@@ -1,4 +1,4 @@
-import type { ExternalActionExecutionAuthorizationBindingV1, ReviewedActionChildHttpProofV1 } from '@happier-dev/protocol/actions/externalActionApi';
+import type { ExternalActionExecutionAuthorizationBindingV1 } from '@happier-dev/protocol/actions/externalActionApi';
 
 import { ApiTokenOperationError } from "@/app/auth/auth";
 import { verifyCurrentExternalActionPrincipalInTx } from "@/app/auth/externalActionExecutionAuthorization";
@@ -27,19 +27,10 @@ import { beforeAccountChangePublication } from '@/app/changes/markAccountChanged
 /** A typed, request-local native birth proof; the original signed binding is never rewritten. */
 export type SessionCreationExecutionAuthorization = ExternalActionExecutionAuthorizationBindingV1 | Readonly<{
     binding: ExternalActionExecutionAuthorizationBindingV1;
-    /** Finite template root already admitted by the canonical requester HTTP verifier. */
-    templateRequesterBirth: true;
-}> | Readonly<{
-    binding: ExternalActionExecutionAuthorizationBindingV1;
-    prepareBirth: Readonly<{ body: Readonly<Record<string, unknown>>; proof: SessionActionChildCreationProofV1 }>;
-}> | Readonly<{
-    binding: ExternalActionExecutionAuthorizationBindingV1;
     modelBirth: Readonly<{ body: Readonly<Record<string, unknown>>; proof: DiscussionModelSessionCreationProofV1; env: NodeJS.ProcessEnv }>;
 }> | Readonly<{
     binding: ExternalActionExecutionAuthorizationBindingV1;
-    /** Already signature-verified create_bot effect and exact birth bytes; never accepted from a body. */
-    reviewedChildAdmission: ReviewedActionChildHttpProofV1;
-    effectActionId: 'session.spawn_new';
+    prepareBirth: Readonly<{ body: Readonly<Record<string, unknown>>; proof: SessionActionChildCreationProofV1 }>;
 }>;
 
 /** The admitted installation signs the one local child and its exact birth body. */
@@ -62,6 +53,13 @@ async function isDeploymentPrepareBirthInTx(tx: Tx, accountId: string,
     if (binding.sessionActionOrigin) {
         if (body.originKind !== 'session' || body.originSessionId !== binding.sessionActionOrigin.caller.sessionId
             || body.originRunId !== undefined) return false;
+    } else if (binding.workflowActionOrigin) {
+        if (body.originKind !== 'run_step' || body.originRunId !== binding.workflowActionOrigin.runId) return false;
+        // Machine-targeted Workflow Actions retain ancestor attribution on the
+        // admitted Run; sessionAuthority is only the Session-targeted carrier.
+        const run = await tx.automationRun.findFirst({ where: { id: binding.workflowActionOrigin.runId, accountId },
+            select: { originSessionId: true } });
+        if (!run || body.originSessionId !== (run.originSessionId ?? undefined)) return false;
     } else return false;
     if (envelope.v === 1) {
         const root = DeploymentPrepareInputV1Schema.safeParse(envelope.input);
@@ -155,20 +153,13 @@ export async function readSessionCreationApiTokenIdInTx(
     authorization: SessionCreationExecutionAuthorization | undefined,
 ): Promise<string | null> {
     if (authorization === undefined) return null;
-    if ('binding' in authorization && 'templateRequesterBirth' in authorization) {
-        if (authorization.binding.accountId !== accountId || authorization.binding.actionId !== 'template.instantiate') {
-            throw new ApiTokenOperationError("invalid_token");
-        }
-        // The root PAT owns revocation, not child-credential creation attribution.
-        return null;
-    }
     await acquireAccountSessionOwnerMetadataFenceInTx(tx, accountId, "content");
     const binding = 'binding' in authorization ? authorization.binding : authorization;
     const principal = await verifyCurrentExternalActionPrincipalInTx(tx, binding);
     if (binding.accountId !== accountId || !principal || ('prepareBirth' in authorization
         ? !await isDeploymentPrepareBirthInTx(tx, accountId, authorization) : 'modelBirth' in authorization
         ? !await isCurrentDiscussionModelBirthInTx(tx, accountId, authorization)
-        : !('reviewedChildAdmission' in authorization) && binding.actionId !== 'session.spawn_new')) {
+        : binding.actionId !== 'session.spawn_new')) {
         throw new ApiTokenOperationError("invalid_token");
     }
     if ('modelBirth' in authorization) {

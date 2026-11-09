@@ -7,8 +7,7 @@ import {
     COOPERATIVE_COLLECTOR_NAVIGATION_QUERY,
     parseCooperativeCollectorConfig, stripCooperativeCollectorQuery, buildCooperativeCollectorNavigationUrl,
 } from '@happier-dev/peer-mediation/browser/collector/cooperative';
-import type { LocalServicePreviewHttpResponseHeaders } from '@happier-dev/peer-mediation/localServices/preview/httpAdapter';
-import type { ProxyLocalServicePreviewHttpRequestInput } from './httpAdapter';
+import type { LocalServicePreviewHttpResponseHeaders, ProxyLocalServicePreviewHttpRequestInput } from '@happier-dev/peer-mediation/localServices/preview/httpAdapter';
 import { createCollectorHtmlStream } from './collectorHtmlStream';
 
 function header(headers: LocalServicePreviewHttpResponseHeaders, name: string): string {
@@ -82,7 +81,8 @@ export function cooperativeProbeRefusalHeaders(search: string, headers: Readonly
 }
 
 /** Called only after the existing preview route has admitted access; configuration is not a grant. */
-export async function prepareCooperativePreview(input: ProxyLocalServicePreviewHttpRequestInput): Promise<ProxyLocalServicePreviewHttpRequestInput | null> {
+export async function prepareCooperativePreview<T extends Pick<ProxyLocalServicePreviewHttpRequestInput,
+    'preview' | 'request' | 'response' | 'onPreviewRefused'>>(input: T): Promise<T | null> {
     const query = new URLSearchParams(input.request.search);
     const probe = query.get(COOPERATIVE_COLLECTOR_STATE_QUERY) === '1';
     const hasCollectorConfig = query.has(COOPERATIVE_COLLECTOR_QUERY);
@@ -151,14 +151,10 @@ export async function prepareCooperativePreview(input: ProxyLocalServicePreviewH
     let collectHtml = false;
     let htmlStream: ReturnType<typeof createCollectorHtmlStream> | undefined;
     let state = 'runtime_unavailable';
-    let transportUnavailable = false;
+    let previewRefused = false;
     let probeRedirect: string | undefined;
     const chunks: Uint8Array[] = [];
-    return { ...input, request: { ...input.request, search: upstreamSearch },
-        onTransportUnavailable(event) {
-            transportUnavailable = true;
-            input.onTransportUnavailable?.(event);
-        }, response: {
+    const response: ProxyLocalServicePreviewHttpRequestInput['response'] = {
         writeHead(code, statusMessage, value) {
             status = code; message = statusMessage; headers = value;
             collectHtml = (config !== null || navigationOnly) && code === 200 && /^text\/html(?:;|$)/i.test(header(value, 'content-type'));
@@ -208,16 +204,16 @@ export async function prepareCooperativePreview(input: ProxyLocalServicePreviewH
         },
         async write(chunk) {
             if (htmlStream) await htmlStream.write(chunk);
-            else if (probe && transportUnavailable) chunks.push(chunk);
+            else if (probe && previewRefused) chunks.push(chunk);
             else if (!probe) await input.response.write(chunk);
         },
         async end() {
             await htmlStream?.end();
             if (probe) {
                 // Preserve the proxy's typed refusal, not an application's error body. The existing
-                // transport callback is authoritative; status or JSON supplied by the app is not.
-                await respond(transportUnavailable || probeRedirect ? status : 200,
-                    transportUnavailable ? Buffer.concat(chunks).toString('utf8') : probeRedirect ? '' : JSON.stringify({ state }), { 'content-type': 'application/json',
+                // refusal callback is authoritative; status or JSON supplied by the app is not.
+                await respond(previewRefused || probeRedirect ? status : 200,
+                    previewRefused ? Buffer.concat(chunks).toString('utf8') : probeRedirect ? '' : JSON.stringify({ state }), { 'content-type': 'application/json',
                     ...(probeRedirect ? { location: probeRedirect } : {}),
                     ...(parentOrigin ? { 'access-control-allow-origin': parentOrigin, 'access-control-allow-credentials': 'true' } : {}), 'vary': 'Origin' });
                 return;
@@ -225,5 +221,10 @@ export async function prepareCooperativePreview(input: ProxyLocalServicePreviewH
             await input.response.end();
         },
         destroy(error) { htmlStream?.destroy(error); input.response.destroy(error); },
-    } };
+    };
+    return { ...input, request: { ...input.request, search: upstreamSearch }, response,
+        onPreviewRefused(reasonCode: Parameters<NonNullable<ProxyLocalServicePreviewHttpRequestInput['onPreviewRefused']>>[0]) {
+            previewRefused = true;
+            input.onPreviewRefused?.(reasonCode);
+        } };
 }

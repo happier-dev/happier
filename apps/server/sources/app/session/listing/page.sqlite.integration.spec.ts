@@ -196,7 +196,7 @@ describe("Session listing predicate composition (SQLite)", () => {
         return { viewer, owner, shared, foreign };
     }
 
-    it('filters a revoked Session from its captured page without admitting a replacement row', async () => {
+    it('finishes its captured Session page and observes revocation and replacement on the next request', async () => {
         const { viewer, owner, shared } = await fixture();
         const input = { userId: viewer.id, authentication, orderBy: V2_SESSION_LIST_ORDER_BY, take: 1 };
         expect((await findV2SessionListRows(input)).map(row => row.id)).toEqual([shared.id]);
@@ -224,7 +224,7 @@ describe("Session listing predicate composition (SQLite)", () => {
             resume();
             const result = await response;
             expect((await findV2SessionListRows(input)).map(row => row.id)).toEqual([replacement.id]);
-            expect(result).toEqual([]);
+            expect(result.map(row => row.id)).toEqual([shared.id]);
         } finally {
             resume(); await response;
             Object.defineProperty(delegate, 'findMany', { configurable: true, writable: true, value: original });
@@ -881,12 +881,13 @@ describe("Session listing predicate composition (SQLite)", () => {
         expect(page.sessions.map(session => session.id)).toEqual([hosted.id]);
     });
 
-    it("admits tracked discussion unread and mentions to attention and badge, and stays quiet otherwise", async () => {
+    it("keeps Session attention tracked and counts unread Discussions independently without duplicating counted anchors", async () => {
         const { viewer, owner, shared, foreign } = await fixture();
         await db.sessionShare.create({ data: {
             sessionId: foreign.id, sharedByUserId: owner.id, sharedWithUserId: viewer.id, accessLevel: "view",
         } });
-        // Tracking is Follow, not access: only `shared` may ever be loud.
+        // Only `shared` contributes Session attention. Each granted Discussion
+        // has its own private unread state, independently of Session Follow.
         await db.accountSessionFollow.create({ data: {
             sessionId: shared.id, accountId: viewer.id, following: true, followPolicy: JSON.stringify({ preset: "important" }),
         } });
@@ -927,19 +928,21 @@ describe("Session listing predicate composition (SQLite)", () => {
         const where = { id: { in: [shared.id, foreign.id] } };
         const page = await createV2SessionAttentionPage({ authentication,  userId: viewer.id, where, candidateLimit: 50 });
         expect(page.rows.map((row) => row.id)).toEqual([shared.id]);
-        expect((await computeAccountActivityBadgeCounts([viewer.id])).get(viewer.id)).toBe(1);
+        // The tracked anchor and its Discussion count once; the Discussion on
+        // the browsed Session contributes independently.
+        expect((await computeAccountActivityBadgeCounts([viewer.id])).get(viewer.id)).toBe(2);
         const projection = await loadSessionViewerProjection({ authentication,  accountId: viewer.id, sessionId: shared.id });
         expect(projection?.attention.reasons).toEqual(["mentioned", "unread_discussion"]);
         expect(projection?.relevance.reasons).toEqual(
             ["shared_directly_with_me", "mentioned_in_discussion", "followed_by_me"],
         );
 
-        // Losing access ends the pressure while the Follow and both private
-        // cursors survive: revocation must be a query-time exclusion, never a
-        // deletion of personal state that a later re-share could not restore.
+        // Losing Session access removes its attention row, while both granted
+        // Discussions remain unread. Follow and private cursors survive so a
+        // later Session re-share can restore its attention without losing state.
         await db.sessionShare.deleteMany({ where: { sessionId: shared.id, sharedWithUserId: viewer.id } });
         expect((await createV2SessionAttentionPage({ authentication,  userId: viewer.id, where, candidateLimit: 50 })).rows).toEqual([]);
-        expect((await computeAccountActivityBadgeCounts([viewer.id])).get(viewer.id)).toBe(0);
+        expect((await computeAccountActivityBadgeCounts([viewer.id])).get(viewer.id)).toBe(2);
         expect(await loadSessionViewerProjection({ authentication,  accountId: viewer.id, sessionId: shared.id })).toBeNull();
         expect((await loadDiscussionAttentionForAccounts({
             accountIds: [viewer.id], sessionIds: [shared.id],
@@ -950,13 +953,13 @@ describe("Session listing predicate composition (SQLite)", () => {
         await db.sessionShare.create({ data: {
             sessionId: shared.id, sharedByUserId: owner.id, sharedWithUserId: viewer.id, accessLevel: "edit",
         } });
-        expect((await computeAccountActivityBadgeCounts([viewer.id])).get(viewer.id)).toBe(1);
+        expect((await computeAccountActivityBadgeCounts([viewer.id])).get(viewer.id)).toBe(2);
 
-        // Archiving the conversation removes the pressure without touching the
-        // cursor, and the badge agrees with the list in the same breath.
+        // Archiving the tracked Discussion clears that Session's attention;
+        // the independently granted Discussion on the browsed Session remains.
         await db.discussion.update({ where: { id: tracked.id }, data: { archivedAt: new Date() } });
         expect((await createV2SessionAttentionPage({ authentication,  userId: viewer.id, where, candidateLimit: 50 })).rows).toEqual([]);
-        expect((await computeAccountActivityBadgeCounts([viewer.id])).get(viewer.id)).toBe(0);
+        expect((await computeAccountActivityBadgeCounts([viewer.id])).get(viewer.id)).toBe(1);
     });
 
     it("agrees on viewer attention for Follow, capabilities, manual standing and finite publication", async () => {

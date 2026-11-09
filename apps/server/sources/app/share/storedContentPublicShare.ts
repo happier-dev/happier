@@ -14,7 +14,6 @@ import { beforeAccountChangePublication, markAccountChanged } from "@/app/change
 import { acquireArtifactPublicationLocksInTx } from "@/app/artifacts/artifactAccessService";
 import { acquireSessionAccountCursorLocksInTx } from '@/app/session/changeTracking/acquireSessionAccountCursorLocksInTx';
 import { tryParseEncryptedDataKeyV0 } from "@/app/api/routes/share/encryptedDataKeyValidation";
-import { resolvePublicShareUseLimit } from "@/app/api/routes/share/publicShareMessageAccessGrant";
 import { isSessionTranscriptShareable, SESSION_TRANSCRIPT_PUBLICATION_SELECT, } from "@/app/session/sessionTranscriptPublicationPolicy";
 import { isSessionMetadataPrivacyUpgradeRequiredError, projectSessionMetadataForRecipient, readSessionMetadataOwnerAccountMode, } from "@/app/session/metadata/sessionMetadataRecipientProjection";
 import { decodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
@@ -329,24 +328,6 @@ export function checkStoredContentPublicShareRateLimit(shareId: string, clientKe
     if (!checker)
         return "unavailable";
     return checker({ exposure: { exposureId: shareId, rateLimitProfileId: "stored-content" }, clientKey, nowMs: Date.now() }) ? "allowed" : "limited";
-}
-export async function resolveStoredContentPublicShareShell(lookupId: string, hostname: string, env: NodeJS.ProcessEnv, clientKey: string) {
-    const row = await db.publicSessionShare.findUnique({ where: { tokenHash: createHash("sha256").update(lookupId, "utf8").digest() } });
-    if (!row || row.keyDerivation !== "fragment_v1" || !isPublicSessionShareActive(row))
-        return null;
-    if (row.artifactId && !await db.artifact.findFirst({ where: { id: row.artifactId, ...artifactVisibleWhere }, select: { id: true } }))
-        return null;
-    const useLimit = resolvePublicShareUseLimit(row.maxUses);
-    if (useLimit.type === "invalid" || (useLimit.type === "capped" && row.useCount >= useLimit.maxUses)) return null;
-    const origin = resolveStoredContentPublicShareSubjectOrigin(row, env);
-    if (!origin || new URL(origin).hostname !== hostname)
-        return null;
-    const admission = checkStoredContentPublicShareRateLimit(row.id, clientKey, env);
-    if (admission === "unavailable")
-        return null;
-    if (admission === "limited")
-        return { error: "rate_limited" as const };
-    return { origin, shareId: row.id };
 }
 export async function writeArtifactPublicShare(input: Omit<SessionPublicShareWrite, "sessionId"> & {
     artifactId: string;

@@ -1,13 +1,20 @@
-import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { withAuthenticatedTestApp } from '@/app/api/testkit/sqliteFastify';
-import { registerPublicProfileReadRoutes } from '@/app/api/routes/account/registerPublicProfileReadRoutes';
+import { registerPublicProfileReadRoutes, publicProfileRepresentationEtag } from '@/app/api/routes/account/registerPublicProfileReadRoutes';
 import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lightSqliteHarness';
 import { loadSharp } from '@/storage/blob/sharpRuntime';
 import { db } from '@/storage/db';
+import { inTx } from '@/storage/inTx';
+import { changeUsernameInTx } from '@/app/social/usernameUpdate';
 import { DEFAULT_PUBLIC_PROFILE_POLICY_V1 } from '@happier-dev/protocol/account/publicProfile';
 import { DEFAULT_PUBLIC_PROFILE_APPEARANCE_V1, PublicProfilePublishBodyV1Schema, PublicProfileReadResultV1Schema } from '@happier-dev/protocol/account/publicProfilePublication';
 import { normalizeUsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
 import { registerAccountPublicProfileRoutes } from '@/app/api/routes/account/registerAccountPublicProfileRoutes';
+import * as svgRenderer from './render/publicProfileSvg';
+import * as htmlRenderer from './render/publicProfileHtml';
+import * as pngRenderer from './render/publicProfileOg';
+import * as heroRenderer from './render/publicProfileHero';
+import { publicProfileServerDependencies } from './publicProfileDependencies';
 
 describe('anonymous public-profile delivery', () => {
     let harness: LightSqliteHarness;
@@ -15,7 +22,7 @@ describe('anonymous public-profile delivery', () => {
         HAPPIER_PUBLIC_SERVER_URL: 'https://profiles.example/prefix', HAPPIER_PUBLIC_PROFILE_REPORT_URL: 'mailto:operator@example.test',
     } }); }, 120_000);
     afterAll(async () => { await harness?.close(); });
-    afterEach(async () => { harness.restoreEnv(); await db.account.deleteMany(); });
+    afterEach(async () => { vi.restoreAllMocks(); harness.restoreEnv(); await db.account.deleteMany(); });
 
     it('publishes through the actual feature-admitted HTTP owner and revalidates every output after hide and withdrawal', async () => {
         const account = await db.account.create({ data: { publicKey: 'public-profile-delivery-owner', username: 'delivery_owner', name: 'Delivery Owner' } });
@@ -33,18 +40,59 @@ describe('anonymous public-profile delivery', () => {
             expect(published.statusCode).toBe(200);
             expect(published.json()).toMatchObject({ kind: 'updated', record: { state: 'published' } });
             const paths = ['/v1/public/profiles/delivery_owner', '/@delivery_owner', '/@delivery_owner/badge/tokens.svg',
-                '/@delivery_owner/card.svg', '/@delivery_owner/card.png?theme=dark', '/@delivery_owner/og.png?v=old'];
+                '/@delivery_owner/card.svg', '/@delivery_owner/card.png?theme=dark', '/@delivery_owner/og.png?v=old',
+                '/@delivery_owner/background?theme=light&viewport=phone&density=1'];
+            // Count actual paint and database boundary work; all implementations remain real.
+            const paints = [vi.spyOn(svgRenderer, 'renderPublicProfileSvg'), vi.spyOn(htmlRenderer, 'renderPublicProfileHtml'),
+                vi.spyOn(pngRenderer, 'renderPublicProfileCardPng'), vi.spyOn(pngRenderer, 'renderPublicProfileOg'),
+                vi.spyOn(heroRenderer, 'renderPublicProfileHeroImage')];
+            const snapshots = vi.spyOn(publicProfileServerDependencies, 'readPublicationContext');
             const validators = new Map<string, string>();
             for (const url of paths) {
+                snapshots.mockClear();
                 const response = await app.inject({ method: 'GET', url });
                 expect(response.statusCode, url).toBe(200);
+                expect(snapshots.mock.calls.length, `admission reads for ${url}`).toBe(1);
                 expect(typeof response.headers.etag, url).toBe('string');
                 const etag = String(response.headers.etag);
                 validators.set(url, etag);
+                if (!url.startsWith('/v1/')) {
+                    expect(paints.reduce((count, paint) => count + paint.mock.calls.length, 0), `initial paints for ${url}`).toBeGreaterThan(0);
+                }
+                paints.forEach(paint => paint.mockClear());
+                snapshots.mockClear();
                 const unchanged = await app.inject({ method: 'GET', url, headers: { 'if-none-match': etag } });
                 expect(unchanged.statusCode, url).toBe(304);
                 expect(unchanged.body).toBe('');
+                expect(paints.reduce((count, paint) => count + paint.mock.calls.length, 0), `paints for ${url}`).toBe(0);
+                expect(snapshots.mock.calls.length, `publication snapshots for ${url}`).toBe(1);
+                if (!url.startsWith('/v1/')) {
+                    // GET comparison is weak even when an intermediary sends the strong form in a list.
+                    expect((await app.inject({ method: 'GET', url, headers: { 'if-none-match': `"other", ${etag.replace(/^W\//, '')}` } })).statusCode).toBe(304);
+                    // Previously issued byte validators safely miss after the rendering-validator transition.
+                    const oldBytes = publicProfileRepresentationEtag(response.rawPayload);
+                    expect((await app.inject({ method: 'GET', url, headers: { 'if-none-match': oldBytes } })).statusCode).toBe(200);
+                }
+                paints.forEach(paint => paint.mockClear());
             }
+            // The page says how long ago it synced, so its validator follows that age; the JSON does not.
+            const later = Date.now() + 2 * 86_400_000;
+            vi.spyOn(Date, 'now').mockReturnValue(later);
+            const agedPage = await app.inject({ method: 'GET', url: '/@delivery_owner', headers: { 'if-none-match': validators.get('/@delivery_owner')! } });
+            expect(agedPage.statusCode).toBe(200);
+            expect(agedPage.headers.etag).not.toBe(validators.get('/@delivery_owner'));
+            expect((await app.inject({ method: 'GET', url: '/@delivery_owner', headers: { 'if-none-match': String(agedPage.headers.etag) } })).statusCode).toBe(304);
+            expect((await app.inject({ method: 'GET', url: '/v1/public/profiles/delivery_owner',
+                headers: { 'if-none-match': validators.get('/v1/public/profiles/delivery_owner')! } })).statusCode).toBe(304);
+            vi.mocked(Date.now).mockRestore();
+            const otherTheme = await app.inject({ method: 'GET', url: '/@delivery_owner/card.svg?theme=dark',
+                headers: { 'if-none-match': validators.get('/@delivery_owner/card.svg')! } });
+            expect(otherTheme.statusCode).toBe(200);
+            expect(otherTheme.headers.etag).not.toBe(validators.get('/@delivery_owner/card.svg'));
+            const otherDensity = await app.inject({ method: 'GET', url: '/@delivery_owner/background?theme=light&viewport=phone&density=2',
+                headers: { 'if-none-match': validators.get('/@delivery_owner/background?theme=light&viewport=phone&density=1')! } });
+            expect(otherDensity.statusCode).toBe(200);
+            expect(otherDensity.headers.etag).not.toBe(validators.get('/@delivery_owner/background?theme=light&viewport=phone&density=1'));
             const hidden = structuredClone(candidate.policy);
             hidden.fields.tokens = false;
             const applied = await app.inject({ method: 'PUT', url: '/v1/account/public-profile/policy', headers, payload: { policy: hidden } });
@@ -64,8 +112,27 @@ describe('anonymous public-profile delivery', () => {
             expect(withdrawn.json()).toEqual({ kind: 'updated', record: null });
             for (const url of paths) {
                 const response = await app.inject({ method: 'GET', url, headers: { 'if-none-match': validators.get(url)! } });
-                expect(response.statusCode, url).toBe(url === '/@delivery_owner' || url.startsWith('/v1/') ? 404 : 200);
+                expect(response.statusCode, url).toBe(url === '/@delivery_owner' || url.startsWith('/v1/') || url.includes('/background?') ? 404 : 200);
                 expect(response.headers.etag, url).toBeUndefined();
+            }
+            await inTx(tx => changeUsernameInTx(tx, account.id, { kind: 'manual_set', username: 'previous_owner' }, process.env),
+                { isolationLevel: 'Serializable' });
+            const replacement = await db.account.create({ data: { publicKey: 'public-profile-replacement-owner',
+                username: 'delivery_owner', name: 'Replacement Owner' } });
+            const replacementCandidate = structuredClone(candidate);
+            replacementCandidate.snapshot.facts.tokens = 123;
+            expect((await app.inject({ method: 'POST', url: '/v1/account/public-profile/publish',
+                headers: { 'x-test-user-id': replacement.id }, payload: replacementCandidate })).json().kind).toBe('updated');
+            for (const url of paths) {
+                const response = await app.inject({ method: 'GET', url, headers: { 'if-none-match': validators.get(url)! } });
+                expect(response.statusCode, url).toBe(200);
+                expect(response.headers.etag, url).not.toBe(validators.get(url));
+                expect(response.body, url).not.toContain('987654321');
+                const current = await app.inject({ method: 'GET', url });
+                expect(response.rawPayload, url).toEqual(current.rawPayload);
+                if (url.startsWith('/v1/')) expect(response.json()).toMatchObject({ kind: 'published', view: {
+                    identity: { name: 'Replacement Owner' }, snapshot: { facts: { tokens: 123 } },
+                } });
             }
         });
     });
@@ -76,6 +143,8 @@ describe('anonymous public-profile delivery', () => {
             expect(response.statusCode).toBe(404);
             expect(response.headers['content-type']).toContain('text/html');
             expect(response.body).toContain('Profile unavailable');
+            expect(response.body).toContain('profiles.example');
+            expect(response.body).not.toContain('https://profiles.example/prefix');
             expect(response.headers.etag).toBeUndefined();
         });
     });

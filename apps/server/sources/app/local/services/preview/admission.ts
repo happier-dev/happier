@@ -24,8 +24,6 @@ async function forwardAdmission(input: Readonly<{
     signal?: AbortSignal;
 }>) {
     const { kind: _kind, ...machineAdmission } = input.admission;
-    const readCurrent = () => resolveMachineAdmission({ actorAccountId: input.admission.actorAccountId,
-        machineId: input.admission.machineId, rpcMethod: method, requireOnline: true });
     const matches = (target: RpcAckResponseEmitter) => target.data?.clientType === 'machine-scoped'
         && target.data.userId === input.admission.custodianAccountId && target.data.machineId === input.admission.machineId
         && target.data.verifiedMachineInstallationId === input.admission.installationId;
@@ -48,7 +46,7 @@ async function forwardAdmission(input: Readonly<{
                 filterTargets: async targets => targets.filter(matches),
                 runOperation: async ({ target, readLatestTarget, operation }) => {
                     const latest = await readLatestTarget();
-                    if (!matches(target) || !latest || !matches(latest) || !sameInstallation(await readCurrent(), input.admission)) {
+                    if (!matches(target) || !latest || !matches(latest)) {
                         return { status: 'unavailable' };
                     }
                     return { status: 'current', value: await operation() };
@@ -61,7 +59,7 @@ async function forwardAdmission(input: Readonly<{
             replyKind: parsed?.success ? parsed.data.kind : 'unavailable',
             ...(!response?.ok && response && 'errorCode' in response ? { errorCode: response.errorCode } : {}) },
             'Declared Service preview admission reply');
-        if (!response?.ok || input.signal?.aborted || !sameInstallation(await readCurrent(), input.admission)) return null;
+        if (!response?.ok || input.signal?.aborted) return null;
         return parsed?.success ? parsed.data : null;
     } finally { input.signal?.removeEventListener('abort', cancel); }
 }
@@ -93,14 +91,18 @@ export async function readLocalServicePreviewAdmission(input: Readonly<{
         ? decision('admitted', admission) : decision('starter_admission_unavailable');
 }
 
-/** Disclosure follows the owner signal; native process termination is a different outcome. */
+/** Only the exact Service owner's retirement reply establishes an end.
+ * Transport loss or an unavailable observation is not a Service lifecycle fact;
+ * each subsequent access still passes the ordinary current-Service admission.
+ */
 export async function observeLocalServicePreviewRetirement(input: Readonly<{
     admission: AdmittedMachine;
     resource: LocalServicePreviewResourceV1;
     signal: AbortSignal;
-}>): Promise<void> {
+}>): Promise<boolean> {
     const target = input.resource.serviceTarget;
-    if (!target || input.signal.aborted) return;
-    await forwardAdmission({ admission: input.admission, request: { v: 1, kind: 'wait_retirement', target,
+    if (!target || input.signal.aborted) return false;
+    const result = await forwardAdmission({ admission: input.admission, request: { v: 1, kind: 'wait_retirement', target,
         instanceId: target.managedServiceId }, signal: input.signal });
+    return result?.kind === 'retired' && result.instanceId === target.managedServiceId;
 }

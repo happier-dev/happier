@@ -16,6 +16,12 @@ import { removeTeamMemberForActorInTx, setTeamMemberManagementForActorInTx, susp
 import { upsertTeamCredentialRecipientMaterialInTx } from "./recipientMaterial";
 import { setTeamCredentialAudienceInTx } from "./resourceAudience";
 import { updateTeamCredentialResourceInTx } from "./resourceUpdate";
+import { deleteTeamCredentialResourceInTx } from "./resourceDelete";
+import { createNativeSessionTeamCredentialFixture, TEST_AUTHENTICATION, TEST_TEAM_AUTHENTICATION } from "./sessionBinding.testkit";
+import { writeSessionTeamCredentialBindingsInTx, stampSessionTeamCredentialNativeDeliveryInTx,
+    submitSessionTeamCredentialNativeDeliveryInTx, completeSessionTeamCredentialNativeDeliveryInTx,
+    readQualifiedSessionTeamCredentialNativeDeliveriesForManagedMachineInTx } from "./sessionBinding";
+import { readSessionTeamCredentialNativeSelectionInTx } from "./nativeDeliveryRead";
 
 describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("Team credential lifetime contention (PostgreSQL)", () => {
     const accountIds: string[] = [];
@@ -31,6 +37,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("T
             HANDY_MASTER_SECRET: "serialaudit-c5-disposable",
             HAPPIER_FEATURE_TEAMS__ENABLED: "1",
             HAPPIER_FEATURE_TEAMS_CREDENTIAL_RESOURCES__ENABLED: "1",
+            HAPPIER_SERVER_IDENTITY_ID: `srv_${"a".repeat(32)}`,
             HAPPIER_DB_CONNECTION_LIMIT: "10",
         })) {
             previousEnv.set(key, process.env[key]);
@@ -123,6 +130,148 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("T
             await Promise.allSettled(opponent ? [opponent] : []);
         }
     }
+
+    it("admits the next serialized native writer after an abandoned submission on the same managed resource", async () => {
+        const f = await createNativeSessionTeamCredentialFixture();
+        const sibling = await db.session.create({ data: { accountId: f.creator.id, tag: randomUUID(), metadata: "{}", encryptionMode: "plain" } });
+        const requests = [];
+        for (const sessionId of [f.session.id, sibling.id]) {
+            expect(await inTx(tx => writeSessionTeamCredentialBindingsInTx(tx, { sessionId, accountId: f.creator.id,
+                intents: [f.intent], authentication: TEST_AUTHENTICATION }))).toEqual({ ok: true });
+            const prepared = await inTx(tx => stampSessionTeamCredentialNativeDeliveryInTx(tx, { sessionId,
+                accountId: f.creator.id, response: f.sourceResponse, authentication: TEST_AUTHENTICATION }));
+            if (!prepared.ok) throw new Error("Expected prepared native source");
+            requests.push({ sessionId, accountId: f.creator.id, bindingKey: prepared.binding.safeFacet.bindingKey,
+                expectedResourceRevision: f.credential.revision, expectedSourceRevision: f.nativeSource.sourceRevision,
+                expectedProviderTicket: f.nativeSource.providerTicket, operation: "install" as const,
+                requestId: randomUUID(), authentication: TEST_AUTHENTICATION });
+        }
+        const [first, second] = requests;
+        if (!first || !second) throw new Error("Expected both managed-resource consumers");
+        const result = await afterUncommittedMutation(async tx => {
+            expect(await submitSessionTeamCredentialNativeDeliveryInTx(tx, first)).toEqual({ ok: true, submitted: true });
+        }, tx => submitSessionTeamCredentialNativeDeliveryInTx(tx, second));
+        expect(result).toEqual({ ok: true, submitted: true });
+        expect(await inTx(tx => completeSessionTeamCredentialNativeDeliveryInTx(tx, { ...first, outcome: "refused" })))
+            .toEqual({ ok: true });
+        expect(await inTx(tx => submitSessionTeamCredentialNativeDeliveryInTx(tx, second))).toEqual({ ok: true, submitted: false });
+    });
+
+    it("settles omitted native peers from the applied cohort even when their resource is restored during IO", async () => {
+        const f = await createNativeSessionTeamCredentialFixture();
+        const sibling = await db.session.create({ data: { accountId: f.creator.id, tag: randomUUID(), metadata: "{}", encryptionMode: "plain" } });
+        const requests = [];
+        for (const sessionId of [f.session.id, sibling.id]) {
+            expect(await inTx(tx => writeSessionTeamCredentialBindingsInTx(tx, { sessionId, accountId: f.creator.id,
+                intents: [f.intent], authentication: TEST_AUTHENTICATION }))).toEqual({ ok: true });
+            const prepared = await inTx(tx => stampSessionTeamCredentialNativeDeliveryInTx(tx, { sessionId,
+                accountId: f.creator.id, response: f.sourceResponse, authentication: TEST_AUTHENTICATION }));
+            if (!prepared.ok) throw new Error("Expected prepared native source");
+            const request = { managedId: f.row.id, sessionId, accountId: f.creator.id,
+                bindingKey: prepared.binding.safeFacet.bindingKey, expectedResourceRevision: f.credential.revision,
+                expectedSourceRevision: f.nativeSource.sourceRevision, expectedProviderTicket: f.nativeSource.providerTicket,
+                operation: "install" as const, requestId: randomUUID(), authentication: TEST_AUTHENTICATION };
+            expect(await inTx(tx => submitSessionTeamCredentialNativeDeliveryInTx(tx, request))).toEqual({ ok: true, submitted: true });
+            const cohort = await inTx(tx => readQualifiedSessionTeamCredentialNativeDeliveriesForManagedMachineInTx(tx, {
+                accountId: f.creator.id, request, authentication: TEST_AUTHENTICATION }));
+            if (!cohort.ok) throw new Error("Expected qualified install cohort");
+            const completion = { ...request, outcome: "confirmed" as const, appliedPolicy: {
+                ownedBindingKeys: cohort.ownedBindings.map(row => row.safeFacet.bindingKey),
+                desiredBindingKeys: cohort.desiredBindings.map(row => row.safeFacet.bindingKey),
+            } };
+            expect(await inTx(tx => completeSessionTeamCredentialNativeDeliveryInTx(tx, completion))).toEqual({ ok: true });
+            requests.push(request);
+        }
+        const target = requests[0];
+        if (!target) throw new Error("Expected native release target");
+        const controllerCensus = await inTx(tx => readQualifiedSessionTeamCredentialNativeDeliveriesForManagedMachineInTx(tx, {
+            accountId: f.custodian.id, request: { managedId: f.row.id }, authentication: TEST_AUTHENTICATION }));
+        expect(controllerCensus.ok && controllerCensus.desiredBindings.map(row => row.safeFacet.bindingKey).sort())
+            .toEqual(requests.map(request => request.bindingKey).sort());
+        await db.teamCredentialResource.update({ where: { id: f.credential.id }, data: { enabled: false } });
+        const release = { ...target, requestId: randomUUID(), operation: "release" as const };
+        expect(await inTx(tx => submitSessionTeamCredentialNativeDeliveryInTx(tx, release))).toEqual({ ok: true, submitted: true });
+        const cohort = await inTx(tx => readQualifiedSessionTeamCredentialNativeDeliveriesForManagedMachineInTx(tx, {
+            accountId: f.creator.id, request: release, authentication: TEST_AUTHENTICATION }));
+        if (!cohort.ok) throw new Error("Expected withdrawn native release cohort");
+        expect(cohort.desiredBindings).toEqual([]);
+        const completion = { ...release, outcome: "confirmed" as const, appliedPolicy: {
+            ownedBindingKeys: cohort.ownedBindings.map(row => row.safeFacet.bindingKey), desiredBindingKeys: [],
+        } };
+        await db.teamCredentialResource.update({ where: { id: f.credential.id }, data: { enabled: true } });
+        expect(await inTx(tx => completeSessionTeamCredentialNativeDeliveryInTx(tx, completion))).toEqual({ ok: true });
+        expect(await inTx(tx => readSessionTeamCredentialNativeSelectionInTx(tx, { sessionId: sibling.id })))
+            .toMatchObject({ ok: true, binding: { installation: "prepared" } });
+        expect(await db.sessionTeamCredentialBinding.count({ where: { nativeManagedId: f.row.id } })).toBe(1);
+    });
+
+    it.each(['submit_first', 'clear_first'] as const)("serializes ordinary native clear against submission: %s", async order => {
+        const f = await createNativeSessionTeamCredentialFixture();
+        expect(await inTx(tx => writeSessionTeamCredentialBindingsInTx(tx, { sessionId: f.session.id, accountId: f.creator.id,
+            intents: [f.intent], authentication: TEST_AUTHENTICATION }))).toEqual({ ok: true });
+        const prepared = await inTx(tx => stampSessionTeamCredentialNativeDeliveryInTx(tx, { sessionId: f.session.id,
+            accountId: f.creator.id, response: f.sourceResponse, authentication: TEST_AUTHENTICATION }));
+        if (!prepared.ok) throw new Error("Expected prepared native source");
+        const request = { sessionId: f.session.id, accountId: f.creator.id, bindingKey: prepared.binding.safeFacet.bindingKey,
+            expectedResourceRevision: f.credential.revision, expectedSourceRevision: f.nativeSource.sourceRevision,
+            expectedProviderTicket: f.nativeSource.providerTicket, operation: "install" as const,
+            requestId: randomUUID(), authentication: TEST_AUTHENTICATION };
+        const clear = (tx: Tx) => writeSessionTeamCredentialBindingsInTx(tx, { sessionId: f.session.id, accountId: f.creator.id,
+            intents: [{ v: 1, slot: { kind: 'provider_model' }, resourceId: null }], authentication: TEST_AUTHENTICATION });
+        const submit = (tx: Tx) => submitSessionTeamCredentialNativeDeliveryInTx(tx, request);
+        const result = order === 'submit_first'
+            ? await afterUncommittedMutation(async tx => { expect(await submit(tx)).toEqual({ ok: true, submitted: true }); }, clear)
+            : await afterUncommittedMutation(async tx => { expect(await clear(tx)).toEqual({ ok: true }); }, submit);
+        if (order === 'submit_first') {
+            expect(result).toEqual({ ok: true });
+            expect(await db.sessionTeamCredentialBinding.count({ where: { sessionId: f.session.id } })).toBe(0);
+        } else {
+            expect(result.ok).toBe(false);
+            expect(await db.sessionTeamCredentialBinding.count({ where: { sessionId: f.session.id } })).toBe(0);
+        }
+    });
+
+    it("publishes native cleanup after submitted insertion commits before resource deletion", async () => {
+        const f = await createNativeSessionTeamCredentialFixture();
+        const result = await afterUncommittedMutation(async tx => {
+            expect(await writeSessionTeamCredentialBindingsInTx(tx, { sessionId: f.session.id, accountId: f.creator.id,
+                intents: [f.intent], authentication: TEST_AUTHENTICATION })).toEqual({ ok: true });
+            const prepared = await stampSessionTeamCredentialNativeDeliveryInTx(tx, { sessionId: f.session.id,
+                accountId: f.creator.id, response: f.sourceResponse, authentication: TEST_AUTHENTICATION });
+            if (!prepared.ok) throw new Error("Expected prepared native source");
+            expect(await submitSessionTeamCredentialNativeDeliveryInTx(tx, { sessionId: f.session.id, accountId: f.creator.id,
+                bindingKey: prepared.binding.safeFacet.bindingKey, expectedResourceRevision: f.credential.revision,
+                expectedSourceRevision: f.nativeSource.sourceRevision, expectedProviderTicket: f.nativeSource.providerTicket,
+                operation: 'install', requestId: randomUUID(), authentication: TEST_AUTHENTICATION }))
+                .toEqual({ ok: true, submitted: true });
+        }, tx => deleteTeamCredentialResourceInTx(tx, { actorAccountId: f.custodian.id, resourceId: f.credential.id,
+            expectedRevision: f.credential.revision, authentication: TEST_TEAM_AUTHENTICATION }));
+        expect(result).toEqual({ ok: true });
+        expect(await db.sessionTeamCredentialBinding.count({ where: { sessionId: f.session.id, nativeManagedId: f.row.id } })).toBe(0);
+    });
+
+    it("cannot accept a new native binding after resource deletion wins", async () => {
+        const f = await createNativeSessionTeamCredentialFixture();
+        const result = await afterUncommittedMutation(async tx => {
+            expect(await deleteTeamCredentialResourceInTx(tx, { actorAccountId: f.custodian.id, resourceId: f.credential.id,
+                expectedRevision: f.credential.revision, authentication: TEST_TEAM_AUTHENTICATION })).toEqual({ ok: true });
+        }, async tx => {
+            // A stale read can reach the real FK while deletion is uncommitted;
+            // either typed re-admission refusal or storage rejection must win.
+            try {
+                return await writeSessionTeamCredentialBindingsInTx(tx, { sessionId: f.session.id, accountId: f.creator.id,
+                    intents: [f.intent], authentication: TEST_AUTHENTICATION });
+            } catch (error) {
+                if (typeof error === "object" && error !== null && "code" in error && error.code === "P2003") {
+                    return { ok: false, reason: "foreign_key_refused" } as const;
+                }
+                throw error;
+            }
+        });
+        expect(result.ok).toBe(false);
+        expect(await db.teamCredentialResource.findUnique({ where: { id: f.credential.id } })).toBeNull();
+        expect(await db.sessionTeamCredentialBinding.count({ where: { sessionId: f.session.id } })).toBe(0);
+    });
 
     async function transferSource(teamId: string, accountId: string) {
         const provider = await db.identityProviderInstance.create({ data: {

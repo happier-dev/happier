@@ -11,7 +11,6 @@ import type { Fastify } from "../../types";
 import { requirePresentUser, PresentUserRequiredResponseSchema } from "@/app/api/utils/requirePresentUser";
 import { resolvePairingAuthPolicyFromEnv } from "./pairingAuthPolicy";
 import { resolveApiHotEndpointRateLimit } from "@/app/api/utils/apiRateLimitCatalog";
-import { recordAuthEnrollmentOutcome } from "@/app/monitoring/metrics/authMetrics";
 import { cleanupExpiredAuthPairingSessions } from "@/app/retention/rules/authPairingSessionRetentionRule";
 import type { HomeApprovalGate } from "@/app/auth/homeApprovalGateContract";
 
@@ -31,15 +30,12 @@ export function createHomeApprovalGate(env: NodeJS.ProcessEnv = process.env): Ho
             if (input.approvalId) {
                 const row = await db.authPairingSession.findUnique({ where: { id: input.approvalId } });
                 if (!row) {
-                    recordAuthEnrollmentOutcome({ flow: "home_approval", outcome: "wrong_target" });
                     return { kind: "invalid" };
                 }
                 if (row.accountId !== input.accountId) {
-                    recordAuthEnrollmentOutcome({ flow: "home_approval", outcome: "wrong_target" });
                     return { kind: "invalid" };
                 }
                 if (row.flow !== "account_assertion") {
-                    recordAuthEnrollmentOutcome({ flow: "home_approval", outcome: "wrong_binding" });
                     return { kind: "invalid" };
                 }
                 if (
@@ -48,11 +44,9 @@ export function createHomeApprovalGate(env: NodeJS.ProcessEnv = process.env): Ho
                     || row.requesterIssuerServerIdentityId !== input.issuerServerIdentityId
                     || row.requesterIssuerSubjectId !== input.issuerSubjectId
                 ) {
-                    recordAuthEnrollmentOutcome({ flow: "home_approval", outcome: "wrong_binding" });
                     return { kind: "invalid" };
                 }
                 if (row.expiresAt <= now || assertionExpiresAtMs <= now.getTime()) {
-                    recordAuthEnrollmentOutcome({ flow: "home_approval", outcome: "expired" });
                     return { kind: "expired" };
                 }
                 if (row.approvalStatus === "pending") {
@@ -66,11 +60,9 @@ export function createHomeApprovalGate(env: NodeJS.ProcessEnv = process.env): Ho
                     };
                 }
                 if (row.approvalStatus === "rejected") {
-                    recordAuthEnrollmentOutcome({ flow: "home_approval", outcome: "rejected" });
                     return { kind: "rejected" };
                 }
                 if (row.approvalStatus !== "approved") {
-                    recordAuthEnrollmentOutcome({ flow: "home_approval", outcome: "wrong_binding" });
                     return { kind: "invalid" };
                 }
                 return {
@@ -250,7 +242,6 @@ export function registerHomeLoginApprovalRoutes(app: Fastify): void {
         });
         if (outcome !== "not_found") {
             if (outcome === "rejected") {
-                recordAuthEnrollmentOutcome({ flow: "home_approval", outcome: "rejected" });
             }
             return reply.send({ status: outcome });
         }

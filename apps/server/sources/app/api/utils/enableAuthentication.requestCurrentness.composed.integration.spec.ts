@@ -9,6 +9,8 @@ import { enforceLoginEligibility } from '@/app/auth/enforceLoginEligibility';
 import { db, withSqliteReadSnapshot } from '@/storage/db';
 import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lightSqliteHarness';
 import { encryptString } from '@/modules/encrypt';
+import { setHomeSettings } from '@/app/home/settings/homeSettings';
+import { logger } from '@/utils/logging/log';
 
 import { enableAuthentication } from './enableAuthentication';
 
@@ -60,6 +62,45 @@ describe('authenticated request Account currentness', () => {
             expect(opens).not.toHaveBeenCalled();
         } finally {
             opens.mockRestore();
+            await db.homeSettings.deleteMany({});
+        }
+    });
+
+    it('reads no Home settings per authenticated request, and a Home write applies the diagnostics flag on this instance', async () => {
+        const owner = await db.account.create({ data: { publicKey: randomUUID(), encryptionMode: 'plain', homeRole: 'owner' } });
+        const token = await auth.createToken(owner.id, undefined, { kind: 'account', authority: 'present_user',
+            authenticationEvidence: [{ kind: 'home_method', methodId: 'key_challenge' }] });
+        const headers = { authorization: `Bearer ${token}` };
+        // Persistence is the measured boundary: count Home settings and governance row reads.
+        const reader = await withSqliteReadSnapshot(async snapshot => snapshot);
+        const original = { settings: reader.homeSettings.findUnique, policy: reader.homeGovernancePolicy.findUnique };
+        const settingsReads = vi.spyOn(reader.homeSettings, 'findUnique').mockImplementation(original.settings);
+        const policyReads = vi.spyOn(reader.homeGovernancePolicy, 'findUnique').mockImplementation(original.policy);
+        const info = vi.spyOn(logger, 'info');
+        const diagnosticLines = () => info.mock.calls.filter(([entry]) => typeof entry === 'object' && entry !== null
+            && 'module' in entry && entry.module === 'auth-decorator').length;
+        try {
+            expect((await app.inject({ method: 'GET', url: '/private', headers })).statusCode).toBe(200);
+            expect(settingsReads.mock.calls.length + policyReads.mock.calls.length).toBe(0);
+            expect(diagnosticLines()).toBe(0);
+            const saved = await setHomeSettings({ actorAccountId: owner.id,
+                write: { expectedRevision: 0, values: { HAPPIER_AUTH_DECORATOR_DIAGNOSTIC_LOGS: true } } });
+            expect(saved.status).toBe('applied');
+            settingsReads.mockClear(); policyReads.mockClear();
+            expect((await app.inject({ method: 'GET', url: '/private', headers })).statusCode).toBe(200);
+            expect(settingsReads.mock.calls.length + policyReads.mock.calls.length).toBe(0);
+            const enabledLines = diagnosticLines();
+            expect(enabledLines).toBeGreaterThan(0);
+            const cleared = await setHomeSettings({ actorAccountId: owner.id,
+                write: { expectedRevision: 1, values: { HAPPIER_AUTH_DECORATOR_DIAGNOSTIC_LOGS: null } } });
+            expect(cleared.status).toBe('applied');
+            expect((await app.inject({ method: 'GET', url: '/private', headers })).statusCode).toBe(200);
+            expect(diagnosticLines()).toBe(enabledLines);
+        } finally {
+            info.mockRestore(); settingsReads.mockRestore(); policyReads.mockRestore();
+            // Prisma's model Proxy has no ordinary descriptor value for Vitest to restore.
+            reader.homeSettings.findUnique = original.settings;
+            reader.homeGovernancePolicy.findUnique = original.policy;
             await db.homeSettings.deleteMany({});
         }
     });

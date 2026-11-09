@@ -50,6 +50,7 @@ export type LocalServicePreviewRuntimeRegistrationResult =
               | "preview_hostname_collision"
               | "preview_token_secret_missing"
               | "preview_public_base_url_missing"
+              | "session_not_authorized"
               | LocalServicePreviewUrlFailureReason;
       }>;
 
@@ -58,7 +59,10 @@ export type LocalServicePreviewRuntimeRegistrationInput = Readonly<{
     accountId: string;
     nativeDirectSupported?: boolean;
     viewerAccountId?: string;
+    machineAccessSignal?: AbortSignal;
 }>;
+
+export type LocalServicePreviewMachineAccessAttempt = Readonly<{ signal: AbortSignal; release: () => void }>;
 
 export type LocalServicePreviewRuntimeContext = Readonly<{
     resource: LocalServicePreviewResourceV1;
@@ -83,8 +87,9 @@ export type LocalServicePreviewRuntime = Readonly<{
     closeNativeRegistrations(): void;
     retainConnection(previewId: string, close: () => void, rawToken?: string | null): () => void;
     retireMachineAccess(input: Readonly<{ machineId: string; accountId: string }>): void;
+    retainMachineAccess(input: Readonly<{ machineId: string; accountIds: readonly string[] }>): LocalServicePreviewMachineAccessAttempt;
     openNativeRegistration(binding: LocalServicePreviewDirectBindingV1, grantId: string): Readonly<{ ok: true; signal: AbortSignal; close: () => void } | { ok: false; reasonCode: string }>;
-    mintNativeDirectAccess(input: Readonly<{ previewId: string; actorAccountId?: string; request: LocalServicePreviewNativeDirectAccessRequestV1; target: MachineIrohEndpointAuthorityV1 }>): Readonly<{ ok: true; access: LocalServicePreviewNativeDirectAccessV1 } | { ok: false; reasonCode: string }>;
+    mintNativeDirectAccess(input: Readonly<{ previewId: string; actorAccountId?: string; machineAccessSignal?: AbortSignal; request: LocalServicePreviewNativeDirectAccessRequestV1; target: MachineIrohEndpointAuthorityV1 }>): Readonly<{ ok: true; access: LocalServicePreviewNativeDirectAccessV1 } | { ok: false; reasonCode: string }>;
     registerPreview(input: LocalServicePreviewRuntimeRegistrationInput): LocalServicePreviewRuntimeRegistrationResult;
     resolvePreview(previewId: string): LocalServicePreviewResourceV1 | null;
     resolvePreviewByHost(hostname: string): LocalServicePreviewResourceV1 | null;
@@ -162,6 +167,8 @@ export function createLocalServicePreviewRuntime(
     const resources = new Map<string, PreviewRuntimeEntry>();
     const previewIdByHostname = new Map<string, string>();
     const hostnameByPreviewId = new Map<string, string>();
+    // RU2-SEC C2: a revoked viewer's in-flight admission must not mint open-ended access after the credential sweep.
+    const mintAttempts = new Set<Readonly<{ machineId: string; accountIds: readonly string[]; controller: AbortController }>>();
     const nowMs = runtimeInput.nowMs ?? Date.now;
     const generateTokenId = runtimeInput.generateTokenId ?? randomUUID;
     const generateRawToken = runtimeInput.generateRawToken ?? defaultRawToken;
@@ -173,6 +180,7 @@ export function createLocalServicePreviewRuntime(
     }
 
     function registerPreview(input: LocalServicePreviewRuntimeRegistrationInput): LocalServicePreviewRuntimeRegistrationResult {
+        if (input.machineAccessSignal?.aborted) return { ok: false, reasonCode: 'session_not_authorized' };
         const accountId = normalizeAccountId(input.accountId);
         const parsed = LocalServicePreviewResourceV1Schema.safeParse(input.resource);
         if (!parsed.success) {
@@ -410,6 +418,11 @@ export function createLocalServicePreviewRuntime(
     }
 
     return {
+        retainMachineAccess(input) {
+            const attempt = { ...input, controller: new AbortController() };
+            mintAttempts.add(attempt);
+            return { signal: attempt.controller.signal, release: () => { mintAttempts.delete(attempt); } };
+        },
         retainConnection(previewId, close, rawToken) {
             const entry = resources.get(previewId);
             if (!entry) { close(); return () => {}; }
@@ -420,6 +433,9 @@ export function createLocalServicePreviewRuntime(
             return () => { entry.connections.delete(connection); };
         },
         retireMachineAccess({ machineId, accountId }) {
+            for (const attempt of mintAttempts) {
+                if (attempt.machineId === machineId && attempt.accountIds.includes(accountId)) attempt.controller.abort();
+            }
             for (const entry of resources.values()) {
                 if (!entry.resource.serviceTarget || entry.resource.machineId !== machineId) continue;
                 if (entry.accountId === accountId) { unregisterPreview(entry.resource.previewId); continue; }
@@ -432,6 +448,8 @@ export function createLocalServicePreviewRuntime(
             }
         },
         closeNativeRegistrations() {
+            for (const attempt of mintAttempts) attempt.controller.abort();
+            mintAttempts.clear();
             for (const entry of resources.values()) {
                 retireConnections(entry);
             }
@@ -447,6 +465,7 @@ export function createLocalServicePreviewRuntime(
             return { ok: true, signal: controller.signal, close };
         },
         mintNativeDirectAccess(input) {
+            if (input.machineAccessSignal?.aborted) return { ok: false, reasonCode: 'session_not_authorized' };
             const entry = resources.get(input.previewId);
             if (!entry) return { ok: false, reasonCode: 'preview_not_found' };
             const signing = resolvePeerMediationGrantSigningConfig(runtimeInput.env ?? process.env, nowMs());

@@ -1,6 +1,5 @@
 import { isDeepStrictEqual } from "node:util";
-import { z } from 'zod/mini';
-import { TeamCredentialBrokerPlacementV1Schema, TeamCredentialRequestPolicySupportOutputV1Schema, type TeamCredentialBrokerPlacementV1, type TeamCredentialRequestPolicyModelSupportV1, type TeamCredentialRequestPolicyV1, type TeamCredentialRequestPolicySupportOutputV1 } from '@happier-dev/protocol/teams/credentials/resourceV1';
+import { TeamCredentialRequestPolicySupportOutputV1Schema, type TeamCredentialBrokerPlacementV1, type TeamCredentialRequestPolicyModelSupportV1, type TeamCredentialRequestPolicyV1, type TeamCredentialRequestPolicySupportOutputV1 } from '@happier-dev/protocol/teams/credentials/resourceV1';
 import { type TeamCredentialSourceBindingV1 } from '@happier-dev/protocol/teams/credentials/sourceBindingV1';
 import { readTeamCredentialSourceBinding } from './sourceBindingRead';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
@@ -12,7 +11,7 @@ import { classifyMachineDaemonPresence, getMachineDaemonPresenceInventory } from
 import { getMachinePoolCandidateSnapshot } from "@/app/machines/pools/machinePoolService";
 import { resolveTeamActorContextInTx, type TeamOperationAuthenticationContext } from "../actorContext";
 import { resolveTeamCredentialCapabilities } from "../capabilities";
-import { resolveTeamCredentialBrokerMachineForSaveInTx } from "./brokerMachineEligibility";
+import { readTeamCredentialBrokerPlacement, validateTeamCredentialBrokerPlacementForSaveInTx } from "./brokerPlacementResolver";
 import { qualifyTeamCredentialOperationInTx } from "./resourceRead";
 import { resolveTeamCredentialResourceSourceInTx } from "./resourceSourceResolver";
 import type { TeamCredentialResourceSourceCurrentness } from "./resourceSourceResolver";
@@ -34,7 +33,7 @@ export type TeamCredentialRequestPolicySupportPreparation = Readonly<{
         | "resource_corrupt" | "team_authentication_required" | "team_authentication_policy_unavailable";
 }> | Readonly<{
     ok: false;
-    unavailable: "broker_unavailable" | "source_unavailable" | "update_required";
+    unavailable: "broker_unavailable" | "source_unavailable" | "update_required" | 'connected_service_credential_reconnect_required';
 }>;
 
 type SupportInput = Readonly<{
@@ -149,21 +148,14 @@ export async function prepareTeamCredentialRequestPolicySupportInTx(
         });
         if (!resource) return { ok: false, error: "resource_not_found" };
         const parsedSource = readTeamCredentialSourceBinding(resource.sourceBindingJson);
-        const parsedPlacement = z.nullable(TeamCredentialBrokerPlacementV1Schema).safeParse(
-            resource.brokerMachineId !== null && resource.brokerPoolId === null
-                ? { kind: "machine", machineId: resource.brokerMachineId }
-                : resource.brokerPoolId !== null && resource.brokerMachineId === null
-                    ? { kind: "machine_pool", poolId: resource.brokerPoolId }
-                    : null,
-        );
-        if (!parsedSource.success || !parsedPlacement.success
-            || (resource.brokerMachineId !== null && resource.brokerPoolId !== null)) {
+        const parsedPlacement = readTeamCredentialBrokerPlacement(resource);
+        if (!parsedSource.success || !parsedPlacement.ok) {
             return { ok: false, error: "resource_corrupt" };
         }
         teamId = resource.teamId;
         custodianAccountId = resource.custodianAccountId;
         source = parsedSource.data;
-        brokerPlacement = parsedPlacement.data;
+        brokerPlacement = parsedPlacement.placement;
     }
 
     const actor = await resolveTeamActorContextInTx(tx, {
@@ -197,20 +189,13 @@ export async function prepareTeamCredentialRequestPolicySupportInTx(
     if (currentSource.status !== "current") {
         return { ok: false, unavailable: "source_unavailable" };
     }
+    if (currentSource.authenticationFailure) return { ok: false, unavailable: currentSource.authenticationFailure };
     if (brokerPlacement === null) return { ok: false, unavailable: "broker_unavailable" };
-    if (brokerPlacement.kind === "machine") {
-        const broker = await resolveTeamCredentialBrokerMachineForSaveInTx(tx, {
-            custodianAccountId,
-            brokerMachineId: brokerPlacement.machineId,
-        });
-        if (!broker.ok) return { ok: false, unavailable: broker.error };
-    } else {
-        const pool = await tx.machinePool.findFirst({
-            where: { id: brokerPlacement.poolId, accountId: custodianAccountId },
-            select: { id: true },
-        });
-        if (!pool) return { ok: false, unavailable: "broker_unavailable" };
-    }
+    const placement = await validateTeamCredentialBrokerPlacementForSaveInTx(tx, {
+        custodianAccountId,
+        placement: brokerPlacement,
+    });
+    if (!placement.ok) return { ok: false, unavailable: placement.error };
     return {
         ok: true,
         teamId,
@@ -315,6 +300,10 @@ export async function resolveTeamCredentialRequestPolicySupport(
         const parsed = DaemonProviderTeamCredentialRequestPolicySupportResponseV1Schema.safeParse(response);
         return parsed.success ? parsed.data : null;
     });
+    if (parsedResponses.some(response => response?.status === 'unavailable'
+        && response.reason === 'connected_service_credential_reconnect_required')) {
+        return { status: 'unavailable', reason: 'connected_service_credential_reconnect_required' };
+    }
     // A refusal is a Pool-wide fact only when every observed candidate agrees;
     // mixed, missing or malformed observations stay `broker_unavailable`.
     const refusal = readTeamCredentialBrokerRefusalReason(parsedResponses.map(response => (

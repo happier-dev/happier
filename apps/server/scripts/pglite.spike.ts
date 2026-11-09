@@ -3,7 +3,7 @@ import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { spawn } from 'node:child_process';
 import { PGlite } from '@electric-sql/pglite';
-import { PGLiteSocketServer } from '@electric-sql/pglite-socket';
+import { FramedPgliteSocketServer } from '../sources/storage/pgliteFramedSocketServer.mjs';
 
 function run(cmd: string, args: string[], options?: { cwd?: string; env?: Record<string, string | undefined> }) {
   return new Promise<void>((resolvePromise, rejectPromise) => {
@@ -52,7 +52,7 @@ model Foo {
 `.trimStart();
 
   let pglite: PGlite | null = null;
-  let server: PGLiteSocketServer | null = null;
+  let server: FramedPgliteSocketServer | null = null;
   let prisma: any | null = null;
 
   try {
@@ -61,7 +61,7 @@ model Foo {
 
     pglite = new PGlite(dbDir);
     await (pglite as any).waitReady;
-    server = new PGLiteSocketServer({ db: pglite, host: '127.0.0.1', port: 0 });
+    server = new FramedPgliteSocketServer({ db: pglite, host: '127.0.0.1', port: 0 });
     await server.start();
 
     const url = (() => {

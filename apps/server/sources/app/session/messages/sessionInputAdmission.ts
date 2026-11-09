@@ -1,4 +1,3 @@
-import { classifyMachineAvailabilityState } from '@/app/machines/machineStateGuards';
 import { SESSION_ACCESS_SESSION_BATCH_SIZE, type EffectiveSessionAccess } from "@/app/session/access/sessionAccess";
 import { SessionInputAdmissionReceiptV1Schema, type SessionInputAdmissionReceiptV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
@@ -7,8 +6,9 @@ import type { CallerInputConstraintsV1 } from "@happier-dev/protocol/auth/apiTok
 import type { Tx } from '@/storage/inTx';
 import { resolveMachineAdmissionInTx, resolveMachineAdmissionsInTx } from '@/app/machines/machineAccess';
 import { readCurrentServerIdentityId } from '@/app/serverIdentity/serverIdentity';
+import { classifyMachineAvailabilityState } from '@/app/machines/machineStateGuards';
 
-/** Exact input placement comes from the requester tuple and C41, never a first-key guess. */
+/** Exact placement uses the requester tuple; new work also passes current C41 admission. */
 export async function readCurrentSessionInputMachineTargetInTx(tx: Tx, input: Readonly<{
     accountId: string; sessionId: string; machineId: string;
 }>, options?: Readonly<{ admittedWork: true }>): Promise<SessionInputMachineTargetV1 | undefined> {
@@ -34,38 +34,48 @@ export async function readCurrentSessionInputMachineTargetInTx(tx: Tx, input: Re
 }
 
 /** Retained placement cannot follow a replacement installation or another Home. */
-export async function isCurrentSessionInputMachineTargetInTx(tx: Tx, target: SessionInputMachineTargetV1): Promise<boolean> {
-    return (await areCurrentSessionInputMachineTargetsInTx(tx, [target]))[0] ?? false;
+export async function isCurrentSessionInputMachineTargetInTx(tx: Tx, target: SessionInputMachineTargetV1,
+    options?: Readonly<{ admittedWork?: true }>): Promise<boolean> {
+    return (await areCurrentSessionInputMachineTargetsInTx(tx, [target], options))[0] ?? false;
 }
 
 /** One coherent set of placement facts; results correspond to the supplied targets. */
-export async function areCurrentSessionInputMachineTargetsInTx(tx: Tx, targets: readonly SessionInputMachineTargetV1[]): Promise<readonly boolean[]> {
+export async function areCurrentSessionInputMachineTargetsInTx(tx: Tx, targets: readonly SessionInputMachineTargetV1[],
+    options?: Readonly<{ admittedWork?: true }>): Promise<readonly boolean[]> {
     if (targets.length === 0) return [];
     if (targets.length > SESSION_ACCESS_SESSION_BATCH_SIZE) {
         const currentness: boolean[] = [];
         for (let offset = 0; offset < targets.length; offset += SESSION_ACCESS_SESSION_BATCH_SIZE) {
-            currentness.push(...await areCurrentSessionInputMachineTargetsInTx(tx, targets.slice(offset, offset + SESSION_ACCESS_SESSION_BATCH_SIZE)));
+            currentness.push(...await areCurrentSessionInputMachineTargetsInTx(tx, targets.slice(offset, offset + SESSION_ACCESS_SESSION_BATCH_SIZE), options));
         }
         return currentness;
     }
     const sessions = await tx.session.findMany({ where: { id: { in: [...new Set(targets.map(target => target.sessionId))] } },
         select: { id: true, accountId: true, runtimeMachineTarget: true } });
     const bySession = new Map(sessions.map(session => [session.id, session]));
-    const keys = await tx.accessKey.findMany({ where: { OR: targets.map(({ accountId, sessionId, machineId }) => ({ accountId, sessionId, machineId })) },
+    const keys = options?.admittedWork ? [] : await tx.accessKey.findMany({ where: { OR: targets.map(({ accountId, sessionId, machineId }) => ({ accountId, sessionId, machineId })) },
         select: { accountId: true, sessionId: true, machineId: true } });
     const bindingKey = (value: Readonly<{ accountId: string; sessionId: string; machineId: string }>) => JSON.stringify([value.accountId, value.sessionId, value.machineId]);
     const bindings = new Set(keys.map(bindingKey));
     const homeId = await readCurrentServerIdentityId(process.env, tx);
+    const machines = options?.admittedWork ? await tx.machine.findMany({
+        where: { id: { in: [...new Set(targets.map(target => target.machineId))] } },
+        select: { id: true, installationId: true, replacedByMachineId: true },
+    }) : [];
+    const byMachine = new Map(machines.map(machine => [machine.id, machine]));
     const byAccount = new Map<string, Awaited<ReturnType<typeof resolveMachineAdmissionsInTx>>>();
-    for (const accountId of new Set(targets.map(target => target.accountId))) {
+    for (const accountId of options?.admittedWork ? [] : new Set(targets.map(target => target.accountId))) {
         byAccount.set(accountId, await resolveMachineAdmissionsInTx(tx, { actorAccountId: accountId,
             machineIds: targets.filter(target => target.accountId === accountId).map(target => target.machineId) }));
     }
     return targets.map(target => {
         const session = bySession.get(target.sessionId);
         const admission = byAccount.get(target.accountId)?.get(target.machineId);
-        if (!session || session.accountId !== target.accountId || !bindings.has(bindingKey(target)) || !homeId || homeId !== target.homeId
-            || admission?.kind !== 'admitted' || admission.installationId !== target.installationId) return false;
+        const machine = byMachine.get(target.machineId);
+        if (!session || session.accountId !== target.accountId || !homeId || homeId !== target.homeId) return false;
+        if (options?.admittedWork
+            ? !machine || machine.replacedByMachineId !== null || machine.installationId !== target.installationId
+            : !bindings.has(bindingKey(target)) || admission?.kind !== 'admitted' || admission.installationId !== target.installationId) return false;
         if (session.runtimeMachineTarget == null) return true;
         const committed = createStoredReadSchema(SessionInputMachineTargetV1Schema).safeParse(session.runtimeMachineTarget);
         return committed.success && sameMachineTarget(committed.data, target);
@@ -104,11 +114,11 @@ export async function isSessionInputTargetCurrentForPublisherInTx(tx: Tx, value:
     if (!target) {
         // Released target-less input only predates foreign Machine placement.
         // Never infer a foreign target from another usable AccessKey tuple.
-        const machine = await tx.machine.findUnique({ where: { id: publisher.machineId }, select: { accountId: true } });
-        return machine !== null && machine.accountId === publisher.accountId;
+        const machine = await tx.machine.findUnique({ where: { id: publisher.machineId }, select: { accountId: true, replacedByMachineId: true } });
+        return machine !== null && machine.accountId === publisher.accountId && machine.replacedByMachineId === null;
     }
     return target.accountId === publisher.accountId && target.sessionId === publisher.sessionId
-        && target.machineId === publisher.machineId && await isCurrentSessionInputMachineTargetInTx(tx, target);
+        && target.machineId === publisher.machineId && await isCurrentSessionInputMachineTargetInTx(tx, target, { admittedWork: true });
 }
 
 /** The sole server receipt builder; callers supply transaction-final admission. */
@@ -146,9 +156,15 @@ export function buildSessionInputAdmissionReceipt(input: (
 /** Shared transcript readers receive attribution, never the native-only private rule proof. */
 export function projectSessionInputAdmissionReceipt(value: unknown): Readonly<{ inputAdmissionReceipt?: SessionInputAdmissionReceiptV1 }> {
     if (value === null || value === undefined) return {};
-    const receipt = createStoredReadSchema(SessionInputAdmissionReceiptV1Schema).parse(value);
-    const { followSources: _privateFollowSources, followRelations: _privateFollowRelations, ...publicReceipt } = receipt;
-    return { inputAdmissionReceipt: publicReceipt };
+    let publicReceipt: unknown = value;
+    if (typeof value === 'object' && !Array.isArray(value)) {
+        // These server-private witnesses never enter the transcript contract.
+        // Retained receipts predate selectedDelivery; do not re-admit their
+        // private custody merely to read the independently validated attribution.
+        const { followSources: _privateFollowSources, followRelations: _privateFollowRelations, ...attribution } = value as Record<string, unknown>;
+        publicReceipt = attribution;
+    }
+    return { inputAdmissionReceipt: createStoredReadSchema(SessionInputAdmissionReceiptV1Schema).parse(publicReceipt) };
 }
 
 /** Relationship changes never change the identity of an already admitted input. */

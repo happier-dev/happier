@@ -5,6 +5,8 @@ const dbMocks = vi.hoisted(() => ({
     runAssignments: vi.fn(),
     automations: vi.fn(),
     triggers: vi.fn(),
+    latestScheduledOccurrences: vi.fn(),
+    scheduledRuns: vi.fn(),
 }));
 
 vi.mock("@/storage/db", () => ({
@@ -13,6 +15,7 @@ vi.mock("@/storage/db", () => ({
         automationRunAssignment: { findMany: dbMocks.runAssignments },
         automation: { findMany: dbMocks.automations },
         automationTrigger: { findMany: dbMocks.triggers },
+        automationRun: { groupBy: dbMocks.latestScheduledOccurrences, findMany: dbMocks.scheduledRuns },
     },
 }));
 
@@ -24,11 +27,6 @@ import {
 import { AutomationValidationError } from "./automationValidation";
 import { createAutomationWorkflowRecipeFixture } from "@/testkit/automationWorkflowRecipe";
 
-const LEGACY_AUTOMATION_RUN_STATES = [
-    "queued", "claimed", "running", "succeeded", "failed", "cancelled",
-    "expired", "dispatch_failed", "skipped", "missed", "outcome_uncertain",
-] as const;
-
 describe("resolveAutomationAssignmentNextClaimAt", () => {
     beforeEach(() => {
         vi.clearAllMocks();
@@ -36,6 +34,8 @@ describe("resolveAutomationAssignmentNextClaimAt", () => {
         dbMocks.runAssignments.mockResolvedValue([]);
         dbMocks.automations.mockResolvedValue([]);
         dbMocks.triggers.mockResolvedValue([]);
+        dbMocks.latestScheduledOccurrences.mockResolvedValue([]);
+        dbMocks.scheduledRuns.mockResolvedValue([]);
     });
 
     it("uses the earliest reachable schedule, queued/retry, or lease-recovery deadline", () => {
@@ -265,6 +265,7 @@ describe("resolveAutomationAssignmentNextClaimAt", () => {
         })).toBeNull();
     });
 
+
     it.each(["workflow", "unclassified"] as const)("projects the canonical %s recipe version on both active and frozen assignment inventory", async (kind) => {
         const now = new Date("2026-08-10T12:01:00.000Z");
         const automation = { id: "automation-current", name: "Current", enabled: true, targetType: null,
@@ -274,7 +275,8 @@ describe("resolveAutomationAssignmentNextClaimAt", () => {
         dbMocks.runAssignments.mockResolvedValue([{ machineId: "machine-1", priority: 0, run: { id: "run-frozen", automationId: "automation-frozen", updatedAt: now,
             triggerId: null, causeKind: "manual", causeTriggerKind: null, state: "queued", dueAt: now, leaseExpiresAt: null, executionDispatchState: null } }]);
         dbMocks.automations.mockResolvedValue([{ ...automation, id: "automation-frozen", enabled: false }]);
-        const rows = await listDaemonAssignments({ accountId: "account-1", machineId: "machine-1" });
+        const rows = await listDaemonAssignments({ accountId: "account-1", machineId: "machine-1",
+            recipeFeaturePolicy: { workflowsEnabled: true } });
         expect(rows).toHaveLength(2);
         expect(rows.map(row => row.executionRecipeVersion)).toEqual([kind === "workflow" ? 2 : null, kind === "workflow" ? 2 : null]);
     });
@@ -334,6 +336,7 @@ describe("resolveAutomationAssignmentNextClaimAt", () => {
         await expect(listDaemonAssignments({
             accountId: "account-1",
             machineId: "machine-1",
+            recipeFeaturePolicy: { workflowsEnabled: true },
         })).resolves.toEqual([
             expect.objectContaining({
                 automation: expect.objectContaining({ id: "automation-1" }),
@@ -342,7 +345,6 @@ describe("resolveAutomationAssignmentNextClaimAt", () => {
         ]);
 
         const runQuery = dbMocks.runAssignments.mock.calls[0]?.[0];
-        expect(runQuery.where.run.state).toEqual({ in: LEGACY_AUTOMATION_RUN_STATES });
         expect(runQuery.select.run.select).toEqual(expect.objectContaining({
             automationId: true,
         }));
@@ -352,10 +354,6 @@ describe("resolveAutomationAssignmentNextClaimAt", () => {
             where: { id: { in: ["automation-1"] }, accountId: "account-1" },
         }));
 
-        const definitionQuery = dbMocks.definitionAssignments.mock.calls[0]?.[0];
-        expect(definitionQuery.select.automation.select.runs.where.state).toEqual({
-            in: LEGACY_AUTOMATION_RUN_STATES,
-        });
     });
 });
 

@@ -1,4 +1,5 @@
-import type { Tx } from "@/storage/inTx";
+import { notifySessionHumanPresenceAccessChanged } from "@/app/session/humanPresence/sessionHumanPresenceService";
+import { afterTx, type Tx } from "@/storage/inTx";
 
 export type ExternalLinkedSessionStorageRow = Readonly<{
     id: string;
@@ -36,7 +37,7 @@ export type ExternalLinkedSessionStorageInitializationResult =
  * makes reclassification unsafe, so message presence never upgrades a row.
  */
 export async function initializeExternalLinkedSessionStorage(
-    client: Pick<Tx, "session">,
+    client: Tx,
     session: ExternalLinkedSessionStorageRow,
     accountId?: string,
 ): Promise<ExternalLinkedSessionStorageInitializationResult> {
@@ -65,6 +66,9 @@ export async function initializeExternalLinkedSessionStorage(
         data: { currentStorageState: "machine_only" },
     });
     if (repaired.count === 1) {
+        // Leaving hosted ends collaborators' live delivery, a publication change
+        // that held audiences consume through the Session access-change push.
+        afterTx(client, () => notifySessionHumanPresenceAccessChanged({ sessionId: session.id }));
         return {
             ok: true,
             session: { ...session, currentStorageState: "machine_only" },

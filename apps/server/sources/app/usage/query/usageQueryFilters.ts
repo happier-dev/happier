@@ -48,3 +48,4 @@ export function canMatchUsageFilters(row: UsageFilterRow & Pick<ScopedUsageContr
     return matchesUsageFilters(row, filters)
         || (!isScopedUsageTurnDelta(row) && matchesUsageFilters({ ...row, modelId: null }, filters));
 }
+

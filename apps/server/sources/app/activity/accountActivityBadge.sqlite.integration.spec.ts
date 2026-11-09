@@ -15,6 +15,7 @@ import {
     computeAccountActivityBadgeCountsInTx,
     computeAuthenticatedAccountActivityBadgeCount,
 } from "./accountActivityBadge";
+import { makeShareEligibleForTest } from '@/testkit/shareEligibility.testkit';
 
 describe("Account activity badge admission (SQLite)", () => {
     let harness: LightSqliteHarness;
@@ -44,6 +45,7 @@ describe("Account activity badge admission (SQLite)", () => {
                     sessionId: session.id, accountId: reader.id, lastViewedSessionSeq: 0,
                 } });
             }
+            await makeShareEligibleForTest(owner.id, [reader.id]);
             const created = await createDiscussion({ actorAccountId: owner.id, authentication, request: {
                 ...(session ? { anchor: { kind: "session", sessionId: session.id } as const } : {}),
                 participants: [{ kind: "account", accountId: reader.id }],

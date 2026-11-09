@@ -150,9 +150,15 @@ describe("Team credential direct material consumed boundary (SQLite integration)
             canApprovePermissions: false,
             effectiveAt: new Date(),
         } });
+        // The worker's custodian owns its RPC registration; the recipient
+        // remains the consumer principal on this shared worker.
+        const worker = await db.machine.create({ data: {
+            id: crypto.randomUUID(), accountId: custodian.id, metadata: "{}", active: true,
+        } });
 
         const app = createAuthenticatedTestApp();
         app.decorate("forwardRpcForUser", async (request: Readonly<{
+            userId: string;
             params: Readonly<{
                 requestNonce: string;
                 serverIdentityId: string;
@@ -160,23 +166,27 @@ describe("Team credential direct material consumed boundary (SQLite integration)
                 workerMachineId: string;
                 executionRunId: string;
             }>;
-        }>) => ({
-            ok: true,
-            result: {
-                status: "current",
-                requestNonce: request.params.requestNonce,
-                serverIdentityId: request.params.serverIdentityId,
-                requestingAccountId: request.params.requestingAccountId,
-                workerMachineId: request.params.workerMachineId,
-                executionRunId: request.params.executionRunId,
-                occurrenceId: `occurrence-${request.params.executionRunId}`,
-                parentSessionId: request.params.executionRunId === "attached-run" ? session.id : null,
-                intent: "agent",
-                runtimeState: "idle",
-                // The Run owner's own accepted selection: this resource, direct.
-                teamCredentialProviderModel: { resourceId: resource.id, deliveryMode: "direct" },
-            },
-        }));
+        }>) => {
+            expect(request.userId).toBe(custodian.id);
+            expect(request.params.requestingAccountId).toBe(recipient.id);
+            return {
+                ok: true,
+                result: {
+                    status: "current",
+                    requestNonce: request.params.requestNonce,
+                    serverIdentityId: request.params.serverIdentityId,
+                    requestingAccountId: request.params.requestingAccountId,
+                    workerMachineId: request.params.workerMachineId,
+                    executionRunId: request.params.executionRunId,
+                    occurrenceId: `occurrence-${request.params.executionRunId}`,
+                    parentSessionId: request.params.executionRunId === "attached-run" ? session.id : null,
+                    intent: "agent",
+                    runtimeState: "idle",
+                    // The Run owner's own accepted selection: this resource, direct.
+                    teamCredentialProviderModel: { resourceId: resource.id, deliveryMode: "direct" },
+                },
+            };
+        });
         app.addHook("onRequest", async (request: FastifyRequest) => {
             request.headers["x-test-user-id"] = recipient.id;
         });
@@ -233,7 +243,7 @@ describe("Team credential direct material consumed boundary (SQLite integration)
             });
             const attachedRequest = {
                 resourceId: resource.id,
-                consumer: { kind: "execution_run" as const, executionRunId: "attached-run", workerMachineId: "worker-1" },
+                consumer: { kind: "execution_run" as const, executionRunId: "attached-run", workerMachineId: worker.id },
                 slot: { kind: "provider_model" as const },
                 sourceMemberKey,
             };
@@ -244,8 +254,13 @@ describe("Team credential direct material consumed boundary (SQLite integration)
             expect(attached, JSON.stringify(attached)).toMatchObject({ ok: true });
             await expect(directClient.open({
                 teamId: team.id,
+                ...attachedRequest,
+                consumer: { ...attachedRequest.consumer, workerMachineId: "missing-worker" },
+            })).resolves.toEqual({ ok: false, reason: "access_removed" });
+            await expect(directClient.open({
+                teamId: team.id,
                 resourceId: resource.id,
-                consumer: { kind: "execution_run", executionRunId: "detached-run", workerMachineId: "worker-1" },
+                consumer: { kind: "execution_run", executionRunId: "detached-run", workerMachineId: worker.id },
                 slot: { kind: "provider_model" },
                 sourceMemberKey,
             })).resolves.toEqual({ ok: false, reason: "access_removed" });
@@ -278,6 +293,22 @@ describe("Team credential direct material consumed boundary (SQLite integration)
                 ok: true,
                 credential: { kind: "apiKey", value: "direct-provider-secret" },
             });
+
+            // Revocation must win over already-published material for both
+            // consumers; regranting restores access through the same owners.
+            await db.teamCredentialMemberGrant.deleteMany({ where: {
+                resourceId: resource.id, teamMembershipId: recipientMembership.id,
+            } });
+            for (const consumer of [{ kind: "session" as const, sessionId: session.id }, attachedRequest.consumer]) {
+                await expect(directClient.open({
+                    teamId: team.id, ...attachedRequest, consumer,
+                })).resolves.toEqual({ ok: false, reason: "access_removed" });
+            }
+            await db.teamCredentialMemberGrant.create({ data: {
+                resourceId: resource.id, teamMembershipId: recipientMembership.id, deliveryMode: "direct",
+            } });
+            await expect(directClient.open({ teamId: team.id, ...attachedRequest }))
+                .resolves.toMatchObject({ ok: true });
         } finally {
             await app.close();
         }

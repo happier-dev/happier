@@ -1,4 +1,3 @@
-import { isFollowDeliveryMutedV1 } from '@happier-dev/protocol/sessions/follow/sessionDeliveryMuteV1';
 import { DiscussionProducerV1Schema } from '@happier-dev/protocol/discussions/content';
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
 import { isSessionFollowQuestionHandlerV1, type SessionFollowInputV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowInputV1';
@@ -7,27 +6,27 @@ import type { SessionStoredMessageContent } from '@happier-dev/protocol/sessions
 import type { PendingRequestedActionV1 } from '@happier-dev/protocol/sessions/pending/pendingRequestedActionV1';
 
 import { TransactionReplayRequiredError, type Tx } from '@/storage/inTx';
-import { readDeliveryMuteScopesInTx } from './sessionDeliveryMuteService';
+import { createDeliveryMuteReaderInTx } from './sessionDeliveryMuteService';
 import { sessionFollowInputFrontiers, settleSessionFollowInputReasonsInTx,
     type SessionFollowInputRelation, type SessionFollowRuleProgressAdmission } from './sessionFollowRuleProgress';
 
 /** Mute suppresses the original only when none of its selected reasons survives. */
 export async function readSessionFollowInputSuppressionInTx(tx: Tx, input: Readonly<{
     accountId: string; destinationSessionId: string; receipt: SessionInputAdmissionReceiptV1;
+    readMuted?: ReturnType<typeof createDeliveryMuteReaderInTx>;
 }>): Promise<boolean | null> {
     const delivery = input.receipt.followDeliveryV1;
     const discussion = input.receipt.issuer === 'authenticatedMachine' ? input.receipt.discussionAddressing : undefined;
     if (!delivery && !discussion) return false;
-    const scopes = await readDeliveryMuteScopesInTx(tx, { accountId: input.accountId,
+    const readMuted = input.readMuted ?? createDeliveryMuteReaderInTx(tx, { accountId: input.accountId,
         receiver: { kind: 'session', sessionId: input.destinationSessionId } });
-    if (scopes === null) return null;
     if (!delivery && discussion) {
         const original = await tx.discussionMessage.findFirst({ where: { id: discussion.messageId,
             discussionId: discussion.discussionId, seq: discussion.throughSeq }, select: { producerV1: true } });
         if (!original) return null;
         const producer = original.producerV1 === null ? null : createStoredReadSchema(DiscussionProducerV1Schema).safeParse(original.producerV1);
         if (producer && !producer.success) return null;
-        return isFollowDeliveryMutedV1(scopes, { source: { kind: 'discussion', discussionId: discussion.discussionId },
+        return readMuted({ source: { kind: 'discussion', discussionId: discussion.discussionId },
             ...(producer?.success && producer.data.kind === 'agent' ? { senderSessionId: producer.data.sessionId } : {}) });
     }
     if (!delivery) return false;
@@ -35,11 +34,16 @@ export async function readSessionFollowInputSuppressionInTx(tx: Tx, input: Reado
     const candidate = 'sourceSessionId' in original
         ? { senderSessionId: original.sourceSessionId, source: { kind: 'session' as const, sessionId: original.sourceSessionId } }
         : { source: original.source, ...('sessionId' in original.source ? { senderSessionId: original.source.sessionId } : {}) };
-    if (isFollowDeliveryMutedV1(scopes, candidate)) return true;
+    const sourceMuted = await readMuted(candidate);
+    if (sourceMuted !== false) return sourceMuted;
     if (isSessionFollowQuestionHandlerV1(delivery, input.destinationSessionId) || input.receipt.followRelations?.length) return false;
     const sources = input.receipt.followSources ?? [];
-    return sources.length > 0 && sources.every(witness => isFollowDeliveryMutedV1(scopes,
-        { source: { kind: 'rule', ruleId: witness.rule.ruleId } }));
+    if (!sources.length) return false;
+    for (const witness of sources) {
+        const muted = await readMuted({ source: { kind: 'rule', ruleId: witness.rule.ruleId } });
+        if (muted !== true) return muted;
+    }
+    return true;
 }
 
 /**

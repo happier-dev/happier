@@ -23,6 +23,9 @@ import { readSessionAccessAuthenticationFromRequest } from '@/app/session/access
 import { deriveSessionSystemRecordAddressKeys } from '@/app/session/systemRecords/sessionSystemRecordAddressKeys';
 import { encodeSessionSystemRecordRevision } from '@/app/session/systemRecords/sessionSystemRecordRevision';
 import { readRequestHomeEnv } from '@/app/home/settings/requestHomeEnv';
+import { projectSessionDisplayV1, sealSessionSharedDisplayEnvelopeV1 } from '@happier-dev/protocol';
+import { readPublishedSessionTranscript } from '@happier-dev/session-core/transcript';
+import { resolveToolRowPresentation, normalizeToolCallForRendering } from '@happier-dev/session-core/tools';
 
 describe("stored-content public share owner (real SQLite)", () => {
     let harness: LightSqliteHarness;
@@ -53,7 +56,7 @@ describe("stored-content public share owner (real SQLite)", () => {
             else process.env.HAPPIER_PUBLIC_SHARES_ALLOW_SUBPATH = previousOptIn;
         });
 
-        it('prefers isolation and keeps private Artifact previews isolated while opt-in is enabled', async () => {
+        it('prefers isolation for public shares without a private Artifact shell while opt-in is enabled', async () => {
             const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
             const artifact = await db.artifact.create({ data: { id: crypto.randomUUID(), accountId: owner.id, headerVersion: 1, bodyVersion: 1,
                 header: privacyKit.decodeBase64(encodePlainArtifactStoredContent({ kind: 'html', title: 'Public HTML' })),
@@ -61,7 +64,7 @@ describe("stored-content public share owner (real SQLite)", () => {
             await db.homeSettings.update({ where: { id: 'home' }, data: { values: { HAPPIER_PUBLIC_SHARES_ALLOW_SUBPATH: true } } });
             await withAuthenticatedTestApp(app => { publicShareRoutes(app); artifactsRoutes(app); }, async app => {
                 const ownerHeaders = { 'x-test-user-id': owner.id };
-                expect((await app.inject({ method: 'GET', url: `/v1/artifacts/${artifact.id}/html-preview`, headers: ownerHeaders })).json()).toEqual({ error: 'artifact_html_isolation_unavailable' });
+                expect((await app.inject({ method: 'GET', url: `/v1/artifacts/${artifact.id}/html-preview`, headers: ownerHeaders })).statusCode).toBe(404);
                 expect((await app.inject({ method: 'GET', url: `/a/${artifact.id}`, headers: { host: 'home.example.test' } })).statusCode).toBe(404);
                 process.env.HAPPIER_FEATURE_LOCAL_SERVICES_PREVIEW__HOST_ORIGIN_DOMAIN = 'preview.example.test';
                 const lookupId = crypto.randomUUID();
@@ -164,9 +167,11 @@ describe("stored-content public share owner (real SQLite)", () => {
                     const headers = { host: 'home.example.test' };
                     const first = await app.inject({ method: 'GET', url: `/s/${lookupId}`, headers });
                     expect(first.statusCode, first.body).toBe(200);
-                    expect((await app.inject({ method: 'GET', url: `/s/${lookupId}`, headers })).statusCode).toBe(429);
+                    expect((await app.inject({ method: 'GET', url: `/s/${lookupId}`, headers })).statusCode).toBe(200);
+                    const content = await app.inject({ method: 'GET', url: `/v1/public-shares/${lookupId}/content`, headers });
+                    expect(content.statusCode).toBe(200);
                     expect((await app.inject({ method: 'GET', url: `/v1/public-shares/${lookupId}/content`, headers })).statusCode).toBe(429);
-                    expect((await db.publicSessionShare.findUniqueOrThrow({ where: { artifactId: artifact.id } })).useCount).toBe(0);
+                    expect((await db.publicSessionShare.findUniqueOrThrow({ where: { artifactId: artifact.id } })).useCount).toBe(1);
                 });
             } finally {
                 if (previousUrl === undefined) delete process.env.HAPPIER_PUBLIC_SERVER_URL;
@@ -247,6 +252,84 @@ describe("stored-content public share owner (real SQLite)", () => {
                 expect((await app.inject({ method: 'GET', url: contentUrl + '?consent=true', headers })).statusCode).toBe(404);
                 expect((await app.inject({ method: 'GET', url: `/s/${lookupId}/viewer.js`, headers: { ...headers, cookie: 'account=secret' } })).statusCode).toBe(200);
             });
+        });
+    });
+
+    it.each(['plain', 'e2ee'] as const)('opens a published %s transcript with current display metadata after consent', async mode => {
+        const owner = await db.account.create({ data: { ...(mode === 'e2ee' ? createSignedAccountContentBinding() : {}), encryptionMode: mode } });
+        const key = new Uint8Array(32).fill(17);
+        const secret = 'A'.repeat(43);
+        const seal = async (value: unknown) => privacyKit.encodeBase64(await sealSessionDataKeyBundleV0(value, key));
+        const sharedMetadata = { v: 1 as const, summary: { text: 'Shared transcript', updatedAt: 0 } };
+        const display = await sealSessionSharedDisplayEnvelopeV1({ sessionMode: mode,
+            display: projectSessionDisplayV1({ sharedMetadata }).shared, encryptPayload: seal });
+        if (!display.ok) throw new Error('Canonical shared display producer failed');
+        const session = await db.session.create({ data: { accountId: owner.id, tag: crypto.randomUUID(), encryptionMode: mode,
+            metadata: mode === 'plain' ? JSON.stringify(sharedMetadata) : await seal(sharedMetadata), metadataLayoutVersion: 1,
+            ownerMetadata: mode === 'plain' ? JSON.stringify(createPlainSessionOwnerMetadataEnvelopeV1({ v: 1, workspace: {} }))
+                : JSON.stringify({ t: 'encrypted', c: 'oRoBAgMEBQYHCAkKCwwNDg8QERITFBUWFxh8aC0+8+YDECLScN6uQTItPyWVR7XbQA==' }),
+            displayProjectionV1: JSON.stringify({ v: 1, metadataLayoutVersion: 1, sourceMetadataVersion: 0, shared: display.envelope }),
+        } });
+        // Stored output envelopes follow the runtime transcript projector; permission facts
+        // remain on the result, and unknown presentation records use the normalizer's policy.
+        const records = [
+            { role: 'user', content: { type: 'text', text: 'Inspect the working folder' } },
+            { role: 'agent', content: { type: 'output', data: { type: 'assistant', uuid: 'call',
+                message: { role: 'assistant', content: [{ type: 'tool_use', id: 'exec', name: 'Bash', input: { command: 'pwd' } }] } } } },
+            { role: 'agent', content: { type: 'output', data: { type: 'user', uuid: 'result',
+                message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'exec', content: 'Permission denied',
+                    is_error: false, permissions: { date: 2, result: 'denied' } }] } } } },
+            { role: 'agent', content: { type: 'codex', data: { type: 'tool-call', callId: 'codex-exec', name: 'Bash', input: { command: 'pwd' } } } },
+            { role: 'agent', content: { type: 'codex', data: { type: 'tool-result', callId: 'codex-exec',
+                output: { type: 'commandExecution', status: 'declined', exitCode: null } } } },
+            { role: 'agent', content: { type: 'output', data: { type: 'assistant', uuid: 'issue',
+                message: { role: 'assistant', content: [{ type: 'text', text: 'The command was declined.' }] } } },
+                meta: { source: 'runtime', runtimeIssueCode: 'agent_failed', runtimeIssueSource: 'agent_session_error', runtimeIssueV1: {
+                    v: 1, scope: 'primary_session', status: 'failed', code: 'agent_failed', source: 'agent_session_error', occurredAt: 2,
+                    failureCause: { phase: 'turn', failureReason: 'permission_denied' },
+                } } },
+            { role: 'agent', content: { type: 'future-presentation-record', data: {} } },
+        ];
+        for (const [index, raw] of records.entries()) await db.sessionMessage.create({ data: {
+            sessionId: session.id, seq: index + 1,
+            content: mode === 'plain' ? { t: 'plain', v: raw } : { t: 'encrypted', c: await seal(raw) },
+        } });
+        const lookupId = crypto.randomUUID();
+        await withAuthenticatedTestApp(publicShareRoutes, async app => {
+            const created = await app.inject({ method: 'POST', url: '/v1/public-shares', headers: { 'x-test-user-id': owner.id }, payload: {
+                subject: { kind: 'session', id: session.id }, lookupId, keyDerivation: 'fragment_v1', isConsentRequired: true,
+                ...(mode === 'e2ee' ? { encryptedDataKey: sealPublicShareDataKeyV1({ dataKey: key, secret, randomBytes: length => new Uint8Array(length).fill(4) }) } : {}),
+            } });
+            expect(created.statusCode).toBe(200);
+            const origin = created.json().viewerOrigin;
+            const location = { origin, pathname: `/s/${lookupId}`, hash: `#k=${secret}` };
+            let requests = 0;
+            const fetch: typeof globalThis.fetch = async input => {
+                requests += 1;
+                const response = await app.inject({ method: 'GET', url: new URL(String(input)).pathname + new URL(String(input)).search,
+                    headers: { host: new URL(origin).host } });
+                return new Response(response.body, { status: response.statusCode });
+            };
+            expect(await loadPublicShareViewerContent({ location, fetch })).toEqual({ status: 'consent_required' });
+            const opened = await loadPublicShareViewerContent({ location, fetch, consent: true });
+            expect(opened.status).toBe('ready');
+            if (opened.status !== 'ready') return;
+            expect(opened.messages).toHaveLength(records.length);
+            expect(opened.text).toContain('Run pwd');
+            expect(opened.text).toContain('Inspect the working folder');
+            const transcript = readPublishedSessionTranscript(opened.messages ?? []).messages;
+            const tools = transcript.flatMap(message => message.kind === 'tool-call'
+                ? [resolveToolRowPresentation(normalizeToolCallForRendering(message.tool))] : []);
+            expect(tools).toMatchObject([{ title: 'Run pwd', statusKind: 'permission_blocked' }, { title: 'Run pwd', statusKind: 'permission_blocked' }]);
+            expect(transcript.find(message => message.kind === 'agent-text' && message.text === 'The command was declined.')?.meta?.runtimeIssueV1)
+                .toMatchObject({ failureCause: { phase: 'turn', failureReason: 'permission_denied' } });
+            expect(requests).toBe(2); // One page per attempt, with no per-tool or display read.
+            if (mode === 'e2ee') {
+                await db.sessionMessage.updateMany({ where: { sessionId: session.id, seq: 1 },
+                    data: { content: { t: 'encrypted', c: privacyKit.encodeBase64(new Uint8Array([1])) } } });
+                expect(await loadPublicShareViewerContent({ location, fetch, consent: true })).toEqual({ status: 'invalid_content' });
+                expect(requests).toBe(3); // Corruption settles without retrying or fetching other resources.
+            }
         });
     });
 
@@ -451,7 +534,7 @@ describe("stored-content public share owner (real SQLite)", () => {
         });
     });
 
-    it('returns a private per-Artifact shell URL through ordinary access without creating a share', async () => {
+    it('keeps private HTML under ordinary Artifact access without a private shell or a public share', async () => {
         const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
         const stranger = await db.account.create({ data: { encryptionMode: 'plain' } });
         const artifact = await db.artifact.create({ data: { id: crypto.randomUUID(), accountId: owner.id,
@@ -459,19 +542,16 @@ describe("stored-content public share owner (real SQLite)", () => {
             body: privacyKit.decodeBase64(encodePlainArtifactStoredContent({ body: '<h1>Private bytes</h1>' })),
             dataEncryptionKey: privacyKit.decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER) } });
         await withAuthenticatedTestApp(artifactsRoutes, async app => {
-            const response = await app.inject({ method: 'GET', url: `/v1/artifacts/${artifact.id}/html-preview`, headers: { 'x-test-user-id': owner.id } });
-            expect(response.statusCode, response.body).toBe(200);
-            expect(response.json()).toEqual({ url: `${resolveStoredContentPublicShareOrigin(artifact.id)}/a/${artifact.id}` });
-            expect((await app.inject({ method: 'GET', url: `/v1/artifacts/${artifact.id}/html-preview`, headers: { 'x-test-user-id': stranger.id } })).statusCode).toBe(404);
+            expect((await app.inject({ method: 'GET', url: `/v1/artifacts/${artifact.id}`, headers: { 'x-test-user-id': owner.id } })).statusCode).toBe(200);
+            expect((await app.inject({ method: 'GET', url: `/v1/artifacts/${artifact.id}`, headers: { 'x-test-user-id': stranger.id } })).statusCode).toBe(404);
+            expect((await app.inject({ method: 'GET', url: `/v1/artifacts/${artifact.id}/html-preview`, headers: { 'x-test-user-id': owner.id } })).statusCode).toBe(404);
             expect(await db.publicSessionShare.count({ where: { artifactId: artifact.id } })).toBe(0);
-            const host = new URL(response.json().url).host;
-            expect((await app.inject({ method: 'GET', url: `/a/${artifact.id}`, headers: { host } })).statusCode).toBe(200);
-            expect((await app.inject({ method: 'GET', url: `/a/${artifact.id}`, headers: { host: 'home.example.test' } })).statusCode).toBe(404);
-            expect((await app.inject({ method: 'GET', url: `/a/${artifact.id}`, headers: { host, cookie: 'account=secret' } })).statusCode).toBe(404);
-            const previous = process.env.HAPPIER_FEATURE_LOCAL_SERVICES_PREVIEW__HOST_ORIGIN_DOMAIN;
-            delete process.env.HAPPIER_FEATURE_LOCAL_SERVICES_PREVIEW__HOST_ORIGIN_DOMAIN;
-            try { expect((await app.inject({ method: 'GET', url: `/v1/artifacts/${artifact.id}/html-preview`, headers: { 'x-test-user-id': owner.id } })).json()).toEqual({ error: 'artifact_html_isolation_unavailable' }); }
-            finally { process.env.HAPPIER_FEATURE_LOCAL_SERVICES_PREVIEW__HOST_ORIGIN_DOMAIN = previous; }
+            const origin = resolveStoredContentPublicShareOrigin(artifact.id);
+            if (!origin) throw new Error('Missing test origin');
+            const host = new URL(origin).host;
+            for (const url of [`/a/${artifact.id}`, `/a/${artifact.id}/viewer.js`]) {
+                expect((await app.inject({ method: 'GET', url, headers: { host } })).statusCode).toBe(404);
+            }
         });
     });
 
@@ -663,7 +743,7 @@ describe("stored-content public share owner (real SQLite)", () => {
             await db.account.update({ where: { id: owner.id }, data: { encryptionMode: "plain" } });
             await db.artifact.update({ where: { id: artifact.id }, data: { deletedAt: new Date() } });
             expect((await app.inject({ method: "GET", url: `/v1/public-shares/${lookupId}/content`, headers: { host } })).statusCode).toBe(404);
-            expect((await app.inject({ method: "GET", url: `/s/${lookupId}`, headers: { host } })).statusCode).toBe(404);
+            expect((await app.inject({ method: "GET", url: `/s/${lookupId}`, headers: { host } })).statusCode).toBe(200);
             expect((await app.inject({ method: "GET", url: `/s/${lookupId}/viewer.js`, headers: { host } })).statusCode).toBe(200);
             expect((await app.inject({ method: "POST", url: "/v1/public-shares", headers,
                 payload: { subject: { kind: "artifact", id: artifact.id }, lookupId: crypto.randomUUID(), keyDerivation: "fragment_v1" } })).statusCode).toBe(403);
@@ -671,10 +751,11 @@ describe("stored-content public share owner (real SQLite)", () => {
             await db.artifact.update({ where: { id: artifact.id }, data: { deletedAt: null } });
             await app.inject({ method: "DELETE", url: `/v1/public-shares/${created.json().publicShare.id}`, headers });
             const revoked = await app.inject({ method: "GET", url: `/s/${lookupId}`, headers: { host } });
-            expect(revoked.statusCode).toBe(404);
+            expect(revoked.statusCode).toBe(200);
             expect(revoked.body).toBe(shell.body);
             expect(revoked.headers["content-type"]).toContain("text/html");
             expect((await app.inject({ method: "GET", url: `/s/${lookupId}/viewer.js`, headers: { host } })).statusCode).toBe(200);
+            expect((await app.inject({ method: "GET", url: `/v1/public-shares/${lookupId}/content`, headers: { host } })).statusCode).toBe(404);
         });
     });
 
@@ -744,7 +825,7 @@ describe("stored-content public share owner (real SQLite)", () => {
                 const headers = { host: new URL(created.json().viewerOrigin).host };
                 expect((await app.inject({ method: "GET", url: `/v1/public-shares/${lookupId}/content`, headers })).statusCode).toBe(200);
                 expect((await app.inject({ method: "GET", url: `/v1/public-shares/${lookupId}/content`, headers })).statusCode).toBe(429);
-                expect((await app.inject({ method: "GET", url: `/s/${lookupId}`, headers })).statusCode).toBe(429);
+                expect((await app.inject({ method: "GET", url: `/s/${lookupId}`, headers })).statusCode).toBe(200);
                 expect((await app.inject({ method: "GET", url: `/s/${lookupId}/viewer.js`, headers })).statusCode).toBe(200);
                 expect((await db.publicSessionShare.findUniqueOrThrow({ where: { id: created.json().publicShare.id } })).useCount).toBe(1);
             });

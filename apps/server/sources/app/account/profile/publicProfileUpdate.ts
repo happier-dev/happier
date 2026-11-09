@@ -2,12 +2,12 @@ import { PublicProfileUpdateBodyV1Schema, PublicProfileAppearanceV1Schema, type 
 import { projectPublicProfileSnapshot, projectPublicProfileMetadata, validatePublicProfileLayout } from '@happier-dev/protocol/account/projectPublicProfile';
 import { getUsageQueryKey, normalizeUsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
 import { inTx } from '@/storage/inTx';
-import { parsePublicProfileRecord, publicProfileUnavailable, publicProfileUpdated, readPublicProfileForMutationInTx } from './publicProfileStorage';
+import { parsePublicProfileRecord, publicProfileUnavailable, publicProfileUpdated, readPublicProfileForMutationInTx, updatePublicProfileInTx } from './publicProfileStorage';
 import { preparePublicProfilePicture, completePublicProfilePictureInTx, retirePublicProfilePictureInTx,
     discardPublicProfilePicture, cleanupPublicProfilePicturesAfterCommit } from './publicProfilePicture';
 import { log } from '@/utils/logging/log';
 
-/** Commits disclosure edits independently of optional source refresh, preserving omitted consent. */
+/** Commits disclosure edits and any freshly prepared facts together, preserving omitted consent. */
 export async function updatePublicProfile(accountId: string, input: PublicProfileUpdateBodyV1): Promise<PublicProfileMutationResultV1> {
     const body = PublicProfileUpdateBodyV1Schema.parse(input);
     const layout = body.layout && validatePublicProfileLayout(body.layout);
@@ -33,12 +33,13 @@ export async function updatePublicProfile(accountId: string, input: PublicProfil
             const metadata = projectPublicProfileMetadata(body.metadata ?? current.metadata, policy);
             const query = body.query ? normalizeUsageQuery(body.query) : current.query;
             const queryChanged = getUsageQueryKey(query) !== getUsageQueryKey(current.query);
-            return publicProfileUpdated(await tx.accountPublicProfile.update({ where: { accountId }, data: {
+            return publicProfileUpdated(await updatePublicProfileInTx(tx, row, {
                 policyJson: JSON.stringify(policy), metadataJson: JSON.stringify({ disclosure: metadata,
                     projectSelections: policy.fields.projects ? body.projectSelections ?? current.projectSelections : [] }),
-                queryJson: JSON.stringify(query), snapshotJson: queryChanged || !current.snapshot ? null : JSON.stringify(projectPublicProfileSnapshot(current.snapshot, policy)),
+                queryJson: JSON.stringify(query), snapshotJson: body.snapshot ? JSON.stringify(projectPublicProfileSnapshot(body.snapshot, policy))
+                    : queryChanged || !current.snapshot ? null : JSON.stringify(projectPublicProfileSnapshot(current.snapshot, policy)),
                 ...(layout ? { layoutJson: JSON.stringify(layout) } : {}), ...(appearance ? { appearanceJson: JSON.stringify(appearance) } : {}),
-            } }));
+            }));
         }, { isolationLevel: 'ReadCommitted' });
     } finally {
         if (prepared) await discardPublicProfilePicture(prepared).catch(() => {

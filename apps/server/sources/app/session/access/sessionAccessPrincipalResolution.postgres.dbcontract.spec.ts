@@ -4,7 +4,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import type { PrincipalRefV1 } from "@happier-dev/protocol/teams/principal";
 import { resolveSessionAccessPrincipalsInTx } from "./sessionAccessPrincipalResolution";
-import { resolveSessionAccessGrantSubjectsInTx } from "./sessionAccessGrantEligibility";
+import { resolveShareSubjectsInTx } from "@/app/teams/shareEligibility";
 import { classifySubjectsExternalToTeamInTx } from "./sessionAccessExternalSharingPolicy";
 import { teamsPolicyStillRequireGrants } from "./sessionAccessGrantService";
 import { listSessionTeamCredentialBindingConsequencesInTx } from "@/app/teams/credentials/sessionBinding";
@@ -71,10 +71,12 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== "postgres")("Selected Sessio
             const page = await resolve(subjects);
             expect(page.value.principals).toHaveLength(121);
             expect(page.value.creationDecision?.teamId).toBe(team.id);
+            console.info("SESSION_PRINCIPALS_QUERY_COST", { oneGroup: single.selects, groups120: page.selects });
             expect(page.selects).toBe(single.selects);
             // This read performs no writes: an identical query and binding set
             // must reuse the same transaction's admitted facts.
             const repeatedSelects = page.selectStatements.filter((statement, index, statements) => statements.indexOf(statement) !== index);
+            console.info("SESSION_PRINCIPALS_REPEATED_SELECTS", repeatedSelects);
             expect(repeatedSelects).toEqual([]);
 
             await client.teamMembership.update({ where: { id: membership.id }, data: { status: "suspended" } });
@@ -101,16 +103,18 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== "postgres")("Selected Sessio
                 })),
             ], true);
             expect(beyondBindBoundary.value.principals).toEqual(filtered.value.principals);
+            console.info("SESSION_PRINCIPALS_BIND_BOUNDARY", { selected: 35_001, selects: beyondBindBoundary.selects });
             const initialSubjects: PrincipalRefV1[] = [subjects[2]!, ...Array.from({ length: 35_000 }, (_, index) => ({
                 kind: "group" as const, teamId: team.id, groupId: `absent-group-${index}`,
             }))];
             for (const [hasExistingGrant, removingExistingGrant] of [[false, false], [true, false], [true, true]] as const) {
                 selects = 0;
-                const eligibility = await client.$transaction(tx => resolveSessionAccessGrantSubjectsInTx(tx, {
-                    actorAccountId: actor.id, sessionOwnerAccountId: actor.id, subjects: initialSubjects, hasExistingGrant, removingExistingGrant,
+                const eligibility = await client.$transaction(tx => resolveShareSubjectsInTx(tx, {
+                    actorAccountId: actor.id, resourceOwnerAccountId: actor.id, subjects: initialSubjects, hasExistingGrant, removingExistingGrant,
                 }), { isolationLevel: "RepeatableRead" });
                 expect(eligibility[0]?.eligibility.ok).toBe(true);
-                expect(eligibility.slice(1).every(row => !row.eligibility.ok && row.eligibility.error === "session_access_subject_not_found")).toBe(true);
+                expect(eligibility.slice(1).every(row => !row.eligibility.ok && row.eligibility.error === "subject_not_found")).toBe(true);
+                console.info("SESSION_GRANT_ELIGIBILITY_BIND_BOUNDARY", { selected: initialSubjects.length, hasExistingGrant, removingExistingGrant, selects });
             }
             const beyondTeamBindBoundary = await resolve([
                 subjects[0]!, ...Array.from({ length: 35_000 }, (_, index) => ({
@@ -118,13 +122,14 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== "postgres")("Selected Sessio
                 })),
             ], true);
             expect(beyondTeamBindBoundary.value.principals).toEqual([{ kind: "team", teamId: team.id, name: team.name }]);
+            console.info("SESSION_PRINCIPALS_TEAM_BIND_BOUNDARY", { selected: 35_001, selects: beyondTeamBindBoundary.selects });
             const accountSubjects: PrincipalRefV1[] = [{ kind: "account", accountId: friend.id }, ...Array.from({ length: 35_000 }, (_, index) => ({
                 kind: "account" as const, accountId: `absent-account-${index}`,
             }))];
             const accounts = await resolve(accountSubjects, true);
             expect(accounts.value.principals.map(principal => principal.kind === "account" ? principal.accountId : null)).toEqual([friend.id]);
-            const accountEligibility = await client.$transaction(tx => resolveSessionAccessGrantSubjectsInTx(tx, {
-                actorAccountId: actor.id, sessionOwnerAccountId: actor.id, subjects: accountSubjects, hasExistingGrant: false,
+            const accountEligibility = await client.$transaction(tx => resolveShareSubjectsInTx(tx, {
+                actorAccountId: actor.id, resourceOwnerAccountId: actor.id, subjects: accountSubjects, hasExistingGrant: false,
             }), { isolationLevel: "RepeatableRead" });
             expect(accountEligibility[0]?.eligibility.ok).toBe(true);
             const externality = await client.$transaction(tx => classifySubjectsExternalToTeamInTx(tx, {
@@ -132,6 +137,7 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== "postgres")("Selected Sessio
             }), { isolationLevel: "RepeatableRead" });
             expect(externality[0]).toBe(false);
             expect(externality.slice(1).every(Boolean)).toBe(true);
+            console.info("SESSION_ACCOUNT_SELECTION_BIND_BOUNDARY", { selected: accountSubjects.length, principals: accounts.value.principals.length });
         } finally {
             await client.team.delete({ where: { id: team.id } });
             await client.account.deleteMany({ where: { id: { in: [actor.id, friend.id] } } });

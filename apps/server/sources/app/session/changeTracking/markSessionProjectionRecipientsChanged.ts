@@ -1,11 +1,12 @@
-import { isSessionSystemRecordUnchangedHintV1 } from '@happier-dev/protocol/sessions/board/changeHint';
-import { publishesSessionCurrentViewForAccount, type SessionCurrentViewPublicationAudience } from '@/app/session/metadata/publishSessionCurrentViewUpdates';
-import { resolveCurrentSessionRecipientAccountIdsInTx } from "@/app/session/access/sessionRecipients";
+import { readCurrentSessionPublicationAudienceInTx } from "@/app/session/access/sessionRecipients";
 import {
     loadSessionTranscriptPublication,
+    type SessionTranscriptPublicationFields,
     projectSessionTranscriptPublicationChangeHint,
 } from "@/app/session/sessionTranscriptPublicationPolicy";
 import type { Tx } from "@/storage/inTx";
+import { isSessionSystemRecordUnchangedHintV1 } from '@happier-dev/protocol/sessions/board/changeHint';
+import { publishesSessionCurrentViewForAccount, type SessionCurrentViewPublicationAudience } from '@/app/session/metadata/publishSessionCurrentViewUpdates';
 import {
     markAccountChangesForSessionAccounts,
     type SessionAccountChangeCursor,
@@ -32,15 +33,25 @@ export async function markSessionProjectionRecipientsChanged(params: {
     tx: Tx;
     sessionId: string;
     hint?: unknown;
+    /** False when this writer changed only a projection, not a Follow source fact. */
+    followSourceChanged?: boolean;
+    /** False only at a writer that changes no Usage rows, transcript counts or publication ceiling. */
+    usageAccountingChanged?: false;
+    /** False only at activity, presence and ready-projection writers: no daemon Memory input changed. */
+    memoryInputsChanged?: false;
+    /** Only canonical receiver lifecycle/presence writers mark an availability event. */
+    followReceiverAvailabilityChanged?: boolean;
     recipientAccountIds?: readonly string[];
+    /** A writer's own row, returned by its Session update in this transaction; omitted reads it. */
+    publication?: SessionTranscriptPublicationFields;
     hintForRecipient?: (accountId: string) => unknown;
+    /** Only writers whose caller publishes the committed current view may supply this. */
     currentViewPublication?: SessionCurrentViewPublicationAudience;
 }): Promise<SessionRecipientPublication[]> {
-    const publication = await loadSessionTranscriptPublication(params.tx, params.sessionId);
-    const recipientAccountIds = params.recipientAccountIds
-        ?? await resolveCurrentSessionRecipientAccountIdsInTx(params.tx, {
-            sessionId: params.sessionId,
-        });
+    const { publication, recipientAccountIds } = params.recipientAccountIds
+        ? { publication: params.publication ?? await loadSessionTranscriptPublication(params.tx, params.sessionId),
+            recipientAccountIds: params.recipientAccountIds }
+        : await readCurrentSessionPublicationAudienceInTx(params.tx, { sessionId: params.sessionId });
 
     const hints = new Map(recipientAccountIds.map(accountId => [accountId,
         projectSessionTranscriptPublicationChangeHint(
@@ -49,7 +60,9 @@ export async function markSessionProjectionRecipientsChanged(params: {
             accountId,
         ),
     ]));
-    const destinationRecipients = await resolveSessionFollowSourceChangeRecipientsInTx(params.tx, { sourceSessionId: params.sessionId });
+    const destinationRecipients = params.followSourceChanged === false
+        ? new Map<string, readonly string[]>()
+        : await resolveSessionFollowSourceChangeRecipientsInTx(params.tx, { sourceSessionId: params.sessionId });
     // The source and its destinations may have different audiences. Fence their union
     // once before any cursor, rather than discovering a lower Account id later.
     await acquireAccountChangePublicationLocksInTx(params.tx, [
@@ -66,12 +79,17 @@ export async function markSessionProjectionRecipientsChanged(params: {
             return hint?.kind === 'publish' && isSessionSystemRecordUnchangedHintV1(hint.value)
                 && publishesSessionCurrentViewForAccount(currentViewPublication, accountId);
         } : undefined,
-
         hintForAccount: (accountId) => {
             const hint = hints.get(accountId);
             return !hint || hint.kind === "suppress"
                 ? { kind: "suppress" }
-                : { kind: "publish", value: hint.value };
+                : { kind: "publish", value: {
+                    ...(hint.value && typeof hint.value === 'object' && !Array.isArray(hint.value) ? hint.value : {}),
+                    ...(params.followSourceChanged === false ? { followSourceChanged: false } : {}),
+                    ...(params.usageAccountingChanged === false ? { usageAccountingChanged: false } : {}),
+                    ...(params.memoryInputsChanged === false ? { memoryInputsChanged: false } : {}),
+                    followReceiverAvailabilityChanged: params.followReceiverAvailabilityChanged === true,
+                } };
         },
     });
     await invalidateSessionFollowDestinationsForSourceChangeInTx(params.tx, {

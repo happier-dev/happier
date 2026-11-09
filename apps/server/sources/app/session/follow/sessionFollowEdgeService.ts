@@ -41,7 +41,7 @@ import { portableQueryChunks } from '@/storage/portableQueryChunks';
 import { isApiTokenGrantRestrictedV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
 import { inReadSnapshot, inTx, type Tx } from "@/storage/inTx";
 import { acquireSessionAccountCursorLocksInTx } from "@/app/session/changeTracking/acquireSessionAccountCursorLocksInTx";
-import { readSnapshotWithCurrentAdmission } from "@/storage/readSnapshotWithCurrentAdmission";
+import { captureReadSnapshot } from "@/storage/captureReadSnapshot";
 import {
     readCurrentSourceSessionFollowFrontier,
     readStoredSessionFollowFrontier,
@@ -89,7 +89,7 @@ import type { SessionFollowActionOutputV1 } from '@happier-dev/protocol/sessions
 import { resolveWorkflowRunFollowEventV1 } from '@happier-dev/protocol/workflows/composeWorkflowRunWorkerUpdateV1';
 import { workflowRunAttentionWhere } from '@/app/workflows/workflowRunAttention';
 import type { Fastify } from '@/app/api/types';
-import { readStoredPolicy, projectOtherFollowSourceInTx, hasPendingRunFollowOccurrenceInTx,
+import { readStoredPolicy, projectOtherFollowSourceInTx, readAdmittedExecutionRunFollowProjectionInTx, hasPendingRunFollowOccurrenceInTx,
     readExecutionRunFollowProjectionFrontiers, type SessionFollowProjectionEdge } from './sessionFollowSourceProjection';
 export { readStoredPolicy } from './sessionFollowSourceProjection';
 export { attachDiscussionFollowSourceInTx, detachDiscussionFollowSourceInTx,
@@ -203,12 +203,14 @@ async function admitSessionFollowSourceForRunnerInTx(
     if (input.principal.kind === 'ephemeral_session_runner' && !await verifyCurrentMaterializedRunnerPrincipalInTx(tx, input.principal)) return null;
     const accountId = input.principal.kind === 'destination_runtime'
         ? input.principal.destinationRuntimeAccountId : input.principal.accountId;
+    const readMuted = createDeliveryMuteReaderInTx(tx, { accountId,
+        receiver: { kind: 'session', sessionId: input.destinationSessionId } });
     const custody = input.request.localInputId ? await readAdmittedSessionFollowInputInTx(tx, {
         principal: input.principal, accountId, sourceSessionId: input.request.sourceSessionId,
-        destinationSessionId: input.destinationSessionId, localInputId: input.request.localInputId,
+        destinationSessionId: input.destinationSessionId, localInputId: input.request.localInputId, readMuted,
     }) : null;
     const rule = input.request.relation === 'rule' ? (await readStalledSessionFollowRulesInTx(tx, {
-        accountId, destinationSessionId: input.destinationSessionId, sourceSessionId: input.request.sourceSessionId,
+        accountId, destinationSessionId: input.destinationSessionId, sourceSessionId: input.request.sourceSessionId, readMuted,
     }))[0] : null;
     const edge = input.request.localInputId || input.request.relation === 'rule' ? null : readSessionEdge(await tx.sessionFollowEdge.findUnique({
         where: { destinationSessionId_sourceSessionId_relation: {
@@ -234,11 +236,8 @@ async function admitSessionFollowSourceForRunnerInTx(
         input.destinationSessionId,
         await resolveSessionFollowRuntimePrincipalAuthenticationInTx(tx, input.principal),
     )) return null;
-    if (await isDeliveryMutedInTx(tx, { accountId,
-        receiver: { kind: 'session', sessionId: input.destinationSessionId },
-        candidate: { senderSessionId: input.request.sourceSessionId,
-            source: { kind: 'session', sessionId: input.request.sourceSessionId } },
-    }) !== false) return null;
+    if (await readMuted({ senderSessionId: input.request.sourceSessionId,
+        source: { kind: 'session', sessionId: input.request.sourceSessionId } }) !== false) return null;
 
     const source = await tx.session.findUnique({
         where: { id: input.request.sourceSessionId },
@@ -352,12 +351,8 @@ export async function projectSessionFollowSourceForRunnerInTx(
 }
 
 export async function projectSessionFollowSourceForRunner(input: SessionFollowSourceRunnerInput): Promise<SessionFollowSourceProjectionResponseV1 | null> {
-    return await readSnapshotWithCurrentAdmission<SessionFollowSourceProjectionResponseV1 | null>(
-        tx => projectSessionFollowSourceForRunnerInTx(tx, input), async (tx, captured) => {
-            if (!captured) return null;
-            const current = await admitSessionFollowSourceForRunnerInTx(tx, input);
-            return current && current.source.encryptionMode === captured.source.encryptionMode ? captured : null;
-        });
+    return await captureReadSnapshot<SessionFollowSourceProjectionResponseV1 | null>(
+        tx => projectSessionFollowSourceForRunnerInTx(tx, input));
 }
 
 export type SessionFollowSourceFailure =
@@ -634,8 +629,7 @@ export async function listSessionFollowSources(input: Readonly<{
     const kindsWhere = selection.sourceKinds === undefined ? {} : { OR: selection.sourceKinds.map(kind => kind === 'session'
         ? { sourceSessionId: { not: null } } : { sourceKey: { startsWith: `${kind}:` } }) };
     const runEdges = new Map<string, SessionFollowProjectionEdge>();
-    let runFrontiers = new Map<string, ExecutionRunFollowFrontierWitness>();
-    return await readSnapshotWithCurrentAdmission<SessionFollowSourceResult<Readonly<{ sources: readonly FollowSourceRelationV1[]; continuation?: string }>>>({ capture: async (tx) => {
+    return await captureReadSnapshot<SessionFollowSourceResult<Readonly<{ sources: readonly FollowSourceRelationV1[]; continuation?: string }>>>({ capture: async (tx) => {
         if (!await isActingAccountActive(tx, input.accountId)) return { ok: false, error: "account_inactive" };
         const destination = await loadSession(tx, input.destinationSessionId);
         if (!destination || !await canReadSession(tx, input.accountId, input.destinationSessionId, input.authentication)) {
@@ -668,30 +662,21 @@ export async function listSessionFollowSources(input: Readonly<{
                 }
             }
         }
-        return { ok: true, value: { sources: visible, ...(page.continuation ? { continuation: page.continuation } : {}) } };
+        return { ok: true, value: { sources: visible, ...(page.continuation
+            ? { continuation: sealSessionFollowListCursor(scope, page.continuation) } : {}) } };
     }, materialize: async captured => {
-        if (captured.ok) runFrontiers = await readExecutionRunFollowProjectionFrontiers({ ...input, sources: captured.value.sources });
-        return captured;
-    } }, async (tx, captured) => {
         if (!captured.ok) return captured;
-        if (!await isActingAccountActive(tx, input.accountId)) return { ok: false, error: "account_inactive" };
-        if (!await canReadSession(tx, input.accountId, input.destinationSessionId, input.authentication)) return { ok: false, error: "session_not_found" };
-        const visible: FollowSourceRelationV1[] = [];
-        for (const source of captured.value.sources) {
-            const permitted = 'sourceSessionId' in source
-                ? await canReadSession(tx, input.accountId, source.sourceSessionId, input.authentication)
-                : await canReadOtherFollowSourceInTx(tx, { accountId: input.accountId, source: source.source as OtherFollowSource,
-                    authentication: input.authentication });
-            if (!permitted) continue;
-            const edge = 'source' in source && source.source.kind === 'execution_run'
-                ? runEdges.get(sourceKeyForSessionFollowSourceV1(source.source)) : undefined;
-            const projected = edge ? await projectOtherFollowSourceInTx(tx, edge, source.deliveryState === 'paused_archived',
-                runFrontiers.get(edge.sourceKey)) : source;
-            if (projected) visible.push(projected);
-        }
-        return { ok: true, value: { sources: visible, ...(captured.value.continuation
-            ? { continuation: sealSessionFollowListCursor(scope, captured.value.continuation) } : {}) } };
-    });
+        const runFrontiers = await readExecutionRunFollowProjectionFrontiers({ ...input, sources: captured.value.sources });
+        if (!runEdges.size) return captured;
+        return inReadSnapshot(async tx => {
+            const sources = await Promise.all(captured.value.sources.map(async source => {
+                if (!('source' in source) || source.source.kind !== 'execution_run') return source;
+                const edge = runEdges.get(sourceKeyForSessionFollowSourceV1(source.source));
+                return edge ? { ...source, ...await readAdmittedExecutionRunFollowProjectionInTx(tx, edge, runFrontiers.get(edge.sourceKey)) } : source;
+            }));
+            return { ...captured, value: { ...captured.value, sources } };
+        });
+    } });
 }
 
 /** Reverse inspection is source-authorized; private people remain an anonymous census. */
@@ -703,7 +688,7 @@ export async function listSessionFollowers(input: Readonly<{
         if (!await isActingAccountActive(tx, input.accountId)) return 'account_inactive' as const;
         return await canReadSession(tx, input.accountId, input.sourceSessionId, input.authentication) ? null : 'session_not_found' as const;
     };
-    return readSnapshotWithCurrentAdmission<SessionFollowSourceResult<SessionFollowActionOutputV1['follow.list']>>(async tx => {
+    return captureReadSnapshot<SessionFollowSourceResult<SessionFollowActionOutputV1['follow.list']>>(async tx => {
         const error = await admitSource(tx);
         if (error) return { ok: false, error };
         const source = await loadSession(tx, input.sourceSessionId);
@@ -718,21 +703,12 @@ export async function listSessionFollowers(input: Readonly<{
             const destination = await loadSession(tx, edge.destinationSessionId);
             if (destination) sources.push({ ...projectSource(edge, source, source.archivedAt !== null || destination.archivedAt !== null), relation: edge.relation });
         }
-        return { ok: true, value: { sources, ...await readSessionPersonalFollowerCensusInTx(tx,
-            { accountId: input.accountId, sessionId: input.sourceSessionId }), rules: [], coverage: 'complete' } };
-    }, async (tx, captured) => {
-        if (!captured.ok) return captured;
-        const error = await admitSource(tx);
-        if (error) return { ok: false, error };
-        const sources: SessionFollowSourceV1[] = [];
-        for (const row of captured.value.sources) if ('sourceSessionId' in row
-            && await canReadSession(tx, input.accountId, row.destinationSessionId, input.authentication)) sources.push(row);
         const census = await readSessionPersonalFollowerCensusInTx(tx, { accountId: input.accountId, sessionId: input.sourceSessionId });
         try {
             const page = pageFollowListV1({ scope: JSON.stringify([input.accountId, 'followers', input.sourceSessionId]),
                 rows: sources, key: row => JSON.stringify([row.destinationSessionId, row.relation]),
                 cursor: input.cursor, limit: input.limit });
-            return { ok: true, value: { ...captured.value, sources: page.rows,
+            return { ok: true, value: { sources: page.rows, rules: [],
                 coverage: page.continuation ? 'partial' : 'complete',
                 ...(page.continuation ? { continuation: page.continuation } : {}),
                 ...census } };
@@ -751,8 +727,7 @@ export async function listOtherSessionFollowers(input: Readonly<{
         return await canReadOtherFollowSourceInTx(tx, input) ? null : 'session_not_found' as const;
     };
     const runEdges = new Map<string, SessionFollowProjectionEdge>();
-    let runFrontiers = new Map<string, ExecutionRunFollowFrontierWitness>();
-    return readSnapshotWithCurrentAdmission<SessionFollowSourceResult<SessionFollowActionOutputV1['follow.list']>>({ capture: async tx => {
+    return captureReadSnapshot<SessionFollowSourceResult<SessionFollowActionOutputV1['follow.list']>>({ capture: async tx => {
         const error = await admit(tx);
         if (error) return { ok: false as const, error };
         const sourceKey = sourceKeyForSessionFollowSourceV1(input.source);
@@ -774,30 +749,23 @@ export async function listOtherSessionFollowers(input: Readonly<{
         return { ok: true as const, value: { sources, rules: [], coverage: 'complete' as const,
             ...await readOtherPersonalFollowerCensusInTx(tx, { accountId: input.accountId, source: input.source }) } };
     }, materialize: async captured => {
-        if (captured.ok) runFrontiers = await readExecutionRunFollowProjectionFrontiers({ ...input, sources: captured.value.sources });
-        return captured;
-    } }, async (tx, captured) => {
         if (!captured.ok) return captured;
-        const error = await admit(tx);
-        if (error) return { ok: false as const, error };
-        const sources: FollowSourceRelationV1[] = [];
-        for (const row of captured.value.sources) if (await canReadSession(tx, input.accountId,
-            row.destinationSessionId, input.authentication)) {
+        const runFrontiers = await readExecutionRunFollowProjectionFrontiers({ ...input, sources: captured.value.sources });
+        const sources = runEdges.size ? await inReadSnapshot(tx => Promise.all(captured.value.sources.map(async row => {
+            if (!('source' in row) || row.source.kind !== 'execution_run') return row;
             const edge = runEdges.get(row.destinationSessionId);
-            const projected = edge ? await projectOtherFollowSourceInTx(tx, edge, row.deliveryState === 'paused_archived',
-                runFrontiers.get(edge.sourceKey)) : row;
-            if (projected) sources.push(projected);
-        }
+            return edge ? { ...row, ...await readAdmittedExecutionRunFollowProjectionInTx(tx, edge, runFrontiers.get(edge.sourceKey)) } : row;
+        }))) : captured.value.sources;
         try {
             const page = pageFollowListV1({ scope: JSON.stringify([input.accountId, 'followers',
                     sourceKeyForSessionFollowSourceV1(input.source)]), rows: sources,
                 key: row => JSON.stringify([row.destinationSessionId, row.relation ?? 'follower']),
                 cursor: input.cursor, limit: input.limit });
             return { ok: true as const, value: { sources: page.rows, rules: [], coverage: 'complete' as const,
-                ...await readOtherPersonalFollowerCensusInTx(tx, { accountId: input.accountId, source: input.source }),
+                peopleCount: captured.value.peopleCount, follows: captured.value.follows,
                 ...(page.continuation ? { continuation: page.continuation } : {}) } };
         } catch { return { ok: false as const, error: 'invalid_parameters' as const }; }
-    });
+    } });
 }
 
 /**
@@ -992,9 +960,10 @@ async function prepareSessionFollowSourceKeyPreparerInTx(
     if (source.archivedAt !== null || destination.archivedAt !== null) {
         return { ok: false, error: "session_archived" };
     }
-    // The custody owner has already admitted this exact Account, pair and
-    // original. A missing/stale input never falls back to a configured edge.
-    if (admittedInput) return { ok: true, value: { destinationRuntimeAccountId: destination.accountId } };
+    // Unaccepted custody already checked fresh source/pair access above.
+    // Accepted custody is state-only: a new key acquisition still admits
+    // current source access here, without reauthorizing its completed ACK.
+    if (admittedInput && !admittedInput.nativeAccepted) return { ok: true, value: { destinationRuntimeAccountId: destination.accountId } };
     const decision = await mayInjectSessionContextInTx(tx, {
         configuringAccountId: input.accountId,
         sourceSessionId: input.sourceSessionId,
@@ -1612,6 +1581,7 @@ export async function admitSessionFollowRelationsForInputInTx(tx: Tx, input: Rea
     admittedOriginal?: true;
     /** Pending validates all other fences before retaining a suppressed original. */
     settleSuppressedOriginal?: true;
+    readMuted?: ReturnType<typeof createDeliveryMuteReaderInTx>;
 } & ({ sourceMachineId: string; authentication?: never } | { sourceMachineId?: never; authentication: SessionAccessAuthentication })>): Promise<readonly SessionFollowInputRelation[] | null> {
     if (!('sourceSessionId' in input.delivery.original)) {
         return admitRunFollowRelationsForInputInTx(tx, input);
@@ -1635,8 +1605,10 @@ export async function admitSessionFollowRelationsForInputInTx(tx: Tx, input: Rea
         ]);
         if (![sourceTarget, receiverTarget].some(target => target?.accountId === input.accountId && target.machineId === input.sourceMachineId)) return null;
     }
-    if (!input.settleSuppressedOriginal && await isDeliveryMutedInTx(tx, { accountId: input.accountId, receiver: { kind: 'session', sessionId: pair.destinationSessionId },
-        candidate: { senderSessionId: source.id, source: { kind: 'session', sessionId: source.id } } }) !== false) return null;
+    const readMuted = input.readMuted ?? createDeliveryMuteReaderInTx(tx, { accountId: input.accountId,
+        receiver: { kind: 'session', sessionId: pair.destinationSessionId } });
+    if (!input.settleSuppressedOriginal && await readMuted({ senderSessionId: source.id,
+        source: { kind: 'session', sessionId: source.id } }) !== false) return null;
     const relations: SessionFollowInputRelation[] = [];
     for (const relation of input.relations) {
         const edge = await tx.sessionFollowEdge.findUnique({ where: { destinationSessionId_sourceSessionId_relation: {
@@ -1656,6 +1628,7 @@ async function admitRunFollowRelationsForInputInTx(tx: Tx, input: Readonly<{
     executionRunFrontier?: ExecutionRunFollowFrontierWitness;
     admittedOriginal?: true;
     settleSuppressedOriginal?: true;
+    readMuted?: ReturnType<typeof createDeliveryMuteReaderInTx>;
     sourceMachineId?: string; authentication?: SessionAccessAuthentication;
 }>): Promise<readonly SessionFollowInputRelation[] | null> {
     const original = input.delivery.original;
@@ -1680,10 +1653,11 @@ async function admitRunFollowRelationsForInputInTx(tx: Tx, input: Readonly<{
         if (![receiver, producer].some(target => target?.accountId === input.accountId
             && target.machineId === input.sourceMachineId)) return null;
     }
-    if (!input.settleSuppressedOriginal && await isDeliveryMutedInTx(tx, { accountId: input.accountId,
-        receiver: { kind: 'session', sessionId: input.destinationSessionId }, candidate: {
+    const readMuted = input.readMuted ?? createDeliveryMuteReaderInTx(tx, { accountId: input.accountId,
+        receiver: { kind: 'session', sessionId: input.destinationSessionId } });
+    if (!input.settleSuppressedOriginal && await readMuted({
             source, ...(source.kind === 'execution_run' && 'sessionId' in source ? { senderSessionId: source.sessionId } : {}),
-        } }) !== false) return null;
+        }) !== false) return null;
     const acceptedKey = deriveSessionFollowOriginalOccurrenceKeyV1(original);
     const accepted = acceptedKey ? await tx.sessionMessage.findFirst({ where: { sessionId: input.destinationSessionId,
         acceptedFollowOriginalKey: acceptedKey }, select: { localId: true, seq: true } }) : null;
@@ -1730,12 +1704,9 @@ export async function acknowledgeAdmittedSessionFollowInputInTx(tx: Tx, input: R
     const request = input.request;
     const accountId = input.principal.kind === 'destination_runtime'
         ? input.principal.destinationRuntimeAccountId : input.principal.accountId;
-    const readCurrentAdmission = async () => {
+    const readCurrentCustody = async () => {
         const destination = await loadSession(tx, request.destinationSessionId);
-        if (!destination || destination.accountId !== accountId || destination.archivedAt !== null
-            || !await isActingAccountActive(tx, accountId)
-            || !await canSubmitDestinationInput(tx, accountId, destination.id,
-                await resolveSessionFollowRuntimePrincipalAuthenticationInTx(tx, input.principal))) return { ok: false as const, rejection: 'source_forbidden' as const };
+        if (!destination || destination.accountId !== accountId || destination.archivedAt !== null) return { ok: false as const, rejection: 'source_forbidden' as const };
         if (destination.publisherGeneration.toString() !== request.expectedPublisherGeneration) return { ok: false as const, rejection: 'stale_publisher_generation' as const };
         const custody = await readAdmittedSessionFollowInputInTx(tx, { principal: input.principal, accountId,
             destinationSessionId: destination.id, ...('sourceSessionId' in request ? { sourceSessionId: request.sourceSessionId } : {}), localInputId: request.localInputId });
@@ -1751,27 +1722,26 @@ export async function acknowledgeAdmittedSessionFollowInputInTx(tx: Tx, input: R
                 requireProviderAccepted: true })) return { ok: false as const, rejection: 'provider_acceptance_unverified' as const };
         return { ok: true as const, destination, custody, represented };
     };
-    let admission = await readCurrentAdmission();
+    let admission = await readCurrentCustody();
     if (!admission.ok) return admission;
     if (admission.custody.admissions.length > 0 || 'sourceSessionId' in admission.custody.delivery.original
         && admission.custody.relations.length > 0) {
         // Accepted progress publishes the destination Session. Admit its complete
         // audience and resource before KV/edge writes or terminal Account locks.
         await acquireSessionAccountCursorLocksInTx(tx, [admission.destination.id], [accountId]);
-        admission = await readCurrentAdmission();
+        admission = await readCurrentCustody();
         if (!admission.ok) return admission;
     }
     const { custody, represented } = admission;
-    const relationProgressAdvanced = 'sourceSessionId' in custody.delivery.original && custody.relations.some(edge =>
-        edge.deliveredTranscriptSeq < represented.observed.transcriptSeq
-        || edge.deliveredAgentStateVersion < represented.observed.agentStateVersion
-        || 'sourceTurn' in custody.delivery.original && !isSessionFollowTurnEqualV1(readStoredSessionFollowFrontier(edge).turn, custody.delivery.original.sourceTurn));
-    if (!await settleSessionFollowInputReasonsInTx(tx, { progresses: custody.admissions.map(row => row.progress),
-        relations: custody.relations, observed: represented.observed, delivery: custody.delivery })) return { ok: false, rejection: 'stale_expected_frontier' };
+    const settled = await settleSessionFollowInputReasonsInTx(tx, { progresses: custody.admissions.map(row => row.progress),
+        relations: custody.relations, observed: represented.observed, delivery: custody.delivery,
+        ...('source' in custody ? { source: custody.source } : {}) });
+    if (!settled) return { ok: false, rejection: 'stale_expected_frontier' };
     // Rule progress already publishes through its KV owner. Manager/explicit
     // progress must wake that same receiver recovery after an unconfirmed
     // middle admission, even if no new source notification will arrive.
-    if (relationProgressAdvanced) await invalidateSessionFollowDestinationsInTx(tx, [admission.destination.id]);
+    if ('sourceSessionId' in custody.delivery.original && settled.relationProgressAdvanced)
+        await invalidateSessionFollowDestinationsInTx(tx, [admission.destination.id]);
     return { ok: true, delivered: represented.observed };
 }
 

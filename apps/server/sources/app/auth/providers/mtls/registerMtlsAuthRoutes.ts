@@ -10,7 +10,7 @@ import { db } from "@/storage/db";
 import { auth } from "@/app/auth/auth";
 import { accountDirectoryAuthErrorHandler } from "@/app/accountDirectory/accountDirectoryErrors";
 import { readAuthMtlsFeatureEnv } from "@/app/features/catalog/readFeatureEnv";
-import { resolveMtlsIdentityFromForwardedHeaders } from "@/app/auth/providers/mtls/mtlsIdentity";
+import { isMtlsLoginEnabled, resolveMtlsIdentityFromForwardedHeaders } from "@/app/auth/providers/mtls/mtlsIdentity";
 import { resolveKeylessAccountsEnabled } from "@/app/features/e2ee/resolveKeylessAccountsEnabled";
 import {
     isTrulyKeylessPlainAccountRow,
@@ -39,15 +39,6 @@ import {
 import { readRequestHomeEnv } from "@/app/home/settings/requestHomeEnv";
 
 type ForwardedMtlsIdentity = NonNullable<ReturnType<typeof resolveMtlsIdentityFromForwardedHeaders>>;
-
-function isMtlsLoginEnabled(env: NodeJS.ProcessEnv): boolean {
-    const mtlsEnv = readAuthMtlsFeatureEnv(env);
-    if (!mtlsEnv.enabled) return false;
-    if (mtlsEnv.mode !== "forwarded") return false;
-    if (!mtlsEnv.trustForwardedHeaders) return false;
-    if (!resolveKeylessAccountsEnabled(env)) return false;
-    return true;
-}
 
 function effectivePort(url: URL): string {
     if (url.port) return url.port;
@@ -309,7 +300,8 @@ export function registerMtlsAuthRoutes(app: Fastify): void {
                 mtlsEnv.mode === "forwarded"
                     ? resolveMtlsIdentityFromForwardedHeaders({
                           env: requestHomeEnv,
-                          headers: request.headers as any,
+                          headers: request.headers,
+                          request: request.raw,
                       })
                     : null;
             if (!identity) {
@@ -396,7 +388,8 @@ export function registerMtlsAuthRoutes(app: Fastify): void {
                 mtlsEnv.mode === "forwarded"
                     ? resolveMtlsIdentityFromForwardedHeaders({
                           env: requestHomeEnv,
-                          headers: request.headers as any,
+                          headers: request.headers,
+                          request: request.raw,
                       })
                     : null;
             if (!identity) {

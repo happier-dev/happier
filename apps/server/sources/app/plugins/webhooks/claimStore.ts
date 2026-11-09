@@ -170,6 +170,8 @@ type EligibleClaimTargetV1 = Readonly<{
     materializationId: string;
     pluginId: string;
     version: string;
+    machineId: string;
+    machineInstallationId: string;
 }>;
 
 type EligibleClaimPathV1 = Readonly<{
@@ -217,7 +219,7 @@ async function resolveEligibleClaimPathsTxV1(params: Readonly<{
         targets: params.targets,
     });
     if (authorities.length === 0) return [];
-    return authorities.map((authority) => Object.freeze({
+    return authorities.flatMap((authority): EligibleClaimPathV1[] => authority.contribution.handlerActionLocalId === null ? [] : [Object.freeze({
         materializationId: authority.materializationId,
         pluginId: authority.pluginId,
         version: authority.version,
@@ -225,7 +227,7 @@ async function resolveEligibleClaimPathsTxV1(params: Readonly<{
         handlerActionId: authority.contribution.handlerActionLocalId,
         verifierKind: authority.contribution.verifierKind,
         routingKind: authority.contribution.routingKind,
-    }));
+    })]);
 }
 
 /**
@@ -355,6 +357,8 @@ export async function claimPluginWebhookDeliveryV1(params: Readonly<{
             materializationId: materialization.materializationId,
             pluginId: materialization.pluginId,
             version: materialization.version,
+            machineId: materialization.machineId,
+            machineInstallationId: params.machine.machineInstallationId,
         }));
         const eligiblePaths = await resolveEligibleClaimPathsTxV1({
             tx,
@@ -606,20 +610,11 @@ async function hasCurrentPluginWebhookPreEffectAuthorityTxV1(params: Readonly<{
     current: PluginWebhookPreEffectRowV1;
     target: ClaimTargetV1;
     serverIdentityId: string;
-    expectedEndpoint?: PluginWebhookInvocationReferenceV1["endpoint"];
 }>): Promise<boolean> {
-    const { current, expectedEndpoint } = params;
+    const { current } = params;
     const endpoint = current.endpoint;
     if (
-        (expectedEndpoint !== undefined && (
-            current.endpointId !== expectedEndpoint.webhookEndpointId
-            || current.endpointRevision !== expectedEndpoint.revision
-            || current.targetPluginId !== expectedEndpoint.webhookContribution.pluginId
-            || current.endpointWebhookContributionId !== expectedEndpoint.webhookContribution.localId
-            || current.endpointHandlerActionId !== expectedEndpoint.handlerActionLocalId
-            || current.endpointSourceInstanceId !== expectedEndpoint.sourceInstanceId
-        ))
-        || endpoint.id !== current.endpointId
+        endpoint.id !== current.endpointId
         || !endpoint.enabled
         || endpoint.revokedAt !== null
         || endpoint.releasedAt !== null
@@ -686,17 +681,6 @@ export async function validateCurrentPluginWebhookInvocationReferenceTxV1(params
             targetMachineInstallationId: true,
             targetMaterializationId: true,
             targetPluginId: true,
-            targetPluginVersion: true,
-            endpoint: {
-                select: {
-                    id: true,
-                    routingKind: true,
-                    enabled: true,
-                    revokedAt: true,
-                    releasedAt: true,
-                    route: { select: { enabled: true, revokedAt: true, verifierKind: true } },
-                },
-            },
         },
     });
     if (
@@ -716,14 +700,16 @@ export async function validateCurrentPluginWebhookInvocationReferenceTxV1(params
     ) {
         return { kind: "unavailable", code: "delivery_lease_unavailable" };
     }
-    if (!(await hasCurrentPluginWebhookPreEffectAuthorityTxV1({
-        tx: params.tx,
-        accountId: params.accountId,
-        current,
-        target: reference.target,
-        serverIdentityId: params.serverIdentityId,
-        expectedEndpoint: reference.endpoint,
-    }))) {
+    // Admission belongs to executionStarted. An admitted finite attempt keeps
+    // its captured endpoint and lease without re-authorizing live policy.
+    if (
+        current.endpointId !== reference.endpoint.webhookEndpointId
+        || current.endpointRevision !== reference.endpoint.revision
+        || current.targetPluginId !== reference.endpoint.webhookContribution.pluginId
+        || current.endpointWebhookContributionId !== reference.endpoint.webhookContribution.localId
+        || current.endpointHandlerActionId !== reference.endpoint.handlerActionLocalId
+        || current.endpointSourceInstanceId !== reference.endpoint.sourceInstanceId
+    ) {
         return { kind: "unavailable", code: "endpoint_unavailable" };
     }
     return {
@@ -789,7 +775,7 @@ export async function renewPluginWebhookDeliveryV1(params: Readonly<{
         ) {
             return PluginWebhookRenewResultV1Schema.parse({ kind: "leaseLost" });
         }
-        if (!(await hasCurrentPluginWebhookPreEffectAuthorityTxV1({
+        if (current.executionStartedAt === null && !(await hasCurrentPluginWebhookPreEffectAuthorityTxV1({
             tx,
             accountId: params.accountId,
             current,

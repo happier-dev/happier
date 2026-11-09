@@ -66,6 +66,30 @@ afterEach(async () => {
 });
 
 describe("Home account detail (home.accounts.get)", () => {
+    it("projects the canonical profile management authority and restriction independently of Account lifecycle", async () => {
+        const app = createTestApp();
+        const owner = await createAccount("owner");
+        const admin = await createAccount("admin");
+        const person = await createAccount("member", "suspended");
+        await db.accountPublicProfile.create({ data: {
+            accountId: person.accountId, removedAt: new Date(), removalReason: "Reviewed report",
+        } });
+
+        const allowed = await post(app, "/v1/home/accounts/get", admin.token, { accountId: person.accountId });
+        expect(allowed.statusCode, allowed.body).toBe(200);
+        expect(allowed.json().publicProfile).toEqual({
+            managementCapability: { status: "available" }, restricted: true,
+        });
+        const denied = await post(app, "/v1/home/accounts/get", admin.token, { accountId: owner.accountId });
+        expect(denied.json().publicProfile).toEqual({
+            managementCapability: { status: "unavailable", reason: "not_authorized" }, restricted: false,
+        });
+        const ownerView = await post(app, "/v1/home/accounts/get", owner.token, { accountId: owner.accountId });
+        expect(ownerView.json().publicProfile).toEqual({
+            managementCapability: { status: "available" }, restricted: false,
+        });
+    });
+
     it("answers an administrator with Teams, counts, linked providers and events about the person, and refuses a member", async () => {
         const app = createTestApp();
         const owner = await createAccount("owner");

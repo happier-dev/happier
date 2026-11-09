@@ -29,6 +29,7 @@ describe("Session input admission constraints", () => {
         const publicReceipt = { v: 1, issuer, ...(issuer === 'authenticatedAccount' ? { actorAccountId: 'owner', sessionRelationship: 'owner' } : {}) };
         const inputAdmissionReceipt = SessionInputAdmissionReceiptV1Schema.parse({ ...publicReceipt,
             followSources: [{ destinationSessionId: 'destination', sourceSessionId: 'source',
+                selectedDelivery: 'wake',
                 rule: { ruleId: 'private-rule', ruleVersion: 3 }, sourceMessage: { localId: 'original', seq: 1 },
                 expectedSourcePublisherGeneration: '1', machineId: 'source-machine', installationId: 'source-installation' }] });
         const message = { id: 'message', seq: 1, localId: 'accepted', messageRole: 'user' as const,
@@ -55,6 +56,30 @@ describe("Session input admission constraints", () => {
         expect(isSameSessionInputAdmissionIssuer(receipt, { ...receipt, admittedTarget: { ...target, machineId: 'other' } })).toBe(false);
         expect(isSameSessionInputAdmissionIssuer(receipt, { ...receipt, admittedTarget: undefined })).toBe(false);
     });
+    it.each(['authenticatedAccount', 'authenticatedMachine'] as const)('projects retained %s attribution without re-admitting obsolete private Follow proof', issuer => {
+        const target = { homeId: 'home', accountId: 'owner', sessionId: 'destination', machineId: 'machine', installationId: 'installation' };
+        const publicReceipt = { v: 1, issuer, admittedTarget: target,
+            ...(issuer === 'authenticatedAccount' ? { actorAccountId: 'owner', sessionRelationship: 'owner' } : {}) };
+        // Retained 2026-10-21 receipt shape: selectedDelivery became required in
+        // 035e023dab1, after these server-private receiver witnesses were stored.
+        const retainedReceipt = { ...publicReceipt, followSources: [{
+            sourceSessionId: 'source', destinationSessionId: 'destination', evaluation: 'receiver',
+            rule: { ruleId: 'private-rule', ruleVersion: 3 }, sourceMessage: { localId: 'original', seq: 1 },
+        }] };
+        expect(SessionInputAdmissionReceiptV1Schema.safeParse(retainedReceipt).success).toBe(false);
+        expect(readStoredSessionInputAdmissionReceipt(retainedReceipt)).toBeUndefined();
+        expect(projectSessionInputAdmissionReceipt(retainedReceipt)).toEqual({ inputAdmissionReceipt: publicReceipt });
+        const message = { id: 'message', seq: 1, localId: 'accepted', messageRole: 'user' as const,
+            content: { t: 'encrypted' as const, c: 'opaque-content' }, createdAt: new Date(1), updatedAt: new Date(1),
+            inputAdmissionReceipt: retainedReceipt };
+        for (const build of [buildNewMessageUpdate, buildMessageUpdatedUpdate]) {
+            expect(build(message, 'destination', 1, 'update').body).toMatchObject({ message: {
+                inputAdmissionReceipt: publicReceipt,
+            } });
+        }
+        expect(() => projectSessionInputAdmissionReceipt({ ...retainedReceipt,
+            admittedTarget: { ...target, installationId: 42 } })).toThrow();
+    });
     it("validates the receipt on authenticated message wire shapes and omits it from public pages", () => {
         const inputAdmissionReceipt = { v: 1 as const, issuer: "authenticatedAccount" as const,
             actorAccountId: "owner", sessionRelationship: "owner" as const };
@@ -70,17 +95,21 @@ describe("Session input admission constraints", () => {
             } }).success).toBe(false);
         }
     });
-    it("carries the trusted receipt through direct and updated message fanout", () => {
+    it.each([undefined, 'finished', 'failed_or_stopped'] as const)("carries the trusted receipt through direct and updated message fanout (%s)", kind => {
         const inputAdmissionReceipt = { v: 1 as const, issuer: "authenticatedAccount" as const,
-            actorAccountId: "owner", sessionRelationship: "owner" as const };
+            actorAccountId: "owner", sessionRelationship: "owner" as const,
+            ...(kind ? { followDeliveryV1: { v: 1 as const, delivery: 'wake' as const,
+                original: { sourceSessionId: 'source', sourceMessage: { localId: 'terminal', seq: 7 } }, event: { kind } } } : {}) };
         const message = {
             id: "message", seq: 1, localId: "local", messageRole: "user" as const,
-            content: { t: "encrypted", c: "opaque" }, createdAt: new Date(1), updatedAt: new Date(1),
+            content: { t: "encrypted" as const, c: "opaque" }, createdAt: new Date(1), updatedAt: new Date(1),
             inputAdmissionReceipt,
         };
         for (const build of [buildNewMessageUpdate, buildMessageUpdatedUpdate]) {
-            expect(build(message, "session", 1, "update").body).toMatchObject({ message: { inputAdmissionReceipt } });
+            const body = UpdateBodySchema.parse(build(message, "session", 1, "update").body);
+            expect(body).toMatchObject({ message: { inputAdmissionReceipt } });
         }
+        expect(serializePendingMaterializedMessage(message)).toHaveProperty('inputAdmissionReceipt', inputAdmissionReceipt);
     });
     it("persists the verified model and permission-mode constraints with each Account input", () => {
         const input = {

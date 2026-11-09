@@ -6,7 +6,7 @@ import {
     projectSessionSharedMetadataV1,
     SESSION_AGENT_TRANSITION_DIVIDER_MESSAGE,
 } from "@happier-dev/protocol";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { computeAccountActivityBadgeCounts } from "@/app/activity/accountActivityBadge";
 import { initializeSessionOwnerReadStateInTx } from "@/app/session/personal/readState";
@@ -15,12 +15,19 @@ import { applySessionAgentTransitionCutover } from "@/app/session/agentTransitio
 import { commitSessionAgentCurrentViewInTx } from "@/app/session/agentTransition/commitSessionAgentCurrentView";
 import {
     createSessionMessage,
+    applySessionTurnMutation,
     patchSessionInTx,
 } from "@/app/session/sessionWriteService";
 import { db } from "@/storage/db";
 import { inTx, type Tx } from "@/storage/inTx";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
 import { createPresentUserSessionAccessAuthentication } from "@/app/session/access/sessionAccessAuthentication.testkit";
+
+import { eventRouter } from "@/app/events/eventRouter";
+import { registerSessionAgentTransitionRoute } from "@/app/api/routes/session/registerSessionAgentTransitionRoute";
+import { createFakeRouteApp, createReplyStub, getRouteHandler } from "@/app/api/testkit/routeHarness";
+import { createAuthenticatedRouteRequest } from "@/app/api/testkit/requestFixtures";
+import type { SessionRuntimeIssueV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 
 const authentication = createPresentUserSessionAccessAuthentication();
 
@@ -194,6 +201,79 @@ describe("applySessionAgentTransitionCutover (sqlite)", () => {
             process.env.HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY = previousStoragePolicy;
         }
         await harness.close();
+    });
+
+    it.each([[0, false], [0, true], [1, false], [1, true]] as const)("retires the departed Agent failure in layout %s (runner clock ahead: %s)", async (layout, clockAhead) => {
+        const owner = await createOwner();
+        const session = layout === 0 ? await createLayoutZeroSession(owner.id) : await createLayoutOneSession(owner.id);
+        const departedObservedAt = clockAhead ? BigInt(Date.now() + 60_000) : 200n;
+        const issue: SessionRuntimeIssueV1 = {
+            v: 1, scope: 'primary_session', status: 'failed', source: 'usage_limit',
+            code: 'usage_limit', agentId: 'claude', occurredAt: 200,
+            usageLimit: { v: 1, resetAtMs: 9_000, retryAfterMs: null, quotaScope: 'account', recoverability: 'wait' },
+        };
+        await db.session.update({ where: { id: session.id }, data: {
+            latestTurnId: 'departed-turn', latestTurnStatus: 'failed',
+            latestTurnStatusObservedAt: departedObservedAt, lastRuntimeIssue: JSON.stringify(issue),
+        } });
+        const history = await db.sessionTurn.create({ data: {
+            sessionId: session.id, turnId: 'departed-turn', agentId: 'claude', status: 'failed',
+            startedAt: 100n, updatedAt: 200n, terminalAt: 200n, lastRuntimeIssueJson: JSON.stringify(issue),
+        } });
+        const currentView: Parameters<typeof applySessionAgentTransitionCutover>[0]['currentView'] = layout === 0 ? {
+            kind: 'legacy_v0', expectedMetadataVersion: session.metadataVersion,
+            metadataCiphertext: JSON.stringify({ flavor: 'codex' }),
+            expectedAgentStateVersion: session.agentStateVersion, agentStateCiphertext: null,
+        } : {
+            kind: 'envelope_tuple_v1', ownerPatch: {
+                mode: 'owner_inactive_model_intent', metadataLayoutVersion: 1,
+                expectedOwnerMetadata: createPlainSessionOwnerMetadataEnvelopeV1({ v: 1 }),
+                ownerMetadata: createPlainSessionOwnerMetadataEnvelopeV1({ v: 1, runtime: { permissionMode: 'default' } }),
+                sharedMetadata: { ciphertext: JSON.stringify(projectSessionSharedMetadataV1({ metadata: { flavor: 'codex' } })), expectedVersion: session.metadataVersion },
+                agentState: { ciphertext: null, expectedVersion: session.agentStateVersion },
+                sessionExpectation: { kind: 'inactive_model_intent' },
+            },
+        };
+        const divider = { localId: buildSessionAgentTransitionDividerLocalId(randomUUID()), content: dividerContent({ fromAgentId: 'claude', toAgentId: 'codex' }) };
+        // Real route and database; only replace outbound socket delivery.
+        const emit = vi.spyOn(eventRouter, 'emitUpdate').mockImplementation(() => {});
+        try {
+            const app = createFakeRouteApp();
+            registerSessionAgentTransitionRoute(app as never, {});
+            const reply = createReplyStub();
+            await getRouteHandler(app, 'POST', '/v2/sessions/:sessionId/agent-transition/cutover')(
+                createAuthenticatedRouteRequest({ userId: owner.id, params: { sessionId: session.id }, body: { v: 1, currentView, divider } }), reply,
+            );
+            expect(reply.statusCode).toBe(200);
+            expect(reply.send).toHaveBeenCalledWith(expect.objectContaining({ success: true }));
+            expect(emit.mock.calls.map(([event]) => event.payload.body)).toContainEqual(expect.objectContaining({
+                t: 'update-session', id: session.id, latestTurnId: null, latestTurnStatus: null,
+                latestTurnStatusObservedAt: expect.any(Number), lastRuntimeIssue: null,
+            }));
+        } finally { emit.mockRestore(); }
+        await expect(db.session.findUniqueOrThrow({ where: { id: session.id }, select: {
+            latestTurnId: true, latestTurnStatus: true, latestTurnStatusObservedAt: true, lastRuntimeIssue: true,
+        } })).resolves.toEqual({ latestTurnId: null, latestTurnStatus: null, latestTurnStatusObservedAt: expect.any(BigInt), lastRuntimeIssue: null });
+        await expect(db.sessionTurn.findUniqueOrThrow({ where: { id: history.id } })).resolves.toEqual(history);
+        const clearedAt = (await db.session.findUniqueOrThrow({ where: { id: session.id } })).latestTurnStatusObservedAt;
+        expect(clearedAt).toBe(departedObservedAt + 1n);
+        await expect(applySessionTurnMutation({ actorUserId: owner.id, authentication, mutation: {
+            v: 1, sessionId: session.id, mutationId: randomUUID(), action: 'append_transcript_anchors',
+            turnId: 'departed-turn', observedAt: 201, transcriptAnchors: { userMessageSeqs: [1] },
+        } })).resolves.toMatchObject({ ok: true, didApply: false, latestTurnId: null, latestTurnStatus: null, lastRuntimeIssue: null });
+        const afterHistory = await db.session.findUniqueOrThrow({ where: { id: session.id } });
+        expect(afterHistory.latestTurnId).toBeNull();
+        expect(afterHistory.lastRuntimeIssue).toBeNull();
+        expect(afterHistory.latestTurnStatusObservedAt).toBe(clearedAt);
+        const targetIssue = { ...issue, agentId: 'codex', occurredAt: Date.now() };
+        await db.session.update({ where: { id: session.id }, data: {
+            active: true, latestTurnId: 'target-turn', latestTurnStatus: 'failed',
+            latestTurnStatusObservedAt: BigInt(targetIssue.occurredAt), lastRuntimeIssue: JSON.stringify(targetIssue),
+        } });
+        expect((await applySessionAgentTransitionCutover({ actorUserId: owner.id, sessionId: session.id, currentView, divider })).ok).toBe(true);
+        const afterRetry = await db.session.findUniqueOrThrow({ where: { id: session.id } });
+        expect(afterRetry.latestTurnId).toBe('target-turn');
+        expect(afterRetry.lastRuntimeIssue).toBe(JSON.stringify(targetIssue));
     });
 
     it("commits the target current view, clears the runtime projection, then appends exactly one divider", async () => {

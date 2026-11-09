@@ -39,6 +39,9 @@ import {
     type LocalServicePublicRuntime,
 } from "@/app/local/services/public/runtime";
 import { createLocalServicePublicAuditRecorder } from "@/app/local/services/public/audit";
+import { isLocalServicePublicAudienceEligible, isLocalServicePublicAudienceMember } from "@/app/local/services/public/peopleAudience";
+import { readRequestHomeEnv } from '@/app/home/settings/requestHomeEnv';
+import { resolveEffectiveWebappBaseUrl } from '@/app/serverUrls/effectiveServerUrls';
 import { createLocalServicePublicRateLimitChecker } from "@/app/local/services/public/rateLimits";
 import { LocalServicePublicPreviewExchangeRequestV1Schema, LocalServicePublicPreviewExchangeResponseV1Schema, resolveLocalServicePublicPreviewCreateFailureV1 } from '@happier-dev/protocol/local/services/public/v1';
 import { resolvePeerRouteFeatureId } from '@happier-dev/protocol/machines/peer/mediation/routeFeature';
@@ -89,8 +92,7 @@ export type LocalServiceRouteSessionAccessPurpose =
     | LocalServicePreviewSessionAccessPurpose
     | "public_exposure"
     | "public_revoke"
-    | "public_status"
-    | "public_access";
+    | "public_status";
 
 export type LocalServiceRouteSessionAccessAuthorizer = (input: Readonly<{
     userId: string;
@@ -170,6 +172,12 @@ export function createLocalServiceRouteRuntimes(env: NodeJS.ProcessEnv): LocalSe
             tokenSecret: resolvePublicTokenSecret(env),
             policy: featureEnv.publicPolicy,
             resolvePreview: (previewId) => preview.resolvePreview(previewId),
+            peopleAdmission: {
+                isInAudience: isLocalServicePublicAudienceMember,
+                // The sharer's Machine admission and the Service's current starter, re-proved once.
+                sharerHoldsService: async ({ sharerAccountId, preview: resource }) => Boolean(
+                    await readLocalServicePreviewAdmission({ accountId: sharerAccountId, resource })),
+            },
             ...publicAuditRecorder,
             ...(publicRateLimitChecker ? { checkRateLimit: publicRateLimitChecker } : {}),
         }),
@@ -180,10 +188,6 @@ export function resolveLocalServiceRouteRequiredAccessLevel(
     purpose: LocalServiceRouteSessionAccessPurpose,
 ): Exclude<SessionAccessLevel, "owner"> {
     if (purpose === "proxy") return "view";
-    // S-2: reaching an `authenticated` exposure is a read of someone's session-bound service, so
-    // it needs the same level as the private preview data plane — not the `admin` level that
-    // creating or revoking the exposure needs.
-    if (purpose === "public_access") return "view";
     if (purpose === "public_exposure" || purpose === "public_revoke" || purpose === "public_status") return "admin";
     return "edit";
 }
@@ -242,6 +246,7 @@ export function registerLocalServiceRoutes(
             });
         },
         registerPreview: (input) => runtimes.preview.registerPreview(input),
+        retainMachineAccess: (input) => runtimes.preview.retainMachineAccess(input),
         mintNativeDirectAccess: (input) => runtimes.preview.mintNativeDirectAccess(input),
         resolveNativeDirectTarget: (input) => readAvailableMachineIrohEndpointAuthority({ ...input, requiredCapability: 'localServicePreviewNativeAccess' }),
         nativeDirectEnabled: (request) => isServerFeatureEnabledForHome(resolvePeerRouteFeatureId({ flowKind: 'tcp_tunnel', routeKind: 'iroh_peer' }), { env, request }),
@@ -268,16 +273,20 @@ export function registerLocalServiceRoutes(
 
     const publicRouteApp = createServerFeatureGatedRouteApp(app, "localServices.publicPreview", env);
     const publicRouteOptions: RegisterLocalServicePublicRoutesOptions = {
+        retainMachineAccess: input => runtimes.preview.retainMachineAccess(input),
         resolvePreview: (previewId) => runtimes.preview.resolvePreview(previewId),
         getStatus: (request) => runtimes.public.getSnapshot(request),
         createExposure: (input) => runtimes.public.createExposure(input),
+        validateAudience: isLocalServicePublicAudienceEligible,
+        resolveLandingBaseUrl: async (request) => resolveEffectiveWebappBaseUrl(await readRequestHomeEnv(request)),
+        admitViewer: (input) => runtimes.public.admitViewer(input),
         resolveExposure: (exposureId) => runtimes.public.resolveExposure(exposureId),
         resolveExposureByHost: (hostname) => runtimes.public.resolveExposureByHost(hostname),
         trustProxy: resolveApiTrustProxy(env),
         externalProtocol,
-        retainConnection: (exposureId, close, actorAccountId) => {
+        retainConnection: (exposureId, close) => {
             const exposure = runtimes.public.resolveExposure(exposureId);
-            const releaseExposure = runtimes.public.retainConnection(exposureId, close, actorAccountId);
+            const releaseExposure = runtimes.public.retainConnection(exposureId, close);
             const releasePreview = exposure ? runtimes.preview.retainConnection(exposure.previewId, close) : undefined;
             return () => { releaseExposure(); releasePreview?.(); };
         },

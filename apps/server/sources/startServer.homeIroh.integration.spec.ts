@@ -57,12 +57,6 @@ installStartServerDbModuleMock(startServerDbMocks);
 
 installStartServerCommonWiringMocks();
 
-// Avoid hanging in tests: startServer calls awaitShutdown().
-vi.mock("@/utils/process/shutdown", async () => {
-    const actual = await vi.importActual<any>("@/utils/process/shutdown");
-    return { ...actual, awaitShutdown: vi.fn(async () => {}) };
-});
-
 describe("startServer managed Home Iroh composition", () => {
     let descriptorDataDir: string | null = null;
     const startServerHarness = createStartServerHarness({
@@ -76,7 +70,14 @@ describe("startServer managed Home Iroh composition", () => {
         HAPPY_SERVER_LIGHT_DATA_DIR: "/tmp/happier-home-iroh-startup",
     });
 
-    beforeEach(() => {
+    beforeEach(async () => {
+        // Only replace the OS signal wait. Each simulated process needs a fresh
+        // shutdown controller; importActual in a static mock retained an aborted
+        // controller across vi.resetModules and invalidated every later case.
+        vi.doUnmock("@/utils/process/shutdown");
+        vi.resetModules();
+        const shutdown = await import("@/utils/process/shutdown");
+        vi.doMock("@/utils/process/shutdown", () => ({ ...shutdown, awaitShutdown: vi.fn(async () => {}) }));
         startServerDbMocks.reset();
         ensureHomeIrohEndpoint.mockClear();
         stopHomeIrohEndpoint.mockClear();
@@ -102,6 +103,7 @@ describe("startServer managed Home Iroh composition", () => {
     });
 
     afterEach(async () => {
+        vi.doUnmock("@/utils/process/shutdown");
         vi.unstubAllGlobals();
         startServerHarness.restore();
         if (descriptorDataDir) {
@@ -222,7 +224,7 @@ describe("startServer managed Home Iroh composition", () => {
         expect(ensureHomeIrohEndpoint).not.toHaveBeenCalled();
     });
 
-    it("starts no Iroh endpoint when the actual listener port differs from the managed port", async () => {
+    it("uses the actual API port even when its canonical audience has another port", async () => {
         await startServerHarness.start("light", {
             SERVER_ROLE: "all",
             PORT: "43123",
@@ -231,10 +233,10 @@ describe("startServer managed Home Iroh composition", () => {
             AUTH_ANONYMOUS_SIGNUP_ENABLED: "0",
         });
 
-        expect(ensureHomeIrohEndpoint).not.toHaveBeenCalled();
+        expect(ensureHomeIrohEndpoint.mock.calls[0]?.[0]).toMatchObject({ apiPort: 3005 });
     });
 
-    it("starts no Iroh endpoint when the managed port is absent instead of assuming the default", async () => {
+    it("uses the actual listener when PORT is absent", async () => {
         await startServerHarness.start("light", {
             SERVER_ROLE: "all",
             HAPPIER_MANAGED_RELAY_PURPOSE: "personal-home",
@@ -242,10 +244,10 @@ describe("startServer managed Home Iroh composition", () => {
             AUTH_ANONYMOUS_SIGNUP_ENABLED: "0",
         });
 
-        expect(ensureHomeIrohEndpoint).not.toHaveBeenCalled();
+        expect(ensureHomeIrohEndpoint.mock.calls[0]?.[0]).toMatchObject({ apiPort: 3005 });
     });
 
-    it("starts no Iroh endpoint when the managed port is malformed", async () => {
+    it("does not infer the acceptor port from a malformed PORT environment value", async () => {
         await startServerHarness.start("light", {
             SERVER_ROLE: "all",
             PORT: "not-a-port",
@@ -254,14 +256,14 @@ describe("startServer managed Home Iroh composition", () => {
             AUTH_ANONYMOUS_SIGNUP_ENABLED: "0",
         });
 
-        expect(ensureHomeIrohEndpoint).not.toHaveBeenCalled();
+        expect(ensureHomeIrohEndpoint.mock.calls[0]?.[0]).toMatchObject({ apiPort: 3005 });
     });
 
     it.each([
         ["legacy public fallback", undefined, "http://127.0.0.1:3005"],
         ["HTTPS canonical URL", "https://127.0.0.1:3005", undefined],
         ["canonical URL with a path", "http://127.0.0.1:3005/home", undefined],
-    ] as const)("starts no Iroh endpoint for %s", async (_label, canonicalServerUrl, publicServerUrl) => {
+    ] as const)("accepts the canonical URL owner's %s", async (_label, canonicalServerUrl, publicServerUrl) => {
         await startServerHarness.start("light", {
             SERVER_ROLE: "all",
             PORT: "3005",
@@ -271,7 +273,7 @@ describe("startServer managed Home Iroh composition", () => {
             AUTH_ANONYMOUS_SIGNUP_ENABLED: "0",
         });
 
-        expect(ensureHomeIrohEndpoint).not.toHaveBeenCalled();
+        expect(ensureHomeIrohEndpoint).toHaveBeenCalledOnce();
     });
 
     it("does not compose the Personal Home acceptor for a generic light runtime with signup disabled", async () => {
@@ -284,13 +286,40 @@ describe("startServer managed Home Iroh composition", () => {
         expect(ensureHomeIrohEndpoint).not.toHaveBeenCalled();
     });
 
-    it("never composes Iroh for the full server flavor", async () => {
+    it("composes Iroh for a single-instance full server without Personal Home purpose", async () => {
         await startServerHarness.start("full", {
             SERVER_ROLE: "all",
+            HAPPIER_CANONICAL_SERVER_URL: "https://home.example.test",
             AUTH_ANONYMOUS_SIGNUP_ENABLED: "0",
         });
 
+        expect(ensureHomeIrohEndpoint).toHaveBeenCalledOnce();
+        expect(ensureHomeIrohEndpoint.mock.calls[0]?.[0]).toMatchObject({ apiPort: 3005 });
+    });
+
+    it("composes an ordinary QA Home without rewriting its .localhost audience", async () => {
+        await startServerHarness.start("light", {
+            SERVER_ROLE: "api",
+            HAPPIER_MANAGED_RELAY_PURPOSE: "generic",
+            HAPPIER_CANONICAL_SERVER_URL: "http://home-qa.localhost:3039",
+            AUTH_ANONYMOUS_SIGNUP_ENABLED: "0",
+        });
+        expect(ensureHomeIrohEndpoint).toHaveBeenCalledOnce();
+        expect(ensureHomeIrohEndpoint.mock.calls[0]?.[0].env.HAPPIER_CANONICAL_SERVER_URL).toBe("http://home-qa.localhost:3039");
+    });
+
+    it("honors deployment-fixed Iroh opt-out on a full server", async () => {
+        await startServerHarness.start("full", {
+            SERVER_ROLE: "api",
+            HAPPIER_CANONICAL_SERVER_URL: "https://home.example.test",
+            HAPPIER_PUBLIC_SERVER_URL: "https://home.example.test",
+            HAPPIER_HOME_IROH_MODE: "disabled",
+            AUTH_ANONYMOUS_SIGNUP_ENABLED: "1",
+        });
         expect(ensureHomeIrohEndpoint).not.toHaveBeenCalled();
+        const { readHomeIrohComposition, readHomeIrohEndpointLifecycleState } = await import("@/app/iroh/homeIrohEndpoint");
+        expect(readHomeIrohComposition()).not.toBeNull();
+        expect(readHomeIrohEndpointLifecycleState().status).toBe("retired");
     });
 
     it("never composes Iroh for the worker-only role", async () => {

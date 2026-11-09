@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import { normalizePluginReleaseFactsV1 } from "@happier-dev/protocol";
+import { normalizePluginReleaseFactsV1 } from "@happier-dev/protocol/plugins/availability/v1";
 import { createPluginEventAutomationSetupResultV1JsonSchema } from "@happier-dev/protocol/automations/event-setup-result";
+import { AutomationEventActionHttpRequestSchemasV1 } from "@happier-dev/protocol/automations/event";
 import { db, getDbProviderFromEnv, initDbPostgres } from "@/storage/db";
 import { inTx, type Tx } from "@/storage/inTx";
 import { markAccountChanged } from "@/app/changes/markAccountChanged";
@@ -64,17 +65,17 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("A
         else process.env.HAPPIER_SERVER_IDENTITY_ID = previousIdentity;
     });
 
-    async function fixture() {
-        const account = await db.account.create({ data: { encryptionMode: "plain" } });
-        accountIds.push(account.id);
+    async function fixture(shared?: Readonly<{ account: { id: string }; materializationId: string }>) {
+        const account = shared?.account ?? await db.account.create({ data: { encryptionMode: "plain" } });
+        if (!shared) accountIds.push(account.id);
         const machineId = randomUUID();
         const machineInstallationId = randomUUID();
-        const materializationId = randomUUID();
+        const materializationId = shared?.materializationId ?? `daemon-selected:${pluginId}`;
         await db.machine.create({ data: { id: machineId, accountId: account.id,
             metadata: "{}", installationId: machineInstallationId, pluginMaterializationRevision: 1n } });
-        await db.accountPluginIntent.create({ data: { accountId: account.id, pluginId,
+        if (!shared) await db.accountPluginIntent.create({ data: { accountId: account.id, pluginId,
             desiredVersion: version, enabled: true, writableCollections: [] } });
-        await db.accountPluginRelease.create({ data: { accountId: account.id, pluginId, version,
+        if (!shared) await db.accountPluginRelease.create({ data: { accountId: account.id, pluginId, version,
             archiveDigestSha256: release.archiveDigestSha256, normalizedManifest: release.normalizedManifest,
             collectionContracts: [], uiSlots: [], packageAssetArchive: release.packageAssetArchive } });
         await db.pluginMachineMaterialization.create({ data: { accountId: account.id, serverIdentityId,
@@ -91,7 +92,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("A
             watcherMachineId: machineId, watcherMachineInstallationId: machineInstallationId,
             watcherPluginId: pluginId, watcherMaterializationId: materializationId,
             definitionEnvelope: JSON.stringify({ t: "plain", v: {} }) } });
-        await db.automationEventCatalogState.create({ data: { accountId: account.id, eventSourceDefinitionsRevision: 7n } });
+        if (!shared) await db.automationEventCatalogState.create({ data: { accountId: account.id, eventSourceDefinitionsRevision: 7n } });
         const caller = { pluginId, machineId, machineInstallationId, materializationId,
             sourceCustody: { kind: "managed" as const, immutableGenerationId: "status-postgres-generation", installSource: "archive" as const } };
         const source = (delta: number) => ({ kind: "source" as const, automationId: automation.id,
@@ -101,9 +102,18 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("A
         const catalog = { kind: "catalogReconciliation" as const, scope: { kind: "checkpointedPull" as const },
             observedRevision: "7", adoptedRevision: "7", state: "current" as const,
             scanStartedAt: Date.now(), nextRetryAt: null };
-        const report = (input: unknown) =>
-            reportAutomationEventSourceStatusV1({ accountId: account.id, caller, input });
-        return { account, automation, trigger, source, catalog, report };
+        const report = (input: unknown) => {
+            // Use the actual HTTP admission shape, including validator-neutral custody objects.
+            const request = AutomationEventActionHttpRequestSchemasV1["automation.event.source.status.report"].parse({
+                v: 1,
+                caller: { pluginId, occurrenceId: "status-postgres-occurrence", sourceCustody: caller.sourceCustody,
+                    materialization: { machineId, materializationId, pluginId } },
+                input,
+            });
+            return reportAutomationEventSourceStatusV1({ accountId: account.id,
+                caller: { ...caller, sourceCustody: request.caller.sourceCustody }, input: request.input });
+        };
+        return { account, automation, trigger, source, catalog, report, caller };
     }
 
     /** Select the real DB isolation boundary; no report/currentness logic is mocked. */
@@ -115,6 +125,125 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("A
         try { return await run(); }
         finally { db.$transaction = original; }
     }
+
+    it.each(["catalog", "source"] as const)("does not write or publish repeated HTTP-admitted %s facts for two Machines", async kind => {
+        const first = await fixture();
+        const second = await fixture({ account: first.account, materializationId: first.caller.materializationId });
+        const emitUpdate = vi.spyOn(eventRouter, "emitUpdate").mockImplementation(() => {});
+        const published = () => emitUpdate.mock.calls.filter(([update]) => (
+            update.payload.body.t === "automation-source-status-updated"
+        )).length;
+        const input = kind === "catalog" ? first.catalog : first.source(0);
+        await first.report(input);
+        await second.report(kind === "catalog" ? second.catalog : second.source(0));
+        expect(published()).toBe(2);
+        const before = await db.account.findUniqueOrThrow({ where: { id: first.account.id }, select: { seq: true } });
+        let writes = 0;
+        const observeWrites = (tx: Tx) => {
+            // Count mutations at the real persistence boundary; all implementations run normally.
+            if (kind === "catalog") {
+                const update = tx.automationEventSourceCatalogStatus.updateMany.bind(tx.automationEventSourceCatalogStatus);
+                tx.automationEventSourceCatalogStatus.updateMany = args => {
+                    writes++;
+                    return update(args);
+                };
+            } else {
+                const update = tx.automationEventSourceStatus.updateMany.bind(tx.automationEventSourceStatus);
+                tx.automationEventSourceStatus.updateMany = args => {
+                    writes++;
+                    return update(args);
+                };
+            }
+        };
+        await observeTransactions(observeWrites, async () => {
+            await first.report(input);
+            await second.report(kind === "catalog" ? second.catalog : second.source(0));
+        }, false);
+        expect(writes).toBe(0);
+        expect(published()).toBe(2);
+        expect(await db.account.findUniqueOrThrow({ where: { id: first.account.id }, select: { seq: true } })).toEqual(before);
+
+        const changed = kind === "catalog"
+            ? { ...first.catalog, state: "reconciling" as const, adoptedRevision: null }
+            : first.source(1);
+        writes = 0;
+        await observeTransactions(observeWrites, () => first.report(changed), false);
+        expect(writes).toBe(1);
+        expect(published()).toBe(3);
+        const afterChange = await db.account.findUniqueOrThrow({ where: { id: first.account.id }, select: { seq: true } });
+        writes = 0;
+        await observeTransactions(observeWrites, () => first.report(kind === "catalog" ? changed : first.source(0)), false);
+        expect(writes).toBe(0);
+        expect(published()).toBe(3);
+        expect(await db.account.findUniqueOrThrow({ where: { id: first.account.id }, select: { seq: true } })).toEqual(afterChange);
+        const revisions = kind === "catalog"
+            ? await db.automationEventSourceCatalogStatus.findMany({ where: { accountId: first.account.id }, select: { reporterMachineId: true, revision: true } })
+            : await db.automationEventSourceStatus.findMany({ where: { triggerId: { in: [first.trigger.id, second.trigger.id] } }, select: { reporterMachineId: true, revision: true } });
+        expect(revisions).toEqual(expect.arrayContaining([
+            { reporterMachineId: first.caller.machineId, revision: 2 },
+            { reporterMachineId: second.caller.machineId, revision: 1 },
+        ]));
+        expect(revisions).toHaveLength(2);
+    });
+
+    it("isolates concurrent Machine reporters with the same machine-local materialization id", async () => {
+        const first = await fixture();
+        const reporters = [first];
+        for (let index = 1; index < 16; index++) {
+            reporters.push(await fixture({ account: first.account, materializationId: first.caller.materializationId }));
+        }
+        // Match the 150-Machine incident without making irrelevant Machines reporters.
+        await db.machine.createMany({ data: Array.from({ length: 134 }, () => ({
+            id: randomUUID(), accountId: first.account.id, metadata: "{}", installationId: randomUUID(),
+        })) });
+        const emitUpdate = vi.spyOn(eventRouter, "emitUpdate").mockImplementation(() => {});
+        let transactions = 0;
+        const results = await observeTransactions(() => { transactions++; }, () => Promise.allSettled(
+            reporters.map(reporter => reporter.report(reporter.catalog)),
+        ), false);
+        expect(results.map(result => result.status)).toEqual(reporters.map(() => "fulfilled"));
+        expect(transactions).toBe(reporters.length);
+        expect(await db.automationEventSourceCatalogStatus.count({ where: { accountId: first.account.id } }))
+            .toBe(reporters.length);
+        const published = () => emitUpdate.mock.calls.filter(([update]) => (
+            update.payload.body.t === "automation-source-status-updated"
+        )).length;
+        expect(published()).toBe(reporters.length);
+        const before = await db.account.findUniqueOrThrow({ where: { id: first.account.id }, select: { seq: true } });
+        transactions = 0;
+        await observeTransactions(() => { transactions++; }, () => Promise.all(
+            reporters.map(reporter => reporter.report(reporter.catalog)),
+        ), false);
+        expect(transactions).toBe(reporters.length);
+        expect(await db.account.findUniqueOrThrow({ where: { id: first.account.id }, select: { seq: true } }))
+            .toEqual(before);
+        expect(published()).toBe(reporters.length);
+        expect(await db.automationEventSourceCatalogStatus.findMany({
+            where: { accountId: first.account.id }, select: { revision: true },
+        })).toEqual(reporters.map(() => ({ revision: 1 })));
+        await first.report({ ...first.catalog, state: "reconciling", adoptedRevision: null });
+        expect(published()).toBe(reporters.length + 1);
+
+        transactions = 0;
+        await observeTransactions(() => { transactions++; }, () => Promise.all(
+            reporters.map(reporter => reporter.report(reporter.source(1))),
+        ), false);
+        expect(transactions).toBe(reporters.length);
+        expect(await db.automationEventSourceStatus.count({ where: {
+            triggerId: { in: reporters.map(reporter => reporter.trigger.id) },
+        } })).toBe(reporters.length);
+        expect(published()).toBe(reporters.length * 2 + 1);
+        const beforeEqualSources = await db.account.findUniqueOrThrow({
+            where: { id: first.account.id }, select: { seq: true },
+        });
+        await Promise.all(reporters.map(reporter => reporter.report(reporter.source(0))));
+        expect(await db.account.findUniqueOrThrow({ where: { id: first.account.id }, select: { seq: true } }))
+            .toEqual(beforeEqualSources);
+        expect(await db.automationEventSourceStatus.findMany({
+            where: { triggerId: { in: reporters.map(reporter => reporter.trigger.id) } }, select: { revision: true },
+        })).toEqual(reporters.map(() => ({ revision: 1 })));
+        expect(published()).toBe(reporters.length * 2 + 1);
+    });
 
     it.each([true, false])("preserves concurrent source deltas when a status row already exists: %s", async exists => {
         const input = await fixture();

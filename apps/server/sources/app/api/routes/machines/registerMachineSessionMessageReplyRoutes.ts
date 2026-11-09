@@ -1,6 +1,6 @@
 import { z } from 'zod/mini';
 import { SessionMessageReplyMachinePendingPageV1Schema } from '@happier-dev/protocol/sessions/messages/sessionMessageReplyV1';
-import { isSessionMessageReplyMachineCurrentInTx, listSessionMessageRepliesPendingForMachineInTx, readSessionMessageReplyInTx } from '@/app/session/messages/sessionMessageReply';
+import { isSessionMessageReplyMachineCurrentInTx, listSessionMessageRepliesPendingForMachineInTx, readSessionMessageRepliesInTx } from '@/app/session/messages/sessionMessageReply';
 import { readSessionAccessAuthenticationFromRequest } from '@/app/session/access/sessionAccessAuthentication';
 import { inReadSnapshot } from '@/storage/inTx';
 import type { Fastify } from '../../types';
@@ -25,12 +25,12 @@ export function registerMachineSessionMessageReplyRoutes(app: Fastify): void {
             return reply.code(404).send({ error: 'Machine not found' });
         }
         const entries = await inReadSnapshot(async tx => {
-            const current = [];
-            for (const entry of result.entries) {
-                const visible = await readSessionMessageReplyInTx(tx, { ...params, sessionId: entry.requestSessionId, localId: entry.requestLocalId });
-                if (visible.status === 'available' && visible.progress.disposition === 'return_pending') current.push(entry);
-            }
-            return current;
+            const current = await readSessionMessageRepliesInTx(tx, { ...params, recoveryMachineId: params.machineId,
+                requests: result.entries.map(entry => ({ sessionId: entry.requestSessionId, localId: entry.requestLocalId })) });
+            return result.entries.filter((_entry, index) => {
+                const visible = current[index]!.reply;
+                return visible.status === 'available' && visible.progress.disposition === 'return_pending';
+            });
         });
         return reply.send({ ...result, entries });
     });

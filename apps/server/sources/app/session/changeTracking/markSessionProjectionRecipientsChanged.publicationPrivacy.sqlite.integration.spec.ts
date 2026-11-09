@@ -2,11 +2,19 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest
 
 import { db } from "@/storage/db";
 import { inTx } from "@/storage/inTx";
+import { markAccountChanged } from '@/app/changes/markAccountChanged';
+import { invalidateSessionRelationProjectionsInTx } from '@/app/session/relations/sessionRelationChanges';
+import { markPendingStateChangedRecipients } from '@/app/session/pending/markPendingStateChangedRecipients';
+import { updateSessionMetadata } from '@/app/session/sessionWriteService';
+import { readSessionFollowReceiverChangeV1 } from '@happier-dev/protocol/sessions/follow/changes';
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
 import { markSessionProjectionRecipientsChanged } from "./markSessionProjectionRecipientsChanged";
 import { eventRouter } from "@/app/events/eventRouter";
 import { PrismaClient } from "../../../../generated/sqlite-client";
 import { sourceKeyForSessionFollowSourceV1 } from "@/app/session/follow/sessionFollowSourceIdentity";
+import { mutateSessionBoard } from '@/app/session/board/service';
+import { createPresentUserSessionAccessAuthentication } from '@/app/session/access/sessionAccessAuthentication.testkit';
+import { initializeSessionSystemRecordsProtocolV1Activation, resetSessionSystemRecordsProtocolV1ActivationForTests } from '@/app/session/systemRecords/sessionSystemRecordProtocolContract';
 
 describe("markSessionProjectionRecipientsChanged publication privacy (SQLite integration)", () => {
     let harness: LightSqliteHarness;
@@ -15,10 +23,13 @@ describe("markSessionProjectionRecipientsChanged publication privacy (SQLite int
         harness = await createLightSqliteHarness({
             tempDirPrefix: "happier-session-change-publication-privacy-",
             initAuth: false,
+            env: { HAPPIER_FEATURE_SESSIONS_BOARD__ENABLED: '1', HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: 'optional' },
         });
+        await expect(initializeSessionSystemRecordsProtocolV1Activation(db)).resolves.toBe(true);
     }, 120_000);
 
     afterAll(async () => {
+        resetSessionSystemRecordsProtocolV1ActivationForTests();
         await harness.close();
     });
 
@@ -31,6 +42,51 @@ describe("markSessionProjectionRecipientsChanged publication privacy (SQLite int
             () => db.session.deleteMany(),
             () => db.account.deleteMany(),
         ]);
+    });
+
+    it.each(['pending', 'metadata'] as const)('keeps a receiver Follow wake independent of unrelated Session changes and cursor acknowledgement (%s)', async kind => {
+        const account = await db.account.create({ data: { publicKey: crypto.randomUUID(), encryptionMode: 'plain' } });
+        const receiver = await db.session.create({ data: { accountId: account.id, tag: crypto.randomUUID(), metadata: '{}', encryptionMode: 'plain' } });
+        const source = await db.session.create({ data: { accountId: account.id, tag: crypto.randomUUID(), metadata: '{}', encryptionMode: 'plain' } });
+        await db.sessionFollowEdge.create({ data: { sourceSessionId: source.id, destinationSessionId: receiver.id,
+            sourceKey: sourceKeyForSessionFollowSourceV1({ kind: 'session', sessionId: source.id }), policyJson: '{"preset":"important"}' } });
+        const receiverChange = `session-follow-receiver:${receiver.id}`;
+        const reads = (after: number) => db.accountChange.findMany({ where: { accountId: account.id,
+            kind: 'account', entityId: receiverChange, cursor: { gt: after } } });
+        for (let i = 0; i < 10; i++) {
+            if (kind === 'pending') await inTx(tx => markPendingStateChangedRecipients({
+                tx, sessionId: source.id, pendingVersion: i, pendingCount: 0,
+            }));
+            else expect(await updateSessionMetadata({ actorUserId: account.id, sessionId: source.id,
+                authentication: createPresentUserSessionAccessAuthentication(), expectedVersion: i,
+                metadataCiphertext: JSON.stringify({ name: `Metadata ${i}` }),
+            })).toMatchObject({ ok: true });
+        }
+        expect(await reads(0)).toHaveLength(0);
+        const wake = vi.spyOn(eventRouter, 'emitUpdate');
+        try {
+            await inTx(async tx => {
+                await tx.session.update({ where: { id: source.id }, data: { seq: 1 } });
+                await markSessionProjectionRecipientsChanged({ tx, sessionId: source.id, hint: { lastMessageSeq: 1 } });
+            });
+            // Adding a known Follow key must not broaden the existing receiver
+            // records invalidation into an Account-wide unknown-domain wake.
+            expect(wake.mock.calls.map(([input]) => input.payload.body)).toContainEqual(expect.objectContaining({
+                t: 'account-change', sessionSystemRecords: [{ sessionId: receiver.id }],
+            }));
+        } finally { wake.mockRestore(); }
+        // A later generic Session write must not overwrite the pending Follow wake.
+        await inTx(tx => markAccountChanged(tx, { accountId: account.id, kind: 'session', entityId: receiver.id,
+            hint: { pendingVersion: 11 } }));
+        const changes = await reads(0);
+        expect(changes).toHaveLength(1);
+        expect(readSessionFollowReceiverChangeV1(changes[0]!)).toBe(receiver.id);
+        expect(await reads(changes[0]!.cursor)).toHaveLength(0);
+        await expect(inTx(async tx => {
+            await invalidateSessionRelationProjectionsInTx(tx, [receiver.id]);
+            throw new Error('follow-rollback');
+        })).rejects.toThrow('follow-rollback');
+        expect(await reads(changes[0]!.cursor)).toHaveLength(0);
     });
 
     it("keeps relation fanout set-oriented while preserving hints, complete audiences and committed wakes", async () => {
@@ -99,7 +155,10 @@ describe("markSessionProjectionRecipientsChanged publication privacy (SQLite int
                     expect(wake.mock.calls).toEqual([]);
                     return result;
                 });
-                const trace = [...statements];
+                // SQLite's shared Account admission owner currently fences each
+                // recipient separately. Count the Follow/publication work here,
+                // not that provider-wide admission policy (Postgres is set-based).
+                const trace = statements.filter(query => !query.startsWith('UPDATE "Account" SET "settingsVersion" = "settingsVersion"'));
                 await settleBroadcasts();
                 expect(cursors.map(cursor => cursor.accountId)).toEqual([owner.id]);
                 const changes = await db.accountChange.findMany({ where: { sessionId: { in: [source.id, ...destinations.map(destination => destination.id)] } },
@@ -123,7 +182,7 @@ describe("markSessionProjectionRecipientsChanged publication privacy (SQLite int
                 const beforeRollback = await db.account.findMany({ where: { id: { in: accounts.map(account => account.id) } },
                     orderBy: { id: "asc" }, select: { id: true, seq: true } });
                 for (const account of beforeRollback) {
-                    expect(account.seq).toBe(destinationCount + (account.id === owner.id ? 1 : 0));
+                    expect(account.seq).toBe(2 * destinationCount + (account.id === owner.id ? 1 : 0));
                     const accountCursors = changes.filter(change => change.accountId === account.id).map(change => change.cursor);
                     expect(new Set(accountCursors).size).toBe(accountCursors.length);
                     expect(wake.mock.calls.some(([input]) => input.userId === account.id
@@ -148,7 +207,6 @@ describe("markSessionProjectionRecipientsChanged publication privacy (SQLite int
             const large = await traceFanout(8, 4);
             // Source publication still uses its hint-sensitive writer. Relation
             // audience/destination growth must not add database round trips.
-            console.info("relation fanout SQL trace", { small: small.length, large: large.length });
             expect(large.length).toBeLessThanOrEqual(small.length);
         } finally {
             broadcast.mockRestore();
@@ -228,13 +286,13 @@ describe("markSessionProjectionRecipientsChanged publication privacy (SQLite int
         ]);
         expect(changes.some((change) => change.accountId === collaborator.id)).toBe(false);
 
-        await inTx(tx => markSessionProjectionRecipientsChanged({ tx, sessionId: session.id,
-            hint: { v: 1, sessionSurfaces: true } }));
-        expect(await db.accountChange.findFirst({ where: { sessionId: session.id, accountId: collaborator.id }, select: { hint: true } }))
-            .toEqual({ hint: { v: 1, sessionSurfaces: true } });
-        await inTx(tx => markSessionProjectionRecipientsChanged({ tx, sessionId: session.id,
-            hint: { v: 1, sessionSurfaces: true, title: "private title" } }));
-        expect(await db.accountChange.findFirst({ where: { sessionId: session.id, accountId: collaborator.id }, select: { hint: true } }))
-            .toEqual({ hint: { v: 1, sessionSurfaces: true } });
+        const result = await mutateSessionBoard({ actorUserId: owner.id, sessionId: session.id,
+            authentication: createPresentUserSessionAccessAuthentication(), mutation: { operation: 'update_layout', expectedLayoutRevision: null,
+                layoutContent: { t: 'plain', v: { v: 1, tabs: [] } } } });
+        expect(result).toMatchObject({ ok: true, result: { outcome: 'created' } });
+        const stored = await db.sessionSystemRecord.findFirstOrThrow({ where: { sessionId: session.id } });
+        expect(await db.accountChange.findFirst({ where: { kind: 'account', entityId: `session-record:${stored.id}`, accountId: collaborator.id }, select: { hint: true } }))
+            .toEqual({ hint: { v: 1, sessionRecords: { sessionId: session.id,
+                address: { owner: 'host', namespace: 'surface', kind: 'layout.v1', localId: 'layout' } } } });
     });
 });

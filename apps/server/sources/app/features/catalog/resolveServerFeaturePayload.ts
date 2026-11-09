@@ -1,7 +1,7 @@
 import { featuresSchema, type FeaturesResponse } from '../types';
 import { applyFeatureDependencies, evaluateServerFeatureDecisions } from '@happier-dev/protocol/features/featureDecisionEngine';
 import { evaluateFeatureBuildPolicy } from '@happier-dev/protocol/features/buildPolicy';
-import { FEATURE_IDS, FEATURE_CATALOG, isFeatureServerRepresented, type FeatureId } from '@happier-dev/protocol/features/catalog';
+import { FEATURE_IDS, FEATURE_CATALOG, getCanonicalFeatureId, isFeatureServerRepresented, type FeatureId } from '@happier-dev/protocol/features/catalog';
 import { FeatureGatesSchema } from '@happier-dev/protocol/features/payload/featureGatesSchema';
 import { tryWriteServerEnabledBitInPlace } from '@happier-dev/protocol/features/serverEnabledBit';
 import { type FeatureDecision } from '@happier-dev/protocol/features/decision';
@@ -155,6 +155,7 @@ export function resolveServerFeatureGate(
     resolvers: readonly ServerFeatureResolver[],
     featureId: FeatureId,
 ): boolean {
+    featureId = getCanonicalFeatureId(featureId);
     if (featureId === 'sessions.folders') featureId = 'sessions';
     if (resolvers.length === 0) throw new Error('resolveServerFeaturePayload: resolvers list is empty');
     const required = new Set<FeatureId>();
@@ -202,6 +203,6 @@ export function resolveServerFeatureDecisions(
         serverPayload: payload,
         buildPolicy: (featureId) => evaluateFeatureBuildPolicy(buildPolicy, featureId),
     });
-    return [...decisions.values()].filter((decision) =>
+    return [...new Set(decisions.values())].filter((decision) =>
         decision.featureId !== 'sessions.folders' && isFeatureServerRepresented(decision.featureId));
 }

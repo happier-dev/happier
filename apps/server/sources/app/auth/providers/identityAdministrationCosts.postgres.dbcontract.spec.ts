@@ -88,6 +88,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('I
                     method: 'POST', url: homeDomainActionPathForMethod('identity.providers.list', 'POST'),
                     headers: { 'x-test-user-id': nonAdmin.id }, payload: { owner: { kind: 'home' } },
                 })).statusCode).toBe(403);
+                console.info('IDENTITY_ADMINISTRATION_SQL_COST', JSON.stringify(measurements));
                 expect(measurements.map(row => row.secretReads)).toEqual([1, 1]);
                 expect(measurements[1]!.selects).toBe(measurements[0]!.selects);
                 expect(measurements.map(row => row.transactions)).toEqual([1, 1]);
@@ -161,6 +162,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('I
             expect(repaired.value.eligibleProviders.some(provider => provider.providerId === repairProviderId)).toBe(false);
             expect(statements.filter(({ query }) => /^SELECT\b/.test(query)
                 && query.includes('"IdentityProviderInstance"') && query.includes('"encryptedSecrets"'))).toHaveLength(1);
+            console.info('IDENTITY_CONNECTION_SQL_COST', JSON.stringify(measurements));
             expect(measurements.map(row => row.secretReads)).toEqual([1, 1]);
             expect(measurements[1]!.selects).toBe(measurements[0]!.selects);
             expect(measurements[1]!.transactions).toBe(measurements[0]!.transactions);

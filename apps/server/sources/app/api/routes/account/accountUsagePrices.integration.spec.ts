@@ -63,17 +63,23 @@ describe('Account Usage public model prices', () => {
                 expect(result.json().provenance).toMatchObject({ origin: 'bundled', fetchStatus: 'error' });
                 expect(result.json().provenance.errorCode).toBe(failure === 'http' ? 'http_503' : failure === 'network' ? 'outbound_transport_failed' : 'invalid_catalog');
             }
-            vi.mocked(httpFetch).mockResolvedValueOnce(new HttpResponse(JSON.stringify(rawCatalog), { status: 200, headers: { etag: 'catalog-v1' } }));
+            const malformed = { mode: 'chat', input_cost_per_token: -1, output_cost_per_token: 1 };
+            vi.mocked(httpFetch).mockResolvedValueOnce(new HttpResponse(JSON.stringify({ ...rawCatalog, malformed }), { status: 200, headers: { etag: 'catalog-v1' } }));
             const recovered = await refresh();
             expect(recovered.statusCode).toBe(200);
             expect(recovered.json()).toMatchObject({ models: { 'catalog-model': { inputUsdPerMillion: 2, outputUsdPerMillion: 4 } },
                 provenance: { origin: 'fetched', fetchStatus: 'ready', revision: 'catalog-v1' } });
+            expect(recovered.json().models).not.toHaveProperty('malformed');
             const [url, init] = vi.mocked(httpFetch).mock.calls.at(-1)!;
             expect(String(url)).toBe('https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json');
             expect(init).toMatchObject({ redirect: 'manual' });
             expect(init?.headers).toBeUndefined();
             expect(init?.body).toBeUndefined();
             expect(await db.simpleCache.findUnique({ where: { key: cacheKey } })).not.toBeNull();
+            vi.mocked(httpFetch).mockResolvedValueOnce(new HttpResponse(JSON.stringify({ malformed }), { status: 200 }));
+            const allInvalid = await refresh();
+            expect(allInvalid.json()).toMatchObject({ models: recovered.json().models,
+                provenance: { origin: 'cached', fetchStatus: 'error', revision: 'catalog-v1', errorCode: 'invalid_catalog' } });
             vi.mocked(httpFetch).mockRejectedValueOnce(new Error('offline again'));
             const offline = await refresh();
             expect(offline.json()).toMatchObject({ models: recovered.json().models, provenance: { origin: 'cached', fetchStatus: 'error' } });

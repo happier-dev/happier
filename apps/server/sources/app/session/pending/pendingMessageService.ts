@@ -2634,7 +2634,7 @@ export async function settlePendingInputAdmission(params: Readonly<{
                 if (!equality) return { ok: false, error: "conflict" } as const;
                 await tx.sessionPendingMessage.update({
                     where: { sessionId_localId: { sessionId, localId }, targetExecutionRunId: existing.targetExecutionRunId, deliveryState: "delivering" },
-                    data: { content: finalContent, usageTimingV1: params.decision.usageTimingV1 ?? getActivePrismaRuntime().DbNull,
+                    data: { content: finalContent, usageTimingV1: decision.usageTimingV1 ?? getActivePrismaRuntime().DbNull,
                         requestEqualityEvidenceV1: equality },
                 });
                 const state = await applyPendingSessionStateChange({ tx, sessionId });
@@ -2651,7 +2651,7 @@ export async function settlePendingInputAdmission(params: Readonly<{
                 targetExecutionRunId: existing.targetExecutionRunId,
                 requestContentForEquality: requestContent,
                 content: finalContent,
-                usageTimingV1: params.decision.usageTimingV1,
+                usageTimingV1: decision.usageTimingV1,
                 messageRole: "user",
                 pendingRequestedAction: requestedAction.data,
                 inputAdmissionReceipt: receipt.data,

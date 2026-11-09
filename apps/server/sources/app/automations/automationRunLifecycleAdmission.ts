@@ -17,14 +17,8 @@ export async function validateAutomationRunLifecycleSourceTx(tx: Tx, accountId: 
         if (!await resolveWorkflowRunAccessInTx(tx, { actorAccountId: accountId, runId: definition.source.runId })) {
             throw new AutomationValidationError("source_unavailable");
         }
-        // Registration serializes with FIN's incumbent parent control lock before inserting the source.
-        // Catch-up then sees either the prior retained fact or the completed transition, never a gap.
-        const source = await tx.automationRun.findUnique({ where: { id: definition.source.runId },
-            select: { revision: true, updatedAt: true } });
-        if (!source || (await tx.automationRun.updateMany({ where: { id: definition.source.runId, revision: source.revision },
-            data: { revision: { increment: 0 }, updatedAt: source.updatedAt } })).count !== 1) {
-            throw new AutomationValidationError("currentness_conflict");
-        }
+        // CRUD publication admission already locks this source Run before registration.
+        // Catch-up therefore sees the prior retained fact or the completed transition.
         return;
     }
     if (definition.condition !== "terminal") throw new AutomationValidationError("unsupported_condition");
@@ -85,9 +79,6 @@ export async function admitWorkflowRunLifecycleAutomationRunsTx(tx: Tx, runId: s
         id: true, accountId: true, state: true, revision: true, updatedAt: true, workflowCustodyState: true,
         finishedAt: true, attentionSeenFailureAt: true } });
     if (!source || source.workflowCustodyState === null) return;
-    const locked = await tx.automationRun.updateMany({ where: { id: runId, revision: source.revision },
-        data: { revision: { increment: 0 }, updatedAt: source.updatedAt } });
-    if (locked.count !== 1) throw new AutomationValidationError("currentness_conflict");
     const terminal = AUTOMATION_RUN_TERMINAL_STATES.some(state => state === source.state);
     const invocationAttention = source.state !== 'cancelled' && (await readWorkflowRunInvocationAttentionInTx(tx, [runId])).has(runId);
     if (!terminal && !invocationAttention) return;

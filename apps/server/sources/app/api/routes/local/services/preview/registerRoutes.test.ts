@@ -29,6 +29,7 @@ import { MachinePublishedMetadataV1Schema } from '@happier-dev/protocol/machines
 import { eventRouter } from '@/app/events/connectionEventRouter';
 import { forwardRpcCall } from '@/app/api/socket/rpc/forwardRpcCall';
 import { resolveRpcForwardTimeoutMs } from '@/app/api/socket/rpc/rpcForwardTimeout';
+import { auth } from '@/app/auth/auth';
 import type { Server } from 'socket.io';
 import * as logging from '@/utils/logging/log';
 
@@ -48,7 +49,7 @@ vi.mock('@/storage/db', async () => {
         machine: { findFirst: machineFindFirst, findUnique: machineFindUnique,
             findMany: async ({ where }: { where: { id: { in: string[] } } }) =>
                 (await Promise.all(where.id.in.map(id => machineFindUnique({ where: { id } })))).filter(row => row !== null),
-        }, session: { findUnique: sessionFindUnique },
+        }, session: { findUnique: sessionFindUnique }, account: { findUnique: async () => ({ tokenEpoch: 0, status: 'active' }) },
         homeSettings: { findUnique: homeSettingsFindUnique }, homeGovernancePolicy: { findUnique: async () => null } };
     return { db: createDbTransactionMock(() => boundary).wrapDb(boundary) };
 });
@@ -94,6 +95,7 @@ function fixture(openTunnel?: OpenLocalServicePreviewTunnel) {
         hostOriginBaseDomain: 'preview.happier.test', registerPreview: runtime.registerPreview,
         unregisterPreview: runtime.unregisterPreview, validateAccess: runtime.validateAccess,
         exchangeAccessToken: runtime.exchangeAccessToken,
+        retainMachineAccess: runtime.retainMachineAccess,
         resolvePreviewAccountId: (id) => runtime.resolvePreviewContext(id)?.accountId,
         openTunnel,
     });
@@ -242,10 +244,10 @@ describe('local service preview routes', () => {
         }
     });
 
-    it('admits a shared current Machine viewer only against the actual current service and retires its registration', async () => {
+    it.each(['retired', 'unavailable', 'refused', 'wrong_instance'] as const)('opens a running Service as a live preview and retires only on exact retirement evidence (%s)', async (observation) => {
         const target = { kind: 'managed_service', machineId: 'machine_1', managedServiceId: 'instance_1', cwd: '/workspace/app',
             declaration: { workspaceRefId: 'workspace_1', selection: { kind: 'manifest', name: 'web' } } };
-        const resource = { ...preview, sessionId: undefined, owner: { kind: 'user', id: 'starter_1' }, serviceTarget: target };
+        const resource = { ...preview, target: { ...preview.target, port: 45097 }, sessionId: undefined, owner: { kind: 'user', id: 'starter_1' }, serviceTarget: target };
         const account = (id: string) => ({ id, status: 'active', encryptionMode: 'plain', firstName: null, lastName: null, username: id, avatar: null });
         const facts = { id: 'machine_1', kind: 'persistent', accountId: 'user_1', installationId: 'installation_1', active: true,
             revokedAt: null, replacedByMachineId: null, metadataVersion: 1, daemonStateVersion: 0, daemonState: null,
@@ -255,10 +257,15 @@ describe('local service preview routes', () => {
             accountGrants: ['starter_1', 'viewer_1'].map(accountId => ({ accountId, accessLevel: 'view', account: account(accountId) })),
             teamGrants: [], groupGrants: [] };
         machineFindUnique.mockResolvedValue(facts);
-        machineFindFirst.mockResolvedValue({ id: 'machine_1', revokedAt: null, replacedByMachineId: null });
+        machineFindFirst.mockResolvedValue({ id: 'machine_1', revokedAt: null, replacedByMachineId: null,
+            operationProtocolCapabilitiesRevision: 1, operationProtocolCapabilities: {
+                irohMachineEndpoint: { protocolVersions: [1], endpointId: 'b'.repeat(64) },
+                localServicePreviewNativeAccess: { protocolVersions: [1] },
+            } });
         let retire!: () => void;
         const retirement = new Promise<void>((resolve) => { retire = resolve; });
         const calls: Array<Record<string, unknown>> = [];
+        let revokeAtAdmissionReply: (() => void) | undefined;
         const socket = { id: 'custodian_socket', data: { clientType: 'machine-scoped', userId: 'user_1', machineId: 'machine_1',
             verifiedMachineInstallationId: 'installation_1', accountStoredContentCompatibility: {
                 supportsCurrentProtocol: true, supportsPluginDataProtocol: false, supportsSessionAccessWitnessProtocol: false,
@@ -269,6 +276,9 @@ describe('local service preview routes', () => {
                 calls.push(request);
                 const params = request.params as { kind: string };
                 if (params.kind === 'wait_retirement') {
+                    if (observation === 'unavailable') throw new Error('transport disconnected');
+                    if (observation === 'refused') return { v: 1, kind: 'refused', reasonCode: 'service_unavailable' };
+                    if (observation === 'wrong_instance') return { v: 1, kind: 'retired', instanceId: 'another-instance' };
                     // Socket.IO is the boundary: honor its ACK deadline rather than returning
                     // an immortal promise that hides the production registration timeout.
                     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -279,24 +289,32 @@ describe('local service preview routes', () => {
                     } finally { clearTimeout(timer); }
                     return { v: 1, kind: 'retired', instanceId: 'instance_1' };
                 }
-                return { v: 1, kind: 'admitted', instanceId: 'instance_1', serviceTarget: target, starterAccountId: 'starter_1', endpoint: preview.target };
+                revokeAtAdmissionReply?.();
+                return { v: 1, kind: 'admitted', instanceId: 'instance_1', serviceTarget: target, starterAccountId: 'starter_1', endpoint: resource.target };
             } }) };
-        const room = { timeout: () => room, fetchSockets: async () => [socket] };
+        const room = { timeout: () => room, fetchSockets: async () => [socket], emit() {}, disconnectSockets() {} };
         // Socket.IO and its returned acknowledgement are the network boundary; forwarding and admission remain real.
         // The custodian is only reachable through the cluster census: this process holds no local room members.
-        const io = { in: () => room, sockets: { adapter: { rooms: new Map() }, sockets: new Map() } } as unknown as Server;
+        const io = { in: () => room, to: () => room, sockets: { adapter: { rooms: new Map() }, sockets: new Map() } } as unknown as Server;
         eventRouter.setIo(io, { forwardRpc: request => forwardRpcCall({ ...request, io }) });
         const env = { ...peerMediationGrantSigningEnv(), HANDY_MASTER_SECRET: 'secret', HAPPIER_PUBLIC_SERVER_URL: 'https://app.happier.test',
             HAPPIER_FEATURE_LOCAL_SERVICES_PREVIEW__ENABLED: 'true', HAPPIER_FEATURE_LOCAL_SERVICES_PREVIEW__HOST_ORIGIN_DOMAIN: 'preview.happier.test',
             HAPPIER_FEATURE_LOCAL_SERVICES_PUBLIC_PREVIEW__ENABLED: 'true',
-            HAPPIER_FEATURE_LOCAL_SERVICES_PUBLIC_PREVIEW__ALLOWED_MODES: 'secret_link',
+            HAPPIER_FEATURE_LOCAL_SERVICES_PUBLIC_PREVIEW__ALLOWED_MODES: 'secret_link,public,people',
             HAPPIER_FEATURE_LOCAL_SERVICES_PUBLIC_PREVIEW__MAX_TTL_MS: '60000', HAPPIER_FEATURE_LOCAL_SERVICES_PUBLIC_PREVIEW__DNS_TLS_REQUIRED: '0',
             [FEATURE_ENV_KEYS.localServicesPublicPreviewAllowTestAuditSink]: '1', [FEATURE_ENV_KEYS.localServicesPublicPreviewRateLimitProfileIds]: 'default',
             [FEATURE_ENV_KEYS.localServicesPublicPreviewAllowTestRateLimitChecker]: '1',
-            [FEATURE_ENV_KEYS.machinesTunnelServerRoutedEnabled]: '1', [FEATURE_ENV_KEYS.machinesTunnelAllowedPorts]: '5173' };
+            [FEATURE_ENV_KEYS.machinesTunnelServerRoutedEnabled]: '1', [FEATURE_ENV_KEYS.machinesTunnelAllowedPorts]: '',
+            [FEATURE_ENV_KEYS.machinesTunnelDirectPeerEnabled]: '1' };
         const runtimes = createLocalServiceRouteRuntimes(env);
         const closeHooks: Array<() => Promise<void>> = [];
-        const app = Object.assign(createFakeRouteApp(), { addHook(_name: string, hook: () => Promise<void>) { closeHooks.push(hook); } });
+        const upgradeHandlers: Array<(request: unknown, socket: unknown, head: Uint8Array) => unknown> = [];
+        const app = Object.assign(createFakeRouteApp(), {
+            server: { on(event: string, handler: (request: unknown, socket: unknown, head: Uint8Array) => unknown) {
+                if (event === 'upgrade') upgradeHandlers.push(handler);
+            } },
+            addHook(_name: string, hook: () => Promise<void>) { closeHooks.push(hook); },
+        });
         registerLocalServiceRoutes(app as never, { env, runtimes });
         vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
         try {
@@ -307,16 +325,59 @@ describe('local service preview routes', () => {
             expect(calls[0]).toMatchObject({ authorization: { kind: 'localServices.preview.admission.serverOrigin' },
                 machineAdmission: { actorAccountId: 'viewer_1', custodianAccountId: 'user_1', installationId: 'installation_1' } });
             await new Promise<void>(resolve => setImmediate(resolve));
+            const callsAfterOpen = calls.length;
             const ordinaryDeadline = resolveRpcForwardTimeoutMs();
             if (ordinaryDeadline === null) throw new Error('Fixture requires the ordinary finite Home RPC deadline');
             await vi.advanceTimersByTimeAsync(ordinaryDeadline + 1);
+            // Settled observation failures never start a retry/poll loop.
+            expect(calls).toHaveLength(callsAfterOpen);
             expect(runtimes.preview.resolvePreview(resource.previewId)).toEqual(resource);
             vi.useRealTimers();
+            const reopened = createReplyStub();
+            await getRouteHandler(app, 'POST', '/v1/local-services/preview')({ userId: 'viewer_1', body: resource }, reopened);
+            expect(reopened.statusCode).toBe(201);
+            await new Promise<void>(resolve => setImmediate(resolve));
+            expect(runtimes.preview.resolvePreview(resource.previewId)).toEqual(resource);
+            const accessRequest = { userId: 'viewer_1', params: { previewId: resource.previewId }, body: {
+                v: 1, initiator: { kind: 'account_client', endpointId: 'a'.repeat(64) }, ephemeralPublicKeyBase64Url: 'c'.repeat(43),
+            } };
+            const readsBeforeAccess = calls.filter(call => (call.params as { kind: string }).kind === 'read').length;
+            machineFindUnique.mockClear();
+            const access = createReplyStub();
+            await getRouteHandler(app, 'POST', '/v1/local-services/preview/:previewId/access')(accessRequest, access);
+            expect(access.statusCode).toBe(200);
+            expect(LocalServicePreviewNativeDirectAccessV1Schema.safeParse(access.send.mock.calls[0]?.[0]).success).toBe(true);
+            expect(calls.filter(call => (call.params as { kind: string }).kind === 'read').length - readsBeforeAccess).toBe(1);
+            // Each foreign principal needs the resource row and its grant graph, once.
+            expect(machineFindUnique).toHaveBeenCalledTimes(4);
+            const serverAccess = createReplyStub();
+            await getRouteHandler(app, 'POST', '/v1/local-services/preview/:previewId/access')({
+                userId: 'viewer_1', params: { previewId: resource.previewId }, body: { v: 1, kind: 'server_preview' },
+            }, serverAccess);
+            expect(serverAccess.statusCode).toBe(200);
+            expect(LocalServicePreviewServerAccessV1Schema.safeParse(serverAccess.send.mock.calls[0]?.[0]).success).toBe(true);
+            for (const removedPrincipal of ['viewer_1', 'starter_1']) {
+                machineFindUnique.mockResolvedValue({ ...facts,
+                    accountGrants: facts.accountGrants.filter(grant => grant.accountId !== removedPrincipal) });
+                const refused = createReplyStub();
+                await getRouteHandler(app, 'POST', '/v1/local-services/preview/:previewId/access')(accessRequest, refused);
+                expect(refused.statusCode).toBe(403);
+            }
+            machineFindUnique.mockResolvedValue(facts);
+            socket.data.verifiedMachineInstallationId = 'foreign-installation';
+            const foreignInstallation = createReplyStub();
+            await getRouteHandler(app, 'POST', '/v1/local-services/preview/:previewId/access')(accessRequest, foreignInstallation);
+            expect(foreignInstallation.statusCode).toBe(403);
+            socket.data.verifiedMachineInstallationId = 'installation_1';
+            const readsBeforePublish = calls.filter(call => (call.params as { kind: string }).kind === 'read').length;
+            machineFindUnique.mockClear();
             const publicReply = createReplyStub();
             await getRouteHandler(app, 'POST', '/v1/local-services/public')({ userId: 'viewer_1', body: { machineId: resource.machineId,
                 previewId: resource.previewId, serviceTarget: target, mode: 'secret_link', ttlMs: 60_000,
                 confirmation: { acknowledged: true } } }, publicReply);
             expect(publicReply.statusCode).toBe(201);
+            expect(calls.filter(call => (call.params as { kind: string }).kind === 'read').length - readsBeforePublish).toBe(1);
+            expect(machineFindUnique).toHaveBeenCalledTimes(4);
             expect(publicReply.send.mock.calls[0]?.[0]).toMatchObject({ exposure: { serviceTarget: target, mode: 'secret_link' } });
             const exposed = publicReply.send.mock.calls[0]?.[0] as { exposure: { exposureId: string } };
             const wrongPublic = createReplyStub();
@@ -346,22 +407,127 @@ describe('local service preview routes', () => {
                 params: { exposureId: exposed.exposure.exposureId }, body: revokeBody }, revoke);
             expect(revoke.send.mock.calls[0]?.[0]).toEqual({ ok: true });
             expect(runtimes.public.resolveExposure(exposed.exposure.exposureId)?.state).toBe('revoked');
+            // F7: drive both real data planes with a verified Account bearer. No exposure
+            // mode consumes a daemon admission per request; a people share is admitted once
+            // at its admission URL (public/runtime.ts admitViewer), never on the data plane.
+            if (observation === 'retired') {
+                const previousSecret = process.env.HANDY_MASTER_SECRET;
+                process.env.HANDY_MASTER_SECRET = 'route-auth-test-secret';
+                try {
+                    await auth.init();
+                    const bearer = await auth.createToken('viewer_1', undefined, { kind: 'account', authority: 'present_user' });
+                    for (const mode of ['public', 'secret_link'] as const) {
+                        const created = runtimes.public.createExposure({ preview: resource as LocalServicePreviewResourceV1,
+                            requestedMode: mode, requestedTtlMs: 60_000, actorId: 'viewer_1', sessionAuthorized: true,
+                            dnsTlsValid: true, rateLimitProfileId: 'default' });
+                        if (!created.ok) throw new Error(created.reasonCode);
+                        const link = new URL(created.exposure.publicUrl);
+                        const headers = { host: link.host, authorization: `Bearer ${bearer}`,
+                            cookie: `happier_public_token=${link.searchParams.get('publicToken') ?? ''}` };
+                        const countReads = () => calls.filter(call => (call.params as { kind: string }).kind === 'read').length;
+                        const beforeHttp = countReads();
+                        await getRouteHandler(app, 'GET', '/v1/local-services/public/:exposureId/*')({
+                            method: 'GET', params: { exposureId: created.exposure.exposureId, '*': '' }, headers,
+                        }, createReplyStub());
+                        expect(countReads() - beforeHttp, `${mode} HTTP admissions`).toBe(0);
+                        const beforeWs = countReads();
+                        const boundary = Object.assign(new EventEmitter(), {
+                            write: () => true, end() {}, destroy() {}, async *[Symbol.asyncIterator]() {},
+                        });
+                        for (const upgrade of upgradeHandlers) await upgrade({
+                            url: `/v1/local-services/public/${created.exposure.exposureId}/socket`,
+                            headers: { ...headers, upgrade: 'websocket', connection: 'Upgrade',
+                                'sec-websocket-key': 'dGhlIHNhbXBsZSBub25jZQ==', 'sec-websocket-version': '13' }, rawHeaders: [],
+                        }, boundary, new Uint8Array());
+                        expect(countReads() - beforeWs, `${mode} WS admissions`).toBe(0);
+                        runtimes.public.revokeExposure(created.exposure.exposureId, { actorId: 'viewer_1' });
+                    }
+                } finally {
+                    if (previousSecret === undefined) delete process.env.HANDY_MASTER_SECRET;
+                    else process.env.HANDY_MASTER_SECRET = previousSecret;
+                }
+            }
+            if (observation === 'retired') {
+                // F3: the access-loss push lands after actor admission, during
+                // the daemon ACK, before an exposure exists for the public sweep.
+                const before = runtimes.public.getSnapshot({ machineId: resource.machineId }).exposures.map(value => value.exposureId);
+                const publish = { userId: 'viewer_1', body: { machineId: resource.machineId, previewId: resource.previewId,
+                    serviceTarget: target, mode: 'public', ttlMs: 60_000, confirmation: { acknowledged: true } } };
+                revokeAtAdmissionReply = () => {
+                    machineFindUnique.mockResolvedValue({ ...facts,
+                        accountGrants: facts.accountGrants.filter(grant => grant.accountId !== 'viewer_1') });
+                    eventRouter.disconnectMachineAndSessionSockets({ accountId: 'viewer_1', machineId: resource.machineId, sessionBindings: [] });
+                };
+                try {
+                    const late = createReplyStub();
+                    await getRouteHandler(app, 'POST', '/v1/local-services/public')(publish, late);
+                    expect(late.statusCode, 'public mint crossing access-loss sweep').toBe(403);
+                    expect(late.send.mock.calls[0]?.[0]).toMatchObject({ reasonCode: 'session_not_authorized' });
+                    expect(runtimes.public.getSnapshot({ machineId: resource.machineId }).exposures.map(value => value.exposureId)).toEqual(before);
+                } finally {
+                    revokeAtAdmissionReply = undefined;
+                    machineFindUnique.mockResolvedValue(facts);
+                }
+                const fresh = createReplyStub();
+                await getRouteHandler(app, 'POST', '/v1/local-services/public')(publish, fresh);
+                expect(fresh.statusCode, 'fresh admission after restored access').toBe(201);
+            }
             const changed = createReplyStub();
             await getRouteHandler(app, 'POST', '/v1/local-services/preview')({ userId: 'viewer_1', body: { ...resource,
                 target: { ...preview.target, port: 5174 } } }, changed);
             expect(changed.statusCode).toBe(403);
-            machineFindFirst.mockImplementationOnce(async () => {
-                // A real DB/network await can finish after C41 finalized the viewer's last grant.
-                machineFindUnique.mockResolvedValue({ ...facts, accountGrants: facts.accountGrants.filter(grant => grant.accountId !== 'viewer_1') });
-                eventRouter.disconnectMachineAndSessionSockets({ accountId: 'viewer_1', machineId: resource.machineId, sessionBindings: [] });
+            let revokedDuringEndpointRead = false;
+            machineFindFirst.mockImplementation(async (query: unknown) => {
+                const select = (query as { select?: { operationProtocolCapabilities?: boolean } }).select;
+                // Revoke at the endpoint query, after the real admission RPC,
+                // rather than at its preceding Machine-availability query.
+                if (select?.operationProtocolCapabilities && !revokedDuringEndpointRead) {
+                    revokedDuringEndpointRead = true;
+                    machineFindUnique.mockResolvedValue({ ...facts, accountGrants: facts.accountGrants.filter(grant => grant.accountId !== 'viewer_1') });
+                    eventRouter.disconnectMachineAndSessionSockets({ accountId: 'viewer_1', machineId: resource.machineId, sessionBindings: [] });
+                }
                 return { id: resource.machineId, revokedAt: null, replacedByMachineId: null };
             });
             const lostDuringEndpointRead = createReplyStub();
             await getRouteHandler(app, 'POST', '/v1/local-services/preview')({ userId: 'viewer_1', body: resource }, lostDuringEndpointRead);
+            expect(revokedDuringEndpointRead).toBe(true);
             expect(lostDuringEndpointRead.statusCode).toBe(403);
+            expect(lostDuringEndpointRead.send.mock.calls[0]?.[0]).toMatchObject({ reasonCode: 'session_not_authorized' });
+            const nextRequest = createReplyStub();
+            await getRouteHandler(app, 'POST', '/v1/local-services/preview')({ userId: 'viewer_1', body: resource }, nextRequest);
+            expect(nextRequest.statusCode).toBe(403);
+            for (const mode of ['native', 'server'] as const) {
+                machineFindUnique.mockResolvedValue(facts);
+                machineFindFirst.mockResolvedValue({ id: resource.machineId, revokedAt: null, replacedByMachineId: null,
+                    operationProtocolCapabilitiesRevision: 1, operationProtocolCapabilities: {
+                        irohMachineEndpoint: { protocolVersions: [1], endpointId: 'b'.repeat(64) },
+                        localServicePreviewNativeAccess: { protocolVersions: [1] },
+                    } });
+                const revoke = () => {
+                    machineFindUnique.mockResolvedValue({ ...facts,
+                        accountGrants: facts.accountGrants.filter(grant => grant.accountId !== 'viewer_1') });
+                    eventRouter.disconnectMachineAndSessionSockets({ accountId: 'viewer_1', machineId: resource.machineId, sessionBindings: [] });
+                };
+                if (mode === 'native') {
+                    machineFindFirst.mockImplementation(async (query: unknown) => {
+                        if ((query as { select?: { operationProtocolCapabilities?: boolean } }).select?.operationProtocolCapabilities) revoke();
+                        return { id: resource.machineId, revokedAt: null, replacedByMachineId: null,
+                            operationProtocolCapabilitiesRevision: 1, operationProtocolCapabilities: {
+                                irohMachineEndpoint: { protocolVersions: [1], endpointId: 'b'.repeat(64) },
+                                localServicePreviewNativeAccess: { protocolVersions: [1] },
+                            } };
+                    });
+                } else revokeAtAdmissionReply = revoke;
+                const refused = createReplyStub();
+                await getRouteHandler(app, 'POST', '/v1/local-services/preview/:previewId/access')({ ...accessRequest,
+                    ...(mode === 'server' ? { body: { v: 1, kind: 'server_preview' } } : {}) }, refused);
+                expect(refused.statusCode).toBe(403);
+                expect(refused.send.mock.calls[0]?.[0]).toMatchObject({ reasonCode: 'session_not_authorized' });
+                revokeAtAdmissionReply = undefined;
+            }
             retire();
             await new Promise<void>((resolve) => setImmediate(resolve));
-            expect(runtimes.preview.resolvePreview(resource.previewId)).toBeNull();
+            expect(runtimes.preview.resolvePreview(resource.previewId)).toEqual(observation === 'retired' ? null : resource);
         } finally {
             retire();
             for (const hook of closeHooks) await hook();
@@ -429,6 +595,7 @@ describe('local service preview routes', () => {
                 resolvePreview: runtime.resolvePreview, resolvePreviewByHost: runtime.resolvePreviewByHost,
                 hostOriginBaseDomain: 'preview.happier.test', validateAccess: runtime.validateAccess,
                 exchangeAccessToken: runtime.exchangeAccessToken,
+                retainMachineAccess: runtime.retainMachineAccess,
             });
             const injectPreview = (url: string, host = HOST) => app.inject({ method, url, headers: { host } });
             const assertRefusal = async (url: string, status: number, error: string, reasonCode: string, host = HOST) => {
@@ -473,12 +640,18 @@ describe('local service preview routes', () => {
         }
     });
 
-    it('serves independently minted private viewers and a public link through real registration, exchange and access routes', async () => {
+    it.each([
+        { context: 'HTTPS document', publicBaseUrl: 'https://app.happier.test', hostOriginBaseDomain: 'preview.happier.test', destination: 'document', sameSite: 'None', secure: true },
+        { context: 'HTTPS loopback document behind TLS termination', publicBaseUrl: 'https://home.localhost:8181', hostOriginBaseDomain: 'localhost', destination: 'document', sameSite: 'None', secure: true },
+        { context: 'HTTP loopback document', publicBaseUrl: 'http://home.localhost:8181', hostOriginBaseDomain: 'localhost', destination: 'document', sameSite: 'Lax', secure: false },
+        { context: 'HTTP loopback iframe', publicBaseUrl: 'http://home.localhost:8181', hostOriginBaseDomain: 'localhost', destination: 'iframe', sameSite: 'None', secure: true },
+        { context: 'HTTP loopback without Fetch Metadata', publicBaseUrl: 'http://home.localhost:8181', hostOriginBaseDomain: 'localhost', destination: undefined, sameSite: 'None', secure: true },
+    ])('serves independently minted private viewers and a public link through real registration, exchange and access routes ($context)', async ({ publicBaseUrl, hostOriginBaseDomain, destination, sameSite, secure }) => {
         sessionFindUnique.mockResolvedValue(sharedSession);
         const env = { ...peerMediationGrantSigningEnv(), HANDY_MASTER_SECRET: 'test-master-secret',
-            HAPPIER_MANAGED_RELAY_PURPOSE: 'personal-home', HAPPIER_PUBLIC_SERVER_URL: 'https://app.happier.test',
+            HAPPIER_MANAGED_RELAY_PURPOSE: 'personal-home', HAPPIER_PUBLIC_SERVER_URL: publicBaseUrl,
             HAPPIER_FEATURE_LOCAL_SERVICES_PREVIEW__ENABLED: 'true',
-            HAPPIER_FEATURE_LOCAL_SERVICES_PREVIEW__HOST_ORIGIN_DOMAIN: 'preview.happier.test',
+            HAPPIER_FEATURE_LOCAL_SERVICES_PREVIEW__HOST_ORIGIN_DOMAIN: hostOriginBaseDomain,
             HAPPIER_FEATURE_LOCAL_SERVICES_PUBLIC_PREVIEW__ENABLED: 'true',
             HAPPIER_FEATURE_LOCAL_SERVICES_PUBLIC_PREVIEW__ALLOWED_MODES: 'secret_link',
             HAPPIER_FEATURE_LOCAL_SERVICES_PUBLIC_PREVIEW__MAX_TTL_MS: '60000',
@@ -512,15 +685,19 @@ describe('local service preview routes', () => {
             };
             const secondUrl = await acquire();
             expect(secondUrl.searchParams.get('previewToken')).not.toBe(firstUrl.searchParams.get('previewToken'));
+            const exchangeHeaders = (url: URL) => ({ host: url.host, ...(destination ? { 'sec-fetch-dest': destination } : {}) });
+            const assertCookieAttributes = (rawCookie: unknown) => {
+                const attributes = String(rawCookie).split(';').slice(1).map((part) => part.trim());
+                expect(attributes).toEqual(expect.arrayContaining(['Path=/', 'HttpOnly', `SameSite=${sameSite}`]));
+                expect(attributes.includes('Secure')).toBe(secure);
+                expect(attributes.includes('Partitioned')).toBe(secure);
+                expect(attributes.some((part) => part.startsWith('Domain='))).toBe(false);
+            };
             const open = async (url: URL) => {
-                const response = await app.inject({ method: 'GET', url: url.pathname + url.search, headers: { host: url.host } });
+                const response = await app.inject({ method: 'GET', url: url.pathname + url.search, headers: exchangeHeaders(url) });
                 expect(response.statusCode).toBe(303);
                 expect(response.headers.location).not.toContain('previewToken');
-                // The HTTPS preview is embedded under a different top-level site. Lax
-                // cookies are rejected there; partitioning keeps admission scoped to that viewer.
-                const attributes = String(response.headers['set-cookie']).split(';').slice(1).map((part) => part.trim());
-                expect(attributes).toEqual(expect.arrayContaining(['Path=/', 'HttpOnly', 'Secure', 'SameSite=None', 'Partitioned']));
-                expect(attributes.some((part) => part.startsWith('Domain='))).toBe(false);
+                assertCookieAttributes(response.headers['set-cookie']);
                 const cookie = String(response.headers['set-cookie']).split(';')[0]!;
                 const loaded = await app.inject({ method: 'GET', url: String(response.headers.location), headers: { host: url.host, cookie } });
                 expect(loaded.statusCode).toBe(200);
@@ -551,14 +728,10 @@ describe('local service preview routes', () => {
             const exposure = LocalServicePublicExposureV1Schema.parse(exposed.json<{ exposure: unknown }>().exposure);
             const publicUrl = new URL(exposure.publicUrl);
             expect(publicUrl.origin).not.toBe(firstUrl.origin);
-            const exchanged = await app.inject({ method: 'GET', url: publicUrl.pathname + publicUrl.search, headers: { host: publicUrl.host } });
+            const exchanged = await app.inject({ method: 'GET', url: publicUrl.pathname + publicUrl.search, headers: exchangeHeaders(publicUrl) });
             expect(exchanged.statusCode).toBe(303);
             expect(exchanged.headers.location).not.toContain('publicToken');
-            const publicAttributes = String(exchanged.headers['set-cookie']).split(';').slice(1).map((part) => part.trim());
-            expect(publicAttributes).toEqual(expect.arrayContaining([
-                'Path=/', 'HttpOnly', 'Secure', 'SameSite=None', 'Partitioned',
-            ]));
-            expect(publicAttributes.some((part) => part.startsWith('Domain='))).toBe(false);
+            assertCookieAttributes(exchanged.headers['set-cookie']);
             const publicHeaders = { host: publicUrl.host, cookie: String(exchanged.headers['set-cookie']).split(';')[0]! };
             const publicLoaded = await app.inject({ method: 'GET', url: String(exchanged.headers.location), headers: publicHeaders });
             expect(publicLoaded.statusCode).toBe(200);

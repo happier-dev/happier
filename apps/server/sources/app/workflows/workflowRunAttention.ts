@@ -4,15 +4,14 @@ import { AUTOMATION_RUN_TERMINAL_STATES_V3 as AUTOMATION_RUN_TERMINAL_STATES } f
 import { getDbProviderFromEnv, prismaRuntime } from "@/storage/prisma";
 import type { Tx } from '@/storage/inTx';
 import { db } from '@/storage/db';
+import { portableQueryChunks } from '@/storage/portableQueryChunks';
 
 /** Actual origin work, excluding attention and withdrawal-only reconciliation. */
 export async function readWorkflowRunOriginWakeCandidatesInTx(tx: Tx, input:
     | Readonly<{ originSessionId: string; runId?: string }>
     | Readonly<{ accountIds: readonly string[] }>) {
-    return tx.automationRun.findMany({ where: {
-        ...('originSessionId' in input
-            ? { originSessionId: input.originSessionId, ...(input.runId ? { id: input.runId } : {}) }
-            : { accountId: { in: [...input.accountIds] }, originSessionId: { not: null } }),
+    const read = (origin: Prisma.AutomationRunWhereInput) => tx.automationRun.findMany({ where: {
+        ...origin,
         workflowCustodyState: { not: null }, workflowAcceptedSnapshotEnvelope: { not: null },
         OR: [
             { workflowInvocations: { some: { lifecycle: 'admitting' } } },
@@ -22,6 +21,14 @@ export async function readWorkflowRunOriginWakeCandidatesInTx(tx: Tx, input:
     }, select: { id: true, accountId: true, originSessionId: true, revision: true,
         automationId: true, state: true, scheduledAt: true, startedAt: true, finishedAt: true,
         updatedAt: true, claimedByMachineId: true, attempt: true } });
+    if ('originSessionId' in input) return read({ originSessionId: input.originSessionId,
+        ...(input.runId ? { id: input.runId } : {}) });
+    const rows: Awaited<ReturnType<typeof read>> = [];
+    for (const accountIds of portableQueryChunks({ values: [...new Set(input.accountIds)], bindingsPerValue: 1,
+        fixedBindings: AUTOMATION_RUN_TERMINAL_STATES.length + 2 })) {
+        rows.push(...await read({ accountId: { in: [...accountIds] }, originSessionId: { not: null } }));
+    }
+    return rows;
 }
 
 /** Public human-attention facts; physical Stop custody has its own recovery index. */

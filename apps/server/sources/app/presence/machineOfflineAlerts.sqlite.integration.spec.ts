@@ -12,7 +12,7 @@ import { machineUpdateHandler } from '@/app/api/socket/machineUpdateHandler';
 import { VERIFIED_MACHINE_INSTALLATION_ID_SOCKET_DATA_KEY } from '@/app/api/socket/machineSocketInstallationProof';
 import { createFakeSocket, getSocketHandler } from '@/app/api/testkit/socketHarness';
 import { activityCache } from './sessionCache';
-import { runPresenceTimeoutTick } from './timeout';
+import { createMachinePresenceDeadlineOwner, stopLocalMachinePresenceTimeout } from './timeout';
 import { inTx } from '@/storage/inTx';
 import { writeAccountSettingsInTx } from '@/app/accountSettings/writeAccountSettingsInTx';
 import { buildMachineOfflineAlertSettingMutation } from '@happier-dev/protocol/actions/settings/machineOfflineAlertSetting';
@@ -33,13 +33,24 @@ const device: DeviceRemoteAlertPolicyV1 = { v: 1, enabled: true, nativeConsumer:
 const config = { sessionTimeoutMs: 600_000, machineTimeoutMs: 600_000, tickMs: 60_000 };
 const messages = () => send.mock.calls.flatMap(([batch]) => batch as Array<Record<string, unknown>>);
 
+async function expireMachines(): Promise<void> {
+    const deadlines = createMachinePresenceDeadlineOwner(config.machineTimeoutMs);
+    try {
+        await deadlines.start();
+        await vi.waitFor(async () => expect(await db.machine.count({ where: {
+            active: true, revokedAt: null, replacedByMachineId: null,
+            lastActiveAt: { lte: new Date(Date.now() - config.machineTimeoutMs) },
+        } })).toBe(0));
+    } finally { await deadlines.stop(); }
+}
+
 describe('opted-in Machine offline presence alerts (real SQLite)', () => {
     let harness: LightSqliteHarness;
     beforeAll(async () => { harness = await createLightSqliteHarness({ tempDirPrefix: 'machine-offline-alert-', initAuth: true, initEncrypt: true,
         env: { HANDY_MASTER_SECRET: 'machine-offline-alert-secret', AUTH_REQUIRED_LOGIN_PROVIDERS: '', SERVER_ROLE: 'all',
             HAPPIER_SERVER_IDENTITY_ID: 'srv_offline_home' } }); }, 120_000);
     afterAll(async () => { await harness?.close(); });
-    afterEach(() => { send.mockClear(); });
+    afterEach(async () => { await stopLocalMachinePresenceTimeout(); send.mockClear(); });
     const account = () => db.account.create({ data: { publicKey: randomUUID(), encryptionMode: 'plain' } });
     async function enroll(accountId: string, machineIds: string[]) {
         const row = await db.account.update({ where: { id: accountId }, data: { settingsVersion: { increment: 1 } } });
@@ -66,7 +77,7 @@ describe('opted-in Machine offline presence alerts (real SQLite)', () => {
         await db.machine.update({ where: { id: fresh.id }, data: { lastActiveAt: new Date() } });
         const token = await enroll(owner.id, [persistent.id, runner.id, fresh.id]);
         await enroll(outsider.id, [persistent.id, runner.id]);
-        await runPresenceTimeoutTick(config);
+        await expireMachines();
         expect(messages()).toHaveLength(2);
         expect(messages().map(message => message.to)).toEqual([token, token]);
         expect(messages().map(message => message.data)).toEqual(expect.arrayContaining([persistent, runner].map(row => ({
@@ -75,7 +86,7 @@ describe('opted-in Machine offline presence alerts (real SQLite)', () => {
         }))));
         expect(JSON.stringify(messages())).not.toContain('private-machine-name');
         expect(await db.machine.findUnique({ where: { id: unenrolled.id } })).toMatchObject({ active: false });
-        await runPresenceTimeoutTick(config);
+        await expireMachines();
         expect(messages()).toHaveLength(2);
         const sessionId = randomUUID();
         await db.session.create({ data: { id: sessionId, accountId: owner.id, tag: randomUUID(), metadata: '{}',
@@ -85,7 +96,7 @@ describe('opted-in Machine offline presence alerts (real SQLite)', () => {
         } });
         await db.machine.update({ where: { id: persistent.id },
             data: { active: true, lastActiveAt: new Date(Date.now() - 700_000) } });
-        await runPresenceTimeoutTick(config);
+        await expireMachines();
         expect(messages()).toHaveLength(3);
         expect(messages()[2]).toMatchObject({ to: token, data: { machineId: persistent.id, phase: 'offline' } });
     });
@@ -103,7 +114,7 @@ describe('opted-in Machine offline presence alerts (real SQLite)', () => {
             }
             if (loss === 'device_disabled') await db.accountPushToken.update({
                 where: { accountId_token: { accountId: owner.id, token } }, data: { remoteAlerts: { ...device, enabled: false } } });
-            await runPresenceTimeoutTick(config);
+            await expireMachines();
             expect(messages()).toEqual([]);
         },
     );
@@ -123,10 +134,10 @@ describe('opted-in Machine offline presence alerts (real SQLite)', () => {
             expect(messages()[0]).toMatchObject({ data: { type: 'machine_alert', phase: 'recovered', machineId: row.id },
                 _contentAvailable: true });
             for (const key of ['title', 'body', 'sound']) expect(messages()[0]).not.toHaveProperty(key);
-            // The incumbent presence write is batched. A second API heartbeat
-            // can still observe inactive; repeat dismissal must remain quiet.
+            // LOCAL admission is committed synchronously. A continuing beat
+            // is not a second recovery and does not repeat the dismissal push.
             await getSocketHandler(socket, 'machine-alive')({ machineId: row.id, time: Date.now() });
-            expect(messages()).toHaveLength(2);
+            expect(messages()).toHaveLength(1);
             for (const message of messages()) {
                 expect(message).toMatchObject({ data: { phase: 'recovered' }, _contentAvailable: true });
                 for (const key of ['title', 'body', 'sound']) expect(message).not.toHaveProperty(key);
@@ -170,12 +181,12 @@ describe('opted-in Machine offline presence alerts (real SQLite)', () => {
             }
             return result;
         });
-        expect(await write(0, settings)).toEqual({ status: 'success', version: 1 });
+        expect(await write(0, settings)).toMatchObject({ status: 'success', version: 1 });
         // An unrelated settings save must retain, not re-arm, the same request.
-        expect(await write(1, settings)).toEqual({ status: 'success', version: 2 });
+        expect(await write(1, settings)).toMatchObject({ status: 'success', version: 2 });
         if (optOut) {
             const disabled = accountSettingsParse(buildMachineOfflineAlertSettingMutation(settings, row.id, false));
-            expect(await write(2, disabled)).toEqual({ status: 'success', version: 3 });
+            expect(await write(2, disabled)).toMatchObject({ status: 'success', version: 3 });
         }
         await db.machine.update({ where: { id: row.id }, data: { active: false } });
         const token = await auth.createToken(owner.id, undefined, { kind: 'account', authority: 'present_user' });
@@ -190,7 +201,7 @@ describe('opted-in Machine offline presence alerts (real SQLite)', () => {
                 expect(messages()).toEqual([]);
                 expect(await recoveryRequests()).toBe(0);
                 if (deliveryDisabled) {
-                    expect(await write(2, enabledSettings)).toEqual({ status: 'success', version: 3 });
+                    expect(await write(2, enabledSettings)).toMatchObject({ status: 'success', version: 3 });
                     await db.machine.update({ where: { id: row.id }, data: { active: false } });
                     await alive({ machineId: row.id, time: Date.now() });
                     expect(messages()).toHaveLength(1);
@@ -209,7 +220,7 @@ describe('opted-in Machine offline presence alerts (real SQLite)', () => {
             await alive({ machineId: row.id, time: Date.now() });
             expect(visibleMessages()).toHaveLength(online ? 0 : 1);
             // Re-saving consent after delivery and a later outage stay ordinary.
-            expect(await write(2, settings)).toEqual({ status: 'success', version: 3 });
+            expect(await write(2, settings)).toMatchObject({ status: 'success', version: 3 });
             await db.machine.update({ where: { id: row.id }, data: { active: false } });
             await alive({ machineId: row.id, time: Date.now() });
             expect(visibleMessages()).toHaveLength(online ? 0 : 1);

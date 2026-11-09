@@ -57,7 +57,7 @@ export function sessionProjectKeyContractTests(): void {
             mode: 'owner' as const, metadataLayoutVersion: 1 as const,
             expectedOwnerMetadata: ownerMetadata, ownerMetadata,
             sharedMetadata: { ciphertext: '{"v":1}', expectedVersion },
-            agentState: { ciphertext: '{}', expectedVersion },
+            agentState: { ciphertext: '{}', expectedVersion: 0 },
             ...(projectKey === undefined ? {} : { projectKey }),
         });
         const patch = (payload: unknown, accountId = owner.id) => app.inject({ method: 'PATCH',
@@ -83,7 +83,7 @@ export function sessionProjectKeyContractTests(): void {
             expect(sharedRow.projectKey).toBe('accepted-project');
             expect(sharedRow.ownerMetadata ?? null).toBeNull();
             const persisted = await db.session.findUniqueOrThrow({ where: { id: session.id } });
-            expect(persisted).toMatchObject({ projectKey: 'accepted-project', metadataVersion: 1, agentStateVersion: 1 });
+            expect(persisted).toMatchObject({ projectKey: 'accepted-project', metadataVersion: 1, agentStateVersion: 0 });
             const recipients = await db.accountChange.findMany({ where: { kind: 'session', entityId: session.id }, select: { accountId: true } });
             expect(recipients.map(row => row.accountId)).toEqual(expect.arrayContaining([owner.id, editor.id]));
 

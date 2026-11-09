@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import { acquireAccountSessionOwnerMetadataFenceInTx } from "@/app/encryption/accountSessionOwnerMetadataFence";
+import { resolveAccountVoiceSelection } from "@/app/session/follow/accountFollowService";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { registerConnectedAccountConfigurationRowsRoutes } from "@/app/account/connectedAccounts/registerConfigurationRowsRoutes";
@@ -150,6 +152,8 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("A
         const captured = deferred(), release = deferred();
         const transaction = db.$transaction;
         let paused = false;
+        let firstPid = 0;
+        let blockedPeer = false;
         // Schedule only the Prisma boundary: both HTTP writers and their
         // access decisions, scope merging, publication and persistence stay real.
         db.$transaction = new Proxy(transaction, { apply(target, receiver, args: unknown[]) {
@@ -165,6 +169,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("A
                         if (!paused && typeof query === "object" && query !== null && "select" in query
                             && typeof query.select === "object" && query.select !== null && "deliveryMutes" in query.select) {
                             paused = true;
+                            [{ pid: firstPid }] = await tx.$queryRaw<Array<{ pid: number }>>`SELECT pg_backend_pid() AS pid`;
                             captured.resolve();
                             await release.promise;
                         }
@@ -186,13 +191,16 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("A
                     while (!settled) {
                         const [{ waiting }] = await db.$queryRawUnsafe<Array<{ waiting: boolean }>>(
                             `SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE datname = current_database()
-                                AND wait_event_type = 'Lock' AND query LIKE '%"Account"%') AS waiting`,
+                                AND $1::int = ANY(pg_blocking_pids(pid))) AS waiting`, firstPid,
                         );
-                        if (waiting) break;
+                        // Session editors serialize at the Session resource
+                        // fence; an Account-query filter misses that waiter.
+                        if (waiting) { blockedPeer = true; break; }
                     }
                 } finally { release.resolve(); }
                 const responses = await Promise.all([first, second]);
                 expect(responses.map(response => response.statusCode)).toEqual([200, 200]);
+                expect(blockedPeer).toBe(true);
                 for (const response of responses) expect(ChangeDeliveryMuteResponseV1Schema.parse(response.json()))
                     .toEqual({ changed: true, disposition: "muted" });
                 db.$transaction = transaction;
@@ -451,19 +459,20 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("A
                 const callback = args[0];
                 if (typeof callback !== "function") return Reflect.apply(target, receiver, args);
                 return Reflect.apply(target, receiver, [async (tx: Tx) => {
-                    // Tag only this transaction without taking an extra read
-                    // snapshot before the production owner's first query.
-                    await tx.$executeRawUnsafe(`SET LOCAL application_name = '${observationName}'`);
                     let observedAttempt = false;
                     const interleave = async (run: () => Promise<unknown>, keyShare: boolean): Promise<unknown> => {
                         if (!observedAttempt) { observedAttempt = true; attempts++; }
                         if (interleaved) return run();
                         interleaved = true;
+                        // Entry admission already attributed this transaction. Retag
+                        // the consumed boundary without establishing a read snapshot.
+                        await tx.$executeRawUnsafe(`SET LOCAL application_name = '${observationName}'`);
                         // A non-key Account UPDATE is compatible with KEY
                         // SHARE. A key update, stronger lock or UPDATE waits.
                         expectedWait = !keyShare || peerChangesAccountKey;
                         const locked = deferred(), release = deferred();
                         const peer = Reflect.apply(transaction, db, [async (peerTx: Tx) => {
+                            if (peerChangesAccountKey) await acquireAccountSessionOwnerMetadataFenceInTx(peerTx, account.id, "exclusive");
                             await peerTx.account.update({ where: { id: account.id }, data: peerChangesAccountKey
                                 ? { encryptionMode: "e2ee", ...createSignedAccountContentBinding() }
                                 : operation === "manager-inactive" || operation === "delivery-mute-inactive" || operation === "delivery-mute-session-inactive"
@@ -750,9 +759,11 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("A
                                 sessionAutoFollowTeam: false, sessionAutoFollowGroup: false,
                             });
                         } else {
-                            expect(await db.accountSessionFollow.findUniqueOrThrow({ where: {
+                            const follow = await db.accountSessionFollow.findUniqueOrThrow({ where: {
                                 accountId_sessionId: { accountId: account.id, sessionId: session.id },
-                            } })).toMatchObject({ following: operation !== "follow-remove", includeInVoice: operation === "voice" });
+                            } });
+                            expect(follow).toMatchObject({ following: operation !== "follow-remove" });
+                            expect(resolveAccountVoiceSelection(follow) !== null).toBe(operation === "voice");
                         }
                         const committedCursor = (await db.account.findUniqueOrThrow({ where: { id: account.id } })).seq;
                         if (operation === "manager-cas") expect(committedCursor).toBe(1);

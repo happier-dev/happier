@@ -30,11 +30,20 @@ export async function updateSessionMessageAtCurrentRevisionInTx(params: Readonly
             where: { id: params.id, rowRevision: params.rowRevision },
             data: {
                 ...params.data,
+                // Changed opaque content/delivery cannot retain the previous body's timing proof.
+                ...((params.data.content !== undefined || params.data.deliveryResolution !== undefined)
+                    && params.data.usageTimingV1 === undefined ? { usageTimingV1: prismaRuntime.DbNull } : {}),
                 // A content correction cannot retain publication authority from the old ciphertext.
                 ...(params.data.content !== undefined && params.data.surfaceItemReference === undefined
                     ? { surfaceItemReference: prismaRuntime.DbNull } : {}),
             },
             select: SESSION_MESSAGE_WRITE_SELECT,
+        });
+        // Corrections bypass transcript insertion's parent cursor write.
+        await params.tx.session.update({
+            where: { id: updated.sessionId },
+            data: { updatedAt: new Date() },
+            select: { id: true },
         });
         notifySessionTranscriptMutationAfterCommit(params.tx, {
             kind: 'upsert',

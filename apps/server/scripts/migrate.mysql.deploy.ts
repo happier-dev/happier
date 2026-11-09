@@ -10,6 +10,7 @@ import {
 } from "../sources/app/session/systemRecords/sessionSystemRecordMigrationDeployment";
 import { resolveServerWorkspaceRoot, runPrismaCli } from "./prismaCli";
 import { join } from "node:path";
+import { runPluginCollectionUsageMigrationDeployment } from '../sources/app/plugins/data/collections/usageTotalsBackfill';
 
 export const MYSQL_VOICE_GRANT_PROVENANCE_MIGRATION =
     "20260729102000_add_voice_conversation_grant_provenance";
@@ -455,11 +456,11 @@ export async function runMysqlMigrationDeployMain(): Promise<void> {
                         provider: "mysql",
                         databaseUrl: String(env.DATABASE_URL ?? "").trim(),
                     }),
-                    deploy: async (stage) => await runPrismaCli({
-                        serverRoot,
-                        args: ["migrate", "deploy", "--schema", stage.schemaPath!],
-                        env,
-                    }),
+                    deploy: async (stage) => {
+                        await runPluginCollectionUsageMigrationDeployment({ ...stage, provider: 'mysql', databaseUrl: String(env.DATABASE_URL ?? '').trim(), env,
+                            deploy: async target => await runPrismaCli({ serverRoot, args: ['migrate', 'deploy', '--schema', target.schemaPath!], env }),
+                        });
+                    },
                     runFinalContractBackfill: async () => {
                         await runSessionSystemRecordFinalContractBackfill({
                             provider: "mysql",

@@ -8,6 +8,7 @@ import tweetnacl from 'tweetnacl';
 import { resolveSocketMaxHttpBufferSizeFromEnv } from './transportBudget';
 import { getMachineInstallationSocketRoom } from '../socketRooms';
 import { resolveMachineAdmission } from '@/app/machines/machineAccess';
+import { eventRouter } from '@/app/events/eventRouter';
 
 import { resolveMachineLiveStreamRelayCaps } from '../../machines/peer/mediation/stream/relayCaps';
 import { applyMachineLiveStreamRelayBackpressure } from '../../machines/peer/mediation/stream/metering';
@@ -67,12 +68,13 @@ const pendingStartAdmissionsByKey = new Map<MachineLiveStreamKey, Promise<void>>
 const VIEWER_SOCKET_REQUIRED_REASON = 'viewer_socket_required';
 
 function buildStreamKey(input: Readonly<{
-    userId: string;
     sourceMachineId: string;
     targetMachineId: string;
     streamId: string;
 }>): MachineLiveStreamKey {
-    return `${input.userId}:${input.sourceMachineId}:${input.targetMachineId}:${input.streamId}`;
+    // Machine ids are global. Both the custodian source and its admitted guest viewer
+    // address the same state; socket authority is checked against that admitted state.
+    return JSON.stringify([input.sourceMachineId, input.targetMachineId, input.streamId]);
 }
 
 function readMachineId(socket: Socket): string {
@@ -109,6 +111,7 @@ function isLegacyTargetMachineSocket(input: Readonly<{
 }
 
 function isConsumerControlSocketForState(input: Readonly<{
+    userId: string;
     socketMachineId: string;
     socketViewerId: string;
     envelope: MachineLiveStreamRelayEnvelopeV1;
@@ -117,11 +120,27 @@ function isConsumerControlSocketForState(input: Readonly<{
     const state = input.state;
     if (!state) return isLegacyTargetMachineSocket(input);
     if (state.viewerSocketId) {
-        return input.socketViewerId !== ''
+        return input.userId === readViewerAccountId(state)
+            && input.socketViewerId !== ''
             && input.socketViewerId === state.viewerSocketId
             && input.envelope.viewerSocketId === state.viewerSocketId;
     }
-    return isLegacyTargetMachineSocket(input);
+    return input.userId === state.userId && isLegacyTargetMachineSocket(input);
+}
+
+function readViewerAccountId(state: MachineLiveStreamRelayState): string {
+    const payload = state.startRequest.authorization?.payload;
+    return payload?.v === 2 ? payload.viewerAccountId : state.userId;
+}
+
+function hasSameAuthorizationBinding(previous: MachineLiveStreamStartRequestV1, next: MachineLiveStreamStartRequestV1): boolean {
+    const previousPayload = previous.authorization?.payload;
+    const nextPayload = next.authorization?.payload;
+    if (previousPayload?.v !== nextPayload?.v) return false;
+    if (previousPayload?.v !== 2 || nextPayload?.v !== 2) return true;
+    return previousPayload.viewerAccountId === nextPayload.viewerAccountId
+        && previousPayload.sourceMachineInstallationId === nextPayload.sourceMachineInstallationId
+        && JSON.stringify(previousPayload.personalSourceAdmission) === JSON.stringify(nextPayload.personalSourceAdmission);
 }
 
 function emitError(socket: Socket, error: string): void {
@@ -133,19 +152,18 @@ function emitError(socket: Socket, error: string): void {
 
 function emitToMachine(params: Readonly<{
     io: RelayIo;
-    userId: string;
     machineId: string;
     envelope: MachineLiveStreamRelayEnvelopeV1;
 }>): void {
     const streamId = readEnvelopeStreamId(params.envelope);
     if (!streamId) return;
-    const state = streamStateByKey.get(buildStreamKey({ userId: params.userId,
+    const state = streamStateByKey.get(buildStreamKey({
         sourceMachineId: params.envelope.sourceMachineId, targetMachineId: params.envelope.targetMachineId, streamId }));
     if (!state) return;
     const installationId = params.machineId === state.sourceMachineId ? state.sourceMachineInstallationId
         : params.machineId === state.targetMachineId ? state.targetMachineInstallationId : null;
     if (!installationId) return;
-    params.io.to(getMachineInstallationSocketRoom(params.userId, params.machineId, installationId)).emit(MACHINE_LIVE_STREAM_SOCKET_EVENT, params.envelope);
+    params.io.to(getMachineInstallationSocketRoom(state.userId, params.machineId, installationId)).emit(MACHINE_LIVE_STREAM_SOCKET_EVENT, params.envelope);
 }
 
 type EmitToConsumerResult =
@@ -174,7 +192,6 @@ function emitToConsumer(params: Readonly<{
     }
     emitToMachine({
         io: params.io,
-        userId: params.userId,
         machineId: params.targetMachineId,
         envelope: params.envelope,
     });
@@ -408,7 +425,6 @@ function emitCapFailure(input: Readonly<{
     }
     emitToMachine({
         io: input.io,
-        userId: input.userId,
         machineId: input.envelope.sourceMachineId,
         envelope: controlEnvelope,
     });
@@ -434,36 +450,14 @@ function emitCapFailure(input: Readonly<{
 function validateRelayAuthorization(input: Readonly<{
     userId: string;
     startRequest: MachineLiveStreamStartRequestV1;
-    nowMs: number;
     trustRoots?: readonly RelayAuthorizationTrustRoot[];
 }>): string | null {
     const authorization = input.startRequest.authorization;
     if (!authorization) return 'live_stream_authorization_required';
     const payload = authorization.payload;
-    if (payload.exp <= input.nowMs) return 'live_stream_authorization_expired';
-    if (payload.iat > input.nowMs) return 'live_stream_authorization_not_yet_valid';
     if (payload.accountId !== input.userId) return 'live_stream_authorization_mismatch';
-    if (
-        payload.sourceMachineId !== input.startRequest.sourceMachineId
-        || payload.targetMachineId !== input.startRequest.targetMachineId
-        || payload.flowKind !== 'live_stream'
-        || payload.routeKind !== input.startRequest.routeKind
-        || payload.streamId !== input.startRequest.streamId
-        || payload.streamFamily !== input.startRequest.streamFamily
-        || payload.sourceId !== input.startRequest.sourceId
-        || payload.codecId !== input.startRequest.codecId
-        || JSON.stringify(payload.viewerCodecs) !== JSON.stringify(input.startRequest.viewerCodecs)
-        || payload.maxBitrateBps !== input.startRequest.maxBitrateBps
-        || payload.maxFramesPerSecond !== input.startRequest.maxFramesPerSecond
-        || payload.maxFrameBytes !== input.startRequest.maxFrameBytes
-        || payload.maxDurationMs !== input.startRequest.maxDurationMs
-        || payload.maxTotalBytes !== input.startRequest.maxTotalBytes
-        // The viewer target is part of the signed grant: a daemon cannot re-point a grant
-        // minted for one tab at a different viewer socket.
-        || payload.viewerSocketId !== input.startRequest.viewerSocketId
-    ) {
-        return 'live_stream_authorization_mismatch';
-    }
+    // Protocol's parsed StartRequest owns request/payload consistency, including the
+    // personal source binding. Authenticate its issuer and principal before using its recipient.
     const publicKey = findRelayAuthorizationPublicKey(input.trustRoots, authorization.signature.keyId);
     if (!publicKey) return 'live_stream_authorization_unknown_key';
     const signature = fromBase64Url(authorization.signature.valueBase64Url);
@@ -474,6 +468,15 @@ function validateRelayAuthorization(input: Readonly<{
     if (!tweetnacl.sign.detached.verify(signingInput, signature, publicKey)) {
         return 'live_stream_authorization_bad_signature';
     }
+    return null;
+}
+
+function validateRelayAuthorizationTime(
+    authorization: NonNullable<MachineLiveStreamStartRequestV1['authorization']>,
+    nowMs: number,
+): string | null {
+    if (authorization.payload.exp <= nowMs) return 'live_stream_authorization_expired';
+    if (authorization.payload.iat > nowMs) return 'live_stream_authorization_not_yet_valid';
     return null;
 }
 
@@ -533,7 +536,6 @@ function emitKeyframeRequired(input: Readonly<{
     };
     emitToMachine({
         io: input.io,
-        userId: input.userId,
         machineId: input.state.sourceMachineId,
         envelope: controlEnvelope,
     });
@@ -819,16 +821,15 @@ export function machineLiveStreamRelayHandler(
         const envelope = createStateStopControlEnvelope(state, 'live_stream_authorization_expired');
         emitToConsumer({ io: ctx.io, userId: state.userId, sourceMachineId: state.sourceMachineId,
             targetMachineId: state.targetMachineId, viewerSocketId: state.viewerSocketId, envelope });
-        emitToMachine({ io: ctx.io, userId: state.userId, machineId: state.sourceMachineId, envelope });
+        emitToMachine({ io: ctx.io, machineId: state.sourceMachineId, envelope });
         closeStreamWithObservability({ streamKey, kind: 'flow.errored', reasonCode: 'live_stream_authorization_expired' });
     };
 
     const closeStreamsForViewerSocket = (viewerSocketId: string): void => {
         for (const [streamKey, state] of [...streamStateByKey.entries()]) {
-            if (state.userId !== userId || state.viewerSocketId !== viewerSocketId) continue;
+            if (readViewerAccountId(state) !== userId || state.viewerSocketId !== viewerSocketId) continue;
             emitToMachine({
                 io: ctx.io,
-                userId,
                 machineId: state.sourceMachineId,
                 envelope: {
                     v: 1,
@@ -854,6 +855,21 @@ export function machineLiveStreamRelayHandler(
         }
     };
 
+    // The source connection owns its relay states. Guest access loss does not disconnect
+    // the custodian's Machine socket, so consume the existing local/cluster withdrawal.
+    const releaseMachineAccessLoss = readMachineId(socket) ? eventRouter.onMachineAccessLoss(input => {
+        for (const streamKey of socketStreamKeys) {
+            const state = streamStateByKey.get(streamKey);
+            if (!state || state.startRequest.authorization?.payload.v !== 2
+                || state.sourceMachineId !== input.machineId || readViewerAccountId(state) !== input.accountId) continue;
+            const envelope = createStateStopControlEnvelope(state, 'machine_unavailable');
+            emitToConsumer({ io: ctx.io, userId: state.userId, sourceMachineId: state.sourceMachineId,
+                targetMachineId: state.targetMachineId, viewerSocketId: state.viewerSocketId, envelope });
+            emitToMachine({ io: ctx.io, machineId: state.sourceMachineId, envelope });
+            closeStreamWithObservability({ streamKey, kind: 'flow.aborted', reasonCode: 'machine_unavailable' });
+        }
+    }) : undefined;
+
     const handleEnvelope = async (envelope: MachineLiveStreamRelayEnvelopeV1): Promise<void> => {
         if (disconnected) return;
         const socketMachineId = readMachineId(socket);
@@ -865,7 +881,16 @@ export function machineLiveStreamRelayHandler(
             return;
         }
 
-        const isSourceSocket = socketMachineId !== '' && envelope.sourceMachineId === socketMachineId;
+        const streamId = readEnvelopeStreamId(envelope);
+        const activeState = streamId ? streamStateByKey.get(buildStreamKey({
+            sourceMachineId: envelope.sourceMachineId, targetMachineId: envelope.targetMachineId, streamId,
+        })) : undefined;
+        const isSourceSocket = socketMachineId !== '' && envelope.sourceMachineId === socketMachineId
+            && (!activeState || (activeState.userId === userId
+                && socket.data.verifiedMachineInstallationId === activeState.sourceMachineInstallationId));
+        const isTargetControlSocket = isConsumerControlSocketForState({
+            userId, socketMachineId, socketViewerId, envelope, state: activeState,
+        });
         const isControlKind = (
             envelope.message.kind === 'control'
             || envelope.message.kind === 'sideband_control'
@@ -883,7 +908,7 @@ export function machineLiveStreamRelayHandler(
             return;
         }
 
-        if (ctx.serverRoutedLiveStreamEnabled !== true || !ctx.relayCaps) {
+        if (envelope.message.kind !== 'start' && (ctx.serverRoutedLiveStreamEnabled !== true || !ctx.relayCaps)) {
             emitError(socket, 'server_routed_live_stream_disabled');
             return;
         }
@@ -909,14 +934,23 @@ export function machineLiveStreamRelayHandler(
             } else {
                 return;
             }
-            const streamKey = buildStreamKey({ userId, sourceMachineId: envelope.sourceMachineId,
+            const streamKey = buildStreamKey({ sourceMachineId: envelope.sourceMachineId,
                 targetMachineId: envelope.targetMachineId, streamId });
             const state = streamStateByKey.get(streamKey);
-            if (state && !(await readCurrentInstallations(state.sourceMachineId, state.targetMachineId, state))) {
+            if (state && !isSourceSocket && !isTargetControlSocket) {
+                emitError(socket, envelope.message.kind === 'control' && envelope.message.control.kind === 'ack'
+                    ? 'target_machine_ack_required' : 'target_machine_control_required');
+                return;
+            }
+            // V2 consumes the exact personal-source admission and installed source socket.
+            // Machine revocation disconnects the source; guest access loss closes the state above.
+            // V1 keeps its existing current-Machine admission contract.
+            if (state && state.startRequest.authorization?.payload.v !== 2
+                && !(await readCurrentInstallations(state.sourceMachineId, state.targetMachineId, state))) {
                 const stop = createStateStopControlEnvelope(state, 'machine_unavailable');
                 emitToConsumer({ io: ctx.io, userId, sourceMachineId: state.sourceMachineId,
                     targetMachineId: state.targetMachineId, viewerSocketId: state.viewerSocketId, envelope: stop });
-                emitToMachine({ io: ctx.io, userId, machineId: state.sourceMachineId, envelope: stop });
+                emitToMachine({ io: ctx.io, machineId: state.sourceMachineId, envelope: stop });
                 closeStreamWithObservability({ streamKey, kind: 'flow.errored', reasonCode: 'machine_unavailable' });
                 emitError(socket, 'machine_unavailable');
                 return;
@@ -931,25 +965,44 @@ export function machineLiveStreamRelayHandler(
             const { startRequest } = envelope.message;
             const serverCaps = ctx.relayCaps;
             const streamKey = buildStreamKey({
-                userId,
                 sourceMachineId: envelope.sourceMachineId,
                 targetMachineId: envelope.targetMachineId,
                 streamId: startRequest.streamId,
             });
+            let verifiedViewerSocketId = '';
+            const refuseStart = (reasonCode: string) => {
+                // The source has already started capture before server admission settles.
+                // Stop that exact authenticated socket; never trust a supplied viewer id.
+                socket.emit(MACHINE_LIVE_STREAM_SOCKET_EVENT, createControlEnvelope({
+                    ...envelope, viewerSocketId: startRequest.viewerSocketId,
+                }, { v: 1, streamId: startRequest.streamId, kind: 'stop', reasonCode }));
+                if (verifiedViewerSocketId) emitToConsumer({
+                    io: ctx.io, userId, sourceMachineId: envelope.sourceMachineId,
+                    targetMachineId: envelope.targetMachineId, viewerSocketId: verifiedViewerSocketId,
+                    envelope: { v: 1, sourceMachineId: envelope.sourceMachineId,
+                        targetMachineId: envelope.targetMachineId, viewerSocketId: verifiedViewerSocketId,
+                        message: { kind: 'start_response', startResponse: {
+                            v: 1, streamId: startRequest.streamId, accepted: false,
+                            routeKind: 'server_relay', disabledReason: reasonCode,
+                        } },
+                    },
+                });
+                emitError(socket, reasonCode);
+            };
+            let admissionCancelled = false;
+            let releaseAdmissionAccessLoss: (() => void) | undefined;
             const admission = (async () => {
-                let nowMs = ctx.nowMs?.() ?? Date.now();
                 if (
                     startRequest.routeKind !== 'server_relay'
                     || startRequest.sourceMachineId !== envelope.sourceMachineId
                     || startRequest.targetMachineId !== envelope.targetMachineId
                 ) {
-                    emitError(socket, 'invalid_live_stream_start');
+                    refuseStart('invalid_live_stream_start');
                     return;
                 }
                 const authorizationFailure = validateRelayAuthorization({
                     userId,
                     startRequest,
-                    nowMs,
                     trustRoots: ctx.relayAuthorizationTrustRoots,
                 });
                 if (authorizationFailure) {
@@ -959,13 +1012,25 @@ export function machineLiveStreamRelayHandler(
                         kind: 'flow.denied',
                         reasonCode: authorizationFailure,
                     });
-                    emitError(socket, authorizationFailure);
+                    refuseStart(authorizationFailure);
                     return;
                 }
                 const viewerSocketId = startRequest.viewerSocketId ?? '';
+                const authorizationPayload = startRequest.authorization!.payload;
+                if (authorizationPayload.v === 2) {
+                    // Access loss can arrive while admission awaits network or storage boundaries.
+                    releaseAdmissionAccessLoss = eventRouter.onMachineAccessLoss(input => {
+                        if (admissionCancelled || input.accountId !== authorizationPayload.viewerAccountId
+                            || input.machineId !== envelope.sourceMachineId) return;
+                        admissionCancelled = true;
+                        socket.emit(MACHINE_LIVE_STREAM_SOCKET_EVENT, createControlEnvelope(envelope, {
+                            v: 1, streamId: startRequest.streamId, kind: 'stop', reasonCode: 'machine_unavailable',
+                        }));
+                    });
+                }
                 if (viewerSocketId) {
                     const viewerOwned = await ctx.verifyViewerSocketOwnership?.({
-                        accountId: userId,
+                        accountId: authorizationPayload.v === 2 ? authorizationPayload.viewerAccountId : userId,
                         socketId: viewerSocketId,
                     });
                     if (viewerOwned !== true) {
@@ -975,9 +1040,14 @@ export function machineLiveStreamRelayHandler(
                             kind: 'flow.denied',
                             reasonCode: 'viewer_socket_not_owned',
                         });
-                        emitError(socket, 'viewer_socket_not_owned');
+                        refuseStart('viewer_socket_not_owned');
                         return;
                     }
+                    verifiedViewerSocketId = viewerSocketId;
+                }
+                if (ctx.serverRoutedLiveStreamEnabled !== true || !serverCaps) {
+                    refuseStart('server_routed_live_stream_disabled');
+                    return;
                 }
                 const expiresAtMs = startRequest.authorization?.payload.exp;
                 if (!expiresAtMs) {
@@ -987,7 +1057,7 @@ export function machineLiveStreamRelayHandler(
                         kind: 'flow.denied',
                         reasonCode: 'live_stream_authorization_required',
                     });
-                    emitError(socket, 'live_stream_authorization_required');
+                    refuseStart('live_stream_authorization_required');
                     return;
                 }
                 const effectiveCaps = resolveMachineLiveStreamRelayCaps({
@@ -1002,7 +1072,7 @@ export function machineLiveStreamRelayHandler(
                         kind: 'flow.denied',
                         reasonCode: capsFailure,
                     });
-                    emitError(socket, capsFailure);
+                    refuseStart(capsFailure);
                     return;
                 }
 
@@ -1010,21 +1080,23 @@ export function machineLiveStreamRelayHandler(
                 try { encryptionMode = await ctx.resolveAccountEncryptionMode?.() ?? null; } catch { /* Fail closed. */ }
                 if (disconnected) return;
                 if (encryptionMode !== 'plain' && encryptionMode !== 'e2ee') {
-                    emitError(socket, 'stream_encryption_mode_unavailable');
+                    refuseStart('stream_encryption_mode_unavailable');
                     return;
                 }
                 const installations = await readCurrentInstallations(envelope.sourceMachineId, envelope.targetMachineId, streamStateByKey.get(streamKey));
-                if (!installations || disconnected) {
-                    emitError(socket, 'machine_unavailable');
+                if (!installations || disconnected || admissionCancelled || (authorizationPayload.v === 2
+                    && installations.sourceMachineInstallationId !== authorizationPayload.sourceMachineInstallationId)) {
+                    refuseStart('machine_unavailable');
                     return;
                 }
                 // Ownership and Account reads can outlive the signed admission window.
                 // Re-sample at the synchronous state/resource admission boundary.
-                nowMs = ctx.nowMs?.() ?? Date.now();
-                if (expiresAtMs <= nowMs) {
+                const nowMs = ctx.nowMs?.() ?? Date.now();
+                const timeFailure = validateRelayAuthorizationTime(startRequest.authorization!, nowMs);
+                if (timeFailure) {
                     emitObservability({ streamId: startRequest.streamId, sourceMachineId: envelope.sourceMachineId,
-                        kind: 'flow.denied', reasonCode: 'live_stream_authorization_expired' });
-                    emitError(socket, 'live_stream_authorization_expired');
+                        kind: 'flow.denied', reasonCode: timeFailure });
+                    refuseStart(timeFailure);
                     return;
                 }
 
@@ -1037,14 +1109,15 @@ export function machineLiveStreamRelayHandler(
                     removeStream(streamKey);
                 }
                 const currentState = streamStateByKey.get(streamKey);
-                if (currentState && currentState.viewerSocketId !== viewerSocketId) {
+                if (currentState && (currentState.viewerSocketId !== viewerSocketId
+                    || !hasSameAuthorizationBinding(currentState.startRequest, startRequest))) {
                     emitObservability({
                         streamId: startRequest.streamId,
                         sourceMachineId: envelope.sourceMachineId,
                         kind: 'flow.denied',
                         reasonCode: 'live_stream_viewer_mismatch',
                     });
-                    emitError(socket, 'live_stream_viewer_mismatch');
+                    refuseStart('live_stream_viewer_mismatch');
                     return;
                 }
                 // A still-live state for this key means this start is an idempotent
@@ -1065,7 +1138,7 @@ export function machineLiveStreamRelayHandler(
                             kind: 'flow.denied',
                             reasonCode: concurrencyFailure,
                         });
-                        emitError(socket, concurrencyFailure);
+                        refuseStart(concurrencyFailure);
                         return;
                     }
                 }
@@ -1099,14 +1172,14 @@ export function machineLiveStreamRelayHandler(
                     });
                 }
             })();
-            await admission;
+            try { await admission; }
+            finally { releaseAdmissionAccessLoss?.(); }
             return;
         }
 
         if (envelope.message.kind === 'renew') {
             const { startRequest } = envelope.message;
             const streamKey = buildStreamKey({
-                userId,
                 sourceMachineId: envelope.sourceMachineId,
                 targetMachineId: envelope.targetMachineId,
                 streamId: startRequest.streamId,
@@ -1116,14 +1189,14 @@ export function machineLiveStreamRelayHandler(
                 emitError(socket, 'live_stream_start_required');
                 return;
             }
-            if (!isSourceSocket && !isConsumerControlSocketForState({ socketMachineId, socketViewerId, envelope, state })) {
+            if (!isSourceSocket && !isTargetControlSocket) {
                 emitError(socket, 'target_machine_control_required');
                 return;
             }
             const nowMs = ctx.nowMs?.() ?? Date.now();
             const authorizationFailure = validateRelayAuthorization({
-                userId, startRequest, nowMs, trustRoots: ctx.relayAuthorizationTrustRoots,
-            });
+                userId: state.userId, startRequest, trustRoots: ctx.relayAuthorizationTrustRoots,
+            }) ?? (startRequest.authorization ? validateRelayAuthorizationTime(startRequest.authorization, nowMs) : null);
             if (authorizationFailure) {
                 emitError(socket, authorizationFailure);
                 return;
@@ -1138,6 +1211,10 @@ export function machineLiveStreamRelayHandler(
                 emitError(socket, 'live_stream_authorization_mismatch');
                 return;
             }
+            if (!hasSameAuthorizationBinding(state.startRequest, startRequest)) {
+                emitError(socket, 'live_stream_authorization_mismatch');
+                return;
+            }
             const expiresAtMs = startRequest.authorization!.payload.exp;
             if (expiresAtMs <= state.expiresAtMs) {
                 emitError(socket, 'live_stream_authorization_mismatch');
@@ -1149,7 +1226,7 @@ export function machineLiveStreamRelayHandler(
             }
             state.expiresAtMs = expiresAtMs;
             state.startRequest = startRequest;
-            if (!isSourceSocket) emitToMachine({ io: ctx.io, userId, machineId: state.sourceMachineId, envelope });
+            if (!isSourceSocket) emitToMachine({ io: ctx.io, machineId: state.sourceMachineId, envelope });
             emitToConsumer({
                 io: ctx.io, userId, sourceMachineId: state.sourceMachineId, targetMachineId: state.targetMachineId,
                 viewerSocketId: state.viewerSocketId,
@@ -1164,7 +1241,6 @@ export function machineLiveStreamRelayHandler(
                 return;
             }
             const streamKey = buildStreamKey({
-                userId,
                 sourceMachineId: envelope.sourceMachineId,
                 targetMachineId: envelope.targetMachineId,
                 streamId: envelope.message.frame.streamId,
@@ -1223,7 +1299,6 @@ export function machineLiveStreamRelayHandler(
                 return;
             }
             const streamKey = buildStreamKey({
-                userId,
                 sourceMachineId: envelope.sourceMachineId,
                 targetMachineId: envelope.targetMachineId,
                 streamId: receipt.streamId,
@@ -1259,18 +1334,11 @@ export function machineLiveStreamRelayHandler(
 
         if (envelope.message.kind === 'control') {
             const streamKey = buildStreamKey({
-                userId,
                 sourceMachineId: envelope.sourceMachineId,
                 targetMachineId: envelope.targetMachineId,
                 streamId: envelope.message.control.streamId,
             });
             const state = streamStateByKey.get(streamKey);
-            const isTargetControlSocket = isConsumerControlSocketForState({
-                socketMachineId,
-                socketViewerId,
-                envelope,
-                state,
-            });
             if (envelope.message.control.kind === 'ack') {
                 if (!state && socketViewerId) {
                     emitError(socket, 'live_stream_start_required');
@@ -1304,7 +1372,6 @@ export function machineLiveStreamRelayHandler(
                 // admitted acknowledgement to produce its next frame.
                 emitToMachine({
                     io: ctx.io,
-                    userId,
                     machineId: state.sourceMachineId,
                     envelope,
                 });
@@ -1340,7 +1407,6 @@ export function machineLiveStreamRelayHandler(
                 // Consumer-initiated control flows to the source machine.
                 emitToMachine({
                     io: ctx.io,
-                    userId,
                     machineId: envelope.sourceMachineId,
                     envelope,
                 });
@@ -1359,7 +1425,6 @@ export function machineLiveStreamRelayHandler(
 
         if (envelope.message.kind === 'sideband_control') {
             const streamKey = buildStreamKey({
-                userId,
                 sourceMachineId: envelope.sourceMachineId,
                 targetMachineId: envelope.targetMachineId,
                 streamId: envelope.message.control.streamId,
@@ -1369,12 +1434,6 @@ export function machineLiveStreamRelayHandler(
                 emitError(socket, 'stream_payload_mode_mismatch');
                 return;
             }
-            const isTargetControlSocket = isConsumerControlSocketForState({
-                socketMachineId,
-                socketViewerId,
-                envelope,
-                state,
-            });
             if (!state && socketViewerId) {
                 emitError(socket, 'live_stream_start_required');
                 return;
@@ -1395,7 +1454,6 @@ export function machineLiveStreamRelayHandler(
             }
             emitToMachine({
                 io: ctx.io,
-                userId,
                 machineId: envelope.sourceMachineId,
                 envelope,
             });
@@ -1413,7 +1471,7 @@ export function machineLiveStreamRelayHandler(
         const envelope = parsed.data;
         const streamId = readEnvelopeStreamId(envelope);
         if (!streamId) { emitError(socket, 'invalid_live_stream_payload'); return; }
-        const streamKey = buildStreamKey({ userId, sourceMachineId: envelope.sourceMachineId, targetMachineId: envelope.targetMachineId, streamId });
+        const streamKey = buildStreamKey({ sourceMachineId: envelope.sourceMachineId, targetMachineId: envelope.targetMachineId, streamId });
         // Current DB admission is asynchronous. Preserve the existing stream arrival
         // order across source frames and viewer controls while each effect is checked.
         const previous = pendingStartAdmissionsByKey.get(streamKey);
@@ -1425,6 +1483,7 @@ export function machineLiveStreamRelayHandler(
 
     socket.on('disconnect', () => {
         disconnected = true;
+        releaseMachineAccessLoss?.();
         const viewerSocketId = isUserScopedSocket(socket) ? socket.id : '';
         if (viewerSocketId) closeStreamsForViewerSocket(viewerSocketId);
         for (const streamKey of socketStreamKeys) {

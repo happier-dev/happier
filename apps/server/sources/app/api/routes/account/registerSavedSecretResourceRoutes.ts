@@ -4,6 +4,7 @@ import { z } from "zod/mini";
 import { SavedSecretResourceActionErrorV1Schema, SavedSecretResourceEnvelopeRepairInputV1Schema, SavedSecretResourceEnvelopeRepairOutputV1Schema, SavedSecretResourceRecipientEnvelopeInputV1Schema, SharedSavedSecretCreateInputV1Schema, SharedSavedSecretDeleteInputV1Schema, SharedSavedSecretDeleteOutputV1Schema, SharedSavedSecretGrantsSetInputV1Schema, SharedSavedSecretListOutputV1Schema, SharedSavedSecretMutationOutputV1Schema, SharedSavedSecretPromoteInputV1Schema, SharedSavedSecretPromoteOutputV1Schema, SharedSavedSecretUpdateInputV1Schema } from '@happier-dev/protocol/account/settings/savedSecretResourceActionsV1';
 import { SavedSecretResourceMaterialsResponseV1Schema, SavedSecretResourceEnvelopeCensusRequestV1Schema, SavedSecretResourceEnvelopeCensusResponseV1Schema } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
 import { inReadSnapshot, inTx } from "@/storage/inTx";
+import { getDbProviderFromEnv } from '@/storage/prisma';
 import { AccountSettingsPublicationConflict } from '@/app/accountSettings/writeAccountSettingsInTx';
 import { readUserKvMutationConflict } from '@/app/kv/kvMutate';
 import { type Fastify } from "../../types";
@@ -84,7 +85,7 @@ function savedSecretResourceErrorHttpStatus(
     if (error === "forbidden" || error === "recipient_mode_unsupported") return 403;
     if (error === "resource_not_found") return missingResourceStatus;
     if (error === "resource_changed" || error === "recipient_changed"
-        || error === "settings_conflict" || error === "references_conflict") return 409;
+        || error === "settings_conflict" || error === "references_conflict" || error === "account_mode_mismatch") return 409;
     return 400;
 }
 
@@ -356,7 +357,12 @@ export function registerSavedSecretResourceRoutes(app: Fastify): void {
             storedContent: body.storedContent,
             ...(body.toMode ? { toMode: body.toMode } : {}),
             keyEnvelopes,
-        }), { /* Secret recipient keys, effective grants and cross-owner reference censuses must stay coherent. */ isolationLevel: "Serializable" });
+        }), {
+            // The owner serializes the complete Account audience before its
+            // mode/key reads and Secret CAS. PostgreSQL must refresh the
+            // pre-admission census snapshot after waiting for that fence.
+            isolationLevel: getDbProviderFromEnv(process.env, 'postgres') === 'postgres' ? 'ReadCommitted' : 'Serializable',
+        });
         if (!result.ok) {
             return reply.code(savedSecretResourceErrorHttpStatus(result.error, 404)).send({ error: result.error });
         }

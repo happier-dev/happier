@@ -10,7 +10,8 @@ import { markAccountChanged } from '@/app/changes/markAccountChanged';
 import { withAuthenticatedTestApp } from '@/app/api/testkit/sqliteFastify';
 import { registerMachineAccessRoutes } from '@/app/api/routes/machines/machineAccessRoutes';
 import { createSignedAccountContentBinding } from '@/testkit/accountEncryption';
-import { readMachineRecipientCensusInTx, resolveMachineAdmissionInTx, resolveMachineAdmissionsInTx } from './machineAccess';
+import { acquireMachineAccessPublicationLocksInTx, readMachineRecipientCensusInTx, resolveMachineAdmissionInTx, resolveMachineAdmissionsInTx } from './machineAccess';
+import { observePrismaReads } from '@/testkit/observePrismaReads';
 import { readArtifactRecipientCensusInTx, commitArtifactRecipientKeyEnvelopesInTx, readArtifactHeaderForCallerInTx } from '@/app/artifacts/artifactAccessService';
 import { removeTeamMemberForActorInTx } from '@/app/teams/memberships/memberAdministration';
 
@@ -70,6 +71,32 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('M
         await db.$connect();
     });
     afterAll(async () => { await db.$disconnect(); });
+
+    it('acquires its audience once at admission and once at canonical publication', async () => {
+        const f = await fixture();
+        let reads: readonly string[] = [];
+        let audienceQueries = 0;
+        await inTx(async tx => {
+            const observed = observePrismaReads(tx, ['machine']);
+            reads = observed.reads;
+            // Count the same audience acquisition before and after the canonical
+            // narrow membership projection replaces the full model read.
+            const traced = new Proxy(observed.tx, { get(target, property, receiver) {
+                const value = Reflect.get(target, property, receiver);
+                if (property !== '$queryRawUnsafe') return typeof value === 'function' ? value.bind(target) : value;
+                return async (...args: unknown[]) => {
+                    if (typeof args[0] === 'string' && args[0].includes('WITH selected AS')) audienceQueries++;
+                    return Reflect.apply(value, target, args);
+                };
+            } });
+            await acquireMachineAccessPublicationLocksInTx(traced, f.machine.id);
+            await markAccountChanged(traced, { accountId: f.owner.id, kind: 'machine', entityId: f.machine.id });
+        });
+        expect(reads.length + audienceQueries).toBe(2);
+        expect(await db.accountChange.findFirst({ where: {
+            accountId: f.owner.id, kind: 'machine', entityId: f.machine.id,
+        } })).toMatchObject({ entityId: f.machine.id });
+    });
 
     it('skips a Resource recipient whose Team removal committed between census and PATCH', async () => {
         const owner = await db.account.create({ data: { encryptionMode: 'e2ee', ...createSignedAccountContentBinding() } });
@@ -182,7 +209,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('M
             });
             expect(await db.machineAccountGrant.findUnique({ where: { machineId_accountId: { machineId: f.machine.id, accountId: f.recipient.id } } }))
                 .toEqual(phase === 'upgrade' ? expect.objectContaining({ accessLevel: 'admin' }) : null);
-            expect(await db.accountChange.findMany({ where: { kind: 'machine', entityId: f.machine.id },
+            expect(await db.accountChange.findMany({ where: { kind: 'machineRecipientAccess', entityId: f.machine.id },
                 select: { accountId: true }, orderBy: { accountId: 'asc' } }))
                 .toEqual([f.owner.id, f.recipient.id].sort().map(accountId => ({ accountId })));
         } finally {
@@ -213,7 +240,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('M
             });
             expect(await db.machineAccountGrant.findUniqueOrThrow({ where: { machineId_accountId: { machineId: f.machine.id, accountId: f.recipient.id } } }))
                 .toMatchObject({ accessLevel: change === 'audience' ? 'admin' : 'view' });
-            expect(await db.accountChange.count({ where: { kind: 'machine', entityId: f.machine.id, accountId: manager.id } }))
+            expect(await db.accountChange.count({ where: { kind: 'machineRecipientAccess', entityId: f.machine.id, accountId: manager.id } }))
                 .toBe(change === 'audience' ? 1 : 0);
         } finally { restore(); }
     });
@@ -225,6 +252,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('M
         const f = await fixture();
         const member = await db.account.create({ data: { id: `a-${randomUUID()}`, encryptionMode: 'plain' } });
         const team = await db.team.create({ data: { name: 'Prospective audience' } });
+        await db.teamMembership.create({ data: { teamId: team.id, accountId: f.owner.id, role: 'member' } });
         const group = await db.teamGroup.create({ data: { teamId: team.id, name: 'Prospective group', nameKey: randomUUID() } });
         vi.stubEnv('HAPPIER_DB_TX_MAX_RETRIES', retries);
         const restore = beforeAdmissionFence(async () => {
@@ -244,7 +272,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('M
             const where = { machineId: f.machine.id };
             expect(kind === 'team' ? await db.machineTeamGrant.count({ where }) : await db.machineGroupGrant.count({ where }))
                 .toBe(retries === '0' ? 0 : 1);
-            expect(await db.accountChange.count({ where: { accountId: member.id, kind: 'machine', entityId: f.machine.id } }))
+            expect(await db.accountChange.count({ where: { accountId: member.id, kind: 'machineRecipientAccess', entityId: f.machine.id } }))
                 .toBe(retries === '0' ? 0 : 1);
         } finally { restore(); vi.unstubAllEnvs(); }
     });

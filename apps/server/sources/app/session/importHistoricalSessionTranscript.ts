@@ -1,3 +1,4 @@
+import type { UsageTimingBoundsV1 } from '@happier-dev/protocol/usage/usageWorkEvidence';
 import { readEncryptionFeatureEnv } from "@/app/features/catalog/readFeatureEnv";
 import { inTx } from "@/storage/inTx";
 import { isPrismaErrorCode } from "@/storage/prisma";
@@ -15,6 +16,7 @@ import {
 export type HistoricalSessionTranscriptImportItem = Readonly<{
     localId: string;
     content: PrismaJson.SessionMessageContent;
+    usageTimingV1?: UsageTimingBoundsV1 | null;
     messageRole?: unknown;
     surfaceItemReference?: SessionTranscriptSurfaceItemReferenceInputV1;
 }>;
@@ -63,6 +65,7 @@ export async function importHistoricalSessionTranscript(
                 localId: item.localId,
                 sidechainId: null,
                 content: item.content,
+                usageTimingV1: item.usageTimingV1,
                 ...(item.surfaceItemReference ? { surfaceItemReference: item.surfaceItemReference } : {}),
                 messageRole: resolveSessionMessageRole({
                     content: item.content,

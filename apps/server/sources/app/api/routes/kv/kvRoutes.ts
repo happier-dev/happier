@@ -13,17 +13,13 @@ import {
     readAccountStoredContentCompatibilityForHttpRequest,
 } from "@/app/clientCompatibility/accountStoredContentCompatibility";
 import {
-    assertAccountJsonKvStoredContentMatchesAccountMode,
     classifyAccountJsonKvStoredContent,
     isAccountJsonKvKey,
     AccountJsonKvStoredContentModeMismatchError,
     AccountJsonKvStoredContentUpgradeRequiredError,
 } from "@/app/kv/accountJsonKvStoredContent";
-import {
-    deriveAccountEncryptionCurrentnessFromRow,
-} from "@/app/encryption/accountContentKeyAdmission";
+import { assertAccountJsonKvReadStoredContentMatchesAccount } from "@/app/kv/accountJsonKvStoredContentRead";
 import { AccountScopedKvReservedKeyError } from "@/app/kv/accountScopedKv";
-import { db } from "@/storage/db";
 import { log } from "@/utils/logging/log";
 import { resolveApiHotEndpointRateLimit } from "@/app/api/utils/apiRateLimitCatalog";
 
@@ -41,37 +37,6 @@ function containsCurrentAccountJsonKvStoredContent(
         return classification.domain !== "generic"
             && classification.representation.startsWith("current_");
     });
-}
-
-async function assertAccountJsonKvReadStoredContentMatchesAccount(
-    accountId: string,
-    items: ReadonlyArray<Readonly<{ key: string; value: string }>>,
-): Promise<void> {
-    const accountJsonItems = items.filter((item) => isAccountJsonKvKey(item.key));
-    if (accountJsonItems.length === 0) return;
-
-    const account = await db.account.findUnique({
-        where: { id: accountId },
-        select: {
-            encryptionMode: true,
-            publicKey: true,
-            contentPublicKey: true,
-            contentPublicKeySig: true,
-        },
-    });
-    const currentness = account
-        ? deriveAccountEncryptionCurrentnessFromRow(account)
-        : null;
-    if (!currentness || currentness.status !== "ready") {
-        throw new AccountJsonKvStoredContentModeMismatchError();
-    }
-    for (const item of accountJsonItems) {
-        assertAccountJsonKvStoredContentMatchesAccountMode({
-            key: item.key,
-            value: privacyKit.decodeBase64(item.value),
-            accountMode: currentness.currentness.encryptionMode,
-        });
-    }
 }
 
 export function kvRoutes(app: Fastify) {
@@ -110,10 +75,6 @@ export function kvRoutes(app: Fastify) {
             if (!result) {
                 return reply.code(404).send({ error: 'Key not found' });
             }
-            await assertAccountJsonKvReadStoredContentMatchesAccount(
-                userId,
-                [result],
-            );
             if (
                 containsCurrentAccountJsonKvStoredContent([result])
                 && !readAccountStoredContentCompatibilityForHttpRequest(request)
@@ -125,6 +86,10 @@ export function kvRoutes(app: Fastify) {
                 );
                 return;
             }
+            await assertAccountJsonKvReadStoredContentMatchesAccount(
+                userId,
+                [result],
+            );
 
             return reply.send(result);
         } catch (error) {
@@ -174,10 +139,6 @@ export function kvRoutes(app: Fastify) {
 
         try {
             const result = await kvList({ uid: userId }, { prefix, limit, afterKey });
-            await assertAccountJsonKvReadStoredContentMatchesAccount(
-                userId,
-                result.items,
-            );
             if (
                 containsCurrentAccountJsonKvStoredContent(result.items)
                 && !readAccountStoredContentCompatibilityForHttpRequest(request)
@@ -189,6 +150,10 @@ export function kvRoutes(app: Fastify) {
                 );
                 return;
             }
+            await assertAccountJsonKvReadStoredContentMatchesAccount(
+                userId,
+                result.items,
+            );
             return reply.send(result);
         } catch (error) {
             if (error instanceof AccountScopedKvReservedKeyError) {
@@ -232,10 +197,6 @@ export function kvRoutes(app: Fastify) {
 
         try {
             const result = await kvBulkGet({ uid: userId }, keys);
-            await assertAccountJsonKvReadStoredContentMatchesAccount(
-                userId,
-                result.values,
-            );
             if (
                 containsCurrentAccountJsonKvStoredContent(result.values)
                 && !readAccountStoredContentCompatibilityForHttpRequest(request)
@@ -247,6 +208,10 @@ export function kvRoutes(app: Fastify) {
                 );
                 return;
             }
+            await assertAccountJsonKvReadStoredContentMatchesAccount(
+                userId,
+                result.values,
+            );
             return reply.send(result);
         } catch (error) {
             if (error instanceof AccountScopedKvReservedKeyError) {

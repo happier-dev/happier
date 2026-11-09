@@ -1,9 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import * as privacyKit from "privacy-kit";
-import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from "@happier-dev/protocol";
+import { ARTIFACT_PLAIN_DATA_KEY_MARKER, MACHINE_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent, encodePlainMachineStoredContent } from "@happier-dev/protocol";
 
 import { db, getDbProviderFromEnv, initDbPostgres } from "@/storage/db";
+import { makeShareEligibleForTest } from '@/testkit/shareEligibility.testkit';
 import type { Tx } from "@/storage/inTx";
 import { updateArtifactHttpMutation } from "./artifactMutationHttpResponse";
 import { createArtifact, createArtifactTx, deleteArtifact, updateArtifact, updateArtifactTx } from "./artifactWriteService";
@@ -18,6 +19,11 @@ import { createPresentUserSessionAccessAuthentication } from "@/app/session/acce
 import { admitTeamMemberInTx } from '@/app/teams/memberships/membershipService';
 import { publishTeamChangedInTx } from '@/app/teams/teamChanges';
 import { acquireAccountSessionOwnerMetadataFenceInTx } from '@/app/encryption/accountSessionOwnerMetadataFence';
+import { ExternalActionExecutionAuthorizationBindingV1Schema, createDeploymentCandidatePublicationV1 } from '@happier-dev/protocol/actions/externalActionApi';
+import { createProjectSourceInTx } from '@/app/projects/sources/projectSourceService';
+import { createDeploymentEnvironmentInTx } from '@/app/deployments/deploymentEnvironmentService';
+import { createDeploymentCandidateArtifactMutationGuard } from '@/app/deployments/deploymentPreparationAuthorization';
+import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-protocol/testing/v1';
 
 const bytes = (value: unknown) => privacyKit.decodeBase64(encodePlainArtifactStoredContent(value));
 
@@ -77,6 +83,78 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("A
         connected = true;
     });
     afterAll(async () => { if (connected) await db.$disconnect(); });
+
+    it.each(['create', 'refresh'] as const)('admits pending Environment Team readers before candidate %s with recovery disabled', async operation => {
+        vi.stubEnv('HAPPIER_DB_TX_MAX_RETRIES', '0');
+        vi.stubEnv('HAPPIER_ARTIFACT_ACCOUNT_LIMIT_BYTES', '');
+        vi.stubEnv('HAPPIER_FEATURE_TEAMS__ENABLED', '1');
+        const serverId = `srv_${'e'.repeat(32)}`;
+        vi.stubEnv('HAPPIER_SERVER_IDENTITY_ID', serverId);
+        try {
+            const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
+            const reader = await db.account.create({ data: { encryptionMode: 'plain' } });
+            const team = await db.team.create({ data: { name: randomUUID() } });
+            await db.teamMembership.createMany({ data: [
+                { teamId: team.id, accountId: owner.id, role: 'owner' },
+                { teamId: team.id, accountId: reader.id, role: 'member' },
+            ] });
+            const source = await inTx(tx => createProjectSourceInTx(tx, owner.id, {
+                serverId, requestKey: randomUUID(), name: 'Candidate publication', audience: [],
+            }));
+            if (!source.ok) throw new Error(source.error);
+            const machine = await db.machine.create({ data: { id: randomUUID(), accountId: owner.id,
+                metadata: encodePlainMachineStoredContent({ host: 'controller', platform: 'linux',
+                    happyCliVersion: 'test', homeDir: '/home/test', happyHomeDir: '/home/test/.happier' }),
+                dataEncryptionKey: privacyKit.decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER), installationId: randomUUID() } });
+            const definition = await createArtifact({ actorUserId: owner.id, artifactId: randomUUID(),
+                header: bytes({ kind: 'deployment-environment.v1', title: 'Environment audience' }),
+                body: bytes({ body: JSON.stringify(createDeploymentEnvironmentDetailV1().content) }),
+                dataEncryptionKey: privacyKit.decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER) });
+            if (!definition.ok) throw new Error(definition.error);
+            expect(await inTx(tx => setArtifactAccessGrantInTx(tx, { actorAccountId: owner.id,
+                artifactId: definition.artifact.id, principal: { kind: 'team', teamId: team.id }, accessLevel: 'view' })))
+                .toMatchObject({ ok: true });
+            const environment = await inTx(tx => createDeploymentEnvironmentInTx(tx, owner.id, {
+                serverId, projectSourceId: source.source.id, protection: 'nonProduction', purpose: 'standard',
+                deployerMode: 'managers', controllerMachineId: machine.id, requestKey: randomUUID(),
+                contentArtifactId: definition.artifact.id, contentHeaderVersion: 1, contentBodyVersion: 1,
+            }));
+            if (!environment.ok) throw new Error(environment.error);
+            // This owner-level contract starts at an already admitted binding;
+            // the SQLite signed-HTTP contract exercises its signature boundary.
+            const root = { accountId: owner.id, authentication: { kind: 'account' as const, tokenEpoch: owner.tokenEpoch },
+                serverIdentityId: serverId, custodianAccountId: owner.id, machineId: machine.id,
+                installationId: machine.installationId!, actionId: 'deployments.deploy' as const,
+                requestId: randomUUID(), requestEnvelopeDigest: 'd'.repeat(43), target: { kind: 'machine' as const, machineId: machine.id } };
+            const scope = createDeploymentCandidatePublicationV1({ ...root, environmentId: environment.environmentId,
+                source: { id: source.source.id, revision: source.source.revision } });
+            const binding = ExternalActionExecutionAuthorizationBindingV1Schema.parse({ ...root, deploymentCandidatePublication: scope });
+            const content = { id: scope.contentArtifactId, kind: 'v1:other:deployment-receipt.v1',
+                header: encodePlainArtifactStoredContent({ kind: 'deployment-receipt.v1', title: 'Candidate' }),
+                body: encodePlainArtifactStoredContent({ body: '{}' }), dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER };
+            const createInput = { actorUserId: owner.id, artifactId: content.id, kind: content.kind,
+                header: privacyKit.decodeBase64(content.header), body: privacyKit.decodeBase64(content.body),
+                dataEncryptionKey: privacyKit.decodeBase64(content.dataEncryptionKey) };
+            if (operation === 'refresh') expect(await createArtifact(createInput)).toMatchObject({ ok: true });
+            const proof = operation === 'create' ? { method: 'POST', path: '/v1/artifacts', body: content }
+                : { method: 'POST', path: `/v1/artifacts/${content.id}`,
+                    body: { body: encodePlainArtifactStoredContent({ body: '{"prepared":true}' }), expectedBodyVersion: 1 } };
+            const mutationGuard = createDeploymentCandidateArtifactMutationGuard({ binding, effectActionId: root.actionId,
+                artifactId: content.id, proof });
+            const written = operation === 'create' ? await createArtifact({ ...createInput, mutationGuard })
+                : await updateArtifact({ actorUserId: owner.id, artifactId: content.id, mutationGuard,
+                    body: { bytes: bytes({ body: '{"prepared":true}' }), expectedVersion: 1 } });
+            expect(written).toMatchObject({ ok: true });
+            expect(await db.artifactTeamGrant.findUnique({ where: { artifactId_teamId: {
+                artifactId: content.id, teamId: team.id,
+            } } })).toMatchObject({ accessLevel: 'view' });
+            expect(await readArtifactForCaller({ actorAccountId: reader.id, artifactId: content.id }))
+                .toMatchObject({ ok: true, artifact: { bodyVersion: operation === 'create' ? 1 : 2 } });
+            expect(await db.accountChange.findUnique({ where: { accountId_kind_entityId: {
+                accountId: reader.id, kind: 'artifact', entityId: content.id,
+            } } })).not.toBeNull();
+        } finally { vi.unstubAllEnvs(); }
+    });
 
     it.each([true, false])('rechecks Team recipients at terminal publication (recovery disabled: %s)', async disabled => {
         const previousRetries = process.env.HAPPIER_DB_TX_MAX_RETRIES;
@@ -587,6 +665,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("A
     it("replays an expanded audience before publishing to a newly granted recipient", async () => {
         const owner = await db.account.create({ data: { encryptionMode: "plain" } });
         const recipient = await db.account.create({ data: { encryptionMode: "plain" } });
+        await makeShareEligibleForTest(owner.id, recipient.id);
         const artifact = await plainArtifact(owner.id);
         const restore = beforeArtifactAccountLock(artifact.id, async () => {
             expect((await inTx(tx => setArtifactAccessGrantInTx(tx, { artifactId: artifact.id, actorAccountId: owner.id,

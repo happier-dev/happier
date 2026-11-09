@@ -15,12 +15,11 @@ import { mayInjectSessionContextInTx } from '@/app/session/access/sessionContext
 import type { SessionAccessAuthentication } from '@/app/session/access/sessionAccessAuthentication';
 import type { SessionCollectiveAccessSnapshot } from '@/app/session/access/sessionAccessWhere';
 import { inReadSnapshot, inTx, type Tx } from '@/storage/inTx';
-import { readSnapshotWithCurrentAdmission } from '@/storage/readSnapshotWithCurrentAdmission';
+import { captureReadSnapshot } from '@/storage/captureReadSnapshot';
 import { markSessionFollowsChangedInTx } from './changes';
 import type { AccountChangePublication } from '@/app/changes/markAccountChanged';
 import { acquireAccountEncryptionTransitionFenceInTx } from '@/app/encryption/accountEncryptionTransition';
 import { UserKvMutationConflictError } from '@/app/kv/kvMutate';
-import { portableQueryChunks } from '@/storage/portableQueryChunks';
 
 export async function markAccountFollowRulesChangedInTx(tx: Tx, input: Readonly<{ accountId: string }>): Promise<AccountChangePublication> {
     return markSessionFollowsChangedInTx(tx, input);
@@ -29,6 +28,9 @@ export async function markAccountFollowRulesChangedInTx(tx: Tx, input: Readonly<
 export const accountFollowRuleRowDomain: ReservedAccountScopedKvRowDomain<SessionFollowRuleStoredRowV1> = {
     label: 'Account private Follow rule',
     parseStoredEnvelope(value) { const parsed = SessionFollowRuleStoredRowV1Schema.safeParse(value); return parsed.success ? parsed.data : null; },
+    // New rules capture inception at the mutation fence. Older rules already
+    // persist their creation instant in KV; carry it from that admitted row.
+    restoreStoredFacts(row, facts) { return row.inception ? row : { ...row, inception: { createdAt: facts.createdAt.getTime() } }; },
     parseCandidateEnvelope(value) { const parsed = SessionFollowRuleStoredRowV1Schema.safeParse(value); return parsed.success ? parsed.data : null; },
     assertEnvelopeForMode(row, mode) { assertSessionFollowRuleContentForModeV1(row.content, mode); },
 };
@@ -46,35 +48,13 @@ function failure(result: ReservedAccountScopedKvRowFailure): { ok: false; error:
         case 'invalid-stored-content': return { ok: false, error: 'invalid_stored_content' };
     }
 }
-/** Retained rows already have an authoritative creation instant in their owning KV row. */
-async function withRuleInceptionInTx(tx: Tx, accountId: string, physicalKey: string, envelope: SessionFollowRuleStoredRowV1) {
-    if (envelope.inception) return envelope;
-    const row = await tx.userKVStore.findUnique({ where: { accountId_key: { accountId, key: physicalKey } }, select: { createdAt: true } });
-    return row ? { ...envelope, inception: { createdAt: row.createdAt.getTime() } } : envelope;
-}
 export async function readAccountFollowRuleInTx(tx: Tx, input: Readonly<{ accountId: string; ruleId: string }>) {
     const physicalKey = buildSessionFollowRulePhysicalKeyV1(input.ruleId);
-    const row = await readReservedAccountScopedKvRowInTx(tx, { accountId: input.accountId,
+    return readReservedAccountScopedKvRowInTx(tx, { accountId: input.accountId,
         physicalKey, domain: accountFollowRuleRowDomain });
-    return row.status === 'present' ? { ...row, envelope: await withRuleInceptionInTx(tx, input.accountId, physicalKey, row.envelope) } : row;
 }
 export async function listAccountFollowRuleRowsInTx(tx: Tx, input: Readonly<{ accountId: string }>) {
-    const result = await listReservedAccountScopedKvRowsInTx(tx, { ...input, physicalPrefix: SESSION_FOLLOW_RULE_ACCOUNT_PREFIX_V1, domain: accountFollowRuleRowDomain });
-    if (result.status !== 'listed') return result;
-    const missing = result.rows.filter(row => row.envelope && !row.envelope.inception).map(row => row.physicalKey);
-    if (!missing.length) return result;
-    const inceptionByKey = new Map<string, number>();
-    // Same-snapshot creation facts; chunks reserve the Account and Prisma OFFSET binds at the portable SQL boundary.
-    for (const keys of portableQueryChunks({ values: missing, bindingsPerValue: 1, fixedBindings: 2 })) {
-        const rows = await tx.userKVStore.findMany({ where: { accountId: input.accountId, key: { in: [...keys] } },
-            select: { key: true, createdAt: true } });
-        for (const row of rows) inceptionByKey.set(row.key, row.createdAt.getTime());
-    }
-    return { ...result, rows: result.rows.map(row => {
-        const createdAt = inceptionByKey.get(row.physicalKey);
-        return row.envelope && !row.envelope.inception && createdAt !== undefined
-            ? { ...row, envelope: { ...row.envelope, inception: { createdAt } } } : row;
-    }) };
+    return listReservedAccountScopedKvRowsInTx(tx, { ...input, physicalPrefix: SESSION_FOLLOW_RULE_ACCOUNT_PREFIX_V1, domain: accountFollowRuleRowDomain });
 }
 async function admitAccount(tx: Tx, input: ProjectionScope): Promise<SessionFollowRuleFailureV1 | null> {
     if (input.authentication.sessionRuntimePrincipal
@@ -199,7 +179,7 @@ async function readRuleSourceRangesInTx(tx: Tx, input: Scope & Readonly<{ destin
 }
 /** Full own-Account census, including Session receivers; unreadable content never becomes an empty rule set. */
 export async function listAccountFollowRules(input: Scope & Readonly<{ destinationSessionId?: string; sourceSessionId?: string }>): Promise<RuleResult<ListSessionFollowRulesResponseV1>> {
-    return readSnapshotWithCurrentAdmission(async tx => {
+    return captureReadSnapshot(async tx => {
         const denied = await admitAccount(tx, input);
         if (denied) return { ok: false as const, error: denied };
         const rows = await listAccountFollowRuleRowsInTx(tx, input);
@@ -214,11 +194,6 @@ export async function listAccountFollowRules(input: Scope & Readonly<{ destinati
         const sourceRanges = input.destinationSessionId ? await readRuleSourceRangesInTx(tx, { ...input,
             destinationSessionId: input.destinationSessionId }, rules) : undefined;
         return { ok: true as const, value: { rules, ...(sourceRanges ? { sourceRanges } : {}) } };
-    }, async (tx, captured) => {
-        if (!captured.ok) return captured;
-        const denied = await admitAccount(tx, input);
-        if (denied) return { ok: false as const, error: denied };
-        return captured;
     });
 }
 /** Reads only the caller's row; another Account's same rule id is absent. */

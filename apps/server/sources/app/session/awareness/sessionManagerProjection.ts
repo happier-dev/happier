@@ -1,5 +1,4 @@
 import type { Prisma } from '@prisma/client';
-import { readCurrentSessionIdsInTx } from '@/app/session/access/sessionReadAdmission';
 import { isProjectedSessionStalledV1, projectSessionAwarenessRuntimeV1, resolveSessionAwarenessLifecycleV1 } from '@happier-dev/protocol/sessions/awareness/runtime';
 import { parseSessionRuntimeActivityProjectionFields } from '@happier-dev/protocol/sessions/runtime/activity/sessionRuntimeActivity';
 import { projectSessionAwarenessOperationalV1 } from '@happier-dev/protocol/sessions/awareness/projectV1';
@@ -133,7 +132,7 @@ function projectReportWorkStatus(row: ReportSessionRow, input: Readonly<{
     };
 }
 
-export type SessionManagerContribution = Readonly<{
+type SessionManagerContribution = Readonly<{
     sessionId: string; managerSessionId: string; working: boolean; needsYou: boolean; stalled: boolean; archived: boolean;
     finished: boolean; attentionPrimary: SessionAwarenessPresentationStateV1;
 }>;
@@ -172,19 +171,6 @@ function projectCapturedReports<T extends SessionManagerProjectionRow>(sessions:
     });
 }
 
-/** Redact revoked endpoints without refreshing captured operational facts. */
-export async function readmitCapturedSessionManagerReferencesInTx<T extends Pick<V2SessionRecord,
-    'id' | 'manager' | 'managedSessions'>>(tx: Tx, input: Readonly<{
-    accountId: string; authentication: SessionAccessAuthentication;
-    accessMode: 'legacy_owner_or_direct' | 'effective_access_v1'; sessions: readonly T[];
-    contributions: readonly SessionManagerContribution[];
-}>): Promise<T[]> {
-    const relatedIds = [...new Set(input.contributions.flatMap(row => [row.sessionId, row.managerSessionId]))];
-    const current = await readCurrentSessionIdsInTx(tx, { ...input, sessionIds: relatedIds });
-    return projectCapturedReports(input.sessions, input.contributions.filter(row =>
-        current.has(row.sessionId) && current.has(row.managerSessionId)));
-}
-
 /** One batch acquires authorized relation facts for every returned list/detail row. */
 export async function projectSessionManagerForRowsInTx<T extends SessionManagerProjectionRow>(tx: Tx, input: Readonly<{
     accountId: string;
@@ -193,7 +179,6 @@ export async function projectSessionManagerForRowsInTx<T extends SessionManagerP
     accessMode: 'legacy_owner_or_direct' | 'effective_access_v1';
     collectiveAccessSnapshot?: SessionCollectiveAccessSnapshot;
     nowMs: number;
-    captureContributions?: (contributions: readonly SessionManagerContribution[]) => void;
     /** One containing listing snapshot may reuse its already admitted private membership read. */
     ruleReceiverCounts?: ReadonlyMap<string, number> | null;
 }>) {
@@ -237,7 +222,6 @@ export async function projectSessionManagerForRowsInTx<T extends SessionManagerP
         contributions.push({ sessionId: edge.sourceSessionId, managerSessionId: edge.destinationSessionId, working: status.bucket === 'working' && !stalled,
             needsYou, stalled, finished, attentionPrimary: status.state, archived: child.archivedAt != null });
     }
-    input.captureContributions?.(contributions);
     return projectCapturedReports(input.sessions.map(session => {
         const projected = { ...session, pendingReviewRuns: pendingReviewRuns.get(session.id) ?? 0 };
         delete projected.receivedRuleCount;

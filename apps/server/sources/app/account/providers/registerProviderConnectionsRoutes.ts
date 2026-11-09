@@ -6,7 +6,8 @@ import type { Fastify } from '@/app/api/types';
 import { asServerProtocolZod } from '@/app/api/utils/protocolComposableZodAdapter';
 import { resolveApiHotEndpointRateLimit } from '@/app/api/utils/apiRateLimitCatalog';
 import { readTeamOperationAuthenticationFromRequest } from '@/app/teams/actorContext';
-import { inReadSnapshot, inTx, isTransactionConflictExhaustedError } from '@/storage/inTx';
+import { inReadSnapshot, inTx } from '@/storage/inTx';
+import { isTransactionStorageError } from '@/storage/transactionErrors';
 import { mutateProviderConnectionsRowInTx, providerConnectionsHaveCrossAccountSecretReferences, readProviderConnectionsRowInTx } from './connectionRows';
 import { readReservedAccountScopedKvRowMutationConflict } from '@/app/kv/reservedAccountScopedKvRow';
 import { AccountSettingsPublicationConflict } from '@/app/accountSettings/writeAccountSettingsInTx';
@@ -22,7 +23,7 @@ export function registerProviderConnectionsRoutes(app: Fastify): void {
     try { return reply.send(await inReadSnapshot(tx => readProviderConnectionsRowInTx(tx, { accountId: request.userId }),
       { transactionClass: 'provider-catalog-read' })); }
     catch (error) {
-      if (isTransactionConflictExhaustedError(error)) throw error;
+      if (isTransactionStorageError(error)) throw error;
       return reply.code(500).send({ error: 'internal' });
     }
   });
@@ -47,7 +48,7 @@ export function registerProviderConnectionsRoutes(app: Fastify): void {
       if (conflict) return reply.send(conflict);
       if (error instanceof AccountSettingsPublicationConflict) return reply.send(error.result.status === 'version_mismatch'
         ? { status: 'settings-conflict', revision: error.result.currentVersion } : { status: 'invalid-stored-content' });
-      if (isTransactionConflictExhaustedError(error)) throw error;
+      if (isTransactionStorageError(error)) throw error;
       return reply.code(500).send({ error: 'internal' });
     }
   });

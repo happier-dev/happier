@@ -30,20 +30,20 @@ describe('Workflow trigger removal through the Action and retained SQLite owners
             automations: {
                 listDetails: async input => {
                     const page = await listAutomationDefinitionsPage({ accountId, ...input, details: true });
-                    return { automations: page.automations.map(row => toAutomationDefinitionDetailApiDto(row, witness)),
+                    return { automations: page.automations.map(row => toAutomationDefinitionDetailApiDto(row, witness, null)),
                         nextCursor: page.nextCursor };
                 },
                 list: async () => ({ automations: (await listAutomations({ accountId }))
-                    .map(row => toAutomationDefinitionListItemApiDto(row)), nextCursor: null }),
+                    .map(row => toAutomationDefinitionListItemApiDto(row, null)), nextCursor: null }),
                 get: async (automationId) => {
                     const row = await getAutomation({ accountId, automationId });
-                    return row ? toAutomationDefinitionDetailApiDto(row, witness) : null;
+                    return row ? toAutomationDefinitionDetailApiDto(row, witness, null) : null;
                 },
-                create: async (input) => toAutomationDefinitionDetailApiDto(await createAutomation({ accountId, input }), witness),
+                create: async (input) => toAutomationDefinitionDetailApiDto(await createAutomation({ accountId, input }), witness, null),
                 reconcile: async (automationId, input) => {
                     const row = await reconcileAutomationDefinition({ accountId, automationId, input });
                     if (!row) throw Object.assign(new Error('content_unavailable'), { code: 'content_unavailable' });
-                    return toAutomationDefinitionDetailApiDto(row, witness);
+                    return toAutomationDefinitionDetailApiDto(row, witness, null);
                 },
                 delete: async (automationId) => {
                     await beforeDelete?.();
@@ -80,7 +80,8 @@ describe('Workflow trigger removal through the Action and retained SQLite owners
         return { accountId: account.id, automationId: automation.id, triggerId };
     }
 
-    const human = { surface: 'ui' as const, authority: 'present_user' as const };
+    const human = { surface: 'ui' as const, authority: 'present_user' as const,
+        presentUserConfirmation: { actionId: 'workflow.trigger.remove' as const } };
     it('forwards the actual removed revision when the Action pre-read saw an older set', async () => {
         const f = await fixture();
         await db.automation.update({ where: { id: f.automationId }, data: { templateVersion: 10,
@@ -126,18 +127,21 @@ describe('Workflow trigger removal through the Action and retained SQLite owners
     it('keeps whole-set removal behind the existing mandatory Agent approval gate', async () => {
         const f = await fixture();
         expect(await executor(f.accountId).execute('workflow.trigger.remove', { automationId: f.automationId }, {
+            surface: 'ui', authority: 'present_user',
+        })).toMatchObject({ ok: false, errorCode: 'approvals_not_supported' });
+        expect(await executor(f.accountId).execute('workflow.trigger.remove', { automationId: f.automationId }, {
             surface: 'mcp', actionCaller: { kind: 'session', sessionId: 'driver', starterDepth: 0, turnDepth: 0 },
         })).toMatchObject({ ok: false, errorCode: 'approvals_not_supported' });
         expect(await getAutomation({ accountId: f.accountId, automationId: f.automationId })).not.toBeNull();
     });
 
-    it('refuses a Session-scoped set at the Account removal boundary', async () => {
+    it('removes a Session-scoped Manual set from the Account census after human confirmation', async () => {
         const f = await fixture();
         const session = await db.session.create({ data: { id: randomUUID(), tag: randomUUID(),
             accountId: f.accountId, encryptionMode: 'plain', metadata: '{}' } });
         await db.automation.update({ where: { id: f.automationId }, data: { scopeSessionId: session.id } });
         expect(await executor(f.accountId).execute('workflow.trigger.remove', { automationId: f.automationId }, human))
-            .toMatchObject({ ok: false, errorCode: 'content_unavailable' });
-        expect(await getAutomation({ accountId: f.accountId, automationId: f.automationId })).not.toBeNull();
+            .toEqual({ ok: true, result: { automationId: f.automationId, deleted: true, removedRevision: 1 } });
+        expect(await getAutomation({ accountId: f.accountId, automationId: f.automationId })).toBeNull();
     });
 });

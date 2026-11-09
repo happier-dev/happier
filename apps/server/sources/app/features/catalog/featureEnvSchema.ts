@@ -4,8 +4,9 @@ export const FEATURE_ENV_KEYS = Object.freeze({
   teamsEnabled: 'HAPPIER_FEATURE_TEAMS__ENABLED',
   teamsCredentialResourcesEnabled: 'HAPPIER_FEATURE_TEAMS_CREDENTIAL_RESOURCES__ENABLED',
   teamsCredentialResourcesExternalApiEnabled: 'HAPPIER_FEATURE_TEAMS_CREDENTIAL_RESOURCES_EXTERNAL_API__ENABLED',
-  automationsEnabled: 'HAPPIER_FEATURE_AUTOMATIONS__ENABLED',
   workflowsEnabled: 'HAPPIER_FEATURE_WORKFLOWS__ENABLED',
+  deploymentsEnabled: 'HAPPIER_FEATURE_DEPLOYMENTS__ENABLED',
+  botsEnabled: 'HAPPIER_FEATURE_BOTS__ENABLED',
 
   artifactRevisionRetentionCount: 'HAPPIER_ARTIFACT_REVISION_RETENTION_COUNT',
   artifactDocumentLimitBytes: 'HAPPIER_ARTIFACT_DOCUMENT_LIMIT_BYTES',

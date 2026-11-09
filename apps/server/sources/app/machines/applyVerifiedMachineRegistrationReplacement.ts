@@ -1,6 +1,9 @@
 import type { Tx } from "@/storage/inTx";
 import { applyMachineReplacement, MachineReplacementWriteConflictError } from "./applyMachineReplacement";
 import { validateMachineReplacement, type MachineReplacementRow } from "./validateMachineReplacement";
+import { MachineRegistrationReplacementResultSchema, type MachineRegistrationReplacementResult } from '@happier-dev/protocol/machines/identity/machineReplacement';
+
+export type { MachineRegistrationReplacementResult } from '@happier-dev/protocol/machines/identity/machineReplacement';
 
 export type ApplyVerifiedMachineRegistrationReplacementParams = Readonly<{
     tx: Tx;
@@ -16,10 +19,6 @@ export class MachineRegistrationReplacementError extends Error {
         super(reason);
     }
 }
-
-export type MachineRegistrationReplacementResult =
-    | Readonly<{ status: "applied"; replacesMachineId: string }>
-    | Readonly<{ status: "alreadyApplied"; replacesMachineId: string }>;
 
 export async function applyVerifiedMachineRegistrationReplacement(
     params: ApplyVerifiedMachineRegistrationReplacementParams,
@@ -47,7 +46,7 @@ export async function applyVerifiedMachineRegistrationReplacement(
         if (validation.reason === "old_machine_replacement_conflict") {
             throw new MachineRegistrationReplacementError(validation.statusCode, validation.reason);
         }
-        return null;
+        return MachineRegistrationReplacementResultSchema.parse({ status: 'skipped', replacesMachineId, reason: validation.reason });
     }
     if (validation.alreadyApplied) {
         return { status: "alreadyApplied", replacesMachineId };

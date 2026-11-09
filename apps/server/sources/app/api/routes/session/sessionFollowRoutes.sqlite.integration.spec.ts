@@ -72,6 +72,41 @@ describe('Account Session Follow HTTP resource', () => {
         } finally { await app.close(); }
     });
 
+    it('selects Run kinds through the generated transport and real list query before pagination', async () => {
+        const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const sessionIds = Array.from({ length: 1_000 }, () => randomUUID());
+        await db.session.createMany({ data: sessionIds.map(id => ({ id, accountId: owner.id, tag: id, metadata: '{}', encryptionMode: 'plain' })) });
+        await db.accountSessionFollow.createMany({ data: sessionIds.map(sessionId => ({ accountId: owner.id, sessionId })) });
+        const source = { kind: 'execution_run' as const, sessionId: sessionIds[0]!, runId: 'selected-run' };
+        await db.accountSessionFollow.create({ data: { accountId: owner.id, sourceKey: sourceKeyForSessionFollowSourceV1(source),
+            sourceExecutionRunSessionId: source.sessionId, sourceExecutionRunId: source.runId, following: true, followPolicy: '{"preset":"important"}' } });
+        const request = { direction: 'following' as const, receiver: { kind: 'account' as const }, sourceKinds: ['execution_run'], limit: 1 };
+        const app = await buildApp(owner.id);
+        try {
+            const response = await app.inject({ method: 'GET', url: resolveSessionFollowActionRequest('follow.list', request).path });
+            expect(response.statusCode, response.body).toBe(200);
+            expect(response.json()).toEqual({ follows: [expect.objectContaining({ source })] });
+            const workflow = await db.automationRun.create({ data: { accountId: owner.id, originKind: 'direct',
+                automationId: null, causeKind: null, causeOccurredAt: null, workflowAcceptedSnapshotEnvelope: '{}',
+                state: 'running', workflowCustodyState: 'pending', scheduledAt: new Date(), dueAt: new Date(), revision: 1 } });
+            const workflowSource = { kind: 'workflow_run' as const, runId: workflow.id };
+            await db.accountSessionFollow.create({ data: { accountId: owner.id, sourceKey: sourceKeyForSessionFollowSourceV1(workflowSource),
+                sourceWorkflowRunId: workflow.id, following: true, followPolicy: '{"preset":"important"}' } });
+            const bothKinds = { ...request, sourceKinds: ['execution_run', 'workflow_run'] };
+            const first = await app.inject({ method: 'GET', url: resolveSessionFollowActionRequest('follow.list', bothKinds).path });
+            expect(first.statusCode, first.body).toBe(200);
+            expect(first.json()).toEqual({ follows: [expect.objectContaining({ source })], continuation: expect.any(String) });
+            const next = await app.inject({ method: 'GET', url: resolveSessionFollowActionRequest('follow.list', {
+                ...bothKinds, sourceKinds: ['workflow_run', 'execution_run', 'execution_run'], cursor: first.json().continuation,
+            }).path });
+            expect(next.statusCode, next.body).toBe(200);
+            expect(next.json()).toEqual({ follows: [expect.objectContaining({ source: workflowSource })] });
+            console.info('FOLLOW_KIND_ROUTE', { unrelatedFollows: sessionIds.length, selectedPages: 2,
+                transferredRows: first.json().follows.length + next.json().follows.length });
+            expect((await app.inject({ method: 'GET', url: '/v2/account/session-follows?sourceKinds=%5B%22rule%22%5D' })).statusCode).toBe(400);
+        } finally { await app.close(); }
+    });
+
     it('keeps a Discussion personal Follow on the Account Follow owner', async () => {
         const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
         const other = await db.account.create({ data: { encryptionMode: 'plain' } });

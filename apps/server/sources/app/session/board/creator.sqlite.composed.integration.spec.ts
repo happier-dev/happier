@@ -170,7 +170,7 @@ describe('Session visual creator persistence', () => {
         } finally { await app.close(); }
     });
 
-    it('persists immutable creator metadata outside caller-authored visual content', async () => {
+    it('persists exact visual content without creation attribution and retains item CAS', async () => {
         const account = await db.account.create({ data: { publicKey: `creator-${randomUUID()}`, encryptionMode: 'plain' } });
         const session = await db.session.create({ data: { accountId: account.id, tag: randomUUID(), encryptionMode: 'plain', metadata: '{}' } });
         const authentication = createPresentUserSessionAccessAuthentication();
@@ -190,52 +190,41 @@ describe('Session visual creator persistence', () => {
             const headers = { [SESSION_SYSTEM_RECORDS_PROTOCOL_HTTP_HEADER]: SESSION_SYSTEM_RECORDS_PROTOCOL_V1_HTTP_HEADER_VALUE };
             const first = await app.inject({ method: 'GET', url: `/v2/sessions/${session.id}/system-records/record?${query}`, headers });
             expect(first.statusCode, first.body).toBe(200);
-            expect(first.json().record.creator).toEqual({ kind: 'user' });
+            expect(first.json().record).not.toHaveProperty('creator');
+            expect((await db.sessionSystemRecord.findUniqueOrThrow({ where: { id: first.json().record.id } })).content).toEqual(itemContent);
             expect(first.json().record.content).toEqual(itemContent);
             const update = await mutateSessionBoard({ actorUserId: account.id, sessionId: session.id,
                 authentication: { ...authentication, authority: 'account_automation' },
-                creator: { kind: 'session', sessionId: session.id },
                 mutation: { operation: 'upsert_item', itemId: 'visual', expectedItemRevision: first.json().record.revision,
                     itemContent: { ...itemContent, v: { ...itemContent.v, title: 'Updated' } } } });
             expect(update.ok).toBe(true);
             const second = await app.inject({ method: 'GET', url: `/v2/sessions/${session.id}/system-records/record?${query}`, headers });
-            expect(second.json().record.creator).toEqual({ kind: 'user' });
+            expect(second.json().record).not.toHaveProperty('creator');
             const published = await inTx(tx => readPublishedSessionSurfaceItemInTx(tx, {
                 accountId: account.id, sessionId: session.id, itemId: 'visual', encryptionMode: 'plain',
             }));
-            expect(published?.creator).toEqual({ kind: 'user' });
+            expect(published).not.toHaveProperty('creator');
             expect(published?.content).toEqual({ ...itemContent, v: { ...itemContent.v, title: 'Updated' } });
 
-            // Historical raw rows remain unattributed even when their next writer is known.
-            await db.sessionSystemRecord.update({ where: { id: first.json().record.id }, data: { content: itemContent } });
-            const legacy = await app.inject({ method: 'GET', url: `/v2/sessions/${session.id}/system-records/record?${query}`, headers });
-            expect(legacy.json().record.creator).toEqual({ kind: 'unknown' });
             await expect(mutateSessionBoard({ actorUserId: account.id, sessionId: session.id, authentication,
-                creator: { kind: 'session', sessionId: session.id }, mutation: { operation: 'upsert_item', itemId: 'visual',
+                mutation: { operation: 'upsert_item', itemId: 'visual', expectedItemRevision: first.json().record.revision,
+                    itemContent } })).resolves.toMatchObject({ ok: false, result: { error: 'session_board_revision_conflict' } });
+
+            // Retained development attribution wrappers remain readable without
+            // restoring attribution as a new write or admission authority.
+            await db.sessionSystemRecord.update({ where: { id: first.json().record.id }, data: { content: {
+                t: 'session_surface_record_v1', content: itemContent, creator: { kind: 'session', sessionId: session.id },
+            } } });
+            const legacy = await app.inject({ method: 'GET', url: `/v2/sessions/${session.id}/system-records/record?${query}`, headers });
+            expect(legacy.json().record).not.toHaveProperty('creator');
+            expect(legacy.json().record.content).toEqual(itemContent);
+            await expect(mutateSessionBoard({ actorUserId: account.id, sessionId: session.id, authentication,
+                mutation: { operation: 'upsert_item', itemId: 'visual',
                     expectedItemRevision: legacy.json().record.revision, itemContent: { ...itemContent, v: { ...itemContent.v, title: 'Legacy update' } } } })).resolves.toMatchObject({ ok: true });
             const legacyUpdate = await app.inject({ method: 'GET', url: `/v2/sessions/${session.id}/system-records/record?${query}`, headers });
-            expect(legacyUpdate.json().record.creator).toEqual({ kind: 'unknown' });
-
-            await expect(mutateSessionBoard({ actorUserId: account.id, sessionId: session.id, authentication,
-                creator: { kind: 'session', sessionId: session.id }, mutation: { operation: 'upsert_item', itemId: 'owned', expectedItemRevision: null, itemContent } })).resolves.toMatchObject({ ok: true });
-            const ownQuery = query.replace('localId=visual', 'localId=owned');
-            const own = await app.inject({ method: 'GET', url: `/v2/sessions/${session.id}/system-records/record?${ownQuery}`, headers });
-            expect(own.json().record.creator).toEqual({ kind: 'session', sessionId: session.id });
-            await expect(mutateSessionBoard({ actorUserId: account.id, sessionId: session.id, authentication,
-                creator: { kind: 'session', sessionId: session.id }, mutation: { operation: 'upsert_item', itemId: 'owned', expectedItemRevision: own.json().record.revision,
-                    itemContent: { ...itemContent, v: { ...itemContent.v, title: 'Resumed caller' } } } })).resolves.toMatchObject({ ok: true });
-            const resumed = await app.inject({ method: 'GET', url: `/v2/sessions/${session.id}/system-records/record?${ownQuery}`, headers });
-            expect(resumed.json().record.creator).toEqual({ kind: 'session', sessionId: session.id });
-            const child = await db.session.create({ data: { accountId: account.id, tag: randomUUID(), encryptionMode: 'plain', metadata: '{}' } });
-            await expect(mutateSessionBoard({ actorUserId: account.id, sessionId: child.id, authentication,
-                mutation: { operation: 'upsert_item', itemId: 'owned', expectedItemRevision: null, itemContent } })).resolves.toMatchObject({ ok: true });
-            const copied = await app.inject({ method: 'GET', url: `/v2/sessions/${child.id}/system-records/record?${ownQuery}`, headers });
-            expect(copied.json().record.creator).toEqual({ kind: 'user' });
-            await expect(mutateSessionBoard({ actorUserId: account.id, sessionId: session.id,
-                authentication: { ...authentication, authority: 'account_automation' },
-                mutation: { operation: 'upsert_item', itemId: 'unproved', expectedItemRevision: null, itemContent } })).resolves.toMatchObject({ ok: true });
-            const unproved = await app.inject({ method: 'GET', url: `/v2/sessions/${session.id}/system-records/record?${query.replace('localId=visual', 'localId=unproved')}`, headers });
-            expect(unproved.json().record.creator).toEqual({ kind: 'unknown' });
+            expect(legacyUpdate.json().record).not.toHaveProperty('creator');
+            expect((await db.sessionSystemRecord.findUniqueOrThrow({ where: { id: first.json().record.id } })).content)
+                .toEqual({ ...itemContent, v: { ...itemContent.v, title: 'Legacy update' } });
             const forged = await mutateSessionBoard({ actorUserId: account.id, sessionId: session.id, authentication,
                 mutation: { operation: 'upsert_item', itemId: 'forged', expectedItemRevision: null,
                     creator: { kind: 'session', sessionId: session.id }, itemContent } });

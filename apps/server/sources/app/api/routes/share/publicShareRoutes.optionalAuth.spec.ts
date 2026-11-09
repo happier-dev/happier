@@ -4,7 +4,6 @@ import { CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION } from "@happier-dev/pr
 import { createDbMocks, createDbTransactionMock, installDbModuleMock, matchesDbMockWhere, inTxPostgresControlStatementMock } from "../../testkit/dbMocks";
 import { isPrismaErrorCode } from '@/storage/prismaErrors';
 import { createRouteTestBuilder } from "../../testkit/routeTestBuilder";
-import { createSignedAccountContentBinding } from "@/testkit/accountEncryption";
 import { homeConfigSnapshotPostgresQueryMock } from '@/app/home/settings/homeConfigSnapshot.testkit';
 
 let auth: typeof import("@/app/auth/auth").auth;
@@ -73,8 +72,13 @@ function retainCredentialRows() {
 
 installDbModuleMock(() => ({
     isPrismaErrorCode,
-    db: dbTransaction.wrapDb(dbMocks.db),
+    // The Home configuration snapshot is one statement on PostgreSQL and runs on the primary client.
+    db: Object.assign(dbTransaction.wrapDb(dbMocks.db), {
+        $queryRawUnsafe: (query: string, id: string) => homeConfigSnapshotPostgresQueryMock.$queryRawUnsafe.call(dbMocks.db, query, id),
+    }),
 }));
+// This testkit imports storage; load it after installing the database boundary.
+const { createSignedAccountContentBinding } = await import("@/testkit/accountEncryption");
 
 const STORED_OWNER_METADATA_ENVELOPE_V1 = JSON.stringify({
     t: "encrypted",

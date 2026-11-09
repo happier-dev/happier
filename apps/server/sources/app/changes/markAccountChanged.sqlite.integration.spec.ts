@@ -1,12 +1,14 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import { buildConnectedServicesAccountChangeV1 } from '@happier-dev/protocol/changes';
+import { buildConnectedServicesAccountChangeV1, readSessionFollowReceiverAvailabilityChangedV1, readSessionFollowSourceChangedV1, readSessionMemoryInputsChangedV1, readSessionUsageAccountingChangedV1 } from '@happier-dev/protocol/changes';
 
+import { markSessionProjectionRecipientsChanged } from "@/app/session/changeTracking/markSessionProjectionRecipientsChanged";
 import { db } from "@/storage/db";
 import { afterTx, inTx, transactionResult } from "@/storage/inTx";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
 import { eventRouter } from "@/app/events/connectionEventRouter";
-import { markAccountChanged, markAccountsChanged, markSessionAccountsChanged, type MarkAccountChangedParams } from "./markAccountChanged";
+import { markAccountChanged, markAccountProjectionChanges, markAccountsChanged, markSessionAccountsChanged, type MarkAccountChangedParams } from "./markAccountChanged";
 import { recordConnectedServiceAccountProfileChange } from '@/app/api/routes/connect/connectedServicesAccountProfileChange';
+import { markDiscussionPrivateReaderChangedInTx } from '@/app/discussions/changes';
 import { logger } from '@/utils/logging/log';
 
 describe("terminal AccountChange publication on SQLite", () => {
@@ -23,6 +25,138 @@ describe("terminal AccountChange publication on SQLite", () => {
     afterEach(() => { eventRouter.clearIo(); });
     afterAll(async () => { await harness?.close(); });
 
+    it('retains known Artifact kinds for new recipients and keeps unknown history coarse', async () => {
+        const owner = await db.account.create({ data: { publicKey: 'artifact-kind-owner' } });
+        const recipient = await db.account.create({ data: { publicKey: 'artifact-kind-recipient' } });
+        const artifact = await db.artifact.create({ data: { id: 'artifact-kind-portable', accountId: owner.id,
+            kind: 'v1:other:bot_template.v1', header: Buffer.from('header'), body: Buffer.from('body'), dataEncryptionKey: Buffer.from('key') } });
+        const read = (accountId = recipient.id) => db.accountChange.findUniqueOrThrow({ where: {
+            accountId_kind_entityId: { accountId, kind: 'artifact', entityId: artifact.id },
+        } });
+        const publish = (hint?: unknown) => inTx(tx => markAccountsChanged(tx, {
+            accountIds: [owner.id, recipient.id], kind: 'artifact', entityId: artifact.id, hint,
+        }));
+        await publish();
+        expect((await read()).hint).toMatchObject({ artifactKinds: ['v1:other:bot_template.v1'] });
+        await db.artifact.update({ where: { id: artifact.id }, data: { kind: 'v1:prompt:prompt_doc.v2' } });
+        await publish({ artifactKinds: ['v1:other:bot_template.v1', 'v1:prompt:prompt_doc.v2'] });
+        await publish();
+        expect((await read()).hint).toMatchObject({ artifactKinds: expect.arrayContaining([
+            'v1:other:bot_template.v1', 'v1:prompt:prompt_doc.v2',
+        ]) });
+        await db.accountChange.update({ where: { accountId_kind_entityId: {
+            accountId: owner.id, kind: 'artifact', entityId: artifact.id,
+        } }, data: { hint: {} } });
+        await publish();
+        expect((await read(owner.id)).hint).not.toHaveProperty('artifactKinds');
+        await db.artifact.delete({ where: { id: artifact.id } });
+        await publish();
+        await db.artifact.create({ data: { id: artifact.id, accountId: owner.id,
+            kind: 'v1:other:bot_template.v1', header: Buffer.from('header'), body: Buffer.from('body'), dataEncryptionKey: Buffer.from('key') } });
+        await publish();
+        expect((await read()).hint).not.toHaveProperty('artifactKinds');
+    });
+
+    it('retains receiver availability through point and batch coalescing only for unconsumed readers', async () => {
+        const account = await db.account.create({ data: { publicKey: 'receiver-availability-coalescing' } });
+        const session = await db.session.create({ data: { accountId: account.id, tag: 'receiver-availability', metadata: '{}' } });
+        const read = () => db.accountChange.findUniqueOrThrow({ where: {
+            accountId_kind_entityId: { accountId: account.id, kind: 'session', entityId: session.id },
+        } });
+        const point = (hint: unknown) => inTx(tx => markAccountChanged(tx, {
+            accountId: account.id, kind: 'session', entityId: session.id, hint,
+        }));
+        await point({ pendingVersion: 1 });
+        expect(readSessionFollowReceiverAvailabilityChangedV1(await read(), 0)).toBe(false);
+        await point({ runtimeActivityRevision: 1, followSourceChanged: false, followReceiverAvailabilityChanged: true });
+        const availability = await read();
+        await point({ metadataVersion: 2, followSourceChanged: false });
+        const title = await read();
+        expect(readSessionFollowReceiverAvailabilityChangedV1(title, availability.cursor - 1)).toBe(true);
+        expect(readSessionFollowReceiverAvailabilityChangedV1(title, availability.cursor)).toBe(false);
+        await inTx(tx => markSessionAccountsChanged(tx, new Map([[session.id, [account.id]]])));
+        expect(readSessionFollowReceiverAvailabilityChangedV1(await read(), availability.cursor - 1)).toBe(true);
+        expect(readSessionFollowReceiverAvailabilityChangedV1(await read(), title.cursor)).toBe(false);
+        expect(readSessionFollowSourceChangedV1(await read(), title.cursor)).toBe(true);
+        await point({ lastMessageSeq: 2 });
+        expect(readSessionFollowReceiverAvailabilityChangedV1(await read(), title.cursor)).toBe(false);
+        expect(readSessionFollowSourceChangedV1(await read(), title.cursor)).toBe(true);
+    });
+
+    it('preserves accounting change floors across projection writes and withdraws them for unknown batches', async () => {
+        const account = await db.account.create({ data: { publicKey: 'usage-accounting-coalescing' } });
+        const session = await db.session.create({ data: { accountId: account.id, tag: 'usage-accounting', metadata: '{}' } });
+        const read = () => db.accountChange.findUniqueOrThrow({ where: {
+            accountId_kind_entityId: { accountId: account.id, kind: 'session', entityId: session.id },
+        } });
+        const source = () => inTx(tx => markAccountChanged(tx, {
+            accountId: account.id, kind: 'session', entityId: session.id, hint: { lastMessageSeq: 1 },
+        }));
+        const projection = (hint: unknown) => inTx(tx => markSessionProjectionRecipientsChanged({
+            tx, sessionId: session.id, recipientAccountIds: [account.id], hint, usageAccountingChanged: false,
+        }));
+        await source();
+        const transcript = await read();
+        await projection({ agentStateVersion: 1 });
+        await projection({ latestTurnStatusObservedAt: 2 });
+        expect((await read()).hint).toMatchObject({ usageAccountingChanged: false,
+            usageAccountingUnchangedSinceCursor: transcript.cursor });
+        // A latest status hint cannot hide the preceding unconsumed transcript.
+        expect(readSessionUsageAccountingChangedV1(await read(), transcript.cursor - 1)).toBe(true);
+        expect(readSessionUsageAccountingChangedV1(await read(), transcript.cursor)).toBe(false);
+        // Accounting projection does not suppress Follow source changes.
+        expect(readSessionFollowSourceChangedV1(await read(), transcript.cursor)).toBe(true);
+        await source();
+        const nextTranscript = await read();
+        await projection({ runtimeActivityRevision: 3 });
+        expect((await read()).hint).toMatchObject({ usageAccountingUnchangedSinceCursor: nextTranscript.cursor });
+        await inTx(tx => markSessionAccountsChanged(tx, new Map([[session.id, [account.id]]])));
+        expect((await read()).hint).not.toHaveProperty('usageAccountingChanged');
+        expect((await read()).hint).not.toHaveProperty('usageAccountingUnchangedSinceCursor');
+        const unknown = await read();
+        await projection({ metadataVersion: 4 });
+        expect((await read()).hint).toMatchObject({ usageAccountingUnchangedSinceCursor: unknown.cursor });
+        await inTx(tx => markAccountChanged(tx, { accountId: account.id, kind: 'session', entityId: session.id,
+            hint: { v: 1, lifecycle: 'deleted' } }));
+        expect((await read()).hint).toEqual({ v: 1, lifecycle: 'deleted' });
+    });
+
+    it('keeps the Memory-unchanged floor across activity writes and withdraws it under a coalesced Memory input', async () => {
+        const account = await db.account.create({ data: { publicKey: 'memory-inputs-coalescing' } });
+        const session = await db.session.create({ data: { accountId: account.id, tag: 'memory-inputs', metadata: '{}' } });
+        const read = () => db.accountChange.findUniqueOrThrow({ where: {
+            accountId_kind_entityId: { accountId: account.id, kind: 'session', entityId: session.id },
+        } });
+        let revision = 0;
+        const activity = () => inTx(tx => markSessionProjectionRecipientsChanged({
+            tx, sessionId: session.id, recipientAccountIds: [account.id], hint: { runtimeActivityRevision: ++revision },
+            followSourceChanged: false, usageAccountingChanged: false, memoryInputsChanged: false,
+        }));
+        await inTx(tx => markAccountChanged(tx, { accountId: account.id, kind: 'session', entityId: session.id,
+            hint: { lastMessageSeq: 1 } }));
+        const transcript = await read();
+        await activity();
+        await activity();
+        // Activity-only writes after a consumed transcript: Memory inputs unchanged.
+        expect((await read()).hint).toMatchObject({ memoryInputsChanged: false, memoryInputsUnchangedSinceCursor: transcript.cursor });
+        expect(readSessionMemoryInputsChangedV1(await read(), transcript.cursor)).toBe(false);
+        expect(readSessionMemoryInputsChangedV1(await read(), transcript.cursor - 1)).toBe(true);
+        const consumed = await read();
+        // A metadata write coalesced with a later activity write must stay visible to Memory.
+        await inTx(async tx => {
+            await markSessionProjectionRecipientsChanged({ tx, sessionId: session.id, recipientAccountIds: [account.id],
+                hint: { metadataVersion: 2 }, followSourceChanged: false, usageAccountingChanged: false });
+            await markSessionProjectionRecipientsChanged({ tx, sessionId: session.id, recipientAccountIds: [account.id],
+                hint: { runtimeActivityRevision: ++revision }, followSourceChanged: false, usageAccountingChanged: false,
+                memoryInputsChanged: false });
+        });
+        expect(readSessionMemoryInputsChangedV1(await read(), consumed.cursor)).toBe(true);
+        // A batch/unknown write withdraws the proof outright.
+        await inTx(tx => markSessionAccountsChanged(tx, new Map([[session.id, [account.id]]])));
+        expect((await read()).hint).not.toHaveProperty('memoryInputsChanged');
+        expect((await read()).hint).not.toHaveProperty('memoryInputsUnchangedSinceCursor');
+    });
+
     it('attributes committed connected-service publications without credential or Account identifiers', async () => {
         const account = await db.account.create({ data: { publicKey: 'connected-publication-attribution' } });
         const diagnostic = vi.spyOn(logger, 'debug');
@@ -37,6 +171,30 @@ describe("terminal AccountChange publication on SQLite", () => {
             expect(diagnostic.mock.calls.filter(([, message]) => message === 'Connected service Account change committed'))
                 .toEqual([[{ reason: 'credential-health', serviceKind: 'email-imap-smtp' }, 'Connected service Account change committed']]);
         } finally { diagnostic.mockRestore(); }
+    });
+
+    it.each(['read-first', 'resource-first'] as const)('retains the union of private Discussion read-state and resource changes (%s)', async order => {
+        const account = await db.account.create({ data: { publicKey: `discussion-hint-${order}` } });
+        const entityId = `discussion-${order}`;
+        const readState = (tx: Parameters<typeof markAccountChanged>[0]) => markDiscussionPrivateReaderChangedInTx({
+            tx, accountId: account.id, discussionId: entityId,
+        });
+        const resource = (tx: Parameters<typeof markAccountChanged>[0]) => markAccountsChanged(tx, {
+            accountIds: [account.id], kind: 'discussion', entityId,
+            hint: { v: 1, discussions: true, changes: { resource: true } },
+        });
+        const first = order === 'read-first' ? readState : resource;
+        const second = order === 'read-first' ? resource : readState;
+        await inTx(async tx => { await first(tx); });
+        const readHint = async () => (await db.accountChange.findUniqueOrThrow({
+            where: { accountId_kind_entityId: { accountId: account.id, kind: 'discussion', entityId } },
+            select: { hint: true },
+        })).hint;
+        expect(await readHint()).toEqual({ v: 1, discussions: true,
+            changes: order === 'read-first' ? { readState: true } : { resource: true } });
+        await inTx(async tx => { await second(tx); await readState(tx); });
+        expect(await readHint()).toEqual({ v: 1, discussions: true, changes: { readState: true, resource: true } });
+        expect(await db.accountChange.count({ where: { accountId: account.id, kind: 'discussion', entityId } })).toBe(1);
     });
 
     it('keeps connected service entities cursor-relative and independent of self changes', async () => {
@@ -98,8 +256,8 @@ describe("terminal AccountChange publication on SQLite", () => {
             await tx.machine.deleteMany({ where: { id: { in: [pointMachine.id, batchMachine.id] } } });
             expect(emit).not.toHaveBeenCalled();
             return transactionResult(() => [
-                { kind: "session", entityId: pointSession.id, cursor: pointSessionChange.resolveCursor(), hint: { removed: true } },
-                { kind: "session", entityId: batchSession.id, cursor: batchSessionChange.resolveCursor(), hint: null },
+                { kind: "session", entityId: pointSession.id, cursor: pointSessionChange.resolveCursor(), hint: { removed: true, followReceiverAvailabilityChanged: false } },
+                { kind: "session", entityId: batchSession.id, cursor: batchSessionChange.resolveCursor(), hint: { followReceiverAvailabilityChanged: false } },
                 { kind: "machine", entityId: pointMachine.id, cursor: pointMachineChange.resolveCursor(), hint: { removed: true } },
                 { kind: "machine", entityId: batchMachine.id, cursor: batchMachineChange.resolveCursor(), hint: { removed: true, batch: true } },
             ]);
@@ -113,7 +271,40 @@ describe("terminal AccountChange publication on SQLite", () => {
                 sessionId: null, machineId: null, artifactId: null, accountPetPackageId: null,
             })).sort((left, right) => left.cursor - right.cursor));
         expect(emit).toHaveBeenCalledTimes(1);
-        expect(emit).toHaveBeenCalledWith("update", expect.objectContaining({ seq: 4, body: { t: "account-change" } }));
+        expect(emit).toHaveBeenCalledWith("update", expect.objectContaining({ seq: 4,
+            body: expect.objectContaining({ t: "account-change", changeKinds: ["session", "machine"],
+                entityIds: [pointSession.id, batchSession.id, pointMachine.id, batchMachine.id] }),
+        }));
+    });
+
+    it("batches hint-free Machine invalidation without losing retained portable hints or durable cursors", async () => {
+        const accounts = await Promise.all(["first", "second", "new"].map(name => db.account.create({
+            data: { publicKey: `machine-batch-${name}` },
+        })));
+        const machine = await db.machine.create({ data: { id: "retained-batch-machine", accountId: accounts[0].id, metadata: "{}" } });
+        await inTx(async tx => {
+            for (const [index, account] of accounts.slice(0, 2).entries()) await markAccountChanged(tx, {
+                accountId: account.id, kind: "machine", entityId: machine.id, hint: { daemonStateVersion: index + 1 },
+            });
+        });
+        const publish = () => inTx(tx => markAccountsChanged(tx, {
+            accountIds: accounts.map(account => account.id), kind: "machine", entityId: machine.id,
+        }));
+        const expected = accounts.map((account, index) => ({ accountId: account.id, cursor: index < 2 ? 2 : 1,
+            hint: index < 2 ? { daemonStateVersion: index + 1 } : null,
+        })).sort((left, right) => left.accountId.localeCompare(right.accountId));
+        const readChanges = () => db.accountChange.findMany({ where: { kind: "machine", entityId: machine.id },
+            orderBy: { accountId: "asc" }, select: { accountId: true, cursor: true, machineId: true, hint: true } });
+        const publications = await publish();
+        expect(publications.map(publication => ({ accountId: publication.accountId, cursor: publication.resolveCursor() })))
+            .toEqual(expected.map(({ hint: _hint, ...row }) => row));
+        expect(await readChanges()).toEqual(expected.map(row => ({ ...row, machineId: machine.id })));
+        await db.machine.delete({ where: { id: machine.id } });
+        await publish();
+        expect(await readChanges()).toEqual(expected.map(row => ({ ...row, cursor: row.cursor + 1, machineId: null })));
+        expect(await db.account.findMany({ where: { id: { in: accounts.map(account => account.id) } },
+            orderBy: { id: "asc" }, select: { id: true, seq: true } }))
+            .toEqual(expected.map(row => ({ id: row.accountId, seq: row.cursor + 1 })));
     });
 
     it("coalesces mixed writers independently for each recipient Account", async () => {
@@ -132,6 +323,10 @@ describe("terminal AccountChange publication on SQLite", () => {
             .map(account => `account-stored-content-v3:${account.id}`).sort());
         expect(emit.mock.calls.map(([, payload]) => payload.seq).sort()).toEqual([1, 2]);
         expect(emit.mock.calls.every(([event, payload]) => event === "update" && payload.body.t === "account-change")).toBe(true);
+        expect(emit.mock.calls.map(([, payload]) => payload.body)).toEqual(expect.arrayContaining([
+            { t: "account-change", changeKinds: ["account"], entityIds: ["settings", "profile"] },
+            { t: "account-change", changeKinds: ["account"], entityIds: ["profile"] },
+        ]));
     });
 
     it("captures the declared Session audience and entities before caller-owned maps and arrays change", async () => {
@@ -158,6 +353,21 @@ describe("terminal AccountChange publication on SQLite", () => {
         }]);
         await expect(db.account.findUniqueOrThrow({ where: { id: later.id }, select: { seq: true } }))
             .resolves.toEqual({ seq: 0 });
+    });
+
+    it("captures shared Account hints before terminal set publication and clears them on a later hint-free write", async () => {
+        const accounts = await Promise.all(["first", "second"].map(name => db.account.create({ data: { name, encryptionMode: 'plain' } })));
+        const accountIds = accounts.map(account => account.id).sort();
+        const hint = { scope: ['original'] };
+        await inTx(async tx => {
+            await markAccountProjectionChanges(tx, 'account', new Map([['shared-hint', accountIds]]), hint);
+            hint.scope.push('later');
+        });
+        const readHints = () => db.accountChange.findMany({ where: { accountId: { in: accountIds }, entityId: 'shared-hint' },
+            orderBy: { accountId: 'asc' }, select: { accountId: true, cursor: true, hint: true } });
+        expect(await readHints()).toEqual(accountIds.map(accountId => ({ accountId, cursor: 1, hint: { scope: ['original'] } })));
+        await inTx(tx => markAccountsChanged(tx, { accountIds, kind: 'account', entityId: 'shared-hint' }));
+        expect(await readHints()).toEqual(accountIds.map(accountId => ({ accountId, cursor: 2, hint: null })));
     });
 
     it("captures point publication parameters and hints when the intent is recorded", async () => {
@@ -216,7 +426,7 @@ describe("terminal AccountChange publication on SQLite", () => {
         expect(afterCommitCursor).toBe(result.cursor);
         expect(emit).toHaveBeenCalledTimes(1);
         expect(emit).toHaveBeenCalledWith("update", expect.objectContaining({
-            seq: result.cursor, body: { t: "account-change" },
+            seq: result.cursor, body: { t: "account-change", changeKinds: ["pluginDomain"], entityIds: [entityId] },
         }));
         await expect(db.accountChange.findMany({ where: { accountId: account.id },
             select: { entityId: true, cursor: true, hint: true } })).resolves.toEqual([{
@@ -254,7 +464,7 @@ describe("terminal AccountChange publication on SQLite", () => {
             expect(publication.resolveCursor()).toBe(cursor);
             expect(emit).toHaveBeenCalledTimes(cursor);
             expect(emit).toHaveBeenLastCalledWith("update", expect.objectContaining({
-                seq: cursor, body: { t: "account-change" },
+                seq: cursor, body: { t: "account-change", changeKinds: ["account"], entityIds: ["settings"] },
             }));
         }
     });

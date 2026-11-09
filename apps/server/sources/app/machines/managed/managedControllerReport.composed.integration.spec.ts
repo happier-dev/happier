@@ -56,7 +56,7 @@ describe('managed native report through CLI, HTTP and disposable storage', () =>
         finally { restoreEnv(initialEnv); }
     });
 
-    it.each(['signed-credential', 'api-token', 'api-token-grant'] as const)('persists a signed submitted Lima result after %s withdrawal, rejects fresh admission and tampering, and replays reports', async (withdrawal) => {
+    it.each(['signed-credential', 'api-token', 'api-token-grant', 'machine-grant'] as const)('persists signed submitted Lima acquire, power and delete results after %s withdrawal and rejects fresh admission and tampering', async (withdrawal) => {
         const account = await db.account.create({ data: { encryptionMode: 'plain' } });
         const viewer = await db.account.create({ data: { encryptionMode: 'plain' } });
         const controller = { machineId: randomUUID(), installationId: randomUUID() };
@@ -83,7 +83,7 @@ describe('managed native report through CLI, HTTP and disposable storage', () =>
             choices };
         const { reviewedFacts: _reviewedFacts, ...unreviewedInput } = managedQb56Input;
         const input = { ...unreviewedInput, selection: { ...managedQb56Input.selection, controller, launch } };
-        const apiToken = withdrawal === 'signed-credential' ? undefined : await auth.createApiToken({
+        const apiToken = withdrawal === 'signed-credential' || withdrawal === 'machine-grant' ? undefined : await auth.createApiToken({
             accountId: account.id, tokenId: randomUUID(), label: 'Acquire completion',
         });
         const token = apiToken?.token ?? await auth.createToken(account.id, undefined, { kind: 'account', authority: 'present_user' });
@@ -229,6 +229,75 @@ describe('managed native report through CLI, HTTP and disposable storage', () =>
             expect(await db.account.findUniqueOrThrow({ where: { id: account.id }, select: { seq: true } })).toEqual(installedSeq);
             expect(await db.managedMachine.count({ where: { custodianAccountId: account.id } })).toBe(1);
             expect(await db.savedSecretResource.count({ where: { ownerAccountId: account.id } })).toBe(0);
+
+            let controlled = installed.machine;
+            const controlActor = withdrawal === 'machine-grant'
+                ? await db.account.create({ data: { encryptionMode: 'plain' } }) : account;
+            for (const intent of ['stop', 'delete'] as const) {
+                const actionId = intent === 'delete' ? 'machines.managed.delete' : 'machines.managed.power.set';
+                if (withdrawal === 'machine-grant') await db.machineAccountGrant.create({ data: {
+                    machineId: controller.machineId, accountId: controlActor.id, createdByAccountId: account.id, accessLevel: 'admin',
+                } });
+                const controlApiToken = withdrawal === 'signed-credential' || withdrawal === 'machine-grant' ? undefined : await auth.createApiToken({
+                    accountId: controlActor.id, tokenId: randomUUID(), label: 'Native control completion',
+                });
+                const controlToken = controlApiToken?.token ?? await auth.createToken(controlActor.id, undefined,
+                    { kind: 'account', authority: 'present_user' });
+                const controlRequestId = randomUUID();
+                const controlInput = { homeId, managedId: controlled.id, expectedRevision: controlled.intentRevision,
+                    intent, when: 'now', ...(intent === 'delete' ? { reviewedDependencies: true } : {}) };
+                const mint = () => app.inject({ method: 'POST', url: bindExternalActionExecutionAuthorizationHttpPathV1(actionId),
+                    headers: { authorization: `Bearer ${controlToken}` }, payload: { v: 1, machineId: controller.machineId,
+                        envelope: { v: 1, requestId: controlRequestId, target: { kind: 'machine', machineId: controller.machineId }, input: controlInput } } });
+                const controlIssued = await mint();
+                expect(controlIssued.statusCode, controlIssued.body).toBe(200);
+                const controlAuthorization = ExternalActionExecutionAuthorizationV1Schema.parse(controlIssued.json());
+                const controlClient = createManagedMachineControllerClient({ token: controlToken,
+                    serverUrl: 'http://managed-report.test', homeId, controller,
+                    externalActionMachineRequestPrivateKey: keys.secretKey },
+                    { requestId: controlRequestId, context: { surface: 'cli', externalActionExecutionAuthorization: controlAuthorization,
+                        externalActionTarget: controlAuthorization.binding.target } }, actionId);
+                const admittedControl = await controlClient.post('/v1/machines/managed/controller/admit-control',
+                    { action: actionId, requestId: controlRequestId, input: controlInput }, ManagedAdmissionOutputV1Schema);
+                const correlation = { homeId, managedId: controlled.id, controller,
+                    expectedIntentRevision: admittedControl.machine.intentRevision, requestId: controlRequestId };
+                const reportPath = '/v1/machines/managed/controller/report-intent';
+                const signedPost = (body: unknown, path = reportPath, privateKey = keys.secretKey) => {
+                    const signed = resolveExternalActionServerRequestHeaders({ context: { surface: 'cli',
+                        externalActionExecutionAuthorization: controlAuthorization, externalActionTarget: controlAuthorization.binding.target },
+                        effectActionId: actionId, method: 'POST', path, body, daemonToken: controlToken,
+                        serverIdentityId: homeId, installationId: controller.installationId, privateKey });
+                    if (!signed.ok) throw new Error('Control report signing unavailable');
+                    return app.inject({ method: 'POST', url: path, payload: body, headers: signed.headers });
+                };
+                const observation = intent === 'delete'
+                    ? { observedAt: Date.now(), availability: 'absent' }
+                    : { observedAt: Date.now(), availability: 'present', power: 'stopped' };
+                const controlReport = { ...correlation, result: { kind: 'confirmed' }, observation };
+                expect(await controlClient.post('/v1/machines/managed/controller/submit-intent', correlation,
+                    ManagedControllerSubmitOutputV1Schema)).toMatchObject({ submitted: true });
+                if (withdrawal === 'machine-grant') await db.machineAccountGrant.deleteMany({
+                    where: { machineId: controller.machineId, accountId: controlActor.id },
+                });
+                else if (!controlApiToken) await auth.signOutEverywhere(account.id);
+                else if (withdrawal === 'api-token') await auth.revokeApiToken({ accountId: account.id, tokenId: controlApiToken.tokenId });
+                else await auth.updateApiToken({ accountId: account.id, tokenId: controlApiToken.tokenId,
+                    grant: { ...API_TOKEN_FULL_GRANT_V1, actions: { families: [], ids: ['machines.managed.get'] } } });
+                expect((await mint()).statusCode).toBe(withdrawal === 'machine-grant' ? 409 : withdrawal === 'api-token-grant' ? 403 : 401);
+                expect((await signedPost({ ...controlReport, requestId: randomUUID() })).statusCode).toBe(401);
+                expect((await signedPost({ ...controlReport, managedId: randomUUID() })).statusCode).toBe(401);
+                expect((await signedPost({ ...controlReport, controller: { ...controller, installationId: randomUUID() } })).statusCode).toBe(401);
+                expect((await signedPost({ ...controlReport, expectedIntentRevision: correlation.expectedIntentRevision + 1 })).statusCode).toBe(401);
+                expect((await signedPost(controlReport, reportPath, tweetnacl.sign.keyPair().secretKey)).statusCode).toBe(401);
+                expect((await signedPost(correlation, '/v1/machines/managed/controller/submit-intent')).statusCode).toBe(401);
+                const settled = await signedPost(controlReport);
+                expect(settled.statusCode, settled.body).toBe(200);
+                controlled = ManagedControllerMachineOutputV1Schema.parse(settled.json()).machine;
+                expect(controlled).toMatchObject({ desired: intent, observation });
+                expect(controlled.submittedNativeEffect).toBeUndefined();
+                expect(await db.managedMachine.findUniqueOrThrow({ where: { id: controlled.id } }))
+                    .toMatchObject({ allocation: intent === 'delete' ? 'confirmed-absent' : 'bound', observation });
+            }
         } finally { restoreHttp(); await app.close(); }
     }, 120_000);
 });

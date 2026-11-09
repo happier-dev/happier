@@ -81,6 +81,38 @@ function dispatchedResponse(value: unknown) {
 describe("createExternalActionDaemonDispatcher", () => {
     afterEach(() => vi.restoreAllMocks());
 
+    it('returns a known daemon authorization refusal with its cause before an Action settlement', async () => {
+        const cause = { phase: 'session.rpc.authorization.closed', errorClass: 'Error',
+            errorCode: 'RPC_FORBIDDEN', httpStatus: null } as const;
+        const dispatch = createExternalActionDaemonDispatcher({ io: {} as never,
+            resolveMachine: async () => 'available',
+            forwardRpc: async () => ({ ok: true, result: { error: 'private-refusal-prose',
+                errorCode: 'RPC_FORBIDDEN', failureCause: cause } }),
+        });
+        await expect(dispatch({ actionId: 'browser.diagnostics.snapshot', principal,
+            envelope: { v: 2, requestId: 'request-known-refusal',
+                target: { kind: 'machine', machineId: 'machine-1' },
+                payload: { t: 'encrypted', c: 'private-envelope' } },
+        })).resolves.toEqual({ kind: 'placement_error', code: 'credential_scope_denied',
+            credentialScopeDiagnostic: { admissionStage: 'daemon_rpc', errorCode: 'RPC_FORBIDDEN', failureCause: cause } });
+    });
+
+    it('does not copy unvalidated daemon refusal details into the credential scope response', async () => {
+        const dispatch = createExternalActionDaemonDispatcher({ io: {} as never,
+            resolveMachine: async () => 'available',
+            forwardRpc: async () => ({ ok: true, result: { error: 'private-refusal-prose',
+                errorCode: 'RPC_FORBIDDEN', failureCause: { phase: 'private prose', errorCode: 'private-input' } } }),
+        });
+        const result = await dispatch({ actionId: 'browser.diagnostics.snapshot', principal,
+            envelope: { v: 2, requestId: 'request-redacted-refusal',
+                target: { kind: 'machine', machineId: 'machine-1' },
+                payload: { t: 'encrypted', c: 'private-envelope' } },
+        });
+        expect(result).toEqual({ kind: 'placement_error', code: 'credential_scope_denied',
+            credentialScopeDiagnostic: { admissionStage: 'daemon_rpc', errorCode: 'RPC_FORBIDDEN' } });
+        expect(JSON.stringify(result)).not.toContain('private-');
+    });
+
     function capturePhaseRecords() {
         const records: Record<string, unknown>[] = [];
         // Capture the real logger's output boundary, retaining its serialization.
@@ -251,6 +283,23 @@ describe("createExternalActionDaemonDispatcher", () => {
         expect(JSON.stringify(witnesses)).not.toContain('private-');
     });
 
+    it('preserves a correlated target admission refusal phase from the daemon', async () => {
+        const refusal = { kind: 'invalid_request' as const, errorCode: 'target_not_local' as const,
+            requestId: 'request-target-admission', phase: 'target_installation' as const };
+        const dispatch = createExternalActionDaemonDispatcher({
+            io: {} as never,
+            resolveMachine: async () => 'available',
+            forwardRpc: async () => ({ ok: true, result: refusal }),
+        });
+        const request = { actionId: 'browser.diagnostics.snapshot', principal,
+            envelope: { v: 2 as const, requestId: refusal.requestId,
+                target: { kind: 'machine' as const, machineId: 'machine-1' },
+                payload: { t: 'encrypted' as const, c: 'private-envelope-marker' } } };
+        await expect(dispatch(request)).resolves.toEqual(refusal);
+        await expect(dispatch({ ...request, envelope: { ...request.envelope, requestId: 'different-request' } }))
+            .resolves.toEqual({ kind: 'submitted_unknown', cause: { reason: 'daemon_response_invalid' } });
+    });
+
     it('witnesses only a correlated daemon encrypted-envelope rejection without exposing its envelope', async () => {
         const records = capturePhaseRecords();
         const dispatch = createExternalActionDaemonDispatcher({
@@ -272,7 +321,7 @@ describe("createExternalActionDaemonDispatcher", () => {
         expect(JSON.stringify(witnesses)).not.toContain('private-');
         records.length = 0;
         await expect(dispatch({ ...request, envelope: { ...request.envelope, requestId: 'different-request' } }))
-            .resolves.toEqual({ kind: 'submitted_unknown' });
+            .resolves.toEqual({ kind: 'submitted_unknown', cause: { reason: 'daemon_response_invalid' } });
         expect(records.filter((record) => record.msg === '[external-action-phase]')).toEqual([]);
 
         // A diagnostic destination failure must not replace the daemon's public refusal.
@@ -313,6 +362,7 @@ describe("createExternalActionDaemonDispatcher", () => {
         expect(resolveMachine).toHaveBeenCalledWith({
             actionId: 'action.spec.get',
             accountId: "account-1",
+            callerAuthority: principal.authority,
             machineId: "machine-1",
             requiredExternalActionExecutionAuthorization: true,
         });
@@ -328,7 +378,7 @@ describe("createExternalActionDaemonDispatcher", () => {
         await expect(dispatch({ actionId: 'action.spec.get', principal,
             envelope: { v: 2, requestId: 'request-1', target: { kind: 'machine', machineId: 'machine-1' },
                 payload: { t: 'encrypted', c: 'AAAA' } },
-        })).resolves.toEqual({ kind: 'submitted_unknown' });
+        })).resolves.toEqual({ kind: 'submitted_unknown', cause: { reason: 'daemon_response_invalid' } });
     });
     it("forwards the opaque envelope with server-stamped provenance and exact machine placement", async () => {
         const envelope: ExternalActionRequestEnvelopeV1 = {
@@ -384,6 +434,7 @@ describe("createExternalActionDaemonDispatcher", () => {
         expect(resolveMachine).toHaveBeenCalledWith({
             actionId: 'session.spawn_new',
             accountId: "account-1",
+            callerAuthority: principal.authority,
             machineId: "machine-1",
             requiredExternalActionExecutionAuthorization: true,
         });
@@ -425,6 +476,7 @@ describe("createExternalActionDaemonDispatcher", () => {
         expect(resolveMachine).toHaveBeenCalledWith({
             actionId: 'session.message.send',
             accountId: "account-1",
+            callerAuthority: principal.authority,
             machineId: "machine-1",
             requiredExternalActionExecutionAuthorization: true,
             requiredSessionInputAdmissionProtocolVersion: 2,
@@ -464,6 +516,7 @@ describe("createExternalActionDaemonDispatcher", () => {
         expect(resolveMachine).toHaveBeenCalledWith({
             actionId: 'session.message.send',
             accountId: "account-1",
+            callerAuthority: principal.authority,
             machineId: "machine-1",
             requiredExternalActionExecutionAuthorization: true,
             requiredSessionInputAdmissionProtocolVersion: 2,
@@ -505,6 +558,7 @@ describe("createExternalActionDaemonDispatcher", () => {
         expect(resolveMachine).toHaveBeenCalledWith({
             actionId: 'session.message.send',
             accountId: "account-1",
+            callerAuthority: principal.authority,
             machineId: "machine-1",
             requiredExternalActionExecutionAuthorization: true,
             requiredSessionInputAdmissionProtocolVersion: 2,
@@ -538,6 +592,7 @@ describe("createExternalActionDaemonDispatcher", () => {
         expect(resolveMachine).toHaveBeenCalledWith({
             actionId: 'session.message.send',
             accountId: "account-1",
+            callerAuthority: principal.authority,
             machineId: "machine-1",
             requiredExternalActionExecutionAuthorization: true,
         });
@@ -578,6 +633,7 @@ describe("createExternalActionDaemonDispatcher", () => {
         expect(resolveMachine).toHaveBeenCalledWith({
             actionId: 'action.spec.get',
             accountId: "account-1",
+            callerAuthority: principal.authority,
             machineId: "machine-1",
             requiredExternalActionExecutionAuthorization: true,
         });
@@ -618,6 +674,7 @@ describe("createExternalActionDaemonDispatcher", () => {
         expect(resolveMachine).toHaveBeenCalledWith({
             actionId: 'session.message.send',
             accountId: "account-1",
+            callerAuthority: principal.authority,
             machineId: "machine-1",
             requiredExternalActionExecutionAuthorization: true,
             requiredSessionInputAdmissionProtocolVersion: 2,
@@ -679,7 +736,7 @@ describe("createExternalActionDaemonDispatcher", () => {
             actionId: "session.message.send",
             envelope,
             principal,
-        })).resolves.toEqual({ kind: "submitted_unknown" });
+        })).resolves.toEqual({ kind: "submitted_unknown", cause: { reason: 'daemon_response_invalid' } });
     });
 
     it("preserves the daemon's canonical prepared Action failure through the relay", async () => {
@@ -1025,7 +1082,11 @@ describe("createExternalActionDaemonDispatcher", () => {
             envelope,
             principal,
         })).resolves.toEqual(dispatchedResponse(response("session.spawn_new", envelope)));
-        expect(resolveMachine).toHaveBeenCalled();
+        expect(resolveMachine).toHaveBeenCalledWith(expect.objectContaining({
+            callerAuthority: principal.authority,
+            expectedCustodianAccountId: principal.accountId,
+            expectedInstallationId: 'installation-1',
+        }));
     });
 
     it("forwards request cancellation only after the exact target socket is selected", async () => {
@@ -1163,7 +1224,7 @@ describe("createExternalActionDaemonDispatcher", () => {
             actionId: "action.spec.get",
             envelope,
             principal,
-        })).resolves.toEqual({ kind: "submitted_unknown" });
+        })).resolves.toEqual({ kind: "submitted_unknown", cause: { reason: 'daemon_acknowledgement_lost' } });
         expect(forwardRpc).toHaveBeenCalledWith(expect.objectContaining({
             onSubmittedUnknown: expect.any(Function),
         }));

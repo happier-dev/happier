@@ -10,6 +10,7 @@ import { artifactGrantStorageAdapter } from '@/app/artifacts/artifactGrantStorag
 import { resolveResourceGrantAccessInTx } from '@/app/teams/resourceGrantAccess';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol';
 import * as privacyKit from 'privacy-kit';
+import { readSessionMessagePage } from '@/app/api/routes/session/registerSessionMessageRoutes';
 
 const authentication = createPresentUserSessionAccessAuthentication({ env: {} });
 
@@ -59,12 +60,38 @@ describe("ordinary authenticated Follow context admission", () => {
         await db.ephemeralRunnerActivation.deleteMany();
         await db.accessKey.deleteMany();
         await db.machine.deleteMany();
+        await db.sessionMessage.deleteMany();
         await db.session.deleteMany();
         await db.team.deleteMany();
         await db.artifact.deleteMany();
         await db.account.deleteMany();
     });
     afterAll(async () => harness?.close());
+
+    it('rechecks the full executable destination audience at the final transcript read', async () => {
+        const owner = await createAccount();
+        const reader = await createAccount();
+        const source = await createSession(owner.id);
+        const destination = await createSession(owner.id);
+        const message = await db.sessionMessage.create({ data: { sessionId: source.id, seq: 1, messageRole: 'agent',
+            content: { t: 'plain', v: { role: 'agent', content: [{ type: 'text', text: 'Private source answer' }] } } } });
+        const runtimeAuthentication = { ...authentication, authority: 'account_automation' as const, contentDisclosureSessionId: destination.id };
+        const read = () => readSessionMessagePage({ userId: owner.id, sessionId: source.id,
+            authentication: runtimeAuthentication, query: { messageId: message.id } });
+        expect(await read()).toMatchObject({ status: 200, body: { messages: [{ id: message.id }] } });
+        // The configuring Account still owns both Sessions. Only the destination
+        // audience changed after the Discussion's prior source admission.
+        await grant(destination, reader.id, 'view');
+        const refused = await read();
+        expect(refused.status).toBe(404);
+        expect(JSON.stringify(refused.body)).not.toContain('Private source answer');
+        expect(await readSessionMessagePage({ userId: owner.id, sessionId: source.id, authentication,
+            query: { messageId: message.id } })).toMatchObject({ status: 200 });
+        await grant(source, reader.id, 'view');
+        expect(await read()).toMatchObject({ status: 200 });
+        await db.sessionShare.deleteMany({ where: { sessionId: source.id, sharedWithUserId: reader.id } });
+        expect(await read()).toMatchObject({ status: 404 });
+    });
 
     it('admits resource quotes only for the full current destination audience in both directions', async () => {
         const owner = await createAccount();

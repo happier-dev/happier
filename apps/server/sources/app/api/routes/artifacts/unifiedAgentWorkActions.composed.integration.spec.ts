@@ -173,6 +173,7 @@ describe('unified work Actions through CLI, HTTP, SQLite and Socket.IO', () => {
         expect(result).toMatchObject({ ok: true });
         if (!result.ok) throw new Error('Expected a created public link');
         const publication = ArtifactActionOutputSchemasV1['artifact.public_link.create'].parse(result.result);
+        if (!publication.url) throw new Error('Explicit anonymous creation did not issue a URL');
         const link = new URL(publication.url);
         const lookupId = link.pathname.split('/').at(-1)!;
         const secret = link.hash.slice('#k='.length);

@@ -1,4 +1,4 @@
-import { applyMachineReplacement, clearMachineReplacement } from "@/app/machines/applyMachineReplacement";
+import { applyMachineReplacement, clearMachineReplacement, MachineReplacementWriteConflictError } from "@/app/machines/applyMachineReplacement";
 import {
     enforceCurrentAccountStoredContentCompatibilityForHttpRequest,
     readAccountStoredContentCompatibilityForHttpRequest,
@@ -32,7 +32,7 @@ export function registerMachineReplacementRoutes(app: Fastify): void {
             readAccountStoredContentCompatibilityForHttpRequest(request)
                 .supportsCurrentProtocol;
 
-        if (!(await hasExactMachineReadiness(userId, replacementMachineId))) {
+        if (!(await hasExactMachineReadiness(userId, replacementMachineId, app.machineDaemonPresence))) {
             return reply.code(409).send({ error: "machine_not_ready", reason: "replacement_machine_not_connected" });
         }
 
@@ -82,6 +82,10 @@ export function registerMachineReplacementRoutes(app: Fastify): void {
             });
 
             return { kind: "ok" as const, machine: updatedOldMachine };
+        }).catch(error => {
+            if (error instanceof MachineReplacementWriteConflictError) return { kind: 'error' as const,
+                validation: { ok: false as const, statusCode: error.statusCode, reason: error.reason } };
+            throw error;
         });
 
         if (result.kind === "error") {

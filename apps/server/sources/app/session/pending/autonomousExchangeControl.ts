@@ -115,7 +115,9 @@ export async function controlAutonomousExchange(params: Readonly<{
         for (const pending of unstarted) {
             await tx.sessionPendingMessage.update({
                 where: { sessionId_localId: { sessionId: pending.sessionId, localId: pending.localId } },
-                data: { ...target, ...(params.request.control === 'stop' ? { discardedAt: new Date() } : {}) },
+                data: { ...target, ...(params.request.control === 'stop'
+                    ? { discardedAt: new Date() }
+                    : { providerAction: null }) },
             });
         }
         const bySession = new Map<string, { total: number; blocked: number }>();

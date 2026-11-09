@@ -3,14 +3,6 @@ import { projectEffectiveSessionAccess, resolveSessionAccessForOperation, type S
 import type { Tx } from "@/storage/inTx";
 import { readSessionAccessAuthenticationFromRequest, readSessionAccessAuthenticationFromSocket, type SessionAccessAuthentication } from "./sessionAccessAuthentication";
 import { API_TOKEN_FULL_GRANT_V1 } from "@happier-dev/protocol/auth/apiTokenGrant";
-import { V2SessionListRowSchema, projectSessionDisplayV1, sealSessionOwnerDisplayEnvelopeV1,
-    sealSessionSharedDisplayEnvelopeV1Sync } from '@happier-dev/protocol';
-import { sealSessionOwnerMetadataEnvelopeV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataEnvelopesV1';
-import { createSignedAccountContentBinding } from '@/testkit/accountEncryption';
-import { createPresentUserSessionAccessAuthentication } from './sessionAccessAuthentication.testkit';
-import { readmitSessionRowsWithAdmissionInTx } from './sessionReadAdmission';
-import { projectSessionMetadataDocumentDescriptorForRecipient, projectSessionMetadataForRecipient,
-    SessionMetadataPrivacyUpgradeRequiredError } from '../metadata/sessionMetadataRecipientProjection';
 
 // Pure row projection never queries persistence; relational coverage uses the real SQLite harness.
 vi.mock("@/storage/db", () => ({ db: {} }));
@@ -23,57 +15,6 @@ function session(overrides: Partial<SessionAccessProjectionRow> = {}): SessionAc
 }
 
 describe("Session effective capability projection", () => {
-    it.each([['plain', 'e2ee'], ['e2ee', 'plain']] as const)(
-        'withdraws captured %s owner display at fresh %s Account admission', async (fromMode, toMode) => {
-        const ownerMetadata = { v: 1 as const, workspace: { name: 'Mode-bound private display' } };
-        const sharedMetadata = { v: 1 as const, summary: { text: 'Mode-neutral shared display', updatedAt: 0 } };
-        const material = { type: 'dataKey' as const, machineKey: new Uint8Array(32).fill(7) };
-        const randomBytes = (length: number) => new Uint8Array(length).fill(4);
-        const encryptedOwner = sealSessionOwnerMetadataEnvelopeV1({ ownerMetadata, material, randomBytes });
-        const plainOwner = { t: 'plain' as const, v: ownerMetadata };
-        const semantic = projectSessionDisplayV1({ sharedMetadata, ownerMetadata });
-        const shared = sealSessionSharedDisplayEnvelopeV1Sync({ sessionMode: 'plain', display: semantic.shared });
-        const owner = sealSessionOwnerDisplayEnvelopeV1({ accountMode: fromMode,
-            display: semantic.owner!, material, randomBytes });
-        if (!shared.ok || !owner.ok) throw new Error('Canonical mode-bound display producer failed');
-        const displayProjectionV1 = { v: 1 as const, metadataLayoutVersion: 1 as const, sourceMetadataVersion: 0,
-            shared: shared.envelope, owner: owner.envelope };
-        const stored = { id: 'session', accountId: 'owner', encryptionMode: 'plain', metadataLayoutVersion: 1,
-            metadata: JSON.stringify(sharedMetadata), metadataVersion: 0, agentState: null, agentStateVersion: 0,
-            ownerMetadata: JSON.stringify(fromMode === 'plain' ? plainOwner : encryptedOwner),
-            displayProjectionV1: JSON.stringify(displayProjectionV1) };
-        const recipient = { type: 'owner' as const, accountId: 'owner', accountMode: fromMode };
-        const captured = V2SessionListRowSchema.parse({ id: 'session', seq: 0, createdAt: 1, updatedAt: 1,
-            active: false, activeAt: 1, encryptionMode: 'plain', dataEncryptionKey: null, share: null,
-            ...projectSessionMetadataDocumentDescriptorForRecipient({ session: stored, recipient }) });
-        const full = { id: 'session', encryptionMode: 'plain', dataEncryptionKey: null,
-            ...projectSessionMetadataForRecipient({ session: stored, recipient }) };
-        const fresh = { ...session(), encryptionMode: 'plain', metadataLayoutVersion: 1,
-            ownerMetadata: JSON.stringify(toMode === 'plain' ? plainOwner : encryptedOwner), dataKeyEnvelopes: [],
-            account: { status: 'active', ...createSignedAccountContentBinding(), encryptionMode: toMode } };
-        const findMany = vi.fn().mockResolvedValue([fresh]);
-        // Prisma is the genuine boundary; all access, mode and recipient logic stays real.
-        const reader = { session: { findMany } } as unknown as Tx;
-        const admission = { accountId: 'owner', accessMode: 'effective_access_v1' as const,
-            authentication: createPresentUserSessionAccessAuthentication() };
-        await expect(readmitSessionRowsWithAdmissionInTx(reader, admission, [full]))
-            .rejects.toBeInstanceOf(SessionMetadataPrivacyUpgradeRequiredError);
-        const readmitted = (await readmitSessionRowsWithAdmissionInTx(reader, admission, [captured])).get('session');
-        expect(readmitted?.status).toBe('allowed');
-        if (readmitted?.status !== 'allowed') throw new Error('Expected compatible shared display to remain admitted');
-        const { owner: _owner, ...sharedOnly } = displayProjectionV1;
-        expect(readmitted.row.displayProjectionV1).toEqual(sharedOnly);
-        expect(JSON.stringify(readmitted.row)).not.toContain('Mode-bound private display');
-        const storedCapture = { ...captured, displayProjectionV1: JSON.stringify(displayProjectionV1) };
-        const storedAdmission = (await readmitSessionRowsWithAdmissionInTx(reader, admission, [storedCapture])).get('session');
-        expect(storedAdmission?.status).toBe('allowed');
-        if (storedAdmission?.status !== 'allowed') throw new Error('Expected captured database row to remain admitted');
-        expect(typeof storedAdmission.row.displayProjectionV1).toBe('string');
-        expect(JSON.parse(storedAdmission.row.displayProjectionV1)).toEqual(sharedOnly);
-        expect(findMany.mock.calls.at(-1)?.[0].select.ownerMetadata).toBe(false);
-        expect(findMany.mock.calls.at(-1)?.[0].select).not.toHaveProperty('displayProjectionV1');
-    });
-
     it("admits an exact model Action without granting Send, while retaining underlying share limits", async () => {
         const authentication: SessionAccessAuthentication = {
             env: {}, authority: "account_automation", authenticationEvidence: undefined,

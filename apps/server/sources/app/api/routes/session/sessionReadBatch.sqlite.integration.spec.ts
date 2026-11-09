@@ -1,7 +1,10 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { createCipheriv, randomBytes } from 'node:crypto';
 import { decodeBase64, encodeBase64 } from 'privacy-kit';
 import tweetnacl from 'tweetnacl';
+import type { Prisma } from '@prisma/client';
 import { API_TOKEN_FULL_GRANT_V1 } from '@happier-dev/protocol/auth/apiTokenGrant';
+import { parseAccountStoredContentCompatibilityHttpHeadersV1 } from '@happier-dev/protocol/clientCompatibility/accountStoredContentCompatibilityV1';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { EXTERNAL_ACTION_EFFECT_ACTION_HEADER, EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER,
@@ -11,11 +14,13 @@ import { computeExternalActionRequestEnvelopeDigestV1, encodeExternalActionResol
     signExternalActionMachineRequestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { encodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
 import { SessionReadBatchResponseV1Schema } from '@happier-dev/protocol/sessions/read/sessionReadBatchV1';
+import { V2SessionListResponseSchema, V2SessionByIdResponseSchema } from '@happier-dev/protocol/sessions/control/contract';
 import { normalizeSessionListFilterV1 } from '@happier-dev/protocol/sessions/listFilter/sessionListFilterV1';
 import { normalizeStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { sealSessionOwnerMetadataEnvelopeV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataEnvelopesV1';
 import { encodeSessionOwnerMetadataEnvelopeV1, projectSessionSharedMetadataV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import { sealEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
+import { packSessionDataKeyBundleV0, serializeSessionDataKeyValue } from '@happier-dev/protocol/crypto/sessionDataKeyBundleV0';
 import { projectSessionDisplayV1, sealSessionOwnerDisplayEnvelopeV1, sealSessionSharedDisplayEnvelopeV1,
     sealSessionSharedDisplayEnvelopeV1Sync, sealSessionDataKeyBundleV0, SessionListQueryV1Schema } from '@happier-dev/protocol';
 import { SessionOwnerMetadataV1Schema, SessionSharedMetadataV1Schema } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
@@ -25,10 +30,13 @@ import { auth } from '@/app/auth/auth';
 import { getOrCreateServerIdentityId } from '@/app/serverIdentity/serverIdentity';
 import { observeSqliteRequests } from '@/testkit/observeSqliteRequests';
 import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lightSqliteHarness';
+import { withSqliteReadSnapshot } from '@/storage/prisma';
 import { createSignedAccountContentBinding } from '@/testkit/accountEncryption';
 import { withAuthenticatedTestApp } from '@/app/api/testkit/sqliteFastify';
+import { currentAccountStoredContentCompatibilityHeaders } from '@/app/api/testkit/accountStoredContentCompatibility';
+import { evaluateAccountStoredContentCompatibility } from '@/app/clientCompatibility/accountStoredContentCompatibility';
 import type { Fastify } from '@/app/api/types';
-import { registerSessionListingRoutes } from './registerSessionListingRoutes';
+import { readSessionDetails, registerSessionListingRoutes } from './registerSessionListingRoutes';
 import { registerSessionReadBatchRoute } from './registerSessionReadBatchRoute';
 import { registerSessionMessageRoutes } from './registerSessionMessageRoutes';
 import { registerSessionTurnMutationRoute } from './registerSessionTurnMutationRoute';
@@ -36,7 +44,36 @@ import { registerSessionPatchRoute } from './registerSessionPatchRoute';
 import { registerSessionCreateOrLoadRoute } from './registerSessionCreateOrLoadRoute';
 import { createMaterializedEphemeralRunnerFixture } from '@/app/ephemeralRunner/materializedRunner.testkit';
 import { sourceKeyForSessionFollowSourceV1 } from '@/app/session/follow/sessionFollowSourceIdentity';
+import { setAccountFollowRule } from '@/app/session/follow/accountFollowRuleService';
+import { readSessionAccessAuthenticationFromRequest } from '@/app/session/access/sessionAccessAuthentication';
+import * as requestPrincipalOwner from '@/app/api/utils/verifyRequestPrincipal';
+import * as sessionAccessOwner from '@/app/session/access/sessionAccess';
 import { sessionReadBatchCostContract } from './sessionReadBatchCost.testkit';
+
+const flowSql = vi.hoisted(() => ({ statements: 0 }));
+// Observe the real adapter, including independent read-snapshot clients. No
+// database request, access decision or result is substituted by this counter.
+vi.mock('../../../../../generated/sqlite-client/index.js', async importOriginal => {
+    const original = await importOriginal<typeof import('@prisma/client')>();
+    return { ...original, PrismaClient: class extends original.PrismaClient<Prisma.PrismaClientOptions, 'query'> {
+        constructor(options: Prisma.PrismaClientOptions) {
+            super({ ...options, log: [{ emit: 'event', level: 'query' }] });
+            this.$on('query', () => { flowSql.statements++; });
+        }
+    } };
+});
+
+const responseAdmissions = vi.hoisted(() => ({ detail: 0 }));
+// Counts admissions of the real response schemas; the real parses still run.
+vi.mock('./sessionRecordResponse', async importOriginal => {
+    const original = await importOriginal<typeof import('./sessionRecordResponse')>();
+    return { ...original,
+        parseProjectedSessionBatchDetail: (detail: unknown) => {
+            responseAdmissions.detail++;
+            return original.parseProjectedSessionBatchDetail(detail);
+        },
+    };
+});
 
 // The actual read owners are sufficient; Session deletion and mutation registrars
 // are not part of this transport's HTTP/authentication contract.
@@ -58,6 +95,321 @@ describe('Session id-batched reads (SQLite integration)', () => {
     afterAll(async () => { await harness?.close(); vi.unstubAllEnvs(); });
 
     sessionReadBatchCostContract('sqlite');
+
+    async function measureSessionHttpFlow(route: 'list' | 'read-batch') {
+        const owner = await db.account.create({ data: { publicKey: crypto.randomUUID(), encryptionMode: 'plain' } });
+        // FLOWBUDGET's foreground corpus is about 1k Sessions. Demand remains
+        // a small page/set; retained inventory must not cause body hydration.
+        const inventorySessions = 1_000;
+        await db.session.createMany({ data: Array.from({ length: inventorySessions }, () => ({
+            accountId: owner.id, tag: crypto.randomUUID(), metadata: '{}', encryptionMode: 'plain',
+        })) });
+        const sessions = await db.session.findMany({ where: { accountId: owner.id }, select: { id: true }, take: 3 });
+        const token = await auth.createToken(owner.id, undefined, { kind: 'account', authority: 'present_user' });
+        const principal = vi.spyOn(requestPrincipalOwner, 'verifyRequestPrincipal');
+        const scalarAccess = vi.spyOn(sessionAccessOwner, 'resolveSessionAccessForOperation');
+        const batchAccess = vi.spyOn(sessionAccessOwner, 'resolveSessionAccessForRowsInTx');
+        const observations: { resources: number; requestAdmissions: number; scalarAccess: number;
+            admissionRows: number[]; documentReads: number; sqlStatements: number; databaseReads: Record<string, number> }[] = [];
+        try {
+            await withAuthenticatedTestApp(registerSessionReadRoutes, async app => {
+                const headers = { authorization: `Bearer ${token}`, 'x-happier-account-stored-content-protocol': '4' };
+                for (const demanded of [sessions.slice(0, 1), sessions]) {
+                    principal.mockClear(); scalarAccess.mockClear(); batchAccess.mockClear();
+                    flowSql.statements = 0;
+                    const requests: string[] = [];
+                    let documentReads = 0;
+                    const stop = observeSqliteRequests({ before: request => {
+                        requests.push(`${request.model ?? 'raw'}.${request.action}`);
+                        const args = request.args as { select?: Record<string, unknown> } | undefined;
+                        if (request.model === 'Session' && args?.select?.metadata === true) documentReads++;
+                    } });
+                    const response = await (async () => {
+                        try { return await app.inject(route === 'list'
+                            ? { method: 'GET', url: `/v2/sessions?limit=${demanded.length}`, headers }
+                            : { method: 'POST', url: '/v2/sessions/read-batch', headers, payload: {
+                                sessionIds: demanded.map(session => session.id), accessProjectionVersion: 1,
+                                includeSnapshot: true, includeTurns: false, includeMessages: false,
+                            } }); } finally { stop(); }
+                    })();
+                    expect(response.statusCode, response.body).toBe(200);
+                    const bodies = route === 'list' ? V2SessionListResponseSchema.parse(response.json()).sessions
+                        : SessionReadBatchResponseV1Schema.parse(response.json()).results.map(result => {
+                            expect(result.detail?.status).toBe(200);
+                            return result.detail?.status === 200 ? result.detail.body.session : undefined;
+                        });
+                    expect(bodies).toHaveLength(demanded.length);
+                    if (route === 'read-batch') {
+                        expect(bodies.map(body => body?.id).sort()).toEqual(demanded.map(session => session.id).sort());
+                    } else {
+                        for (const body of bodies) {
+                            expect(body).not.toHaveProperty('metadata');
+                            expect(body).not.toHaveProperty('agentState');
+                        }
+                    }
+                    observations.push({ resources: demanded.length, requestAdmissions: principal.mock.calls.length,
+                        scalarAccess: scalarAccess.mock.calls.length, admissionRows: batchAccess.mock.calls.map(([, , rows]) => rows.length),
+                        documentReads, sqlStatements: flowSql.statements,
+                        databaseReads: Object.fromEntries([...new Set(requests)].filter(key => !key.startsWith('raw.'))
+                            .map(key => [key, requests.filter(value => value === key).length])),
+                    });
+                    console.info('FLOWBUDGET_SESSION_HTTP_DB', JSON.stringify({ route, inventorySessions, resources: demanded.length,
+                        httpRequests: 1, requestAdmissions: principal.mock.calls.length,
+                        scalarAccess: scalarAccess.mock.calls.length,
+                        batchAccess: batchAccess.mock.calls.map(([, , rows]) => rows.length),
+                        sqlStatements: flowSql.statements, documentReads,
+                        databaseRequests: Object.fromEntries([...new Set(requests)].map(key => [key, requests.filter(value => value === key).length])),
+                    }));
+                }
+            }, { authentication: 'real' });
+            return observations;
+        } finally { principal.mockRestore(); scalarAccess.mockRestore(); batchAccess.mockRestore(); }
+    }
+
+    it.each(['list', 'read-batch'] as const)('FLOWBUDGET real %s admits each HTTP request once and reads only demanded documents', async route => {
+        const observations = await measureSessionHttpFlow(route);
+        for (const observation of observations) {
+            expect(observation.requestAdmissions).toBe(1); // One physical HTTP request.
+            expect(observation.scalarAccess).toBe(0); // Set reads must not fall back to per-id acquisition.
+            expect(observation.documentReads).toBe(route === 'list' ? 0 : 1); // One demanded document set.
+            expect(observation.sqlStatements, 'The physical SQL observer must be live').toBeGreaterThan(0);
+            if (route === 'list') {
+                // The access-qualified query admits the compact rows once;
+                // no later row-level decision re-admits the same list page.
+                expect(observation.admissionRows).toEqual([]);
+            }
+        }
+        // A larger page/set uses the same IO batches, not one query per row.
+        // Compare real demand sizes; measured statement totals are not limits.
+        expect(observations.at(-1)?.databaseReads).toEqual(observations[0]?.databaseReads);
+    });
+
+    it('FLOWBUDGET read-batch admits each demanded Session once without a capture/readmission recheck', async () => {
+        const observations = await measureSessionHttpFlow('read-batch');
+        for (const observation of observations) {
+            expect(observation.admissionRows.reduce((total, rows) => total + rows, 0)).toBe(observation.resources);
+        }
+    });
+
+    it('FLOWBUDGET read-batch validates each Session response once and still refuses another Account', async () => {
+        const owner = await db.account.create({ data: { publicKey: crypto.randomUUID(), encryptionMode: 'plain' } });
+        const stranger = await db.account.create({ data: { publicKey: crypto.randomUUID(), encryptionMode: 'plain' } });
+        const ids = [crypto.randomUUID(), crypto.randomUUID()];
+        await db.session.createMany({ data: ids.map(id => ({ id, accountId: owner.id, tag: id, metadata: '{}', encryptionMode: 'plain' })) });
+        try {
+            await withAuthenticatedTestApp(registerSessionReadBatchRoute, async app => {
+                responseAdmissions.detail = 0;
+                const owned = await app.inject({ method: 'POST', url: '/v2/sessions/read-batch',
+                    headers: { 'x-test-user-id': owner.id, ...currentAccountStoredContentCompatibilityHeaders },
+                    payload: { sessionIds: ids, includeSnapshot: true, includeTurns: false } });
+                expect(owned.statusCode).toBe(200);
+                expect(SessionReadBatchResponseV1Schema.parse(owned.json()).results.map(row => row.detail?.status)).toEqual([200, 200]);
+                expect(responseAdmissions.detail).toBe(ids.length);
+
+                const refused = await app.inject({ method: 'POST', url: '/v2/sessions/read-batch',
+                    headers: { 'x-test-user-id': stranger.id, ...currentAccountStoredContentCompatibilityHeaders },
+                    payload: { sessionIds: ids, includeSnapshot: true, includeTurns: false } });
+                expect(refused.statusCode).toBe(200);
+                expect(refused.json().results.map((row: { detail?: { status: number } }) => row.detail?.status)).not.toContain(200);
+            });
+        } finally {
+            await db.session.deleteMany({ where: { id: { in: ids } } });
+            await db.account.deleteMany({ where: { id: { in: [owner.id, stranger.id] } } });
+        }
+    });
+
+    it('projects Usage detail at storage without hydrating unused owner cursor bodies', async () => {
+        const owner = await db.account.create({ data: { publicKey: crypto.randomUUID(), encryptionMode: 'plain' } });
+        const metadata = JSON.stringify(SessionSharedMetadataV1Schema.parse({ v: 1, summary: { text: 'Keep shared facts', updatedAt: 1 } }));
+        const agentState = (padding: number) => JSON.stringify({ requests: { permission: { tool: 'Read', turnId: 'turn', createdAt: 10, arguments: { privateText: 'a'.repeat(padding) } } },
+            completedRequests: {}, providerExtension: { retained: 'Agent runtime state' } });
+        const ownerValue = (padding: number) => SessionOwnerMetadataV1Schema.parse({ v: 1,
+            workspace: { name: 'Workspace', path: '/workspace/repository' },
+            runtime: { modelSelectionIntentV1: { v: 1, updatedAt: 2, selection: null },
+                mcpSelectionV1: { v: 1, managedServersEnabled: false, forceIncludeServerIds: ['server'], forceExcludeServerIds: [] } },
+            cursors: { externalSessionAttentionV1: { v: 1, observedProgressToken: 'p'.repeat(padding) } } });
+        const session = await db.session.create({ data: { accountId: owner.id, tag: crypto.randomUUID(),
+            encryptionMode: 'plain', metadataLayoutVersion: 1, metadata, agentState: agentState(128),
+            ownerMetadata: JSON.stringify({ t: 'plain', v: ownerValue(128) }) } });
+        await withAuthenticatedTestApp(app => {
+            registerSessionReadRoutes(app);
+            for (const usageProjection of [false, true]) app.get(`/__usage-detail/${usageProjection ? 'usage' : 'full'}`, {
+                preHandler: app.authenticate,
+            }, async (request, reply) => {
+                const result = (await readSessionDetails({ userId: request.userId, sessionIds: [session.id], accessProjectionVersion: 1,
+                    usageProjection, authentication: readSessionAccessAuthenticationFromRequest(request),
+                    storedContentCompatibility: evaluateAccountStoredContentCompatibility(
+                        parseAccountStoredContentCompatibilityHttpHeadersV1(currentAccountStoredContentCompatibilityHeaders)) })).get(session.id)!;
+                if (result.status === 'rejected') throw result.reason;
+                return reply.code(result.value.status).send(result.value.body);
+            });
+        }, async app => {
+            const headers = { 'x-test-user-id': owner.id, 'x-happier-account-stored-content-protocol': '4' };
+            const bytes: number[] = [];
+            const responseBytes: number[] = [];
+            const fullOwnerHydrations: number[] = [];
+            const publishedOwners: unknown[] = [];
+            for (const padding of [128, 16_000]) {
+                const actionConfirmationsV1 = { v: 1, requests: { confirmation: {
+                    tool: 'Happier Action confirmation', kind: 'user_action', createdAt: 10, turnId: 'turn', source: 'happier_action',
+                    arguments: { actionId: 'usage.query', preview: { privateText: 'c'.repeat(padding) }, sessionId: session.id, turnId: 'turn' },
+                    responseTarget: { kind: 'happier_action_confirmation_v1', requestId: 'confirmation', actionId: 'usage.query',
+                        inputDigestV1: `sha256:${'a'.repeat(64)}`, runtimeAccountId: owner.id, sessionId: session.id, turnId: 'turn' },
+                } }, completedRequests: {} };
+                await db.session.update({ where: { id: session.id }, data: {
+                    metadata: JSON.stringify(SessionSharedMetadataV1Schema.parse({ ...JSON.parse(metadata), actionConfirmationsV1 })),
+                    agentState: agentState(padding), ownerMetadata: JSON.stringify({ t: 'plain', v: ownerValue(padding) }) } });
+                let databaseBytes = 0;
+                let hydratedOwners = 0;
+                const stop = observeSqliteRequests({ after: (request, result) => {
+                    if (Array.isArray(result)) for (const row of result) {
+                        if (row && typeof row === 'object') for (const field of ['ownerMetadata', 'agentState', 'metadata'] as const) {
+                            if (field in row && typeof row[field] === 'string') databaseBytes += Buffer.byteLength(row[field]);
+                        }
+                    }
+                    const args = request.args as { select?: { ownerMetadata?: boolean } } | undefined;
+                    if (request.model === 'Session' && args?.select?.ownerMetadata === true) hydratedOwners++;
+                } });
+                const response = await (async () => {
+                    try { return await app.inject({ method: 'GET', url: '/__usage-detail/usage', headers }); }
+                    finally { stop(); }
+                })();
+                expect(response.statusCode, response.body).toBe(200);
+                const projected = V2SessionByIdResponseSchema.parse(response.json()).session;
+                expect(projected.metadata).toBe(metadata);
+                expect(projected.agentState).toBeNull();
+                expect(projected.ownerMetadata).toMatchObject({ t: 'plain', v: { v: 1,
+                    workspace: { name: 'Workspace', path: '/workspace/repository' }, runtime: ownerValue(0).runtime } });
+                publishedOwners.push(projected.ownerMetadata);
+                bytes.push(databaseBytes); responseBytes.push(Buffer.byteLength(response.body)); fullOwnerHydrations.push(hydratedOwners);
+            }
+            expect(bytes[1]).toBe(bytes[0]);
+            expect(responseBytes[1]).toBeLessThanOrEqual(responseBytes[0]!);
+            expect(fullOwnerHydrations).toEqual([0, 0]);
+            const expectedOwner = { t: 'plain', v: { v: 1, workspace: { name: 'Workspace', path: '/workspace/repository' },
+                runtime: ownerValue(0).runtime } };
+            expect(publishedOwners).toEqual([expectedOwner, expectedOwner]);
+            const full = await app.inject({ method: 'GET', url: '/__usage-detail/full', headers });
+            expect(full.statusCode, full.body).toBe(200);
+            expect(full.json().session.ownerMetadata).toEqual({ t: 'plain', v: ownerValue(16_000) });
+            expect(full.json().session.agentState).toBe(agentState(16_000));
+            expect(JSON.parse(full.json().session.metadata).actionConfirmationsV1.requests.confirmation.arguments.preview.privateText).toHaveLength(16_000);
+        });
+    });
+
+    it('keeps Usage detail encryption and recipient admission at the canonical mapper', async () => {
+        const plain = await db.account.create({ data: { publicKey: crypto.randomUUID(), encryptionMode: 'plain' } });
+        const content = tweetnacl.box.keyPair();
+        const encrypted = await db.account.create({ data: { encryptionMode: 'e2ee', ...createSignedAccountContentBinding(content.publicKey) } });
+        const ownerEnvelope = sealSessionOwnerMetadataEnvelopeV1({ ownerMetadata: { v: 1,
+            workspace: { path: '/encrypted/workspace' }, cursors: { externalSessionAttentionV1: { v: 1, observedProgressToken: 'opaque' } } },
+            material: { type: 'dataKey', machineKey: content.secretKey, publicKey: content.publicKey }, randomBytes });
+        const sealed = encodeSessionOwnerMetadataEnvelopeV1(ownerEnvelope);
+        const rows = await Promise.all([
+            db.session.create({ data: { accountId: encrypted.id, tag: crypto.randomUUID(), encryptionMode: 'plain',
+                metadataLayoutVersion: 1, metadata: JSON.stringify({ v: 1 }), ownerMetadata: sealed } }),
+            db.session.create({ data: { accountId: plain.id, tag: crypto.randomUUID(), encryptionMode: 'plain',
+                metadataLayoutVersion: 1, metadata: JSON.stringify({ v: 1 }), ownerMetadata: sealed } }),
+            db.session.create({ data: { accountId: plain.id, tag: crypto.randomUUID(), encryptionMode: 'plain',
+                metadataLayoutVersion: 1, metadata: JSON.stringify({ v: 1 }), ownerMetadata: '{malformed' } }),
+            db.session.create({ data: { accountId: plain.id, tag: crypto.randomUUID(), encryptionMode: 'plain',
+                metadataLayoutVersion: 1, metadata: JSON.stringify({ v: 1 }), ownerMetadata: JSON.stringify({ t: 'unexpected', v: { v: 1 } }) } }),
+        ]);
+        const stateAdmissions = new Map<string, boolean>();
+        const read = (userId: string, usageProjection: boolean) => readSessionDetails({ userId, sessionIds: rows.map(row => row.id),
+            onUsageStateAdmission: (sessionId, admitted) => { stateAdmissions.set(sessionId, admitted); },
+            accessProjectionVersion: 1, usageProjection,
+            authentication: readSessionAccessAuthenticationFromRequest({ authAuthority: 'present_user' }),
+            storedContentCompatibility: evaluateAccountStoredContentCompatibility(
+                parseAccountStoredContentCompatibilityHttpHeadersV1(currentAccountStoredContentCompatibilityHeaders)) });
+        for (const owner of [plain, encrypted]) {
+            stateAdmissions.clear();
+            const full = await read(owner.id, false);
+            expect(stateAdmissions.size).toBe(0);
+            const usage = await read(owner.id, true);
+            expect([...stateAdmissions]).toEqual(owner.id === encrypted.id ? [[rows[0]!.id, true]] : []);
+            expect(usage).toEqual(full);
+            for (const result of usage.values()) if (result.status === 'rejected') throw result.reason;
+            const first = usage.get(rows[0]!.id)!;
+            expect(first).toMatchObject(owner.id === encrypted.id
+                ? { status: 'fulfilled', value: { status: 200, body: { session: { ownerMetadata: JSON.parse(sealed) } } } }
+                : { status: 'fulfilled', value: { status: 404 } });
+            if (owner.id === plain.id) for (const row of rows.slice(1)) {
+                expect(usage.get(row.id)).toMatchObject({ status: 'fulfilled', value: { status: 409,
+                    body: { code: 'metadata_privacy_upgrade_required' } } });
+            }
+        }
+    });
+
+    it('captures each existing detail batch in one admission snapshot', async () => {
+        const owner = await db.account.create({ data: { publicKey: crypto.randomUUID(), encryptionMode: 'plain' } });
+        const sessionIds = Array.from({ length: sessionAccessOwner.SESSION_ACCESS_SESSION_BATCH_SIZE + 1 }, () => crypto.randomUUID());
+        await db.session.createMany({ data: sessionIds.map(id => ({ id, accountId: owner.id,
+            tag: crypto.randomUUID(), metadata: '{}', encryptionMode: 'plain' })) });
+        const reader = await withSqliteReadSnapshot(async tx => tx);
+        const execute = reader.$executeRawUnsafe.bind(reader);
+        let snapshots = 0;
+        Object.defineProperty(reader, '$executeRawUnsafe', { configurable: true, writable: true,
+            value: async (...args: Parameters<typeof execute>) => {
+                if (args[0] === 'BEGIN DEFERRED;') snapshots++;
+                return await execute(...args);
+            } });
+        const admission = vi.spyOn(sessionAccessOwner, 'resolveSessionAccessForRowsInTx');
+        try {
+            const details = await readSessionDetails({ userId: owner.id, sessionIds, accessProjectionVersion: 1,
+                authentication: readSessionAccessAuthenticationFromRequest({ authAuthority: 'present_user' }),
+                storedContentCompatibility: evaluateAccountStoredContentCompatibility(
+                    parseAccountStoredContentCompatibilityHttpHeadersV1(currentAccountStoredContentCompatibilityHeaders)) });
+            expect(details.size).toBe(sessionIds.length);
+            for (const id of sessionIds) {
+                const detail = details.get(id);
+                if (detail?.status === 'rejected') throw detail.reason;
+                expect(detail).toMatchObject({ status: 'fulfilled', value: { status: 200, body: { session: { id } } } });
+            }
+            expect(admission.mock.calls.reduce((total, [, , rows]) => total + rows.length, 0)).toBe(sessionIds.length);
+            expect(snapshots).toBe(Math.ceil(sessionIds.length / sessionAccessOwner.SESSION_ACCESS_SESSION_BATCH_SIZE));
+            snapshots = 0;
+            const empty = await readSessionDetails({ userId: owner.id, sessionIds: [], accessProjectionVersion: 1,
+                authentication: readSessionAccessAuthenticationFromRequest({ authAuthority: 'present_user' }),
+                storedContentCompatibility: evaluateAccountStoredContentCompatibility(
+                    parseAccountStoredContentCompatibilityHttpHeadersV1(currentAccountStoredContentCompatibilityHeaders)) });
+            expect(empty.size).toBe(0);
+            expect(snapshots).toBe(0);
+        } finally {
+            admission.mockRestore();
+            Object.defineProperty(reader, '$executeRawUnsafe', { configurable: true, writable: true, value: execute });
+        }
+    });
+
+    it('preserves the scalar observation cut when the batch adds private Follow rule read states', async () => {
+        const owner = await db.account.create({ data: { publicKey: crypto.randomUUID(), encryptionMode: 'plain' } });
+        const session = await db.session.create({ data: { accountId: owner.id, tag: crypto.randomUUID(),
+            metadata: '{}', encryptionMode: 'plain', seq: 1 } });
+        const ruleId = crypto.randomUUID();
+        const rule = await setAccountFollowRule({ accountId: owner.id, ruleId,
+            authentication: readSessionAccessAuthenticationFromRequest({ authAuthority: 'present_user' }),
+            mutation: { expectedVersion: -1, receiver: { kind: 'account' }, content: { t: 'plain', v: {
+                v: 1, enabled: true, filter: normalizeSessionListFilterV1({ show: 'sessions' }), policy: { preset: 'important' },
+            } } } });
+        expect(rule.ok).toBe(true);
+        const token = await auth.createToken(owner.id, undefined, { kind: 'account', authority: 'present_user' });
+        await withAuthenticatedTestApp(registerSessionReadRoutes, async app => {
+            const headers = { authorization: `Bearer ${token}`, 'x-happier-account-stored-content-protocol': '4' };
+            const scalar = await app.inject({ method: 'GET', url: `/v2/sessions/${session.id}?accessProjectionVersion=1`, headers });
+            expect(scalar.statusCode, scalar.body).toBe(200);
+            expect(scalar.json().observationCursor).toEqual(expect.any(Number));
+            const batch = await app.inject({ method: 'POST', url: '/v2/sessions/read-batch', headers,
+                payload: { sessionIds: [session.id], accessProjectionVersion: 1,
+                    includeSnapshot: true, includeTurns: false, includeMessages: false } });
+            expect(batch.statusCode, batch.body).toBe(200);
+            const detail = SessionReadBatchResponseV1Schema.parse(batch.json()).results[0]?.detail;
+            expect(detail).toMatchObject({ status: 200, body: { session: { viewer: {
+                ruleReadStates: [{ ruleId }],
+            } } } });
+            if (detail?.status !== 200) throw new Error('Expected an admitted batch detail');
+            expect(detail.body.observationCursor).toBe(scalar.json().observationCursor);
+        }, { authentication: 'real' });
+    });
 
     it('atomically creates pre-encrypted display before the server allocates its Session id', async () => {
         const sessionKey = new Uint8Array(32).fill(8);
@@ -294,6 +646,7 @@ describe('Session id-batched reads (SQLite integration)', () => {
             for (const result of results) {
                 expect(result).not.toHaveProperty('turns');
                 expect(result).not.toHaveProperty('messages');
+                if (result.detail?.status === 200) expect(result.detail.body).not.toHaveProperty('observationCursor');
                 if (result.detail?.status === 200) for (const field of ['viewer', 'ownerMetadata', 'lastViewedSessionSeq', 'unreadSince', 'receivedRuleCount']) {
                     expect(result.detail.body.session).not.toHaveProperty(field);
                 }
@@ -346,7 +699,12 @@ describe('Session id-batched reads (SQLite integration)', () => {
                 const captured = await read();
                 expect(captured.statusCode, captured.body).toBe(200);
                 expect(captured.json().results[0]).toMatchObject({ sessionId: fixture.sessionId, detail: { status: 200 } });
-                expect(captured.json().results[1]).toMatchObject({ sessionId: child.id, detail: { status: 404 } });
+                // The finite read retains its admitted snapshot. The 10-29
+                // owner ruling withdraws subtree access at the next request.
+                expect(captured.json().results[1]).toMatchObject({ sessionId: child.id, detail: { status: 200 } });
+                const next = await read();
+                expect(next.statusCode, next.body).toBe(200);
+                expect(next.json().results[1]).toMatchObject({ sessionId: child.id, detail: { status: 404 } });
             } finally { stop(); }
         }, { authentication: 'real' });
     }, 120_000);
@@ -539,6 +897,7 @@ describe('Session id-batched reads (SQLite integration)', () => {
         const encrypted = await db.session.create({ data: { accountId: owner.id, tag: crypto.randomUUID(), metadata: 'sealed-metadata', encryptionMode: 'e2ee' } });
         const denied = await db.session.create({ data: { accountId: foreign.id, tag: crypto.randomUUID(), metadata: 'private' } });
         const corrupt = await db.session.create({ data: { accountId: owner.id, tag: crypto.randomUUID(), metadata: '{}', encryptionMode: 'plain' } });
+        const retained = await db.session.create({ data: { accountId: owner.id, tag: crypto.randomUUID(), metadata: '{}', encryptionMode: 'plain' } });
         await db.sessionMessage.createMany({ data: Array.from({ length: 151 }, (_, index) => ({
             sessionId: plain.id, seq: index + 1, messageRole: 'user',
             content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: `input ${index}` } } },
@@ -548,12 +907,20 @@ describe('Session id-batched reads (SQLite integration)', () => {
             { sessionId: plain.id, seq: 153, messageRole: 'unknown', content: { t: 'plain', v: { type: 'excluded row' } } },
             { sessionId: encrypted.id, seq: 1, messageRole: 'agent', content: { t: 'encrypted', c: 'sealed-content' } },
             { sessionId: corrupt.id, seq: 1, messageRole: 'user', content: { t: 'plain', v: null } },
+            { sessionId: retained.id, seq: 1, messageRole: 'user', content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'Retained input' } } } },
         ] });
         // Corrupt retained storage is a database boundary fixture, not a current writer shape.
         await db.$executeRaw`UPDATE "SessionMessage" SET "content" = ${JSON.stringify({ t: 'unexpected' })} WHERE "sessionId" = ${corrupt.id}`;
+        const retainedAttribution = { v: 1, issuer: 'authenticatedAccount', actorAccountId: owner.id, sessionRelationship: 'owner' };
+        // Real predecessor storage before selectedDelivery was required. Do not
+        // send this through current write admission or synthesize a delivery vote.
+        await db.$executeRaw`UPDATE "SessionMessage" SET "inputAdmissionReceipt" = ${JSON.stringify({ ...retainedAttribution,
+            followSources: [{ sourceSessionId: plain.id, destinationSessionId: retained.id, evaluation: 'receiver',
+                rule: { ruleId: 'retained-rule', ruleVersion: 1 }, sourceMessage: { localId: 'original', seq: 1 } }],
+        })} WHERE "sessionId" = ${retained.id}`;
         await db.sessionTurn.create({ data: { sessionId: plain.id, turnId: 'completed-turn', status: 'completed',
             startedAt: 10n, updatedAt: 20n, terminalAt: 20n } });
-        const ids = [plain.id, encrypted.id, denied.id, 'missing-session', corrupt.id];
+        const ids = [plain.id, encrypted.id, denied.id, 'missing-session', corrupt.id, retained.id];
         await withAuthenticatedTestApp(registerSessionReadRoutes, async app => {
             const headers = { 'x-test-user-id': owner.id, 'x-happier-account-stored-content-protocol': '4' };
             const response = await app.inject({ method: 'POST', url: '/v2/sessions/read-batch', headers,
@@ -580,6 +947,10 @@ describe('Session id-batched reads (SQLite integration)', () => {
             expect(results[0].messages.body.messages[0]).toMatchObject({ seq: 152, messageRole: 'event', sidechainId: 'child' });
             expect(results[1].messages.body.messages[0].content).toEqual({ t: 'encrypted', c: 'sealed-content' });
             expect(results[4]).toMatchObject({ detail: { status: 200 }, messages: { status: 503, body: { error: 'session_transcript_stored_content_unavailable' } } });
+            expect(results[5]).toMatchObject({ detail: { status: 200 }, messages: { status: 200, body: { messages: [
+                { inputAdmissionReceipt: retainedAttribution },
+            ] } } });
+            expect(results[5].messages.body.messages[0].inputAdmissionReceipt).not.toHaveProperty('followSources');
 
             const snapshot = await app.inject({ method: 'POST', url: '/v2/sessions/read-batch', headers,
                 payload: { sessionIds: [plain.id], accessProjectionVersion: 1 } });
@@ -655,21 +1026,101 @@ describe('Session id-batched reads (SQLite integration)', () => {
         });
     });
 
-    it('quarantines malformed retained component output without discarding another Session', async () => {
+    it('keeps malformed message components isolated in the JSON batch', async () => {
         const owner = await db.account.create({ data: { publicKey: crypto.randomUUID(), encryptionMode: 'plain' } });
         const healthy = await db.session.create({ data: { accountId: owner.id, tag: crypto.randomUUID(), encryptionMode: 'plain', metadata: '{}' } });
         const malformed = await db.session.create({ data: { accountId: owner.id, tag: crypto.randomUUID(), encryptionMode: 'plain', metadata: '{}' } });
         await db.sessionMessage.create({ data: { id: '', sessionId: malformed.id, seq: 1, messageRole: 'user',
             content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'retained row without usable identity' } } } } });
         await withAuthenticatedTestApp(registerSessionReadRoutes, async app => {
-            const response = await app.inject({ method: 'POST', url: '/v2/sessions/read-batch',
-                headers: { 'x-test-user-id': owner.id, 'x-happier-account-stored-content-protocol': '4' },
-                payload: { sessionIds: [malformed.id, healthy.id], accessProjectionVersion: 1, includeMessages: true } });
+            let response;
+            try {
+                response = await app.inject({ method: 'POST', url: '/v2/sessions/read-batch',
+                    headers: { 'x-test-user-id': owner.id, 'x-happier-account-stored-content-protocol': '4' },
+                    payload: { sessionIds: [malformed.id, healthy.id], accessProjectionVersion: 1, includeMessages: true } });
+            } finally {
+                await db.sessionMessage.delete({ where: { id: '' } });
+            }
             expect(response.statusCode, response.body).toBe(200);
-            expect(SessionReadBatchResponseV1Schema.parse(response.json()).results).toMatchObject([
+            expect(response.headers['content-type']).toContain('application/json');
+            expect(response.headers['cache-control']).toBe('no-store');
+            const results = SessionReadBatchResponseV1Schema.parse(response.json()).results;
+            expect(results).toHaveLength(2);
+            expect(results).toMatchObject([
                 { sessionId: malformed.id, detail: { status: 200 }, messages: { status: 503, body: { error: 'session_read_unavailable' } } },
                 { sessionId: healthy.id, detail: { status: 200 }, messages: { status: 200, body: { messages: [] } } },
             ]);
+            const empty = await app.inject({ method: 'POST', url: '/v2/sessions/read-batch',
+                headers: { 'x-test-user-id': owner.id, 'x-happier-account-stored-content-protocol': '4' },
+                payload: { sessionIds: [], includeMessages: true } });
+            expect(empty.statusCode).toBe(200);
+            expect(empty.json()).toEqual({ results: [] });
+        });
+    });
+
+    it.skipIf(process.env.HAPPIER_SRVQ_CHOOSER_MEASUREMENT !== '1')('measures the encrypted chooser payload floor through the real batch route', async () => {
+        // Match FIN DIAG181's synthetic workload, not a production size limit.
+        const count = 1000;
+        const content = tweetnacl.box.keyPair();
+        const material = { type: 'dataKey' as const, machineKey: content.secretKey, publicKey: content.publicKey };
+        const binding = createSignedAccountContentBinding(content.publicKey);
+        const owner = await db.account.create({ data: { encryptionMode: 'e2ee', ...binding } });
+        const rows = Array.from({ length: count }, () => {
+            const id = crypto.randomUUID();
+            const key = randomBytes(32);
+            // Native cipher boundary with the canonical Session frame/serializer;
+            // no CLI/UI owner import or alternate production encryption path.
+            const nonce = randomBytes(12);
+            const cipher = createCipheriv('aes-256-gcm', key, nonce);
+            const ciphertext = Buffer.concat([cipher.update(serializeSessionDataKeyValue({ v: 1 })), cipher.final()]);
+            const metadata = encodeBase64(new Uint8Array(packSessionDataKeyBundleV0({ nonce, ciphertext, authTag: cipher.getAuthTag() })));
+            const ownerMetadata = encodeSessionOwnerMetadataEnvelopeV1(sealSessionOwnerMetadataEnvelopeV1({
+                material, randomBytes,
+                ownerMetadata: { v: 1, cursors: { externalSessionAttentionV1: {
+                    v: 1, observedProgressToken: 'p'.repeat(14000),
+                } } },
+            }));
+            return { id, key, metadata, ownerMetadata };
+        });
+        await db.session.createMany({ data: rows.map(row => ({ id: row.id, tag: row.id, accountId: owner.id,
+            encryptionMode: 'e2ee', metadataLayoutVersion: 1, metadata: row.metadata, ownerMetadata: row.ownerMetadata })) });
+        await db.sessionDataKeyEnvelope.createMany({ data: rows.map(row => ({ sessionId: row.id,
+            recipientAccountId: owner.id, encryptedDataKey: Buffer.from(sealEncryptedDataKeyEnvelopeV1({
+                dataKey: row.key, recipientPublicKey: binding.contentPublicKey, randomBytes,
+            })) })) });
+        await withAuthenticatedTestApp(registerSessionReadRoutes, async app => {
+            const started = performance.now();
+            const response = await app.inject({ method: 'POST', url: '/v2/sessions/read-batch',
+                headers: { 'x-test-user-id': owner.id, 'x-happier-account-stored-content-protocol': '4' },
+                payload: { sessionIds: rows.map(row => row.id), accessProjectionVersion: 1,
+                    includeSnapshot: true, includeTurns: false, includeMessages: false } });
+            expect(response.statusCode).toBe(200);
+            const { results } = SessionReadBatchResponseV1Schema.parse(response.json());
+            expect(results).toHaveLength(count);
+            const fieldBytes: Record<string, number> = {};
+            let ownerCiphertextBytes = 0;
+            let duplicateLargeFieldBytes = 0;
+            for (const result of results) {
+                expect(result.detail?.status).toBe(200);
+                if (result.detail?.status !== 200) throw new Error('Measurement requires admitted rows');
+                expect(result.turns).toBeUndefined();
+                const seen = new Set<string>();
+                for (const [field, value] of Object.entries(result.detail.body.session)) {
+                    const serialized = JSON.stringify(value);
+                    if (serialized === undefined) continue;
+                    const valueBytes = Buffer.byteLength(serialized);
+                    fieldBytes[field] = (fieldBytes[field] ?? 0) + valueBytes;
+                    if (serialized.length > 140 && seen.has(serialized)) duplicateLargeFieldBytes += valueBytes;
+                    seen.add(serialized);
+                }
+                const envelope = result.detail.body.session.ownerMetadata;
+                expect(envelope?.t).toBe('encrypted');
+                if (envelope?.t === 'encrypted') ownerCiphertextBytes += Buffer.byteLength(envelope.c);
+            }
+            console.info('SRVQ chooser real-route payload measurement', JSON.stringify({ count,
+                elapsedMs: performance.now() - started, jsonBytes: Buffer.byteLength(response.body),
+                jsonBytesPerSession: Buffer.byteLength(response.body) / count, ownerCiphertextBytes,
+                duplicateLargeFieldBytes, fieldBytes: Object.fromEntries(Object.entries(fieldBytes).sort((a, b) => b[1] - a[1])) }));
         });
     });
 });

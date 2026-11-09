@@ -10,7 +10,7 @@ import { getDbProviderFromEnv } from '@/storage/prisma';
 import { createPresentUserSessionAccessAuthentication } from '@/app/session/access/sessionAccessAuthentication.testkit';
 import { createSessionPublisherPresence } from '@/app/presence/sessionPublisherPresence';
 import { sourceKeyForSessionFollowSourceV1 } from '@/app/session/follow/sessionFollowSourceIdentity';
-import { enqueuePendingMessage, enqueuePendingMessageByAuthenticatedMachine, resolveAcceptedPendingDelivery } from './pendingMessageService';
+import { blockPendingDelivery, enqueuePendingMessage, enqueuePendingMessageByAuthenticatedMachine, resolveAcceptedPendingDelivery } from './pendingMessageService';
 import { materializeNextPendingMessage } from './materializeNextPendingMessage';
 import { hasCanonicalFollowProviderInputAcceptanceInTx } from '@/app/session/follow/providerInputAcceptance';
 import { inTx } from '@/storage/inTx';
@@ -29,6 +29,47 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('r
         await db.$connect();
     });
     afterAll(async () => { await db.$disconnect(); vi.unstubAllEnvs(); });
+
+    it('accepts fresh Run input while retaining an earlier unclaimed unavailable refusal', async () => {
+        const account = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const machine = await db.machine.create({ data: { id: randomUUID(), accountId: account.id, installationId: randomUUID(),
+            metadata: encodePlainMachineStoredContent({ host: 'host', platform: 'linux', happyCliVersion: 'test',
+                homeDir: '/home/test', happyHomeDir: '/home/test/.happier' }),
+            dataEncryptionKey: new Uint8Array(decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER)),
+            operationProtocolCapabilities: { sessionInputAdmission: { protocolVersions: [1, 2] } },
+            operationProtocolCapabilitiesRevision: 1 } });
+        const session = await db.session.create({ data: { accountId: account.id, tag: randomUUID(), metadata: '{}', encryptionMode: 'plain' } });
+        await db.accessKey.create({ data: { accountId: account.id, sessionId: session.id, machineId: machine.id, data: randomUUID() } });
+        const presence = createSessionPublisherPresence();
+        const binding = { accountId: account.id, sessionId: session.id, machineId: machine.id };
+        const registration = await presence.registerPublisher({ socket: {}, binding,
+            completeActivitySnapshot: { state: 'idle', activeCount: 0 } });
+        if (registration.status !== 'registered') throw new Error(`Publisher fixture refused: ${registration.reason}`);
+        const publisherAuthority = { ...binding, committedFence: registration.committedFence };
+        const runId = randomUUID();
+        const input = { actorUserId: account.id, sessionId: session.id, targetExecutionRunId: runId,
+            authentication: createPresentUserSessionAccessAuthentication(), targetMachineId: machine.id,
+            requestedAction: { v: 1, kind: 'enqueue' }, content: { t: 'plain', v: {
+                role: 'user', content: { type: 'text', text: 'Continue' },
+                meta: { happier: { kind: 'participant_message.v1', payload: { recipient: { kind: 'execution_run', runId } } } },
+            } } } as const;
+        const blockedId = randomUUID();
+        expect(await enqueuePendingMessage({ ...input, localId: blockedId })).toMatchObject({ ok: true, didWrite: true });
+        expect(await blockPendingDelivery({ ...binding, actorUserId: account.id, targetExecutionRunId: runId,
+            publisherAuthority, localId: blockedId, reason: 'session_input_target_unavailable' })).toMatchObject({ ok: true, didUpdate: true });
+        const localId = randomUUID();
+        expect(await enqueuePendingMessage({ ...input, localId })).toMatchObject({ ok: true, didWrite: true });
+        expect(await materializeNextPendingMessage({ actorUserId: account.id, sessionId: session.id,
+            publisherAuthority, targetExecutionRunId: runId, expectedSidechainId: runId,
+            deliveryState: 'provider', deliveryTiming: 'after_foreground_ready', foregroundState: 'ready' }))
+            .toMatchObject({ ok: true, didMaterialize: true, message: { localId } });
+        expect(await resolveAcceptedPendingDelivery({ actorUserId: account.id, sessionId: session.id, localId,
+            publisherAuthority, targetExecutionRunId: runId, expectedSidechainId: runId,
+            acceptedTurn: { kind: 'followUp', turnId: randomUUID() } })).toMatchObject({ ok: true, didResolve: true });
+        expect(await db.sessionMessage.findMany({ where: { sessionId: session.id }, select: { localId: true } })).toEqual([{ localId }]);
+        expect(await db.sessionPendingMessage.findUniqueOrThrow({ where: { sessionId_localId: { sessionId: session.id, localId: blockedId } } }))
+            .toMatchObject({ status: 'queued', deliveryState: 'blocked', deliveryBlockedReason: 'session_input_target_unavailable', providerAction: null });
+    });
 
     it.each(['delivering', 'reconnect', 'ordinary-head', 'successor'] as const)(
         'accepts only the natural input while retaining omitted information (%s)', async scenario => {
@@ -113,6 +154,11 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('r
         expect(await materialize([quietId])).toMatchObject({ ok: true, didMaterialize: true, message: { localId: humanId } });
         const accepted = { actorUserId: account.id, sessionId: session.id, localId: humanId, publisherAuthority,
             acceptedTurn: { kind: 'newTurn' as const, turnId: randomUUID() } };
+        expect(await resolveAcceptedPendingDelivery(accepted)).toEqual({ ok: false, error: 'turn-publication-pending' });
+        expect(await db.sessionMessage.count({ where: { sessionId: session.id } })).toBe(0);
+        expect(await db.sessionPendingMessage.count({ where: { sessionId: session.id } })).toBe(2);
+        await db.sessionTurn.create({ data: { sessionId: session.id, turnId: accepted.acceptedTurn.turnId,
+            status: 'in_progress', startedAt: 1n, updatedAt: 1n } });
         expect(await resolveAcceptedPendingDelivery(accepted)).toMatchObject({ ok: true, didResolve: true });
         expect(await resolveAcceptedPendingDelivery(accepted)).toMatchObject({ ok: true, didResolve: false });
         expect(await db.sessionMessage.findMany({ where: { sessionId: session.id }, select: { localId: true } }))

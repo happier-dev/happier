@@ -121,7 +121,7 @@ describe("authenticated Session pure reads (SQLite integration)", () => {
                 expect(external.statusCode).toBe(200);
                 expect(external.json()).toMatchObject({ hasMore: true,
                     externalShareableSnapshot: { turnSettlementBlockedFromSeq: 4,
-                        turns: [] } });
+                        turns: current ? [expect.objectContaining({ turnId: 'waiting-turn', status: 'waiting' })] : [] } });
             }
         });
     });

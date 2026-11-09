@@ -10,7 +10,7 @@ import { getDbProviderFromEnv } from "@/storage/prisma";
 import { fenceExactCurrentPublisherAuthorityInTx } from "./hasExactCurrentPublisherAuthorityInTx";
 import { armPendingActivationAuthorizationInTx } from "./pendingActivationAuthorization";
 import { inPendingQueuePositionTx } from "./reserveNextPendingQueuePosition";
-import { setMachineAccessGrantInTx } from "@/app/machines/machineAccess";
+import { setEligibleMachineAccessGrantInTx as setMachineAccessGrantInTx } from '@/testkit/machineAccessGrant.testkit';
 import { revokeMachineInTx } from "@/app/machines/machineMutations";
 import { acquireSessionAccountCursorLocksInTx } from "@/app/session/changeTracking/acquireSessionAccountCursorLocksInTx";
 import { createSignedAccountContentBinding } from "@/testkit/accountEncryption";
@@ -145,7 +145,10 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("S
             throw new Error("Use the disposable PostgreSQL DB-contract harness");
         }
         vi.stubEnv("HAPPIER_WEB_LATENCY_TRACE", "1");
-        const sink = vi.spyOn(logger, "debug").mockImplementation(() => undefined);
+        const previousLevel = logger.level;
+        logger.level = "trace";
+        const sink = vi.spyOn(logger, "trace").mockImplementation(() => undefined);
+        const failureSink = vi.spyOn(logger, "debug").mockImplementation(() => undefined);
         const account = await db.account.create({ data: createSignedAccountContentBinding() });
         const session = await db.session.create({ data: { accountId: account.id, tag: randomUUID(), metadata: "{}" } });
         const requestId = randomUUID();
@@ -195,10 +198,10 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("S
             await expect(withWebLatencyTrace(failedRequestId, () => inTx(tx => tx.$queryRawUnsafe(
                 "SELECT 1 / 0 /* private-database-input */",
             )))).rejects.toBeDefined();
-            expect(sink.mock.calls.map(([record]) => record)).toContainEqual(expect.objectContaining({
+            expect(failureSink.mock.calls.map(([record]) => record)).toContainEqual(expect.objectContaining({
                 requestId: failedRequestId, phase: "db.transaction.attempt", status: "failed", code: "P2010", sqlState: "22012",
             }));
-            const traceRecords = sink.mock.calls.map(([record]) => record).filter(record => typeof record === "object" && record !== null && "phase" in record);
+            const traceRecords = [...sink.mock.calls, ...failureSink.mock.calls].map(([record]) => record).filter(record => typeof record === "object" && record !== null && "phase" in record);
             expect(JSON.stringify(traceRecords)).not.toContain("private-database-input");
             vi.stubEnv("HAPPIER_WEB_LATENCY_TRACE", "0");
             const sql = "SELECT current_query() AS query";
@@ -207,6 +210,8 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("S
             release();
             await Promise.all([writerOutcome, pendingOutcome]);
             sink.mockRestore();
+            failureSink.mockRestore();
+            logger.level = previousLevel;
             vi.unstubAllEnvs();
             await db.session.deleteMany({ where: { accountId: account.id } });
             await db.account.delete({ where: { id: account.id } });

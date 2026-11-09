@@ -191,7 +191,7 @@ describe("API auth-token composition (integration)", () => {
             for (const url of [
                 "/v1/auth/ping",
                 "/v1/machines",
-                "/v1/sessions",
+                "/v2/sessions",
                 "/v1/artifacts",
             ]) {
                 const response = await app.inject({

@@ -150,6 +150,32 @@ async function createMigrationDir(prefix: string, migrations: ReadonlyArray<Read
     return dir;
 }
 
+describe('SQLite migration failure identity', () => {
+    it('names the exact failing migration after earlier pending SQL succeeds', async () => {
+        const first = '20260101000000_first';
+        const failed = '20260102000000_invalid';
+        const migrationsDir = await createMigrationDir('happier-migration-failure-', [
+            { name: first, sql: 'CREATE TABLE RetainedProbe (id TEXT PRIMARY KEY); INSERT INTO RetainedProbe VALUES (\'retained\');' },
+            { name: failed, sql: 'THIS IS INVALID SQL;' },
+        ]);
+        const databasePath = join(migrationsDir, 'probe.sqlite');
+        try {
+            await expect(applySqliteMigrations({ databasePath, migrationsDir })).rejects.toMatchObject({
+                code: 'ESQLITEMIGRATIONFAILED', migrationName: failed,
+            });
+            const { DatabaseSync } = await import('node:sqlite');
+            const database = new DatabaseSync(databasePath, { readOnly: true });
+            try {
+                expect(database.prepare('SELECT migration_name FROM _prisma_migrations').all())
+                    .toEqual([{ migration_name: first }]);
+                expect(database.prepare('SELECT id FROM RetainedProbe').get()).toMatchObject({ id: 'retained' });
+            } finally { database.close(); }
+            await expect(applySqliteMigrations({ databasePath: migrationsDir, migrationsDir }))
+                .rejects.not.toHaveProperty('migrationName');
+        } finally { await rm(migrationsDir, { recursive: true, force: true }); }
+    });
+});
+
 async function listMigrationSqlFiles(dir: string): Promise<string[]> {
     const entries = await readdir(dir, { withFileTypes: true });
     const files: string[] = [];

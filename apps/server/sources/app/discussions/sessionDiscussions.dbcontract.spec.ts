@@ -16,6 +16,7 @@ import { createSessionInputReplyProgressInTx } from '@/app/session/messages/sess
 import { deleteOwnedSession } from '@/app/session/delete/deleteOwnedSession';
 import { createPresentUserSessionAccessAuthentication } from "@/app/session/access/sessionAccessAuthentication.testkit";
 import { db, initDbMysql, initDbPostgres, requireDbProviderFromEnv, shutdownDbClient } from "@/storage/db";
+import { makeShareEligibleForTest } from '@/testkit/shareEligibility.testkit';
 
 import { createDiscussion, postDiscussionMessage } from "./mutations";
 
@@ -203,6 +204,7 @@ describe("Discussion provider contract", () => {
 
     it.each(['session', 'message'] as const)('invites through HTTP after the source %s is deleted, but never bypasses a live private source', async deleted => {
         const [owner, reader, outsider] = await Promise.all([0, 1, 2].map(() => db.account.create({ data: { publicKey: randomUUID(), encryptionMode: 'plain' } })));
+        await makeShareEligibleForTest(owner.id, [reader.id, outsider.id]);
         const source = await db.session.create({ data: { accountId: owner.id, tag: randomUUID(), encryptionMode: 'plain', metadata: '{}' } });
         const answer = await db.sessionMessage.create({ data: { sessionId: source.id, seq: 1, messageRole: 'agent', content: { t: 'plain', v: { text: 'Private source answer' } } } });
         const reviewer = await db.session.create({ data: { accountId: owner.id, tag: randomUUID(), encryptionMode: 'plain', metadata: '{}' } });
@@ -262,6 +264,7 @@ describe("Discussion provider contract", () => {
             data: { publicKey: `discussion-contract-author-${randomUUID()}`, encryptionMode: "plain" },
             select: { id: true },
         });
+        await makeShareEligibleForTest(owner.id, author.id);
         const session = await db.session.create({
             data: {
                 accountId: owner.id,

@@ -11,6 +11,8 @@ import { observeLazyPrismaQuery } from '@/app/changes/accountPublicationContenti
 import { db, initDbPostgres, shutdownDbClient } from '@/storage/db';
 import { inTx, type Tx } from '@/storage/inTx';
 import { transitionMachineContentKeyInTx } from './transitionMachineContentKeyInTx';
+import { createSocketRoomDiscoveryHarness } from '@/app/api/testkit/socketHarness';
+import { getMachineSocketRoom } from '@/app/api/socketRooms';
 
 // Genuine AES-GCM fixture boundary; framing and value encoding stay protocol-owned.
 function encryptFixtureContent(value: unknown, dataKey: Uint8Array): Uint8Array {
@@ -20,23 +22,33 @@ function encryptFixtureContent(value: unknown, dataKey: Uint8Array): Uint8Array 
     return packSessionDataKeyBundleV0({ nonce, ciphertext, authTag: cipher.getAuthTag() });
 }
 
-function beforeMachineWrite(before: () => Promise<void>) {
+function beforeMachineMutation(before: () => Promise<void>, boundary: 'machine-write' | 'account-serialization' = 'machine-write') {
     const transaction = db.$transaction;
     let observed = false;
+    const observeBefore = (query: unknown) => observeLazyPrismaQuery(query,
+        () => ({ started() {}, settled() {} }), async () => {
+            if (observed) return;
+            observed = true; await before();
+        });
     db.$transaction = new Proxy(transaction, { apply(target, receiver, args: unknown[]) {
         const callback = args[0];
         if (typeof callback !== 'function') return Reflect.apply(target, receiver, args);
         return Reflect.apply(target, receiver, [async (tx: Tx) => callback(new Proxy(tx, {
             get(inner, property, innerReceiver) {
+                if (boundary === 'account-serialization') {
+                    const member: unknown = Reflect.get(inner, property, innerReceiver);
+                    if (property !== '$queryRawUnsafe' || typeof member !== 'function') return member;
+                    return (query: string, ...values: unknown[]) => {
+                        const pending = Reflect.apply(member, inner, [query, ...values]);
+                        return query.includes('FROM "Account"') && query.endsWith('FOR NO KEY UPDATE')
+                            ? observeBefore(pending) : pending;
+                    };
+                }
                 if (property !== 'machine') return Reflect.get(inner, property, innerReceiver);
                 return new Proxy(inner.machine, { get(model, method, modelReceiver) {
                     const member: unknown = Reflect.get(model, method, modelReceiver);
                     if (method !== 'update' && method !== 'updateMany' || typeof member !== 'function') return member;
-                    return (...values: unknown[]) => observeLazyPrismaQuery(Reflect.apply(member, model, values),
-                        () => ({ started() {}, settled() {} }), async () => {
-                            if (observed) return;
-                            observed = true; await before();
-                        });
+                    return (...values: unknown[]) => observeBefore(Reflect.apply(member, model, values));
                 } });
             },
         })), ...args.slice(1)]);
@@ -63,7 +75,11 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== 'postgres')('Machine publica
             active: true, lastActiveAt: new Date() } });
         const replacement = await db.machine.create({ data: { id: randomUUID(), accountId: account.id,
             metadata: old.metadata, dataEncryptionKey: old.dataEncryptionKey, active: true, lastActiveAt: new Date() } });
-        const app = createAuthenticatedTestApp(); machinesRoutes(app); await app.ready();
+        const app = createAuthenticatedTestApp();
+        app.decorate('machineDaemonPresence', createSocketRoomDiscoveryHarness(async room => [old, replacement]
+            .filter(machine => room === getMachineSocketRoom(account.id, machine.id))
+            .map(machine => ({ data: { clientType: 'machine-scoped', userId: account.id, machineId: machine.id } }))));
+        machinesRoutes(app); await app.ready();
         const headers = { 'x-test-user-id': account.id,
             ...buildAccountStoredContentCompatibilityHttpHeadersV1(CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION) };
         return { account, binding, old, replacement, app, headers, close: async () => {
@@ -128,16 +144,15 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== 'postgres')('Machine publica
             if (typeof callback !== 'function') return Reflect.apply(target, receiver, args);
             return Reflect.apply(target, receiver, [async (tx: Tx) => callback(new Proxy(tx, {
                 get(inner, property, innerReceiver) {
-                    if (property !== 'machine') return Reflect.get(inner, property, innerReceiver);
-                    return new Proxy(inner.machine, { get(model, method, modelReceiver) {
-                        const member: unknown = Reflect.get(model, method, modelReceiver);
-                        if (method !== 'update' && method !== 'updateMany' || typeof member !== 'function') return member;
-                        return (...values: unknown[]) => observeLazyPrismaQuery(Reflect.apply(member, model, values),
-                            () => ({ started() {}, settled() {} }), async () => {
-                                if (++admissions === 2) release();
-                                await bothAdmitted;
-                            });
-                    } });
+                    if (property !== '$queryRawUnsafe') return Reflect.get(inner, property, innerReceiver);
+                    return (query: string, ...values: unknown[]) => {
+                        const pending = inner.$queryRawUnsafe(query, ...values);
+                        if (!query.includes('FROM "Account"') || !query.includes('FOR ')) return pending;
+                        return observeLazyPrismaQuery(pending, () => ({ started() {}, settled() {} }), async () => {
+                            if (++admissions === 2) release();
+                            await bothAdmitted;
+                        });
+                    };
                 },
             })), ...args.slice(1)]);
         } });
@@ -157,7 +172,7 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== 'postgres')('Machine publica
     it('requires confirmation if the old Machine becomes active before replacement writes', async () => {
         const current = await fixture();
         await db.machine.update({ where: { id: current.old.id }, data: { active: false } });
-        const restore = beforeMachineWrite(async () => {
+        const restore = beforeMachineMutation(async () => {
             await db.machine.update({ where: { id: current.old.id }, data: { active: true } });
         });
         try {
@@ -173,13 +188,16 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== 'postgres')('Machine publica
     it.each(['replace', 'revoke'] as const)('rechecks legacy-client admission when content becomes plain before %s writes', async operation => {
         const current = await fixture();
         await db.account.update({ where: { id: current.account.id }, data: { encryptionMode: 'plain' } });
-        const restore = beforeMachineWrite(async () => {
+        // Replacement's serializing Account lock must not be held while this
+        // test awaits the peer's terminal Account publication. The route has
+        // already read the encrypted basis before reaching that SQL boundary.
+        const restore = beforeMachineMutation(async () => {
             expect(await inTx(tx => transitionMachineContentKeyInTx({ tx, accountId: current.account.id, input: {
                 machineId: current.old.id, expected: { dataEncryptionKey: encodeBase64(current.old.dataEncryptionKey!),
                     metadataVersion: current.old.metadataVersion, daemonStateVersion: current.old.daemonStateVersion },
                 next: { dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER, metadata: encodePlainMachineStoredContent({ host: 'plain' }), daemonState: null },
             } }))).toMatchObject({ kind: 'committed' });
-        });
+        }, operation === 'replace' ? 'account-serialization' : 'machine-write');
         try {
             const response = await current.app.inject({ method: 'POST',
                 url: `/v1/machines/${current.old.id}/${operation === 'revoke' ? 'revoke' : 'replacement'}`,

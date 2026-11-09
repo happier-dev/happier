@@ -11,7 +11,7 @@ import { prepareAcpCatalogTransferV2 } from '@happier-dev/protocol/acp/catalog/t
 import { KIRO_ACP_STDERR_RULES } from '@happier-dev/plugins-kiro/agent/acp/transport';
 import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lightSqliteHarness';
 import { createSignedAccountContentBinding } from '@/testkit/accountEncryption';
-import { ACP_CATALOG_ACCOUNT_ROW_KEY_V1, ACP_CATALOG_ROWS_ROUTE_V1, AcpCatalogRecordV1Schema,
+import { ACP_CATALOG_ACCOUNT_ROW_KEY_V1, ACP_CATALOG_ROWS_ROUTE_V1, AcpCatalogRecordV1Schema, AccountEncryptionMigrateAcpCatalogDirectiveV1Schema,
     sealAcpCatalogContentV1, openAcpCatalogContentV1, type AcpCatalogContentV1 } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
 import { deriveAccountEncryptionMigrationKeyFingerprints } from '@/app/encryption/accountEncryptionTransition';
 import tweetnacl from 'tweetnacl';
@@ -158,7 +158,7 @@ describe('Account configured ACP catalog (SQLite)', () => {
         expect((await db.account.findUniqueOrThrow({ where: { id: account.id } })).settingsVersion).toBe(0);
         const legacy = await db.account.create({ data: { encryptionMode: 'plain' } });
         expect(await inTx(tx => writeAccountSettingsInTx({ tx, accountId: legacy.id, expectedVersion: 0,
-            next: { kind: 'v2', content } }))).toEqual({ status: 'success', version: 1 });
+            next: { kind: 'v2', content } }))).toEqual({ status: 'success', version: 1, remoteAlertPolicyStatus: 'disabled' });
         const incomplete = await db.account.create({ data: { encryptionMode: 'plain', settings: JSON.stringify(content) } });
         await db.userKVStore.create({ data: { accountId: incomplete.id, key: ACP_CATALOG_ACCOUNT_ROW_KEY_V1, version: 0,
             value: new TextEncoder().encode(JSON.stringify({ t: 'plain', v: { ...record,
@@ -362,7 +362,7 @@ describe('Account configured ACP catalog (SQLite)', () => {
             connectedServices: { action: 'assert_empty' as const }, automations: { action: 'assert_empty' as const }, machines: { action: 'assert_empty' as const },
             todos: { action: 'assert_empty' as const }, artifacts: { action: 'assert_empty' as const }, sessions: { action: 'assert_empty' as const },
             reviewComments: { action: 'assert_empty' as const }, sessionOrganization: { action: 'assert_empty' as const }, pets: { action: 'assert_empty' as const },
-            acpCatalog: { expectedRevision: 5, content } };
+            acpCatalog: AccountEncryptionMigrateAcpCatalogDirectiveV1Schema.parse({ expectedRevision: 5, content }) };
         const request = toMode === 'plain' ? base : (() => {
             const unsigned: AccountEncryptionMigrateUnsignedRequest = { ...base, keyProof: { v: 1,
                 publicKey: encodeBase64(signing.publicKey), contentPublicKey: encodeBase64(recipient), contentPublicKeySig: encodeBase64(contentPublicKeySig) } };
@@ -413,7 +413,7 @@ describe('Account configured ACP catalog (SQLite)', () => {
                 connectedServices: { action: 'assert_empty' as const }, automations: { action: 'assert_empty' as const }, machines: { action: 'assert_empty' as const },
                 todos: { action: 'assert_empty' as const }, artifacts: { action: 'assert_empty' as const }, sessions: { action: 'assert_empty' as const },
                 reviewComments: { action: 'assert_empty' as const }, sessionOrganization: { action: 'assert_empty' as const }, pets: { action: 'assert_empty' as const },
-                ...(directive === undefined ? {} : { acpCatalog: directive }) };
+                ...(directive === undefined ? {} : { acpCatalog: AccountEncryptionMigrateAcpCatalogDirectiveV1Schema.parse(directive) }) };
             if (toMode === 'plain') return base;
             const request: AccountEncryptionMigrateUnsignedRequest = { ...base, keyProof: { v: 1,
                 publicKey: encodeBase64(signing.publicKey), contentPublicKey: encodeBase64(recipient), contentPublicKeySig: encodeBase64(contentPublicKeySig) } };

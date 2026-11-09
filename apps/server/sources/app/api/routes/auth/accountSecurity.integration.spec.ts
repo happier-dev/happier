@@ -85,11 +85,10 @@ describe("Account Security native password lifecycle", () => {
         }
     });
 
-    it("lets a terminal credential read a re-allowed policy under its stale automation ceiling", async () => {
+    it("lets a terminal credential read the Account security projection under an automation ceiling", async () => {
         const signing = tweetnacl.sign.keyPair();
         const account = await db.account.create({ data: {
             publicKey: privacyKit.encodeHex(new Uint8Array(signing.publicKey)),
-            terminalPresentUserPolicy: "allowed",
         } });
         const token = await auth.createToken(account.id, undefined, { kind: "terminal", authority: "account_automation" });
         const app = Fastify({ logger: false }).withTypeProvider<ZodTypeProvider>();
@@ -101,7 +100,7 @@ describe("Account Security native password lifecycle", () => {
                 authorization: `Bearer ${token}`, "x-happier-authority-ceiling": "account_automation",
             } });
             expect(response.statusCode, response.body).toBe(200);
-            expect(response.json()).toMatchObject({ terminalPresentUserPolicy: "allowed" });
+            expect(response.json()).toMatchObject({ v: 1, encryptionMode: "plain" });
         } finally { await app.close(); }
     });
 
@@ -771,7 +770,6 @@ describe("Account Security native password lifecycle", () => {
                 encryptionMode: "plain",
                 nativeEmail: "automation-security@example.test",
                 password: { status: "enrolled", revision: 1 },
-                terminalPresentUserPolicy: "allowed",
             });
             expect(response.body).not.toMatch(/plain_password_hash|hash|salt|digest|envelope|authVerifier|authenticationEvidence|repeatKey|operation/i);
 
@@ -782,7 +780,6 @@ describe("Account Security native password lifecycle", () => {
                 encryptionMode: "e2ee",
                 nativeEmail: "other-security@example.test",
                 password: { status: "not_enrolled", revision: null },
-                terminalPresentUserPolicy: "allowed",
             });
             expect(otherResponse.body).not.toContain("automation-security@example.test");
 

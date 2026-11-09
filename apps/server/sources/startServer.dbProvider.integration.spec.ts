@@ -86,6 +86,16 @@ describe("startServer DB provider selection", () => {
         expect(initDbPostgres).not.toHaveBeenCalled();
     });
 
+    it("opens the API without reading or converting any historical turn pages", async () => {
+        await startServerHarness.start("full", {
+            SERVER_ROLE: "api",
+            HAPPIER_DB_PROVIDER: "postgres",
+        });
+
+        expect(startServerDbMocks.sessionTurnFindMany).not.toHaveBeenCalled();
+        expect(startServerDbMocks.sessionTurnUpdateMany).not.toHaveBeenCalled();
+    });
+
     it("starts the identity backfill worker only for an all/worker role and passes the selected provider", async () => {
         await startServerHarness.start("full", {
             SERVER_ROLE: "all",
@@ -150,27 +160,25 @@ describe("startServer DB provider selection", () => {
         );
     });
 
-    it("automatically converts retained turn anchors before admitting the API", async () => {
-        const row = { id: "retained-turn", transcriptAnchorsJson: JSON.stringify({
-            startUserMessageSeq: 1, userMessageSeqs: [1], finalAssistantMessageSeq: 2,
-        }), transcriptAnchorProjectionVersion: 0, transcriptAnchorMinSeq: null as number | null,
-            transcriptAnchorMaxSeq: null as number | null };
-        startServerDbMocks.sessionTurnFindMany.mockImplementation(async () => [{ ...row }]);
-        startServerDbMocks.sessionTurnUpdateMany.mockImplementation(async (...args) => {
-            const update = args[0] as { data: {
-                transcriptAnchorProjectionVersion: number;
-                transcriptAnchorMinSeq: number | null;
-                transcriptAnchorMaxSeq: number | null;
-            } };
-            Object.assign(row, update.data);
-            return { count: 1 };
+    it.each([
+        ["full", "postgres", "HAPPIER_DB_PROVIDER"],
+        ["full", "mysql", "HAPPIER_DB_PROVIDER"],
+        ["full", "pglite", "HAPPIER_DB_PROVIDER"],
+        ["light", "sqlite", "HAPPY_DB_PROVIDER"],
+    ] as const)("admits the %s/%s API without scanning Accounts or rebuilding Usage projections", async (flavor, provider, providerKey) => {
+        startServerDbMocks.accountFindMany.mockResolvedValue(Array.from({ length: 64 }, (_, index) => ({ id: `account-${index}` })));
+        await startServerHarness.start(flavor, {
+            SERVER_ROLE: "api",
+            [providerKey]: provider,
+            ...(flavor === "light" ? { HAPPY_SERVER_LIGHT_DATA_DIR: "/tmp/happy-server-light-usage-test" } : {}),
         });
-        await startServerHarness.start("full", { SERVER_ROLE: "api", HAPPIER_DB_PROVIDER: "postgres" });
-        expect(row).toMatchObject({ transcriptAnchorProjectionVersion: 1,
-            transcriptAnchorMinSeq: 1, transcriptAnchorMaxSeq: 2 });
         const { startApi } = await import("@/app/api/api");
-        expect(startServerDbMocks.sessionTurnUpdateMany.mock.invocationCallOrder[0])
-            .toBeLessThan(vi.mocked(startApi).mock.invocationCallOrder[0]);
+        expect(startApi).toHaveBeenCalledOnce();
+        expect(startServerDbMocks.accountFindMany).not.toHaveBeenCalled();
+        expect(startServerDbMocks.dbQueryRawUnsafe.mock.calls.every(call =>
+            !/UsageEvent|UsageAccountingProjection/.test(String(call[0])))).toBe(true);
+        expect(vi.mocked(startApi).mock.invocationCallOrder[0])
+            .toBeGreaterThan(startServerDbMocks.dbConnect.mock.invocationCallOrder[0]);
     });
 
     it("refuses startup when Session System Records remains on the expanded-only database shape", async () => {
@@ -193,7 +201,7 @@ describe("startServer DB provider selection", () => {
         });
 
         expect(process.env.DATABASE_URL).toBe(
-            `file:${join("/tmp/happy server light", "happier-server-light.sqlite")}?socket_timeout=30&connection_limit=4`,
+            `file:${join("/tmp/happy server light", "happier-server-light.sqlite")}?socket_timeout=30&connection_limit=1`,
         );
     });
 
@@ -207,7 +215,7 @@ describe("startServer DB provider selection", () => {
         });
 
         expect(process.env.DATABASE_URL).toBe(
-            `file:${join("/Users/tester/happy-server-light", "happier-server-light.sqlite")}?socket_timeout=30&connection_limit=4`,
+            `file:${join("/Users/tester/happy-server-light", "happier-server-light.sqlite")}?socket_timeout=30&connection_limit=1`,
         );
     });
 
@@ -221,7 +229,7 @@ describe("startServer DB provider selection", () => {
         });
 
         expect(process.env.DATABASE_URL).toBe(
-            `file:${join("/tmp/happier-preferred-dir", "happier-server-light.sqlite")}?socket_timeout=30&connection_limit=4`,
+            `file:${join("/tmp/happier-preferred-dir", "happier-server-light.sqlite")}?socket_timeout=30&connection_limit=1`,
         );
         expect(applySqliteMigrationsIfNeeded).toHaveBeenCalledWith(expect.objectContaining({
             dataDir: "/tmp/happier-preferred-dir",
@@ -241,7 +249,7 @@ describe("startServer DB provider selection", () => {
         });
 
         expect(process.env.DATABASE_URL).toBe(
-            `file:${join(expectedDataDir, "happier-server-light.sqlite")}?socket_timeout=30&connection_limit=4`,
+            `file:${join(expectedDataDir, "happier-server-light.sqlite")}?socket_timeout=30&connection_limit=1`,
         );
         expect(applySqliteMigrationsIfNeeded).toHaveBeenCalledWith(expect.objectContaining({
             dataDir: expectedDataDir,

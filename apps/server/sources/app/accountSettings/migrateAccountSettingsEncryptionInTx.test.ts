@@ -22,6 +22,7 @@ describe("matchAccountSettingsEncryptionMigrationPostStateInTx", () => {
                 updateMany: vi.fn(),
             },
             accountChange: { upsert: vi.fn() },
+            accountSettingsSnapshot: { findMany: vi.fn(async () => []) },
         } as unknown as Tx;
 
         await expect(
@@ -80,6 +81,7 @@ describe("matchAccountSettingsEncryptionMigrationPostStateInTx", () => {
         );
         const tx = {
             account: { findUnique, updateMany: vi.fn() },
+            accountSettingsSnapshot: { findMany: vi.fn(async () => []) },
         } as any;
 
         await expect(

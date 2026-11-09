@@ -53,9 +53,31 @@ function reportCost(source: 'planet' | 'horizon', started: number, rss: number,
     if (!hero) throw new Error('Expected painted hero');
     const pngBytes = Object.values(hero.editions).flatMap(theme => Object.values(theme))
         .flatMap(viewport => Object.values(viewport)).reduce((sum, image) => sum + privacyKit.decodeBase64(image.base64).length, 0);
+    console.info('public-profile-hero-cost', { source, elapsedMs: Math.round(performance.now() - started), pngBytes,
+        rssDeltaBytesNotPeak: process.memoryUsage().rss - rss });
 }
 
 describe('cold public-profile hero pixels', () => {
+    it('keeps every band edition on the visitor origin, including a prefixed Home served over LAN', () => {
+        const view = profile();
+        view.urls.page = 'https://home.example/prefix/@nadia';
+        const hero = createPublicProfileHero(view);
+        expect(hero).toBeDefined();
+        for (const [theme, viewports] of Object.entries(hero!.editions)) {
+            for (const [viewport, densities] of Object.entries(viewports)) {
+                for (const [edition, image] of Object.entries(densities)) {
+                    const density = edition === 'one' ? 1 : 2;
+                    expect(image.src).toBe(`/prefix/@nadia/background?theme=${theme}&viewport=${viewport}&density=${density}`);
+                    expect(new URL(image.src, 'http://192.168.1.10:3011').origin).toBe('http://192.168.1.10:3011');
+                }
+            }
+        }
+        const html = renderPublicProfileHtml({ kind: 'published', view }, hero);
+        expect(html).toContain('src="/prefix/@nadia/background?theme=');
+        expect(html).toContain('srcSet="/prefix/@nadia/background?theme=');
+        expect(html).not.toContain('src="https://home.example');
+        expect(html).not.toContain('srcSet="https://home.example');
+    });
     it('keeps a 90-day cold page proportional to its markup while painting the selected halftone picture', async () => {
         const sharp = await loadSharp();
         const view = profile();
@@ -96,11 +118,12 @@ describe('cold public-profile hero pixels', () => {
         expect(Buffer.byteLength(html)).toBeLessThanOrEqual(budget);
         expect(html).not.toMatch(/<script\b|data:image\/png;base64/);
         expect(html).toContain('public-profile-hero-band');
-        expect(html).toContain(`${view.urls.page}/background?theme=`);
+        expect(html).toContain(`${new URL(view.urls.page).pathname}/background?theme=`);
         const painted = await renderPublicProfileHeroImage(view, { palette, picture }, { theme: 'light', viewport: 'phone', density: 2 });
         const expected = await renderPublicProfileBackdrop({ bytes: picture, picture: descriptor, layout: 'horizon', theme: 'light',
             width: 780, height: 600, dpr: 2, page: palette.light.backgroundRgb, horizonAt: expectedMetrics.horizonAt });
         expect(painted?.bytes).toEqual(expected.bytes);
+        console.info('public-profile-cold-html-size', { htmlBytes: Buffer.byteLength(html), budget });
     });
     it('paints the shared wide/phone band in both themes and densities, and preserves None', async () => {
         const sharp = await loadSharp();

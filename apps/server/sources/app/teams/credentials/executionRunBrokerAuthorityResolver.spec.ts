@@ -1,6 +1,11 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createExecutionRunBrokerCurrentnessResolver } from './executionRunBrokerAuthorityResolver';
+
+const machineRead = vi.hoisted(() => vi.fn(async () => ({ accountId: 'account-one' })));
+// Persistent Machine ownership is a database boundary; routing and response
+// admission remain the real resolver.
+vi.mock('@/storage/db', () => ({ db: { machine: { findUnique: machineRead } } }));
 
 const request = {
     executionRunId: 'run-one',
@@ -11,6 +16,32 @@ const request = {
 };
 
 describe('createExecutionRunBrokerCurrentnessResolver', () => {
+    beforeEach(() => machineRead.mockClear());
+    it('routes a recipient Run read to the worker custodian while preserving the recipient principal', async () => {
+        machineRead.mockResolvedValueOnce({ accountId: 'worker-custodian' });
+        const forwardRpcForUser = vi.fn(async ({ userId, params }: { userId: string; params: unknown }) => {
+            if (userId !== 'worker-custodian') return { ok: false as const, error: 'target_unavailable' };
+            const body = params as Record<string, unknown>;
+            return { ok: true as const, result: {
+                status: 'current', requestNonce: body.requestNonce,
+                serverIdentityId: body.serverIdentityId, requestingAccountId: body.requestingAccountId,
+                workerMachineId: body.workerMachineId, executionRunId: body.executionRunId,
+                occurrenceId: request.expectedOccurrenceId, parentSessionId: 'recipient-session',
+                intent: 'voice_agent', runtimeState: 'active_turn', teamCredentialProviderModel: null,
+            } };
+        });
+        const resolve = createExecutionRunBrokerCurrentnessResolver({
+            app: { forwardRpcForUser }, resolveServerIdentityId: async () => 'srv_home_one',
+            createNonce: () => '11111111-1111-4111-8111-111111111111',
+        });
+        await expect(resolve(request)).resolves.toMatchObject({ ok: true, parentSessionId: 'recipient-session' });
+        expect(forwardRpcForUser).toHaveBeenCalledWith(expect.objectContaining({
+            userId: 'worker-custodian', params: expect.objectContaining({ requestingAccountId: 'account-one' }),
+        }));
+        expect(machineRead).toHaveBeenCalledWith({ where: { id: request.workerMachineId }, select: { accountId: true } });
+        expect(machineRead).toHaveBeenCalledTimes(1);
+    });
+
     it('accepts only an exact nonce/Home/Account/Machine/Run/occurrence response', async () => {
         const forwardRpcForUser = vi.fn(async () => ({ ok: true as const, result: {
             status: 'current',

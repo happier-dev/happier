@@ -116,6 +116,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('H
                     }
                     measurements.push({ accounts, routes: measured });
                 }
+                console.info('HOME_ADMINISTRATION_SQL_COST', JSON.stringify(measurements));
                 // Physical query counts include real signed-bearer verification,
                 // current lifecycle/epoch reads and each route's transaction
                 // boundaries and request-scoped Home environment capture.
@@ -146,6 +147,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('H
         };
         const admitted = await resolve(false);
         expect(admitted.result.status).toBe('ready');
+        console.info('HOME_EFFECTIVE_METHOD_POLICY_SQL_COST', { policies: admitted.policies });
         expect(admitted.policies).toBe(1);
         expect(await resolve(true)).toEqual({ result: { status: 'unavailable' }, policies: 0 });
     });
@@ -171,6 +173,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('H
                 viewer: { accountId: actor.id, homeRole: 'admin', status: 'active' },
                 capabilities: { viewAdministration: true, manageAuthentication: false },
             } });
+            console.info('HOME_GOVERNANCE_ADMISSION_SQL_COST', { accountRows: admitted.accountRows, policies: admitted.policies, selects: admitted.selects });
             expect(admitted.accountRows).toBe(1);
             // The projection, options, and both policy-composed catalog
             // decisions consume the same already-admitted policy row.

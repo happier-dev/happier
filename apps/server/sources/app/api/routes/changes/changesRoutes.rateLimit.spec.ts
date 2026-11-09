@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
 
 import { createFakeRouteApp, getRouteEntry } from "../../testkit/routeHarness";
+import { changesRoutes } from "./changesRoutes";
 
 describe("changesRoutes rate limits", () => {
-    it("registers GET /v2/changes with an explicit rate limit", async () => {
-        const { changesRoutes } = await import("./changesRoutes");
+    it("registers GET /v2/changes with an explicit rate limit", () => {
         const app = createFakeRouteApp();
         changesRoutes(app as any);
         expect(getRouteEntry(app, "GET", "/v2/cursor").opts.config?.rateLimit).toEqual(

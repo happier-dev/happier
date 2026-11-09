@@ -9,6 +9,7 @@ import {
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { resolveMigrationEnv } from "./migrationEnv";
+import { runPluginCollectionUsageMigrationDeployment } from '../sources/app/plugins/data/collections/usageTotalsBackfill';
 
 export async function runPostgresMigrationDeploy(environment: NodeJS.ProcessEnv = process.env): Promise<void> {
     const env = resolveMigrationEnv(environment, "postgres");
@@ -20,11 +21,12 @@ export async function runPostgresMigrationDeploy(environment: NodeJS.ProcessEnv 
             provider: "postgres",
             databaseUrl: String(env.DATABASE_URL ?? "").trim(),
         }),
-        deploy: async (stage) => await runPrismaCli({
-            serverRoot,
-            args: ["migrate", "deploy", "--schema", stage.schemaPath!],
-            env,
-        }),
+        deploy: async (stage) => {
+            await runPluginCollectionUsageMigrationDeployment({
+                ...stage, provider: 'postgres', databaseUrl: String(env.DATABASE_URL ?? '').trim(), env,
+                deploy: async target => await runPrismaCli({ serverRoot, args: ['migrate', 'deploy', '--schema', target.schemaPath!], env }),
+            });
+        },
         runFinalContractBackfill: async () => {
             await runSessionSystemRecordFinalContractBackfill({
                 provider: "postgres",

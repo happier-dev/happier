@@ -1,12 +1,15 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   deriveAutomationManualOccurrenceKeyV1, AutomationTriggerIdSchema,
-  MAX_NON_TERMINAL_EVENT_CONVERSATION_RUNS_PER_ACCOUNT,
   sealAutomationTriggerDefinitionStoredEnvelopeV1, serializeAutomationStoredWorkflowDefinitionRecipeV2,
   createAccountScopedCryptoMaterialSnapshotV1,
 } from '@happier-dev/protocol';
 import type { Tx } from '@/storage/inTx';
 import { admitAutomationRunTx } from './automationRunAdmissionService';
+
+// This synthetic Prisma boundary models SQLite; real publication-lock SQL belongs to the DB-contract lane.
+beforeEach(() => vi.stubEnv('HAPPIER_DB_PROVIDER', 'sqlite'));
+afterEach(() => vi.unstubAllEnvs());
 
 const triggerId = AutomationTriggerIdSchema.parse('pr-trigger-one');
 const scopedTrigger = { triggerId, triggerRevision: 1, triggerKind: 'prComment' as const, sessionId: 'session-one',
@@ -46,7 +49,7 @@ function fixture(change: 'missing' | 'disabled' | 'scope' | 'kind' | 'selector' 
       targetType: null, templateVersion: 1, templateCiphertext: definition.serialized,
       assignments: [{ machineId: 'machine-one', priority: 0,
         machine: { accountId: 'account-one', revokedAt: null, replacedByMachineId: null } }] }] },
-    automationRun: { findMany: async () => [], count: async () => MAX_NON_TERMINAL_EVENT_CONVERSATION_RUNS_PER_ACCOUNT },
+    automationRun: { findMany: async () => [] },
   };
   // Narrow synthetic persistent database adapter: the real admission, locking and selector codec run.
   return tx as unknown as Tx;

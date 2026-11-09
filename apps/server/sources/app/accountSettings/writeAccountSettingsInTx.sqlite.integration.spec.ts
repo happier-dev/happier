@@ -52,7 +52,7 @@ describe("writeAccountSettingsInTx (SQLite integration)", () => {
         const write = (expectedVersion: number, next: Parameters<typeof writeAccountSettingsInTx>[0]['next']) => inTx((tx) =>
             writeAccountSettingsInTx({ tx, accountId: account.id, expectedVersion, next }));
         expect(await write(0, { kind: "v2", content: { t: "encrypted", c: "first" }, remoteAlertPolicy: policy }))
-            .toEqual({ status: "success", version: 1 });
+            .toEqual({ status: "success", version: 1, remoteAlertPolicyStatus: 'current' });
         expect(await db.account.findUniqueOrThrow({ where: { id: account.id } })).toMatchObject({
             settingsVersion: 1, remoteAlertPolicy: { settingsVersion: 1, policy },
         });
@@ -88,7 +88,7 @@ describe("writeAccountSettingsInTx (SQLite integration)", () => {
                 kind: "v2",
                 content: { t: "encrypted", c: "settings-after" },
             },
-        }))).resolves.toEqual({ status: "success", version: 7 });
+        }))).resolves.toEqual({ status: "success", version: 7, remoteAlertPolicyStatus: 'disabled' });
 
         const stored = await db.account.findUniqueOrThrow({
             where: { id: account.id },
@@ -169,7 +169,7 @@ describe("writeAccountSettingsInTx (SQLite integration)", () => {
                     content: { t: "encrypted", c: "settings-after" },
                 },
             });
-            expect(result).toEqual({ status: "success", version: 7 });
+            expect(result).toEqual({ status: "success", version: 7, remoteAlertPolicyStatus: 'disabled' });
             throw outerFailure;
         })).rejects.toBe(outerFailure);
 

@@ -1,6 +1,7 @@
 import { isIP } from "node:net";
 
 import { isPrivateNetworkAddress, parseIpAddress } from "@/app/net/addressPolicy";
+import { IROH_REQUEST_IP } from './requestIngress';
 
 export type RequestIpClassification = "public" | "private" | "unknown";
 
@@ -13,6 +14,7 @@ export type RequestIpClassification = "public" | "private" | "unknown";
  */
 export function classifyRequestIp(rawIp: unknown): RequestIpClassification {
     const raw = typeof rawIp === "string" ? rawIp.trim() : "";
+    if (raw === IROH_REQUEST_IP) return 'public';
     if (!raw) return "unknown";
 
     const dottedMapped = raw.match(/^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/i)?.[1]?.trim();

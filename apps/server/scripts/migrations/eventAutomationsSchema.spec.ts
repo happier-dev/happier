@@ -160,9 +160,10 @@ const replyHandoffDueIndexName = "AutomationRun_replyHandoffState_replyHandoffDu
 async function applySqliteMigrationThroughCanonicalExecutor(
     db: DatabaseSync,
     sql: string,
+    name = migrationId,
 ): Promise<void> {
     const root = await mkdtemp(join(tmpdir(), "automation-trigger-sets-"));
-    const migrationDir = join(root, migrationId);
+    const migrationDir = join(root, name);
     try {
         await mkdir(migrationDir, { recursive: true });
         await writeFile(join(migrationDir, "migration.sql"), sql, "utf8");
@@ -1615,6 +1616,37 @@ describe("Automation trigger-set executable migration", () => {
                     'installation-enabled', '{"v":1,"run":null}', datetime('now', '+5 minutes'))
             `)).toThrow();
             expect(db.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
+        } finally {
+            db.close();
+        }
+    });
+
+    it("retains catalog status facts while qualifying Machine-local reporters on SQLite", async () => {
+        const db = new DatabaseSync(":memory:");
+        const name = "20261025125000_qualify_automation_catalog_status_machine";
+        try {
+            db.exec('PRAGMA foreign_keys = ON; CREATE TABLE "Account" ("id" TEXT PRIMARY KEY); INSERT INTO "Account" VALUES (\'account\');');
+            const predecessor = await read(migrationPaths[1]);
+            const table = predecessor.match(/CREATE TABLE "AutomationEventSourceCatalogStatus" \([\s\S]*?\n\);/)?.[0];
+            if (!table) throw new Error("Canonical predecessor catalog table is unavailable");
+            db.exec(table);
+            const insert = db.prepare(`INSERT INTO "AutomationEventSourceCatalogStatus" VALUES (
+                'account', 'plugin', ?, 'installation', 'daemon-selected:plugin',
+                '{"kind":"bundled_first_party"}', 'checkpointedPull', 7, 6,
+                'reconciling', 1000, 2000, 3000, 3
+            )`);
+            insert.run("machine-first");
+            const before = db.prepare('SELECT * FROM "AutomationEventSourceCatalogStatus"').all();
+            const sql = await read(`prisma/sqlite/migrations/${name}/migration.sql`);
+            await applySqliteMigrationThroughCanonicalExecutor(db, sql, name);
+            await applySqliteMigrationThroughCanonicalExecutor(db, sql, name);
+            expect(db.prepare('SELECT * FROM "AutomationEventSourceCatalogStatus"').all()).toEqual(before);
+            insert.run("machine-second");
+            expect(() => insert.run("machine-first")).toThrow();
+            expect(db.prepare('SELECT "reporterMachineId" FROM "AutomationEventSourceCatalogStatus" ORDER BY "reporterMachineId"').all())
+                .toEqual([{ reporterMachineId: "machine-first" }, { reporterMachineId: "machine-second" }]);
+            expect(db.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
+            expect(db.prepare("PRAGMA integrity_check").get()).toEqual({ integrity_check: "ok" });
         } finally {
             db.close();
         }

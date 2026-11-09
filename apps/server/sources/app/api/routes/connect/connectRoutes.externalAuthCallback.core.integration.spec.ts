@@ -67,7 +67,7 @@ describe("connectRoutes (GitHub callback) external auth flow (integration)", () 
     it("defers normal connect completion to the authenticated finalizer and adopts merged credential evidence", async () => {
         applyGithubExternalAuthCallbackEnv(harness);
         const account = await db.account.create({
-            data: { publicKey: `pk-connect-adoption-${Date.now()}`, username: "account-owner", terminalPresentUserPolicy: "disallowed" },
+            data: { publicKey: `pk-connect-adoption-${Date.now()}`, username: "account-owner" },
             select: { id: true },
         });
         const initiating = await auth.createToken(account.id, undefined, {

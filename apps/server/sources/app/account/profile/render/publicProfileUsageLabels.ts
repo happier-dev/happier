@@ -1,7 +1,10 @@
 import type { HappierPublicProfileUsageLabels } from '@happier-dev/plugin-ui/presentation';
 import type { PublicProfileViewV1 } from '@happier-dev/protocol/account/publicProfilePublication';
+import { PUBLIC_PROFILE_FIELD_COPY_EN as fields, PUBLIC_PROFILE_PAGE_COPY_EN as page,
+    PUBLIC_USAGE_CHART_COPY_EN as charts, PUBLIC_USAGE_PLANET_COPY_EN as planet,
+    PUBLIC_USAGE_ORIGINAL_COPY_EN as original } from '@happier-dev/protocol/account/publicProfilePublication';
 import { resolveUsageCalendarDateStart, resolveUsageCalendarInstant } from '@happier-dev/protocol/usage/usageCalendar';
-import { formatTokenCountLong, formatUsageCalendarDate, formatUsageChartClock,
+import { formatTokenCount, formatTokenCountLong, formatUsageCalendarDate, formatUsageChartClock,
     formatUsageDuration, formatUsageSharePercent } from '@happier-dev/protocol/usage/usageFormatting';
 import { readBuiltinUsagePublicPresentationDescriptorV1 } from '@happier-dev/protocol/widgets/builtinWidgetDescriptorV1';
 import { PUBLIC_PROFILE_ASSET_LABELS, PUBLIC_PROFILE_LOCALE } from './publicProfileLabels';
@@ -9,7 +12,7 @@ import { PUBLIC_PROFILE_ASSET_LABELS, PUBLIC_PROFILE_LOCALE } from './publicProf
 /** Anonymous host wording for the shared bodies; only the already public view supplies its calendar. */
 export function publicProfileUsageLabels(view: PublicProfileViewV1): HappierPublicProfileUsageLabels {
     const count = (value: number) => formatTokenCountLong(value, PUBLIC_PROFILE_LOCALE);
-    const days = (value: number) => `${count(value)} ${value === 1 ? 'day' : 'days'}`;
+    const days = (value: number) => charts.daysCount({ count: count(value) });
     const duration = (ms: number) => formatUsageDuration(ms, {
         seconds: seconds => `${count(seconds)} s`, minutes: minutes => `${count(minutes)} min`,
         hours: (hours, minutes) => `${count(hours)} h ${count(minutes)} min`,
@@ -21,131 +24,135 @@ export function publicProfileUsageLabels(view: PublicProfileViewV1): HappierPubl
     const weekday = (index: number) => formatUsageCalendarDate(Date.UTC(2024, 0, 1 + index), 0,
         { weekday: 'short' }, PUBLIC_PROFILE_LOCALE);
     const weekdays = [weekday(0), weekday(1), weekday(2), weekday(3), weekday(4), weekday(5), weekday(6)] as const;
-    const levelNames = ['No activity', 'Quiet', 'Steady', 'Busy', 'Busiest'];
-    const levelName = (value: number) => levelNames[value] ?? 'Not recorded';
-    const values = { show: 'Show values', hide: 'Hide values' };
-    const recordTitles = { activeDays: 'Active days', currentStreakDays: 'Current streak', bestStreakDays: 'Best streak',
-        peakParallel: 'Most at once', longestTurnMs: 'Longest closed turn' };
+    const initials = planet.weekdayInitials.split(',');
+    const levelNames = [charts.noActivity, charts.levelQuiet, charts.levelSteady, charts.levelBusy, charts.levelBusiest];
+    const levelName = (value: number) => levelNames[value] ?? charts.notRecorded;
+    const levels = { quiet: charts.levelQuiet, steady: charts.levelSteady, busy: charts.levelBusy, busiest: charts.levelBusiest };
+    const values = { show: charts.showValues, hide: charts.hideValues };
+    const recordTitles = { activeDays: fields.activeDays, currentStreakDays: fields.currentStreak, bestStreakDays: fields.bestStreak,
+        peakParallel: charts.recordPeak, longestTurnMs: charts.recordLongestTurn };
     const recordPeriod = PUBLIC_PROFILE_ASSET_LABELS.period(view.snapshot.period);
     const labels = {
         chartLabel: widgetId => readBuiltinUsagePublicPresentationDescriptorV1(widgetId)?.title ?? 'Public activity',
-        unavailable: 'Not shared or not recorded',
+        unavailable: page.blockUnavailable,
         original: {
-            metrics: { tokens: 'Tokens', activeDays: 'Active days', agentTimeMs: 'Agent time', mergedPrs: 'Merged pull requests',
-                currentStreakDays: 'Current streak', bestStreakDays: 'Best streak in this period', peakParallel: 'Most at once' },
-            formatMetric: (kind, value) => kind === 'agentTimeMs' ? duration(value) : count(value),
-            activityLevel: 'Activity level', level: levelName, date: shortDate, weekdays, clock: formatUsageChartClock,
+            metrics: { tokens: fields.tokens, activeDays: fields.activeDays, agentTimeMs: original.page.agentTime, mergedPrs: fields.mergedPrs,
+                currentStreakDays: fields.currentStreak, bestStreakDays: fields.bestStreak, peakParallel: fields.peakParallel },
+            // As the owner preview writes them: compact tokens, a duration, a plain count.
+            formatMetric: (kind, value) => kind === 'agentTimeMs' ? duration(value) : kind === 'tokens' ? formatTokenCount(value) : count(value),
+            activityLevel: page.activityLevel, level: levelName, date: shortDate, weekdays, clock: formatUsageChartClock,
             showValues: values.show, hideValues: values.hide,
-            agentMix: 'Agent mix', sourceSplit: 'Where they ran', percent: formatUsageSharePercent,
-            source: execution => ({ happier: 'In Happier', outside: 'Outside Happier', unknown: 'Unknown' })[execution],
-            coverage: { title: 'Coverage', columns: ['Source', 'Coverage'],
-                status: status => ({ complete_for_supplied_facts: 'Complete for supplied facts', partial: 'Partial history', unknown: 'Unknown', unavailable: 'Unavailable' })[status],
-                method: method => ({ runtime: 'Runtime', logs: 'Logs', context_only: 'Context only', mixed: 'Mixed sources', unknown: 'Unknown source' })[method] },
-            footprint: { title: 'Insufficient basis', reason: 'There is no applicable versioned method for estimating energy or emissions.',
-                noEstimate: 'No estimate', accounted: 'Accounted usage', tokensUnit: 'tokens', proxy: 'Proxy only',
-                proxyDetail: 'Tokens are a proxy, not an energy measurement.', methodTitle: 'Method',
-                methodBody: 'An estimate needs an applicable published method and sufficient model, serving, date and region evidence.' },
+            agentMix: fields.agentMix, sourceSplit: fields.sourceSplit, percent: formatUsageSharePercent,
+            source: execution => ({ happier: original.page.executionHappier, outside: original.page.executionOutside, unknown: original.page.executionUnknown })[execution],
+            coverage: { title: original.widgets.usage_source_coverage, columns: [original.widgets.usage_sources, original.widgets.usage_source_coverage],
+                status: status => ({ complete_for_supplied_facts: original.sources.coverageAvailable, partial: original.page.factIncomplete,
+                    unknown: original.sources.coverageUnknown, unavailable: 'Unavailable' })[status],
+                method: method => ({ runtime: original.page.sourceKindMeasured, logs: original.page.sourceKindFromLogs,
+                    context_only: charts.coverageContextOnlyShort, mixed: original.widgets.usage_sources, unknown: original.sources.coverageUnknown })[method] },
+            footprint: { title: original.howYouWork.footprintInsufficientTitle, reason: original.howYouWork.footprintInsufficientReason,
+                noEstimate: original.howYouWork.footprintNoEstimate, accounted: original.howYouWork.footprintAccounted, tokensUnit: 'tokens',
+                proxy: original.howYouWork.footprintProxy, proxyDetail: original.howYouWork.footprintProxyDetail,
+                methodTitle: original.howYouWork.footprintMethodTitle, methodBody: original.howYouWork.footprintMethodBody },
             period: recordPeriod,
         },
         sky: {
             formatValue: levelName,
             month: value => date(value, { month: 'short' }),
             day: value => date(value, { weekday: 'short', day: 'numeric', month: 'short' }),
-            levels: { quiet: 'Quiet', steady: 'Steady', busy: 'Busy', busiest: 'Busiest' },
-            streakBestOngoing: days => `${count(days)}-day streak · best this period, still going`,
-            streakBest: value => `Best · ${days(value)}`, streakNow: value => `Now · ${days(value)}`,
-            streakShort: (days, best) => `${count(days)}-day streak${best ? ' · best' : ''}`,
-            key: { tie: 'Tie', notAttributed: 'Not attributed', noActivity: 'No activity', notRecorded: 'Not recorded', quieter: 'Quieter', busier: 'Busier' },
-            caption: ({ runs, band }) => `Higher, larger and brighter marks stronger shared intensity.${runs && band ? ' Faint lines join runs of five days or more; the soft band is the 7-day average.'
-                : runs ? ' Faint lines join runs of five days or more.' : band ? ' The soft band is the 7-day average.' : ''}`,
-            values: { ...values, dateColumn: 'Day', valueColumn: 'Activity level', leaderColumn: 'Led by',
-                noActivity: 'No activity', notRecorded: 'Not recorded', tie: 'Tie', notAttributed: 'Not attributed' },
+            levels,
+            streakBestOngoing: days => charts.streakBestOngoing({ count: count(days) }),
+            streakBest: value => charts.streakBest({ count: value }), streakNow: value => charts.streakNow({ count: value }),
+            streakShort: (days, best) => (best ? charts.streakShortBest : charts.streakShort)({ count: count(days) }),
+            key: { tie: charts.tie, notAttributed: charts.notAttributed, noActivity: charts.noActivity, notRecorded: charts.notRecorded,
+                quieter: charts.quieter, busier: charts.busier },
+            caption: charts.skyCaptionIntensity,
+            values: { ...values, dateColumn: charts.dateColumn, valueColumn: page.activityLevel, leaderColumn: charts.leaderColumn,
+                noActivity: charts.noActivity, notRecorded: charts.notRecorded, tie: charts.tie, notAttributed: charts.notAttributed },
         },
         weekTide: {
             weekdays, clock: formatUsageChartClock,
             peak: (day, hour, value) => `${weekdays[day] ?? ''} ${formatUsageChartClock(hour)} · ${levelName(value)}`,
-            values: { ...values, weekdayColumn: 'Weekday', formatValue: levelName, levelNames },
+            values: { ...values, weekdayColumn: charts.weekdayColumn, formatValue: levelName, levelNames },
         },
         daylight: {
             clock: formatUsageChartClock,
-            night: (from, to, share) => `Night · ${formatUsageChartClock(from)}–${formatUsageChartClock(to)}${share === null ? '' : ` · ${formatUsageSharePercent(share)}`}`,
+            night: (from, to, share) => share === null ? charts.nightWindow({ window: `${formatUsageChartClock(from)}–${formatUsageChartClock(to)}` })
+                : charts.nightWindowShare({ window: `${formatUsageChartClock(from)}–${formatUsageChartClock(to)}`, share: formatUsageSharePercent(share) }),
             // The public punch may be absent even when the night share is known; never invent a peak hour.
-            caption: () => 'Each column is an hour of the day; taller marks stronger shared intensity.',
-            values: { ...values, hourColumn: 'Hour', valueColumn: 'Activity level', formatValue: levelName, levelNames },
+            caption: () => charts.daylightCaptionNoPeak,
+            values: { ...values, hourColumn: charts.hourColumn, valueColumn: page.activityLevel, formatValue: levelName, levelNames },
         },
         parallel: {
-            unknownAgent: 'Unknown agent',
-            peakOnlyCaption: 'Most turns running at once in the period. A day, clock and agent timeline are not shared.',
-            clock: formatUsageChartClock, duration, atOnce: 'At once', turns: 'turns', agentTime: 'Agent time',
-            peak: (total, atHour) => `${count(total)} at once · ${formatUsageChartClock(atHour)}`,
-            peakCount: total => `${count(total)} at once`,
+            unknownAgent: charts.unknownAgent,
+            peakOnlyCaption: charts.peakOnlyCaption,
+            clock: formatUsageChartClock, duration, atOnce: charts.atOnce, turns: charts.turns, agentTime: charts.agentTime,
+            peak: (total, atHour) => `${charts.atOnceCount({ count: count(total) })} · ${formatUsageChartClock(atHour)}`,
+            peakCount: total => charts.atOnceCount({ count: count(total) }),
             peakLine: (atHour, byAgent) => `${formatUsageChartClock(atHour)} · ${byAgent.map(entry => `${entry.name} ${count(entry.count)}`).join(', ')}`,
-            waiting: 'Waiting for you',
+            waiting: charts.waitingForYou,
             caption: {
-                lanes: 'Each lane is an agent’s closed turns; hatched is waiting for you. The curve is turns running at once.',
-                dial: 'Around the clock from 00 at the top. The filled shape is turns running at once; gaps are waits for you.',
+                lanes: charts.lanesCaption,
+                dial: charts.dialCaption,
             },
-            values: { ...values, agentColumn: 'Agent', agentTimeColumn: 'Agent time', spansColumn: 'Worked',
+            values: { ...values, agentColumn: charts.agentColumn, agentTimeColumn: original.page.agentTime, spansColumn: charts.spansColumn,
                 formatSpan: (from, to) => `${formatUsageChartClock(from)}–${formatUsageChartClock(to)}` },
         },
-        orbit: { percent: formatUsageSharePercent, unknown: names => `${names} · share unknown`, unknownAgent: 'Unknown agent' },
-        crew: { percent: formatUsageSharePercent, days, unknownAgent: 'Unknown agent' },
+        orbit: { percent: formatUsageSharePercent, unknown: names => charts.shareUnknown({ names }), unknownAgent: charts.unknownAgent },
+        crew: { percent: formatUsageSharePercent, days, unknownAgent: charts.unknownAgent },
         river: {
             week: shortDate, inline: (name, share) => `${name} ${formatUsageSharePercent(share)}`,
-            caption: "Each week's shared agent mix. Equal widths do not imply weekly totals.", unknownAgent: 'Unknown agent',
-            partialWeek: (start, end) => `${shortDate(start)}–${shortDate(end)} · part week`,
-            values: { ...values, weekColumn: 'Week', totalColumn: 'Total not shared', formatTotal: () => '—', percent: formatUsageSharePercent },
+            caption: "Each week's shared agent mix. Equal widths do not imply weekly totals.", unknownAgent: charts.unknownAgent,
+            partialWeek: (start, end) => planet.partialWeek({ from: shortDate(start), to: shortDate(end) }),
+            values: { ...values, weekColumn: planet.weekColumn, totalColumn: 'Total not shared', formatTotal: () => '—', percent: formatUsageSharePercent },
         },
-        shipped: { week: shortDate, noDate: 'No date', countLine: total => `${count(total)} merged pull requests linked to agent work`,
-            mixed: 'Mixed', noMergeDate: 'No merge date', colourBy: 'accent' },
+        shipped: { week: shortDate, noDate: charts.noDate, countLine: total => charts.shippedCount({ count: count(total) }),
+            mixed: charts.mixed, noMergeDate: charts.noMergeDate, colourBy: 'accent' },
         constellation: {
-            kinds: { session: 'Started a session', run: 'Execution run · delegate, review, plan', native: 'Native subagents' },
-            arrowNote: 'Arrow: who started → who did it · width: how often',
-            unknownStarts: total => `${count(total)} sessions started by an agent we can't name`,
-            nodesOnly: 'Collaboration details are not shared; each planet is an agent sized by its share.', unknownAgent: 'Unknown agent',
+            kinds: { session: charts.edgeSession, run: charts.edgeRun, native: charts.edgeNative },
+            arrowNote: charts.edgeNote,
+            unknownStarts: total => charts.unknownStarts({ count: count(total) }),
+            nodesOnly: 'Collaboration details are not shared; each planet is an agent sized by its share.', unknownAgent: charts.unknownAgent,
         },
         planet: {
-            rows: { light: 'Light', halo: 'Halo', trail: 'Trail' },
-            activeDays: (active, of) => `${count(active)} of ${count(of)} days`, peak: total => `Up to ${count(total)} at once`,
-            streak: days => `${count(days)}-day streak`, notShared: 'Not shared or not recorded',
-            lightNote: 'Grows with each active day in the period', lightRest: 'Rests at half light',
-            haloNote: 'Widens with the most work run at once (of 8)', haloRest: 'No halo',
-            trailNote: best => best === null ? 'Lengthens with each day of the current streak'
-                : `Lengthens toward the best this period, ${days(best)}`, trailRest: 'No trail',
+            rows: { light: charts.planetLight, halo: charts.planetHalo, trail: charts.planetTrail },
+            activeDays: (active, of) => charts.daysOf({ count: count(active), total: count(of) }), peak: total => charts.upToAtOnce({ count: count(total) }),
+            streak: days => charts.dayStreak({ count: count(days) }), notShared: charts.notRecorded,
+            lightNote: charts.planetLightNote, lightRest: charts.planetLightRest,
+            haloNote: charts.planetHaloNote, haloRest: charts.planetHaloRest,
+            trailNote: best => best === null ? charts.planetTrailNoteNoBest
+                : charts.planetTrailNote({ count: best }), trailRest: charts.planetTrailRest,
         },
         calendar: {
             month: value => date(value, { month: 'short' }), day: value => date(value, { weekday: 'short', day: 'numeric', month: 'short' }), short: shortDate,
-            weekdayInitials: ['M', 'T', 'W', 'T', 'F', 'S', 'S'],
-            levels: { quiet: 'Quiet', steady: 'Steady', busy: 'Busy', busiest: 'Busiest' }, noActivity: 'No activity', notRecorded: 'Not recorded',
-            quieter: 'Quieter', busier: 'Busier', best: value => `Best · ${days(value)}`, now: value => `${days(value)} now`,
-            ongoingBest: value => `${days(value)} · longest in this period`,
-            lit: (active, days) => `${count(active)} of ${count(days)} days lit`, noRuns: 'No run of three days or more in this period',
-            values: { ...values, dateColumn: 'Day', levelColumn: 'How busy', weekColumn: 'Week', activeDaysColumn: 'Active days' },
+            weekdayInitials: [initials[0] ?? '', initials[1] ?? '', initials[2] ?? '', initials[3] ?? '', initials[4] ?? '', initials[5] ?? '', initials[6] ?? ''],
+            levels, noActivity: charts.noActivity, notRecorded: charts.notRecorded,
+            quieter: charts.quieter, busier: charts.busier, best: value => planet.streakBestDays({ count: value }), now: value => planet.streakNowDays({ count: value }),
+            ongoingBest: value => planet.streakOngoingBest({ count: value }),
+            lit: (active, days) => planet.daysLit({ count: count(active), total: count(days) }), noRuns: planet.noStreakRings,
+            values: { ...values, dateColumn: charts.dateColumn, levelColumn: planet.levelColumn, weekColumn: planet.weekColumn, activeDaysColumn: planet.activeDaysColumn },
         },
         moons: {
-            percent: formatUsageSharePercent, days: (active, of) => `${count(active)} of ${count(of)} days`, unknownAgent: 'Unknown agent',
-            caption: daysShared => daysShared ? 'Each agent is a moon; its size is its share, the lit part how many days it worked.'
-                : 'Each agent is a moon; its size is its share.',
-            values: { ...values, agentColumn: 'Agent', shareColumn: 'Share', daysColumn: 'Days' },
+            percent: formatUsageSharePercent, days: (active, of) => charts.daysOf({ count: count(active), total: count(of) }), unknownAgent: charts.unknownAgent,
+            caption: daysShared => daysShared ? planet.moonsCaptionDays : planet.moonsCaption,
+            values: { ...values, agentColumn: charts.agentColumn, shareColumn: planet.shareColumn, daysColumn: planet.daysColumn },
         },
         machines: {
-            kind: (kind, total) => `${kind === 'unknown' ? 'Unknown kind' : kind}${total > 1 ? ` ×${count(total)}` : ''}`, percent: formatUsageSharePercent,
-            unavailable: 'Machine kinds are not recorded yet.', empty: 'No machine ran agents in this period.',
-            values: { ...values, kindColumn: 'Machine', countColumn: 'How many', shareColumn: 'Share' },
+            kind: (kind, total) => `${kind === 'unknown' ? planet.machineKindUnknown : kind}${total > 1 ? ` ×${count(total)}` : ''}`, percent: formatUsageSharePercent,
+            unavailable: planet.machinesUnavailable, empty: planet.machinesEmpty,
+            values: { ...values, kindColumn: planet.kindColumn, countColumn: planet.countColumn, shareColumn: planet.shareColumn },
         },
-        projects: { empty: 'No public projects linked.' },
+        projects: { empty: planet.projectsEmpty },
         atmosphere: {
             week: startMs => shortDate(resolveUsageCalendarInstant(startMs, view.snapshot.period.timeZoneOffsetMinutes).date),
-            peak: total => `Up to ${count(total)} at once`, firstWeek: 'Week 1',
-            caption: peak => peak === null ? 'The halo thickens in weeks with more agents at once; week 1 is at the top.'
-                : `The halo thickens in weeks with more agents at once; up to ${count(peak)} at once this period.`,
-            values: { ...values, weekColumn: 'Week', peakColumn: 'At once', notRecorded: 'Not recorded' },
+            peak: total => charts.upToAtOnce({ count: count(total) }), firstWeek: planet.atmosphereFirstWeek,
+            caption: peak => peak === null ? planet.atmosphereCaption : planet.atmosphereCaptionPeak({ count: count(peak) }),
+            values: { ...values, weekColumn: planet.weekColumn, peakColumn: planet.peakColumn, notRecorded: charts.notRecorded },
         },
         runLength: {
-            duration, unknownAgent: 'Unknown agent', detail: (p90, samples) => `p90 ${duration(p90)} · ${count(samples)}`,
-            ticks: { minute: '1 min', tenMinutes: '10 min', hour: '1 h', fourHours: '4 h' },
-            caption: "Each dot is an equal share of that agent's closed turns. Bold is the median, thin is the 90th percentile. Wall time from start to finish, permission waits included.",
-            values: { ...values, agentColumn: 'Agent', medianColumn: 'Median', p90Column: '90th percentile',
+            duration, unknownAgent: charts.unknownAgent, detail: (p90, samples) => charts.runDetail({ p90: duration(p90), count: count(samples) }),
+            ticks: { minute: charts.tickMinute, tenMinutes: charts.tickTenMinutes, hour: charts.tickHour, fourHours: charts.tickFourHours },
+            caption: charts.runCaption,
+            values: { ...values, agentColumn: charts.agentColumn, medianColumn: charts.median, p90Column: charts.p90,
                 samplesColumn: 'Observations', formatCount: count },
         },
         records: {

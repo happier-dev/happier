@@ -16,8 +16,8 @@ import { markSessionProjectionRecipientsChanged } from '@/app/session/changeTrac
 import { changeDeliveryMute } from './sessionDeliveryMuteService';
 import { setSessionManager } from './sessionManagerService';
 import { sourceKeyForSessionFollowSourceV1 } from './sessionFollowSourceIdentity';
-import { readAdmittedSessionFollowInputInTx, readSessionFollowOriginalOccurrenceFrontiersInTx, sessionFollowInputFrontiers, settleSessionFollowInputReasonsInTx } from './sessionFollowRuleProgress';
-import { setAccountFollowRule } from './accountFollowRuleService';
+import { readAdmittedSessionFollowInputInTx, readSessionFollowOriginalOccurrenceFrontiersInTx, readSessionFollowRuleProgressInTx, sessionFollowInputFrontiers, settleSessionFollowInputReasonsInTx } from './sessionFollowRuleProgress';
+import { removeAccountFollowRule, setAccountFollowRule } from './accountFollowRuleService';
 import { normalizeSessionListFilterV1 } from '@happier-dev/protocol/sessions/listFilter/sessionListFilterV1';
 import { buildSessionInputAdmissionReceipt } from '@/app/session/messages/sessionInputAdmission';
 import { SessionInputAdmissionReceiptV1Schema } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
@@ -30,6 +30,7 @@ import { encodePlainMachineStoredContent } from '@happier-dev/protocol/machines/
 
 import {
     admitSessionFollowRelationsForInputInTx,
+    acknowledgeAdmittedSessionFollowInputInTx,
     acknowledgeSessionFollowFrontierInTx as acknowledgeSessionFollowFrontierAuthenticatedInTx,
     authorizeSessionFollowSourceKeyPreparation as authorizeSessionFollowSourceKeyPreparationAuthenticated,
     authorizeSessionFollowSourceKeyPreparer,
@@ -226,6 +227,40 @@ describe('SessionFollowEdge service', () => {
             deliveredAgentStateVersion: 2, deliveredTurnId: occurrence.sourceTurn.id, deliveredTurnStatus: 'failed' });
     });
 
+    it.each(['later coverage', 'unknown coverage', 'same Turn status'] as const)(
+        'joins accepted terminal progress using %s without sorting Turn ids or clocks', async proof => {
+        const owner = await createAccount();
+        const source = await createSession(owner.id, { seq: 3, latestTurnId: 'latest-turn', latestTurnStatus: 'completed' });
+        const destination = await createSession(owner.id);
+        for (const [turnId, seq] of [['previous-turn', 1], ['accepted-turn', 2], ['latest-turn', 3]] as const) {
+            await db.sessionTurn.create({ data: { sessionId: source.id, turnId, status: 'completed',
+                // Deliberately identical clocks: coverage, not time, orders these Turns.
+                startedAt: 1n, updatedAt: 1n, terminalAt: 1n,
+                ...(proof === 'unknown coverage' && turnId === 'accepted-turn' ? {} : {
+                    transcriptAnchorsJson: JSON.stringify({ startSeqInclusive: seq, endSeqInclusive: seq }),
+                }) } });
+        }
+        expect(await setSessionFollowSource({ accountId: owner.id, sourceSessionId: source.id,
+            destinationSessionId: destination.id })).toMatchObject({ ok: true });
+        const edgeKey = { destinationSessionId: destination.id, sourceSessionId: source.id, relation: 'follower' };
+        const previous = proof === 'same Turn status'
+            ? { id: 'accepted-turn', status: 'waiting' as const } : { id: 'previous-turn', status: 'completed' as const };
+        await db.sessionFollowEdge.update({ where: { destinationSessionId_sourceSessionId_relation: edgeKey },
+            data: { deliveredTurnId: previous.id, deliveredTurnStatus: previous.status } });
+        const delivery = SessionFollowInputV1Schema.parse({ v: 1, delivery: 'next_turn', event: { kind: 'finished' },
+            original: { sourceSessionId: source.id, sourceTurn: { id: 'accepted-turn', status: 'completed' } } });
+        const settle = () => inTx(async tx => settleSessionFollowInputReasonsInTx(tx, {
+            progresses: [], relations: [await tx.sessionFollowEdge.findUniqueOrThrow({ where: {
+                destinationSessionId_sourceSessionId_relation: edgeKey,
+            } })], delivery, observed: sessionFollowInputFrontiers(delivery).observed,
+        }));
+        expect(await settle()).toEqual({ relationProgressAdvanced: proof !== 'unknown coverage' });
+        expect(await readEdge(destination.id, source.id)).toMatchObject({
+            deliveredTurnId: proof === 'unknown coverage' ? previous.id : 'accepted-turn', deliveredTurnStatus: 'completed',
+        });
+        expect(await settle()).toEqual({ relationProgressAdvanced: false });
+    });
+
     it('rejects a direct Pending terminal notice backed only by a source message', async () => {
         const owner = await createAccount();
         const source = await createSession(owner.id, { seq: 2 });
@@ -395,6 +430,87 @@ describe('SessionFollowEdge service', () => {
         expect((await db.sessionMessage.findUniqueOrThrow({ where: { sessionId_localId: {
             sessionId: destination.id, localId: localInputId,
         } } })).inputAdmissionReceipt).toEqual(receipt);
+    });
+
+    it.each(['source grant', 'source mute', 'relation policy', 'rule version', 'rule removal'] as const)(
+        'settles the exact accepted input after %s changes without admitting a fresh source read', async change => {
+        const owner = await createAccount();
+        const sourceOwner = await createAccount();
+        const source = await createSession(sourceOwner.id);
+        const destination = await createSession(owner.id, { publisherGeneration: 1n });
+        await grantAccess(source, owner.id, 'view');
+        expect(await setSessionFollowSource({ accountId: owner.id, sourceSessionId: source.id,
+            destinationSessionId: destination.id })).toMatchObject({ ok: true });
+        const ruleId = randomUUID();
+        const ruleContent = { t: 'plain' as const, v: { v: 1 as const, enabled: true,
+            filter: normalizeSessionListFilterV1(), policy: { preset: 'everything' as const } } };
+        expect(await setAccountFollowRule({ accountId: owner.id, ruleId, authentication, mutation: {
+            receiver: { kind: 'session', sessionId: destination.id }, expectedVersion: -1, content: ruleContent,
+        } })).toMatchObject({ ok: true });
+        const sourceTurn = { id: 'accepted-before-policy-change', status: 'failed' as const };
+        await db.sessionTurn.create({ data: { sessionId: source.id, turnId: sourceTurn.id, status: sourceTurn.status,
+            startedAt: 1n, updatedAt: 2n, terminalAt: 2n } });
+        await db.session.update({ where: { id: source.id }, data: { latestTurnId: sourceTurn.id, latestTurnStatus: sourceTurn.status } });
+        const delivery = SessionFollowInputV1Schema.parse({ v: 1, delivery: 'wake',
+            original: { sourceSessionId: source.id, sourceTurn }, event: { kind: 'failed_or_stopped' } });
+        const localInputId = deriveSessionFollowInputLocalIdV1({ destinationSessionId: destination.id, original: delivery.original });
+        const receipt = SessionInputAdmissionReceiptV1Schema.parse({
+            ...buildSessionInputAdmissionReceipt({ issuer: 'authenticatedMachine', admittedTarget: { homeId: 'home',
+                accountId: owner.id, sessionId: destination.id, machineId: 'producer', installationId: 'installation' } }),
+            followDeliveryV1: delivery, followRelations: [{ relation: 'follower' }],
+            followSources: [{ rule: { ruleId, ruleVersion: 0 }, evaluation: 'receiver', selectedDelivery: 'wake',
+                sourceSessionId: source.id, destinationSessionId: destination.id, sourceTurn }],
+        });
+        // Native transport is the boundary: persist its real accepted outcome
+        // beside the canonical admission producer's exact original receipt.
+        await db.sessionMessage.create({ data: { sessionId: destination.id, seq: 1, localId: localInputId,
+            messageRole: 'user', content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'Accepted failure' } } },
+            inputAdmissionReceipt: receipt, acceptedTurnId: 'accepted-native-turn',
+            acceptedFollowOriginalKey: deriveSessionFollowOriginalOccurrenceKeyV1(delivery.original) } });
+        const principal = runtimePrincipal(owner.id);
+        const project = (relation: 'follower' | 'rule' = 'follower') => inTx(tx => projectSessionFollowSourceForRunnerInTx(tx, {
+            principal, destinationSessionId: destination.id,
+            request: { v: 1, sourceSessionId: source.id, relation, afterTranscriptSeq: 0, observedTranscriptSeq: 0, limit: 1 },
+        }));
+        expect(await project()).not.toBeNull();
+        if (change === 'source grant') await db.sessionShare.deleteMany({ where: { sessionId: source.id, sharedWithUserId: owner.id } });
+        else if (change === 'source mute') expect(await changeDeliveryMute({ accountId: owner.id, authentication,
+            receiver: { kind: 'session', sessionId: destination.id },
+            scope: { kind: 'source', source: { kind: 'session', sessionId: source.id } }, operation: 'set',
+        })).toMatchObject({ ok: true });
+        else if (change === 'relation policy') await db.sessionFollowEdge.update({ where: { destinationSessionId_sourceSessionId_relation: {
+            destinationSessionId: destination.id, sourceSessionId: source.id, relation: 'follower',
+        } }, data: { policyJson: JSON.stringify({ preset: 'custom', events: {} }) } });
+        else if (change === 'rule version') expect(await setAccountFollowRule({ accountId: owner.id, ruleId, authentication,
+            mutation: { receiver: { kind: 'session', sessionId: destination.id }, expectedVersion: 0, content: ruleContent },
+        })).toMatchObject({ ok: true });
+        else expect(await removeAccountFollowRule({ accountId: owner.id, ruleId, authentication,
+            receiver: { kind: 'session', sessionId: destination.id }, expectedVersion: 0,
+        })).toMatchObject({ ok: true });
+        if (change === 'source grant' || change === 'source mute') expect(await project()).toBeNull();
+        if (change === 'source grant') expect((await inTx(tx => observeSessionFollowForDestinationInTx(tx, {
+            principal, destinationSessionId: destination.id,
+        }))).observations).toEqual([]);
+        if (change === 'source grant') expect(await authorizeSessionFollowSourceKeyPreparer({
+            accountId: owner.id, authentication, sourceSessionId: source.id, destinationSessionId: destination.id, localInputId,
+        })).toMatchObject({ ok: false });
+        const frontiers = sessionFollowInputFrontiers(delivery);
+        const acknowledge = () => inTx(tx => acknowledgeAdmittedSessionFollowInputInTx(tx, { principal, request: {
+            v: 1, destinationSessionId: destination.id, sourceSessionId: source.id, localInputId,
+            expectedPublisherGeneration: '1', ...frontiers, consumed: frontiers.observed,
+            acceptance: { kind: 'admitted_input', localInputId, userMessageSeq: 1 },
+        } }));
+        expect(await acknowledge()).toEqual({ ok: true, delivered: frontiers.observed });
+        expect(await acknowledge()).toEqual({ ok: true, delivered: frontiers.observed });
+        expect(await readEdge(destination.id, source.id)).toMatchObject({ deliveredTurnId: sourceTurn.id, deliveredTurnStatus: 'failed' });
+        const progress = await inTx(tx => readSessionFollowRuleProgressInTx(tx, { accountId: owner.id,
+            rule: { ruleId, ruleVersion: change === 'rule version' ? 1 : 0 },
+            sourceSessionId: source.id, destinationSessionId: destination.id }));
+        if (change === 'rule removal') expect(progress).toBeNull();
+        else expect(progress).toMatchObject({ delivered: { turn: change === 'rule version' ? null : sourceTurn } });
+        // Acceptance never licenses a different terminal fact under the same id.
+        await db.sessionTurn.update({ where: { sessionId_turnId: { sessionId: source.id, turnId: sourceTurn.id } }, data: { status: 'completed' } });
+        expect(await acknowledge()).toMatchObject({ ok: false });
     });
 
     it('observes a terminal Turn without scanning its 1,000 transcript originals or destination custody', async () => {

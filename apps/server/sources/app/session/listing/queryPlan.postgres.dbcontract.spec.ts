@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { decodeBase64 } from "privacy-kit";
 import { PrismaClient, type Prisma } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
@@ -8,6 +9,11 @@ import { createPresentUserSessionAccessAuthentication } from "@/app/session/acce
 import { readSessionMetadataOwnerAccountModes } from "@/app/session/metadata/sessionMetadataRecipientProjection";
 import { findV2SessionListRows, mapV2SessionListRows, V2_SESSION_LIST_ORDER_BY } from "./page";
 import { loadSessionLatestFailureSequencesInTx } from "@/app/session/personal/projection";
+import { loadSessionRuleReadStatesInTx } from "@/app/session/personal/readState";
+import { SessionFollowRuleStoredRowV1Schema, buildSessionFollowRulePhysicalKeyV1 } from "@happier-dev/protocol/sessions/follow/sessionFollowRuleV1";
+import { normalizeSessionListFilterV1 } from "@happier-dev/protocol/sessions/listFilter/sessionListFilterV1";
+import { encodeAccountScopedKvJson } from "@/app/kv/accountScopedKv";
+import { SESSION_TRANSCRIPT_PUBLICATION_SELECT } from "@/app/session/sessionTranscriptPublicationPolicy";
 
 interface PlanNode {
     "Node Type": string;
@@ -34,6 +40,49 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("S
         await client.$connect();
     });
     afterAll(async () => { await client.$disconnect(); await shutdownDbClient(); });
+
+    it("batches personal rule boundaries by distinct inception rather than Session or rule", async () => {
+        const accountId = `rule-boundaries-${randomUUID()}`;
+        const sessionIds = Array.from({ length: 1_000 }, (_, index) => `${accountId}-${index}`);
+        await client.account.create({ data: { id: accountId, publicKey: accountId, encryptionMode: "plain" } });
+        try {
+            await client.session.createMany({ data: sessionIds.map(id => ({ id, accountId, tag: id, metadata: "{}", seq: 3,
+                currentStorageState: "hosted" })) });
+            await client.sessionMessage.createMany({ data: sessionIds.flatMap(sessionId => [1, 2, 3].map(seq => ({
+                sessionId, seq, localId: `${sessionId}-${seq}`, createdAt: new Date(seq * 100),
+                content: { t: "plain", v: { role: "user", content: { type: "text", text: "Original" } } },
+            } satisfies Prisma.SessionMessageCreateManyInput))) });
+            await client.userKVStore.createMany({ data: Array.from({ length: 20 }, (_, index) => {
+                const encoded = encodeAccountScopedKvJson(SessionFollowRuleStoredRowV1Schema.parse({ version: 0, receiver: { kind: "account" },
+                    inception: { createdAt: index % 2 ? 250 : 150 },
+                    content: { t: "plain", v: { v: 1, enabled: true, filter: normalizeSessionListFilterV1(), policy: { preset: "important" } } },
+                }));
+                if (encoded === null) throw new Error("Rule fixture could not be encoded");
+                return { accountId, key: buildSessionFollowRulePhysicalKeyV1(`rule-${index}`), version: 0, value: decodeBase64(encoded) };
+            }) });
+            const rows = await client.session.findMany({ where: { accountId }, select: { id: true, ...SESSION_TRANSCRIPT_PUBLICATION_SELECT } });
+            queries.length = 0;
+            const projected = await loadSessionRuleReadStatesInTx(client, { accountId,
+                authentication: createPresentUserSessionAccessAuthentication(), rows });
+            expect(projected.size).toBe(1_000);
+            const first = projected.get(sessionIds[0]);
+            expect(first).toHaveLength(20);
+            expect(first?.find(rule => rule.ruleId === "rule-0")?.readState)
+                .toEqual({ state: "tracking", lastViewedSessionSeq: 1, unreadSince: 150 });
+            expect(first?.find(rule => rule.ruleId === "rule-1")?.readState)
+                .toEqual({ state: "tracking", lastViewedSessionSeq: 2, unreadSince: 250 });
+            const originalReads = queries.filter(query => /FROM "public"\."SessionMessage"/.test(query.query));
+            expect(originalReads).toHaveLength(4);
+            expect(Math.max(...originalReads.map(query => JSON.parse(query.params).length))).toBeLessThanOrEqual(999);
+            expect(originalReads.every(query => query.query.includes("MAX(") && query.query.includes("GROUP BY"))).toBe(true);
+            expect(queries.filter(query => /FROM "public"\."UserKVStore"/.test(query.query))).toHaveLength(1);
+        } finally {
+            await client.sessionMessage.deleteMany({ where: { sessionId: { in: sessionIds } } });
+            await client.userKVStore.deleteMany({ where: { accountId } });
+            await client.session.deleteMany({ where: { accountId } });
+            await client.account.delete({ where: { id: accountId } });
+        }
+    });
 
     it("reads exact current failure anchors in batches without scanning historical turns or querying per Session", async () => {
         const prefix = `failure-anchor-${randomUUID()}`;

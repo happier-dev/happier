@@ -16,7 +16,6 @@ import { BOX_BUNDLE_MIN_BYTES } from '@happier-dev/protocol/crypto/boxBundleForm
 import { inspectTerminalProvisioningV3Payload } from '@happier-dev/protocol/crypto/terminalProvisioningV2';
 import { isValidBoxBundlePublicKey, sealBoxBundle } from '@happier-dev/protocol/crypto/boxBundle';
 import { resolveApiHotEndpointRateLimit } from "@/app/api/utils/apiRateLimitCatalog";
-import { recordAuthEnrollmentOutcome } from "@/app/monitoring/metrics/authMetrics";
 import { readRequestHomeEnv } from "@/app/home/settings/requestHomeEnv";
 
 const MAX_PERSISTED_ENCRYPTED_TOKEN_CHARS = 16_384;
@@ -119,7 +118,6 @@ export function registerAccountAuthRoutes(app: Fastify): void {
     ) => {
         const publicKey = decodeCanonicalRequesterPublicKey(request.body.publicKey);
         if (!publicKey) {
-            recordAuthEnrollmentOutcome({ flow: "account_qr", outcome: "malformed_payload" });
             return reply.code(401).send({ error: 'Invalid public key' });
         }
 
@@ -136,7 +134,6 @@ export function registerAccountAuthRoutes(app: Fastify): void {
             where: { publicKey: publicKeyHex },
         });
         if (existing && isExpired(existing.createdAt)) {
-            recordAuthEnrollmentOutcome({ flow: "account_qr", outcome: "expired" });
             // Best-effort cleanup: expired requests should not linger indefinitely.
             await db.accountAuthRequest.delete({ where: { id: existing.id } }).catch(() => {});
         }
@@ -149,7 +146,6 @@ export function registerAccountAuthRoutes(app: Fastify): void {
 
         // Expiry also applies after response to avoid indefinite "wait arbitrarily long then fetch token" behavior.
         if (isExpired(answer.createdAt)) {
-            recordAuthEnrollmentOutcome({ flow: "account_qr", outcome: "expired" });
             await db.accountAuthRequest.delete({ where: { id: answer.id } }).catch(() => {});
             return reply.send({ state: 'requested' });
         }
@@ -186,7 +182,6 @@ export function registerAccountAuthRoutes(app: Fastify): void {
             !isCanonicalPersistedProvisioningResponse(answer.response)
             || !isCanonicalPersistedEncryptedToken(answer.tokenEncrypted)
         ) {
-            recordAuthEnrollmentOutcome({ flow: "account_qr", outcome: "malformed_payload" });
             return reply.code(409).send({ error: "account_provisioning_inconsistent" });
         }
         if (version === 'v1') {
@@ -285,7 +280,6 @@ export function registerAccountAuthRoutes(app: Fastify): void {
         const tweetnacl = (await import("tweetnacl")).default;
         const publicKey = decodeCanonicalRequesterPublicKey(String(request.body.publicKey));
         if (!publicKey || tweetnacl.box.publicKeyLength !== publicKey.length) {
-            recordAuthEnrollmentOutcome({ flow: "account_qr", outcome: "malformed_payload" });
             return reply.code(401).send({ error: 'Invalid public key' });
         }
 
@@ -300,7 +294,6 @@ export function registerAccountAuthRoutes(app: Fastify): void {
             return reply.code(503).send({ error: "home_identity_unavailable" });
         }
         if (homeServerIdentityId !== localHomeServerIdentityId) {
-            recordAuthEnrollmentOutcome({ flow: "account_qr", outcome: "wrong_target" });
             return reply.code(403).send({ error: "wrong_home" });
         }
 
@@ -477,15 +470,12 @@ export function registerAccountAuthRoutes(app: Fastify): void {
         });
 
         if (outcome.status === "success") {
-            recordAuthEnrollmentOutcome({ flow: "account_qr", outcome: "success" });
             return reply.send({ success: true });
         }
         if (outcome.status === "expired") {
-            recordAuthEnrollmentOutcome({ flow: "account_qr", outcome: "expired" });
             return reply.code(404).send({ error: "Request not found" });
         }
         if (outcome.status === "wrong_binding") {
-            recordAuthEnrollmentOutcome({ flow: "account_qr", outcome: "wrong_binding" });
             return reply.code(404).send({ error: "Request not found" });
         }
         if (outcome.status === "not_found") return reply.code(404).send({ error: "Request not found" });
@@ -496,13 +486,8 @@ export function registerAccountAuthRoutes(app: Fastify): void {
             return reply.code(409).send({ error: "already_completed" });
         }
         if (outcome.status === "inconsistent") {
-            recordAuthEnrollmentOutcome({ flow: "account_qr", outcome: "malformed_payload" });
             return reply.code(409).send({ error: "account_provisioning_inconsistent" });
         }
-        recordAuthEnrollmentOutcome({
-            flow: "account_qr",
-            outcome: outcome.reason === "invalid_provisioning_response" ? "malformed_payload" : "rejected",
-        });
         const statusCode = outcome.reason === "invalid_provisioning_response" ? 400 : 409;
         return reply.code(statusCode).send({ error: outcome.reason });
     });

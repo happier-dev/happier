@@ -80,16 +80,19 @@ export type ReservedAccountScopedKvRowsMutationInTxResult =
  * Stored and candidate grammars are separate because a domain may keep reading
  * an envelope it would no longer accept as a new write — an oversized
  * predecessor record stays recoverable while current writers hold the narrower
- * bound.
+ * bound. Their outputs are independently typed: native optional members may be
+ * undefined before JSON encoding, while stored JSON never contains undefined.
  */
-export type ReservedAccountScopedKvRowDomain<TEnvelope> = Readonly<{
+export type ReservedAccountScopedKvRowDomain<TEnvelope, TCandidate = TEnvelope> = Readonly<{
     /** Names the domain in programming-error messages only. */
     label: string;
     parseStoredEnvelope(value: unknown): TEnvelope | null;
+    /** Restore retained facts from the owning KV row, never from another read or a new clock. */
+    restoreStoredFacts?(envelope: TEnvelope, facts: Readonly<{ createdAt: Date }>): TEnvelope;
     /** Conversion needs a complete inventory even when the display reader permits partial content. */
     parseMigrationStoredEnvelope?(value: unknown): TEnvelope | null;
-    parseCandidateEnvelope(value: unknown): TEnvelope | null;
-    assertEnvelopeForMode(envelope: TEnvelope, mode: "plain" | "e2ee"): void;
+    parseCandidateEnvelope(value: unknown): TCandidate | null;
+    assertEnvelopeForMode(envelope: TEnvelope | TCandidate, mode: "plain" | "e2ee"): void;
 }>;
 
 type AccountScope =
@@ -107,9 +110,9 @@ class ReservedAccountScopedKvRowError extends Error {
     }
 }
 
-function decodeStoredEnvelope<TEnvelope>(
+function decodeStoredEnvelope<TEnvelope, TCandidate>(
     value: Uint8Array,
-    domain: ReservedAccountScopedKvRowDomain<TEnvelope>,
+    domain: ReservedAccountScopedKvRowDomain<TEnvelope, TCandidate>,
 ): TEnvelope | null {
     let decoded: unknown;
     try {
@@ -123,10 +126,10 @@ function decodeStoredEnvelope<TEnvelope>(
     return domain.parseStoredEnvelope(decoded);
 }
 
-function envelopeMatchesMode<TEnvelope>(
-    envelope: TEnvelope,
+function envelopeMatchesMode<TEnvelope, TCandidate>(
+    envelope: TEnvelope | TCandidate,
     mode: "plain" | "e2ee",
-    domain: ReservedAccountScopedKvRowDomain<TEnvelope>,
+    domain: ReservedAccountScopedKvRowDomain<TEnvelope, TCandidate>,
 ): boolean {
     try {
         domain.assertEnvelopeForMode(envelope, mode);
@@ -168,12 +171,12 @@ async function resolveAccountScopeInTx(
         : { status: "account-inconsistent", reason: currentness.reason };
 }
 
-export async function readReservedAccountScopedKvRowInTx<TEnvelope>(
+export async function readReservedAccountScopedKvRowInTx<TEnvelope, TCandidate = TEnvelope>(
     tx: Tx,
     input: Readonly<{
         accountId: string;
         physicalKey: string;
-        domain: ReservedAccountScopedKvRowDomain<TEnvelope>;
+        domain: ReservedAccountScopedKvRowDomain<TEnvelope, TCandidate>;
     }>,
 ): Promise<ReservedAccountScopedKvRowReadResult<TEnvelope>> {
     const scope = await resolveAccountScopeInTx(tx, input.accountId);
@@ -183,13 +186,14 @@ export async function readReservedAccountScopedKvRowInTx<TEnvelope>(
         where: {
             accountId_key: { accountId: input.accountId, key: input.physicalKey },
         },
-        select: { version: true, value: true },
+        select: { version: true, value: true, createdAt: true },
     });
     if (row === null) return { status: "absent" };
     if (row.value === null) return { status: "deleted", revision: row.version };
 
-    const envelope = decodeStoredEnvelope(row.value, input.domain);
-    if (envelope === null) return { status: "invalid-stored-content" };
+    const parsed = decodeStoredEnvelope(row.value, input.domain);
+    if (parsed === null) return { status: "invalid-stored-content" };
+    const envelope = input.domain.restoreStoredFacts?.(parsed, row) ?? parsed;
     if (!envelopeMatchesMode(envelope, scope.mode, input.domain)) {
         return { status: "account-mode-mismatch" };
     }
@@ -201,7 +205,7 @@ export async function readReservedAccountScopedKvRowInTx<TEnvelope>(
  * `complete` reports omitted corrupt content in this page; `nextCursor` reports
  * remaining physical rows. Without diagnostics, malformed content fails closed.
  */
-export async function listReservedAccountScopedKvRowsInTx<TEnvelope>(
+export async function listReservedAccountScopedKvRowsInTx<TEnvelope, TCandidate = TEnvelope>(
     tx: Tx,
     input: Readonly<{
         accountId: string;
@@ -212,7 +216,7 @@ export async function listReservedAccountScopedKvRowsInTx<TEnvelope>(
         physicalKeys?: readonly string[];
         /** Narrow by canonical ASCII physical prefixes before opening unrelated envelopes. */
         physicalPrefixes?: readonly string[];
-        domain: ReservedAccountScopedKvRowDomain<TEnvelope>;
+        domain: ReservedAccountScopedKvRowDomain<TEnvelope, TCandidate>;
         cursor?: string;
         limit?: number;
         diagnostics?: boolean;
@@ -258,14 +262,15 @@ export async function listReservedAccountScopedKvRowsInTx<TEnvelope>(
     const storedRows = await tx.userKVStore.findMany({
         where: { accountId: input.accountId, ...prefixes, key: { ...keyScope,
             ...(input.cursor !== undefined ? { gt: input.cursor } : {}) } },
-        select: { key: true, version: true, value: true },
+        select: { key: true, version: true, value: true, createdAt: true },
         orderBy: { key: "asc" },
         ...(input.limit !== undefined ? { take: input.limit } : {}),
     });
     const rows: Array<{ physicalKey: string; revision: number; envelope: TEnvelope | null }> = [];
     const diagnostics: Array<{ physicalKey: string; revision: number; reason: "invalid-stored-content" }> = [];
     for (const row of storedRows) {
-        const envelope = row.value === null ? null : decodeStoredEnvelope(row.value, input.domain);
+        const parsed = row.value === null ? null : decodeStoredEnvelope(row.value, input.domain);
+        const envelope = parsed === null ? null : input.domain.restoreStoredFacts?.(parsed, row) ?? parsed;
         if (row.value !== null && envelope === null) {
             diagnostics.push({ physicalKey: row.key, revision: row.version, reason: "invalid-stored-content" });
             continue;
@@ -293,14 +298,14 @@ export async function listReservedAccountScopedKvRowsInTx<TEnvelope>(
  * mutation and a mode flip cannot interleave, and the row already stored is
  * re-validated against the fenced mode inside the same compare-and-set.
  */
-export async function mutateReservedAccountScopedKvRowInTx<TEnvelope>(
+export async function mutateReservedAccountScopedKvRowInTx<TEnvelope, TCandidate = TEnvelope>(
     tx: Tx,
     input: Readonly<{
         accountId: string;
         physicalKey: string;
         expectedRevision: number | "absent";
-        envelope: TEnvelope | null;
-        domain: ReservedAccountScopedKvRowDomain<TEnvelope>;
+        envelope: TCandidate | null;
+        domain: ReservedAccountScopedKvRowDomain<TEnvelope, TCandidate>;
         markChanged: (params: Readonly<{ tx: Tx; revision: number }>) => Promise<AccountChangePublication>;
     }>,
 ): Promise<ReservedAccountScopedKvRowMutationInTxResult> {

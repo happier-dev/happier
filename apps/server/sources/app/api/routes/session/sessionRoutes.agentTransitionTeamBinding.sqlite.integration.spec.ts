@@ -9,13 +9,14 @@ import {
 import type { FastifyInstance } from "fastify";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { admitTeamCredentialOperationBindingInTx } from "@/app/teams/credentials/sessionBinding";
+import { admitTeamCredentialOperationBindingInTx, listSessionTeamCredentialBindingConsequencesInTx, writeSessionTeamCredentialBindingsInTx } from "@/app/teams/credentials/sessionBinding";
 import { db } from "@/storage/db";
 import { inTx } from "@/storage/inTx";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
 
 import { withAuthenticatedTestApp } from "../../testkit/sqliteFastify";
 import { registerSessionAgentTransitionRoute } from "./registerSessionAgentTransitionRoute";
+import { mutateQualifiedConnectedServiceCredentialInTx, readQualifiedConnectedAccountSourceIdentityInTx } from "../connect/qualifiedConnectedAccounts/credentialRepository";
 
 /**
  * An Agent transition to a target whose Team default resolves must leave the
@@ -38,7 +39,7 @@ const PRESENT_USER_AUTHENTICATION = {
 
 const CODEX_PURPOSE = {
     consumer: { pluginId: "happier.agent.codex", localId: "codex" },
-    purpose: "openai-codex",
+    purpose: "primary",
 } as const;
 
 const OWNER_METADATA = createPlainSessionOwnerMetadataEnvelopeV1({ v: 1 });
@@ -75,6 +76,7 @@ describe("Agent transition cutover — Team binding (SQLite)", () => {
         harness = await createLightSqliteHarness({
             tempDirPrefix: "happier-agent-transition-team-binding-",
             initAuth: false,
+            initEncrypt: true,
             env: {
                 HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: "optional",
                 HAPPIER_FEATURE_TEAMS_CREDENTIAL_RESOURCES__ENABLED: "1",
@@ -102,22 +104,30 @@ describe("Agent transition cutover — Team binding (SQLite)", () => {
             operationProtocolCapabilities: { providerBrokerIngress: { protocolVersions: [1] } },
             operationProtocolCapabilitiesRevision: 1,
         } });
-        const resource = await db.teamCredentialResource.create({ data: {
+        const createResource = async (service: Readonly<{ pluginId: string; localId: string }>) => {
+            const ref = { service, accountId: randomUUID() };
+            await expect(inTx(tx => mutateQualifiedConnectedServiceCredentialInTx(tx, {
+                accountId: custodian.id, ref, authenticationModeId: "oauth", expectedCredentialRevision: null,
+                content: { t: "plain", v: { accessToken: "test-only-token" } }, metadata: { displayName: "Fixture account", scopes: [] },
+            }))).resolves.toMatchObject({ status: "written" });
+            const identity = await inTx(tx => readQualifiedConnectedAccountSourceIdentityInTx(tx, { accountId: custodian.id, ref }));
+            if (!identity) throw new Error("Connected Account source fixture is unavailable");
+            return await db.teamCredentialResource.create({ data: {
             teamId: team.id,
             custodianAccountId: custodian.id,
-            displayName: "Shared Codex account",
+            displayName: `Shared ${service.localId} account`,
             disclosureCeiling: "brokered_only",
             sessionUsePolicy: "personal_allowed",
             brokerMachineId: broker.id,
             sourceBindingJson: JSON.stringify({
                 v: 1,
-                kind: "provider_connection",
-                connectionId: "pc_transition",
-                connectionSecurityFingerprint: "connection-security:v1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-                credentialSlotId: "apiKey",
+                kind: "connected_account", target: { kind: "account", account: ref },
+                credentialIncarnation: identity.incarnation,
             }),
             memberGrants: { create: { teamMembershipId: membership.id, deliveryMode: "brokered" } },
-        } });
+            } });
+        };
+        const resource = await createResource({ pluginId: "happier.agent.codex", localId: "openai-codex" });
         // The source Session: stopped (the coordinator confirmed the stop) and
         // on the canonical layout-one tuple, as every 0.3 Session is created.
         const session = await db.session.create({ data: {
@@ -166,7 +176,7 @@ describe("Agent transition cutover — Team binding (SQLite)", () => {
             deliveryMode: "brokered",
             authentication: PRESENT_USER_AUTHENTICATION,
         }));
-        return { member, resource, session, binding, cutoverBody, admitFirstUse };
+        return { member, resource, session, binding, cutoverBody, admitFirstUse, createResource };
     }
 
     function postCutover(app: FastifyInstance, sessionId: string, accountId: string, payload: object) {
@@ -207,6 +217,11 @@ describe("Agent transition cutover — Team binding (SQLite)", () => {
 
     it("commits neither the target view nor the binding when the Home refuses the binding", async () => {
         const current = await fixture();
+        await expect(inTx(tx => writeSessionTeamCredentialBindingsInTx(tx, {
+            sessionId: current.session.id, accountId: current.member.id,
+            intents: [{ ...current.binding, slot: { kind: "provider_model" } }],
+            authentication: PRESENT_USER_AUTHENTICATION,
+        }))).resolves.toEqual({ ok: true });
         // The resource changed after the daemon resolved the target default.
         await db.teamCredentialResource.update({
             where: { id: current.resource.id },
@@ -227,11 +242,46 @@ describe("Agent transition cutover — Team binding (SQLite)", () => {
         );
 
         await expect(db.sessionTeamCredentialBinding.count({ where: { sessionId: current.session.id } }))
-            .resolves.toBe(0);
+            .resolves.toBe(1);
+        await expect(db.sessionTeamCredentialBinding.findFirst({ where: { sessionId: current.session.id } }))
+            .resolves.toMatchObject({ slotKind: "provider_model:brokered", resourceRevision: current.resource.revision });
         await expect(db.session.findUniqueOrThrow({
             where: { id: current.session.id },
             select: { metadata: true, metadataVersion: true },
         })).resolves.toEqual({ metadata: SHARED_METADATA, metadataVersion: current.session.metadataVersion });
         await expect(db.sessionMessage.count({ where: { sessionId: current.session.id } })).resolves.toBe(0);
+    });
+
+    it.each([false, true])("contracts the departed Agent's qualified witness (target Team default: %s)", async (targetHasTeamDefault) => {
+        const current = await fixture();
+        const source = await current.createResource({ pluginId: "happier.agent.claude", localId: "claude-subscription" });
+        await db.teamCredentialResource.update({ where: { id: source.id }, data: { sessionUsePolicy: "team_context_required" } });
+        await db.session.update({ where: { id: current.session.id }, data: { primaryTeamId: current.binding.teamId } });
+        const sourceSlot = { kind: "connected_service_purpose", purpose: {
+            consumer: { pluginId: "happier.agent.claude", localId: "claude" }, purpose: "model_upstream",
+        } } as const;
+        await expect(inTx(tx => writeSessionTeamCredentialBindingsInTx(tx, {
+            sessionId: current.session.id, accountId: current.member.id,
+            intents: [{ ...current.binding, slot: sourceSlot, resourceId: source.id, expectedResourceRevision: source.revision }], authentication: PRESENT_USER_AUTHENTICATION,
+        }))).resolves.toEqual({ ok: true });
+        const preview = () => inTx(tx => listSessionTeamCredentialBindingConsequencesInTx(tx, {
+            sessionId: current.session.id, teamIds: [current.binding.teamId],
+        }));
+        await expect(preview()).resolves.toMatchObject([{ resourceId: source.id }]);
+
+        const body = current.cutoverBody(targetHasTeamDefault ? [current.binding] : []);
+        const { teamCredentialBindings: _, ...withoutBindings } = body;
+        await withAuthenticatedTestApp(app => registerSessionAgentTransitionRoute(app), async app => {
+            const response = await postCutover(app, current.session.id, current.member.id,
+                targetHasTeamDefault ? body : withoutBindings);
+            expect(response.statusCode, response.body).toBe(200);
+        });
+        await expect(inTx(tx => admitTeamCredentialOperationBindingInTx(tx, {
+            consumer: { kind: "session", sessionId: current.session.id }, accountId: current.member.id,
+            slot: sourceSlot, deliveryMode: "brokered", authentication: PRESENT_USER_AUTHENTICATION,
+        }))).resolves.toEqual({ ok: false, reason: "binding_missing" });
+        await expect(db.sessionTeamCredentialBinding.count({ where: { sessionId: current.session.id } }))
+            .resolves.toBe(targetHasTeamDefault ? 1 : 0);
+        await expect(preview()).resolves.toHaveLength(0);
     });
 });

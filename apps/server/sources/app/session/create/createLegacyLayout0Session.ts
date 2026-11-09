@@ -1,3 +1,4 @@
+import type { UsageSessionTimingV1 } from '@happier-dev/protocol/usage/usageWorkEvidence';
 import { initializeSessionOwnerReadStateInTx } from "@/app/session/personal/readState";
 import type { Tx } from "@/storage/inTx";
 import { assertAccountActive } from "@/app/auth/accountStatus";
@@ -24,6 +25,7 @@ export async function createLegacyLayout0SessionInTx(
         tag: string;
         metadata: string;
         agentState: string | null;
+        usageTimingV1?: UsageSessionTimingV1;
         encryptionMode: "e2ee" | "plain";
         requestedStorageState: "machine_only" | undefined;
         dataEncryptionKey: Uint8Array<ArrayBuffer> | null;
@@ -48,6 +50,7 @@ export async function createLegacyLayout0SessionInTx(
             encryptionMode: params.encryptionMode,
             metadata: params.metadata,
             agentState: params.agentState,
+            ...(params.usageTimingV1 ? { usageTimingV1: params.usageTimingV1 } : {}),
             createdAt,
             lastActiveAt: createdAt,
             meaningfulActivityAt: createdAt,

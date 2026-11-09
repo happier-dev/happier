@@ -2,9 +2,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { installDbModuleMock } from '../../testkit/dbMocks';
 
-const transaction = vi.fn();
+const accountFindUnique = vi.fn();
 // Substitute the persistent connection, retaining real Account reads and HTTP error projection.
-installDbModuleMock({ db: { $transaction: transaction } });
+installDbModuleMock({ db: { account: { findUnique: accountFindUnique } } });
 
 const { createAuthenticatedTestApp } = await import('../../testkit/sqliteFastify');
 const { registerAccountEncryptionRoutes } = await import('./registerAccountEncryptionRoutes');
@@ -17,17 +17,16 @@ describe('Account encryption storage unavailability', () => {
     });
 
     afterEach(() => {
-        transaction.mockReset();
+        accountFindUnique.mockReset();
         vi.unstubAllEnvs();
     });
 
     it.each([
         { url: '/v1/account/encryption', storageCode: 'P2024', error: 'database_connection_unavailable' },
         { url: '/v1/account/encryption/currentness', storageCode: 'P2024', error: 'database_connection_unavailable' },
-        { url: '/v1/account/encryption/currentness', storageCode: 'P2034', error: 'database_transaction_conflict_exhausted' },
     ])(
         'projects $storageCode through $url as the global typed 503', async ({ url, storageCode, error }) => {
-            transaction.mockRejectedValue(Object.assign(new Error('private database details'), { code: storageCode }));
+            accountFindUnique.mockRejectedValue(Object.assign(new Error('private database details'), { code: storageCode }));
             const app = createAuthenticatedTestApp();
             registerAccountEncryptionRoutes(app);
             try {

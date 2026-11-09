@@ -3,6 +3,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import type { DiscussionCreateRequestV1 } from "@happier-dev/protocol";
 import { db } from "@/storage/db";
+import { makeShareEligibleForTest } from '@/testkit/shareEligibility.testkit';
 import {
     createDiscussion,
     postDiscussionMessage,
@@ -56,6 +57,8 @@ describe("personal relevance producers and list scopes (SQLite)", () => {
 
         const viewer = await loadSessionViewerProjection({ accountId: collaborator.id, sessionId: shared.id, authentication });
         expect(viewer?.relevance.reasons).toEqual(["shared_directly_with_me"]);
+        expect(viewer).toMatchObject({ readState: { state: "not_started" },
+            follow: { follows: false, notificationLevel: null }, attention: { needsAttention: false } });
         expect(viewer?.follow.defaultRelationships).toEqual({ assigned: false, direct: true, team: false, group: false });
 
         const ownerViewer = await loadSessionViewerProjection({ accountId: owner.id, sessionId: shared.id, authentication });
@@ -163,6 +166,7 @@ describe("personal relevance producers and list scopes (SQLite)", () => {
             await share(discussed.id, owner.id, account.id);
         }
 
+        await makeShareEligibleForTest(author.id, [mentioned.id, agentRuntime.id]);
         const created = await createDiscussion({
             actorAccountId: author.id,
             request: {

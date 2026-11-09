@@ -1,7 +1,11 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { matchesDbMockWhere as matches } from "@/app/api/testkit/dbMocks";
 
-const boundary = vi.hoisted(() => ({ tx: {} }));
+const boundary = await vi.hoisted(async () => {
+    const { PrismaClient } = await import("@prisma/client");
+    // Construct field references from Prisma without opening a database connection.
+    return { tx: {}, runFields: new PrismaClient().automationRun.fields };
+});
 const transactions = await vi.hoisted(async () => {
     const { createDbTransactionMock, inTxPostgresControlStatementMock } = await import("@/app/api/testkit/dbMocks");
     return createDbTransactionMock(() => ({ ...inTxPostgresControlStatementMock, ...boundary.tx }));
@@ -9,7 +13,7 @@ const transactions = await vi.hoisted(async () => {
 
 // Only database transports are replaced. inTx, cancellation, claim, access,
 // Account encryption fences and recovery selection use their real owners.
-vi.mock("@/storage/db", () => ({ db: transactions.wrapDb({}) }));
+vi.mock("@/storage/db", () => ({ db: transactions.wrapDb({ automationRun: { fields: boundary.runFields } }) }));
 vi.mock("@/storage/prisma", async importOriginal => ({
     ...await importOriginal<typeof import("@/storage/prisma")>(),
     withSqliteReadSnapshot: transactions.readSnapshot,
@@ -36,12 +40,14 @@ function apply(row: Record<string, unknown>, data: Record<string, unknown>) {
 const now = new Date("2026-10-11T10:00:00.000Z");
 let row: Record<string, unknown>;
 let children: Record<string, unknown>[];
+let runEvents: Record<string, unknown>[];
 let renewBeforeWrite: boolean;
 
 beforeEach(() => {
     vi.useFakeTimers();
     vi.setSystemTime(now);
     renewBeforeWrite = false;
+    runEvents = [];
     children = [{ id: "root", runId: "run", parentRecordId: null, lifecycle: "cancel_requested", contentRevision: 3n },
         { id: "child", runId: "run", parentRecordId: "root", lifecycle: "cancel_requested", contentRevision: 3n }];
     row = { id: "run", accountId: "account", originKind: "direct", automationId: null,
@@ -50,7 +56,8 @@ beforeEach(() => {
         workflowCustodyState: "pending", workflowResumeRequestedRevision: null,
         workflowAcceptedSnapshotEnvelope: "accepted", workflowCheckpointEnvelope: null, resultEnvelope: null,
         originDeliveryAckRevision: null, executionInputEnvelope: null, triggerId: null, dueAt: now,
-        scheduledAt: now, startedAt: now, createdAt: now, updatedAt: now, finishedAt: null, account: { encryptionMode: "plain" },
+        scheduledAt: now, startedAt: now, createdAt: now, updatedAt: now, finishedAt: null, attentionSeenFailureAt: null,
+        account: { encryptionMode: "plain" },
         assignments: [{ machineId: "old-machine" }], workflowInvocations: children };
     const runSnapshot = () => ({ ...row, leaseExpiresAt: row.leaseExpiresAt,
         workflowInvocations: children.map(child => ({ ...child })),
@@ -79,7 +86,12 @@ beforeEach(() => {
         machine: { findFirst: async () => ({ id: "old-machine", installationId: "installation" }),
             findMany: async () => [{ id: "old-machine", accountId: "account" }] },
         simpleCache: { findUnique: async () => null },
+        automation: { findMany: async () => [{ id: "automation", accountId: "account", scopeSessionId: null, assignments: [] }] },
         automationTrigger: { findMany: async () => [] },
+        automationRunEvent: { create: async ({ data }: { data: Record<string, unknown> }) => {
+            runEvents.push(data);
+            return data;
+        } },
         sessionFollowEdge: { findMany: async () => [] },
         automationRun: {
             findUnique: async () => runSnapshot(),
@@ -94,6 +106,8 @@ beforeEach(() => {
             },
         },
         workflowRunInvocation: {
+            groupBy: async ({ where }: { where: unknown }) =>
+                [...new Set(children.filter(child => matches(child, where)).map(child => child.runId))].map(runId => ({ runId })),
             findFirst: async ({ where }: { where: unknown }) => children.find(child => matches(child, where)) ?? null,
             updateMany: async ({ where, data }: { where: unknown; data: Record<string, unknown> }) => {
                 const selected = children.filter(child => matches(child, where));
@@ -105,6 +119,21 @@ beforeEach(() => {
 });
 
 afterEach(() => vi.useRealTimers());
+
+it("lets the same cancel owner settle a queued Run before Workflow custody", async () => {
+    Object.assign(row, { originKind: "automation", automationId: "automation", causeKind: "manual", causeOccurredAt: now,
+        state: "queued", workflowCustodyState: null, workflowAcceptedSnapshotEnvelope: null,
+        executionDispatchState: null, startedAt: null, claimedByMachineId: null, leaseExpiresAt: null });
+    children = [];
+    await expect(cancelWorkflowRun({ accountId: "foreign-account", runId: "run", expectedRevision: 140 }))
+        .rejects.toMatchObject({ code: "run_not_found" });
+    const result = await cancelWorkflowRun({ accountId: "account", runId: "run", expectedRevision: 140 });
+    expect(result).toMatchObject({ intent: "cancelled", run: { state: "cancelled", revision: 141,
+        workflowCustodyState: null, finishedAt: now.toISOString() } });
+    expect(row).toMatchObject({ state: "cancelled", revision: 141, finishedAt: now });
+    expect(children).toEqual([]);
+    expect(runEvents.map(event => event.type)).toEqual(["run_cancelled"]);
+});
 
 it("lets Stop end an expired cancelled claim without inventing child settlement or reclaiming it", async () => {
     children[1].lifecycle = "running";

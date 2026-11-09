@@ -1,7 +1,7 @@
 import { inTx, type Tx } from "@/storage/inTx";
 import { readArtifactStorageEnv } from "@/app/features/catalog/readFeatureEnv";
-import { acquireArtifactPublicationLocksInTx, readArtifactForCallerInTx, readmitArtifactContentInTx } from "./artifactAccessService";
-import { readSnapshotWithCurrentAdmission } from "@/storage/readSnapshotWithCurrentAdmission";
+import { acquireArtifactPublicationLocksInTx, readArtifactForCallerInTx } from "./artifactAccessService";
+import { captureReadSnapshot } from "@/storage/captureReadSnapshot";
 import { openArtifactStoredContentBytes, openArtifactProvenanceBytes } from "./artifactStoredContent";
 import { updateArtifactTx, type UpdateArtifactResult } from "./artifactWriteService";
 import { cleanupArtifactOrphanBlobsAfterCommit } from './artifactBlobService';
@@ -31,27 +31,16 @@ async function captureArtifactBodyRevisionsInTx(tx: Tx, input: Readonly<{
         projected.push({ bodyVersion: revision.bodyVersion, body, provenance, createdAt: revision.createdAt,
             sizeBytes: revision.body.byteLength + (revision.provenance?.byteLength ?? 0) });
     }
-    return { ok: true as const, revisions: projected, retentionCount: readArtifactStorageEnv(process.env).revisionRetentionCount,
-        admission: read.artifact };
+    return { ok: true as const, revisions: projected, retentionCount: readArtifactStorageEnv(process.env).revisionRetentionCount };
 }
 
 export async function listArtifactBodyRevisionsInTx(tx: Tx, input: Parameters<typeof captureArtifactBodyRevisionsInTx>[1]) {
-    const captured = await captureArtifactBodyRevisionsInTx(tx, input);
-    if (!captured.ok) return captured;
-    const { admission: _admission, ...result } = captured;
-    return result;
+    return captureArtifactBodyRevisionsInTx(tx, input);
 }
 
 export async function listArtifactBodyRevisions(input: Parameters<typeof listArtifactBodyRevisionsInTx>[1]): Promise<Awaited<ReturnType<typeof listArtifactBodyRevisionsInTx>>> {
-    const result = await readSnapshotWithCurrentAdmission<Awaited<ReturnType<typeof captureArtifactBodyRevisionsInTx>>>(
-        tx => captureArtifactBodyRevisionsInTx(tx, input), async (tx, captured) => {
-            if (!captured.ok) return captured;
-            const current = await readmitArtifactContentInTx(tx, input, captured.admission);
-            return current.ok ? captured : current;
-        });
-    if (!result.ok) return result;
-    const { admission: _admission, ...projection } = result;
-    return projection;
+    return await captureReadSnapshot<Awaited<ReturnType<typeof captureArtifactBodyRevisionsInTx>>>(
+        tx => captureArtifactBodyRevisionsInTx(tx, input));
 }
 
 /** Restore the selected body with caller-prepared provenance, atomically advancing both head versions. */

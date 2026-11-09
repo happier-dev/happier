@@ -6,11 +6,9 @@ import { SessionSurfaceItemV1Schema, isSessionSurfaceItemSourceCompatible } from
 import { type SessionBoardErrorV1, type SessionBoardFeatureGateErrorV1Schema } from '@happier-dev/protocol/sessions/board/errors';
 import { type SessionSystemRecordContent } from '@happier-dev/protocol/sessions/system/records/sessionSystemRecordContent';
 import { type SessionSystemRecordStored } from '@happier-dev/protocol/sessions/system/records/sessionSystemRecordRoutes';
-import { type SessionSystemRecordCreatorV1 } from '@happier-dev/protocol/sessions/system/records/sessionSystemRecord';
 import { inTx } from "@/storage/inTx";
 import { isPrismaErrorCode } from "@/storage/prisma";
 import { resolveSessionBoardRecordsInTx } from "@/app/session/systemRecords/sessionSystemRecordService";
-import { markSessionProjectionRecipientsChanged } from "@/app/session/changeTracking/markSessionProjectionRecipientsChanged";
 import { acquireSessionAccountCursorLocksInTx } from "@/app/session/changeTracking/acquireSessionAccountCursorLocksInTx";
 import type { SessionAccessAuthentication } from "@/app/session/access/sessionAccessAuthentication";
 
@@ -24,7 +22,7 @@ type SessionBoardMutationOutcome =
     { ok: true; result: SessionBoardMutationResultV1 } | { ok: false; result: SessionBoardMutationError };
 
 async function mutateSessionBoardAttempt(
-    params: Readonly<{ actorUserId: string; sessionId: string; authentication: SessionAccessAuthentication; creator?: SessionSystemRecordCreatorV1 }>,
+    params: Readonly<{ actorUserId: string; sessionId: string; authentication: SessionAccessAuthentication }>,
     mutation: SessionBoardMutationV1,
     settleCreateRace: boolean,
 ): Promise<SessionBoardMutationOutcome> {
@@ -74,7 +72,6 @@ async function mutateSessionBoardAttempt(
             const outcome = (previous: SessionSystemRecordStored | null, next: SessionSystemRecordStored) =>
                 !previous ? "created" as const : previous.revision === next.revision ? "unchanged" as const : "updated" as const;
             let result: SessionBoardMutationResultV1;
-            let changed = false;
             if (mutation.operation === "update_layout") {
                 const participant = mutation.itemPlacementParticipant;
                 if (participant) {
@@ -91,7 +88,6 @@ async function mutateSessionBoardAttempt(
                 }
                 const next = await upsert(null, mutation.layoutContent, mutation.expectedLayoutRevision);
                 result = { operation: mutation.operation, outcome: outcome(layout, next), layoutRevision: next.revision };
-                changed = layout?.revision !== next.revision;
             } else if (mutation.operation === "upsert_item") {
                 if (!item && mutation.expectedItemRevision !== null) fail("session_board_item_not_found");
                 validate(mutation.itemId, mutation.itemContent);
@@ -107,13 +103,11 @@ async function mutateSessionBoardAttempt(
                 const nextItem = await upsert(mutation.itemId, itemContent, mutation.expectedItemRevision);
                 const nextLayout = mutation.placement ? await upsert(null, mutation.placement.layoutContent, mutation.placement.expectedLayoutRevision) : null;
                 if (mutation.placement?.layoutContent.t === "plain") {
-                    validate(null, mutation.placement.layoutContent);
                     const next = SessionBoardLayoutV1Schema.parse(mutation.placement.layoutContent.v);
                     if (!next.tabs.some(tab => tab.items.some(placement => placement.itemId === mutation.itemId))) fail("session_board_invalid");
                 }
                 result = { operation: mutation.operation, itemId: mutation.itemId, outcome: outcome(item, nextItem), itemRevision: nextItem.revision,
                     ...(nextLayout ? { layoutRevision: nextLayout.revision } : {}) };
-                changed = item?.revision !== nextItem.revision || (nextLayout !== null && layout?.revision !== nextLayout.revision);
             } else {
                 if (mutation.layoutContent) validate(null, mutation.layoutContent);
                 if (mutation.layoutContent?.t === "plain") {
@@ -131,10 +125,8 @@ async function mutateSessionBoardAttempt(
                         ? await upsert(null, mutation.layoutContent, mutation.expectedLayoutRevision) : null;
                     result = { operation: mutation.operation, outcome: "removed", itemId: mutation.itemId,
                         ...(next ? { layoutRevision: next.revision } : {}) };
-                    changed = true;
                 }
             }
-            if (changed) await markSessionProjectionRecipientsChanged({ tx, sessionId: params.sessionId, hint: { v: 1, sessionSurfaces: true } });
             return { ok: true as const, result };
         });
     } catch (error) {
@@ -160,8 +152,6 @@ export async function mutateSessionBoard(params: Readonly<{
     sessionId: string;
     mutation: unknown;
     authentication: SessionAccessAuthentication;
-    /** Verified transport fact only; never taken from mutation JSON. */
-    creator?: SessionSystemRecordCreatorV1;
 }>): Promise<SessionBoardMutationOutcome> {
     const parsed = SessionBoardMutationV1Schema.safeParse(params.mutation);
     if (!parsed.success) return { ok: false, result: { error: "session_board_invalid" } };

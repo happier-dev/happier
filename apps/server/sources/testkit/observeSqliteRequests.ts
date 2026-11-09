@@ -1,7 +1,8 @@
 import { createRequire } from "node:module";
 
-type PrismaRequest = Readonly<{ modelName?: string; protocolQuery: { action: string }; args: unknown }>;
-type ObservedPrismaRequest = Readonly<{ model?: string; action: string; args: unknown; client: unknown }>;
+type PrismaRequest = Readonly<{ modelName?: string; protocolQuery: { action: string }; args: unknown;
+    transaction?: Readonly<{ kind: string; id?: string }> }>;
+type ObservedPrismaRequest = Readonly<{ model?: string; action: string; args: unknown; client: unknown; transactionId?: string }>;
 type RequestObserver = Readonly<{
     before?: (request: ObservedPrismaRequest) => Promise<void> | void;
     after?: (request: ObservedPrismaRequest, result: unknown) => Promise<void> | void;
@@ -40,6 +41,7 @@ function observeRequestHandler(handler: unknown, observer: RequestObserver): () 
         const observed = {
             model: request.modelName, action: request.protocolQuery.action,
             args: request.args, client: Reflect.get(this, "client"),
+            transactionId: request.transaction?.kind === 'itx' ? request.transaction.id : undefined,
         };
         await observer.before?.(observed);
         const result: unknown = await Reflect.apply(original, this, [request]);

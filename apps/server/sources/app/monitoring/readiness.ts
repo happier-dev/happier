@@ -5,7 +5,7 @@ import {
     dbReadinessChecksCounter,
     dbReadinessDurationHistogram,
 } from "@/app/monitoring/metrics/index";
-import { db } from "@/storage/db";
+import { probeDbReadiness } from "@/storage/db";
 import { log } from "@/utils/logging/log";
 import { isShutdown } from "@/utils/process/shutdown";
 
@@ -82,7 +82,7 @@ function createUnhealthyMonitoringResponse() {
 }
 
 function createDefaultDatabaseReadinessProbe(): Promise<unknown> {
-    return db.$queryRaw`SELECT 1`;
+    return probeDbReadiness();
 }
 
 function readErrorField(error: unknown, key: 'name' | 'code'): string | null {

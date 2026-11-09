@@ -341,11 +341,6 @@ export function registerTeamCredentialProviderBrokerRoutes(app: Fastify, persona
             authenticatedBrokerAccountId: request.userId,
             request: parsed.data,
             observedAt,
-            readCurrentBrokerPresence: () => getMachineDaemonPresenceInventory({
-                accountId: request.userId,
-                io: app.machineDaemonPresence,
-                machineIds: [parsed.data.authority.payload.target.machineId],
-            }),
             verifyAuthority: authority => verifyProviderBrokerRouteGrantSignatureV1({
                 authority,
                 signingCapability: signing.capability,

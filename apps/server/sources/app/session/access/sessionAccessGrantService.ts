@@ -25,11 +25,11 @@ import {
 import { acquireSessionAccessTransitionCursorLocksInTx, applySessionAccessTransitionEffectsInTx } from "./sessionAccessTransitionEffects";
 import type { SessionAccountCursorLockOptions } from "@/app/session/changeTracking/acquireSessionAccountCursorLocksInTx";
 import {
-    resolveSessionAccessGrantSubjectInTx,
-    validateSessionAccessGrantAccountSubjectIdentity,
-    type SessionAccessGrantSubject,
-    type SessionAccessGrantSubjectError,
-} from "./sessionAccessGrantEligibility";
+    resolveShareSubjectInTx,
+    validateShareAccountSubjectIdentity,
+    type ShareSubject,
+    type ShareSubjectError,
+} from "@/app/teams/shareEligibility";
 import { gainsSessionAccessDelegationCapabilityV1, type SessionAccessGrantCapabilityValueV1 } from '@happier-dev/protocol/sessions/access/sessionEffectiveAccessV1';
 import { type SessionInitialAccessMaterializedV1 } from '@happier-dev/protocol/sessions/access/sessionInitialAccessDraftV1';
 import {
@@ -51,6 +51,9 @@ import {
  * their draft tombstoned and their local Session deleted.
  */
 export type SessionAccessGrantValue = SessionAccessGrantCapabilityValueV1;
+
+/** Session wire codes keep their released `session_access_` prefix over the shared share-eligibility verdict. */
+type SessionAccessGrantSubjectError = `session_access_${ShareSubjectError}`;
 
 export type SessionAccessGrantErrorCode =
     | SessionAccessGrantSubjectError
@@ -98,7 +101,7 @@ export type PutSessionAccessGrantResult =
         ok: true;
         changed: boolean;
         transition: SessionAccessGrantTransition;
-        subject: SessionAccessGrantSubject;
+        subject: ShareSubject;
         value: SessionAccessGrantValue;
         requiredByTeamPolicy: boolean;
         directShare: SessionAccessDirectShareRow | null;
@@ -110,7 +113,7 @@ export type DeleteSessionAccessGrantResult =
     | Readonly<{
         ok: true;
         changed: boolean;
-        subject: SessionAccessGrantSubject;
+        subject: ShareSubject;
         removedDirectShare: SessionAccessDirectShareRow | null;
         effects: SessionAccessGrantEffects;
     }>
@@ -126,7 +129,7 @@ export type SetSessionAccessContextResult =
 export function sessionAccessGrantMutationCursorLockOptions(input: Readonly<{
     actorAccountId: string;
     sessionId: string;
-    subjects: readonly SessionAccessGrantSubject[];
+    subjects: readonly ShareSubject[];
 }>): SessionAccountCursorLockOptions {
     return {
         intent: "exclusive",
@@ -199,6 +202,15 @@ export async function assertSessionAccessManageAccessInTx(
     return admission === "allowed" ? null : projectMutationAdmissionError(admission);
 }
 
+/** The shared share-eligibility owner decides; Session callers receive its verdict under their wire prefix. */
+async function resolveSessionGrantSubjectInTx(
+    tx: Tx,
+    params: Parameters<typeof resolveShareSubjectInTx>[1],
+): Promise<Readonly<{ ok: true; subject: ShareSubject }> | Readonly<{ ok: false; error: SessionAccessGrantSubjectError }>> {
+    const resolution = await resolveShareSubjectInTx(tx, params);
+    return resolution.ok ? resolution : { ok: false, error: `session_access_${resolution.error}` };
+}
+
 async function validateSessionContextTeamInTx(
     tx: Tx,
     params: Readonly<{ actorAccountId: string; teamId: string }>,
@@ -239,7 +251,7 @@ type InitialSessionAccessAdmission = Readonly<{
     session: Readonly<{ accountId: string; primaryTeamId: string | null; encryptionMode: string }>;
     primaryTeam: Readonly<{ sessionCreationPolicy: TeamSessionCreationPolicy; archivedAt: Date | null }> | null;
     resolved: readonly Readonly<{
-        subject: SessionAccessGrantSubject;
+        subject: ShareSubject;
         grant: SessionAccessGrantValue;
         accountEnvelopeInput?: unknown;
     }>[];
@@ -273,15 +285,15 @@ async function admitInitialSessionAccessInTx(tx: Tx, params: InitialSessionAcces
 
     const grants = [...params.initialAccess.grants];
     const resolved: Array<{
-        subject: SessionAccessGrantSubject;
+        subject: ShareSubject;
         grant: SessionAccessGrantValue;
         accountEnvelopeInput?: unknown;
     }> = [];
     const envelopeWrites = new Map<string, Uint8Array<ArrayBuffer>>();
     for (const grant of grants) {
-        const subject = await resolveSessionAccessGrantSubjectInTx(tx, {
+        const subject = await resolveSessionGrantSubjectInTx(tx, {
             actorAccountId: params.creatorAccountId,
-            sessionOwnerAccountId: session.accountId,
+            resourceOwnerAccountId: session.accountId,
             subject: grant.subject,
             hasExistingGrant: false,
         });
@@ -488,7 +500,7 @@ type StoredGrant = Readonly<{
 async function loadStoredGrantInTx(
     tx: Tx,
     sessionId: string,
-    subject: SessionAccessGrantSubject,
+    subject: ShareSubject,
 ): Promise<{ stored: StoredGrant | null; directShare: SessionAccessDirectShareRow | null }> {
     if (subject.kind === "account") {
         const share = await tx.sessionShare.findUnique({
@@ -557,7 +569,7 @@ export async function teamsPolicyStillRequireGrants(tx: Tx, teamIds: readonly st
 
 async function resolveAffectedAccountIdsInTx(
     tx: Tx,
-    subject: SessionAccessGrantSubject,
+    subject: ShareSubject,
 ): Promise<string[]> {
     if (subject.kind === "account") return [subject.accountId];
     return await resolveSubjectMemberAccountIdsInTx(
@@ -620,7 +632,7 @@ export async function putSessionAccessGrantInTx(
     params: Readonly<{
         actorAccountId: string;
         sessionId: string;
-        subject: SessionAccessGrantSubject;
+        subject: ShareSubject;
         grant: SessionAccessGrantValue;
         accountEnvelopeInput?: unknown;
         /** Verified request/runtime credential context supplied by the entry point. */
@@ -668,9 +680,9 @@ export async function putSessionAccessGrantInTx(
         params.subject,
     );
 
-    const resolution = await resolveSessionAccessGrantSubjectInTx(tx, {
+    const resolution = await resolveSessionGrantSubjectInTx(tx, {
         actorAccountId: params.actorAccountId,
-        sessionOwnerAccountId: session.accountId,
+        resourceOwnerAccountId: session.accountId,
         subject: params.subject,
         hasExistingGrant: stored !== null,
     });
@@ -893,7 +905,7 @@ export async function deleteSessionAccessGrantInTx(
     params: Readonly<{
         actorAccountId: string;
         sessionId: string;
-        subject: SessionAccessGrantSubject;
+        subject: ShareSubject;
         authentication: SessionAccessAuthentication;
     }>,
 ): Promise<DeleteSessionAccessGrantResult> {
@@ -914,12 +926,12 @@ export async function deleteSessionAccessGrantInTx(
     if (!session) return { ok: false, error: "session_access_session_not_found" };
 
     if (params.subject.kind === "account") {
-        const identityError = validateSessionAccessGrantAccountSubjectIdentity({
+        const identityError = validateShareAccountSubjectIdentity({
             actorAccountId: params.actorAccountId,
-            sessionOwnerAccountId: session.accountId,
+            resourceOwnerAccountId: session.accountId,
             subjectAccountId: params.subject.accountId,
         });
-        if (identityError) return { ok: false, error: identityError };
+        if (identityError) return { ok: false, error: `session_access_${identityError}` };
     }
 
     const { stored, directShare } = await loadStoredGrantInTx(tx, params.sessionId, params.subject);
@@ -940,9 +952,9 @@ export async function deleteSessionAccessGrantInTx(
     // eligibility, but it does not make the caller's subject claim authoritative.
     // Reuse the canonical subject resolver so owner/self direct grants and a
     // mismatched Group parent Team cannot bypass the sole grant writer.
-    const resolution = await resolveSessionAccessGrantSubjectInTx(tx, {
+    const resolution = await resolveSessionGrantSubjectInTx(tx, {
         actorAccountId: params.actorAccountId,
-        sessionOwnerAccountId: session.accountId,
+        resourceOwnerAccountId: session.accountId,
         subject: params.subject,
         hasExistingGrant: true,
         removingExistingGrant: true,

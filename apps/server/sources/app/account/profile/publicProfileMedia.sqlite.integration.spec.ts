@@ -83,7 +83,7 @@ describe('public-profile media admission', () => {
     afterAll(async () => { await harness?.close(); });
     afterEach(async () => { fontIo.afterRead = undefined; vi.restoreAllMocks(); await db.uploadedFile.deleteMany(); await db.account.deleteMany(); });
 
-    it.each(['hide', 'withdraw'] as const)('discards every painted representation when %s wins during font IO', async change => {
+    it.each(['hide', 'withdraw'] as const)('finishes captured painting when %s occurs during font IO and revokes on the next request', async change => {
         harness.resetEnv(env);
         const owner = await publishedAccount();
         await withAuthenticatedTestApp(app => { registerAccountPublicProfileRoutes(app); registerPublicProfileReadRoutes(app); }, async app => {
@@ -92,7 +92,8 @@ describe('public-profile media admission', () => {
                 const body = publishBody({ ...DEFAULT_PUBLIC_PROFILE_APPEARANCE_V1,
                     atmosphere: { source: 'planet', planet: { placement: 'side', style: 'airy', digits: true } } });
                 expect((await publishPublicProfile(owner.id, body, env, deps)).kind).toBe('updated');
-                const unavailable = await app.inject({ method: 'GET', url: `/@missing_profile${suffix}` });
+                const admitted = await app.inject({ method: 'GET', url: `/@delivery_owner${suffix}` });
+                expect(admitted.statusCode, suffix).toBe(200);
                 let changed = false;
                 fontIo.afterRead = async () => {
                     changed = true;
@@ -103,21 +104,28 @@ describe('public-profile media admission', () => {
                         await updatePublicProfile(owner.id, { policy });
                     }
                 };
-                const response = await app.inject({ method: 'GET', url: `/@delivery_owner${suffix}`, headers: { 'if-none-match': '*' } });
+                // A miss starts a finite render under the captured admission.
+                const response = await app.inject({ method: 'GET', url: `/@delivery_owner${suffix}`, headers: { 'if-none-match': '"stale-render"' } });
                 expect(changed, `font IO reached for ${suffix || 'HTML'}`).toBe(true);
-                expect(response.statusCode, suffix || 'HTML').toBe(unavailable.statusCode);
-                expect(response.headers.etag, suffix || 'HTML').toBeUndefined();
-                expect(response.rawPayload, suffix || 'HTML').toEqual(unavailable.rawPayload);
+                expect(response.statusCode, suffix).toBe(200);
+                expect(response.headers.etag, suffix).toBe(admitted.headers.etag);
+                expect(response.rawPayload, suffix).toEqual(admitted.rawPayload);
+                const next = await app.inject({ method: 'GET', url: `/@delivery_owner${suffix}`,
+                    headers: { 'if-none-match': response.headers.etag } });
+                expect(next.statusCode, suffix).toBe(change === 'withdraw' && suffix.startsWith('/background?') ? 404 : 200);
+                expect(next.headers.etag, suffix).not.toBe(admitted.headers.etag);
+                if (change === 'withdraw') expect(next.headers.etag, suffix).toBeUndefined();
+                const current = await app.inject({ method: 'GET', url: `/@delivery_owner${suffix}` });
+                expect(next.rawPayload, suffix).toEqual(current.rawPayload);
             }
         });
         harness.restoreEnv();
     });
 
-    it('preserves a real paint failure only while its captured publication remains admitted', async () => {
+    it('reports a real paint failure even when the captured publication is withdrawn during font IO', async () => {
         harness.resetEnv(env);
         const owner = await publishedAccount();
         await withAuthenticatedTestApp(app => registerPublicProfileReadRoutes(app), async app => {
-            const unavailable = await app.inject({ method: 'GET', url: '/@missing_profile/card.svg' });
             fontIo.afterRead = async () => { throw new Error('physical font read failed'); };
             const unchanged = await app.inject({ method: 'GET', url: '/@delivery_owner/card.svg' });
             expect(unchanged.statusCode).toBe(503);
@@ -126,23 +134,32 @@ describe('public-profile media admission', () => {
                 await unpublishPublicProfile(owner.id);
                 throw new Error('retired paint failed');
             };
-            const retired = await app.inject({ method: 'GET', url: '/@delivery_owner/card.svg', headers: { 'if-none-match': '*' } });
-            expect(retired.statusCode).toBe(200);
+            const retired = await app.inject({ method: 'GET', url: '/@delivery_owner/card.svg', headers: { 'if-none-match': '"stale-render"' } });
+            expect(retired.statusCode).toBe(503);
             expect(retired.headers.etag).toBeUndefined();
-            expect(retired.rawPayload).toEqual(unavailable.rawPayload);
+            expect(retired.headers['cache-control']).toBe('no-store');
+            const unavailable = await app.inject({ method: 'GET', url: '/@missing_profile/card.svg' });
+            const next = await app.inject({ method: 'GET', url: '/@delivery_owner/card.svg' });
+            expect(next.statusCode).toBe(200);
+            expect(next.headers.etag).toBeUndefined();
+            expect(next.rawPayload).toEqual(unavailable.rawPayload);
         });
         harness.restoreEnv();
     });
 
-    it('cold-renders the admitted selected picture at shared responsive geometry and rechecks its policy and ref before validators', async () => {
+    it('cold-renders selected picture URLs without reading pixels and revalidates current policy on the next HTML request', async () => {
         harness.resetEnv(env);
         const owner = await publishedAccount();
         await applyPicture(owner.id, 17, { author: 'Ada <Painter>', source: 'Local collection', url: 'https://example.test/credit', licence: 'CC0' });
         await withAuthenticatedTestApp(app => { registerAccountPublicProfileRoutes(app); registerPublicProfileReadRoutes(app); }, async app => {
+            const physicalReads = vi.spyOn(files, 'readPrivateFile');
             const url = '/@delivery_owner';
             const startedAt = performance.now();
             const first = await app.inject({ method: 'GET', url });
+            console.info('public-profile-cold-hero-http-cost', { elapsedMs: Math.round(performance.now() - startedAt),
+                htmlBytes: first.rawPayload.length });
             expect(first.statusCode).toBe(200);
+            expect(physicalReads.mock.calls.length).toBe(0);
             expect(first.body).toContain('public-profile-hero-band');
             const stylesheet = first.body.match(/<style>([\s\S]*?)<\/style>/)?.[1];
             if (!stylesheet) throw new Error('Expected the actual cold HTTP stylesheet');
@@ -166,6 +183,7 @@ describe('public-profile media admission', () => {
                 const metadata = await sharp(response.rawPayload).metadata();
                 return `${metadata.width}x${metadata.height}`;
             }));
+            expect(physicalReads.mock.calls.length).toBe(images.size);
             for (const kind of ['wide', 'phone'] as const) {
                 for (const density of [1, 2]) expect(dimensions).toContain(`${HAPPIER_PUBLIC_PROFILE_HERO_METRICS.rasterWidthPx[kind] * density}x${HAPPIER_PUBLIC_PROFILE_HERO_METRICS.bandHeightPx[kind] * density}`);
             }
@@ -174,16 +192,13 @@ describe('public-profile media admission', () => {
             const validator = String(first.headers.etag);
             expect((await app.inject({ method: 'GET', url, headers: { 'if-none-match': validator } })).statusCode).toBe(304);
 
-            const actualRead = files.readPrivateFile;
-            vi.spyOn(files, 'readPrivateFile').mockImplementationOnce(async (...args) => {
-                const bytes = await actualRead(...args);
-                const policy = structuredClone(DEFAULT_PUBLIC_PROFILE_POLICY_V1);
-                policy.fields.name = false;
-                await updatePublicProfile(owner.id, { policy });
-                return bytes;
-            });
-            const hidden = await app.inject({ method: 'GET', url, headers: { 'if-none-match': validator } });
+            const policy = structuredClone(DEFAULT_PUBLIC_PROFILE_POLICY_V1);
+            policy.fields.name = false;
+            await updatePublicProfile(owner.id, { policy });
+            physicalReads.mockClear();
+            const hidden = await app.inject({ method: 'GET', url, headers: { 'if-none-match': '"stale-render"' } });
             expect(hidden.statusCode).toBe(200);
+            expect(physicalReads.mock.calls.length).toBe(0);
             expect(hidden.body).not.toContain('Reviewed owner');
             expect(hidden.headers.etag).not.toBe(validator);
             await applyPicture(owner.id, 233);
@@ -196,7 +211,9 @@ describe('public-profile media admission', () => {
             const withdrawn = await app.inject({ method: 'GET', url, headers: { 'if-none-match': replacement.headers.etag } });
             expect(withdrawn.statusCode).toBe(404);
             expect(withdrawn.headers.etag).toBeUndefined();
-            expect(withdrawn.body).not.toContain('public-profile-hero-band');
+            expect(withdrawn.body).toMatch(/data-testid="public-profile-hero-band"[^>]*>\s*<svg[\s\S]*?<circle/);
+            expect(withdrawn.body).not.toContain('/@delivery_owner/background?');
+            expect(withdrawn.body).not.toContain('public-profile-identity');
         });
         harness.restoreEnv();
     });
@@ -287,10 +304,14 @@ describe('public-profile media admission', () => {
         expect(await db.uploadedFile.findMany({ where: { accountId: owner.id }, select: { id: true } })).toEqual([{ id: first.id }]);
     });
 
-    it('retires the same applied custody through canonical username withdrawal', async () => {
+    it('retains applied picture custody through rename and retires it on canonical username release', async () => {
         const owner = await publishedAccount();
         const applied = await applyPicture(owner.id, 17);
         await inTx(tx => changeUsernameInTx(tx, owner.id, { kind: 'manual_set', username: 'renamed_owner' }, env), { isolationLevel: 'Serializable' });
+        expect(await readAdmittedPublicProfileDelivery('delivery_owner', env, deps)).toEqual({ result: { kind: 'unavailable' } });
+        expect((await readAdmittedPublicProfileDelivery('renamed_owner', env, deps)).result).toMatchObject({ kind: 'published' });
+        expect((await readPublicProfilePicture({ accountId: owner.id, pictureId: applied.id })).ok).toBe(true);
+        await inTx(tx => changeUsernameInTx(tx, owner.id, { kind: 'release' }, env), { isolationLevel: 'ReadCommitted' });
         expect(await db.accountPublicProfile.findUnique({ where: { accountId: owner.id } })).toBeNull();
         expect(await readPublicProfilePicture({ accountId: owner.id, pictureId: applied.id })).toEqual({ ok: false, reason: 'not_found' });
     });
@@ -328,19 +349,20 @@ describe('public-profile media admission', () => {
         expect(await readAdmittedPublicProfileDelivery('delivery_owner', env, deps)).toEqual({ result: { kind: 'unavailable' } });
     });
 
-    it('lets current withdrawal supersede a physical read failure for the retired image', async () => {
+    it('reports a genuine captured-picture read failure and withdraws the next read normally', async () => {
         const owner = await publishedAccount();
         await applyPicture(owner.id, 17);
         vi.spyOn(files, 'readPrivateFile').mockImplementationOnce(async () => {
             await unpublishPublicProfile(owner.id);
             throw new Error('retired file is no longer available');
         });
+        await expect(readAdmittedPublicProfileDelivery('delivery_owner', env, deps)).rejects.toThrow('public_profile_picture_unavailable');
         expect(await readAdmittedPublicProfileDelivery('delivery_owner', env, deps)).toEqual({ result: { kind: 'unavailable' } });
     });
 
-    it.each(['pause', 'hide', 'replace', 'rename', 'recycle'] as const)('readmits the current publication after physical IO races with %s', async change => {
+    it.each(['pause', 'hide', 'replace', 'rename', 'recycle'] as const)('finishes captured picture delivery across %s and admits only current state on the next read', async change => {
         const owner = await publishedAccount();
-        await applyPicture(owner.id, 17);
+        const captured = await applyPicture(owner.id, 17);
         const realRead = files.readPrivateFile;
         vi.spyOn(files, 'readPrivateFile').mockImplementationOnce(async path => {
             const bytes = await realRead(path);
@@ -361,13 +383,23 @@ describe('public-profile media admission', () => {
             return bytes;
         });
         const delivered = await readAdmittedPublicProfileDelivery('delivery_owner', env, deps);
+        expect(delivered.result).toMatchObject({ kind: 'published', view: { identity: { name: 'Reviewed owner' },
+            appearance: { atmosphere: { source: 'picture', picture: { ref: { id: captured.id } } } } } });
+        expect(delivered.picture).toBeDefined();
+        expect((await sharp(delivered.picture!.bytes).raw().toBuffer()).equals(await sharp(captured.pixels).raw().toBuffer())).toBe(true);
+        const next = await readAdmittedPublicProfileDelivery('delivery_owner', env, deps);
         if (change === 'hide') {
-            expect(delivered.result).toMatchObject({ kind: 'published', view: { identity: {} } });
-            expect(JSON.stringify(delivered.result)).not.toContain('Reviewed owner');
-            expect(delivered.picture).toBeDefined();
+            expect(next.result).toMatchObject({ kind: 'published', view: { identity: {} } });
+            expect(JSON.stringify(next.result)).not.toContain('Reviewed owner');
+            expect(next.picture).toBeDefined();
+        } else if (change === 'replace' || change === 'recycle') {
+            expect(next.result.kind).toBe('published');
+            expect(JSON.stringify(next.result)).not.toContain(captured.id);
+            expect(next.picture).toBeDefined();
+            expect((await sharp(next.picture!.bytes).raw().toBuffer()).equals(await sharp(captured.pixels).raw().toBuffer())).toBe(false);
         } else {
-            expect(delivered.result.kind).toBe(change === 'pause' ? 'paused' : 'unavailable');
-            expect(delivered.picture).toBeUndefined();
+            expect(next.result.kind).toBe(change === 'pause' ? 'paused' : 'unavailable');
+            expect(next.picture).toBeUndefined();
         }
     });
 

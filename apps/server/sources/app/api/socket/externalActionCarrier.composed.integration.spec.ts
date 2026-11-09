@@ -6,7 +6,12 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest
 import { io as ioClient } from "socket.io-client";
 import { Server } from "socket.io";
 import nacl from 'tweetnacl';
-import { API_TOKEN_FULL_GRANT_V1 } from '@happier-dev/protocol';
+import {
+    API_TOKEN_FULL_GRANT_V1,
+    MACHINE_PLAIN_DATA_KEY_MARKER,
+    encodePlainMachineStoredContent,
+} from '@happier-dev/protocol';
+import { decodeBase64 } from 'privacy-kit';
 
 const protocolSerializerSpy = vi.hoisted(() => vi.fn());
 const protocolPrepareSpy = vi.hoisted(() => vi.fn());
@@ -46,6 +51,9 @@ import {
     EXTERNAL_ACTION_EFFECT_ACTION_HEADER,
     EXTERNAL_ACTION_RESOLVED_TARGET_HEADER,
     EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER,
+    ExternalActionExecutionAuthorizationV1Schema,
+    bindExternalActionExecutionAuthorizationHttpPathV1,
+    createExternalActionDaemonDispatchResponseV1,
 } from "@happier-dev/protocol/actions";
 import {
     SOCKET_RPC_EVENTS,
@@ -54,8 +62,11 @@ import {
 
 import { createAuthenticatedTestApp } from "@/app/api/testkit/sqliteFastify";
 import { db } from "@/storage/db";
+import { inTx } from '@/storage/inTx';
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
 import { auth } from '@/app/auth/auth';
+import { resolveExternalActionExecutionMachineAdmissionInTx } from '@/app/auth/externalActionExecutionAuthorization';
+import { setMachineAccessGrantInTx } from '@/app/machines/machineAccess';
 import { getOrCreateServerIdentityId } from '@/app/serverIdentity/serverIdentity';
 import { reconcileExternalActionTarget } from '../../../../../cli/src/daemon/externalActions/reconcileExternalActionTarget';
 
@@ -170,11 +181,98 @@ describe("external Action server-to-daemon request carrier", () => {
         await db.accessKey.deleteMany();
         await db.session.deleteMany();
         await db.machine.deleteMany();
+        await db.teamMembership.deleteMany();
+        await db.team.deleteMany();
         await db.account.deleteMany();
     });
 
     afterAll(async () => {
         await harness.close();
+    });
+
+    it('relays a present-user approval decision to a Team-granted Machine through production placement', async () => {
+        const owner = await db.account.create({ data: { publicKey: null, encryptionMode: 'plain' } });
+        const reader = await db.account.create({ data: { publicKey: null, encryptionMode: 'plain' } });
+        const team = await db.team.create({ data: { name: 'Approval reviewers' } });
+        await db.teamMembership.create({ data: { teamId: team.id, accountId: reader.id, role: 'member' } });
+        await db.teamMembership.create({ data: { teamId: team.id, accountId: owner.id, role: 'member' } });
+        const installationId = randomUUID();
+        const installation = nacl.sign.keyPair();
+        await db.machine.create({ data: {
+            id: machineId,
+            accountId: owner.id,
+            installationId,
+            installationPublicKey: installation.publicKey,
+            metadata: encodePlainMachineStoredContent({ host: 'approval-owner', platform: 'linux', happyCliVersion: 'test',
+                homeDir: '/home/approval-owner', happyHomeDir: '/home/approval-owner/.happier' }),
+            dataEncryptionKey: decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER, 'base64'),
+            active: true,
+            operationProtocolCapabilitiesRevision: 1,
+            operationProtocolCapabilities: {
+                externalActionExecutionAuthorization: { protocolVersions: [1] },
+            },
+        } });
+        await inTx(tx => setMachineAccessGrantInTx(tx, {
+            actorAccountId: owner.id,
+            machineId,
+            principal: { kind: 'team', teamId: team.id },
+            level: 'view',
+        }));
+        const admission = await resolveExternalActionExecutionMachineAdmissionInTx(db, {
+            actorAccountId: reader.id,
+            machineId,
+            actionId: 'approval.request.decide',
+        });
+        expect(admission, JSON.stringify(admission)).toMatchObject({
+            kind: 'admitted', custodianAccountId: owner.id, installationId,
+        });
+
+        const token = await auth.createToken(reader.id, undefined, { kind: 'account', authority: 'present_user' });
+        const serverIdentityId = await getOrCreateServerIdentityId();
+        const envelope = {
+            v: 1 as const,
+            requestId: 'team-granted-approval-replay',
+            target: { kind: 'machine' as const, machineId },
+            input: { artifactId: 'deferred-layout-approval', decision: 'approve' as const, serverIdentityId },
+        };
+        const app = createAuthenticatedTestApp({ authentication: 'real' });
+        const io = new Server(app.server, { path: '/v1/updates', transports: ['websocket'] });
+        let received = 0;
+        const forwardRpc = vi.fn(async ({ callParams, targetUserId }) => {
+            received += 1;
+            expect(targetUserId).toBe(owner.id);
+            const dispatch = ExternalActionDaemonDispatchRequestSchema.parse(callParams);
+            const prepared = prepareExternalActionResponseEnvelopeV1({
+                v: 1,
+                actionId: dispatch.actionId,
+                requestId: dispatch.envelope.requestId,
+                execution: { ok: true, result: { status: 'approved' } },
+            });
+            return { ok: true as const, result: createExternalActionDaemonDispatchResponseV1(prepared) };
+        });
+        registerExternalActionRoutes(app, { dispatch: createExternalActionDaemonDispatcher({ io, forwardRpc }) });
+        try {
+            const headers = { authorization: `Bearer ${token}` };
+            const issued = await app.inject({
+                method: 'POST',
+                url: bindExternalActionExecutionAuthorizationHttpPathV1('approval.request.decide'),
+                headers,
+                payload: { v: 1, machineId, envelope },
+            });
+            expect(issued.statusCode, issued.body).toBe(200);
+            const executionAuthorization = ExternalActionExecutionAuthorizationV1Schema.parse(issued.json());
+            const relayed = await app.inject({
+                method: 'POST',
+                url: '/v1/actions/approval.request.decide',
+                headers,
+                payload: { v: 1, machineId, envelope, executionAuthorization },
+            });
+            expect(relayed.statusCode, relayed.body).toBe(200);
+            expect(received).toBe(1);
+        } finally {
+            await io.close();
+            await app.close();
+        }
     });
 
     it.each(['account', 'terminal'] as const)('relays opaque Machine-targeted Session input for an original %s credential and checks the resolved Session', async (kind) => {

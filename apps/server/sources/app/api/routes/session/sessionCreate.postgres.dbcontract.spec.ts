@@ -69,6 +69,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('S
                 expect(await db.session.count({ where: { accountId: account.id, tag: body.tag } })).toBe(1);
             });
         } finally {
+            console.info('SESSION_LEGACY_HOT_CURSOR', { publications });
             db.$transaction = transaction;
             vi.unstubAllEnvs();
             await db.session.deleteMany({ where: { accountId: account.id } });

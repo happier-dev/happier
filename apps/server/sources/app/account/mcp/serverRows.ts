@@ -15,7 +15,7 @@ import type { Tx } from '@/storage/inTx';
 import { mutateReservedAccountScopedKvRowInTx, readReservedAccountScopedKvRowInTx, type ReservedAccountScopedKvRowDomain,
     type ReservedAccountScopedKvRowMutationInTxResult } from '@/app/kv/reservedAccountScopedKvRow';
 
-export const mcpServerCatalogRowDomain: ReservedAccountScopedKvRowDomain<StoredMcpServerCatalogContentV1> = {
+export const mcpServerCatalogRowDomain: ReservedAccountScopedKvRowDomain<StoredMcpServerCatalogContentV1, McpServerCatalogContentV1> = {
     label: 'MCP server catalog',
     parseStoredEnvelope(value) {
         const parsed = StoredMcpServerCatalogContentV1Schema.safeParse(value);

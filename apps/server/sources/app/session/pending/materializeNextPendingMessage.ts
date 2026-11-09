@@ -1,18 +1,14 @@
+import { isTransactionStorageError } from '@/storage/transactionErrors';
 import type { SessionRecipientCursor, SessionRecipientPublication } from "@/app/session/changeTracking/markSessionProjectionRecipientsChanged";
 import { pendingPublicationResult, type PendingPublicationFields } from "./pendingPublicationResult";
 import { acquireSessionAccountCursorLocksInTx } from "@/app/session/changeTracking/acquireSessionAccountCursorLocksInTx";
 import type { CurrentSessionPublisherAuthority } from "@/app/presence/sessionPublisherPresence";
 import {
     fenceExactCurrentPublisherAuthorityInTx,
-    hasExactCurrentPublisherAuthorityInTx,
-    hasCurrentPublisherTargetAdmissionCapabilityInTx,
 } from "@/app/session/pending/hasExactCurrentPublisherAuthorityInTx";
 import { markPendingStateChangedRecipients } from "@/app/session/pending/markPendingStateChangedRecipients";
 import {
     inTx,
-    isTransactionAcquisitionUnavailableError,
-    isTransactionConflictExhaustedError,
-    isTransactionDeadlineExceededError,
     type Tx,
     type TransactionResult,
 } from "@/storage/inTx";
@@ -30,6 +26,7 @@ import { compareSessionMessageContentAndRole } from "@/app/session/sessionTransc
 import type { SessionReadyProjectionUpdate } from "@/app/session/sessionWriteService";
 import { logger } from "@/utils/logging/log";
 import {
+    isUnclaimedUnavailableExecutionRunInput,
     selectPendingProviderInvocation,
     type PendingClaimForegroundState,
     type PendingProviderAction,
@@ -192,13 +189,6 @@ async function resolvePendingProviderRejoinInTx(params: {
     expectedSidechainId: string | null;
     retainedContextLocalIds: readonly string[];
 }): Promise<PendingMaterializationPublications | null> {
-    if (!await hasExactCurrentPublisherAuthorityInTx(
-        params.tx,
-        params.authority,
-        params.actorUserId,
-        params.sessionId,
-    )) return { ok: false, error: "forbidden" };
-
     const session = await params.tx.session.findUniqueOrThrow({
         where: { id: params.sessionId },
         select: {
@@ -280,12 +270,6 @@ async function resolvePendingProviderRejoinInTx(params: {
     }
 
     const content = toSessionMessageContentFromPending(row.content as PrismaJson.SessionPendingMessageContent);
-    if (!await hasExactCurrentPublisherAuthorityInTx(
-        params.tx,
-        params.authority,
-        params.actorUserId,
-        params.sessionId,
-    )) return { ok: false, error: "forbidden" };
     const storageMode = session.encryptionMode === "plain" ? "plain" as const : "e2ee" as const;
     const messageRole = resolveSessionMessageRole({
         content,
@@ -319,12 +303,6 @@ async function resolvePendingProviderRejoinInTx(params: {
             return { ok: false, error: "transcript-conflict" };
         }
     }
-    if (!await hasExactCurrentPublisherAuthorityInTx(
-        params.tx,
-        params.authority,
-        params.actorUserId,
-        params.sessionId,
-    )) return { ok: false, error: "forbidden" };
     return {
         ok: true,
         didMaterialize: true,
@@ -380,8 +358,7 @@ export async function materializeNextPendingMessage(
 
 export function mapPendingMaterializationError(error: unknown): MaterializeNextPendingMessageResult {
     if (error instanceof PublisherAuthorityLostError) return { ok: false, error: "forbidden" };
-    if (isTransactionDeadlineExceededError(error) || isTransactionAcquisitionUnavailableError(error)
-        || isTransactionConflictExhaustedError(error)) {
+    if (isTransactionStorageError(error)) {
         return { ok: false, error: "transaction-unavailable", retryAfterMs: 1_000 };
     }
     return { ok: false, error: "internal" };
@@ -461,11 +438,8 @@ async function materializePendingTargetInTx(
         params.publisherAuthority,
         actorUserId,
         sessionId,
+        { admittedWork: true },
     )) return { ok: false, error: "forbidden" };
-
-    if (params.targetExecutionRunId !== null && !await hasCurrentPublisherTargetAdmissionCapabilityInTx(tx, params.publisherAuthority)) {
-        return { ok: false, error: "session_input_target_update_required" };
-    }
 
     const sessionRow = await tx.session.findUnique({
         where: { id: sessionId },
@@ -574,10 +548,14 @@ async function materializePendingTargetInTx(
             const invocationSelection = selectPendingProviderInvocation({
                 // C7-held Discussion originals already have protected Pending
                 // custody. They stay visible there without blocking independent
-                // later questions; ordinary blocked FIFO items keep their contract.
+                // later questions. An exact Run's unavailable classification also
+                // ends only that unclaimed attempt: retain its refusal without
+                // preventing fresh input after explicit Run recovery. Claimed or
+                // uncertain work and ordinary blocked FIFO keep their contract.
                 rows: pendingCandidates.filter(row => {
                     if (retainedContextLocalIds.includes(row.localId)) return false;
                     if (row.deliveryState !== 'blocked' || row.deliveryBlockedReason !== 'session_input_target_unavailable') return true;
+                    if (isUnclaimedUnavailableExecutionRunInput(params.targetExecutionRunId, row)) return false;
                     const receipt = readStoredSessionInputAdmissionReceipt(row.inputAdmissionReceipt);
                     const address = receipt?.issuer === 'authenticatedMachine' ? receipt.discussionAddressing : undefined;
                     return !address || address.participantSessionId !== sessionId

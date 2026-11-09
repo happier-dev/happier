@@ -1,7 +1,8 @@
 import type { FeaturesPayloadDelta, FeaturesResponse } from '../types';
+import { readServerConfig } from '@happier-dev/protocol/serverConfig/serverConfigCodec';
+import { FEATURE_CONFIG } from './featureServerConfig';
 import { resolveArtifactQueryHintsFeature } from '../artifactQueryHintsFeature';
 
-import { resolveAutomationsFeature } from '../automationsFeature';
 import { resolveWorkflowsFeature } from '../workflowsFeature';
 import { resolvePublicProfilesFeature } from '../publicProfilesFeature';
 import { resolveBugReportsFeature } from '../bugReportsFeature';
@@ -62,6 +63,7 @@ function register(
 }
 
 export const serverFeatureRegistry = Object.freeze([
+    register([], () => ({ capabilities: { changes: { cursorHeaderVersion: 1 } } })),
     register(['artifacts'], () => resolveArtifactQueryHintsFeature()),
     register(['account'], (env) => resolvePublicProfilesFeature(env)),
     register([], () => resolveAccountStoredContentCompatibilityFeature()),
@@ -69,11 +71,12 @@ export const serverFeatureRegistry = Object.freeze([
     register([], () => resolveSessionProtocolCapabilitiesFeature()),
     register([], (env) => resolveServerUrlCapabilitiesFeature(env)),
     register([], (env) => resolveServerRetentionCapabilitiesFeature(env)),
-    register([], () => resolveServerUsageAnalyticsCapabilitiesFeature()),
+    register(['usage'], () => resolveServerUsageAnalyticsCapabilitiesFeature()),
     register([], (env) => resolveLiveActivityRemoteUpdatesFeature(env)),
     register(['bugReports'], (env) => resolveBugReportsFeature(env)),
-    register(['automations'], (env) => resolveAutomationsFeature(env)),
     register(['workflows'], (env) => resolveWorkflowsFeature(env)),
+    register(['deployments'], (env) => ({ features: { deployments: { enabled: readServerConfig(env, FEATURE_CONFIG.deploymentsEnabled) } } })),
+    register(['bots'], (env) => ({ features: { bots: { enabled: readServerConfig(env, FEATURE_CONFIG.botsEnabled) } } })),
     register(['sharing'], (_env) => resolveSharingFeature()),
     register(['voice'], (env) => resolveVoiceFeature(env)),
     register(['connectedServices'], (env) => resolveConnectedServicesFeature(env)),

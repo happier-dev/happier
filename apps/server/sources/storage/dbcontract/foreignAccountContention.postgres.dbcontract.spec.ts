@@ -158,7 +158,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("f
         });
     });
 
-    it.each(["self", "administrator"] as const)("finishes %s E2EE erasure while another administrator publishes an Account change during final deletion", async actor => {
+    it.each(["self", "administrator"] as const)("finishes %s E2EE erasure while another administrator publishes an Account change before final admission", async actor => {
         const f = await fixture("e2ee");
         await db.account.update({ where: { id: f.foreign.id }, data: { homeRole: "admin" } });
         const transaction = db.$transaction.bind(db);
@@ -167,24 +167,24 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("f
             const callback = args[0];
             if (typeof callback !== "function") return Reflect.apply(owner, receiver, args);
             return Reflect.apply(owner, receiver, [async (tx: Tx) => {
-                const find = tx.account.findUnique.bind(tx.account);
+                const query = tx.$queryRawUnsafe.bind(tx);
                 let published = false;
-                tx.account.findUnique = new Proxy(find, { async apply(owner, receiver, args: Parameters<typeof find>) {
-                    const query = args[0];
-                    const row: unknown = await Reflect.apply(owner, receiver, args);
-                    // This exact read belongs to final deletion after its target
-                    // fence, before its wider Home-governance publication.
-                    if (!published && query?.where?.id === f.target.id
-                        && query.select?.status && Object.keys(query.select).length === 1) {
-                        published = true;
-                        await inTx(peer => markAccountChanged(peer, {
-                            accountId: f.foreign.id, kind: "account", entityId: "self",
-                        }), { isolationLevel: "ReadCommitted" });
-                        peerCommits += 1;
-                    }
-                    return row;
-                } });
-                return callback(tx);
+                return callback(new Proxy(tx, { get(owner, property, proxyReceiver) {
+                    if (property !== "$queryRawUnsafe") return Reflect.get(owner, property, proxyReceiver);
+                    return async (sql: string, ...values: unknown[]) => {
+                        // Final deletion admits every Home administrator exclusively.
+                        // Commit the peer after retirement, before that complete fence.
+                        if (!published && sql.includes('FROM "Account"') && sql.includes("FOR UPDATE")
+                            && (await db.account.findUnique({ where: { id: f.target.id }, select: { status: true } }))?.status === "disabled") {
+                            published = true;
+                            await inTx(peer => markAccountChanged(peer, {
+                                accountId: f.foreign.id, kind: "account", entityId: "self",
+                            }), { isolationLevel: "ReadCommitted" });
+                            peerCommits += 1;
+                        }
+                        return query(sql, ...values);
+                    };
+                } }));
             }, ...args.slice(1)]);
         } });
         try {
@@ -258,27 +258,24 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("f
             const callback = args[0];
             if (typeof callback !== "function") return Reflect.apply(owner, receiver, args);
             return Reflect.apply(owner, receiver, [async (tx: Tx) => {
-                const find = tx.account.findUnique.bind(tx.account);
-                const findMany = tx.account.findMany.bind(tx.account);
-                let finalDeletion = false;
-                tx.account.findUnique = new Proxy(find, { async apply(owner, receiver, args: Parameters<typeof find>) {
-                    const query = args[0];
-                    const row: unknown = await Reflect.apply(owner, receiver, args);
-                    if (query?.where?.id === f.target.id && query.select?.status && Object.keys(query.select).length === 1) {
-                        finalDeletion = true;
-                    }
-                    return row;
+                const account = new Proxy(tx.account, { get(owner, property, delegateReceiver) {
+                    const operation = Reflect.get(owner, property, delegateReceiver);
+                    if (property !== "findMany") return operation;
+                    return async (query: Parameters<typeof tx.account.findMany>[0]) => {
+                        const rows = await owner.findMany(query);
+                        // Census precedes exclusive admission. An independent
+                        // administrator may disappear here, never after its fence.
+                        if (!peerDeleted && query?.where?.status === "active" && query.where.homeRole
+                            && (await db.account.findUnique({ where: { id: f.target.id }, select: { status: true } }))?.status === "disabled") {
+                            peerDeleted = true;
+                            await erasePeer();
+                        }
+                        return rows;
+                    };
                 } });
-                tx.account.findMany = new Proxy(findMany, { async apply(owner, receiver, args: Parameters<typeof findMany>) {
-                    const query = args[0];
-                    const rows: unknown = await Reflect.apply(owner, receiver, args);
-                    if (finalDeletion && !peerDeleted && query?.where?.status === "active" && query.where.homeRole) {
-                        peerDeleted = true;
-                        await erasePeer();
-                    }
-                    return rows;
-                } });
-                return callback(tx);
+                return callback(new Proxy(tx, { get(owner, property, proxyReceiver) {
+                    return property === "account" ? account : Reflect.get(owner, property, proxyReceiver);
+                } }));
             }, ...args.slice(1)]);
         } });
         try {
@@ -317,19 +314,22 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("f
             const callback = args[0];
             if (typeof callback !== "function") return Reflect.apply(owner, receiver, args);
             return Reflect.apply(owner, receiver, [async (tx: Tx) => {
-                const find = tx.sessionShare.findMany.bind(tx.sessionShare);
-                tx.sessionShare.findMany = (async (query: Parameters<typeof find>[0]) => {
-                    const rows = await find(query);
-                    if (!removed && rows.some(row => row.id === share.id)
-                        && query?.where?.session && query?.select?.session) {
-                        removed = true;
-                        // The genuine database boundary represents the foreign
-                        // owner's committed grant removal, not erasure internals.
-                        await db.sessionShare.delete({ where: { id: share.id } });
-                    }
-                    return rows;
-                }) as typeof tx.sessionShare.findMany;
-                return callback(tx);
+                const shares = new Proxy(tx.sessionShare, { get(owner, property, delegateReceiver) {
+                    const operation = Reflect.get(owner, property, delegateReceiver);
+                    if (property !== "findMany") return operation;
+                    return async (query: Parameters<typeof tx.sessionShare.findMany>[0]) => {
+                        const rows = await owner.findMany(query);
+                        if (!removed && rows.some(row => row.id === share.id)
+                            && query?.where?.session && query?.select?.session) {
+                            removed = true;
+                            await db.sessionShare.delete({ where: { id: share.id } });
+                        }
+                        return rows;
+                    };
+                } });
+                return callback(new Proxy(tx, { get(owner, property, proxyReceiver) {
+                    return property === "sessionShare" ? shares : Reflect.get(owner, property, proxyReceiver);
+                } }));
             }, ...args.slice(1)]);
         } });
         try {

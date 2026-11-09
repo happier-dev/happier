@@ -4,15 +4,15 @@ import { createPresentUserSessionAccessAuthentication } from "@/app/session/acce
 const authentication = createPresentUserSessionAccessAuthentication();
 
 const state = vi.hoisted(() => ({
-    tx: null as unknown,
+    tx: null as ReturnType<typeof createTx> | null,
 }));
 
 const compileCounting = vi.hoisted(() => ({
     calls: 0,
 }));
 
-vi.mock("@happier-dev/protocol", async (importOriginal) => {
-    const actual = await importOriginal<typeof import("@happier-dev/protocol")>();
+vi.mock("@happier-dev/protocol/plugins/actions/json-schema-validation", async (importOriginal) => {
+    const actual = await importOriginal<typeof import("@happier-dev/protocol/plugins/actions/json-schema-validation")>();
     return {
         ...actual,
         compilePluginJsonSchema: ((schema: object) => {
@@ -22,9 +22,17 @@ vi.mock("@happier-dev/protocol", async (importOriginal) => {
     };
 });
 
-vi.mock("@/storage/inTx", () => ({
-    inTx: async (callback: (tx: unknown) => Promise<unknown>) => await callback(state.tx),
-}));
+vi.mock("@/storage/db", async (importOriginal) => {
+    const actual = await importOriginal<typeof import("@/storage/db")>();
+    const { createPrismaTransactionBoundary } = await import("@/app/api/testkit/txHarness");
+    return { ...actual, db: {
+        // Fake only Prisma's driver callback; retain real inTx context and admission.
+        $transaction: createPrismaTransactionBoundary(() => {
+            if (!state.tx) throw new Error("Expected transaction fixture");
+            return state.tx;
+        }),
+    } };
+});
 
 import type { NormalizedPluginAccountCollectionContractV1 } from "@happier-dev/protocol";
 import { PLUGIN_COLLECTION_REVISION_MAX } from "@happier-dev/protocol";
@@ -39,8 +47,9 @@ import {
 
 function createTx() {
     return {
-        $executeRawUnsafe: vi.fn(async () => 1),
-        $queryRawUnsafe: vi.fn(async () => [{ id: "account-1" }]),
+        $executeRawUnsafe: vi.fn(async (_sql: string, ..._values: unknown[]) => 1),
+        $queryRawUnsafe: vi.fn(async (_sql: string, ..._values: unknown[]) => [{ id: "account-1" }]),
+        $queryRaw: vi.fn(async () => [{ statement_timeout: "0" }]),
         account: {
             findUnique: vi.fn(async () => ({
                 publicKey: null,
@@ -122,10 +131,12 @@ describe("plugin Collection mutation", () => {
             },
         })).rejects.toMatchObject({ code: "collection_unavailable" });
 
-        const fenceCallOrder = [
-            ...tx.$executeRawUnsafe.mock.invocationCallOrder,
-            ...tx.$queryRawUnsafe.mock.invocationCallOrder,
-        ];
+        const fenceCallOrder = [tx.$executeRawUnsafe, tx.$queryRawUnsafe].flatMap(method => (
+            method.mock.calls.flatMap((args, index) => (
+                String(args[0]).includes('"Account"') || String(args[0]).includes('`Account`')
+                    ? [method.mock.invocationCallOrder[index]] : []
+            ))
+        ));
         expect(fenceCallOrder).toHaveLength(1);
         expect(fenceCallOrder[0]).toBeLessThan(
             tx.account.findUnique.mock.invocationCallOrder[0],

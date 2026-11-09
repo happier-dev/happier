@@ -14,7 +14,6 @@ import {
 import { inReadSnapshot, inTx, type Tx } from "@/storage/inTx";
 import { evaluateProvisioningResponsePolicy } from "./provisioningResponsePolicy";
 import { resolveApiHotEndpointRateLimit } from "@/app/api/utils/apiRateLimitCatalog";
-import { recordAuthEnrollmentOutcome } from "@/app/monitoring/metrics/authMetrics";
 import {
     parseAuthenticationEvidenceSnapshot,
     resolveCurrentAuthenticationEvidenceInTx,
@@ -134,19 +133,16 @@ export function registerTerminalAuthRequestRoutes(
     }, async (request, reply) => {
         const tweetnacl = (await import("tweetnacl")).default;
         if (String(request.body.publicKey).length > 512) {
-            recordAuthEnrollmentOutcome({ flow: "terminal", outcome: "malformed_payload" });
             return reply.code(401).send({ error: 'Invalid public key' });
         }
         let publicKey: ReturnType<typeof privacyKit.decodeBase64>;
         try {
             publicKey = privacyKit.decodeBase64(request.body.publicKey);
         } catch {
-            recordAuthEnrollmentOutcome({ flow: "terminal", outcome: "malformed_payload" });
             return reply.code(401).send({ error: 'Invalid public key' });
         }
         const isValid = tweetnacl.box.publicKeyLength === publicKey.length;
         if (!isValid) {
-            recordAuthEnrollmentOutcome({ flow: "terminal", outcome: "malformed_payload" });
             return reply.code(401).send({ error: 'Invalid public key' });
         }
 
@@ -166,13 +162,11 @@ export function registerTerminalAuthRequestRoutes(
         }).catch(() => {});
 
         if (existing && isTerminalAuthExpired(existing.createdAt)) {
-            recordAuthEnrollmentOutcome({ flow: "terminal", outcome: "expired" });
             await db.terminalAuthRequest.delete({ where: { id: existing.id } }).catch(() => {});
             return reply.code(410).send({ error: "expired" as const });
         }
 
         if (existing && claimSecretHash && existing.claimSecretHash !== claimSecretHash) {
-            recordAuthEnrollmentOutcome({ flow: "terminal", outcome: "wrong_binding" });
             return reply.code(409).send({ error: "claim_mismatch" as const });
         }
 
@@ -244,19 +238,16 @@ export function registerTerminalAuthRequestRoutes(
     }, async (request, reply) => {
         const tweetnacl = (await import("tweetnacl")).default;
         if (String(request.query.publicKey).length > 512) {
-            recordAuthEnrollmentOutcome({ flow: "terminal", outcome: "malformed_payload" });
             return reply.send({ status: 'not_found', supportsV2: false });
         }
         let publicKey: ReturnType<typeof privacyKit.decodeBase64>;
         try {
             publicKey = privacyKit.decodeBase64(request.query.publicKey);
         } catch {
-            recordAuthEnrollmentOutcome({ flow: "terminal", outcome: "malformed_payload" });
             return reply.send({ status: 'not_found', supportsV2: false });
         }
         const isValid = tweetnacl.box.publicKeyLength === publicKey.length;
         if (!isValid) {
-            recordAuthEnrollmentOutcome({ flow: "terminal", outcome: "malformed_payload" });
             return reply.send({ status: 'not_found', supportsV2: false });
         }
 
@@ -270,7 +261,6 @@ export function registerTerminalAuthRequestRoutes(
         }
 
         if (isTerminalAuthExpired(authRequest.createdAt)) {
-            recordAuthEnrollmentOutcome({ flow: "terminal", outcome: "expired" });
             await db.terminalAuthRequest.delete({ where: { id: authRequest.id } }).catch(() => {});
             return reply.send({ status: "not_found", supportsV2: false });
         }
@@ -310,19 +300,16 @@ export function registerTerminalAuthRequestRoutes(
     }, async (request, reply) => {
         const tweetnacl = (await import("tweetnacl")).default;
         if (String(request.body.publicKey).length > 512) {
-            recordAuthEnrollmentOutcome({ flow: "terminal", outcome: "malformed_payload" });
             return reply.code(410).send({ error: "expired" as const });
         }
         let publicKey: ReturnType<typeof privacyKit.decodeBase64>;
         try {
             publicKey = privacyKit.decodeBase64(request.body.publicKey);
         } catch {
-            recordAuthEnrollmentOutcome({ flow: "terminal", outcome: "malformed_payload" });
             return reply.code(410).send({ error: "expired" as const });
         }
         const isValid = tweetnacl.box.publicKeyLength === publicKey.length;
         if (!isValid) {
-            recordAuthEnrollmentOutcome({ flow: "terminal", outcome: "malformed_payload" });
             return reply.code(410).send({ error: "expired" as const });
         }
 
@@ -335,7 +322,6 @@ export function registerTerminalAuthRequestRoutes(
         }
 
         if (isTerminalAuthExpired(authRequest.createdAt)) {
-            recordAuthEnrollmentOutcome({ flow: "terminal", outcome: "expired" });
             await db.terminalAuthRequest.delete({ where: { id: authRequest.id } }).catch(() => {});
             return reply.code(410).send({ error: "expired" as const });
         }
@@ -353,7 +339,6 @@ export function registerTerminalAuthRequestRoutes(
 
         const computedHash = createHash("sha256").update(claimSecretBytes).digest("base64url");
         if (computedHash !== authRequest.claimSecretHash) {
-            recordAuthEnrollmentOutcome({ flow: "terminal", outcome: "wrong_proof" });
             return reply.code(401).send({ error: "unauthorized" as const });
         }
 
@@ -432,24 +417,20 @@ export function registerTerminalAuthRequestRoutes(
         debug({ module: 'auth-response' }, `Auth response endpoint hit - user: ${request.userId}`);
         const tweetnacl = (await import("tweetnacl")).default;
         if (String(request.body.publicKey).length > 512) {
-            recordAuthEnrollmentOutcome({ flow: "terminal", outcome: "malformed_payload" });
             return reply.code(401).send({ error: 'Invalid public key' });
         }
         let publicKey: ReturnType<typeof privacyKit.decodeBase64>;
         try {
             publicKey = privacyKit.decodeBase64(request.body.publicKey);
         } catch {
-            recordAuthEnrollmentOutcome({ flow: "terminal", outcome: "malformed_payload" });
             return reply.code(401).send({ error: 'Invalid public key' });
         }
         const isValid = tweetnacl.box.publicKeyLength === publicKey.length;
         if (!isValid) {
-            recordAuthEnrollmentOutcome({ flow: "terminal", outcome: "malformed_payload" });
             return reply.code(401).send({ error: 'Invalid public key' });
         }
         const responseKind = request.body.responseKind;
         if (!responseKind) {
-            recordAuthEnrollmentOutcome({ flow: "terminal", outcome: "malformed_payload" });
             return reply.code(426).send({ error: "terminal_provisioning_update_required" });
         }
         const publicKeyHex = privacyKit.encodeHex(publicKey);
@@ -531,11 +512,9 @@ export function registerTerminalAuthRequestRoutes(
         });
 
         if (outcome.status === "success") {
-            recordAuthEnrollmentOutcome({ flow: "terminal", outcome: "success" });
             return reply.send({ success: true });
         }
         if (outcome.status === "expired") {
-            recordAuthEnrollmentOutcome({ flow: "terminal", outcome: "expired" });
             return reply.code(404).send({ error: "Request not found" });
         }
         if (outcome.status === "not_found") return reply.code(404).send({ error: "Request not found" });
@@ -546,17 +525,11 @@ export function registerTerminalAuthRequestRoutes(
             return reply.code(409).send({ error: "provisioning_material_unavailable" });
         }
         if (outcome.status === "already_completed") {
-            recordAuthEnrollmentOutcome({ flow: "terminal", outcome: "rejected" });
             return reply.code(409).send({ error: "already_completed" });
         }
         if (outcome.status === "evidence_unavailable") {
-            recordAuthEnrollmentOutcome({ flow: "terminal", outcome: "rejected" });
             return reply.code(409).send({ error: "credential_authentication_evidence_unavailable" });
         }
-        recordAuthEnrollmentOutcome({
-            flow: "terminal",
-            outcome: outcome.reason === "invalid_provisioning_response" ? "malformed_payload" : "rejected",
-        });
         const statusCode = outcome.reason === "invalid_provisioning_response" ? 400 : 409;
         return reply.code(statusCode).send({ error: outcome.reason });
     });

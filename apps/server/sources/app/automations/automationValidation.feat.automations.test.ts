@@ -1,373 +1,83 @@
 import { describe, expect, it } from "vitest";
-
 import { AUTOMATION_INT_COLUMN_MAX } from "@happier-dev/protocol";
-
 import {
     assertAutomationTemplateEnvelopeForAccountMode,
     AutomationValidationError,
-    parseAutomationPatchInput,
     parseAutomationScheduleInput,
-    parseAutomationUpsertInput,
+    readLegacyExistingSessionTemplateAdmission,
 } from "./automationValidation";
 
-const TEST_TEMPLATE_ENVELOPE = JSON.stringify({
-    kind: "happier_automation_template_encrypted_v1",
-    payloadCiphertext: "ciphertext-base64",
-});
+describe("Automation schedule admission", () => {
+    it("accepts computable intervals through the database column boundary", () => {
+        for (const everyMs of [60_000, AUTOMATION_INT_COLUMN_MAX]) {
+            expect(parseAutomationScheduleInput({ kind: "interval", everyMs })).toMatchObject({ everyMs });
+        }
+        for (const schedule of [{ kind: "interval" }, { kind: "interval", everyMs: AUTOMATION_INT_COLUMN_MAX + 1 }]) {
+            expect(() => parseAutomationScheduleInput(schedule)).toThrow(AutomationValidationError);
+        }
+    });
 
-describe("parseAutomationPatchInput", () => {
-    it("rejects an empty patch", () => {
-        expect(() => parseAutomationPatchInput({})).toThrow(/at least one field/i);
+    it("accepts valid cron schedules and refuses missing or uncomputable expressions", () => {
+        expect(parseAutomationScheduleInput({ kind: "cron", scheduleExpr: "*/5 * * * *", timezone: "UTC" }))
+            .toMatchObject({ kind: "cron", scheduleExpr: "*/5 * * * *" });
+        for (const schedule of [{ kind: "cron" }, { kind: "cron", scheduleExpr: "not-a-cron", timezone: "UTC" }]) {
+            expect(() => parseAutomationScheduleInput(schedule)).toThrow(AutomationValidationError);
+        }
     });
 });
 
-describe("released V2 manual schedule compatibility", () => {
-    it("accepts manual create and patch input without treating it as a cadence", () => {
-        expect(parseAutomationUpsertInput({
-            name: "Run on demand",
-            enabled: true,
-            schedule: { kind: "manual" },
-            targetType: "new_session",
-            templateCiphertext: TEST_TEMPLATE_ENVELOPE,
-        }).schedule).toEqual({ kind: "manual" });
-        const patch = parseAutomationPatchInput({
-            schedule: { kind: "manual" },
-        });
-        expect("schedule" in patch ? patch.schedule : undefined).toEqual({ kind: "manual" });
-    });
-});
+describe("Automation template mode and retained Session admission", () => {
+    const encrypted = JSON.stringify({ kind: "happier_automation_template_encrypted_v1", payloadCiphertext: "ciphertext" });
+    const plain = JSON.stringify({ kind: "happier_automation_template_plain_v1", payload: { directory: "/repo", prompt: "hi" } });
 
-describe("parseAutomationUpsertInput", () => {
-    it("accepts existing_session target for encrypted templates", () => {
-        expect(() =>
-            parseAutomationUpsertInput({
-                name: "Existing-session automation",
-                enabled: true,
-                schedule: { kind: "interval", everyMs: 60_000 },
-                targetType: "existing_session",
-                templateCiphertext: JSON.stringify({
-                    kind: "happier_automation_template_encrypted_v1",
-                    payloadCiphertext: "ciphertext-base64",
-                }),
-            }),
-        ).not.toThrow();
-    });
-
-    it("accepts interval schedules with an execution template", () => {
-        const parsed = parseAutomationUpsertInput({
-            name: "Daily workspace sweep",
-            enabled: true,
-            schedule: {
-                kind: "interval",
-                everyMs: 60_000,
-            },
-            targetType: "new_session",
-            templateCiphertext: TEST_TEMPLATE_ENVELOPE,
-            assignments: [{ machineId: "m1", enabled: true, priority: 1 }],
-        });
-
-        expect(parsed.schedule.kind).toBe("interval");
-        expect(parsed.schedule.everyMs).toBe(60_000);
-        expect(parsed.assignments).toHaveLength(1);
-    });
-
-    it("rejects interval schedules without everyMs", () => {
-        expect(() =>
-            parseAutomationUpsertInput({
-                name: "Broken",
-                enabled: true,
-                schedule: { kind: "interval" },
-                targetType: "new_session",
-                templateCiphertext: TEST_TEMPLATE_ENVELOPE,
-            }),
-        ).toThrow(/everyMs/);
-    });
-
-    it("rejects an interval cadence the Automation.everyMs INTEGER column cannot hold", () => {
-        expect(() =>
-            parseAutomationUpsertInput({
-                name: "Too wide",
-                enabled: true,
-                schedule: { kind: "interval", everyMs: AUTOMATION_INT_COLUMN_MAX + 1 },
-                targetType: "new_session",
-                templateCiphertext: TEST_TEMPLATE_ENVELOPE,
-            }),
-        ).toThrow(AutomationValidationError);
-
-        const widest = parseAutomationScheduleInput({
-            kind: "interval",
-            everyMs: AUTOMATION_INT_COLUMN_MAX,
-        });
-        expect(widest.everyMs).toBe(AUTOMATION_INT_COLUMN_MAX);
-    });
-
-    it("accepts cron schedules with scheduleExpr", () => {
-        const parsed = parseAutomationUpsertInput({
-            name: "Cron schedule",
-            enabled: true,
-            schedule: { kind: "cron", scheduleExpr: "*/5 * * * *", timezone: "UTC" },
-            targetType: "new_session",
-            templateCiphertext: TEST_TEMPLATE_ENVELOPE,
-        });
-
-        expect(parsed.schedule.kind).toBe("cron");
-        expect((parsed.schedule as any).scheduleExpr).toBe("*/5 * * * *");
-    });
-
-    it("rejects cron schedules without scheduleExpr", () => {
-        expect(() =>
-            parseAutomationUpsertInput({
-                name: "Missing expr",
-                enabled: true,
-                schedule: { kind: "cron" },
-                targetType: "new_session",
-                templateCiphertext: TEST_TEMPLATE_ENVELOPE,
-            }),
-        ).toThrow(/scheduleExpr/i);
-    });
-
-    it("rejects cron schedules with invalid scheduleExpr", () => {
-        expect(() =>
-            parseAutomationUpsertInput({
-                name: "Invalid cron",
-                enabled: true,
-                schedule: { kind: "cron", scheduleExpr: "not-a-cron", timezone: "UTC" },
-                targetType: "new_session",
-                templateCiphertext: TEST_TEMPLATE_ENVELOPE,
-            }),
-        ).toThrow(/schedule/i);
-    });
-
-    it("rejects plaintext templates that are not encrypted envelopes", () => {
-        expect(() =>
-            parseAutomationUpsertInput({
-                name: "Legacy template",
-                enabled: true,
-                schedule: { kind: "interval", everyMs: 60_000 },
-                targetType: "new_session",
-                templateCiphertext: "{\"directory\":\"/tmp/project\"}",
-            }),
-        ).toThrow(/templateCiphertext/i);
-    });
-
-    it("accepts plaintext automation templates when accountMode=plain", () => {
-        const plain = JSON.stringify({
-            kind: "happier_automation_template_plain_v1",
-            payload: { directory: "/tmp/project", prompt: "hi" },
-        });
-
-        expect(() =>
-            parseAutomationUpsertInput({
-                name: "Plain template",
-                enabled: true,
-                schedule: { kind: "interval", everyMs: 60_000 },
-                targetType: "new_session",
-                templateCiphertext: plain,
-            }, { accountMode: "plain" }),
-        ).not.toThrow();
-    });
-
-    it("rejects plaintext automation templates that include sessionEncryptionKeyBase64 when accountMode=plain", () => {
-        const plain = JSON.stringify({
-            kind: "happier_automation_template_plain_v1",
-            payload: {
-                directory: "/tmp/project",
-                prompt: "hi",
-                sessionEncryptionKeyBase64: "dek",
-            },
-        });
-
-        expect(() =>
-            parseAutomationUpsertInput({
-                name: "Plain template",
-                enabled: true,
-                schedule: { kind: "interval", everyMs: 60_000 },
-                targetType: "new_session",
-                templateCiphertext: plain,
-            }, { accountMode: "plain" }),
-        ).toThrow(/sessionEncryptionKeyBase64/i);
-    });
-
-    it("rejects encrypted new-session automation templates when accountMode=plain", () => {
-        const encrypted = JSON.stringify({
-            kind: "happier_automation_template_encrypted_v1",
-            payloadCiphertext: "ciphertext",
-        });
-
-        expect(() =>
-            parseAutomationUpsertInput({
-                name: "Encrypted template",
-                enabled: true,
-                schedule: { kind: "interval", everyMs: 60_000 },
-                targetType: "new_session",
-                templateCiphertext: encrypted,
-            }, { accountMode: "plain" }),
-        ).toThrow(/encrypted.*existing_session|plain account/i);
-    });
-
-    it("rejects an unbound encrypted existing-session template on a plain Account", () => {
-        expect(() => parseAutomationUpsertInput({
-            name: "Opaque encrypted template",
-            enabled: false,
-            schedule: { kind: "manual" },
-            targetType: "existing_session",
-            templateCiphertext: JSON.stringify({
-                kind: "happier_automation_template_encrypted_v1",
-                payloadCiphertext: "ciphertext",
-            }),
-        }, { accountMode: "plain", allowLegacyEncryptedExistingSessionTemplate: true }))
+    it("accepts each Account's own envelope and refuses mode mismatches", () => {
+        expect(() => assertAutomationTemplateEnvelopeForAccountMode(encrypted, "e2ee", "existing_session")).not.toThrow();
+        expect(() => assertAutomationTemplateEnvelopeForAccountMode(plain, "plain", "new_session")).not.toThrow();
+        for (const target of ["existing_session", "new_session"] as const) {
+            expect(() => assertAutomationTemplateEnvelopeForAccountMode(encrypted, "plain", target)).toThrow(AutomationValidationError);
+        }
+        expect(() => assertAutomationTemplateEnvelopeForAccountMode(plain, "e2ee", "new_session")).toThrow(AutomationValidationError);
+        expect(() => assertAutomationTemplateEnvelopeForAccountMode('{"directory":"/repo"}', "e2ee", "new_session"))
             .toThrow(AutomationValidationError);
-        expect(() => assertAutomationTemplateEnvelopeForAccountMode(
-            JSON.stringify({ kind: "happier_automation_template_encrypted_v1", payloadCiphertext: "ciphertext" }),
-            "plain", "existing_session",
-            { kind: "legacy-encrypted-existing-session-v1", existingSessionId: "session-e2ee" },
-        )).toThrow(AutomationValidationError);
     });
 
-    it("rejects a predecessor encrypted outer session identifier outside the legacy request adapter", () => {
-        const encrypted = JSON.stringify({
-            kind: "happier_automation_template_encrypted_v1",
-            payloadCiphertext: "ciphertext",
-            existingSessionId: "session-e2ee",
-        });
-
-        expect(() =>
-            parseAutomationUpsertInput({
-                name: "Encrypted retained-session template",
-                enabled: true,
-                schedule: { kind: "interval", everyMs: 60_000 },
-                targetType: "existing_session",
-                templateCiphertext: encrypted,
-            }, { accountMode: "plain" }),
-        ).toThrow(/templateCiphertext/i);
+    it("refuses Session encryption material in a plain envelope", () => {
+        const template = JSON.stringify({ kind: "happier_automation_template_plain_v1",
+            payload: { directory: "/repo", sessionEncryptionKeyBase64: "dek" } });
+        expect(() => assertAutomationTemplateEnvelopeForAccountMode(template, "plain", "new_session"))
+            .toThrow(AutomationValidationError);
     });
 
-    it("admits only the exact predecessor encrypted outer session identifier through the legacy request adapter", () => {
-        const encrypted = JSON.stringify({
-            kind: "happier_automation_template_encrypted_v1",
-            payloadCiphertext: "ciphertext",
-            existingSessionId: "session-e2ee",
-        });
-
-        const parsed = parseAutomationUpsertInput({
-            name: "Encrypted retained-session template",
-            enabled: true,
-            schedule: { kind: "interval", everyMs: 60_000 },
-            targetType: "existing_session",
-            templateCiphertext: encrypted,
-        }, {
-            accountMode: "plain",
-            allowLegacyEncryptedExistingSessionTemplate: true,
-        });
-
-        expect(parsed.legacyTemplateEnvelopeAdmission).toEqual({
-            kind: "legacy-encrypted-existing-session-v1",
-            existingSessionId: "session-e2ee",
-        });
-        expect(parsed.templateCiphertext).toBe(encrypted);
+    it.each(["encrypted", "plain"] as const)("admits only exact retained %s Session correspondence", kind => {
+        const template = JSON.stringify(kind === "encrypted"
+            ? { kind: "happier_automation_template_encrypted_v1", payloadCiphertext: "ciphertext", existingSessionId: "retained" }
+            : { kind: "happier_automation_template_plain_v1", payload: { existingSessionId: "retained" }, existingSessionId: "retained" });
+        const admission = readLegacyExistingSessionTemplateAdmission(template, "existing_session");
+        expect(admission).toMatchObject({ existingSessionId: "retained" });
+        expect(() => assertAutomationTemplateEnvelopeForAccountMode(template, "plain", "existing_session", admission))
+            .not.toThrow();
+        expect(() => assertAutomationTemplateEnvelopeForAccountMode(template, "plain", "existing_session"))
+            .toThrow(AutomationValidationError);
+        expect(() => assertAutomationTemplateEnvelopeForAccountMode(template, "plain", "existing_session",
+            { kind: kind === "encrypted" ? "legacy-encrypted-existing-session-v1" : "legacy-plain-existing-session-v1", existingSessionId: "other" }))
+            .toThrow(AutomationValidationError);
+        expect(readLegacyExistingSessionTemplateAdmission(template, "new_session")).toBeUndefined();
     });
 
-    it("admits the exact predecessor plain outer session identifier only when it agrees with the payload", () => {
-        const plain = JSON.stringify({
-            kind: "happier_automation_template_plain_v1",
-            payload: { existingSessionId: "session-e2ee" },
-            existingSessionId: "session-e2ee",
-        });
-
-        const parsed = parseAutomationUpsertInput({
-            name: "Not an encrypted predecessor envelope",
-            enabled: true,
-            schedule: { kind: "interval", everyMs: 60_000 },
-            targetType: "existing_session",
-            templateCiphertext: plain,
-        }, {
-            accountMode: "plain",
-            allowLegacyEncryptedExistingSessionTemplate: true,
-        });
-
-        expect(parsed.legacyTemplateEnvelopeAdmission).toEqual({
-            kind: "legacy-plain-existing-session-v1",
-            existingSessionId: "session-e2ee",
-        });
-        expect(parsed.templateCiphertext).toBe(plain);
+    it("refuses mismatched inner and outer retained Session identifiers", () => {
+        const template = JSON.stringify({ kind: "happier_automation_template_plain_v1",
+            payload: { existingSessionId: "inner" }, existingSessionId: "outer" });
+        expect(readLegacyExistingSessionTemplateAdmission(template, "existing_session")).toBeUndefined();
+        expect(() => assertAutomationTemplateEnvelopeForAccountMode(template, "plain", "existing_session",
+            { kind: "legacy-plain-existing-session-v1", existingSessionId: "outer" })).toThrow(AutomationValidationError);
     });
 
-    it("rejects a predecessor plain outer session identifier that disagrees with the payload", () => {
-        expect(() => parseAutomationUpsertInput({
-            name: "Mismatched predecessor envelope",
-            enabled: true,
-            schedule: { kind: "interval", everyMs: 60_000 },
-            targetType: "existing_session",
-            templateCiphertext: JSON.stringify({
-                kind: "happier_automation_template_plain_v1",
-                payload: { existingSessionId: "session-inner" },
-                existingSessionId: "session-outer",
-            }),
-        }, {
-            accountMode: "plain",
-            allowLegacyEncryptedExistingSessionTemplate: true,
-        })).toThrow(/templateCiphertext/i);
-    });
-
-    it("rechecks the trusted legacy admission against the exact raw predecessor envelope", () => {
-        const encrypted = JSON.stringify({
-            kind: "happier_automation_template_encrypted_v1",
-            payloadCiphertext: "ciphertext",
-            existingSessionId: "session-e2ee",
-        });
-
-        expect(() => assertAutomationTemplateEnvelopeForAccountMode(
-            encrypted,
-            "plain",
-            "existing_session",
-            {
-                kind: "legacy-encrypted-existing-session-v1",
-                existingSessionId: "different-session",
-            },
-        )).toThrow(/templateCiphertext/i);
-    });
-
-    it("rejects plaintext automation templates when accountMode=e2ee", () => {
-        const plain = JSON.stringify({
-            kind: "happier_automation_template_plain_v1",
-            payload: { directory: "/tmp/project" },
-        });
-
-        expect(() =>
-            parseAutomationUpsertInput({
-                name: "Plain template",
-                enabled: true,
-                schedule: { kind: "interval", everyMs: 60_000 },
-                targetType: "new_session",
-                templateCiphertext: plain,
-            }, { accountMode: "e2ee" }),
-        ).toThrow(/templateCiphertext/i);
-    });
-
-    it("rejects templates with an oversized payloadCiphertext", () => {
-        expect(() =>
-            parseAutomationUpsertInput({
-                name: "Huge payload",
-                enabled: true,
-                schedule: { kind: "interval", everyMs: 60_000 },
-                targetType: "new_session",
-                templateCiphertext: JSON.stringify({
-                    kind: "happier_automation_template_encrypted_v1",
-                    payloadCiphertext: "a".repeat(200_001),
-                }),
-            }),
-        ).toThrow(/payloadCiphertext|templateCiphertext/i);
-    });
-
-    it("rejects templates with an oversized templateCiphertext envelope", () => {
-        expect(() =>
-            parseAutomationUpsertInput({
-                name: "Huge envelope",
-                enabled: true,
-                schedule: { kind: "interval", everyMs: 60_000 },
-                targetType: "new_session",
-                templateCiphertext: "a".repeat(220_001),
-            }),
-        ).toThrow(/templateCiphertext/i);
+    it("refuses malformed and oversized encrypted templates at the retained-content boundary", () => {
+        for (const template of ["a".repeat(220_001), JSON.stringify({
+            kind: "happier_automation_template_encrypted_v1", payloadCiphertext: "a".repeat(200_001),
+        })]) {
+            expect(() => assertAutomationTemplateEnvelopeForAccountMode(template, "e2ee", "new_session"))
+                .toThrow(AutomationValidationError);
+        }
     });
 });

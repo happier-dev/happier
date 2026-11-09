@@ -6,6 +6,7 @@ import { ExternalSessionMaterializationPublicationV1Schema, type ExternalSession
 
 import { readEncryptionFeatureEnv } from "@/app/features/catalog/readFeatureEnv";
 import { initializeExternalLinkedSessionStorage } from "@/app/session/externalLinkedSessionStorageInitialization";
+import { notifySessionHumanPresenceAccessChanged } from "@/app/session/humanPresence/sessionHumanPresenceService";
 import { fenceExactCurrentPublisherAuthorityInTx } from "@/app/session/pending/hasExactCurrentPublisherAuthorityInTx";
 import { updateSessionMetadataEnvelopeTupleInTx } from "@/app/session/sessionWriteService";
 import { resolveVisibleSessionSeq, stampViewerUnreadEntryInTx } from "@/app/session/personal/readState";
@@ -17,7 +18,7 @@ import {
     findExactHostSessionSystemRecordInTx,
     writeExternalSessionHistoricalImportRecordInTx,
 } from "@/app/session/systemRecords/sessionSystemRecordService";
-import { inTx, type Tx } from "@/storage/inTx";
+import { afterTx, inTx, type Tx } from "@/storage/inTx";
 import type { Prisma } from "@prisma/client";
 import { notifySessionTranscriptMutationAfterCommit } from './sessionTranscriptMutationObserver';
 
@@ -1399,6 +1400,9 @@ async function executeExternalSessionHistoricalImportCommandWithCreateRaceRetry(
                     "Persisted takeover authority changed during admission.",
                 );
             }
+            // Becoming hosted opens live delivery to collaborators, a publication
+            // change that held audiences consume through the access-change push.
+            afterTx(tx, () => notifySessionHumanPresenceAccessChanged({ sessionId: session.id }));
 
             job = {
                 ...job,
@@ -1439,6 +1443,7 @@ async function executeExternalSessionHistoricalImportCommandWithCreateRaceRetry(
                     sidechainId: item.sidechainId,
                     messageRole: item.messageRole,
                     content: item.content,
+                    usageTimingV1: item.usageTimingV1,
                     transcriptObservationProvenance:
                         HISTORICAL_IMPORT_TRANSCRIPT_OBSERVATION_PROVENANCE,
                     ...(item.sourceCreatedAtMs === undefined

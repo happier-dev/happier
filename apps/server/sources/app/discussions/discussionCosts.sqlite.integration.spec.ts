@@ -61,6 +61,9 @@ describe('Discussion owner cost contracts (SQLite; not PostgreSQL lock evidence)
                 const sql = [...statements];
                 const after = await db.account.findUniqueOrThrow({ where: { id: owner.id }, select: { seq: true } });
                 const cursorDelta = after.seq - before.seq;
+                console.info('DISCUSSION_SQL_COST', JSON.stringify({ operation, statements: sql.length,
+                    accountUpdates: sql.filter(query => /^UPDATE.*["`]Account["`]/.test(query)).length,
+                    publications: cursorDelta }));
                 expect(result).toMatchObject({ ok: true });
                 expect(cursorDelta).toBe(publications);
                 return result;
@@ -119,6 +122,7 @@ describe('Discussion owner cost contracts (SQLite; not PostgreSQL lock evidence)
                 const beforeAck = statements.length;
                 await acknowledgeDiscussionFollowInputInTx(tx, { addressing, localInputId: localId });
                 const ackStatements = statements.length - beforeAck;
+                console.info('DISCUSSION_FOLLOW_ACK_SQL', ackStatements);
                 expect(ackStatements).toBe(2);
                 return { ok: true };
             }), 0);
@@ -171,6 +175,7 @@ describe('Discussion owner cost contracts (SQLite; not PostgreSQL lock evidence)
             const result = await listDiscussions({ authentication, actorAccountId: owner.id, anchorDocArtifactId: doc.ref.artifactId, limit: 1,
                 cursor: encodeDiscussionListCursorV1({ v: 1, at: Date.now() + 2_000, id: 'start' }) });
             expect(result).toMatchObject({ ok: true, value: { discussions: [{ id: created.value.discussion.id }], nextCursor: null } });
+            console.info('DISCUSSION_DOC_CANDIDATE_ROWS', fetched);
             // One matching candidate plus its access admission; unrelated rows never leave storage.
             expect(fetched).toBe(2);
         } finally { observation.mockRestore(); }

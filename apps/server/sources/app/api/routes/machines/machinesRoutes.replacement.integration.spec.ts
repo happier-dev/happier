@@ -11,8 +11,9 @@ import { createSessionMachineAccessKeyInTx } from "@/app/accessKeys/sessionMachi
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
 import { createSignedAccountContentBinding } from "@/testkit/accountEncryption";
 import { withAuthenticatedTestApp } from "../../testkit/sqliteFastify";
-import { machinesRoutes } from "./machinesRoutes";
+import { createSocketRoomDiscoveryHarness } from '../../testkit/socketHarness';
 import { getMachineSocketRoom } from '@/app/api/socketRooms';
+import { machinesRoutes } from "./machinesRoutes";
 import { seedBundledManagedAvailability } from '@/app/machines/managed/managedProjectionVolume.testkit';
 import { admitManagedControl } from '@/app/machines/managed/managedMutations';
 
@@ -21,10 +22,12 @@ describe("machinesRoutes machine replacement", () => {
     let accountId: string;
     let installation: ReturnType<typeof tweetnacl.sign.keyPair>;
     let fingerprint: string;
+    const connectedMachines = new Set<string>();
     const homeId = `srv_${'a'.repeat(32)}`;
     beforeAll(async () => { harness = await createLightSqliteHarness({ tempDirPrefix: "happier-machine-route-replacement-", initAuth: false,
         initEncrypt: true, env: { HAPPIER_SERVER_IDENTITY_ID: homeId } }); }, 120_000);
     beforeEach(async () => {
+        connectedMachines.clear();
         harness.resetEnv();
         const binding = createSignedAccountContentBinding();
         accountId = (await db.account.create({ data: { ...binding, encryptionMode: "e2ee" } })).id;
@@ -51,7 +54,12 @@ describe("machinesRoutes machine replacement", () => {
     }
     async function invoke(payload: unknown, options: { method?: "POST" | "DELETE"; path?: string; legacy?: boolean } = {}) {
         let result!: { statusCode: number; body: string; json: () => unknown };
-        await withAuthenticatedTestApp(machinesRoutes, async app => {
+        await withAuthenticatedTestApp(app => {
+            app.decorate('machineDaemonPresence', createSocketRoomDiscoveryHarness(async room => [...connectedMachines]
+                .filter(machineId => room === getMachineSocketRoom(accountId, machineId))
+                .map(machineId => ({ data: { userId: accountId, clientType: 'machine-scoped', machineId } }))));
+            machinesRoutes(app);
+        }, async app => {
             const response = await app.inject({ method: options.method ?? "POST", url: options.path ?? "/v1/machines", headers: {
                 "x-test-user-id": accountId,
                 ...(options.legacy ? {} : buildAccountStoredContentCompatibilityHttpHeadersV1(CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION)),
@@ -60,7 +68,7 @@ describe("machinesRoutes machine replacement", () => {
         });
         return result;
     }
-    async function readyReplacement(plain = false) {
+    async function readyReplacement(plain = false, connected = true) {
         if (plain) {
             await db.account.update({ where: { id: accountId }, data: { encryptionMode: "plain" } });
             await db.machine.update({ where: { id: "m1" }, data: { metadata: encodePlainMachineStoredContent({ host: "old" }),
@@ -69,6 +77,7 @@ describe("machinesRoutes machine replacement", () => {
         await db.machine.create({ data: { id: "m2", accountId, metadata: plain ? encodePlainMachineStoredContent({ host: "new" }) : "new-meta",
             dataEncryptionKey: plain ? Buffer.from(MACHINE_PLAIN_DATA_KEY_MARKER, "base64") : null,
             contentPublicKeyFingerprint: plain ? null : fingerprint, active: true, lastActiveAt: new Date() } });
+        if (connected) connectedMachines.add('m2');
     }
 
     it("creates machines with installation identity and replacement fields serialized", async () => {
@@ -114,6 +123,15 @@ describe("machinesRoutes machine replacement", () => {
         expect(await db.automation.findUniqueOrThrow({ where: { id: automation.id } })).toEqual(automation);
         expect(await db.automationAssignment.findUniqueOrThrow({ where: { id: assignment.id } })).toEqual(assignment);
         expect(await db.accessKey.count({ where: { accountId, machineId: "m1", sessionId: session.id } })).toBe(1);
+    });
+
+    it("reports the skipped automatic replacement reason while preserving successful registration", async () => {
+        const response = await invoke(proposal("missing-old"));
+        expect(response.statusCode, response.body).toBe(200);
+        expect(response.json()).toMatchObject({ machine: { id: "m2" }, machineReplacement: {
+            status: "skipped", replacesMachineId: "missing-old", reason: "old_machine_not_found",
+        } });
+        expect(await db.machine.findUnique({ where: { id: "m2" } })).not.toBeNull();
     });
 
     it.each([
@@ -229,6 +247,14 @@ describe("machinesRoutes machine replacement", () => {
         expect(undo.statusCode, undo.body).toBe(200);
         expect(await db.machine.findUniqueOrThrow({ where: { id: "m1" } })).toMatchObject({ replacedByMachineId: null,
             replacedAt: null, replacementReason: null, replacementSource: null, replacementActorUserId: null });
+    });
+
+    it("refuses manual replacement when recent durable activity has no connected daemon", async () => {
+        await readyReplacement(false, false);
+        const response = await invoke({ replacementMachineId: "m2", confirmActiveOldMachine: true }, { path: "/v1/machines/m1/replacement" });
+        expect(response.statusCode, response.body).toBe(409);
+        expect(response.json()).toEqual({ error: "machine_not_ready", reason: "replacement_machine_not_connected" });
+        expect((await db.machine.findUniqueOrThrow({ where: { id: "m1" } })).replacedByMachineId).toBeNull();
     });
 
     it("does not apply manual replacement for a marked Machine when the caller is legacy", async () => {

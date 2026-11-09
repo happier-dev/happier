@@ -80,8 +80,8 @@ describe("Resource Test relay composition (SQLite integration)", () => {
         return await db.account.create({ data: { encryptionMode: "plain", publicKey: null } });
     }
 
-    it.each(["available", "stalled_activation", "silent_carrier", "slow_response", "source_refusal", "upstream_unauthorized", "application_exception"] as const)("tests a revision-zero resource through the real broker terminator: %s", async outcome => {
-        const realApplication = outcome === "available" || outcome === "application_exception";
+    it.each(["available", "stalled_activation", "silent_carrier", "slow_response", "source_refusal", "source_reauth", "upstream_unauthorized", "application_exception"] as const)("tests a revision-zero resource through the real broker terminator: %s", async outcome => {
+        const realApplication = outcome === "available" || outcome === "application_exception" || outcome === "source_reauth";
         const ordinaryResponse = realApplication || outcome === "available" || outcome === "source_refusal" || outcome === "upstream_unauthorized";
         const custodian = await createAccount();
         const team = await db.team.create({ data: { name: "Initial resource Test" } });
@@ -99,6 +99,7 @@ describe("Resource Test relay composition (SQLite integration)", () => {
             service: { pluginId: "happier.agent.codex", localId: "openai-codex" },
             accountId: "initial-connected-account",
         };
+        const credentialMetadata = { v: 4, storage: 'stored_envelope_v1', credentialRevision: createConnectedServiceCredentialRevision(), values: {} };
         const credential = await db.serviceAccountToken.create({ data: {
             accountId: custodian.id, servicePluginId: connectedAccount.service.pluginId,
             serviceLocalId: connectedAccount.service.localId,
@@ -106,7 +107,7 @@ describe("Resource Test relay composition (SQLite integration)", () => {
             connectedAccountId: connectedAccount.accountId,
             qualifiedIdentityDigest: createQualifiedConnectedAccountIdentityDigest(connectedAccount),
             authenticationModeId: "api-key", token: Buffer.from("fixture-only"),
-            metadata: { credentialRevision: createConnectedServiceCredentialRevision() },
+            metadata: credentialMetadata,
         } });
         const source = {
             v: 1, kind: "connected_account",
@@ -211,6 +212,10 @@ describe("Resource Test relay composition (SQLite integration)", () => {
                     modelCatalog: { models: [{ id: "gpt-5" }], resolveCanonicalModelId: id => id === "gpt-5" ? id : null },
                 }),
                 admitResourceTest: async request => {
+                    if (outcome === 'source_reauth') await db.serviceAccountToken.update({ where: { id: credential.id }, data: {
+                        metadata: { ...credentialMetadata,
+                            health: { v: 1, status: 'needs_reauth', reconnectRequired: true } },
+                    } });
                     // Cross the real Home HTTP route with the same strict
                     // request/response codecs used by ApiClient. A rejected
                     // Home response throws AxiosError, as on the daemon.
@@ -328,6 +333,9 @@ describe("Resource Test relay composition (SQLite integration)", () => {
             expect(result, JSON.stringify(diagnostics.mock.calls))
                 .toMatchObject(outcome === "available" || outcome === "slow_response"
                     ? { result: "available", readiness: { kind: "available" } }
+                    : outcome === 'source_reauth'
+                        ? { result: 'needs_attention', code: 'connected_service_credential_reconnect_required',
+                            readiness: { kind: 'source_unavailable', reason: 'connected_service_credential_reconnect_required' } }
                     : outcome === "source_refusal" || outcome === "upstream_unauthorized"
                         ? { result: "needs_attention", readiness: { kind: "source_unavailable" },
                             code: outcome === "source_refusal" ? "source_unavailable" : "upstream_unavailable" }
@@ -338,7 +346,10 @@ describe("Resource Test relay composition (SQLite integration)", () => {
                 expect(JSON.stringify(result)).not.toContain("private");
             }
             expect(admitted).toBe(true);
-            if (realApplication) {
+            if (outcome === 'source_reauth') {
+                expect(applicationRequest).toBeUndefined();
+                expect(await db.usageEvent.count({ where: { teamCredentialResourceId: resource.id } })).toBe(0);
+            } else if (realApplication) {
                 expect(applicationRequest).toMatchObject({ model: "gpt-5", input: "Reply with OK." });
                 expect(await db.usageEvent.count({ where: { teamCredentialResourceId: resource.id } })).toBe(1);
             } else if (ordinaryResponse || outcome === "slow_response") expect(applicationRequest).toMatchObject({ kind: "resource_test", resourceId: resource.id });

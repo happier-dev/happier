@@ -526,22 +526,22 @@ function accountingMetadataForWrite(request: UsageEventIngestRequest): Record<st
     };
 }
 
-async function retainEarliestRuntimeOrderInTx(tx: Tx, existing: UsageEvent, request: UsageEventIngestRequest, attribution: SessionUsageAttribution): Promise<void> {
+async function retainEarliestRuntimeOrderInTx(tx: Tx, existing: UsageEvent, request: UsageEventIngestRequest, attribution: SessionUsageAttribution): Promise<boolean> {
     const previousAccounting = readUsageAccountingMetadata(existing.metadata);
     const accounting = readUsageAccountingMetadata(request.metadata);
     const previous = previousAccounting?.path === 'runtime' ? previousAccounting.runtimeEventOrder : undefined;
     const order = accounting?.path === 'runtime' ? accounting.runtimeEventOrder : undefined;
     if (!previous || !order || previous.runtimeIncarnationId !== order.runtimeIncarnationId
-        || order.sequence >= previous.sequence || request.observedAt > existing.observedAt.getTime()) return;
+        || order.sequence >= previous.sequence || request.observedAt > existing.observedAt.getTime()) return false;
     if ((['nativeSessionId', 'inferenceId', 'counterEpoch', 'inputIncludesCache', 'outputIncludesReasoning'] as const)
-        .some(key => !isDeepStrictEqual(previousAccounting?.[key], accounting?.[key]))) return;
+        .some(key => !isDeepStrictEqual(previousAccounting?.[key], accounting?.[key]))) return false;
     const next = toUsageEventCreateInput(existing.accountId, request, attribution);
     if (Object.entries(next).some(([key, value]) => key !== 'observedAt' && key !== 'metadata'
-        && !isDeepStrictEqual(Reflect.get(existing, key), value))) return;
+        && !isDeepStrictEqual(Reflect.get(existing, key), value))) return false;
     const metadata = existing.metadata;
-    if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata) || !('usageAccounting' in metadata)) return;
+    if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata) || !('usageAccounting' in metadata)) return false;
     const rawAccounting = metadata.usageAccounting;
-    if (!rawAccounting || typeof rawAccounting !== 'object' || Array.isArray(rawAccounting)) return;
+    if (!rawAccounting || typeof rawAccounting !== 'object' || Array.isArray(rawAccounting)) return false;
     // Replay keeps the original fact, including its attribution. Only the
     // earliest witnessed position and its real source instant can move back.
     const changed = await tx.usageEvent.updateMany({ where: {
@@ -554,6 +554,7 @@ async function retainEarliestRuntimeOrderInTx(tx: Tx, existing: UsageEvent, requ
     // transaction's replay policy rather than replace a newer minimum order.
     if (changed.count === 0) throw new TransactionReplayRequiredError('usage-runtime-order-changed');
     emitUsageEventAfterTransaction(tx, existing.accountId, request);
+    return true;
 }
 
 async function ensureNativeSubjectOwnedInTx(tx: Tx, accountId: string, subject: UsageNativeAccountingSubject): Promise<boolean> {
@@ -761,7 +762,8 @@ export async function recordUsageEvent(
                         await tx.usageEvent.update({ where: { id: existing.id }, data: next });
                         emitUsageEventAfterTransaction(tx, accountId, request);
                     }
-                } else await retainEarliestRuntimeOrderInTx(tx, existing, request, attribution);
+                } else if (await retainEarliestRuntimeOrderInTx(tx, existing, request, attribution)) {
+                }
                 return { ok: true, event: { id: existing.id, createdAt: existing.createdAt } };
             }
 
@@ -1161,6 +1163,7 @@ export async function recordLegacyUsageReport(
             data: Prisma.JsonValue;
         } | null = null;
         let removedDuplicateAccountReports = false;
+        let duplicateAccountReportIds: string[] = [];
 
         if (sessionId) {
             previous = await tx.usageReport.findUnique({
@@ -1185,17 +1188,13 @@ export async function recordLegacyUsageReport(
             });
             const [survivor, ...duplicates] = existingReports;
             previous = survivor ?? null;
-            if (duplicates.length > 0) {
-                await tx.usageReport.deleteMany({
-                    where: {
-                        accountId,
-                        sessionId: null,
-                        key,
-                        id: { in: duplicates.map((report) => report.id) },
-                    },
-                });
-                removedDuplicateAccountReports = true;
-            }
+            duplicateAccountReportIds = duplicates.map(report => report.id);
+        }
+
+        if (duplicateAccountReportIds.length > 0) {
+            await tx.usageReport.deleteMany({ where: { accountId, sessionId: null, key,
+                id: { in: duplicateAccountReportIds } } });
+            removedDuplicateAccountReports = true;
         }
 
         const usageData: PrismaJson.UsageReportData = {
@@ -1286,7 +1285,9 @@ export async function recordLegacyUsageReport(
                     nextUsage: previousData.data, previousUsage: null,
                     observedAtMs: previous.updatedAt.getTime(),
                 });
-                if (baseline) await tx.usageEvent.create({ data: toUsageEventCreateInput(accountId, baseline) });
+                if (baseline) {
+                    await tx.usageEvent.create({ data: toUsageEventCreateInput(accountId, baseline) });
+                }
             }
         }
         const deltaRequest = buildLegacyDeltaRequest({
@@ -1305,6 +1306,7 @@ export async function recordLegacyUsageReport(
             });
             usageEventId = created.id;
         }
+
 
         if (sessionId) {
             afterTx(tx, () => {

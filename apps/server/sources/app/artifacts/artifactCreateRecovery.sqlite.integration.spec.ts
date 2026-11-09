@@ -5,7 +5,7 @@ import { db } from '@/storage/db';
 import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lightSqliteHarness';
 import { withAuthenticatedTestApp } from '@/app/api/testkit/sqliteFastify';
 import { artifactsRoutes } from '@/app/api/routes/artifacts/artifactsRoutes';
-import { TransactionConflictExhaustedError } from '@/storage/inTx';
+import { TransactionConflictExhaustedError, TransactionDeadlineExceededError } from '@/storage/inTx';
 
 const fault = vi.hoisted(() => ({ once: null as unknown, persistent: null as unknown, responseRead: null as unknown }));
 vi.mock('@/storage/db', async importOriginal => {
@@ -43,6 +43,27 @@ describe('Artifact creation storage recovery through real HTTP wiring', () => {
         return { id, header: encodePlainArtifactStoredContent({ title: 'Approval' }),
             body: encodePlainArtifactStoredContent({ body: 'Approve gateway creation' }), dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER };
     }
+
+    it('preserves storage deadlines as typed 503 for create and update without changing durable content', async () => {
+        const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const existingId = randomUUID();
+        const newId = randomUUID();
+        await withAuthenticatedTestApp(artifactsRoutes, async app => {
+            const headers = { 'x-test-user-id': owner.id };
+            expect((await app.inject({ method: 'POST', url: '/v1/artifacts', headers, payload: payload(existingId) })).statusCode).toBe(200);
+            fault.persistent = new TransactionDeadlineExceededError(null, 'artifact-timeout');
+            for (const request of [
+                { url: '/v1/artifacts', payload: payload(newId) },
+                { url: `/v1/artifacts/${existingId}`, payload: { body: encodePlainArtifactStoredContent({ body: 'changed' }), expectedBodyVersion: 1 } },
+            ]) {
+                const response = await app.inject({ method: 'POST', headers, ...request });
+                expect(response.statusCode, response.body).toBe(503);
+                expect(response.json()).toEqual({ error: 'database_transaction_timeout', statusCode: 503 });
+            }
+            expect(await db.artifact.count({ where: { id: newId } })).toBe(0);
+            expect(await db.artifact.findUniqueOrThrow({ where: { id: existingId } })).toMatchObject({ bodyVersion: 1 });
+        });
+    });
 
     it('recovers a rolled-back create within the canonical transaction budget, without duplicate durable content', async () => {
         const owner = await db.account.create({ data: { encryptionMode: 'plain' } });

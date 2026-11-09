@@ -15,16 +15,16 @@ import { readSessionMessagePages } from '@/app/api/routes/session/readSessionMes
 import { readSessionTranscriptRowsInTx } from '@/app/session/access/readSessionTranscriptRows';
 import { applySessionTranscriptPublicationCeiling, hasSessionTranscriptPublicationLiveFacts,
     resolveSessionTranscriptPublicationCeiling, resolveSessionTranscriptPublicationRecencyMs } from '@/app/session/sessionTranscriptPublicationPolicy';
-import { projectSessionEffectiveAccessV1 } from '@/app/session/access/sessionAccess';
+import { projectSessionEffectiveAccessV1, SESSION_ACCESS_SESSION_BATCH_SIZE } from '@/app/session/access/sessionAccess';
 import { projectViewerSessionDataKey } from '@/app/session/encryption/sessionDataKeyEnvelopePersistence';
 import { readActorSessionSystemRecordsV1 } from '@/app/session/systemRecords/sessionSystemRecordService';
 import { sessionSystemRecordV1ErrorStatus } from '@/app/session/systemRecords/sessionSystemRecordSerialization';
 import { inReadSnapshot } from '@/storage/inTx';
 import { readDatabaseErrorCode } from '@/storage/transactionErrors';
 import { readSessionEvidenceCandidateIdsInTx, selectSessionEvidenceSubjectsInTx } from './selectSessionEvidenceSubjects';
-import { readSessionMessageEvidenceRowsInTx } from './readSessionMessageEvidenceRows';
+import { readSessionMessageEvidenceRowsInTx, type UsageMessageEvidenceStorageRow } from './readSessionMessageEvidenceRows';
 import { readUsageSessionMessageProjection } from './messageEvidenceProjection';
-import { readSessionStateEvidenceRowsInTx } from './readSessionStateEvidenceRows';
+import { readSessionStateEvidenceRowsInTx, type UsageStateEvidenceStorageRow } from './readSessionStateEvidenceRows';
 import { Readable } from 'node:stream';
 
 /** Query demand owns the selected subjects and content-free read; Session owners still admit each component. */
@@ -90,8 +90,12 @@ export function registerSessionEvidenceRoute(app: Fastify): void {
             const results: UsageSessionEvidenceResponse['results'] = ids.map(sessionId => {
                 const record = records.get(sessionId);
                 if (!record) return { sessionId, detail: unavailable(undefined) };
-                if (!record.ok) return { sessionId, detail: { status: sessionSystemRecordV1ErrorStatus(record.code),
-                    body: { error: 'Plugin Session system record operation failed', code: record.code } } };
+                if (!record.ok) {
+                    const databaseError = readDatabaseErrorCode(record.cause);
+                    return { sessionId, detail: databaseError ? { status: 503, body: { error: databaseError } }
+                        : { status: sessionSystemRecordV1ErrorStatus(record.code),
+                            body: { error: 'Plugin Session system record operation failed', code: record.code } } };
+                }
                 const session = record.session;
                 const turn = turns.get(sessionId);
                 return { sessionId, workFacts: { session: {
@@ -125,29 +129,52 @@ export function registerSessionEvidenceRoute(app: Fastify): void {
             sessionIds: readableIds.filter(id => evidenceIds.has(id)) });
         const plainIds = readableIds.filter(id => { const result = details.get(id); return transcriptIds.has(id)
             && result?.status === 'fulfilled' && result.value.status === 200 && result.value.body.session.encryptionMode === 'plain'; });
-        const opaqueIds = readableIds.filter(id => transcriptIds.has(id) && !plainIds.includes(id));
-        const stateRows = await inReadSnapshot(tx => readSessionStateEvidenceRowsInTx(tx,
-            readableIds.filter(id => { const detail = details.get(id); return evidenceIds.has(id)
-                && detail?.status === 'fulfilled' && detail.value.status === 200 && detail.value.body.session.encryptionMode === 'plain'; })
-                .map(id => ({ id, privateState: privateStateIds.has(id) }))));
-        const stateById = new Map(stateRows.map(row => [row.id, row]));
+        const plainIdSet = new Set(plainIds);
+        const opaqueIds = readableIds.filter(id => transcriptIds.has(id) && !plainIdSet.has(id));
+        const stateIds = readableIds.filter(id => { const detail = details.get(id); return evidenceIds.has(id)
+            && detail?.status === 'fulfilled' && detail.value.status === 200 && detail.value.body.session.encryptionMode === 'plain'; });
+        const stateById = new Map<string, UsageStateEvidenceStorageRow>();
+        const stateFailures = new Map<string, ReturnType<typeof unavailable>>();
+        for (let offset = 0; offset < stateIds.length; offset += SESSION_ACCESS_SESSION_BATCH_SIZE) {
+            const batch = stateIds.slice(offset, offset + SESSION_ACCESS_SESSION_BATCH_SIZE);
+            try {
+                const rows = await inReadSnapshot(tx => readSessionStateEvidenceRowsInTx(tx,
+                    batch.map(id => ({ id, privateState: privateStateIds.has(id) }))));
+                for (const row of rows) stateById.set(row.id, row);
+            } catch (reason) {
+                for (const id of batch) stateFailures.set(id, unavailable(reason));
+            }
+        }
         if (reply.raw.destroyed) { reply.hijack(); return; }
         const opaque = await readSessionMessagePages({ userId: request.userId, authentication,
             sessionIds: opaqueIds, previewRequest: request, includeAccountActors: false });
-        const plainCapture = await inReadSnapshot(async tx => {
-            if (!plainIds.length) return { rows: [], admitted: new Set<string>(), denied: new Map<string, { status: 403 | 404 | 503; body: { error: string } }>() };
-            const access = await readSessionTranscriptRowsInTx(tx, { accountId: request.userId, sessionIds: plainIds, authentication });
-            const denied = new Map<string, { status: 403 | 404 | 503; body: { error: string } }>();
-            const subjects = plainIds.flatMap(id => access.decisions.get(id)?.status === 'allowed'
-                && access.rows.has(id) ? [{ id, maximumSeq: resolveSessionTranscriptPublicationCeiling(access.rows.get(id)!) }]
-                : (denied.set(id, access.decisions.get(id)?.status === 'authentication_required'
-                    ? { status: 403, body: { error: 'team_authentication_required' } }
-                    : access.decisions.get(id)?.status === 'authentication_unavailable'
-                        ? { status: 503, body: { error: 'team_authentication_unavailable' } }
-                        : { status: 404, body: { error: 'Session not found' } }), []));
-            return { rows: await readSessionMessageEvidenceRowsInTx(tx, subjects, USAGE_COLLABORATION_TOOL_LEAF_KEYS),
-                admitted: new Set(subjects.map(subject => subject.id)), denied };
-        });
+        const plainCapture: { rows: UsageMessageEvidenceStorageRow[]; admitted: Set<string>;
+            denied: Map<string, { status: 403 | 404 | 503; body: { error: string } }> } = {
+                rows: [], admitted: new Set(), denied: new Map(),
+            };
+        for (let offset = 0; offset < plainIds.length; offset += SESSION_ACCESS_SESSION_BATCH_SIZE) {
+            const batch = plainIds.slice(offset, offset + SESSION_ACCESS_SESSION_BATCH_SIZE);
+            try {
+                const captured = await inReadSnapshot(async tx => {
+                    const access = await readSessionTranscriptRowsInTx(tx, { accountId: request.userId, sessionIds: batch, authentication });
+                    const denied = new Map<string, { status: 403 | 404 | 503; body: { error: string } }>();
+                    const subjects = batch.flatMap(id => access.decisions.get(id)?.status === 'allowed'
+                        && access.rows.has(id) ? [{ id, maximumSeq: resolveSessionTranscriptPublicationCeiling(access.rows.get(id)!) }]
+                        : (denied.set(id, access.decisions.get(id)?.status === 'authentication_required'
+                            ? { status: 403, body: { error: 'team_authentication_required' } }
+                            : access.decisions.get(id)?.status === 'authentication_unavailable'
+                                ? { status: 503, body: { error: 'team_authentication_unavailable' } }
+                                : { status: 404, body: { error: 'Session not found' } }), []));
+                    return { rows: await readSessionMessageEvidenceRowsInTx(tx, subjects, USAGE_COLLABORATION_TOOL_LEAF_KEYS),
+                        admitted: subjects.map(subject => subject.id), denied };
+                });
+                for (const row of captured.rows) plainCapture.rows.push(row);
+                for (const id of captured.admitted) plainCapture.admitted.add(id);
+                for (const [id, denial] of captured.denied) plainCapture.denied.set(id, denial);
+            } catch (reason) {
+                for (const id of batch) plainCapture.denied.set(id, unavailable(reason));
+            }
+        }
         if (reply.raw.destroyed) { reply.hijack(); return; }
         const messages = new Map<string, UsageSessionMessageProjection[]>();
         const malformed = new Set<string>();
@@ -164,7 +191,7 @@ export function registerSessionEvidenceRoute(app: Fastify): void {
         for (const sessionId of ids) {
             const detail = details.get(sessionId);
             const result: UsageSessionEvidenceResponse['results'][number] = { sessionId,
-                detail: !detail ? unavailable(undefined) : detail.status === 'rejected' ? unavailable(detail.reason) : detail.value };
+                detail: stateFailures.get(sessionId) ?? (!detail ? unavailable(undefined) : detail.status === 'rejected' ? unavailable(detail.reason) : detail.value) };
             const turn = turns.get(sessionId);
             if (turn) result.turns = turn.status === 'fulfilled' ? turn.value : unavailable(turn.reason);
             const state = stateById.get(sessionId);

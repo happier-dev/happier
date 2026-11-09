@@ -71,6 +71,7 @@ describe("Machine transaction-composable mutations (SQLite integration)", () => 
         expect(validated.ok).toBe(true);
         if (!validated.ok) return;
 
+        const beforeCreation = Date.now();
         const created = await inTx(async (tx) => createMachineWithInstallationIdentityInTx(tx, {
             accountId: account.id,
             machineId: payload.machineId,
@@ -81,6 +82,7 @@ describe("Machine transaction-composable mutations (SQLite integration)", () => 
             contentPublicKeyFingerprint: null,
             replacementReason: "machine_rotation",
         }));
+        const afterCreation = Date.now();
 
         expect(created.machine).toMatchObject({
             id: payload.machineId,
@@ -92,6 +94,12 @@ describe("Machine transaction-composable mutations (SQLite integration)", () => 
         });
         expect(created.machine.installationPublicKey).toEqual(installationKeyPair.publicKey);
         expect(created.machineReplacement).toBeNull();
+        const stored = await db.machine.findUniqueOrThrow({ where: { id: payload.machineId },
+            select: { active: true, lastActiveAt: true } });
+        expect(stored.active).toBe(false);
+        expect(stored.lastActiveAt).toEqual(created.machine.lastActiveAt);
+        expect(stored.lastActiveAt.getTime()).toBeGreaterThanOrEqual(Math.floor(beforeCreation / 1_000) * 1_000);
+        expect(stored.lastActiveAt.getTime()).toBeLessThanOrEqual(afterCreation);
         await expect(db.accountChange.count({
             where: { accountId: account.id, machineId: payload.machineId },
         })).resolves.toBe(1);

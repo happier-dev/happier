@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-import { isServerFeatureEnabledForHome } from "@/app/features/catalog/serverFeatureGate";
+import { isServerFeatureEnabledForRequest, readHomeEffectiveEnv } from "@/app/features/catalog/serverFeatureGate";
 import { markAccountChanged, type AccountChangePublication } from "@/app/changes/markAccountChanged";
 import { buildUpdateAccountUpdate, eventRouter } from "@/app/events/eventRouter";
 import { afterTx, type Tx } from "@/storage/inTx";
@@ -17,10 +17,12 @@ export async function recordConnectedServiceAccountProfileChange(params: Readonl
     reason?: 'credential-create' | 'credential-replace' | 'credential-delete' | 'credential-health'
         | 'legacy-credential' | 'configuration' | 'group' | 'group-delete' | 'encryption-migration';
 }>): Promise<AccountChangePublication> {
+    const env = await readHomeEffectiveEnv({ tx: params.tx });
     const projection = await buildAccountConnectedServicesProjection({
         tx: params.tx,
         accountId: params.accountId,
-        includeGroups: await isServerFeatureEnabledForHome("connectedServices.accountGroups", { tx: params.tx }),
+        includeGroups: isServerFeatureEnabledForRequest("connectedServices.accountGroups", env),
+        env,
     });
     const cursor = await markAccountChanged(params.tx, {
         accountId: params.accountId,

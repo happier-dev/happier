@@ -4,6 +4,8 @@ import {
     SessionReadBatchTurnsV1Schema,
     SessionReadBatchMessagesV1Schema,
     type SessionReadBatchResultV1,
+    type SessionReadBatchRequestV1,
+    type SessionReadBatchResponseV1,
 } from '@happier-dev/protocol/sessions/read/sessionReadBatchV1';
 
 import type { Fastify } from '../../types';
@@ -19,11 +21,11 @@ import { readSessionTurnsBatch } from './readSessionTurns';
 import { inReadSnapshot } from '@/storage/inTx';
 import { loadSessionRuleReadBoundariesInTx, projectSessionRuleReadStates } from '@/app/session/personal/readState';
 import { readAccountFollowRuleProjectionRowsInTx, projectAccountFollowRuleReceiverCounts } from '@/app/session/follow/accountFollowRuleService';
-import { parseProjectedSessionBatchDetail, parseProjectedSessionBatchResponse } from './sessionRecordResponse';
+import { parseProjectedSessionBatchDetail } from './sessionRecordResponse';
 
 /** Each demanded kind reads one admitted set; projection preserves per-id outcomes. */
 export function registerSessionReadBatchRoute(app: Fastify) {
-    app.post('/v2/sessions/read-batch', {
+    app.post<{ Body: SessionReadBatchRequestV1; Reply: SessionReadBatchResponseV1 }>('/v2/sessions/read-batch', {
         preHandler: app.authenticate,
         config: { rateLimit: resolveApiHotEndpointRateLimit(process.env, 'session.detail'),
             restrictedCredentialBinding: { scope: 'session_managed_subtree', session: 'body.underSessionId' },
@@ -115,14 +117,17 @@ export function registerSessionReadBatchRoute(app: Fastify) {
                 else {
                     const ruleReadStates = projectSessionRuleReadStates({ visibleSessionSeq: row.session.seq, readState: row.viewer.readState,
                         boundaries: ruleProjection.boundaries.get(row.session.id) ?? [] });
-                    row.result.detail = parseProjectedSessionBatchDetail({ ...row.detail, body: { ...row.detail.body, session: {
+                    // Adds server-computed rule facts to an already admitted detail; it does not re-validate the record.
+                    row.result.detail = { ...row.detail, body: { ...row.detail.body, session: {
                         ...row.session, viewer: { ...row.viewer, ...(ruleReadStates.length ? { ruleReadStates } : {}) },
                         ...(row.session.ownerAccountId === request.userId && ruleProjection.receiverCounts
                             ? { receivedRuleCount: ruleProjection.receiverCounts.get(row.session.id) ?? 0 } : {}),
-                    } } });
+                    } } };
                 }
             }
         }
-        return reply.header('Cache-Control', 'no-store').serializer(JSON.stringify).send(parseProjectedSessionBatchResponse({ results }));
+        if (reply.raw.destroyed) { reply.hijack(); return; }
+        // Every component was admitted above; the detail route serializes the same way.
+        return reply.header('Cache-Control', 'no-store').type('application/json; charset=utf-8').serializer(JSON.stringify).send({ results });
     });
 }

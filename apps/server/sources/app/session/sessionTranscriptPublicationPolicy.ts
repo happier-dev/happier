@@ -1,7 +1,7 @@
 import type { Prisma } from "@prisma/client";
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
 import { PrimaryTurnStatusV1Schema, type PrimaryTurnStatusV1, type SessionRuntimeIssueV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
-import { SessionSurfacesChangeHintV1Schema } from '@happier-dev/protocol/sessions/board';
+import { SESSION_UPDATED_MESSAGE_HINT_KEYS, SessionSystemRecordChangeHintV1Schema } from '@happier-dev/protocol/sessions/board/changeHint';
 import { SessionInputAdmissionReceiptV1Schema } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import { readStoredSessionMessageDeliveryResolutionV1 } from '@happier-dev/protocol/sessions/messages/sessionMessageDeliveryResolutionV1';
 import { type ParticipantExecutionRunRecipientRoutingIdentityV1 } from '@happier-dev/protocol/messages/structured/participantMessageV1';
@@ -142,7 +142,9 @@ function filterPublishedSequenceFacts(values: readonly number[], ceiling: number
 }
 
 function isPublishedSessionTranscriptChangeHint(hint: unknown, ceiling: number): boolean {
-    if (SessionSurfacesChangeHintV1Schema.safeParse(hint).success) return true;
+    const record = SessionSystemRecordChangeHintV1Schema.safeParse(hint);
+    if (record.success && record.data.sessionRecords.address.owner === 'host'
+        && record.data.sessionRecords.address.namespace === 'surface') return true;
     if (!isRecord(hint)) return false;
     if (
         hasOnlyKeys(hint, ["lastMessageSeq", "lastMessageId"], ["lastMessageSeq"])
@@ -151,8 +153,9 @@ function isPublishedSessionTranscriptChangeHint(hint: unknown, ceiling: number):
         return true;
     }
     if (
-        hasOnlyKeys(hint, ["updatedMessageSeq", "updatedMessageId"], ["updatedMessageSeq"])
+        hasOnlyKeys(hint, SESSION_UPDATED_MESSAGE_HINT_KEYS, ["updatedMessageSeq"])
         && isPublishedSequence(hint.updatedMessageSeq, ceiling)
+        && (hint.updatedMessageUpdatedAt === undefined || readServerTimestamp(hint.updatedMessageUpdatedAt) !== null)
     ) {
         return true;
     }
@@ -203,6 +206,13 @@ function createCompleteSnapshotPublicationWhere(): Prisma.SessionWhereInput {
             gte: 0,
             lte: db.session.fields.seq,
         },
+    };
+}
+
+function createIncompletePublicationWhere(): Prisma.SessionWhereInput {
+    return {
+        currentStorageState: { not: 'hosted' },
+        NOT: createCompleteSnapshotPublicationWhere(),
     };
 }
 
@@ -306,12 +316,7 @@ export function createSessionTranscriptPublicationRecencyQueryBranches(): readon
             ],
         },
         {
-            where: {
-                NOT: [
-                    { currentStorageState: "hosted" },
-                    completeSnapshotWhere,
-                ],
-            },
+            where: createIncompletePublicationWhere(),
             orderBy: [
                 { createdAt: "desc" },
                 { id: "desc" },
@@ -356,13 +361,17 @@ export function createSessionTranscriptPublicationActivityQueryBranches(
     orderBy: readonly Prisma.SessionOrderByWithRelationInput[];
 }>[] {
     const completeSnapshotWhere = createCompleteSnapshotPublicationWhere();
-    return [
+    const branches: readonly Readonly<{
+        where: Prisma.SessionWhereInput;
+        cursorWheres: readonly Prisma.SessionWhereInput[];
+        orderBy: readonly Prisma.SessionOrderByWithRelationInput[];
+    }>[] = [
         {
             where: {
                 currentStorageState: "hosted",
                 meaningfulActivityAt: { not: null },
             },
-            cursorWhere: createMeaningfulActivityCursorWhere(cursor),
+            cursorWheres: createMeaningfulActivityCursorWheres(cursor),
             orderBy: [
                 { meaningfulActivityAt: "desc" },
                 { id: "desc" },
@@ -373,7 +382,7 @@ export function createSessionTranscriptPublicationActivityQueryBranches(
                 currentStorageState: "hosted",
                 meaningfulActivityAt: null,
             },
-            cursorWhere: createCreatedAtCursorWhere(cursor),
+            cursorWheres: createCreatedAtCursorWheres(cursor),
             orderBy: [
                 { createdAt: "desc" },
                 { id: "desc" },
@@ -381,26 +390,25 @@ export function createSessionTranscriptPublicationActivityQueryBranches(
         },
         {
             where: completeSnapshotWhere,
-            cursorWhere: createMaterializedObservationCursorWhere(cursor),
+            cursorWheres: createMaterializedObservationCursorWheres(cursor),
             orderBy: [
                 { materializedThroughSourceAt: "desc" },
                 { id: "desc" },
             ],
         },
         {
-            where: {
-                NOT: [
-                    { currentStorageState: "hosted" },
-                    completeSnapshotWhere,
-                ],
-            },
-            cursorWhere: createCreatedAtCursorWhere(cursor),
+            where: createIncompletePublicationWhere(),
+            cursorWheres: createCreatedAtCursorWheres(cursor),
             orderBy: [
                 { createdAt: "desc" },
                 { id: "desc" },
             ],
         },
     ];
+    // Timestamp ties and earlier timestamps are disjoint. Taking top-k from
+    // each lets the B-tree seek on both columns, including a large timestamp tie.
+    return branches.flatMap(({ cursorWheres, ...branch }) =>
+        cursorWheres.map(cursorWhere => ({ ...branch, cursorWhere })));
 }
 
 /**
@@ -1033,53 +1041,41 @@ function readDateMs(value: unknown): number | null {
     return Number.isSafeInteger(timestamp) && timestamp >= 0 ? timestamp : null;
 }
 
-function createMeaningfulActivityCursorWhere(
+function createMeaningfulActivityCursorWheres(
     cursor: SessionTranscriptPublicationActivityCursor | null | undefined,
-): Prisma.SessionWhereInput {
-    if (!cursor) return {};
+): readonly Prisma.SessionWhereInput[] {
+    if (!cursor) return [{}];
     const activityAt = createCursorDate(cursor.activityAt);
-    if (!activityAt) return { id: { in: [] } };
-    return {
-        AND: [{
-            OR: [
-                { meaningfulActivityAt: { lt: activityAt } },
-                { meaningfulActivityAt: activityAt, id: { lt: cursor.sessionId } },
-            ],
-        }],
-    };
+    if (!activityAt) return [{ id: { in: [] } }];
+    return [
+        { meaningfulActivityAt: { lt: activityAt } },
+        { meaningfulActivityAt: activityAt, id: { lt: cursor.sessionId } },
+    ];
 }
 
-function createCreatedAtCursorWhere(
+function createCreatedAtCursorWheres(
     cursor: SessionTranscriptPublicationActivityCursor | null | undefined,
-): Prisma.SessionWhereInput {
-    if (!cursor) return {};
+): readonly Prisma.SessionWhereInput[] {
+    if (!cursor) return [{}];
     const activityAt = createCursorDate(cursor.activityAt);
-    if (!activityAt) return { id: { in: [] } };
-    return {
-        AND: [{
-            OR: [
-                { createdAt: { lt: activityAt } },
-                { createdAt: activityAt, id: { lt: cursor.sessionId } },
-            ],
-        }],
-    };
+    if (!activityAt) return [{ id: { in: [] } }];
+    return [
+        { createdAt: { lt: activityAt } },
+        { createdAt: activityAt, id: { lt: cursor.sessionId } },
+    ];
 }
 
-function createMaterializedObservationCursorWhere(
+function createMaterializedObservationCursorWheres(
     cursor: SessionTranscriptPublicationActivityCursor | null | undefined,
-): Prisma.SessionWhereInput {
+): readonly Prisma.SessionWhereInput[] {
     if (!cursor || !Number.isSafeInteger(cursor.activityAt) || cursor.activityAt < 0) {
-        return cursor ? { id: { in: [] } } : {};
+        return cursor ? [{ id: { in: [] } }] : [{}];
     }
     const activityAt = BigInt(cursor.activityAt);
-    return {
-        AND: [{
-            OR: [
-                { materializedThroughSourceAt: { lt: activityAt } },
-                { materializedThroughSourceAt: activityAt, id: { lt: cursor.sessionId } },
-            ],
-        }],
-    };
+    return [
+        { materializedThroughSourceAt: { lt: activityAt } },
+        { materializedThroughSourceAt: activityAt, id: { lt: cursor.sessionId } },
+    ];
 }
 
 function createCursorDate(value: number): Date | null {

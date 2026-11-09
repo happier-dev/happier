@@ -9,14 +9,9 @@ export function sealSessionFollowListCursor(scope: string, cursor: string): stri
     return JSON.stringify({ t: 'sealed_v1', c: encodeBase64(encryptString(['follow-list', 'v1', scope], cursor)) });
 }
 
-/** Retain existing V1 cursor inputs; a malformed sealed envelope never falls back to plain. */
+/** Only the server's sealed continuation may reveal a candidate position. */
 export function openSessionFollowListCursor(scope: string, cursor?: string): string | undefined {
     if (cursor === undefined) return undefined;
-    const value: unknown = JSON.parse(cursor);
-    if (value !== null && typeof value === 'object' && 't' in value) {
-        const sealed = sealedCursorSchema.parse(value);
-        return decryptString(['follow-list', 'v1', scope], decodeBase64(sealed.c));
-    }
-    // The Protocol keyset owner validates this closed legacy V1 shape and its scope.
-    return cursor;
+    const sealed = sealedCursorSchema.parse(JSON.parse(cursor));
+    return decryptString(['follow-list', 'v1', scope], decodeBase64(sealed.c));
 }

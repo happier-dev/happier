@@ -73,7 +73,6 @@ const scheduleAutomation: AutomationListItem = {
     targetType: "execution_run",
     templateCiphertext: "strict-definition",
     templateVersion: 3,
-    lastRunAt: null,
     createdAt: new Date("2026-08-12T00:00:00.000Z"),
     updatedAt: new Date("2026-08-12T00:00:00.000Z"),
     assignments: [],

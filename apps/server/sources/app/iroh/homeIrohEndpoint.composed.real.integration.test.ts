@@ -24,6 +24,7 @@ import {
 } from "@happier-dev/tests/testkit/tls/ephemeralTlsServerFixture";
 
 import { registerApiRoutes } from "@/app/api/api";
+import { installHomeIrohIngress } from '@/app/api/irohIngress';
 import { startSocket } from "@/app/api/socket";
 import type { Fastify as AppFastify } from "@/app/api/types";
 import { enableAuthentication } from "@/app/api/utils/enableAuthentication";
@@ -38,6 +39,7 @@ import {
 } from "@/app/features/homeConnectionDescriptorPublication";
 import { db } from "@/storage/db";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
+import { resolveBoundServerListener } from '@/app/runtime/startupReceipt';
 
 import {
     ensureHomeIrohEndpoint,
@@ -49,6 +51,8 @@ import {
     HOME_IROH_RELAY_URLS_ENV_KEY,
 } from "./homeIrohEndpointConfig";
 import { loadHomeIrohNativeLifecycleFromModule } from "./homeIrohNativeLifecycle";
+import * as nativeLifecycleBoundary from './homeIrohNativeLifecycle';
+import { prepareHomeIrohStartup } from './startup';
 
 type TestDaemonIrohRuntime = Readonly<{
     available: boolean;
@@ -218,13 +222,14 @@ async function requestOverTls(input: Readonly<{
 
 function createProductionProtocolApp(options?: Readonly<{
     https?: Readonly<{ key: Buffer; cert: Buffer }>;
-}>): AppFastify {
+}>): AppFastify & { irohIngress: ReturnType<typeof installHomeIrohIngress> } {
     // `https` swaps the underlying Node server type; the composition below is
     // identical for both, so the ordinary instance type stays the local shape.
     const typed = (options?.https
         ? Fastify({ logger: false, https: { key: options.https.key, cert: options.https.cert } })
             .withTypeProvider<ZodTypeProvider>()
         : Fastify({ logger: false }).withTypeProvider<ZodTypeProvider>()) as unknown as AppFastify;
+    const irohIngress = installHomeIrohIngress(typed);
     typed.register(import("@fastify/rate-limit"), resolveApiRateLimitPluginOptions(process.env));
     typed.setValidatorCompiler(validatorCompiler);
     typed.setSerializerCompiler(serializerCompiler);
@@ -239,7 +244,7 @@ function createProductionProtocolApp(options?: Readonly<{
         homeConnectionDescriptorContinuityStore:
             createHomeConnectionDescriptorContinuityStoreForServer(process.env),
     });
-    return typed;
+    return Object.assign(typed, { irohIngress });
 }
 
 function waitForSocketConnection(socket: ReturnType<typeof ioClient>): Promise<void> {
@@ -301,6 +306,7 @@ describe("composed Home Iroh application bytes", () => {
 
     afterEach(async () => {
         await stopHomeIrohEndpoint();
+        vi.restoreAllMocks();
         harness.resetEnv();
         vi.unstubAllGlobals();
         await db.machine.deleteMany();
@@ -313,9 +319,10 @@ describe("composed Home Iroh application bytes", () => {
     });
 
     it.each([
-        { topology: "direct" as const, expectedPath: "direct" as const },
-        { topology: "relay" as const, expectedPath: "relay" as const },
-    ])("moves authenticated HTTP and WebSocket bytes through the production Home acceptor over $topology", { timeout: 120_000 }, async ({ topology, expectedPath }) => {
+        { topology: "direct" as const, expectedPath: "direct" as const, holder: false },
+        { topology: "relay" as const, expectedPath: "relay" as const, holder: false },
+        { topology: "direct" as const, expectedPath: "direct" as const, holder: true },
+    ])("moves authenticated HTTP and WebSocket bytes through the production Home acceptor over $topology (redis-streams holder=$holder)", { timeout: 120_000 }, async ({ topology, expectedPath, holder }) => {
         expect(process.env.HAPPIER_IROH_REQUIRE_NODE_ADDON).toBe("1");
         const explicitAddonPath = process.env.HAPPIER_TEST_IROH_NODE_ADDON_PATH?.trim();
         if (!explicitAddonPath) {
@@ -362,11 +369,23 @@ describe("composed Home Iroh application bytes", () => {
             const address = app.server.address() as AddressInfo | null;
             if (!address?.port) throw new Error("Fastify did not bind a loopback port");
 
-            const homeState = await ensureHomeIrohEndpoint({
-                env: process.env,
-                apiPort: address.port,
-                native: homeNativeLifecycle,
-            });
+            const ingressPort = await app.irohIngress.listen();
+
+            // Exercise production startup for the declared holder. Only native
+            // addon selection changes: the loaded test-feature addon carries
+            // real HTTP/WebSocket bytes through the ordinary lifecycle adapter.
+            const homeState = await (async () => {
+                if (!holder) return ensureHomeIrohEndpoint({
+                    env: process.env, apiPort: ingressPort, native: homeNativeLifecycle,
+                });
+                vi.spyOn(nativeLifecycleBoundary, 'loadHomeIrohNativeLifecycle').mockReturnValue(homeNativeLifecycle);
+                const env = { ...process.env, HAPPIER_SOCKET_ADAPTER: 'redis-streams', HAPPIER_HOME_IROH_HOLDER: '1' };
+                await prepareHomeIrohStartup(env)({
+                    listener: resolveBoundServerListener(app), ingressPort,
+                    continuityStore: createHomeConnectionDescriptorContinuityStoreForServer(env),
+                });
+                return getHomeIrohEndpointState();
+            })();
             expect(homeState).toMatchObject({
                 status: "active",
                 failureReason: null,
@@ -414,6 +433,14 @@ describe("composed Home Iroh application bytes", () => {
             expect(runtimeOrigin).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
             expect(new URL(runtimeOrigin).port).not.toBe(String(address.port));
             expect(runtimeOrigin).not.toBe(CANONICAL_HOME_URL);
+
+            const challengeResponse = await fetch(`${runtimeOrigin}/v1/auth/challenge`, {
+                method: "POST",
+                headers: { "content-type": "application/json" },
+                body: "{}",
+            });
+            expect(challengeResponse.status).toBe(200);
+            await expect(challengeResponse.json()).resolves.toMatchObject({ audience: { origin: CANONICAL_HOME_URL } });
 
             const healthResponse = await fetch(`${runtimeOrigin}/health`);
             expect(healthResponse.status).toBe(200);
@@ -494,7 +521,7 @@ describe("composed Home Iroh application bytes", () => {
             expect(profileResponse.status).toBe(200);
             await expect(profileResponse.json()).resolves.toMatchObject({ id: account.id });
 
-            const sessionsResponse = await fetch(`${runtimeOrigin}/v1/sessions`, {
+            const sessionsResponse = await fetch(`${runtimeOrigin}/v2/sessions`, {
                 headers: { authorization },
             });
             expect(sessionsResponse.status).toBe(200);
@@ -518,7 +545,7 @@ describe("composed Home Iroh application bytes", () => {
             const acceptor = await native.startHomeAcceptor({
                 endpointHandle: resolvePersonalHomeRuntimeLayout({ env: process.env }).irohEndpointKeyPath,
                 targetHost: "127.0.0.1",
-                targetPort: address.port,
+                targetPort: ingressPort,
             });
             expect(acceptor).toMatchObject({
                 reused: true,
@@ -535,6 +562,12 @@ describe("composed Home Iroh application bytes", () => {
             await expect(testController.restoreAutomatic()).rejects.toThrow(
                 /cannot change while native endpoints are active/,
             );
+            // Keeping the EndpointId and the already-open transport cannot
+            // restore a revoked credential's HTTP authority.
+            await db.account.update({ where: { id: account.id }, data: { tokenEpoch: { increment: 1 } } });
+            const revokedPing = await fetch(`${runtimeOrigin}/v1/auth/ping`, { headers: { authorization } });
+            expect(revokedPing.status).toBe(401);
+            expect((await getHomeIrohEndpointState()).snapshot?.endpoint.endpointId).toBe(homeState.snapshot.endpoint.endpointId);
         } finally {
             try {
                 socket?.close();
@@ -602,6 +635,7 @@ describe("composed Home Iroh application bytes", () => {
             // from this explicit operator input, so the published URL and the
             // served origin are now the same fact instead of two.
             const httpsOrigin = `https://127.0.0.1:${address.port}`;
+            const ingressPort = await app.irohIngress.listen();
             process.env.HAPPIER_PUBLIC_SERVER_URL = httpsOrigin;
 
             // Server composition: the Home Iroh carrier is unavailable on this
@@ -612,7 +646,7 @@ describe("composed Home Iroh application bytes", () => {
             // start no native endpoint or Home acceptor.
             await expect(ensureHomeIrohEndpoint({
                 env: process.env,
-                apiPort: address.port,
+                apiPort: ingressPort,
                 native: null,
             })).resolves.toEqual({
                 status: "unavailable",
@@ -695,7 +729,7 @@ describe("composed Home Iroh application bytes", () => {
 
             const sessionsResponse = await requestOverTls({
                 ingress,
-                url: `${advertisedHttpsEndpoint.url}/v1/sessions`,
+                url: `${advertisedHttpsEndpoint.url}/v2/sessions`,
                 headers: { authorization },
             });
             expect(sessionsResponse.status).toBe(200);

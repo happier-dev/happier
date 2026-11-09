@@ -71,6 +71,7 @@ function errorStatus(code: TeamCredentialExternalProviderErrorCodeV1): number {
     if (code === "invalid_api_key") return 401;
     if (code === "invalid_request") return 400;
     if (code === "policy_denied") return 403;
+    if (code === 'connected_service_credential_reconnect_required') return 403;
     if (code === "team_credential_usage_limit") return 429;
     if (code === "request_cancelled") return 499;
     return 503;

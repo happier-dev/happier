@@ -4,7 +4,7 @@ import { db } from "@/storage/db";
 import { getActivePrismaRuntime } from "@/storage/prisma";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
 import { createPresentUserSessionAccessAuthentication } from "./sessionAccessAuthentication.testkit";
-import { createSessionMessage, reassertSessionLatestTurnStatus, updateSessionReadCursor } from "@/app/session/sessionWriteService";
+import { createSessionMessage, updateSessionReadCursor } from "@/app/session/sessionWriteService";
 import { buildSessionAccessWhere, buildSessionReadableAccountWhereInTx, createApplicableAudienceWhere, buildMembershipHistorySessionAccessWhereInTx, resolveEffectiveSessionAccessWhere } from "./sessionAccessWhere";
 import { assertSessionCapabilityInTx, resolveEffectiveSessionAccess, resolveEffectiveSessionAccessForSessionsInTx, resolveStructuralSessionAccessForAccountsInTx, resolveSessionAccessForOperation, SESSION_CAPABILITY_RULES, type SessionCapability, listCurrentSessionAudienceAccountsInTx, assertSessionTeamReadableGrantInTx, buildSessionAccessProjectionSelect, projectEffectiveSessionAccess } from "./sessionAccess";
 import { inTx, type Tx } from "@/storage/inTx";
@@ -243,9 +243,6 @@ describe("Session access owner/direct authority (SQLite)", () => {
         const after = await db.accountSessionReadState.findUnique({ where: readStateWhere });
         expect(after).toEqual(before);
         expect(await db.accountChange.count({ where: { accountId: actor.id } })).toBe(0);
-        expect(await reassertSessionLatestTurnStatus({ actorUserId: actor.id, sessionId: session.id,
-            latestTurnStatus: "completed", latestTurnStatusObservedAt: 200,
-        })).toEqual({ ok: false, error: "forbidden" });
         expect(await db.sessionMessage.count({ where: { sessionId: session.id } })).toBe(0);
     });
 

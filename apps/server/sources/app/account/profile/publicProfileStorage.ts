@@ -4,8 +4,9 @@ import { PublicProfilePolicyV1Schema, PublicProfileSnapshotV1Schema, PublicProfi
 import { PublicProfileLayoutV1Schema } from '@happier-dev/protocol/widgets/widgetPublicSnapshotV1';
 import { UsageQuerySchema } from '@happier-dev/protocol/inputs/usageQuery';
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
-import type { Tx } from '@/storage/inTx';
-import { acquireAccountChangePublicationLocksInTx } from '@/app/changes/markAccountChanged';
+import { TransactionReplayRequiredError, type Tx } from '@/storage/inTx';
+import { getDbProviderFromEnv } from '@/storage/db';
+import { markAccountChanged } from '@/app/changes/markAccountChanged';
 
 export interface PublicProfileServerDependencies {
     readPublicationContext(tx: Tx, accountId: string, env: NodeJS.ProcessEnv): Promise<PublicProfileContextV1>;
@@ -14,10 +15,66 @@ export interface PublicProfileServerDependencies {
 
 type ProfileRow = NonNullable<Awaited<ReturnType<Tx['accountPublicProfile']['findUnique']>>>;
 
-/** Publication, consent and withdrawal share the identity owner's Account exclusion. */
+/** Ordinary publication mutations admit the row without locking unrelated Account facts. */
 export async function readPublicProfileForMutationInTx(tx: Tx, accountId: string): Promise<ProfileRow | null> {
-    await acquireAccountChangePublicationLocksInTx(tx, [accountId], { includeSingleAccount: true, intent: 'exclusive' });
     return tx.accountPublicProfile.findUnique({ where: { accountId } });
+}
+
+/** The observed payload is the write predicate, so replay re-admits concurrent consent and lifecycle edits. */
+function publicProfileMutationWhere(row: ProfileRow) {
+    return { accountId: row.accountId, state: row.state, removedAt: row.removedAt,
+        policyJson: row.policyJson, metadataJson: row.metadataJson, queryJson: row.queryJson,
+        snapshotJson: row.snapshotJson, layoutJson: row.layoutJson, appearanceJson: row.appearanceJson,
+        publishedAt: row.publishedAt };
+}
+
+async function admitExactPublicProfileWriteInTx(tx: Tx, row: ProfileRow): Promise<void> {
+    if (getDbProviderFromEnv(process.env, 'postgres') !== 'mysql') return;
+    // MySQL's retained utf8mb4_unicode_ci columns equate case/accent changes.
+    // Lock only an exact payload match until the ORM update/delete completes.
+    const matches = await tx.$queryRaw<Array<{ accountId: string }>>`
+        SELECT accountId FROM AccountPublicProfile WHERE accountId = ${row.accountId}
+        AND CAST(policyJson AS BINARY) <=> CAST(${row.policyJson} AS BINARY)
+        AND CAST(metadataJson AS BINARY) <=> CAST(${row.metadataJson} AS BINARY)
+        AND CAST(queryJson AS BINARY) <=> CAST(${row.queryJson} AS BINARY)
+        AND CAST(snapshotJson AS BINARY) <=> CAST(${row.snapshotJson} AS BINARY)
+        AND CAST(layoutJson AS BINARY) <=> CAST(${row.layoutJson} AS BINARY)
+        AND CAST(appearanceJson AS BINARY) <=> CAST(${row.appearanceJson} AS BINARY)
+        FOR UPDATE
+    `;
+    if (matches.length !== 1) throw new TransactionReplayRequiredError('public-profile-changed');
+}
+
+/** Every committed disclosure change shares the Account's durable feed and post-commit wake. */
+async function publishPublicProfileChangeInTx(tx: Tx, accountId: string): Promise<void> {
+    await markAccountChanged(tx, { accountId, kind: 'account', entityId: 'public-profile' });
+}
+
+export async function createPublicProfileInTx(tx: Tx,
+    data: NonNullable<Parameters<Tx['accountPublicProfile']['create']>[0]>['data']): Promise<ProfileRow> {
+    const row = await tx.accountPublicProfile.create({ data });
+    await publishPublicProfileChangeInTx(tx, row.accountId);
+    return row;
+}
+
+export async function updatePublicProfileInTx(tx: Tx, row: ProfileRow,
+    data: NonNullable<Parameters<Tx['accountPublicProfile']['updateMany']>[0]>['data']): Promise<ProfileRow> {
+    if (Object.entries(data).every(([key, value]) => {
+        const current = row[key as keyof ProfileRow];
+        return current instanceof Date && value instanceof Date ? current.getTime() === value.getTime() : current === value;
+    })) return row;
+    await admitExactPublicProfileWriteInTx(tx, row);
+    const result = await tx.accountPublicProfile.updateMany({ where: publicProfileMutationWhere(row), data });
+    if (result.count !== 1) throw new TransactionReplayRequiredError('public-profile-changed');
+    await publishPublicProfileChangeInTx(tx, row.accountId);
+    return tx.accountPublicProfile.findUniqueOrThrow({ where: { accountId: row.accountId } });
+}
+
+export async function deletePublicProfileInTx(tx: Tx, row: ProfileRow): Promise<void> {
+    await admitExactPublicProfileWriteInTx(tx, row);
+    const result = await tx.accountPublicProfile.deleteMany({ where: publicProfileMutationWhere(row) });
+    if (result.count !== 1) throw new TransactionReplayRequiredError('public-profile-changed');
+    await publishPublicProfileChangeInTx(tx, row.accountId);
 }
 
 const storedMetadataSchema = z.strictObject({ disclosure: PublicProfileMetadataV1Schema,

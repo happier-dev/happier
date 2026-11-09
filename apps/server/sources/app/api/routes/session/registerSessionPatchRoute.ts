@@ -1,9 +1,10 @@
+import { UsageSessionTimingV1Schema } from '@happier-dev/protocol/usage/usageWorkEvidence';
 import { z } from "zod/mini";
 import { SESSION_METADATA_LAYOUT_VERSION_V1, SessionMetadataActiveConflictV1Schema, SessionMetadataInactiveModelIntentOwnerPatchV1Schema, SessionMetadataInactiveModelIntentPatchSuccessV1Schema, SessionMetadataInactiveModelIntentPatchV1Schema, SessionMetadataInactiveModelIntentVersionConflictV1Schema, SessionMetadataTuplePatchSuccessV1Schema, SessionMetadataTuplePatchV1Schema, SessionMetadataVersionConflictV1Schema } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 
 import {
     patchSession,
-    updateSessionMetadataEnvelopeTuple,
+    updateAdmittedSessionMetadataEnvelopeTuple,
 } from "@/app/session/sessionWriteService";
 import {
     createSessionMetadataPrivacyUpgradeRequiredResponse,
@@ -17,10 +18,12 @@ import { type Fastify } from "../../types";
 import { readSessionAccessAuthenticationFromRequest } from "@/app/session/access/sessionAccessAuthentication";
 import { SessionTeamCredentialBindingMetadataPatchV1Schema, SessionTeamCredentialBindingMutationRejectionV1Schema } from '@happier-dev/protocol/teams/credentials/sessionBindingV1';
 import { PRESENT_USER_REQUIRED_ERROR } from "@/app/api/utils/apiTokenRouteAdmission";
+import { AccountRouteAuthenticationForbiddenResponseSchema } from "@/app/api/utils/enableAuthentication";
 import { log } from "@/utils/logging/log";
 
 export function registerSessionPatchRoute(app: Fastify) {
     const legacyPatchBodySchema = z.strictObject({
+        usageTimingV1: z.optional(UsageSessionTimingV1Schema),
         metadata: z.optional(z.strictObject({
             ciphertext: z.string(),
             expectedVersion: z.number().check(z.int(), z.minimum(0)),
@@ -63,6 +66,7 @@ export function registerSessionPatchRoute(app: Fastify) {
                 ]),
                 400: z.object({ error: z.literal("Invalid parameters") }),
                 403: z.union([
+                    AccountRouteAuthenticationForbiddenResponseSchema,
                     z.object({ error: z.literal("Forbidden") }),
                     z.object({ error: z.literal(PRESENT_USER_REQUIRED_ERROR) }),
                     z.object({ error: z.literal("session_access_authentication_required") }),
@@ -123,7 +127,7 @@ export function registerSessionPatchRoute(app: Fastify) {
                     authentication: readSessionAccessAuthenticationFromRequest(request),
                 }
                 : { ...tupleBody, actorUserId: userId, sessionId };
-            const tupleResult = await updateSessionMetadataEnvelopeTuple(tupleInput, { publishCurrentView: true });
+            const tupleResult = await updateAdmittedSessionMetadataEnvelopeTuple(tupleInput, { publishCurrentView: true });
             if (!tupleResult.ok) {
                 if (tupleResult.error === "invalid-params") return reply.code(400).send({ error: "Invalid parameters" });
                 if (tupleResult.error === "forbidden") return reply.code(403).send({ error: "Forbidden" });
@@ -213,6 +217,7 @@ export function registerSessionPatchRoute(app: Fastify) {
                         sharedMetadata: tupleResult.sharedMetadata,
                         ownerMetadata: tupleResult.ownerMetadata,
                         agentState: tupleResult.agentState,
+                        runtimeProjection: tupleResult.runtimeProjection,
                         ...(tupleResult.changed ? { changed: tupleResult.changed } : {}),
                         ...(tupleResult.projectKey !== undefined ? { projectKey: tupleResult.projectKey } : {}),
                     },
@@ -250,6 +255,7 @@ export function registerSessionPatchRoute(app: Fastify) {
             metadata: metadata ? { ciphertext: metadata.ciphertext, expectedVersion: metadata.expectedVersion } : undefined,
             agentState: agentState ? { ciphertext: agentState.ciphertext, expectedVersion: agentState.expectedVersion } : undefined,
             sessionExpectation,
+            usageTimingV1: request.body.usageTimingV1,
         });
 
         if (!result.ok) {

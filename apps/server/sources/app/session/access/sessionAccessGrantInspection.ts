@@ -1,11 +1,11 @@
 import { projectSessionAccessGrantTransitionsV1, type SessionAccessGrantRowV1, type SessionAccessGrantsListResponseV1 } from '@happier-dev/protocol/sessions/access/sessionAccessOperationsV1';
 import { ACCOUNT_DISPLAY_PROFILE_SELECT, projectAccountDisplayProfileV1 } from "@/app/account/profile/accountDisplayProfile";
 import { listSessionTeamCredentialBindingConsequencesInTx } from "@/app/teams/credentials/sessionBinding";
-import { readSnapshotWithCurrentAdmission } from "@/storage/readSnapshotWithCurrentAdmission";
+import { captureReadSnapshot } from "@/storage/captureReadSnapshot";
 import { projectSessionEffectiveAccessV1, resolveSessionAccessForOperation } from "./sessionAccess";
 import { backgroundDeliveryAuthentication, type SessionAccessAuthentication } from "./sessionAccessAuthentication";
 import { classifySubjectsExternalToTeamInTx, enforceTeamExternalSharingPolicyInTx } from "./sessionAccessExternalSharingPolicy";
-import { resolveSessionAccessGrantSubjectsInTx } from "./sessionAccessGrantEligibility";
+import { resolveShareSubjectsInTx } from "@/app/teams/shareEligibility";
 import { teamsPolicyStillRequireGrants } from "./sessionAccessGrantService";
 
 /** What the grant inspector answers: the roster projection, or a typed refusal. */
@@ -24,7 +24,7 @@ export async function inspectSessionAccessGrants(params: Readonly<{
     recipientAccountId?: string;
     authentication: SessionAccessAuthentication;
 }>): Promise<SessionAccessGrantInspectionResult> {
-    return await readSnapshotWithCurrentAdmission<SessionAccessGrantInspectionResult>(async (tx): Promise<SessionAccessGrantInspectionResult> => {
+    return await captureReadSnapshot<SessionAccessGrantInspectionResult>(async (tx): Promise<SessionAccessGrantInspectionResult> => {
         const admission = await resolveSessionAccessForOperation(tx, {
             accountId: params.actorAccountId,
             sessionId: params.sessionId,
@@ -86,8 +86,8 @@ export async function inspectSessionAccessGrants(params: Readonly<{
             actorAccountId: params.actorAccountId, primaryTeamId, authentication: params.authentication,
         });
         const subjects = facts.map((row) => row.grant.subject);
-        const eligibilityBySubject = await resolveSessionAccessGrantSubjectsInTx(tx, {
-            actorAccountId: params.actorAccountId, sessionOwnerAccountId: session.accountId,
+        const eligibilityBySubject = await resolveShareSubjectsInTx(tx, {
+            actorAccountId: params.actorAccountId, resourceOwnerAccountId: session.accountId,
             subjects, hasExistingGrant: true,
         });
         const requiredTeamIds = await teamsPolicyStillRequireGrants(tx, facts.flatMap((row) =>
@@ -109,8 +109,9 @@ export async function inspectSessionAccessGrants(params: Readonly<{
                 current: { accessLevel: row.grant.accessLevel, canApprovePermissions: row.grant.canApprovePermissions },
                 canDelegate: admission.access.capabilities.managePermissionDelegation,
                 requiredByTeamPolicy: required,
-                ...(eligibility.ok ? {} : { ineligible: eligibility.error }),
-                ...(removalEligibility.ok ? {} : { removalIneligible: removalEligibility.error }),
+                // Session wire codes keep their released `session_access_` prefix over the shared verdict.
+                ...(eligibility.ok ? {} : { ineligible: `session_access_${eligibility.error}` as const }),
+                ...(removalEligibility.ok ? {} : { removalIneligible: `session_access_${removalEligibility.error}` as const }),
                 ...(external && externalSharing !== null ? { externalSharing } : {}),
             }) });
         }
@@ -124,32 +125,18 @@ export async function inspectSessionAccessGrants(params: Readonly<{
                 ...(primaryTeamId === null ? [] : [primaryTeamId]),
             ])],
         });
-        return { ok: true, value: { ...base, visibility: "complete", grants, credentialBindingConsequences: [...credentialBindingConsequences] } };
-    }, async (tx, captured) => {
-        if (!captured.ok) return captured;
-        const current = await resolveSessionAccessForOperation(tx, {
-            accountId: params.actorAccountId, sessionId: params.sessionId, authentication: params.authentication,
-            capability: captured.value.visibility === "complete" ? "manageAccess" : "readTranscript",
-        });
-        if (current.status === "authentication_required") return { ok: false, error: "session_access_authentication_required" };
-        if (current.status === "authentication_unavailable") return { ok: false, error: "session_access_authentication_unavailable" };
-        if (current.status !== "allowed"
-            || (captured.value.effectiveAccess.capabilities.managePermissionDelegation
-                && !current.access.capabilities.managePermissionDelegation)) return { ok: false, error: "session_access_forbidden" };
-        const value = { ...captured.value, effectiveAccess: projectSessionEffectiveAccessV1(current.access) };
-        if (params.recipientAccountId === undefined) return { ok: true, value };
-        if (value.visibility !== "complete") return { ok: false, error: "session_access_forbidden" };
-        // This host-only preview has no verified credential evidence from the
-        // recipient. The current access owner must qualify their grants itself;
-        // the manager's authentication cannot stand in for the recipient's.
-        const recipient = await resolveSessionAccessForOperation(tx, {
+        // This is a separate subject's admission, captured alongside the
+        // manager's roster; the manager's credentials cannot stand in for it.
+        const recipient = params.recipientAccountId === undefined ? undefined : await resolveSessionAccessForOperation(tx, {
             accountId: params.recipientAccountId,
             sessionId: params.sessionId,
             authentication: backgroundDeliveryAuthentication(),
         });
-        return { ok: true, value: { ...value, recipientAccess: {
-            accountId: params.recipientAccountId,
-            effectiveAccess: recipient.status === "allowed" ? projectSessionEffectiveAccessV1(recipient.access) : null,
-        } } };
+        return { ok: true, value: { ...base, visibility: "complete", grants, credentialBindingConsequences: [...credentialBindingConsequences],
+            ...(params.recipientAccountId === undefined ? {} : { recipientAccess: {
+                accountId: params.recipientAccountId,
+                effectiveAccess: recipient?.status === "allowed" ? projectSessionEffectiveAccessV1(recipient.access) : null,
+            } }),
+        } };
     });
 }

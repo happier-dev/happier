@@ -9,6 +9,7 @@ import { resolveSessionFollowActionRequest } from '@happier-dev/protocol/session
 import { SESSION_FOLLOW_SOURCES_HTTP_PATHS_V1 } from '@happier-dev/protocol/sessions/follow/sessionFollowSourcesApi';
 import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lightSqliteHarness';
 import { db } from '@/storage/db';
+import { makeShareEligibleForTest } from '@/testkit/shareEligibility.testkit';
 import { changeDeliveryMute } from '@/app/session/follow/sessionDeliveryMuteService';
 import { createPresentUserSessionAccessAuthentication } from '@/app/session/access/sessionAccessAuthentication.testkit';
 import { createAuthenticatedTestApp } from '../../testkit/sqliteFastify';
@@ -39,6 +40,7 @@ describe('Account Run Follow source to personal delivery (SQLite + HTTP)', () =>
             tag: randomUUID(), metadata: '{}', encryptionMode: 'plain' } }) : null;
         const producer = agent ? { v: 1 as const, kind: 'agent' as const, sessionId: agent.id } : undefined;
         const policy: FollowPolicyV1 = kind === 'agent' ? { preset: 'custom', events: { message: { delivery: 'interrupt' } } } : { preset: 'important' };
+        await makeShareEligibleForTest(author.id, receiver.id);
         const authentication = createPresentUserSessionAccessAuthentication({ env: {} });
         const created = await createDiscussion({ actorAccountId: author.id, authentication, ...(producer ? { producer } : {}), request: {
             creationLocalId: randomUUID(), titleContent: { t: 'plain', v: { v: 1, title: 'Discussion' } },
@@ -50,6 +52,11 @@ describe('Account Run Follow source to personal delivery (SQLite + HTTP)', () =>
         const discussionId = created.value.discussion.id;
         const source = { kind: 'discussion' as const, discussionId };
         const app = createAuthenticatedTestApp();
+        const routeReads: { status: number; code: string | undefined }[] = [];
+        app.addHook('onResponse', async (request: FastifyRequest, reply: FastifyReply) => {
+            if (request.url === SESSION_FOLLOW_SOURCES_HTTP_PATHS_V1.runOccurrenceRoutes)
+                routeReads.push({ status: reply.statusCode, code: request.followSourceRoute?.sourceReadCode });
+        });
         app.addHook('onRequest', async (request: FastifyRequest) => { request.headers['x-test-user-id'] = receiver.id; });
         registerSessionFollowSourceRoutes(app);
         registerSessionFollowRoutes(app);
@@ -66,9 +73,21 @@ describe('Account Run Follow source to personal delivery (SQLite + HTTP)', () =>
                     payload: { v: 1, source } });
                 expect(unavailable.statusCode).toBe(409);
                 expect(unavailable.json()).toMatchObject({ ok: false, error: 'source_unavailable' });
+                expect(routeReads.at(-1)).toEqual({ status: 409, code: 'discussion_follow_unavailable' });
                 await db.accountSessionFollow.updateMany({ where: { accountId: receiver.id, sourceDiscussionId: discussionId },
                     data: { deliveredDiscussionSeq: created.value.discussion.messageSeq } });
             }
+            // A seeded Follow at the current sequence has no new original.
+            // It is healthy no-content; the missing-seed refusal above is not.
+            const empty = await app.inject({ method: 'POST', url: SESSION_FOLLOW_SOURCES_HTTP_PATHS_V1.runOccurrenceRoutes,
+                payload: { v: 1, source } });
+            expect(empty.statusCode).toBe(204);
+            expect(empty.body).toBe('');
+            expect(routeReads.at(-1)).toEqual({ status: 204, code: 'occurrence_absent' });
+            const missingOriginal = await app.inject({ method: 'POST', url: SESSION_FOLLOW_SOURCES_HTTP_PATHS_V1.runOccurrenceRoutes,
+                payload: { v: 1, source, messageId: 'missing-message' } });
+            expect(missingOriginal.statusCode).toBe(409);
+            expect(routeReads.at(-1)).toEqual({ status: 409, code: 'discussion_message_absent' });
             const posted = await postDiscussionMessage({ actorAccountId: author.id, authentication, discussionId, ...(producer ? { producer } : {}), request: {
                 localId: randomUUID(), content: { t: 'plain', v: { v: 1, parts: [{ t: 'text', text: 'Original human text stays private' }] } }, mentionedAccountIds: [],
             } });
@@ -136,6 +155,10 @@ describe('Account Run Follow source to personal delivery (SQLite + HTTP)', () =>
                     where: { discussionId_accountId: { discussionId, accountId: receiver.id } },
                 })).toEqual(readState);
                 expect((await db.accountSessionFollow.findFirstOrThrow({ where: { accountId: receiver.id } })).deliveredDiscussionSeq).toBe(posted.value.message.seq);
+                const exhausted = await app.inject({ method: 'POST', url: SESSION_FOLLOW_SOURCES_HTTP_PATHS_V1.runOccurrenceRoutes,
+                    payload: { v: 1, source } });
+                expect(exhausted.statusCode).toBe(204);
+                expect(exhausted.body).toBe('');
                 expect((await app.inject({ method: 'GET', url: '/v2/account/session-follows' })).json()).toEqual(configurationBefore.json());
                 // Private effect progress is not a changed Follow configuration:
                 // its coarse publication would re-demand every unrelated Run.
@@ -204,6 +227,10 @@ describe('Account Run Follow source to personal delivery (SQLite + HTTP)', () =>
         let terminalEventId = 'exact-terminal';
         const app = createAuthenticatedTestApp();
         const failures: unknown[] = [];
+        const routeReads: number[] = [];
+        app.addHook('onResponse', async (request: FastifyRequest, reply: FastifyReply) => {
+            if (request.url === SESSION_FOLLOW_SOURCES_HTTP_PATHS_V1.runOccurrenceRoutes) routeReads.push(reply.statusCode);
+        });
         app.addHook('onSend', async (request: FastifyRequest, reply: FastifyReply, payload: unknown) => {
             if (reply.statusCode >= 400 && request.method === 'POST') failures.push({ path: request.url, status: reply.statusCode, payload });
         });
@@ -261,6 +288,17 @@ describe('Account Run Follow source to personal delivery (SQLite + HTTP)', () =>
                 isCurrent: async () => true, subscribeInvalidation: () => () => {}, resolveSourceKeyContext: async () => null,
                 isPersonalCurrent: async () => true, dispatchPersonal: personal });
             try {
+                // An Execution Run without an occurrence is a healthy empty
+                // range. The seeded Workflow revision is already an original.
+                // Both settle one read without progress; the later terminal
+                // hint/range must still deliver its new original.
+                const before = await db.accountSessionFollow.findFirstOrThrow({ where: { accountId: account.id } });
+                await dispatcher.dispatchAccountSourceRange(kind === 'execution_run'
+                    ? { sourceSessionId: parent.id } : { workflowRunIds: [run.id] });
+                expect(failures).toEqual([]);
+                expect(routeReads).toEqual([kind === 'execution_run' ? 204 : 200]);
+                expect(pushes).toHaveLength(0);
+                expect(await db.accountSessionFollow.findFirstOrThrow({ where: { accountId: account.id } })).toEqual(before);
                 terminal = true;
                 await db.automationRun.update({ where: { id: run.id }, data: { state: terminalStatus, revision: 2 } });
                 const configurationBefore = await app.inject({ method: 'GET', url: '/v2/account/session-follows' });

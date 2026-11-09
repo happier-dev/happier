@@ -9,6 +9,7 @@ import {
 
 import { db } from "@/storage/db";
 import { withSqliteReadSnapshot } from '@/storage/prisma';
+import { sealProviderAccountUsageSnapshot, openSealedProviderAccountUsageSnapshot } from "@happier-dev/protocol/connect/accountUsage";
 import { ConnectedServiceQuotaSnapshotV1Schema } from "@happier-dev/protocol";
 import { createSignedAccountContentBinding } from "@/testkit/accountEncryption";
 import {
@@ -131,6 +132,88 @@ describe("qualified Connected Account usage stored identity", () => {
             staleAfterMs: snapshot.staleAfterMs,
         };
     }
+
+    it.each([
+        { encrypted: false, fingerprint: undefined },
+        { encrypted: false, fingerprint: 'unchanged-material' },
+        { encrypted: true, fingerprint: undefined },
+        { encrypted: true, fingerprint: 'unchanged-material' },
+    ])('settles a failed quota refresh without advancing the last provider observation (%j)', async ({ encrypted, fingerprint }) => {
+        const account = await db.account.create({ data: encrypted
+            ? { ...createSignedAccountContentBinding(), encryptionMode: 'e2ee' }
+            : { publicKey: null, encryptionMode: 'plain' } });
+        const { credential, ref } = await createCredential(account.id, encrypted);
+        const write = buildUsageWrite(account.id, {
+            credentialRevision: credential.credentialRevision,
+            source: { ref, bindingKind: 'account' },
+            fetchedAt: Date.now() - 60_000,
+            planLabel: 'Last known plan',
+        });
+        const material = { type: 'legacy' as const, secret: new Uint8Array(32).fill(7) };
+        const publish = async (snapshot: typeof write.snapshot, status: 'ok' | 'error') => {
+            const { snapshot: _snapshot, ...base } = write;
+            return await writeQualifiedProviderAccountUsageRecord({ ...base, status, materialFingerprint: fingerprint,
+                ...(encrypted ? { payloadMode: 'sealed_account_scoped_v1' as const,
+                    sealedPayload: sealProviderAccountUsageSnapshot({ material, snapshot, randomBytes: length => new Uint8Array(length).fill(3) }) }
+                    : { snapshot }),
+            });
+        };
+        await publish(write.snapshot, 'ok');
+        expect(await requestQualifiedConnectedAccountQuotaRefresh({ accountId: account.id, ref })).toBe('written');
+        const pending = await readQualifiedConnectedAccountUsageRecord({ accountId: account.id, ref });
+        expect(pending?.refreshRequestedAt).toBeDefined();
+        const oldFailureAt = write.fetchedAt;
+        await publish({ ...write.snapshot, state: 'error_last_known_good',
+            diagnostics: [{ kind: 'provider_http', code: 'provider_backoff', status: 429, observedAtMs: oldFailureAt }] }, 'error');
+        expect(await readQualifiedConnectedAccountUsageRecord({ accountId: account.id, ref }))
+            .toMatchObject({ status: 'error', fetchedAt: write.fetchedAt, refreshRequestedAt: pending!.refreshRequestedAt });
+        const observedAtMs = Date.now();
+        const retryAtMs = observedAtMs + 45_000;
+        const failedSnapshot = { ...write.snapshot, state: 'error_last_known_good' as const,
+            diagnostics: [{ kind: 'provider_http' as const, code: 'provider_backoff', status: 429, observedAtMs, retryAtMs }] };
+        await publish(failedSnapshot, 'error');
+        const result = await readQualifiedConnectedAccountUsageRecord({ accountId: account.id, ref });
+        expect(result).toMatchObject({ status: 'error', fetchedAt: write.fetchedAt });
+        const snapshot = result?.snapshot ?? (result?.sealedPayload
+            ? openSealedProviderAccountUsageSnapshot({ material, sealed: result.sealedPayload }) : null);
+        expect(snapshot).toMatchObject({ state: 'error_last_known_good',
+            fetchedAtMs: write.fetchedAt, observedAtMs: write.snapshot.observedAtMs,
+            meters: write.snapshot.meters, diagnostics: [{ kind: 'provider_http', status: 429, retryAtMs }] });
+        expect(result).not.toHaveProperty('refreshRequestedAt');
+        // Late outcomes cannot overwrite the newer failure or revive its request.
+        await publish({ ...failedSnapshot, diagnostics: [{ ...failedSnapshot.diagnostics[0], observedAtMs: oldFailureAt }] }, 'error');
+        expect(await readQualifiedConnectedAccountUsageRecord({ accountId: account.id, ref })).toEqual(result);
+    });
+
+    it.each([false, true])('does not restore an old-observation failure after an equal-time successful observation (encrypted=%s)', async encrypted => {
+        const account = await db.account.create({ data: encrypted
+            ? { ...createSignedAccountContentBinding(), encryptionMode: 'e2ee' }
+            : { publicKey: null, encryptionMode: 'plain' } });
+        const { credential, ref } = await createCredential(account.id, encrypted);
+        const write = buildUsageWrite(account.id, {
+            credentialRevision: credential.credentialRevision,
+            source: { ref, bindingKind: 'account' }, fetchedAt: 1000, planLabel: 'Retained plan',
+        });
+        const material = { type: 'legacy' as const, secret: new Uint8Array(32).fill(7) };
+        const publish = async (snapshot: typeof write.snapshot, status: 'ok' | 'error') => {
+            const { snapshot: _snapshot, ...base } = write;
+            return await writeQualifiedProviderAccountUsageRecord({ ...base, status, fetchedAt: snapshot.fetchedAtMs,
+                ...(encrypted ? { payloadMode: 'sealed_account_scoped_v1' as const,
+                    sealedPayload: sealProviderAccountUsageSnapshot({ material, snapshot, randomBytes: length => new Uint8Array(length).fill(3) }) }
+                    : { snapshot }),
+            });
+        };
+        const oldFailure = { ...write.snapshot, state: 'error_last_known_good' as const,
+            diagnostics: [{ kind: 'provider_http' as const, status: 429, observedAtMs: 2000 }] };
+        await publish(oldFailure, 'error');
+        expect(await readQualifiedConnectedAccountUsageRecord({ accountId: account.id, ref }))
+            .toMatchObject({ status: 'error', fetchedAt: 1000 });
+        await publish({ ...write.snapshot, fetchedAtMs: 2000, observedAtMs: 2000 }, 'ok');
+        const successful = await readQualifiedConnectedAccountUsageRecord({ accountId: account.id, ref });
+        expect(successful).toMatchObject({ status: 'ok', fetchedAt: 2000 });
+        await publish(oldFailure, 'error');
+        expect(await readQualifiedConnectedAccountUsageRecord({ accountId: account.id, ref })).toEqual(successful);
+    });
 
     it.each(['record', 'account'] as const)('publishes an exact quota-refresh wake after the %s refresh marker commits', async target => {
         const account = await db.account.create({ data: { publicKey: null, encryptionMode: 'plain' } });

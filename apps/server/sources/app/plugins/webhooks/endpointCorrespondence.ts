@@ -4,7 +4,8 @@ import type { Tx } from "@/storage/inTx";
 
 import { resolveCurrentPluginWebhookContributionTxV1 } from "./currentContribution";
 import { resolveCurrentPluginWebhookTargetTxV1 } from "./currentTarget";
-import { projectPluginWebhookEndpointBindingAvailabilityV1 } from "./endpointReadiness";
+import { createPluginWebhookCheckIdDigestV1 } from "./checkIdDigest";
+import { projectPluginWebhookEndpointBindingAvailabilityV1, projectPluginWebhookEndpointReadinessV1 } from "./endpointReadiness";
 
 const UNAVAILABLE = {
     kind: "unavailable",
@@ -27,7 +28,7 @@ export function pluginWebhookEndpointControllerCorrespondenceWhereV1(params: Rea
     webhookContribution: Readonly<{ pluginId: string; localId: string }>;
     sourceInstanceId: string;
     setup: PluginWebhookEndpointSetupV1;
-    contribution: Readonly<{ handlerActionLocalId: string; routingKind: string }>;
+    contribution: Readonly<{ handlerActionLocalId: string | null; routingKind: string }>;
 }>) {
     return {
         id: params.webhookEndpointId,
@@ -36,6 +37,8 @@ export function pluginWebhookEndpointControllerCorrespondenceWhereV1(params: Rea
         webhookContributionId: params.webhookContribution.localId,
         sourceInstanceId: params.sourceInstanceId,
         setupKind: params.setup.kind,
+        checkId: params.setup.kind === "capabilityUrlV1" ? params.setup.checkId : "",
+        checkIdDigest: createPluginWebhookCheckIdDigestV1(params.setup.kind === "capabilityUrlV1" ? params.setup.checkId : ""),
         providerInstallationId: params.setup.kind === "githubSharedInstallationV1"
             ? params.setup.installationId
             : null,
@@ -107,6 +110,7 @@ export async function checkCurrentPluginWebhookEndpointCorrespondenceTxV1(params
                 revision: true,
                 enabled: true,
                 revokedAt: true,
+                providerConfirmedAt: true,
                 route: { select: { enabled: true, revokedAt: true } },
             },
         });
@@ -121,7 +125,26 @@ export async function checkCurrentPluginWebhookEndpointCorrespondenceTxV1(params
             targetStatus: "current",
         });
         return PluginWebhookEndpointCheckCorrespondenceResultV1Schema.parse(availability === "available"
-            ? { kind: "ready", webhookEndpointId: endpoint.id, revision: endpoint.revision }
+            ? {
+                kind: "ready", webhookEndpointId: endpoint.id, revision: endpoint.revision,
+                // The exact query above proves these nonsecret endpoint facts.
+                // Returning them preserves the monitor's own binding checks
+                // without granting it present-user endpoint administration.
+                contribution: input.webhookContribution,
+                targetMaterialization: input.targetMaterialization,
+                sourceInstanceId: input.sourceInstanceId,
+                ...(endpoint.revokedAt ? { revokedAt: endpoint.revokedAt.getTime() } : {}),
+                readiness: projectPluginWebhookEndpointReadinessV1({
+                    endpointEnabled: endpoint.enabled,
+                    endpointRevokedAt: endpoint.revokedAt,
+                    routeEnabled: endpoint.route.enabled,
+                    routeRevokedAt: endpoint.route.revokedAt,
+                    targetStatus: "current",
+                    providerConfirmedAt: endpoint.providerConfirmedAt,
+                    oneTimeCredentialDisclosureLost: false,
+                    receiptOnly: input.setup.kind === "capabilityUrlV1",
+                }),
+            }
             : UNAVAILABLE);
     } catch {
         return UNAVAILABLE;

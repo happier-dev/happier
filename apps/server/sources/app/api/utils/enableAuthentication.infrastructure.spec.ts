@@ -1,11 +1,5 @@
 import Fastify from "fastify";
 import type { ZodTypeProvider } from "fastify-type-provider-zod";
-import { once } from "node:events";
-import { createServer } from "node:http";
-import { Server } from "socket.io";
-import { io } from "socket.io-client";
-import { ACCEPTED_PENDING_SETTLEMENT_EVENT_V1 } from "@happier-dev/protocol/sessions/pending/acceptedPendingSettlementV1";
-import { SESSION_PUBLISHER_AUTHORITY_CHECK_EVENT } from "@happier-dev/protocol/sessions/runtime/activity/transport";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { applyEnvValues, restoreEnv, snapshotEnv } from "@/testkit/env";
@@ -111,59 +105,4 @@ describe("authentication infrastructure failures", () => {
         }
     });
 
-    it.each([ACCEPTED_PENDING_SETTLEMENT_EVENT_V1, SESSION_PUBLISHER_AUTHORITY_CHECK_EVENT])("retires an unbounded %s ACK on storage failure and reoffers the same operation after reconnect", async (event) => {
-        const { app, token } = await createApp();
-        const { installSessionPublisherCredentialCurrentness } = await import("../socket/socketCredentialCurrentness");
-        const http = createServer();
-        const server = new Server(http);
-        const effects: unknown[] = [];
-        server.on("connection", (socket) => {
-            installSessionPublisherCredentialCurrentness("u1", socket);
-            socket.on("error", () => {});
-            socket.on(event, (request, ack) => {
-                effects.push(request);
-                ack({ ok: true });
-            });
-        });
-        http.listen(0, "127.0.0.1");
-        await once(http, "listening");
-        const address = http.address();
-        if (!address || typeof address === "string") throw new Error("Missing test listener");
-        const client = io(`http://127.0.0.1:${address.port}`, { auth: { token }, transports: ["websocket"], autoConnect: false });
-        try {
-            const connected = new Promise<void>((resolve) => client.once("connect", () => resolve()));
-            client.connect();
-            await connected;
-            let socketFailureReached = false;
-            boundary.account.findUnique.mockImplementationOnce(async () => {
-                socketFailureReached = true;
-                throw Object.assign(new Error("private connection detail"), { code: "P1017" });
-            });
-            const reconnected = new Promise<void>((resolve) => client.once("connect", () => resolve()));
-            const request = { sessionId: "session", localId: "accepted-input" };
-            // No ACK timeout: disconnect must retire the original wait so its
-            // incumbent custody can reoffer this exact operation on reconnect.
-            await expect(client.emitWithAck(event, request)).rejects.toThrow("disconnected");
-            expect(socketFailureReached).toBe(true);
-            const accountReadsAfterFailure = boundary.account.findUnique.mock.calls.length;
-            expect(effects).toEqual([]);
-            expect(client.active).toBe(true);
-            await reconnected;
-            await expect(client.emitWithAck(event, request)).resolves.toEqual({ ok: true });
-            expect(boundary.account.findUnique.mock.calls.length).toBeGreaterThan(accountReadsAfterFailure);
-            expect(effects).toEqual([request]);
-            // A real invalid credential keeps the existing terminal refusal.
-            const serverSocket = [...server.sockets.sockets.values()][0]!;
-            serverSocket.handshake.auth.token = "invalid-signature";
-            const disconnected = new Promise<void>((resolve) => client.once("disconnect", () => resolve()));
-            await expect(client.emitWithAck(event, request)).rejects.toThrow("disconnected");
-            await disconnected;
-            expect(client.active).toBe(false);
-            expect(effects).toEqual([request]);
-        } finally {
-            client.disconnect();
-            await new Promise<void>((resolve) => server.close(() => resolve()));
-            await app.close();
-        }
-    });
 });

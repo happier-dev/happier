@@ -11,6 +11,7 @@ type V2SessionListServerTimingMetric = "cursor" | "query" | "page" | "snapshot" 
 export type V2SessionListInitialPageTiming = Readonly<{
     measureQuery: <T>(fn: () => Promise<T>) => Promise<T>;
     measurePage: <T>(fn: () => T) => T;
+    recordCandidates?: (count: number, limit: number) => void;
 }>;
 
 export const V2_SESSION_LIST_SERVER_TIMING_REQUEST_HEADER = "x-happier-session-list-timing";
@@ -50,6 +51,13 @@ function formatDurationMs(durationMs: number): string {
 export function createV2SessionListServerTiming(request: RequestWithHeaders) {
     const enabled = isTimingRequested(request);
     const startedAtMs = nowMs();
+    let examinedCandidates = 0;
+    let candidateBudget = 0;
+    const recordCandidates = (count: number, limit: number): void => {
+        if (!enabled) return;
+        examinedCandidates += count;
+        candidateBudget += limit;
+    };
     const durations: Record<V2SessionListServerTimingMetric, number> = {
         cursor: 0,
         query: 0,
@@ -85,6 +93,7 @@ export function createV2SessionListServerTiming(request: RequestWithHeaders) {
         enabled,
         measure,
         measureAsync,
+        recordCandidates,
         apply(reply: ReplyWithHeaders): void {
             if (!enabled) return;
             const totalMs = nowMs() - startedAtMs;
@@ -95,12 +104,14 @@ export function createV2SessionListServerTiming(request: RequestWithHeaders) {
                 `${SERVER_TIMING_NAME_BY_METRIC.total};dur=${formatDurationMs(totalMs)}`,
                 `${SERVER_TIMING_NAME_BY_METRIC.snapshot};dur=${formatDurationMs(durations.snapshot)}`,
                 `${SERVER_TIMING_NAME_BY_METRIC.readmission};dur=${formatDurationMs(durations.readmission)}`,
+                `happier_v2_sessions_candidates;desc="${examinedCandidates}/${candidateBudget}"`,
             ].join(", "));
         },
         initialPageTiming(): V2SessionListInitialPageTiming {
             return {
                 measureQuery: (fn) => measureAsync("query", fn),
                 measurePage: (fn) => measure("page", fn),
+                recordCandidates,
             };
         },
     };

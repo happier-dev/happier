@@ -1,16 +1,19 @@
 import Fastify from "fastify";
 import { Server } from "socket.io";
 import { io as connect, type Socket as ClientSocket } from "socket.io-client";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { SessionConsumptionReplaceAckV1Schema } from "@happier-dev/protocol";
 import { UpdateContainerSchema } from "@happier-dev/protocol/updates";
+import { buildAccountStoredContentCompatibilitySocketAuthV1, CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION } from "@happier-dev/protocol/clientCompatibility/accountStoredContentCompatibilityV1";
 import { startSocket } from "@/app/api/socket";
 import type { Fastify as AppFastify } from "@/app/api/types";
 import { auth } from "@/app/auth/auth";
-import { buildMessageUpdatedUpdate, buildNewMessageUpdate, eventRouter } from "@/app/events/eventRouter";
+import { buildMessageUpdatedUpdate, buildNewMessageUpdate, buildUpdateSessionUpdate, eventRouter } from "@/app/events/eventRouter";
 import { deleteSessionAccessGrantInTx, putSessionAccessGrantInTx } from "@/app/session/access/sessionAccessGrantService";
+import { notifySessionHumanPresenceAccessChanged } from "@/app/session/humanPresence/sessionHumanPresenceService";
 import { db } from "@/storage/db";
 import { inTx } from "@/storage/inTx";
+import * as sqliteStorage from "@/storage/prisma";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
 
 describe("Session consumption through authenticated Socket.IO registration and SQLite", () => {
@@ -43,20 +46,26 @@ describe("Session consumption through authenticated Socket.IO registration and S
         if (!address || typeof address === "string") throw new Error("Missing socket address");
         const clients: ClientSocket[] = [];
         const updates = new Map<ClientSocket, unknown[]>();
+        const metadataUpdates = new Map<ClientSocket, unknown[]>();
         const ticks = new Map<ClientSocket, unknown[]>();
+        const accountChangeFrames = new Map<ClientSocket, number>();
         const open = async (accountId: string, clientPurpose: string, runner = false) => {
             const token = await auth.createToken(accountId, undefined, { kind: "account", authority: "present_user" });
             const client = connect(`http://127.0.0.1:${address.port}`, {
                 path: "/v1/updates", transports: ["websocket"], reconnection: false, autoConnect: false,
-                auth: { token, clientPurpose, clientType: runner ? "session-scoped" : "user-scoped",
+                auth: { ...buildAccountStoredContentCompatibilitySocketAuthV1(CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION), token, clientPurpose, clientType: runner ? "session-scoped" : "user-scoped",
                     ...(runner ? { sessionId: session.id } : {}) },
             });
             clients.push(client);
             updates.set(client, []);
+            metadataUpdates.set(client, []);
             ticks.set(client, []);
+            accountChangeFrames.set(client, 0);
             client.on("update", value => {
                 const parsed = UpdateContainerSchema.parse(value);
+                if (parsed.body.t === "account-change") accountChangeFrames.set(client, accountChangeFrames.get(client)! + 1);
                 if (parsed.body.t === "new-message" || parsed.body.t === "message-updated") updates.get(client)!.push(parsed);
+                if (parsed.body.t === "update-session") metadataUpdates.get(client)!.push(parsed);
             });
             client.on("ephemeral", value => {
                 if (value.type === "transcript-stream-segment" || value.type === "transcript-stream-segment-delta") ticks.get(client)!.push(value);
@@ -87,12 +96,41 @@ describe("Session consumption through authenticated Socket.IO registration and S
             const durable = await open(owner.id, "concurrent-server-cache");
             const runner = await open(owner.id, "sdk-live", true);
             const shared = await open(viewer.id, "sync");
+            const unrelated = await open(stranger.id, "sync");
+            expect(await replace(unrelated, [session.id], [session.id]))
+                .toEqual({ ok: true, v: 1, liveSessionIds: [], durableSessionIds: [] });
             expect(await replace(live, [session.id, denied.id, "missing"], []))
                 .toEqual({ ok: true, v: 1, liveSessionIds: [session.id], durableSessionIds: [] });
             expect(await replace(durable, [], [session.id]))
                 .toEqual({ ok: true, v: 1, liveSessionIds: [], durableSessionIds: [session.id] });
             expect(await replace(shared, [session.id], []))
                 .toEqual({ ok: true, v: 1, liveSessionIds: [session.id], durableSessionIds: [] });
+            const metadataPayload = buildUpdateSessionUpdate(session.id, 3, "metadata-update",
+                { version: 9, value: "private-metadata" }, { version: 4, value: "request-ledger" },
+                { pendingPermissionRequestCount: 1, pendingUserActionRequestCount: 0 });
+            await eventRouter.emitUpdate({ userId: owner.id, payload: metadataPayload,
+                recipientFilter: { type: "all-interested-in-session", sessionId: session.id } });
+            await settle();
+            expect(metadataUpdates.get(hidden)).toMatchObject([{ body: { metadataDocument: "omitted", metadataVersion: 9,
+                metadataLayoutVersion: 0, agentState: { version: 4, value: "request-ledger" }, pendingPermissionRequestCount: 1 } }]);
+            expect(metadataUpdates.get(hidden)?.[0]).not.toHaveProperty("body.metadata");
+            for (const client of [live, durable, runner]) expect(metadataUpdates.get(client)).toEqual([metadataPayload]);
+            await replace(shared, [], []);
+            const recipientMetadataPayload = buildUpdateSessionUpdate(session.id, 4, "recipient-metadata-update",
+                { version: 10, value: JSON.stringify({ completedRequests: { request: { status: "approved" } },
+                    actionConfirmationsV1: { v: 1 } }) }, { version: 4, value: "request-ledger" });
+            recipientMetadataPayload.body.metadataLayoutVersion = 1;
+            await eventRouter.emitUpdate({ userId: viewer.id, payload: recipientMetadataPayload,
+                recipientFilter: { type: "all-interested-in-session", sessionId: session.id } });
+            await settle();
+            expect(metadataUpdates.get(shared)).toEqual([recipientMetadataPayload]);
+            await replace(shared, [session.id], []);
+            await replace(hidden, [session.id], []);
+            await eventRouter.emitUpdate({ userId: owner.id, payload: metadataPayload,
+                recipientFilter: { type: "all-interested-in-session", sessionId: session.id } });
+            await settle();
+            expect(metadataUpdates.get(hidden)?.at(-1)).toEqual(metadataPayload);
+            await replace(hidden, [], []);
             await publish(owner.id);
             await publish(owner.id, true);
             for (const type of ["transcript-stream-segment", "transcript-stream-segment-delta"] as const) {
@@ -128,14 +166,121 @@ describe("Session consumption through authenticated Socket.IO registration and S
             await publish(viewer.id);
             await settle();
             expect(updates.get(shared)).toHaveLength(1);
+            const beforeRevoke = new Map(accountChangeFrames);
             expect(await inTx(tx => deleteSessionAccessGrantInTx(tx, { actorAccountId: owner.id,
                 sessionId: session.id, subject: { kind: "account", accountId: viewer.id }, authentication })))
                 .toMatchObject({ ok: true });
-            await publish(viewer.id, true);
+            // A grant revocation does not disconnect the person's whole Account
+            // transport, but the committed Session access-change push retires
+            // that open stream: its live demand is gone without any delivery.
+            expect(shared.connected).toBe(true);
+            const sharedServerSocket = io.sockets.sockets.get(shared.id!);
+            await vi.waitFor(() => expect(sharedServerSocket?.data.sessionConsumption?.liveSessionIds.has(session.id)).toBe(false));
             await settle();
-            expect(updates.get(shared)).toHaveLength(1);
-            expect(await replace(shared, [session.id], []))
-                .toEqual({ ok: true, v: 1, liveSessionIds: [], durableSessionIds: [] });
+            expect(accountChangeFrames.get(shared)! - beforeRevoke.get(shared)!).toBe(1);
+            expect(accountChangeFrames.get(unrelated)! - beforeRevoke.get(unrelated)!).toBe(0);
+            console.info("SESSION_ACCESS_CHANGE_ACCOUNT_FRAMES", JSON.stringify({
+                owner: accountChangeFrames.get(reconnected)! - beforeRevoke.get(reconnected)!,
+                viewer: accountChangeFrames.get(shared)! - beforeRevoke.get(shared)!,
+                stranger: accountChangeFrames.get(unrelated)! - beforeRevoke.get(unrelated)!,
+            }));
+            const beforeAccessPush = new Map(accountChangeFrames);
+            notifySessionHumanPresenceAccessChanged({ sessionId: session.id });
+            // The real declaration ACK drains this socket's ordered consumption
+            // lane after retirement; no arbitrary timing window is needed.
+            await replace(shared, [], []);
+            await settle();
+            expect(accountChangeFrames).toEqual(beforeAccessPush);
+            console.info("SESSION_ACCESS_PUSH_EXTRA_ACCOUNT_FRAMES", 0);
+            const snapshotSizes: number[] = [];
+            const readSnapshot = sqliteStorage.withSqliteReadSnapshot;
+            // Observe the genuine database boundary without replacing a query,
+            // admission decision or projection. Every finite event/declaration
+            // owns one snapshot, which must already exclude revoked readers.
+            const observeSnapshot = vi.spyOn(sqliteStorage, "withSqliteReadSnapshot")
+                .mockImplementation(async function<T>(
+                    read: (reader: sqliteStorage.TransactionClient) => Promise<T>,
+                    options?: Readonly<{ deadlineAtMs?: number }>,
+                ): Promise<T> {
+                    return readSnapshot(async tx => {
+                        const captured = await read(tx);
+                        // Retain only admission cardinality: captured socket
+                        // objects include credentials and must never enter diffs.
+                        if (captured && typeof captured === "object" && "value" in captured
+                            && Array.isArray(captured.value)) snapshotSizes.push(captured.value.length);
+                        return captured;
+                    }, options);
+                });
+            try {
+                const refusedAtCapture = async (operation: () => Promise<unknown>) => {
+                    snapshotSizes.length = 0;
+                    await operation();
+                    expect(snapshotSizes).toEqual([0]);
+                };
+                // Live segments reach UI consumers only through admitted live
+                // demand, so a retired stream costs no per-delta decision.
+                const refusedWithoutCapture = async (operation: () => Promise<unknown>) => {
+                    snapshotSizes.length = 0;
+                    await operation();
+                    expect(snapshotSizes).toEqual([]);
+                };
+                for (const accountId of [viewer.id, stranger.id]) {
+                    await refusedAtCapture(() => publish(accountId, true));
+                    await refusedAtCapture(async () => eventRouter.emitUpdate({ userId: accountId, payload: metadataPayload,
+                        recipientFilter: { type: "all-interested-in-session", sessionId: session.id } }));
+                    for (const type of ["transcript-stream-segment", "transcript-stream-segment-delta"] as const) {
+                        await refusedWithoutCapture(async () => eventRouter.emitEphemeral({ userId: accountId,
+                            payload: { type, sessionId: session.id, message: { localId: "revoked-segment", tick: 3,
+                                baseLength: 1, content: { t: "encrypted", c: "after-revoke" }, createdAt: 1, updatedAt: 2 } },
+                            recipientFilter: { type: "all-interested-in-session", sessionId: session.id },
+                        }));
+                    }
+                }
+                await settle();
+                expect(updates.get(shared)).toHaveLength(1);
+                expect(metadataUpdates.get(shared)).toEqual([recipientMetadataPayload]);
+                expect(ticks.get(shared)).toEqual([]);
+                expect(updates.get(unrelated)).toEqual([]);
+                expect(metadataUpdates.get(unrelated)).toEqual([]);
+                expect(ticks.get(unrelated)).toEqual([]);
+                await refusedAtCapture(async () => {
+                    expect(await replace(shared, [session.id], [session.id]))
+                        .toEqual({ ok: true, v: 1, liveSessionIds: [], durableSessionIds: [] });
+                });
+                await refusedAtCapture(() => publish(viewer.id));
+                await settle();
+                expect(updates.get(shared)).toHaveLength(1);
+
+                // The same guard must keep the authorized owner working.
+                const ownerUpdates = updates.get(durable)!.length;
+                const ownerSegments = ticks.get(runner)!.length;
+                snapshotSizes.length = 0;
+                expect(await replace(durable, [], [session.id]))
+                    .toEqual({ ok: true, v: 1, liveSessionIds: [], durableSessionIds: [session.id] });
+                expect(snapshotSizes).toEqual([1]);
+                snapshotSizes.length = 0;
+                await publish(owner.id, true);
+                expect(snapshotSizes).toHaveLength(1);
+                expect(snapshotSizes[0]).toBeGreaterThan(0);
+                snapshotSizes.length = 0;
+                await eventRouter.emitEphemeral({ userId: owner.id,
+                    payload: { type: "transcript-stream-segment", sessionId: session.id,
+                        message: { localId: "owner-after-revoke", tick: 3, baseLength: 1,
+                            content: { t: "encrypted", c: "owner-still-authorized" }, createdAt: 1, updatedAt: 2 } },
+                    recipientFilter: { type: "all-interested-in-session", sessionId: session.id },
+                });
+                // A live segment shares no delivery snapshot: UI consumers go by
+                // admitted demand and the runner by its own held decision.
+                expect(snapshotSizes).toEqual([]);
+                await settle();
+                expect(updates.get(durable)).toHaveLength(ownerUpdates + 1);
+                expect(updates.get(durable)!.at(-1)).toMatchObject({ body: { delivery: "full", message: { content: message.content } } });
+                expect(ticks.get(runner)).toHaveLength(ownerSegments + 1);
+                expect(shared.connected).toBe(true);
+                expect(unrelated.connected).toBe(true);
+            } finally {
+                observeSnapshot.mockRestore();
+            }
         } finally {
             clients.forEach(client => client.disconnect());
             eventRouter.clearIo();

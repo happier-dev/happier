@@ -47,7 +47,7 @@ describe("local service public exposure policy", () => {
         const mod = await loadPublicPolicyModule();
 
         const modeDecision = mod?.resolveLocalServicePublicExposureDecision({
-            policy: { enabled: true, allowedModes: ["authenticated"], dnsTlsRequired: false },
+            policy: { enabled: true, allowedModes: ["people"], dnsTlsRequired: false },
             requestedMode: "public",
             requestedTtlMs: 60_000,
             nowMs: 1_000,

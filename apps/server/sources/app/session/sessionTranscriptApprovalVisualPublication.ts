@@ -67,7 +67,8 @@ async function retainAndEnrichInTx(tx: Tx, params: Readonly<{
         sessionId: params.sessionId, sessionEncryptionMode: mode, stored, surfaceItemReference: admitted,
     }) : null;
     if (enriched) await markSessionProjectionRecipientsChanged({ tx, sessionId: params.sessionId,
-        hint: { updatedMessageId: enriched.id, updatedMessageSeq: enriched.seq } });
+        hint: { updatedMessageId: enriched.id, updatedMessageSeq: enriched.seq,
+            updatedMessageUpdatedAt: enriched.updatedAt.getTime() } });
     if (!isDeepStrictEqual(artifact.transcriptVisualPublication, next)) await tx.artifact.update({
         where: { id: params.artifactId }, data: { transcriptVisualPublication: next, updatedAt: artifact.updatedAt },
     });

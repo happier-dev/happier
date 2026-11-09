@@ -62,6 +62,8 @@ export function discussionFollowPublicationCostContracts(): void {
                 const baseline = new Map(beforeChanges.map(row => [row.entityId, row]));
                 const changed = afterChanges.filter(row => row.cursor !== baseline.get(row.entityId)?.cursor);
                 const publications = after.seq - before.seq;
+                console.info('DISCUSSION_FOLLOW_PUBLICATION_COST', JSON.stringify({ unrelatedAttachments: count,
+                    publications, changedDestinations: changed.length, retry }));
                 // One real Discussion publication plus each changed destination;
                 // a retry publishes neither, independent of attachment inventory.
                 expect(publications).toBe(retry ? 0 : 1 + changedSessionIds.length);

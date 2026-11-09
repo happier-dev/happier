@@ -3,6 +3,7 @@ import tweetnacl from 'tweetnacl';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { MACHINE_PLAIN_DATA_KEY_MARKER, decodeBase64, encodePlainMachineStoredContent, signMachineInstallationProof } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { WorkspaceSyncSourceRoutingV1Schema, WorkspaceSyncTargetRoutingV1Schema } from '@happier-dev/protocol/socketRpc';
 import { createAuthenticatedTestApp } from '@/app/api/testkit/sqliteFastify';
 import { db } from '@/storage/db';
 import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lightSqliteHarness';
@@ -29,7 +30,14 @@ describe('Machine receiver current admission on SQLite', () => {
             installationId: randomUUID(), installationPublicKey: new Uint8Array(key.publicKey),
         } });
         const session = await db.session.create({ data: { id: randomUUID(), accountId: alice.id, tag: randomUUID(),
-            metadata: '{}', encryptionMode: 'plain', active: true } });
+            metadata: '{}', encryptionMode: 'plain', active: false } });
+        const homeId = await getOrCreateServerIdentityId();
+        await db.accessKey.create({ data: { accountId: alice.id, sessionId: session.id,
+            machineId: machine.id, data: MACHINE_PLAIN_DATA_KEY_MARKER } });
+        await db.session.update({ where: { id: session.id }, data: { runtimeMachineTarget: {
+            homeId, accountId: alice.id, sessionId: session.id, machineId: machine.id,
+            installationId: machine.installationId!,
+        } } });
         const share = await db.sessionShare.create({ data: { sessionId: session.id, sharedByUserId: alice.id,
             sharedWithUserId: bob.id, accessLevel: 'edit', canApprovePermissions: false } });
         const context = { actorAccountId: alice.id, custodianAccountId: alice.id, machineId: machine.id,
@@ -42,7 +50,7 @@ describe('Machine receiver current admission on SQLite', () => {
             installationId: context.installationId, accountId: alice.id, rpcAdmission: { context, method, sessionDecision } },
             privateKey: key.secretKey });
         const app = createAuthenticatedTestApp();
-        let hostingMachineId: string | null = machine.id;
+        let hostingMachineId: string | null = null;
         app.decorate('resolveCurrentSessionMachine', async (input: Readonly<{ accountId: string; sessionId: string }>) =>
             input.accountId === alice.id && input.sessionId === session.id ? hostingMachineId : null);
         machinesRoutes(app);
@@ -78,7 +86,9 @@ describe('Machine receiver current admission on SQLite', () => {
             await db.account.update({ where: { id: bob.id }, data: { encryptionMode: 'plain' } });
             expect((await verify(qualifiedBody)).statusCode).toBe(403);
             await db.account.update({ where: { id: bob.id }, data: { encryptionMode: 'e2ee' } });
-            hostingMachineId = null;
+            await db.accessKey.delete({ where: { accountId_machineId_sessionId: {
+                accountId: alice.id, machineId: machine.id, sessionId: session.id,
+            } } });
             expect((await verify(qualifiedBody)).statusCode).toBe(403);
         } finally { await app.close(); }
     });
@@ -146,22 +156,24 @@ describe('Machine receiver current admission on SQLite', () => {
         } finally { await app.close(); }
     });
 
-    async function createSharedChildParentFixture() {
+    async function createSharedChildParentFixture(requesterOwned = false) {
         const homeId = await getOrCreateServerIdentityId();
         const custodian = await db.account.create({ data: { publicKey: `source-custodian-${randomUUID()}`, encryptionMode: 'plain' } });
         const actor = await db.account.create({ data: { publicKey: `source-actor-${randomUUID()}`, encryptionMode: 'plain' } });
         const parentKey = tweetnacl.sign.keyPair();
         const childKey = tweetnacl.sign.keyPair();
-        const createMachine = (key: ReturnType<typeof tweetnacl.sign.keyPair>) => db.machine.create({ data: {
-            id: randomUUID(), accountId: custodian.id, active: true,
+        const createMachine = (key: ReturnType<typeof tweetnacl.sign.keyPair>, accountId = custodian.id) => db.machine.create({ data: {
+            id: randomUUID(), accountId, active: true,
+            operationProtocolCapabilities: { requesterExecutionIsolation: { protocolVersions: [1] } },
+            operationProtocolCapabilitiesRevision: 1,
             metadata: encodePlainMachineStoredContent({ host: 'source-fixture', platform: 'linux', happyCliVersion: 'test',
                 homeDir: '/home/source', happyHomeDir: '/home/source/.happier' }),
             dataEncryptionKey: new Uint8Array(decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER, 'base64')),
             installationId: randomUUID(), installationPublicKey: new Uint8Array(key.publicKey),
         } });
         const parent = await createMachine(parentKey);
-        const child = await createMachine(childKey);
-        await db.machineAccountGrant.create({ data: { machineId: child.id, accountId: actor.id,
+        const child = await createMachine(childKey, requesterOwned ? actor.id : custodian.id);
+        if (!requesterOwned) await db.machineAccountGrant.create({ data: { machineId: child.id, accountId: actor.id,
             accessLevel: 'view', createdByAccountId: custodian.id } });
         expect(await resolveMachineAdmission({ actorAccountId: actor.id, machineId: parent.id })).toMatchObject({ kind: 'denied' });
         const admitted = await resolveMachineAdmission({ actorAccountId: actor.id, machineId: child.id, requiredRole: 'use' });
@@ -171,7 +183,7 @@ describe('Machine receiver current admission on SQLite', () => {
         const row = await db.managedMachine.create({ data: {
             homeId, custodianAccountId: custodian.id,
             controllerMachineId: parent.id, controllerInstallationId: parent.installationId!, enrolledMachineId: child.id,
-            admittedActionRequestId: randomUUID(), admittedInput: {}, allocation: 'bound', creationState: 'active',
+            admittedActionRequestId: randomUUID(), admittedInput: requesterOwned ? { enrollmentAccountId: actor.id } : {}, allocation: 'bound', creationState: 'active',
             launch: { provider: { pluginId: 'happier.devcontainer', localId: 'devcontainer' }, schemaVersion: 1, name: 'Source child', choices: {} },
             retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
             resource: { contributionRef: { pluginId: 'happier.devcontainer', localId: 'devcontainer' }, schemaVersion: 1, value: {},
@@ -180,6 +192,48 @@ describe('Machine receiver current admission on SQLite', () => {
         } });
         return { homeId, custodian, actor, parentKey, childKey, parent, child, context, row };
     }
+
+    it.each(['source', 'target'] as const)('verifies requester-owned %s workspace admission at its foreign controller and retains only cleanup after rebuild', async kind => {
+        const { homeId, custodian, actor, parentKey, childKey, parent, child, context, row } = await createSharedChildParentFixture(true);
+        const operationId = randomUUID();
+        const body = (phase: 'prepare' | 'abort' | 'preflight' | 'release', rootPath = '/child/source', privateKey = parentKey.secretKey) => {
+            const routing = kind === 'source' ? { workspaceSyncSourceRouting: WorkspaceSyncSourceRoutingV1Schema.parse({ v: 1, phase, operationId,
+                accountServerId: homeId, sourceMachineId: child.id, sourceRootPath: rootPath,
+                sourceContext: { machineAdmission: context, callerAuthority: 'present_user' } }) }
+                : { workspaceSyncTargetRouting: WorkspaceSyncTargetRoutingV1Schema.parse({ v: 1, phase, operationId, accountServerId: homeId,
+                    targetMachineId: child.id, targetRootPath: rootPath,
+                    targetContext: { machineAdmission: context, callerAuthority: 'present_user' } }) };
+            const method = `${parent.id}:${kind === 'source' ? RPC_METHODS.DAEMON_WORKSPACE_SYNC_HANDOFF_SOURCE_PHASE
+                : phase === 'release' ? RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_BOOTSTRAP_RELEASE : RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_REPLACEMENT_PREFLIGHT}`;
+            return { v: 1, context, method, ...routing, proof: signMachineInstallationProof({ payload: {
+                version: 1, machineId: parent.id, installationId: parent.installationId!, accountId: custodian.id,
+                rpcAdmission: { context, method, ...routing } }, privateKey }) };
+        };
+        const freshPhase = kind === 'source' ? 'prepare' : 'preflight';
+        const releasePhase = kind === 'source' ? 'abort' : 'release';
+        const app = createAuthenticatedTestApp();
+        machinesRoutes(app);
+        try {
+            const verify = (payload: unknown, accountId = custodian.id) => app.inject({ method: 'POST',
+                url: `/v1/machines/${parent.id}/admission/verify`,
+                headers: { authorization: 'Bearer authenticated-test', 'x-test-user-id': accountId }, payload });
+            expect((await verify(body(freshPhase))).statusCode).toBe(200);
+            expect((await verify(body(freshPhase), actor.id)).statusCode).toBe(403);
+            expect((await verify(body(freshPhase, '/unrelated'))).statusCode).toBe(403);
+            expect((await verify(body(freshPhase, '/child/source', childKey.secretKey))).statusCode).toBe(403);
+            await db.managedMachine.update({ where: { id: row.id }, data: { enrolledMachineId: null,
+                admittedInput: { enrollmentAccountId: actor.id, replacementEnrollment: { machineId: child.id } },
+                resource: { contributionRef: { pluginId: 'happier.devcontainer', localId: 'devcontainer' }, schemaVersion: 1,
+                    value: {}, devcontainerObservation: { nativeResourceId: 'replacement', user: 'coder', workspaceFolder: '/new',
+                        storage: { kind: 'child', childPath: '/new' } } } } });
+            expect((await verify(body(freshPhase))).statusCode).toBe(403);
+            expect((await verify(body(releasePhase))).statusCode).toBe(200);
+            await db.managedMachine.update({ where: { id: row.id }, data: { admittedInput: { enrollmentAccountId: custodian.id,
+                replacementEnrollment: { machineId: child.id } } } });
+            expect((await verify(body(releasePhase))).statusCode).toBe(403);
+            expect(await resolveMachineAdmission({ actorAccountId: custodian.id, machineId: child.id })).toMatchObject({ kind: 'denied' });
+        } finally { await app.close(); }
+    });
 
     it('verifies original shared-child SOURCE admission with the exact physical parent signer', async () => {
         const { homeId, custodian, actor, parentKey, childKey, parent, child, context, row } = await createSharedChildParentFixture();
@@ -200,6 +254,23 @@ describe('Machine receiver current admission on SQLite', () => {
             const response = await verify(body);
             expect(response.statusCode).toBe(200);
             expect(response.json()).toEqual({ v: 1, ok: true });
+            // Reviewed SOURCE custody grants the physical effect, not permission
+            // to use an older receiver's unrestricted daemon filesystem rights.
+            await db.machine.update({ where: { id: child.id }, data: {
+                operationProtocolCapabilities: { requesterExecutionIsolation: { protocolVersions: [1] } },
+                operationProtocolCapabilitiesRevision: 1,
+            } });
+            await db.machine.update({ where: { id: parent.id }, data: {
+                operationProtocolCapabilities: { requesterExecutionIsolation: { protocolVersions: [1] } },
+                operationProtocolCapabilitiesRevision: 1,
+            } });
+            expect((await verify(body)).statusCode).toBe(200);
+            await db.machine.update({ where: { id: parent.id }, data: { operationProtocolCapabilities: {} } });
+            expect((await verify(body)).statusCode).toBe(403);
+            await db.machine.update({ where: { id: parent.id }, data: {
+                operationProtocolCapabilities: { requesterExecutionIsolation: { protocolVersions: [1] } },
+            } });
+            expect((await verify(body)).statusCode).toBe(200);
             const foreignHome = `srv_${'b'.repeat(32)}`;
             const foreignHomeRouting = { ...routing, accountServerId: foreignHome };
             expect((await verify({ ...body, workspaceSyncSourceRouting: foreignHomeRouting,

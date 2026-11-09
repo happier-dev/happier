@@ -186,6 +186,7 @@ function createChannelsCollection(...initialRows: JsonRecord[]) {
                 if (request.index === "by-kind") return row.value["record-kind"] === prefix[0];
                 if (request.index === "by-connection") return row.value["connection-id"] === prefix[0];
                 if (request.index === "by-binding") return row.value["binding-id"] === prefix[0];
+                if (request.index === "by-retry-due") return row.value.terminal === prefix[0];
                 if (request.index === "by-connection-binding-v2") {
                     return row.value["connection-id"] === prefix[0]
                         && (row.value["binding-id"] ?? null) === prefix[1]
@@ -895,6 +896,7 @@ describe("Channels first-party provider Automation Event composition", () => {
                     "../../../../../packages/plugins/channels/src/testkit/currentConnectionFixture.ts",
                     import.meta.url,
                 ).href);
+                const authorityEpoch = 4;
                 const connection = currentConnectionFixture.createCurrentConversationConnectionFixture({
                     connectionId: `connection-${provider}`,
                     authority: {
@@ -913,7 +915,7 @@ describe("Channels first-party provider Automation Event composition", () => {
                         providerConfig: scenario.providerConfig,
                         routingIdentityKey: "r".repeat(43),
                         integrationPrincipal: scenario.integrationPrincipal,
-                        authorityEpoch: 4,
+                        authorityEpoch,
                     },
                     transport: scenario.connectionTransport,
                     overlapSafety: provider === "telegram" ? "providerExclusive" : "safe",
@@ -1043,6 +1045,7 @@ describe("Channels first-party provider Automation Event composition", () => {
                 ).href);
                 const input = {
                     connectionId: `connection-${provider}`,
+                    ...(scenario.connectionTransport.kind === "socket" ? { authorityEpoch } : {}),
                     entry: scenario.observation,
                 };
 
@@ -2096,7 +2099,7 @@ describe("Channels first-party provider Automation Event composition", () => {
         const dispatchHandler = handlers.get(AUTOMATION_REPLY_HANDOFF_DAEMON_RPC_METHOD_V1);
         if (dispatchHandler === undefined) throw new Error("composed handoff receiver was not registered");
         const worker = await runAutomationReplyHandoffWorkerPass({
-            now: new Date(),
+            now: () => new Date(),
             dispatch: async (request: unknown) => await dispatchHandler(request, {
                 signal: new AbortController().signal,
             }) as AutomationReplyHandoffDispatchResultV1,
@@ -2252,6 +2255,7 @@ describe("Channels first-party provider Automation Event composition", () => {
             });
 
             const connectionId = "connection-discord";
+            const authorityEpoch = 4;
             const connection = await (async () => {
                 const fixtureModule = await import(/* @vite-ignore */ new URL(
                     "../../../../../packages/plugins/channels/src/testkit/currentConnectionFixture.ts",
@@ -2277,7 +2281,7 @@ describe("Channels first-party provider Automation Event composition", () => {
                         providerConfig: humanScenario.providerConfig,
                         routingIdentityKey: "r".repeat(43),
                         integrationPrincipal: humanScenario.integrationPrincipal,
-                        authorityEpoch: 4,
+                        authorityEpoch,
                     },
                     transport: humanScenario.connectionTransport,
                     overlapSafety: "safe",
@@ -2398,7 +2402,7 @@ describe("Channels first-party provider Automation Event composition", () => {
             // census/checkpoint owner and settles checkpoint-safe with zero
             // Event custody and zero Runs.
             await expect(ingressModule.ingestConversationProviderObservationForInvocation(
-                { connectionId, entry: selfScenario.observation },
+                { connectionId, authorityEpoch, entry: selfScenario.observation },
                 channelsContext,
             )).resolves.toBeUndefined();
             expect(await db.automationRun.count({ where: { accountId: ACCOUNT_ID } })).toBe(0);
@@ -2410,7 +2414,7 @@ describe("Channels first-party provider Automation Event composition", () => {
             // one Run through the same census and the provider's admit Action.
             currentScenario = humanScenario;
             await expect(ingressModule.ingestConversationProviderObservationForInvocation(
-                { connectionId, entry: humanScenario.observation },
+                { connectionId, authorityEpoch, entry: humanScenario.observation },
                 channelsContext,
             )).resolves.toBeUndefined();
             expect(await db.automationRun.count({ where: { accountId: ACCOUNT_ID } })).toBe(1);
@@ -2434,7 +2438,7 @@ describe("Channels first-party provider Automation Event composition", () => {
         }
     }, 120_000);
 
-    it("rejoins the same Conversation handoff deterministically when the daemon custody response is lost", async () => {
+    it("rejoins the same Conversation handoff after repeated lost custody responses without redispatching an unknown provider outcome", async () => {
         const scenario = await loadScenario("telegram");
         const keyPair = await seedComposedProviderFixture(scenario);
         await seedChannelsCoreReleaseFixture();
@@ -2690,21 +2694,21 @@ describe("Channels first-party provider Automation Event composition", () => {
         const dispatchHandler = handlers.get(AUTOMATION_REPLY_HANDOFF_DAEMON_RPC_METHOD_V1);
         if (dispatchHandler === undefined) throw new Error("composed handoff receiver was not registered");
 
-        // First dispatch: the real daemon handler commits custody, then the
-        // RPC response is lost before it reaches the server worker.
+        // Real daemon/Channels custody admission completes before the transport
+        // loses two answers. Only that RPC boundary is replaced here.
         let dispatchCalls = 0;
         const dispatch = async (request: unknown) => {
             dispatchCalls += 1;
             const result = await dispatchHandler(request, {
                 signal: new AbortController().signal,
             }) as AutomationReplyHandoffDispatchResultV1;
-            if (dispatchCalls === 1) {
-                throw new Error("simulated RPC response loss after custody committed");
+            if (dispatchCalls <= 2) {
+                return { kind: "unavailable", code: "contractInvalid" } as const;
             }
             return result;
         };
         const firstPass = await runAutomationReplyHandoffWorkerPass({
-            now: new Date(),
+            now: () => new Date(),
             dispatch,
         });
         expect(firstPass).toMatchObject({ claimed: true, settled: true });
@@ -2717,21 +2721,62 @@ describe("Channels first-party provider Automation Event composition", () => {
             select: { replyHandoffState: true, replyHandoffAttempt: true },
         })).resolves.toMatchObject({ replyHandoffState: "ready", replyHandoffAttempt: 1 });
 
+        const outward = await import(/* @vite-ignore */ new URL(
+            "../../../../../packages/plugins/channels/src/outwardDelivery.ts",
+            import.meta.url,
+        ).href) as typeof import("../../../../../packages/plugins/channels/src/outwardDelivery");
+        const signal = new AbortController().signal;
+        // The shared Collection fixture is the external storage host; custody
+        // parsing, claiming, settlement and terminality remain real.
+        const storage = {
+            stateCollection,
+            deliveriesCollection: deliveries.collection,
+            signal,
+        } as unknown as Parameters<typeof outward.createConversationOutwardDeliveryCollectionStore>[0];
+        const store = outward.createConversationOutwardDeliveryCollectionStore(storage);
+        const scanner = outward.createConversationOutwardDeliveryCollectionScanner(storage);
+        const pending = await scanner.scan({ now: Date.now(), limit: 1 });
+        expect(pending.kind).toBe("ready");
+        if (pending.kind !== "ready" || !pending.records[0]) throw new Error("Missing ready Channels custody");
+        const original = pending.records[0];
+        if (original.obligation.content === null) throw new Error("Ready custody lost its content");
+        const obligation = { ...original.obligation, content: original.obligation.content };
+        let providerCalls = 0;
+        const deliver = async () => {
+            providerCalls += 1;
+            return { kind: "outcomeUnknown" } as const;
+        };
+        const delivery = { store, obligation, signal, deliver,
+            now: Date.now,
+            authority: outward.createConversationOutwardDeliveryCollectionAuthority({ stateCollection }) };
+        expect(await outward.deliverConversationOutwardDelivery({ ...delivery,
+            retainedRecord: original, attemptId: "provider-unknown" }))
+            .toMatchObject({ kind: "settled", custody: { state: "outcomeUnknown" } });
+        expect(providerCalls).toBe(1);
+
         // The retry re-leases the SAME handoff id; the deterministic custody
         // writer rejoins the existing row instead of creating a second one.
         const retryPass = await runAutomationReplyHandoffWorkerPass({
-            now: new Date(Date.now() + 60_000),
+            now: () => new Date(Date.now() + 60_000),
             dispatch,
         });
         expect(retryPass).toMatchObject({ claimed: true, settled: true });
         expect(dispatchCalls).toBe(2);
         expect([...deliveries.rows.values()].filter((row) => row.deleted !== true)).toHaveLength(1);
+        await expect(db.automationRun.findUniqueOrThrow({
+            where: { id: conversationRunIdResolved },
+            select: { replyHandoffState: true, replyHandoffAttempt: true },
+        })).resolves.toMatchObject({ replyHandoffState: "ready", replyHandoffAttempt: 2 });
+        expect(await runAutomationReplyHandoffWorkerPass({
+            now: () => new Date(Date.now() + 180_000), dispatch,
+        })).toMatchObject({ claimed: true, settled: true });
+        expect(dispatchCalls).toBe(3);
         const settledRun = await db.automationRun.findUniqueOrThrow({
             where: { id: conversationRunIdResolved },
             select: { replyHandoffState: true, replyHandoffAttempt: true },
         });
         expect(settledRun.replyHandoffState).toBe("accepted");
-        expect(settledRun.replyHandoffAttempt).toBe(2);
+        expect(settledRun.replyHandoffAttempt).toBe(3);
         // Rejoin is exact at the Channels custody owner: the retry settles the
         // same durable row the lost first attempt created, keyed by the same
         // handoff id. No server-side proof blob records that fact.
@@ -2739,6 +2784,7 @@ describe("Channels first-party provider Automation Event composition", () => {
         expect(rejoinedCustody).toHaveLength(1);
         expect(rejoinedCustody[0]!.rowId).toBe(custodyAfterLoss[0]!.rowId);
         expect((rejoinedCustody[0]!.value.payload as JsonRecord)).toMatchObject({
+            state: "outcomeUnknown",
             deliveryKey: `automation:${handoffId}`,
             source: {
                 kind: "automationResult",
@@ -2746,5 +2792,12 @@ describe("Channels first-party provider Automation Event composition", () => {
                 resultId: handoffId,
             },
         });
+        const retained = await store.lookup(obligation);
+        expect(retained.kind).toBe("rejoined");
+        if (retained.kind !== "rejoined") throw new Error("Missing retained Channels custody");
+        expect(await outward.deliverConversationOutwardDelivery({ ...delivery,
+            retainedRecord: retained.record, attemptId: "must-not-redeliver" }))
+            .toMatchObject({ kind: "settled", custody: { state: "outcomeUnknown" } });
+        expect(providerCalls).toBe(1);
     }, 120_000);
 });

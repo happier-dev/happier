@@ -2,7 +2,12 @@ import type {
     PluginCollectionHostReferenceAdapter,
     PluginCollectionHostReferenceResolution,
 } from "@/app/plugins/data/collections/hostReferences";
-import { resolveSessionAccessForOperation, resolveStructuralSessionAccess } from "@/app/session/access/sessionAccess";
+import {
+    resolveSessionAccessDecisionsForSessionsInTx,
+    resolveSessionAccessForOperation,
+    resolveStructuralSessionAccess,
+    type SessionAccessOperationDecision,
+} from "@/app/session/access/sessionAccess";
 import type { SessionAccessAuthentication } from "@/app/session/access/sessionAccessAuthentication";
 import type { Tx } from "@/storage/inTx";
 
@@ -30,12 +35,8 @@ export async function resolveSessionHostReferenceForAuthenticationInTx(input: Re
         authentication: input.authentication,
         capability: "readTranscript",
     });
-    if (decision.status === "allowed") return AVAILABLE;
-    // Authentication failure is not evidence of structural revocation. Keep
-    // it distinct for durable access witnesses; relation validation still
-    // fails closed because neither result is `available`.
-    if (decision.status === "authentication_required") return AUTHENTICATION_REQUIRED;
-    if (decision.status === "authentication_unavailable") return AUTHENTICATION_UNAVAILABLE;
+    const live = projectLiveSessionHostReference(decision);
+    if (live) return live;
 
     const change = await input.tx.accountChange.findUnique({
         where: {
@@ -48,6 +49,56 @@ export async function resolveSessionHostReferenceForAuthenticationInTx(input: Re
         select: { sessionId: true },
     });
     return change?.sessionId === null ? TOMBSTONE : UNAVAILABLE;
+}
+
+/**
+ * The set-oriented sibling for one credential over many Sessions, such as an
+ * Account change page's access witness. Access decisions come from the same
+ * operation resolver over one batched projection read, and tombstones from one
+ * Account-change read, instead of one of each per Session.
+ */
+export async function resolveSessionHostReferencesForAuthenticationInTx(input: Readonly<{
+    tx: Tx;
+    accountId: string;
+    targetIds: readonly string[];
+    authentication: SessionAccessAuthentication;
+}>): Promise<ReadonlyMap<string, AuthenticatedSessionHostReferenceResolution>> {
+    const targetIds = [...new Set(input.targetIds)];
+    const result = new Map<string, AuthenticatedSessionHostReferenceResolution>();
+    if (targetIds.length === 0) return result;
+    const decisions = await resolveSessionAccessDecisionsForSessionsInTx(input.tx, {
+        accountId: input.accountId,
+        sessionIds: targetIds,
+        authentication: input.authentication,
+        capability: "readTranscript",
+    });
+    const unresolved: string[] = [];
+    for (const id of targetIds) {
+        const decision = decisions.get(id);
+        const live = decision ? projectLiveSessionHostReference(decision) : null;
+        if (live) result.set(id, live);
+        else unresolved.push(id);
+    }
+    if (unresolved.length === 0) return result;
+    const changes = await input.tx.accountChange.findMany({
+        where: { accountId: input.accountId, kind: "session", entityId: { in: unresolved } },
+        select: { entityId: true, sessionId: true },
+    });
+    const tombstones = new Set(changes.filter(change => change.sessionId === null).map(change => change.entityId));
+    for (const id of unresolved) result.set(id, tombstones.has(id) ? TOMBSTONE : UNAVAILABLE);
+    return result;
+}
+
+function projectLiveSessionHostReference(
+    decision: SessionAccessOperationDecision,
+): AuthenticatedSessionHostReferenceResolution | null {
+    if (decision.status === "allowed") return AVAILABLE;
+    // Authentication failure is not evidence of structural revocation. Keep
+    // it distinct for durable access witnesses; relation validation still
+    // fails closed because neither result is `available`.
+    if (decision.status === "authentication_required") return AUTHENTICATION_REQUIRED;
+    if (decision.status === "authentication_unavailable") return AUTHENTICATION_UNAVAILABLE;
+    return null;
 }
 
 /**

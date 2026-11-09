@@ -1,4 +1,5 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { readSessionUsageAccountingChangedV1 } from "@happier-dev/protocol/changes";
 import type { Socket } from "socket.io";
 
 import { eventRouter, type ClientConnection, type UpdatePayload } from "@/app/events/eventRouter";
@@ -268,6 +269,9 @@ describe("session realtime publication privacy (SQLite integration)", () => {
             ]);
 
             updates.length = 0;
+            const accountsBeforeReady = await db.account.findMany({
+                where: { id: { in: [owner.id, collaborator.id] } }, select: { id: true, seq: true },
+            });
             await publishSessionReadyProjectionUpdate({
                 sessionId: session.id,
                 readyProjection: {
@@ -275,6 +279,14 @@ describe("session realtime publication privacy (SQLite integration)", () => {
                     latestReadyEventAt: 90_000,
                 },
             });
+            const readyChanges = await db.accountChange.findMany({
+                where: { kind: "session", entityId: session.id },
+                select: { accountId: true, kind: true, cursor: true, hint: true },
+            });
+            expect(readyChanges.map(change => change.accountId)).toEqual([owner.id]);
+            expect(readyChanges.map(change => readSessionUsageAccountingChangedV1(change,
+                accountsBeforeReady.find(account => account.id === change.accountId)!.seq)))
+                .toEqual([false]);
             expect(updates).toEqual([
                 expect.objectContaining({
                     userId: owner.id,

@@ -65,17 +65,12 @@ describe("auth (token cache)", () => {
         expect(auth.getCacheStats().size).toBe(1);
     });
 
-    it("refreshes terminal authority from the Account policy without trusting the crypto cache", async () => {
+    it("derives terminal person authority without any Account policy, including cache hits", async () => {
         await auth.init();
-        dbAccountFindUniqueMock.mockResolvedValue({ tokenEpoch: 0, status: "active", terminalPresentUserPolicy: "allowed" });
-        const token = await auth.createToken("terminal-policy-account", undefined, { kind: "terminal", authority: "account_automation" });
+        dbAccountFindUniqueMock.mockResolvedValue({ tokenEpoch: 0, status: "active" });
+        const token = await auth.createToken("terminal-person-account", undefined, { kind: "terminal", authority: "account_automation" });
         await expect(auth.verifyToken(token)).resolves.toMatchObject({ authTokenKind: "terminal", authority: "present_user" });
-        dbAccountFindUniqueMock.mockResolvedValue({ tokenEpoch: 0, status: "active", terminalPresentUserPolicy: "disallowed" });
-        await expect(auth.verifyToken(token)).resolves.toMatchObject({ authTokenKind: "terminal", authority: "account_automation" });
-        dbAccountFindUniqueMock.mockResolvedValue({ tokenEpoch: 0, status: "active", terminalPresentUserPolicy: "allowed" });
-        await expect(auth.verifyToken(token)).resolves.toMatchObject({ authority: "present_user" });
-        dbAccountFindUniqueMock.mockResolvedValue({ tokenEpoch: 0, status: "active", terminalPresentUserPolicy: "unknown" });
-        await expect(auth.verifyToken(token)).resolves.toMatchObject({ authority: "account_automation" });
+        await expect(auth.verifyToken(token)).resolves.toMatchObject({ authTokenKind: "terminal", authority: "present_user" });
     });
 
     it("enforces a max entry limit for the token cache", async () => {

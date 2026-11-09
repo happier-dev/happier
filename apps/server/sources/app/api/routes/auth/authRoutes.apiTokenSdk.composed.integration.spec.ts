@@ -76,7 +76,6 @@ describe('trusted CLI issuance and protected SDK invocation over HTTP', () => {
         const account = await db.account.create({ data: {
             publicKey: Buffer.from(signing.publicKey).toString('hex'),
             encryptionMode: 'e2ee',
-            terminalPresentUserPolicy: 'allowed',
             contentPublicKey: new Uint8Array(content.publicKey),
             contentPublicKeySig: new Uint8Array(signAccountContentKeyBindingV1({
                 accountSigningSecretKey: signing.secretKey, contentPublicKey: content.publicKey,

@@ -2,6 +2,7 @@ import Fastify from "fastify";
 import { randomUUID } from "node:crypto";
 import { Server } from "socket.io";
 import { io as ioClient } from "socket.io-client";
+import { serializerCompiler, validatorCompiler } from "fastify-type-provider-zod";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { auth } from "@/app/auth/auth";
@@ -10,6 +11,9 @@ import { db } from "@/storage/db";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
 import { startSocket } from "./socket";
 import type { Fastify as AppFastify } from "./types";
+import { enableAuthentication } from './utils/enableAuthentication';
+import { registerAccountApiTokenManagementRoutes } from './routes/auth/registerAccountApiTokenManagementRoutes';
+import { EphemeralUpdateSchema } from '@happier-dev/protocol/updates';
 
 describe("API-token Session viewer", () => {
     let harness: LightSqliteHarness;
@@ -29,19 +33,30 @@ describe("API-token Session viewer", () => {
         const otherSession = await db.session.create({ data: {
             accountId: account.id, tag: randomUUID(), metadata: "{}", encryptionMode: "plain",
         } });
-        const token = await auth.createApiToken({ accountId: account.id, tokenId: randomUUID(), label: "viewer",
+        const parentToken = await auth.createApiToken({ accountId: account.id, tokenId: randomUUID(), label: "viewer",
             expiresAt: new Date(Date.now() + 60_000), grant: {
                 v: 1, actions: { families: ["session_transcripts"], ids: [] },
                 targets: { sessions: [session.id], machines: [] }, approve: false,
                 origins: [], models: null, permissionModes: null, create: null,
             } });
         const app = Fastify({ logger: false }) as AppFastify;
+        app.setValidatorCompiler(validatorCompiler);
+        app.setSerializerCompiler(serializerCompiler);
+        enableAuthentication(app);
+        registerAccountApiTokenManagementRoutes(app);
         startSocket(app);
         const io = app.machineDaemonPresence;
         if (!(io instanceof Server)) throw new Error("Missing socket test server");
         await app.listen({ port: 0, host: "127.0.0.1" });
         const address = app.server.address();
         if (!address || typeof address === "string") throw new Error("Missing socket test address");
+        const minted = await app.inject({ method: 'POST', url: '/v1/auth/api-tokens/children/create',
+            headers: { authorization: `Bearer ${parentToken.token}` }, payload: {
+                tokenId: randomUUID(), label: 'viewer child', expiresAt: new Date(Date.now() + 30_000).toISOString(),
+                grant: parentToken.grant,
+            } });
+        expect(minted.statusCode, minted.body).toBe(200);
+        const token = { token: minted.json().token as string, tokenId: minted.json().apiToken.tokenId as string };
         const client = ioClient(`http://127.0.0.1:${address.port}`, {
             path: "/v1/updates", transports: ["websocket"], reconnection: false, autoConnect: false,
             auth: { token: token.token, clientType: "session-scoped", sessionId: session.id },
@@ -68,7 +83,26 @@ describe("API-token Session viewer", () => {
             const ping = await client.timeout(5_000).emitWithAck("ping");
             expect(ping).toBeDefined();
             expect(updates).toHaveLength(1);
-            const revoked = await auth.revokeApiToken({ accountId: account.id, tokenId: token.tokenId });
+            const signed = await auth.createToken(account.id, undefined, { kind: 'account', authority: 'present_user' });
+            const presentationChanges: unknown[] = [];
+            client.on('ephemeral', payload => {
+                if (payload.type === 'api-token-embed-config-changed') presentationChanges.push(EphemeralUpdateSchema.parse(payload));
+            });
+            const embedConfig = { v: 1, ui: { attachments: false }, newChat: null,
+                organization: { folderId: null, tagIds: [] }, style: { v: 1, mode: 'dark' } };
+            const edit = (payload: unknown) => app.inject({ method: 'POST', url: '/v1/auth/api-tokens/update',
+                headers: { authorization: `Bearer ${signed}`, 'content-type': 'application/json' }, payload: JSON.stringify(payload),
+                // The body is serialized explicitly to keep this helper's input untrusted.
+            });
+            const changed = await edit({ tokenId: parentToken.tokenId, embedConfig });
+            expect(changed.statusCode, changed.body).toBe(200);
+            await vi.waitFor(() => expect(presentationChanges).toEqual([{ type: 'api-token-embed-config-changed' }]));
+            expect(client.connected).toBe(true);
+            expect((await edit({ tokenId: parentToken.tokenId, embedConfig })).statusCode).toBe(200);
+            expect((await edit({ tokenId: parentToken.tokenId, label: 'Renamed' })).statusCode).toBe(200);
+            await client.timeout(5_000).emitWithAck('ping');
+            expect(presentationChanges).toHaveLength(1);
+            const revoked = await auth.revokeApiToken({ accountId: account.id, tokenId: parentToken.tokenId });
             expect(revoked.revoked).toBe(true);
             const disconnected = new Promise<void>(resolve => client.once("disconnect", () => resolve()));
             if (!app.disconnectApiTokenSockets) throw new Error("Missing token socket revocation callback");
@@ -77,7 +111,7 @@ describe("API-token Session viewer", () => {
             expect(client.connected).toBe(false);
         } finally {
             client.disconnect(); await io.close(); await app.close();
-            await db.account.delete({ where: { id: account.id } });
+            // The harness owns disposal of the isolated database, including audit rows.
         }
     });
 });

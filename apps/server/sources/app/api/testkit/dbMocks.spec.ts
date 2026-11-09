@@ -20,6 +20,11 @@ describe("dbMocks", () => {
         expect(matchesDbMockWhere({ ...row, assignments: [{ machineId: "other" }] }, where)).toBe(false);
         expect(matchesDbMockWhere({ ...row, state: "claimed", leaseExpiresAt: new Date(10) }, where)).toBe(false);
         expect(matchesDbMockWhere({ ...row, state: "claimed", leaseExpiresAt: new Date(9) }, where)).toBe(true);
+        const stopWhere = { revision: { gte: 140 }, state: { notIn: ["cancelled", "succeeded", "failed"] } };
+        expect(matchesDbMockWhere({ revision: 139, state: "claimed" }, stopWhere)).toBe(false);
+        expect(matchesDbMockWhere({ revision: 140, state: "claimed" }, stopWhere)).toBe(true);
+        expect(matchesDbMockWhere({ revision: 141, state: "claimed" }, stopWhere)).toBe(true);
+        expect(matchesDbMockWhere({ revision: 141, state: "cancelled" }, stopWhere)).toBe(false);
     });
 
     it("creates nested Prisma-like delegates and resets their state", async () => {

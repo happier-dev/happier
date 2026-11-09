@@ -96,6 +96,7 @@ describe("Redis Streams adapter current consumer composition", () => {
         const cluster = await startCluster();
         const accountId = "account:external-action:cluster";
         const machineId = "machine:external-action:exact";
+        const installationId = "installation:external-action:exact";
         const actionId = "session.spawn_new" as const;
         const requestId = "request:external-action:cluster";
         const method = `${machineId}:${EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1}`;
@@ -121,7 +122,7 @@ describe("Redis Streams adapter current consumer composition", () => {
             clientType: "machine-scoped",
             userId: accountId,
             machineId,
-            verifiedMachineInstallationId: "installation:external-action:exact",
+            verifiedMachineInstallationId: installationId,
         });
         Object.assign(decoyServerSocket.data, {
             clientType: "machine-scoped",
@@ -179,7 +180,7 @@ describe("Redis Streams adapter current consumer composition", () => {
             mintExecutionAuthorization: async (binding) => ExternalActionExecutionAuthorizationV1Schema.parse({
                 v: 1,
                 token: "test-external-action-authorization",
-                binding: { ...binding, custodianAccountId: binding.accountId, installationId: 'installation-1' },
+                binding: { ...binding, custodianAccountId: binding.accountId, installationId },
             }),
         });
 

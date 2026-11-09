@@ -79,6 +79,28 @@ describe('buildHomeConfigEnv', () => {
 
 describe('projectHomeSettings', () => {
     it.each([
+        'HAPPIER_PERSONAL_HOME_RELOCATION_OPERATION_ID',
+        'HAPPIER_SERVER_STARTUP_RECEIPT_PATH',
+        'HAPPIER_SERVER_STARTUP_RECEIPT_NONCE',
+        'HAPPIER_UPDATER_FORWARD_RECOVERY_CAPABILITY',
+        'HAPPIER_RELEASE_SOURCE_SHA',
+        'HAPPIER_SERVER_FLAVOR',
+        'HAPPIER_HOME_IROH_HOLDER',
+    ])('excludes the runtime fact %s from the editor and retained startup overrides', key => {
+        const persisted = { [key]: 'stored-override' };
+        const start = (env: Record<string, string>) => buildStartupHomeEnv({
+            env, stored: { values: persisted, secrets: {} }, registry: SERVER_CONFIG_REGISTRY,
+            now: new Date('2026-10-28T00:00:00Z'),
+        });
+        const producerValue = key === 'HAPPIER_SERVER_FLAVOR' ? 'light' : 'producer-value';
+        const startup = start({ [key]: producerValue });
+        expect(startup.env[key]).toBe(producerValue);
+        expect(startup.snapshot.applied).not.toContain(key);
+        expect(start({}).env[key]).toBeUndefined();
+        expect(projectHomeSettings({ env: startup.deploymentEnv, persisted, persistedSecretKeys: [], startup }).some(row => row.key === key)).toBe(false);
+    });
+
+    it.each([
         ['light', 'local', 'sqlite', 100, 1600, 0],
         ['full', 's3', 'postgres', 200, 5000, 0.25],
     ] as const)('projects the %s runtime defaults in declarations, values and applied restart facts', (flavor, backend, provider, delay, maxDelay, jitter) => {

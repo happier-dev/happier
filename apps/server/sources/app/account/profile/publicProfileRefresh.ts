@@ -2,7 +2,7 @@ import { PublicProfileRefreshBodyV1Schema, type PublicProfileMutationResultV1, t
 import { projectPublicProfileSnapshot, projectPublicProfileMetadata } from '@happier-dev/protocol/account/projectPublicProfile';
 import { getUsageQueryKey } from '@happier-dev/protocol/inputs/usageQuery';
 import { inTx, type Tx } from '@/storage/inTx';
-import { parsePublicProfileRecord, publicProfileUnavailable, publicProfileUpdated, readPublicProfileForMutationInTx, type PublicProfileServerDependencies } from './publicProfileStorage';
+import { parsePublicProfileRecord, publicProfileUnavailable, publicProfileUpdated, readPublicProfileForMutationInTx, updatePublicProfileInTx, type PublicProfileServerDependencies } from './publicProfileStorage';
 
 /** Replaces facts under current consent; only explicit resume changes a paused lifecycle. */
 export async function refreshPublicProfile(accountId: string, input: PublicProfileRefreshBodyV1, env: NodeJS.ProcessEnv, deps: PublicProfileServerDependencies): Promise<PublicProfileMutationResultV1> {
@@ -31,8 +31,8 @@ export async function replacePublicProfileSnapshotInTx(tx: Tx, accountId: string
         const selected = new Set(body.projectLinks.map(link => JSON.stringify(link)));
         metadata.projects = metadata.projects.filter(link => selected.has(JSON.stringify(link)));
     }
-    return publicProfileUpdated(await tx.accountPublicProfile.update({ where: { accountId }, data: {
+    return publicProfileUpdated(await updatePublicProfileInTx(tx, row, {
         state: 'published', snapshotJson: JSON.stringify(projectPublicProfileSnapshot(body.snapshot, current.policy)),
         metadataJson: JSON.stringify({ disclosure: metadata, projectSelections: current.policy.fields.projects ? current.projectSelections : [] }),
-    } }));
+    }));
 }

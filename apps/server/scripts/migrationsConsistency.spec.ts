@@ -92,6 +92,26 @@ function expectNoFileContains(paths: string[], pattern: string): void {
 }
 
 describe("migrations (provider completeness)", () => {
+    it("renames retained Machine setup through a forward migration while preserving its original identity", () => {
+        const root = process.cwd();
+        const original = "20261009160000_add_machine_preset_environment";
+        const forward = "20261026172000_rename_machine_setup_columns";
+        const originalDigests: Record<MigrationProvider, string> = {
+            postgres: "bdf802037bae21a81f9a1c0472ba226d3927b5576b062f8925f37c091fe5e1a8",
+            sqlite: "bdf802037bae21a81f9a1c0472ba226d3927b5576b062f8925f37c091fe5e1a8",
+            mysql: "ab36ac45961fa8aa675fbd77b119cdf9bf687fc9b63ae708e2b509f5e354d473",
+        };
+        for (const provider of Object.keys(MIGRATION_PROVIDER_DIRS) as MigrationProvider[]) {
+            const migrationsDir = join(root, ...MIGRATION_PROVIDER_DIRS[provider]);
+            expect(sha256Hex(join(migrationsDir, original, "migration.sql"))).toBe(originalDigests[provider]);
+            const sql = readText(join(migrationsDir, forward, "migration.sql"));
+            const quote = provider === "mysql" ? "`" : '"';
+            expect(sql).toContain(`ALTER TABLE ${quote}ManagedMachinePreset${quote} RENAME COLUMN ${quote}environment${quote} TO ${quote}setup${quote}`);
+            expect(sql).toContain(`ALTER TABLE ${quote}ManagedMachine${quote} RENAME COLUMN ${quote}environmentSetup${quote} TO ${quote}machineSetup${quote}`);
+            expect(sql).not.toContain("_prisma_migrations");
+        }
+    });
+
     it("prepares MySQL digest identity without contracting the legacy writer", () => {
         const root = process.cwd();
         const migration = readText(

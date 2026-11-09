@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { Expo } from "expo-server-sdk";
 
 import {
     SESSION_AGENT_TRANSITION_DIVIDER_LOCAL_ID_PREFIX,
@@ -12,6 +13,8 @@ import {
 import { createSessionPublisherPresence } from "@/app/presence/sessionPublisherPresence";
 import { resolvePresenceTimeoutConfig, runPresenceTimeoutTick } from "@/app/presence/timeout";
 import { sessionUpdateHandler } from "@/app/api/socket/sessionUpdateHandler";
+import { eventRouter, type ClientConnection } from "@/app/events/eventRouter";
+import { UpdateContainerSchema } from "@happier-dev/protocol/updates";
 import {
     createAuthenticatedFakeSocket,
     createFakeSocket,
@@ -50,6 +53,59 @@ describe("session update handler on SQLite", () => {
     }, 120_000);
     beforeEach(() => harness.resetEnv());
     afterAll(async () => await harness.close());
+
+    it("publishes released legacy partial changes through the current-view owner and keeps equal state silent", async () => {
+        const owner = await db.account.create({ data: { encryptionMode: "plain" } });
+        const participant = await db.account.create({ data: { encryptionMode: "plain" } });
+        const session = await db.session.create({ data: { accountId: owner.id, tag: randomUUID(),
+            encryptionMode: "plain", metadata: "{}", agentState: "{}" } });
+        await db.sessionShare.create({ data: { sessionId: session.id, sharedByUserId: owner.id,
+            sharedWithUserId: participant.id, accessLevel: "view" } });
+        await db.accountPushToken.create({ data: { accountId: owner.id,
+            token: "ExponentPushToken[metadata-owner-badge]" } });
+        const socket = createAuthenticatedFakeSocket();
+        const connection: ClientConnection = { connectionType: "user-scoped", userId: owner.id,
+            socket: socket as unknown as ClientConnection["socket"] };
+        sessionUpdateHandler(owner.id, connection.socket, connection);
+        // Observe the socket-delivery boundary after real admission, SQLite CAS and projection.
+        const emit = vi.spyOn(eventRouter, "emitUpdate").mockImplementation(() => undefined);
+        // Wait for the real asynchronous badge path at its external push boundary
+        // before closing SQLite; no background query may outlive this fixture.
+        const push = vi.spyOn(Expo.prototype, "sendPushNotificationsAsync")
+            .mockResolvedValue([{ status: "ok", id: "metadata-owner-badge" }]);
+        try {
+            const metadata = JSON.stringify({ name: "Private owner title" });
+            const metadataAck: unknown[] = [];
+            await getSocketHandler(socket, "update-metadata")({ sid: session.id, metadata, expectedVersion: 0 },
+                (ack: unknown) => metadataAck.push(ack));
+            expect(metadataAck).toEqual([{ result: "success", version: 1, metadata }]);
+            expect(emit.mock.calls.filter(([publication]) => publication.payload.body.t === 'update-session').map(([publication]) => ({ userId: publication.userId,
+                body: publication.payload.body, sender: publication.skipSenderConnection }))).toEqual([
+                expect.objectContaining({ userId: owner.id, sender: connection,
+                    body: expect.objectContaining({ t: "update-session", id: session.id,
+                        metadata: { value: metadata, version: 1 }, agentState: undefined }) }),
+            ]);
+            emit.mockClear();
+            const equalAck: unknown[] = [];
+            await getSocketHandler(socket, "update-state")({ sid: session.id, agentState: "{}", expectedVersion: 0 },
+                (ack: unknown) => equalAck.push(ack));
+            expect(equalAck).toEqual([{ result: "success", version: 0, agentState: "{}" }]);
+            expect(emit).not.toHaveBeenCalled();
+            const agentState = JSON.stringify({ requests: { question: { kind: "user_action", createdAt: 100 } } });
+            const stateAck: unknown[] = [];
+            await getSocketHandler(socket, "update-state")({ sid: session.id, agentState, expectedVersion: 0,
+                activitySummaryV1: { pendingPermissionRequestCount: 0, pendingUserActionRequestCount: 1,
+                    pendingRequestNewestCreatedAt: 100 } }, (ack: unknown) => stateAck.push(ack));
+            expect(stateAck).toEqual([{ result: "success", version: 1, agentState }]);
+            expect(emit.mock.calls.filter(([publication]) => publication.payload.body.t === 'update-session').map(([publication]) => ({ userId: publication.userId,
+                body: publication.payload.body, sender: publication.skipSenderConnection }))).toEqual([
+                expect.objectContaining({ userId: owner.id, sender: connection,
+                    body: expect.objectContaining({ t: "update-session", id: session.id, metadata: undefined,
+                        agentState: { value: agentState, version: 1 }, pendingUserActionRequestCount: 1 }) }),
+            ]);
+            await vi.waitFor(() => expect(push).toHaveBeenCalledTimes(1), { timeout: 10_000 });
+        } finally { emit.mockRestore(); push.mockRestore(); }
+    });
 
     it("recovers the original capability notice after Home commits but its ACK is lost", async () => {
         type TranscriptObservation = ReturnType<typeof SessionTranscriptObservationInputSchema.parse>;
@@ -1132,6 +1188,53 @@ describe("session update handler on SQLite", () => {
         }
     });
 
+    it("delivers an active released heartbeat to the shared audience as activity, with no Account cursor", async () => {
+        let clockMs = Date.parse("2026-07-22T08:00:00.000Z");
+        const now = vi.spyOn(Date, "now").mockImplementation(() => clockMs);
+        const ephemerals = vi.spyOn(eventRouter, "emitEphemeral").mockImplementation(() => undefined);
+        const updates = vi.spyOn(eventRouter, "emitUpdate").mockImplementation(() => undefined);
+        try {
+            const { sessionId, heartbeat, binding } = await createReleasedAliveSession(() => clockMs);
+            const viewer = await db.account.create({ data: { encryptionMode: "plain" }, select: { id: true } });
+            await db.sessionShare.create({ data: { sessionId, sharedByUserId: binding.accountId,
+                sharedWithUserId: viewer.id, accessLevel: "view" } });
+            await heartbeat();
+            await expect(db.session.findUniqueOrThrow({ where: { id: sessionId }, select: { active: true } }))
+                .resolves.toEqual({ active: true });
+            const readSeqs = () => db.account.findMany({ where: { id: { in: [binding.accountId, viewer.id] } },
+                orderBy: { id: "asc" }, select: { id: true, seq: true } });
+            const seqsBefore = await readSeqs();
+            const changesBefore = await db.accountChange.count();
+            ephemerals.mockClear();
+            updates.mockClear();
+            const heartbeats = 5;
+            for (let beat = 0; beat < heartbeats; beat += 1) {
+                clockMs += 61_000;
+                await heartbeat();
+            }
+            await vi.waitFor(async () => {
+                expect((await db.session.findUniqueOrThrow({ where: { id: sessionId }, select: { lastActiveAt: true } }))
+                    .lastActiveAt.getTime()).toBe(clockMs);
+            });
+            // Idle liveness writes no Account cursor or change row for any recipient.
+            expect(await readSeqs()).toEqual(seqsBefore);
+            expect(await db.accountChange.count()).toBe(changesBefore);
+            expect(updates).not.toHaveBeenCalled();
+            const viewerHeartbeats = ephemerals.mock.calls.map(([event]) => event)
+                .filter(event => event.userId === viewer.id);
+            expect(viewerHeartbeats).toHaveLength(heartbeats);
+            expect(viewerHeartbeats.at(-1)).toEqual({
+                userId: viewer.id,
+                payload: { type: "activity", id: sessionId, active: true, activeAt: clockMs },
+                recipientFilter: { type: "user-scoped-only" },
+            });
+        } finally {
+            now.mockRestore();
+            ephemerals.mockRestore();
+            updates.mockRestore();
+        }
+    });
+
     it.each(["trailing", "session-runtime-activity-close", "session-end", "disconnect", "replacement"])(
         "settles the default released heartbeat window through %s without inventing liveness",
         async (transition) => {
@@ -1170,6 +1273,7 @@ describe("session update handler on SQLite", () => {
                 });
                 expect(vi.getTimerCount()).toBe(0);
                 if (transition === "trailing") {
+                    let lastReceivedAtMs = startedAt + 59_999;
                     for (let elapsedMs = 75_000; elapsedMs <= 180_000; elapsedMs += 15_000) {
                         clockMs = startedAt + elapsedMs;
                         await vi.advanceTimersByTimeAsync(15_000);
@@ -1178,10 +1282,16 @@ describe("session update handler on SQLite", () => {
                             const persisted = await db.session.findUniqueOrThrow({
                                 where: { id: sessionId }, select: { lastActiveAt: true },
                             });
-                            const expectedObservationMs = elapsedMs < 120_000 ? 59_999 : Math.floor(elapsedMs / 60_000) * 60_000 - 15_000;
-                            expect(persisted.lastActiveAt.getTime()).toBe(startedAt + expectedObservationMs);
+                            // The shorter canonical expiry can flush earlier than
+                            // the former ten-minute default. Retain its contract:
+                            // no invented observation and no healthy expiry gap.
+                            expect(persisted.lastActiveAt.getTime(), `elapsed=${elapsedMs}`)
+                                .toBeLessThanOrEqual(lastReceivedAtMs);
+                            expect(clockMs - persisted.lastActiveAt.getTime())
+                                .toBeLessThan(resolvePresenceTimeoutConfig().sessionTimeoutMs);
                         });
                         await heartbeat();
+                        lastReceivedAtMs = clockMs;
                     }
                 }
             } finally {
@@ -1235,6 +1345,82 @@ describe("session update handler on SQLite", () => {
             release();
             now.mockRestore();
             vi.useRealTimers();
+        }
+    });
+
+    it.each([false, true])("persists newest released liveness without rewriting the turn projection (new heartbeat: %s)", async (receiveNewerHeartbeat) => {
+        const startedAt = Date.parse("2026-07-22T08:00:00.000Z");
+        let clockMs = startedAt;
+        const presence = createSessionPublisherPresence({ now: () => new Date(clockMs) });
+        const blocker = await createReleasedAliveSession(() => clockMs, presence);
+        const target = await createReleasedAliveSession(() => clockMs, presence);
+        // Even a heartbeat matching a durable historical turn is not a turn
+        // mutation or repair request. Only the canonical turn writer projects it.
+        const turnId = randomUUID();
+        const terminalObservedAt = startedAt + 1_000;
+        await db.sessionTurn.create({ data: {
+            sessionId: target.sessionId, turnId, status: "completed",
+            startedAt: BigInt(startedAt), updatedAt: BigInt(terminalObservedAt), terminalAt: BigInt(terminalObservedAt),
+        } });
+        await db.session.update({ where: { id: target.sessionId }, data: {
+            latestTurnId: turnId, latestTurnStatus: "running", latestTurnStatusObservedAt: BigInt(startedAt),
+        } });
+        const observer = createAuthenticatedFakeSocket({ id: randomUUID() });
+        const observerConnection: ClientConnection = {
+            connectionType: "session-scoped", socket: observer as never,
+            userId: target.binding.accountId, sessionId: target.sessionId,
+        };
+        eventRouter.clearIo();
+        eventRouter.addConnection(target.binding.accountId, observerConnection);
+        const clock = vi.spyOn(Date, "now").mockImplementation(() => clockMs);
+        let release!: () => void;
+        const held = new Promise<void>((resolve) => { release = resolve; });
+        let entered!: () => void;
+        const started = new Promise<void>((resolve) => { entered = resolve; });
+        try {
+            await blocker.heartbeat();
+            const holder = presence.runAsCurrentPublisher({ socket: blocker.socket, operation: async () => {
+                entered();
+                await held;
+            } });
+            await started;
+            clockMs += 60_000;
+            const blockerAlive = blocker.heartbeat();
+            await Promise.resolve();
+            const targetAlive = target.heartbeat();
+            clockMs += 10_000;
+            if (receiveNewerHeartbeat) {
+                await getSocketHandler(target.socket, "session-alive")({
+                    sid: target.sessionId, time: clockMs, thinking: false,
+                    latestTurnStatus: "completed", latestTurnStatusObservedAt: terminalObservedAt,
+                });
+            }
+            // Waiting for admission does not constitute a new observation.
+            clockMs += 10_000;
+            release();
+            await Promise.all([holder, blockerAlive, targetAlive]);
+            const expectedObservationMs = startedAt + 60_000 + (receiveNewerHeartbeat ? 10_000 : 0);
+            await expect(db.session.findUniqueOrThrow({
+                where: { id: target.sessionId }, select: { active: true, lastActiveAt: true, latestTurnStatus: true },
+            })).resolves.toEqual({
+                active: true, lastActiveAt: new Date(expectedObservationMs),
+                latestTurnStatus: "running",
+            });
+            await vi.waitFor(() => {
+                const activeUpdates = observer.emit.mock.calls.flatMap(([event, payload]) => {
+                    if (event !== "update") return [];
+                    const parsed = UpdateContainerSchema.safeParse(payload);
+                    return parsed.success && parsed.data.body.t === "update-session"
+                        && parsed.data.body.id === target.sessionId && typeof parsed.data.body.activeAt === "number"
+                        ? [parsed.data.body.activeAt] : [];
+                });
+                expect(activeUpdates).toEqual([expectedObservationMs]);
+            });
+        } finally {
+            release();
+            await getSocketHandler(target.socket, "disconnect")();
+            eventRouter.removeConnection(target.binding.accountId, observerConnection);
+            clock.mockRestore();
         }
     });
 

@@ -26,6 +26,10 @@ const transactionScope = {
     createdAtMs: 1,
 } as const;
 
+function transactionReadUrl(mutationUrl: string): string {
+    return mutationUrl.replace(/\/(?:oauth|device)\//u, "/");
+}
+
 function resolveContractProviderFromEnv(): "postgres" | "mysql" {
     const raw = (process.env.HAPPIER_DB_PROVIDER ?? process.env.HAPPY_DB_PROVIDER ?? "postgres")
         .toString()
@@ -161,10 +165,15 @@ describe("Connected Account attempt transaction provider db contract", () => {
                 } },
             });
             expect(created.statusCode).toBe(200);
-            expect(created.json()).toEqual({
+            expect(created.json()).toMatchObject({
                 revision: 1,
                 content: initialContent,
                 expiresAtMs,
+                scope: {
+                    ...transactionScope,
+                    modeId: scenario.kind,
+                    phase: scenario.kind === "oauth" ? "awaitingOAuth" : "awaitingDeviceAuthorization",
+                },
             });
 
             const stored = await db.repeatKey.findFirstOrThrow({
@@ -175,7 +184,7 @@ describe("Connected Account attempt transaction provider db contract", () => {
 
             const read = await app.inject({
                 method: "GET",
-                url,
+                url: transactionReadUrl(url),
                 headers,
             });
             expect(read.statusCode).toBe(200);
@@ -217,10 +226,15 @@ describe("Connected Account attempt transaction provider db contract", () => {
                 },
             });
             expect(replaced.statusCode).toBe(200);
-            expect(replaced.json()).toEqual({
+            expect(replaced.json()).toMatchObject({
                 revision: 2,
                 content: replacementContent,
                 expiresAtMs: expiresAtMs + 1_000,
+                scope: {
+                    ...transactionScope,
+                    modeId: scenario.kind,
+                    phase: scenario.kind === "oauth" ? "awaitingOAuth" : "awaitingDeviceAuthorization",
+                },
             });
 
             const staleDelete = await app.inject({
@@ -245,7 +259,7 @@ describe("Connected Account attempt transaction provider db contract", () => {
 
             const missing = await app.inject({
                 method: "GET",
-                url,
+                url: transactionReadUrl(url),
                 headers,
             });
             expect(missing.statusCode).toBe(404);

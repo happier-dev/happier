@@ -1,7 +1,7 @@
-import { acquireSessionAccountCursorLocksInTx } from '@/app/session/changeTracking/acquireSessionAccountCursorLocksInTx';
 import { encodeSessionOwnerMetadataEnvelopeV1, SESSION_METADATA_LAYOUT_VERSION_V1, type SessionMetadataInactiveModelIntentOwnerPatchV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 
 import type { SessionTeamCredentialBindingIntentListV1 } from '@happier-dev/protocol/teams/credentials/sessionBindingIntentV1';
+import { UsageSessionTimingV1Schema, type UsageSessionTimingV1 } from '@happier-dev/protocol/usage/usageWorkEvidence';
 
 import type { SessionAccessAuthentication } from "@/app/session/access/sessionAccessAuthentication";
 import type { SessionRecipientCursor } from "@/app/session/changeTracking/markSessionProjectionRecipientsChanged";
@@ -15,13 +15,14 @@ import type {
 } from "@/app/session/metadata/publishSessionCurrentViewUpdates";
 import {
     clearSessionRuntimeActivityProjectionInTx,
-    clearSessionSourceRuntimeRequestProjectionsInTx,
+    clearSessionSourceRuntimeProjectionsInTx,
     doesStoredSessionDisplayMatchTupleWrite,
     loadSessionOwnerMutationContextInTx,
     patchSessionInTx,
     updateSessionMetadataEnvelopeTupleInTx,
 } from "@/app/session/sessionWriteService";
 import { inTx, transactionResult, type TransactionResult, type Tx } from "@/storage/inTx";
+import { acquireSessionAccountCursorLocksInTx } from '@/app/session/changeTracking/acquireSessionAccountCursorLocksInTx';
 
 /**
  * Same-Session cross-Agent transition — the narrow current-view transaction.
@@ -58,6 +59,7 @@ export type SessionAgentTransitionCurrentViewWriteV1 =
         metadataCiphertext: string;
         expectedAgentStateVersion: number;
         agentStateCiphertext: null;
+        usageTimingV1?: UsageSessionTimingV1;
       }
     | {
         kind: "envelope_tuple_v1";
@@ -120,7 +122,8 @@ function validateCurrentViewInput(
             && currentView.metadataCiphertext.length > 0
             && isNonNegativeInteger(currentView.expectedMetadataVersion)
             && isNonNegativeInteger(currentView.expectedAgentStateVersion)
-            && currentView.agentStateCiphertext === null;
+            && currentView.agentStateCiphertext === null
+            && (currentView.usageTimingV1 === undefined || UsageSessionTimingV1Schema.safeParse(currentView.usageTimingV1).success);
     }
     return currentView.ownerPatch?.mode === "owner_inactive_model_intent";
 }
@@ -238,6 +241,7 @@ export async function commitSessionAgentCurrentViewInTx(
             displayProjectionV1: true,
             agentStateVersion: true,
             agentState: true,
+            latestTurnStatusObservedAt: true,
         },
     });
     if (!current) return { ok: false, error: "session-not-found" };
@@ -286,6 +290,7 @@ export async function commitSessionAgentCurrentViewInTx(
     if (params.currentView.kind === "legacy_v0") {
         const currentView = params.currentView;
         const patched = await patchSessionInTx(tx, {
+            publishCurrentView: true,
             actorUserId: params.actorUserId,
             sessionId: params.sessionId,
             metadata: {
@@ -297,6 +302,7 @@ export async function commitSessionAgentCurrentViewInTx(
                 expectedVersion: params.currentView.expectedAgentStateVersion,
             },
             sessionExpectation: { kind: "inactive_model_intent" },
+            usageTimingV1: currentView.usageTimingV1,
         }, { requireUnarchivedSession: true });
         if (!patched.ok) {
             return { ok: false, error: toCommitError(patched.error) };
@@ -305,9 +311,10 @@ export async function commitSessionAgentCurrentViewInTx(
             tx,
             sessionId: params.sessionId,
         });
-        await clearSessionSourceRuntimeRequestProjectionsInTx({
+        const primaryTurnProjection = await clearSessionSourceRuntimeProjectionsInTx({
             tx,
             sessionId: params.sessionId,
+            previousTurnStatusObservedAt: current.latestTurnStatusObservedAt,
         });
         await writeTargetTeamCredentialBindingsInTx(tx, params);
         const patchedRow = await tx.session.findUnique({
@@ -338,6 +345,7 @@ export async function commitSessionAgentCurrentViewInTx(
             publication: patchedRow
                 ? {
                     kind: "legacy_v0",
+                    runtimeProjection: primaryTurnProjection,
                     sessionOwnerId: params.actorUserId,
                     session: patchedRow,
                   }
@@ -349,7 +357,7 @@ export async function commitSessionAgentCurrentViewInTx(
         ...params.currentView.ownerPatch,
         actorUserId: params.actorUserId,
         sessionId: params.sessionId,
-    }, { requireUnarchivedSession: true });
+    }, { requireUnarchivedSession: true }, { publishCurrentView: true });
     if (!tuple.ok) {
         return { ok: false, error: toCommitError(tuple.error) };
     }
@@ -357,9 +365,10 @@ export async function commitSessionAgentCurrentViewInTx(
         tx,
         sessionId: params.sessionId,
     });
-    await clearSessionSourceRuntimeRequestProjectionsInTx({
+    const primaryTurnProjection = await clearSessionSourceRuntimeProjectionsInTx({
         tx,
         sessionId: params.sessionId,
+        previousTurnStatusObservedAt: current.latestTurnStatusObservedAt,
     });
     await writeTargetTeamCredentialBindingsInTx(tx, params);
     return transactionResult<CommitSessionAgentCurrentViewResult>(() => ({
@@ -374,6 +383,7 @@ export async function commitSessionAgentCurrentViewInTx(
         // envelope must be the one this write committed.
         publication: {
             kind: "envelope_tuple_v1",
+            runtimeProjection: primaryTurnProjection,
             sessionOwnerId: tuple.sessionOwnerId,
             ownerAccountMode: tuple.ownerAccountMode,
             sharedMetadata: tuple.sharedMetadata,

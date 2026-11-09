@@ -13,7 +13,7 @@ import {
     parsePersistedSessionOwnerMetadataEnvelopeV1,
 } from "./sessionOwnerMetadataPersistence";
 import { V2SessionRecordSchema } from '@happier-dev/protocol/sessions/control/contract';
-
+import { parseProjectedSessionRecord } from '@/app/api/routes/session/sessionRecordResponse';
 import { sealAccountScopedBlobCiphertext } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import { getAccountScopedBlobKindByte, readAccountScopedCiphertextKindByte } from '@happier-dev/protocol/crypto/accountScopedCipherEnvelope';
 
@@ -45,11 +45,12 @@ describe("projectSessionMetadataForRecipient", () => {
             ownerMetadata: projection.ownerMetadata, accountMode: "e2ee", isOwner: true });
         const row = { ...projection, id: "session", seq: 0, createdAt: 1, updatedAt: 1,
             active: false, activeAt: 1, encryptionMode: "e2ee", share: null, dataEncryptionKey: null };
-        const response = V2SessionRecordSchema.parse(row);
-        expect(V2SessionRecordSchema.parse(response).ownerMetadata).toEqual(OWNER_ENVELOPE);
+        const response = parseProjectedSessionRecord(row);
+        expect(response.ownerMetadata).toBe(projection.ownerMetadata);
         expect(() => assertSessionOwnerMetadataCurrentness({ metadataLayoutVersion: 1,
             ownerMetadata: response.ownerMetadata ?? null, accountMode: "plain", isOwner: true }))
             .toThrow(SessionMetadataPrivacyUpgradeRequiredError);
+        expect(V2SessionRecordSchema.parse(response).ownerMetadata).toEqual(OWNER_ENVELOPE);
     });
     it("projects strict plaintext shared metadata without changing its stored bytes", () => {
         const metadata = JSON.stringify({ v: 1 });

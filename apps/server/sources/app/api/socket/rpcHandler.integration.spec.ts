@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { Socket } from "socket.io";
+import { Server, type Socket } from "socket.io";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { RPC_ERROR_CODES, RPC_METHODS, SESSION_RPC_METHODS, parseSocketRpcAuthorizationContext } from "@happier-dev/protocol/rpc";
@@ -16,6 +16,7 @@ import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lig
 import { createEnvReset } from "../testkit/env";
 import { createAuthenticatedFakeSocket, createSocketRoomDiscoveryHarness, getSocketHandler } from "../testkit/socketHarness";
 import { rpcHandler } from "./rpcHandler";
+import { registerSocketRoomDiscovery } from './socketRoomDiscovery';
 
 const RELEASED_SERVER_V0_2_0_PROVENANCE = Object.freeze({
     tag: "server-v0.2.0",
@@ -154,12 +155,17 @@ describe("rpcHandler", () => {
 
         try {
             const target = createTarget("target-socket", { ok: true, value: 123 });
-            const { io, inMock } = createIo({
-                [`rpc:${accountId}:${sessionId}:execution.run.stream.start`]: [
-                    [],
-                    [],
-                    [target.socket],
-                ],
+            const io = new Server();
+            registerSocketRoomDiscovery(io);
+            const room = `rpc:${accountId}:${sessionId}:execution.run.stream.start`;
+            let registered = false;
+            const inMock = vi.spyOn(io, 'in').mockImplementation(() => {
+                // Room transport is the boundary; the real join event drives the waiter.
+                const query = { fetchSockets: async () => {
+                    if (!registered) queueMicrotask(() => { registered = true; io.sockets.adapter.emit('join-room', room, target.socket.id); });
+                    return registered ? [target.socket] : [];
+                }, timeout: () => query };
+                return query as unknown as ReturnType<Server['in']>;
             });
             const callerSocket = createAuthenticatedFakeSocket({
                 id: "caller-socket",
@@ -441,6 +447,8 @@ describe("rpcHandler", () => {
 
     // The daemon's raw Browser and Computer control routes admit only present_user (SEC-FIX-1101 S2).
     it.each([
+        ['daemon.computer.personal.actions.execute', "present_user"],
+        ['daemon.computer.personal.actions.execute', "account_automation"],
         [RPC_METHODS.DAEMON_BROWSER_CONTROL_DISPATCH, "present_user"],
         [RPC_METHODS.DAEMON_COMPUTER_ACTION_EXECUTE, "present_user"],
         [RPC_METHODS.DAEMON_BROWSER_CONTROL_DISPATCH, "account_automation"],

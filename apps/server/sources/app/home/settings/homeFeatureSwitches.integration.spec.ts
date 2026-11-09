@@ -14,7 +14,7 @@ import { readHomeConfigEnv, readHomeSettingsProjectionInTx, setHomeSettings } fr
  * resolvers through the overlay, dependency closure and build-policy denies still run after it,
  * and the console's projection explains every bit with the engine's typed reason.
  */
-const AUTOMATIONS = "HAPPIER_FEATURE_AUTOMATIONS__ENABLED";
+const WORKFLOWS = "HAPPIER_FEATURE_WORKFLOWS__ENABLED";
 
 let sequence = 0;
 let harness: LightSqliteHarness;
@@ -65,11 +65,11 @@ afterEach(async () => {
 });
 
 describe("Home feature switches", () => {
-    it("turns a feature off through the overlay, closes its dependents and explains both with typed reasons", async () => {
+    it("turns Workflows off through the overlay and publishes the released alias with one typed decision", async () => {
         const owner = await createAccount("owner");
         const written = await setHomeSettings({
             actorAccountId: owner,
-            write: { expectedRevision: 0, values: { [AUTOMATIONS]: false } },
+            write: { expectedRevision: 0, values: { [WORKFLOWS]: false } },
         });
         expect(written.status).toBe("applied");
 
@@ -78,38 +78,34 @@ describe("Home feature switches", () => {
         expect(readServerEnabledBit(payload, "workflows")).toBe(false);
 
         const projection = await readProjection(owner);
-        expect(decisionOf(projection.featureDecisions, "automations")).toMatchObject({
-            state: "disabled",
-            blockedBy: "server",
-        });
+        expect(decisionOf(projection.featureDecisions, "automations")).toBeUndefined();
         expect(decisionOf(projection.featureDecisions, "workflows")).toMatchObject({
             state: "disabled",
-            blockedBy: "dependency",
-            blockingDependencyId: "automations",
+            blockedBy: "server",
         });
         // Only server-represented features are Home decisions.
         expect(decisionOf(projection.featureDecisions, "execution.runs")).toBeUndefined();
 
-        const entry = projection.entries.find((candidate) => candidate.key === AUTOMATIONS);
+        const entry = projection.entries.find((candidate) => candidate.key === WORKFLOWS);
         expect(entry).toMatchObject({
             value: false,
             source: "home",
             fixed: false,
-            declaration: { type: "boolean", section: "features", family: "automations", featureId: "automations", default: true },
+            declaration: { type: "boolean", section: "features", family: "workflows", featureId: "workflows", default: true },
         });
     });
 
     it("keeps an explicit deployment value as the lock: projected fixed, the stored switch has no effect", async () => {
         const owner = await createAccount("owner");
-        await setHomeSettings({ actorAccountId: owner, write: { expectedRevision: 0, values: { [AUTOMATIONS]: false } } });
-        setDeploymentEnv(AUTOMATIONS, "1");
+        await setHomeSettings({ actorAccountId: owner, write: { expectedRevision: 0, values: { [WORKFLOWS]: false } } });
+        setDeploymentEnv("HAPPIER_FEATURE_AUTOMATIONS__ENABLED", "1");
 
         const payload = resolveFeaturesFromEnv(await readHomeConfigEnv(process.env));
         expect(readServerEnabledBit(payload, "automations")).toBe(true);
         expect(readServerEnabledBit(payload, "workflows")).toBe(true);
 
         const projection = await readProjection(owner);
-        expect(projection.entries.find((candidate) => candidate.key === AUTOMATIONS)).toMatchObject({
+        expect(projection.entries.find((candidate) => candidate.key === WORKFLOWS)).toMatchObject({
             value: true,
             source: "deployment",
             fixed: true,
@@ -119,7 +115,7 @@ describe("Home feature switches", () => {
 
     it("never lets a Home switch lift a build-policy deny", async () => {
         const owner = await createAccount("owner");
-        await setHomeSettings({ actorAccountId: owner, write: { expectedRevision: 0, values: { [AUTOMATIONS]: true } } });
+        await setHomeSettings({ actorAccountId: owner, write: { expectedRevision: 0, values: { [WORKFLOWS]: true } } });
         setDeploymentEnv("HAPPIER_BUILD_FEATURES_DENY", "automations");
 
         const payload = resolveFeaturesFromEnv(await readHomeConfigEnv(process.env));
@@ -127,13 +123,9 @@ describe("Home feature switches", () => {
         expect(readServerEnabledBit(payload, "workflows")).toBe(false);
 
         const projection = await readProjection(owner);
-        expect(decisionOf(projection.featureDecisions, "automations")).toMatchObject({
-            state: "disabled",
-            blockedBy: "build_policy",
-        });
+        expect(decisionOf(projection.featureDecisions, "automations")).toBeUndefined();
         expect(decisionOf(projection.featureDecisions, "workflows")).toMatchObject({
-            blockedBy: "dependency",
-            blockingDependencyId: "automations",
+            blockedBy: "build_policy",
         });
     });
 });

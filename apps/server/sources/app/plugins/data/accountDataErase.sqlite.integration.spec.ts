@@ -20,7 +20,9 @@ import { eventRouter } from "@/app/events/connectionEventRouter";
 import { resolveMachineAdmissionInTx } from "@/app/machines/machineAccess";
 import {
     materializePluginCollectionContractsFromManifestTx,
+    readMaterializedPluginCollectionContract,
 } from "@/app/plugins/data/collections/contracts";
+import { buildPluginCollectionIndexValues } from "./collections/mutation";
 import {
     buildPluginAccountStoragePhysicalKey,
     buildPluginDeclarativeSettingsPhysicalKey,
@@ -28,6 +30,15 @@ import {
 import { ACCOUNT_ENCRYPTION_TRANSITION_LIFECYCLE } from "@/app/encryption/accountEncryptionTransitionCoordinator";
 import { db } from "@/storage/db";
 import { inTx } from "@/storage/inTx";
+import { backfillPluginCollectionUsageTotalsInTx } from "./collections/usageTotals";
+import { assertPluginCollectionUsageTotalsMatchRows } from "./collections/usageTotals.testkit";
+import { observePrismaReads } from "@/testkit/observePrismaReads";
+import { createNativeSessionTeamCredentialFixture, createPlannedSessionTeamCredentialFixture,
+    TEST_AUTHENTICATION } from '@/app/teams/credentials/sessionBinding.testkit';
+import { writeSessionTeamCredentialBindingsInTx, stampSessionTeamCredentialNativeDeliveryInTx,
+    submitSessionTeamCredentialNativeDeliveryInTx, completeSessionTeamCredentialNativeDeliveryInTx,
+    readQualifiedSessionTeamCredentialNativeDeliveriesForManagedMachineInTx } from '@/app/teams/credentials/sessionBinding';
+import { readManagedResourceDependenciesInTx } from '@/app/machines/managed/managedRead';
 import {
     createLightSqliteHarness,
     type LightSqliteHarness,
@@ -61,6 +72,7 @@ const COLLECTION_MANIFEST = {
                 id: "by-status",
                 fields: [{ field: "status", direction: "asc" }],
             }],
+            quota: { maxRowsByIndexPrefix: [{ indexId: "by-status", prefix: ["open"], maxRows: 2 }] },
         }],
     },
 } as const;
@@ -102,7 +114,7 @@ async function materializeFixtureContract() {
 
 async function seedAccountCollectionData(input: Readonly<{
     accountId: string;
-    contract: Readonly<{ id: string; schemaVersion: number; contractDigest: string }>;
+    contract: Awaited<ReturnType<typeof materializeFixtureContract>>;
 }>) {
     const state = await db.pluginCollectionIndexState.create({
         data: {
@@ -155,9 +167,12 @@ async function seedAccountCollectionData(input: Readonly<{
         })),
     });
     await db.pluginCollectionIndexEntry.createMany({
-        data: [first, second].map((row, index) => ({
+        data: [first, second].map((row) => ({
             indexStateId: state.id,
-            encodedSortKey: Uint8Array.of(0x01, index),
+            encodedSortKey: buildPluginCollectionIndexValues({
+                contract: readMaterializedPluginCollectionContract(input.contract),
+                rowId: row.rowId, projection: { status: "open" },
+            })[0]!.encodedSortKey,
             rowId: row.rowId,
             rowRevision: 1,
         })),
@@ -206,6 +221,10 @@ describe("plugin Account data erasure", () => {
             initAuth: true,
             initEncrypt: false,
             initFiles: false,
+            env: {
+                HAPPIER_FEATURE_TEAMS_CREDENTIAL_RESOURCES__ENABLED: '1',
+                HAPPIER_SERVER_IDENTITY_ID: `srv_${'a'.repeat(32)}`,
+            },
         });
     }, 120_000);
 
@@ -228,10 +247,114 @@ describe("plugin Account data erasure", () => {
             () => db.userKVStore.deleteMany(),
             () => db.homeAdministrationEvent.deleteMany(),
             () => db.uploadedFile.deleteMany(),
+            () => db.session.deleteMany(),
+            () => db.teamCredentialResource.deleteMany(),
             () => db.managedMachine.deleteMany(),
             () => db.machine.deleteMany(),
             () => db.account.deleteMany(),
         ]);
+    });
+
+    it.each([
+        ['custodian', 'prepared'], ['custodian', 'confirmed'], ['custodian', 'unknown'],
+        ['custodian', 'submitted'], ['custodian', 'corrupt'],
+        ['session_owner', 'prepared'], ['session_owner', 'confirmed'], ['session_owner', 'submitted'],
+    ] as const)(
+        'honors %s erasure with native %s evidence before retirement or blob IO', async (subject, installation) => {
+            const { deleteAccountForErasure } = await import('./accountDataErase');
+            const f = await createNativeSessionTeamCredentialFixture();
+            if (subject === 'custodian') await db.teamMembership.update({ where: { id: f.membership.id }, data: { role: 'owner' } });
+            const accountId = subject === 'custodian' ? f.custodian.id : f.creator.id;
+            const blobPath = `native-erasure-${crypto.randomUUID()}.png`;
+            await db.uploadedFile.create({ data: { accountId, path: blobPath } });
+            // Object storage is the genuine outward boundary. All native
+            // acceptance, lifecycle fences and Account erasure stay real.
+            const deleteBlob = vi.spyOn(blobFiles, 'deletePublicFile').mockResolvedValue(undefined);
+            await expect(inTx(tx => writeSessionTeamCredentialBindingsInTx(tx, {
+                sessionId: f.session.id, accountId: f.creator.id, intents: [f.intent], authentication: TEST_AUTHENTICATION,
+            }))).resolves.toEqual({ ok: true });
+            const prepared = await inTx(tx => stampSessionTeamCredentialNativeDeliveryInTx(tx, {
+                sessionId: f.session.id, accountId: f.creator.id, response: f.sourceResponse, authentication: TEST_AUTHENTICATION,
+            }));
+            if (!prepared.ok) throw new Error('Expected prepared native delivery');
+            const complete = async (operation: 'install' | 'release') => {
+                const input = {
+                    sessionId: f.session.id, accountId: f.creator.id, bindingKey: prepared.binding.safeFacet.bindingKey,
+                    expectedResourceRevision: f.credential.revision, expectedSourceRevision: f.nativeSource.sourceRevision,
+                    expectedProviderTicket: f.nativeSource.providerTicket, operation,
+                    requestId: crypto.randomUUID(),
+                    outcome: operation === 'install' && installation === 'unknown' ? 'unknown' : 'confirmed', authentication: TEST_AUTHENTICATION,
+                } as const;
+                await expect(inTx(tx => submitSessionTeamCredentialNativeDeliveryInTx(tx, input)))
+                    .resolves.toEqual({ ok: true, submitted: true });
+                const cohort = await inTx(tx => readQualifiedSessionTeamCredentialNativeDeliveriesForManagedMachineInTx(tx, {
+                    accountId: input.accountId, request: { ...input, managedId: prepared.binding.managedId },
+                    authentication: input.authentication,
+                }));
+                if (!cohort.ok) throw new Error('Expected qualified submitted native cohort');
+                const completion = { ...input, appliedPolicy: {
+                    ownedBindingKeys: cohort.ownedBindings.map(row => row.safeFacet.bindingKey),
+                    desiredBindingKeys: cohort.desiredBindings.map(row => row.safeFacet.bindingKey),
+                } };
+                return inTx(tx => completeSessionTeamCredentialNativeDeliveryInTx(tx, completion));
+            };
+            if (installation === 'confirmed' || installation === 'unknown') {
+                await expect(complete('install')).resolves.toEqual({ ok: true });
+            } else if (installation === 'submitted') {
+                await expect(inTx(tx => submitSessionTeamCredentialNativeDeliveryInTx(tx, {
+                    sessionId: f.session.id, accountId: f.creator.id, bindingKey: prepared.binding.safeFacet.bindingKey,
+                    expectedResourceRevision: f.credential.revision, expectedSourceRevision: f.nativeSource.sourceRevision,
+                    expectedProviderTicket: f.nativeSource.providerTicket, requestId: crypto.randomUUID(),
+                    operation: 'install', authentication: TEST_AUTHENTICATION,
+                }))).resolves.toEqual({ ok: true, submitted: true });
+            } else if (installation === 'corrupt') {
+                await db.sessionTeamCredentialBinding.updateMany({ where: { sessionId: f.session.id }, data: { nativeDeliveryJson: '{' } });
+            }
+            const dependencies = await inTx(tx => readManagedResourceDependenciesInTx(tx, {
+                kind: 'account', accountId,
+            }));
+            const managedResourceDispositions = dependencies.map(dependency => ({
+                managedId: dependency.managedId, expectedIntentRevision: dependency.intentRevision,
+                expectedAllocation: dependency.allocation, expectedResource: dependency.resource,
+                expectedNativeOperationRef: dependency.nativeOperationRef, expectedRecovery: dependency.recovery,
+                responsibility: 'manual' as const,
+            }));
+            const erase = () => deleteAccountForErasure({ accountId, managedResourceDispositions });
+            const assertErased = async () => {
+                expect(deleteBlob).toHaveBeenCalledWith(blobPath);
+                expect(await db.account.findUnique({ where: { id: accountId } })).toBeNull();
+                expect(await db.sessionTeamCredentialBinding.findMany({ where: { sessionId: f.session.id } })).toEqual([]);
+                if (subject === 'custodian') {
+                    expect(await db.teamCredentialResource.findUnique({ where: { id: f.credential.id } })).toBeNull();
+                    expect(await db.managedMachine.findUnique({ where: { id: f.row.id } })).toBeNull();
+                    expect(await db.session.findUnique({ where: { id: f.session.id } })).not.toBeNull();
+                } else {
+                    expect(await db.teamCredentialResource.findUnique({ where: { id: f.credential.id } })).not.toBeNull();
+                    expect(await db.managedMachine.findUnique({ where: { id: f.row.id } })).not.toBeNull();
+                    expect(await db.session.findUnique({ where: { id: f.session.id } })).toBeNull();
+                }
+            };
+            await expect(erase()).resolves.toEqual({ status: 'deleted' });
+            await assertErased();
+        },
+    );
+
+    it.each(['brokered', 'direct'] as const)('allows custodian erasure with only another Account %s binding', async deliveryMode => {
+        const { deleteAccountForErasure } = await import('./accountDataErase');
+        const f = await createPlannedSessionTeamCredentialFixture('personal_allowed');
+        await db.teamMembership.update({ where: { id: f.creatorMembership.id }, data: { role: 'owner' } });
+        await db.teamCredentialResource.update({ where: { id: f.resource.id }, data: { disclosureCeiling: 'direct_allowed' } });
+        await db.teamCredentialMemberGrant.updateMany({ where: { resourceId: f.resource.id }, data: { deliveryMode } });
+        const session = await db.session.create({ data: { accountId: f.creator.id, tag: crypto.randomUUID(), metadata: '{}' } });
+        await expect(inTx(tx => writeSessionTeamCredentialBindingsInTx(tx, {
+            sessionId: session.id, accountId: f.creator.id, authentication: TEST_AUTHENTICATION,
+            intents: [{ v: 1, slot: { kind: 'provider_model' }, resourceId: f.resource.id,
+                expectedResourceRevision: f.resource.revision, deliveryMode }],
+        }))).resolves.toEqual({ ok: true });
+        await expect(deleteAccountForErasure({ accountId: f.custodian.id })).resolves.toEqual({ status: 'deleted' });
+        expect(await db.account.findUnique({ where: { id: f.custodian.id } })).toBeNull();
+        expect(await db.session.findUnique({ where: { id: session.id } })).not.toBeNull();
+        expect(await db.sessionTeamCredentialBinding.findMany({ where: { sessionId: session.id } })).toEqual([]);
     });
 
     it("reports account-not-found through the real Account-first erasure fence", async () => {
@@ -533,6 +656,11 @@ describe("plugin Account data erasure", () => {
         const contract = await materializeFixtureContract();
         const erased = await seedAccountCollectionData({ accountId: erasedAccountId, contract });
         const retained = await seedAccountCollectionData({ accountId: retainedAccountId, contract });
+        await db.pluginCollectionAccountGrant.create({ data: { rowDbId: erased.first.id, accountId: retainedAccountId,
+            accessLevel: 'view', createdByAccountId: erasedAccountId } });
+        for (const accountId of [erasedAccountId, retainedAccountId]) {
+            await inTx(tx => backfillPluginCollectionUsageTotalsInTx({ tx, accountId }));
+        }
         await db.pluginCollectionCandidatePreparationStage.createMany({
             data: [
                 { accountId: erasedAccountId, row: erased.first, candidateIdentity: "a".repeat(43) },
@@ -623,6 +751,14 @@ describe("plugin Account data erasure", () => {
                 retiredRelationCount: 1,
             },
         });
+        await assertPluginCollectionUsageTotalsMatchRows(erasedAccountId);
+        await assertPluginCollectionUsageTotalsMatchRows(retainedAccountId);
+
+        expect(await db.pluginCollectionAccountGrant.count({ where: { rowDbId: erased.first.id } })).toBe(0);
+        expect(await db.pluginCollectionKeyEnvelope.count({ where: { rowDbId: erased.first.id } })).toBe(0);
+        expect(await db.accountChange.findMany({ where: { accountId: retainedAccountId, kind: 'pluginDomain' } })).toEqual(expect.arrayContaining([
+            expect.objectContaining({ hint: expect.objectContaining({ pluginDomain: 'dataCollection', rowIds: ['task-1'] }) }),
+        ]));
 
         await expect(db.userKVStore.findMany({
             where: { accountId: erasedAccountId },
@@ -701,10 +837,37 @@ describe("plugin Account data erasure", () => {
                 retiredRelationCount: 0,
             },
         });
+        await assertPluginCollectionUsageTotalsMatchRows(erasedAccountId);
+        await assertPluginCollectionUsageTotalsMatchRows(retainedAccountId);
         await expect(db.account.findUniqueOrThrow({
             where: { id: erasedAccountId },
             select: { seq: true },
         })).resolves.toEqual({ seq: 3 });
+    });
+
+    it("does not rewrite settled Collection prefix usage when plugin erasure is retried", async () => {
+        const { erasePluginAccountDataInTx } = await import("./accountDataErase");
+        const accountId = "account-erased-prefix-retry";
+        await createPlainAccount(accountId);
+        const contract = await materializeFixtureContract();
+        await seedAccountCollectionData({ accountId, contract });
+        await inTx(tx => backfillPluginCollectionUsageTotalsInTx({ tx, accountId }));
+        const erase = () => inTx(async tx => {
+            const observed = observePrismaReads(tx, ["pluginCollectionIndexState", "pluginCollectionIndexEntry"]);
+            const result = await erasePluginAccountDataInTx({ tx: observed.tx, accountId, pluginId: PLUGIN_ID });
+            expect(result.status).toBe("erased");
+            return {
+                updatedStateRows: observed.updates.filter(update => update.model === "pluginCollectionIndexState")
+                    .reduce((count, update) => count + update.rows, 0),
+                entryReads: observed.reads.filter(read => read === "pluginCollectionIndexEntry.findMany"),
+            };
+        });
+        const first = await erase();
+        expect(first.updatedStateRows).toBeGreaterThan(0);
+        await assertPluginCollectionUsageTotalsMatchRows(accountId);
+        expect(first.entryReads).toEqual([]);
+        expect(await erase()).toEqual({ updatedStateRows: 0, entryReads: [] });
+        await assertPluginCollectionUsageTotalsMatchRows(accountId);
     });
 
     it("reports changed when erasure only scrubs historical tombstone content and resets derived index state", async () => {

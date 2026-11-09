@@ -3,6 +3,19 @@ import {
     ACCOUNT_IDENTITY_PROVIDER_USER_ID_MAX_CODE_UNITS,
 } from "@/app/auth/providers/accountIdentityBounds";
 import { readAuthMtlsFeatureEnv, type AuthMtlsIdentitySource } from "@/app/features/catalog/readFeatureEnv";
+import { resolveKeylessAccountsEnabled } from "@/app/features/e2ee/resolveKeylessAccountsEnabled";
+import type { IncomingMessage } from 'node:http';
+import { isIrohIngressRequest } from '@/app/net/requestIngress';
+
+/** Forwarded certificate identity is meaningful only behind its trusted ingress. */
+export function isMtlsLoginEnabled(env: NodeJS.ProcessEnv): boolean {
+    const mtlsEnv = readAuthMtlsFeatureEnv(env);
+    if (!mtlsEnv.enabled) return false;
+    if (mtlsEnv.mode !== "forwarded") return false;
+    if (!mtlsEnv.trustForwardedHeaders) return false;
+    if (!resolveKeylessAccountsEnabled(env)) return false;
+    return true;
+}
 
 function readSingleHeader(headers: Record<string, unknown>, headerNameLower: string): string | null {
     const raw = headers[headerNameLower];
@@ -69,7 +82,9 @@ export type MtlsIdentity = Readonly<{
 export function resolveMtlsIdentityFromForwardedHeaders(params: {
     env: NodeJS.ProcessEnv;
     headers: Record<string, unknown>;
+    request: Pick<IncomingMessage, 'socket'>;
 }): MtlsIdentity | null {
+    if (isIrohIngressRequest(params.request)) return null;
     const mtlsEnv = readAuthMtlsFeatureEnv(params.env);
     if (!mtlsEnv.trustForwardedHeaders) {
         return null;

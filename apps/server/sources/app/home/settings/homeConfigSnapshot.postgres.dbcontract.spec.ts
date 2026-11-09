@@ -85,6 +85,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('H
         };
         const homeOps = measured.orm.filter(belongsToHome);
         const homeData = homeOps.filter(span => !['db.raw.$executeRaw', 'db.raw.$executeRawUnsafe', 'db.raw.$queryRaw'].includes(span.phase));
+        console.info('HOME_REQUEST_COST', JSON.stringify({ homeOps: homeOps.map(span => span.phase), totalOrm: measured.orm.length }));
         // This distinguishes a single joined read from the previous two model reads.
         expect(homeData.map(span => span.phase)).toHaveLength(1);
         expect(homeOps.length).toBeLessThanOrEqual(4);
@@ -119,6 +120,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('H
     it('reads the same overlay inside an existing transaction without opening another one', async () => {
         const measured = await measure(() => inReadSnapshot(tx => readHomeConfigEnvInTx(tx, {})));
         expect(measured.spans.filter(span => span.phase === 'db.transaction.attempt')).toHaveLength(1);
+        console.info('HOME_EXISTING_TX_COST', JSON.stringify(measured.orm.map(span => span.phase)));
         expect(measured.orm.length).toBeLessThanOrEqual(4);
     });
 

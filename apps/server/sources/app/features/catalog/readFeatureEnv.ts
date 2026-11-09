@@ -32,10 +32,6 @@ function readFeatureConfig<P extends FeatureEnvProperty>(env: NodeJS.ProcessEnv,
   return readServerConfig(env, FEATURE_CONFIG[property]);
 }
 
-export type AutomationsFeatureEnv = Readonly<{
-  enabled: boolean;
-}>;
-
 export type WorkflowsFeatureEnv = Readonly<{
   enabled: boolean;
 }>;
@@ -119,7 +115,7 @@ export type MachineTunnelFeatureEnv = Readonly<{
   directPeerEnabled: boolean;
   serverRoutedEnabled: boolean;
   allowedPorts: readonly number[];
-  serverRoutedMaxActiveTunnelsPerSocket: number;
+  serverRoutedMaxActiveTunnelsPerSocket: number | undefined;
   serverRoutedMaxFrameBytes: number;
   serverRoutedSupportedEncodings: readonly PeerTcpTunnelEncoding[];
   serverRoutedPreferredEncoding: PeerTcpTunnelEncoding;
@@ -479,12 +475,6 @@ function parseIssuerAllowlist(raw: string | undefined): string[] {
   return parseCommaList(trimmed);
 }
 
-export function readAutomationsFeatureEnv(env: NodeJS.ProcessEnv): AutomationsFeatureEnv {
-  return {
-    enabled: readFeatureConfig(env, 'automationsEnabled'),
-  };
-}
-
 export function readPublicProfilesFeatureEnv(env: NodeJS.ProcessEnv): Readonly<{ enabled: boolean }> {
   return { enabled: readFeatureConfig(env, 'accountPublicProfilesEnabled') };
 }
@@ -641,11 +631,7 @@ export function readMachineTunnelFeatureEnv(env: NodeJS.ProcessEnv): MachineTunn
     directPeerEnabled: readFeatureConfig(env, 'machinesTunnelDirectPeerEnabled'),
     serverRoutedEnabled: readFeatureConfig(env, 'machinesTunnelServerRoutedEnabled'),
     allowedPorts: parsePortList(env[FEATURE_ENV_KEYS.machinesTunnelAllowedPorts]),
-    serverRoutedMaxActiveTunnelsPerSocket: normalizeMachineTunnelPositiveInt(
-      env[FEATURE_ENV_KEYS.machinesTunnelServerRoutedMaxActiveTunnelsPerSocket],
-      FEATURE_READER_DEFAULTS.machinesTunnelServerRoutedMaxActiveTunnelsPerSocket.default,
-      { max: FEATURE_READER_DEFAULTS.machinesTunnelServerRoutedMaxActiveTunnelsPerSocket.bounds.max },
-    ),
+    serverRoutedMaxActiveTunnelsPerSocket: readFeatureConfig(env, 'machinesTunnelServerRoutedMaxActiveTunnelsPerSocket'),
     serverRoutedMaxFrameBytes: normalizeMachineTunnelPositiveInt(
       env[FEATURE_ENV_KEYS.machinesTunnelServerRoutedMaxFrameBytes],
       FEATURE_READER_DEFAULTS.machinesTunnelServerRoutedMaxFrameBytes.default,
@@ -672,11 +658,7 @@ export function readMachineTunnelFeatureEnv(env: NodeJS.ProcessEnv): MachineTunn
       { max: FEATURE_READER_DEFAULTS.machinesTunnelServerRoutedMaxFramedMessageBytes.bounds.max },
     ),
     serverRoutedSubstreams: {
-      maxConcurrentSubstreams: normalizeMachineTunnelPositiveInt(
-        env[FEATURE_ENV_KEYS.machinesTunnelServerRoutedMaxConcurrentSubstreams],
-        FEATURE_READER_DEFAULTS.machinesTunnelServerRoutedMaxConcurrentSubstreams.default,
-        { max: FEATURE_READER_DEFAULTS.machinesTunnelServerRoutedMaxConcurrentSubstreams.bounds.max },
-      ),
+      maxConcurrentSubstreams: readFeatureConfig(env, 'machinesTunnelServerRoutedMaxConcurrentSubstreams'),
     },
   };
 }

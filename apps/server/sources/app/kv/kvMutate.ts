@@ -16,6 +16,8 @@ import { getDbProviderFromEnv, isPrismaErrorCode } from "@/storage/prisma";
 import { db } from "@/storage/db";
 import { portableQueryChunks } from "@/storage/portableQueryChunks";
 import { assertUserKvKeyStorageAdmission } from "./userKvKeyStorage";
+import { assertAccountJsonKvReadStoredContentMatchesAccount } from "./accountJsonKvStoredContentRead";
+import { publishTaskKvMutationChangesInTx, readTaskKvMutationAudienceInTx } from "@/app/todos/taskChanges";
 
 export interface KVMutation {
     key: string;
@@ -66,11 +68,14 @@ export class UserKvMutationConflictError extends Error {
 }
 
 /** Resolve only after the failed transaction has rolled back, including P2002. */
-export async function readUserKvMutationConflict(error: unknown): Promise<NonNullable<KVMutateResult["errors"]>[number] | null> {
+export async function readUserKvMutationConflict(error: unknown,
+    validateCurrent?: (current: Readonly<{ key: string; value: Uint8Array | null; version: number }>) => Promise<void> | void,
+): Promise<NonNullable<KVMutateResult["errors"]>[number] | null> {
     if (!(error instanceof UserKvMutationConflictError)) return null;
     const current = await db.userKVStore.findUnique({ where: { accountId_key: {
         accountId: error.accountId, key: error.key,
     } }, select: { version: true, value: true } });
+    if (current) await validateCurrent?.({ key: error.key, ...current });
     return { key: error.key, error: "version-mismatch", version: current?.version ?? -1,
         value: current?.value ? privacyKit.encodeBase64(current.value) : null };
 }
@@ -237,8 +242,6 @@ export async function kvMutate(
 ): Promise<KVMutateResult> {
     try { return await inTx(
         async (tx) => {
-            // Account admission stabilizes mode; row CAS owns key revisions.
-            await acquireAccountChangePublicationLocksInTx(tx, [ctx.uid], { includeSingleAccount: true });
             return await kvMutateInTx(
                 tx,
                 ctx,
@@ -247,7 +250,12 @@ export async function kvMutate(
             );
         },
     ); } catch (error) {
-        const conflict = await readUserKvMutationConflict(error);
+        const conflict = await readUserKvMutationConflict(error, async current => {
+            if (current.value === null) return;
+            await assertAccountJsonKvReadStoredContentMatchesAccount(ctx.uid, [
+                { key: current.key, value: current.value },
+            ], storedContentAdmission.supportsCurrentProtocol);
+        });
         if (conflict) return { success: false, errors: [conflict] };
         throw error;
     }
@@ -305,6 +313,10 @@ async function kvMutateWithStoredContentPolicyInTx(
             for (const mutation of mutations) {
                 assertPublicGenericKvKey(mutation.key);
             }
+            const audience = await readTaskKvMutationAudienceInTx(tx, ctx.uid, mutations.map(mutation => mutation.key));
+            // Account admission stabilizes mode and declares the complete task
+            // publication cohort; row CAS still owns every key revision.
+            await acquireAccountChangePublicationLocksInTx(tx, [ctx.uid, ...audience], { includeSingleAccount: true });
         }
 
         const needsAccountCurrentness =
@@ -362,6 +374,9 @@ async function kvMutateWithStoredContentPolicyInTx(
         }
 
         const uniqueKeys = Array.from(new Set(mutations.map((m) => m.key)));
+        if (storedContentPolicy.kind === "regular") {
+            await publishTaskKvMutationChangesInTx(tx, ctx.uid, uniqueKeys);
+        }
         const hint = uniqueKeys.length <= 50 ? { keys: uniqueKeys } : { full: true };
         const cursor = await markAccountChanged(tx, { accountId: ctx.uid, kind: 'kv', entityId: 'self', hint });
 

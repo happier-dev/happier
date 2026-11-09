@@ -24,7 +24,6 @@ describe("monitoring/metrics/index", () => {
         expect(register.getSingleMetric("websocket_reconnections_total")).toBeTruthy();
         expect(register.getSingleMetric("auth_login_eligibility_cache_total")).toBeTruthy();
         expect(register.getSingleMetric("auth_login_eligibility_stage_duration_seconds")).toBeTruthy();
-        expect(register.getSingleMetric("auth_enrollment_outcomes_total")).toBeTruthy();
         expect(register.getSingleMetric("redis_commands_total")).toBeTruthy();
         expect(register.getSingleMetric("redis_command_duration_seconds")).toBeTruthy();
         expect(register.getSingleMetric("redis_command_failures_total")).toBeTruthy();

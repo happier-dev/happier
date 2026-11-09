@@ -2,9 +2,10 @@ import { PLUGIN_DECLARATIVE_SETTINGS_KEY_PREFIX } from "@/app/kv/accountScopedKv
 import type { Tx } from "@/storage/inTx";
 
 /**
- * Settings' closed-participant PEP1 check. It names only persisted,
- * mode-bound Settings content that the legacy Account transition does not
- * migrate; it neither stages nor transforms any Settings row.
+ * Persisted mode-bound Settings census. Declarative plugin Settings still
+ * block conversion; history participates in the canonical Settings re-seal.
+ * The empty-only PATCH has no history replacements and must refuse both.
+ * This census never stages or transforms a Settings row.
  *
  * The Account transition owner invokes it after taking its Account-first
  * fence in the same transaction that decides whether a transition may proceed.
@@ -40,7 +41,6 @@ export async function inspectAccountSettingsForEncryptionTransitionInTx(
         tx.accountSettingsSnapshot.findFirst({
             where: {
                 accountId,
-                settingsDbValue: { not: null },
             },
             select: { id: true },
         }),

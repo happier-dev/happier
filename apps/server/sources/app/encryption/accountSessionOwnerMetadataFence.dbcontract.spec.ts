@@ -21,6 +21,7 @@ import {
 import { acquireAccountChangePublicationLocksInTx, markAccountChanged, markAccountsChanged } from "@/app/changes/markAccountChanged";
 import { readTeamChangePublicationAudienceInTx, TEAM_CHANGE_ENTITY_ID } from '@/app/teams/teamChanges';
 import { setAccountStatusInTx } from "@/app/home/governance/accountLifecycle";
+import { makeShareEligibleForTest } from '@/testkit/shareEligibility.testkit';
 import { createDiscussion } from '@/app/discussions/mutations';
 import { acquireDiscussionMutationAccountsInTx } from '@/app/discussions/access';
 import { setDiscussionGrantInTx } from '@/app/discussions/accessService';
@@ -439,6 +440,7 @@ describe("Account Session owner-metadata fence database contract", () => {
     it.skipIf(provider !== 'postgres')('replays an expanded Discussion publication audience before terminal Account locking', async () => {
         const owner = await db.account.create({ data: { publicKey: `${publicKeyPrefix}${randomUUID()}`, encryptionMode: 'plain' } });
         const recipient = await db.account.create({ data: { publicKey: `${publicKeyPrefix}${randomUUID()}`, encryptionMode: 'plain' } });
+        await makeShareEligibleForTest(owner.id, recipient.id);
         const authentication = createPresentUserSessionAccessAuthentication();
         const created = await createDiscussion({ actorAccountId: owner.id, authentication, request: {
             creationLocalId: randomUUID(), titleContent: { t: 'plain', v: { v: 1, title: 'Stable audience' } },

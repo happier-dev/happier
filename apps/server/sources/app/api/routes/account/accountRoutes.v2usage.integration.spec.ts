@@ -6,6 +6,35 @@ import { db } from "@/storage/db";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
 import { withAuthenticatedTestApp } from "../../testkit/sqliteFastify";
 import { accountRoutes } from "./accountRoutes";
+import { TransactionConflictExhaustedError, TransactionDeadlineExceededError } from "@/storage/transactionErrors";
+import { normalizeUsageQuery, usageQueryToAnalyticsRequest } from '@happier-dev/protocol/inputs/usageQuery';
+import { UsageAnalyticsQueryBatchResponseSchema, UsageAnalyticsQueryResponseSchema } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
+import { request as requestHttp } from 'node:http';
+import type { FastifyReply, FastifyRequest, HookHandlerDoneFunction, RouteOptions } from 'fastify';
+import type { TransactionClient } from '@/storage/prisma';
+
+const databaseFault = vi.hoisted(() => ({ error: null as unknown,
+    onSnapshot: null as ((reader: TransactionClient) => TransactionClient) | null }));
+// Substitute only database adapters; transaction classification, routes and HTTP serialization stay real.
+vi.mock("@/storage/db", async importOriginal => {
+    const actual = await importOriginal<typeof import("@/storage/db")>();
+    return { ...actual, db: new Proxy(actual.db, {
+        get(target, key) {
+            const value: unknown = Reflect.get(target, key);
+            if (key !== "$transaction" || typeof value !== "function") return value;
+            return (...args: unknown[]) => databaseFault.error ? Promise.reject(databaseFault.error) : Reflect.apply(value, target, args);
+        },
+    }) };
+});
+vi.mock("@/storage/prisma", async importOriginal => {
+    const actual = await importOriginal<typeof import("@/storage/prisma")>();
+    return { ...actual, withSqliteReadSnapshot: (...args: Parameters<typeof actual.withSqliteReadSnapshot>) => {
+        if (databaseFault.error) throw databaseFault.error;
+        return actual.withSqliteReadSnapshot(reader => {
+            return args[0](databaseFault.onSnapshot?.(reader) ?? reader);
+        }, args[1]);
+    } };
+});
 
 const { emitEphemeral } = vi.hoisted(() => ({
     emitEphemeral: vi.fn(),
@@ -34,6 +63,7 @@ describe("accountRoutes v2 usage", () => {
     });
 
     afterEach(async () => {
+        databaseFault.error = null;
         harness.resetEnv();
         await harness.resetDbTables([
             () => db.usageEvent.deleteMany(),
@@ -42,6 +72,233 @@ describe("accountRoutes v2 usage", () => {
             () => db.repeatKey.deleteMany(),
             () => db.account.deleteMany(),
         ]);
+    });
+
+    it.each(['/v1/usage/query', '/v2/usage/query', '/v2/usage/query-batch'])(
+        'reads raw Usage without building a projection through %s', async url => {
+        const account = await db.account.create({ data: { publicKey: `pk-usage-lazy-${url}` } });
+        const unrelated = await db.account.create({ data: { publicKey: `pk-usage-unvisited-${url}` } });
+        await db.usageEvent.create({ data: { accountId: account.id, observedAt: new Date(100),
+            agentId: 'codex', source: 'runtime', scope: 'turn_delta', inputTokens: 7, totalTokens: 7 } });
+        await withAuthenticatedTestApp(accountRoutes, async app => {
+            const response = await app.inject({ method: 'POST', url,
+                headers: { 'x-test-user-id': account.id },
+                payload: url.endsWith('query-batch') ? { queries: [{}], contributionQueries: [] } : {} });
+            expect(response.statusCode, response.body).toBe(200);
+            const body = response.json();
+            expect(url.endsWith('query-batch') ? body.results[0].value.totals.tokens.total
+                : url.startsWith('/v1/') ? body.usage[0]?.tokens.total : body.totals.tokens.total).toBe(7);
+            expect(await db.usageAccountingProjection.count({ where: { accountId: account.id } })).toBe(0);
+            expect(await db.usageAccountingProjection.count({ where: { accountId: unrelated.id } })).toBe(0);
+        });
+    });
+
+    it.each(['/v1/usage/query', '/v2/usage/query', '/v2/usage/query-batch'])(
+        'does no row projection after the HTTP reader closes during capture through %s, and serves the next reader', async url => {
+        const account = await db.account.create({ data: { publicKey: `pk-usage-aborted-${url}` }, select: { id: true } });
+        await db.usageEvent.createMany({ data: [1, 2, 3].map(index => ({ accountId: account.id,
+            observedAt: new Date(index), agentId: 'codex', source: 'runtime', scope: 'turn_delta', inputTokens: index, totalTokens: index })) });
+        let readStarted!: () => void;
+        let readFailed!: (error: Error) => void;
+        let releaseRead!: () => void;
+        let readerClosed!: () => void;
+        let handlerFinished!: () => void;
+        const started = new Promise<void>((resolve, reject) => { readStarted = resolve; readFailed = reject; });
+        const released = new Promise<void>(resolve => { releaseRead = resolve; });
+        const closed = new Promise<void>(resolve => { readerClosed = resolve; });
+        const finished = new Promise<void>(resolve => { handlerFinished = resolve; });
+        let pause = true;
+        let projectedRows = 0;
+        let repliesAfterClose = 0;
+        // Pause only the genuine persistence boundary. Real admission, accounting,
+        // projection and HTTP lifecycle remain exercised beneath the route.
+        databaseFault.onSnapshot = reader => new Proxy(reader, { get(target, key, receiver) {
+            if (key !== 'usageEvent') return Reflect.get(target, key, receiver);
+            return new Proxy(target.usageEvent, { get(eventReader, method, eventReceiver) {
+                if (method !== 'findMany') return Reflect.get(eventReader, method, eventReceiver);
+                return async (...args: Parameters<typeof eventReader.findMany>) => {
+                    const rows = await eventReader.findMany(...args);
+                    if (pause) { pause = false; readStarted(); await released; }
+                    return rows.map(row => new Proxy(row, { get(value, property, valueReceiver) {
+                        projectedRows++;
+                        return Reflect.get(value, property, valueReceiver);
+                    } }));
+                };
+            } });
+        } });
+        try {
+            await withAuthenticatedTestApp(app => {
+                app.addHook('onRoute', (options: RouteOptions) => {
+                    if (options.url !== url) return;
+                    const handler = options.handler;
+                    options.handler = async function (request, reply) {
+                        try { return await handler.call(this, request, reply); }
+                        finally { handlerFinished(); }
+                    };
+                });
+                app.addHook('onRequest', (_request: FastifyRequest, reply: FastifyReply, done: HookHandlerDoneFunction) => {
+                    reply.raw.once('close', readerClosed);
+                    done();
+                });
+                app.addHook('onSend', async (_request: FastifyRequest, reply: FastifyReply, payload: unknown) => {
+                    if (reply.raw.destroyed) repliesAfterClose++;
+                    handlerFinished();
+                    return payload;
+                });
+                accountRoutes(app);
+            }, async app => {
+                const address: string = await app.listen({ host: '127.0.0.1', port: 0 });
+                const payload = url.endsWith('query-batch') ? { queries: [{}], contributionQueries: [] } : {};
+                const client = requestHttp(address + url, { method: 'POST', headers: {
+                    'content-type': 'application/json', 'x-test-user-id': account.id,
+                } }, response => {
+                    response.resume();
+                    readFailed(new Error(`HTTP ${response.statusCode} completed before the paused database read`));
+                });
+                client.on('error', () => {});
+                client.end(JSON.stringify(payload));
+                try {
+                    await started;
+                    client.destroy();
+                    await closed;
+                } finally { client.destroy(); releaseRead(); }
+                await finished;
+                expect(projectedRows).toBe(0);
+                expect(repliesAfterClose).toBe(0);
+                const next = await app.inject({ method: 'POST', url, headers: { 'x-test-user-id': account.id }, payload });
+                expect(next.statusCode, next.body).toBe(200);
+                expect(projectedRows).toBeGreaterThan(0);
+                expect(url.endsWith('query-batch') ? next.json().results[0].value.totals.tokens.total
+                    : url.startsWith('/v1/') ? next.json().usage[0].tokens.total : next.json().totals.tokens.total).toBe(6);
+            });
+        } finally { releaseRead(); databaseFault.onSnapshot = null; }
+    });
+
+    it.each(["/v1/usage/query", "/v2/usage/query"].flatMap(url => [
+        { url, code: "database_transaction_timeout", failure: () => new TransactionDeadlineExceededError(new Error("private database detail"), "usage-query") },
+        { url, code: "database_transaction_conflict_exhausted", failure: () => new TransactionConflictExhaustedError(new Error("private database detail")) },
+    ]))("preserves terminal storage $code and recovery through $url", async ({ url, code, failure }) => {
+        const account = await db.account.create({ data: { publicKey: `pk-query-deadline-${url}` }, select: { id: true } });
+        await withAuthenticatedTestApp(accountRoutes, async app => {
+            const query = () => app.inject({ method: "POST", url,
+                headers: { "x-test-user-id": account.id }, payload: {} });
+            databaseFault.error = failure();
+            const unavailable = await query();
+            expect(unavailable.statusCode, unavailable.body).toBe(503);
+            expect(unavailable.json()).toEqual({ error: code, statusCode: 503 });
+            expect(unavailable.body).not.toContain("private");
+            databaseFault.error = new Error("private unrelated failure");
+            const unexpected = await query();
+            expect(unexpected.statusCode).toBe(500);
+            expect(unexpected.body).not.toContain("private");
+            databaseFault.error = null;
+            expect((await query()).statusCode).toBe(200);
+        });
+    });
+
+    it('settles the QA-ACCT exact empty model/Machine clauses as zero on scalar and batch routes', async () => {
+        const account = await db.account.create({ data: { publicKey: 'qa-usage-acct-1030-empty', encryptionMode: 'plain' }, select: { id: true } });
+        await db.usageEvent.create({ data: { accountId: account.id, observedAt: new Date(), agentId: 'codex',
+            modelId: 'a-different-model', source: 'runtime', scope: 'turn_delta', inputTokens: 7, totalTokens: 7 } });
+        const common = { machines: ['ae694c29-6fe7-4324-b7d3-0bff5a8961e0'], breakdown: ['model'], includeQuotaHistory: false,
+            includeSessionEvidence: false, includeTranscriptEvidence: false, includeWorkEvidence: false, timeZoneOffsetMinutes: 0 };
+        const counters = ['qa-usage-acct-1030-counter-a', 'qa-usage-acct-1030-counter-b'];
+        const input = [{ ...common, period: { relative: 'today' }, modelIds: counters }, { ...common, period: {}, modelIds: counters },
+            { ...common, period: { relative: 'today' }, modelIds: ['qa-usage-acct-1030-model-a', 'qa-usage-acct-1030-model-b'] }];
+        const queries = input.map(value => usageQueryToAnalyticsRequest(normalizeUsageQuery(value)));
+        await withAuthenticatedTestApp(accountRoutes, async app => {
+            const headers = { 'x-test-user-id': account.id };
+            const unfiltered = await app.inject({ method: 'POST', url: '/v2/usage/query', headers, payload: {} });
+            expect(unfiltered.json().totals.tokens.total).toBe(7);
+            for (const query of queries) {
+                const response = await app.inject({ method: 'POST', url: '/v2/usage/query', headers, payload: query });
+                expect(response.statusCode, response.body).toBe(200);
+                const value = UsageAnalyticsQueryResponseSchema.parse(response.json());
+                expect(value.totals).toMatchObject({ eventCount: 0, tokens: { total: 0 } });
+                expect(value.breakdowns?.model).toEqual([]);
+            }
+            const response = await app.inject({ method: 'POST', url: '/v2/usage/query-batch', headers, payload: { queries } });
+            expect(response.statusCode, response.body).toBe(200);
+            const batch = UsageAnalyticsQueryBatchResponseSchema.parse(response.json());
+            expect(batch.results).toHaveLength(3);
+            for (const row of batch.results) {
+                expect(row).not.toHaveProperty('error');
+                if ('value' in row) expect(row.value.totals).toMatchObject({ eventCount: 0, tokens: { total: 0 } });
+            }
+        });
+    });
+
+    it('delivers aggregate slices without raw rows and pages only explicitly requested contribution detail', async () => {
+        const account = await db.account.create({ data: { publicKey: 'pk-usage-slice-delivery', encryptionMode: 'plain' }, select: { id: true } });
+        const session = await db.session.create({ data: { accountId: account.id, tag: 'usage-slice-delivery',
+            encryptionMode: 'plain', metadata: '{}' }, select: { id: true } });
+        const query = usageQueryToAnalyticsRequest(normalizeUsageQuery({ period: { startMs: 0, endMs: 1000 },
+            includeSessionEvidence: false, includeWorkEvidence: false, topLimit: 2, breakdown: ['agent'] }));
+        await withAuthenticatedTestApp(accountRoutes, async app => {
+            const headers = { 'x-test-user-id': account.id };
+            for (let index = 0; index < 5; index++) {
+                const ingested = await app.inject({ method: 'POST', url: '/v2/usage-events', headers,
+                    payload: { sessionId: session.id, observedAt: 100 + index, agentId: 'codex', source: 'runtime', scope: 'turn_delta', isCumulative: false,
+                        modelId: 'gpt-5.4', tokens: { input: 10, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 10 },
+                        cost: { reportedUsd: 0, estimatedUsd: 0, currency: 'USD' } } });
+                expect(ingested.statusCode, ingested.body).toBe(200);
+            }
+            const read = (contributionQueries: typeof query[], contributionOffset = 0) => app.inject({ method: 'POST',
+                url: '/v2/usage/query-batch', headers, payload: { queries: [query], contributionQueries, contributionOffset } });
+            const compact = await read([]);
+            expect(compact.statusCode, compact.body).toBe(200);
+            const summary = UsageAnalyticsQueryBatchResponseSchema.parse(compact.json());
+            expect(summary.results[0]).toMatchObject({ value: { totals: { eventCount: 5, tokens: { total: 50 } } } });
+            expect(summary.results[0]).not.toHaveProperty('value.contributions');
+            expect(summary).not.toHaveProperty('contributionPages');
+            const rows: string[] = [];
+            let offset: number | null = 0;
+            while (offset !== null) {
+                const response = await read([query], offset);
+                expect(response.statusCode, response.body).toBe(200);
+                const body = response.json() as { contributionPages: { rows: { id: string }[]; offset: number;
+                    totalCount: number; nextOffset: number | null }[]; results: unknown[] };
+                expect(body.results[0]).not.toHaveProperty('value.contributions');
+                const page = body.contributionPages[0]!;
+                expect(page.totalCount).toBe(5);
+                expect(page.offset).toBe(offset);
+                expect(page.rows.length).toBeLessThanOrEqual(query.topLimit);
+                rows.push(...page.rows.map(row => row.id));
+                offset = page.nextOffset;
+            }
+            expect(rows).toHaveLength(5);
+            expect(new Set(rows).size).toBe(5);
+            const streamed = await app.inject({ method: 'POST', url: '/v2/usage/query-batch',
+                headers: { ...headers, accept: 'application/x-ndjson' }, payload: { queries: [query], contributionQueries: [query] } });
+            expect(streamed.statusCode).toBe(200);
+            const streamedBody: string = streamed.body;
+            const chunks = streamedBody.trim().split('\n').map(line => UsageAnalyticsQueryBatchResponseSchema.parse(JSON.parse(line)));
+            expect(chunks.flatMap(chunk => chunk.results)).toHaveLength(1);
+            expect(chunks.flatMap(chunk => chunk.contributionPages ?? []).map(page => page.rows.length)).toEqual([2, 2, 1]);
+            const workStream = await app.inject({ method: 'POST', url: '/v2/usage/query-batch',
+                headers: { ...headers, accept: 'application/x-ndjson; contribution-projection=work' },
+                payload: { queries: [query], contributionQueries: [query] } });
+            expect(workStream.statusCode).toBe(200);
+            const workStreamBody: string = workStream.body;
+            const workChunks = workStreamBody.trim().split('\n').map(line => UsageAnalyticsQueryBatchResponseSchema.parse(JSON.parse(line)));
+            const fullRows = chunks.flatMap(chunk => chunk.contributionPages?.flatMap(page => page.rows) ?? []);
+            const workRows = workChunks.flatMap(chunk => chunk.contributionPages?.flatMap(page => page.rows) ?? []);
+            expect(workRows).toEqual(fullRows.map(row => {
+                const { context: _context, connectedAccount: _account, providerConnectionId: _connection,
+                    providerAttribution: _attribution, providerSource: _source, ...work } = row;
+                return work;
+            }));
+            expect(JSON.stringify(workRows).length).toBeLessThan(JSON.stringify(fullRows).length);
+            const dictionaryStream = await app.inject({ method: 'POST', url: '/v2/usage/query-batch',
+                headers: { ...headers, accept: 'application/x-ndjson; contribution-projection=work; contribution-encoding=dictionary' },
+                payload: { queries: [query], contributionQueries: [query] } });
+            expect(dictionaryStream.statusCode).toBe(200);
+            const dictionaryStreamBody: string = dictionaryStream.body;
+            const dictionaryChunks = dictionaryStreamBody.trim().split('\n')
+                .map(line => UsageAnalyticsQueryBatchResponseSchema.parse(JSON.parse(line)));
+            expect(dictionaryChunks).toEqual(workChunks);
+            expect(dictionaryStream.body.length).toBeLessThan(workStream.body.length);
+        });
     });
 
     it("keeps shared-session usage viewer-bound and retires the read when the grant is removed", async () => {
@@ -99,6 +356,20 @@ describe("accountRoutes v2 usage", () => {
             expect(current.json().totals.tokens.total).toBe(10);
             expect(previous.json().messageStats.messageCount).toBe(1);
             expect(current.json().messageStats.messageCount).toBe(1);
+            const batched = await app.inject({ method: 'POST', url: '/v2/usage/query-batch', headers,
+                payload: { queries: [
+                    { filters: { sessionIds: [session.id] }, dateRange: { startMs: 0, endMs: 1000 }, includeMessageStats: true },
+                    { filters: { sessionIds: [session.id] }, dateRange: { startMs: 1000, endMs: 2000 }, includeMessageStats: true },
+                    { filters: { sessionIds: ['unreadable-session'] }, dateRange: { startMs: 0, endMs: 2000 } },
+                ] } });
+            expect(batched.statusCode, batched.body).toBe(200);
+            expect(batched.json().results.map((result: { value?: unknown; error?: string }) => result.value ?? result.error))
+                .toEqual([expect.objectContaining({ totals: expect.objectContaining({ tokens: expect.objectContaining({ total: 5 }) }),
+                    messageStats: { sessionCount: 1, messageCount: 1 } }),
+                expect.objectContaining({ totals: expect.objectContaining({ tokens: expect.objectContaining({ total: 10 }) }),
+                    messageStats: { sessionCount: 1, messageCount: 1 } }), 'not_found']);
+            expect(batched.json()).not.toHaveProperty('priceCatalog');
+            expect(batched.json().results[0].value).not.toHaveProperty('contributions');
             const legacy = await app.inject({ method: "POST", url: "/v1/usage/query", headers,
                 payload: { sessionId: session.id, endTime: 1, groupBy: "day" } });
             expect(legacy.statusCode).toBe(200);
@@ -235,7 +506,7 @@ describe("accountRoutes v2 usage", () => {
             userId: account.id,
             recipientFilter: { type: "user-scoped-only" },
             payload: { type: "usage", id: session.id, key: "k1", tokens: { total: 10, prompt: 5 },
-                cost: { total: 0.1 }, timestamp: expect.any(Number) },
+                cost: { total: 0.1 }, timestamp: expect.any(Number), accountingChange: { sessionId: session.id } },
         }]);
     });
 
@@ -485,6 +756,7 @@ describe("accountRoutes v2 usage", () => {
                     type: "usage",
                     id: session.id,
                     key: "claude:claude-sonnet-4-6",
+                    accountingChange: { sessionId: session.id, observedFromMs: 1_714_000_000_000 },
                     tokens: {
                         total: 15,
                         input: 10,

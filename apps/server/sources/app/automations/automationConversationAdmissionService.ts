@@ -1,5 +1,5 @@
 import { AutomationConversationAdmitEncryptedHostEvidenceV1Schema, AutomationConversationAdmitReplyHandoffV1Schema, AutomationReplyHandoffTargetV1Schema, type AutomationConversationAdmitEncryptedHostEvidenceV1, type AutomationConversationAdmitReplyHandoffV1 } from '@happier-dev/protocol/automations/event';
-import { AutomationConversationAdmitInputV1Schema, AutomationConversationAdmitResultV1Schema, isAutomationConversationResultDeliveryOwnedByCallerV1, isAutomationConversationAdmitScopedCorrespondenceV1, type AutomationConversationAdmitInputV1, type AutomationConversationAdmitResultV1, type AutomationConversationScopedTriggerEvidenceV1 } from '@happier-dev/protocol/automations/result-delivery';
+import { AutomationConversationAdmitInputV1Schema, AutomationConversationAdmitResultV1Schema, isAutomationConversationResultDeliveryOwnedByCallerV1, isAutomationConversationAdmitScopedCorrespondenceV1, isAutomationConversationScopedActorCorrespondenceV1, type AutomationConversationAdmitInputV1, type AutomationConversationAdmitResultV1, type AutomationConversationScopedTriggerEvidenceV1 } from '@happier-dev/protocol/automations/result-delivery';
 import { buildAutomationConversationOccurrenceEvidenceV1, deriveAutomationOccurrenceKeyV1, type AutomationConversationOccurrenceEvidenceV1, type AutomationOccurrenceKeyV1 } from '@happier-dev/protocol/automations/automationOccurrenceV1';
 import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/canonicalJson';
 import { isAutomationReplyHandoffIdForRunV1 } from '@happier-dev/protocol/automations/automationReplyHandoffIdentityV1';
@@ -117,7 +117,6 @@ type FinalResultDeliveryV1 = Extract<
 
 function blocked(
     reason:
-        | "capacity"
         | "temporarilyUnavailable"
         | "occurrenceConflict"
         | "noEnabledAssignment"
@@ -150,16 +149,24 @@ async function scopedAdmissionRefusalTx(params: Readonly<{
     tx: Tx; accountId: string; automationId: string;
     evidence: ScopedConversationEvidenceV1 | undefined;
     hasReplyHandoff: boolean;
+    plainInput?: AutomationConversationAdmitInputV1;
 }>): Promise<AutomationConversationAdmitResultV1 | null> {
     const automation = await params.tx.automation.findFirst({ where: { id: params.automationId,
         accountId: params.accountId, deletedAt: null }, select: { scopeSessionId: true } });
     if (!automation) return blocked('temporarilyUnavailable');
     const evidence = params.evidence;
     if (!evidence) return automation.scopeSessionId === null ? null : refused('repositoryWriteAccessUnknown');
-    if (evidence.actor.principalId !== evidence.observationActorPrincipalId
+    const corresponding = params.plainInput === undefined
+        ? isAutomationConversationScopedActorCorrespondenceV1(evidence)
+        : isAutomationConversationAdmitScopedCorrespondenceV1(params.plainInput);
+    if (!corresponding
         || params.hasReplyHandoff) return refused('scopedTriggerIdentityMismatch');
-    if (evidence.actor.repositoryWriteAccess === null) return refused('repositoryWriteAccessUnknown');
-    if (evidence.actor.repositoryWriteAccess !== true) return refused('repositoryWriteAccessDenied');
+    // The composite is one admission, but every original sender must satisfy
+    // the existing trigger permission policy. Do not re-check the leader tuple.
+    for (const { actor } of evidence.eventActors ?? [evidence]) {
+        if (actor.repositoryWriteAccess === null) return refused('repositoryWriteAccessUnknown');
+        if (actor.repositoryWriteAccess !== true) return refused('repositoryWriteAccessDenied');
+    }
     return await matchesScopedAutomationConversationTriggerTx({ tx: params.tx, accountId: params.accountId,
         automationId: params.automationId, scopeSessionId: automation.scopeSessionId, scopedTrigger: evidence })
         ? null : refused('scopedTriggerIdentityMismatch');
@@ -536,7 +543,6 @@ async function createConversationRunTx(params: Readonly<{
             : {}),
     });
     if (result.kind === "ineligible") {
-        if (result.reason === "capacity") return blocked("capacity");
         if (result.reason === "noEnabledAssignment") return blocked("noEnabledAssignment");
         return blocked("temporarilyUnavailable");
     }
@@ -626,13 +632,6 @@ export async function admitEncryptedAutomationConversationV1(params: Readonly<{
                 disposition === "mismatch" ? "occurrenceConflict" : "temporarilyUnavailable",
             );
         }
-        // A new sealed occurrence must have been produced against the Account
-        // version this transaction commits under; a rejoin above only needs the
-        // same content key.
-        if (hostEvidence.accountCurrentness.version !== accountFence.account.version) {
-            return blocked("temporarilyUnavailable");
-        }
-
         return await createConversationRunTx({
             tx,
             accountId: params.accountId,
@@ -695,11 +694,8 @@ export async function admitAutomationConversationV1(params: Readonly<{
         if (accountFence.account.currentness.encryptionMode !== "plain") {
             return blocked("temporarilyUnavailable");
         }
-        if (!isAutomationConversationAdmitScopedCorrespondenceV1(input)) {
-            return refused('scopedTriggerIdentityMismatch');
-        }
         const scopeRefusal = await scopedAdmissionRefusalTx({ tx, accountId: params.accountId, automationId: input.automationId,
-            evidence: input.hostEvidence, hasReplyHandoff: input.resultDelivery.kind !== 'none' });
+            evidence: input.hostEvidence, hasReplyHandoff: input.resultDelivery.kind !== 'none', plainInput: input });
         if (scopeRefusal) return scopeRefusal;
 
         const evidence = buildConversationEvidence({

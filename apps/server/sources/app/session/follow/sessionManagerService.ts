@@ -1,5 +1,5 @@
 import { inTx, type Tx } from '@/storage/inTx';
-import { readSnapshotWithCurrentAdmission } from '@/storage/readSnapshotWithCurrentAdmission';
+import { captureReadSnapshot } from '@/storage/captureReadSnapshot';
 import type { SessionAccessAuthentication } from '@/app/session/access/sessionAccessAuthentication';
 import type { SessionManagerSetResultV1, SessionManagerOptionsV1 } from '@happier-dev/protocol/sessions/follow/sessionManagerV1';
 import { FollowPolicyV1Schema } from '@happier-dev/protocol/sessions/follow/sessionFollowPolicyV1';
@@ -135,11 +135,12 @@ async function readManagerCyclesInTx(tx: Tx, sessionId: string, managerSessionId
 export async function getSessionManagerOptions(input: Readonly<{
     accountId: string; sessionId: string; candidateSessionIds: readonly string[]; authentication: SessionAccessAuthentication;
 }>): Promise<SessionManagerOptionsV1> {
-    return readSnapshotWithCurrentAdmission<SessionManagerOptionsV1>(async (tx) => {
+    return captureReadSnapshot<SessionManagerOptionsV1>(async (tx) => {
         const sourceAccess = await resolveEffectiveSessionAccess(tx, input);
         const existing = sourceAccess?.capabilities.readTranscript === true
             ? await readSessionManagerInTx(tx, input.sessionId) : null;
-        const currentManagerSessionId = existing?.destinationSessionId ?? null;
+        const lead = existing ? await resolveEffectiveSessionAccess(tx, { ...input, sessionId: existing.destinationSessionId }) : null;
+        const currentManagerSessionId = existing && lead?.capabilities.readTranscript === true ? existing.destinationSessionId : null;
         const admissions = await readManagerCandidateAdmissionsInTx(tx, input);
         const cycles = await readManagerCyclesInTx(tx, input.sessionId,
             [...admissions].filter(([, admission]) => admission.ok).map(([id]) => id));
@@ -156,23 +157,6 @@ export async function getSessionManagerOptions(input: Readonly<{
             }
         }
         return { sessionId: input.sessionId, currentManagerSessionId, candidates };
-    }, async (tx, captured) => {
-        const source = await resolveEffectiveSessionAccess(tx, input);
-        const canReadSource = source?.capabilities.readTranscript === true;
-        const lead = canReadSource && captured.currentManagerSessionId !== null
-            ? await resolveEffectiveSessionAccess(tx, { ...input, sessionId: captured.currentManagerSessionId }) : null;
-        const currentManagerSessionId = lead?.capabilities.readTranscript === true ? captured.currentManagerSessionId : null;
-        const admissions = await readManagerCandidateAdmissionsInTx(tx, {
-            ...input, candidateSessionIds: captured.candidates.filter(candidate => candidate.allowed).map(candidate => candidate.sessionId),
-        });
-        const candidates: SessionManagerOptionsV1['candidates'] = [];
-        for (const candidate of captured.candidates) {
-            if (!candidate.allowed) { candidates.push(candidate); continue; }
-            const current = admissions.get(candidate.sessionId)!;
-            candidates.push(current.ok ? candidate : { sessionId: candidate.sessionId, allowed: false,
-                reason: current.error === 'manager_forbidden' ? current.reason : 'cycle' });
-        }
-        return { ...captured, currentManagerSessionId, candidates };
     });
 }
 

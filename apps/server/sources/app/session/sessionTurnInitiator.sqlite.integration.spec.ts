@@ -44,6 +44,32 @@ describe("Host-stamped SessionTurn facts (SQLite integration)", () => {
     afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); });
     afterAll(async () => { if (harness) await harness.close(); });
 
+    it('advances Session recency when a nonlatest turn settles after the latest turn', async () => {
+        const suffix = randomUUID();
+        const before = new Date('2020-01-01T00:00:00Z');
+        const account = await db.account.create({ data: { publicKey: suffix, encryptionMode: 'plain' } });
+        const session = await db.session.create({ data: {
+            accountId: account.id, tag: suffix, metadata: '{}', encryptionMode: 'plain',
+            updatedAt: before, lastActiveAt: before, latestTurnId: 'newer', latestTurnStatus: 'completed',
+        } });
+        await db.sessionTurn.createMany({ data: [
+            { sessionId: session.id, turnId: 'older', status: 'in_progress', startedAt: 100n,
+                updatedAt: 100n, lastMutationId: `begin-old-${suffix}` },
+            { sessionId: session.id, turnId: 'newer', status: 'completed', startedAt: 200n,
+                updatedAt: 300n, terminalAt: 300n, lastMutationId: `end-new-${suffix}` },
+        ] });
+        expect(await applySessionTurnMutation({ actorUserId: account.id, authentication, mutation: {
+            v: 1, sessionId: session.id, turnId: 'older', action: 'complete',
+            mutationId: `late-end-${suffix}`, observedAt: 400,
+        } })).toMatchObject({ ok: true, didApply: true });
+        const current = await db.session.findUniqueOrThrow({ where: { id: session.id } });
+        expect(current.updatedAt.getTime()).toBeGreaterThan(before.getTime());
+        expect(current).toMatchObject({ latestTurnId: 'newer', latestTurnStatus: 'completed', lastActiveAt: before });
+        expect(await db.sessionTurn.findUniqueOrThrow({ where: {
+            sessionId_turnId: { sessionId: session.id, turnId: 'older' },
+        } })).toMatchObject({ status: 'completed', terminalAt: 400n });
+    });
+
     it('settles a yielded question as waiting without a finished or stopped occurrence', async () => {
         const suffix = randomUUID();
         const account = await db.account.create({ data: { publicKey: suffix, encryptionMode: 'plain' } });
@@ -188,19 +214,6 @@ describe("Host-stamped SessionTurn facts (SQLite integration)", () => {
             expect(await db.sessionTurn.findUniqueOrThrow({ where: { id: stored.id } }))
                 .toMatchObject({ initiator, workDepth: 29, workflowInvocationJson: stored.workflowInvocationJson });
 
-            // A newer begin can reopen a failed turn only with matching native
-            // context. That recovery is still not a new fact-establishment.
-            expect(await applySessionTurnMutation({ actorUserId: account.id, authentication,
-                mutation: { v: 1, sessionId: session.id, turnId, action: "fail", mutationId: `fail-${suffix}`, observedAt: 120,
-                    issue: { v: 1, scope: "primary_session", status: "failed", code: "test_failure", source: "unknown", occurredAt: 120 } } }))
-                .toMatchObject({ ok: true, didApply: true });
-            expect(await applySessionTurnMutation({ actorUserId: account.id, authentication,
-                mutation: { ...begin, mutationId: `recover-${suffix}`, observedAt: 130,
-                    initiator: "user", workDepth: 0, workflowInvocation: undefined } }))
-                .toMatchObject({ ok: true, didApply: true });
-            expect(await db.sessionTurn.findUniqueOrThrow({ where: { id: stored.id } }))
-                .toMatchObject({ initiator, workDepth: 29, workflowInvocationJson: stored.workflowInvocationJson });
-
             // Observation only: the spy calls the real admission owner, including
             // its real DB reads/writes. No internal domain behavior is replaced.
             const admission = vi.spyOn(lifecycleAdmission, "admitSessionLifecycleAutomationRunsTx");
@@ -219,4 +232,40 @@ describe("Host-stamped SessionTurn facts (SQLite integration)", () => {
                 .toMatchObject({ initiator, workDepth: 29, workflowInvocationJson: stored.workflowInvocationJson });
         },
     );
+
+    it.each(['begin', 'complete'] as const)('keeps a failed turn terminal after newer matching native %s evidence while allowing a new turn', async action => {
+        const suffix = randomUUID();
+        const account = await db.account.create({ data: { publicKey: suffix, encryptionMode: 'plain' } });
+        const session = await db.session.create({ data: { accountId: account.id, tag: suffix, metadata: '{}', encryptionMode: 'plain' } });
+        const turnId = `failed-${suffix}`;
+        const base = { v: 1, sessionId: session.id, turnId, agentId: 'codex', agentTurnId: `native-${suffix}` } as const;
+        const apply = (mutation: unknown) => applySessionTurnMutation({ actorUserId: account.id, authentication, mutation });
+        expect(await apply({ ...base, action: 'begin', mutationId: `begin-${suffix}`, observedAt: 100 }))
+            .toMatchObject({ ok: true, didApply: true });
+        expect(await apply({ ...base, action: 'fail', mutationId: `fail-${suffix}`, observedAt: 200,
+            issue: { v: 1, scope: 'primary_session', status: 'failed', code: 'test_failure', source: 'unknown', occurredAt: 200,
+                agentId: base.agentId, agentTurnId: base.agentTurnId } }))
+            .toMatchObject({ ok: true, didApply: true });
+        const where = { sessionId_turnId: { sessionId: session.id, turnId } };
+        const failedTurn = await db.sessionTurn.findUniqueOrThrow({ where });
+        const failedSession = await db.session.findUniqueOrThrow({ where: { id: session.id } });
+        // MMD-58: matching ids and a later timestamp are not native recovery authority.
+        const late = { ...base, action, mutationId: `late-${suffix}`, observedAt: 300 };
+        const result = await apply(late);
+        expect(result).toMatchObject({ ok: true, didApply: false, reason: 'terminal-turn', latestTurnStatus: 'failed',
+            receipt: { mutationId: late.mutationId, turnId, action, decision: 'stale-terminal' } });
+        expect(await db.sessionTurn.findUniqueOrThrow({ where })).toEqual(failedTurn);
+        expect(await db.session.findUniqueOrThrow({ where: { id: session.id } })).toEqual(failedSession);
+        expect(await apply(late)).toMatchObject({ ok: true, didApply: false, reason: 'duplicate-mutation', receipt: result.ok ? result.receipt : undefined });
+        expect(await db.sessionTurnMutationReceipt.count({ where: { sessionId: session.id, mutationId: late.mutationId } })).toBe(1);
+
+        const next = { ...base, turnId: `next-${suffix}`, agentTurnId: `next-native-${suffix}` };
+        expect(await apply({ ...next, action: 'begin', mutationId: `next-begin-${suffix}`, observedAt: 400 }))
+            .toMatchObject({ ok: true, didApply: true, latestTurnId: next.turnId, latestTurnStatus: 'in_progress', lastRuntimeIssue: null });
+        expect(await apply({ ...next, action: 'complete', mutationId: `next-complete-${suffix}`, observedAt: 500 }))
+            .toMatchObject({ ok: true, didApply: true, latestTurnId: next.turnId, latestTurnStatus: 'completed', lastRuntimeIssue: null });
+        expect(await db.sessionTurn.findUniqueOrThrow({ where })).toEqual(failedTurn);
+        expect(await db.session.findUniqueOrThrow({ where: { id: session.id } }))
+            .toMatchObject({ latestTurnId: next.turnId, latestTurnStatus: 'completed', thinking: false, lastRuntimeIssue: null });
+    });
 });

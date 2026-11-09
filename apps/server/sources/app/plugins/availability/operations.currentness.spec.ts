@@ -12,7 +12,8 @@ import {
     encodePluginUiArtifactArchiveBodyV1,
 } from "@happier-dev/protocol/plugins/ui";
 import * as privacyKit from "privacy-kit";
-import { createInTxHarness } from "@/app/api/testkit/txHarness";
+import { createPrismaTransactionBoundary } from "@/app/api/testkit/txHarness";
+import { inTxPostgresControlStatementMock } from "@/app/api/testkit/dbMocks";
 import { withAuthenticatedTestApp } from "@/app/api/testkit/sqliteFastify";
 import { createSignedAccountContentBinding } from "@/testkit/accountEncryption";
 
@@ -98,7 +99,7 @@ function releaseRow(input: Readonly<{
 const boundary = vi.hoisted(() => {
     const directDb = {
         account: { findUnique: vi.fn() },
-        accountPluginIntent: { findUnique: vi.fn() },
+        accountPluginIntent: { findUnique: vi.fn(), findMany: vi.fn() },
         accountPluginRelease: { findUnique: vi.fn(), findMany: vi.fn() },
         accountPluginUiArtifact: { findUnique: vi.fn() },
         artifact: { findUnique: vi.fn() },
@@ -106,7 +107,7 @@ const boundary = vi.hoisted(() => {
     };
     const transactionSnapshot = {
         account: { findUnique: vi.fn() },
-        accountPluginIntent: { findUnique: vi.fn() },
+        accountPluginIntent: { findUnique: vi.fn(), findMany: vi.fn() },
         accountPluginRelease: { findUnique: vi.fn(), findMany: vi.fn() },
         accountPluginUiArtifact: { findUnique: vi.fn() },
         artifact: { findUnique: vi.fn() },
@@ -116,11 +117,17 @@ const boundary = vi.hoisted(() => {
 });
 
 vi.mock("@/storage/db", () => ({
-    db: boundary.directDb,
+    db: {
+        ...boundary.directDb,
+        // Simulate only the Prisma/SQL boundary; snapshot and transaction
+        // admission, publication and error classification remain real.
+        $transaction: createPrismaTransactionBoundary(() => ({
+            ...boundary.transactionSnapshot,
+            ...inTxPostgresControlStatementMock,
+        })),
+    },
     isPrismaErrorCode: () => false,
 }));
-
-vi.mock("@/storage/inTx", () => createInTxHarness(() => boundary.transactionSnapshot));
 
 import { createPluginAvailabilityOperations } from "./operations";
 import { registerPluginAvailabilityRoutes } from "./routes";
@@ -140,6 +147,8 @@ describe("plugin Availability read currentness", () => {
             writableCollections: [],
             revision: BigInt(1),
         });
+        boundary.directDb.accountPluginIntent.findMany.mockImplementation(async () => [await boundary.directDb.accountPluginIntent.findUnique()]);
+        boundary.transactionSnapshot.accountPluginIntent.findMany.mockImplementation(async () => [await boundary.transactionSnapshot.accountPluginIntent.findUnique()]);
         const directRelease = releaseRow({
             artifactId: "00000000-0000-4000-8000-000000000007",
             archiveDigestSha256: `sha256:${"7".repeat(64)}`,

@@ -1,11 +1,11 @@
 import type { PublicProfileOwnerReadV1, PublicProfileReadResultV1 } from '@happier-dev/protocol/account/publicProfilePublication';
 import { projectPublicProfile, projectPublicProfileIdentity } from '@happier-dev/protocol/account/projectPublicProfile';
 import { inReadSnapshot, type Tx } from '@/storage/inTx';
-import { readSnapshotWithCurrentAdmission } from '@/storage/readSnapshotWithCurrentAdmission';
 import { parsePublicProfileRecord, type PublicProfileServerDependencies } from './publicProfileStorage';
 import { readPublicProfilePicture } from './publicProfilePicture';
 import { isServerFeatureEnabledForRequest } from '@/app/features/catalog/serverFeatureGate';
-import { isDeepStrictEqual } from 'node:util';
+import { createHash } from 'node:crypto';
+import { publicProfileSyncedAge } from './render/publicProfileLabels';
 
 export interface PublicProfileDelivery {
     result: PublicProfileReadResultV1;
@@ -21,8 +21,39 @@ interface ResolvedPublicProfileDelivery extends ResolvedPublicProfile {
     picture?: PublicProfileDelivery['picture'];
 }
 
-interface MaterializedPublicProfile extends ResolvedPublicProfileDelivery {
-    media?: Awaited<ReturnType<typeof readPublicProfilePicture>>;
+type ProfileTheme = 'auto' | 'light' | 'dark';
+export type PublicProfileRepresentationVariant =
+    | Readonly<{ kind: 'html'; service?: string; nowMs?: number }>
+    | Readonly<{ kind: 'svg'; surface: 'badge' | 'card'; theme: ProfileTheme; metric?: string }>
+    | Readonly<{ kind: 'png'; surface: 'card' | 'og'; theme?: ProfileTheme }>
+    | Readonly<{ kind: 'background'; selection?: Readonly<{ theme: 'light' | 'dark'; viewport: 'wide' | 'phone'; density: '1' | '2' }> }>;
+
+interface PublicProfileRepresentationCondition {
+    ifNoneMatch: string | string[] | undefined;
+    variant: PublicProfileRepresentationVariant;
+}
+
+type PublicProfileRepresentation<T> =
+    | { kind: 'not_modified'; result: PublicProfileReadResultV1; etag: string }
+    | { kind: 'rendered'; result: PublicProfileReadResultV1; representation: T; etag?: string };
+
+export function matchesPublicProfileEtag(value: string | string[] | undefined, etag: string): boolean {
+    const values = Array.isArray(value) ? value : [value ?? ''];
+    return values.flatMap(value => value.split(',')).some(value => value.trim() === '*'
+        || value.trim().replace(/^W\//, '') === etag.replace(/^W\//, ''));
+}
+
+/** Bump the rendering revision for semantic renderer/font/copy changes, including the generated HTML body. */
+function representationEtag(result: PublicProfileReadResultV1, variant: PublicProfileRepresentationVariant): string | undefined {
+    if (result.kind === 'unavailable') return undefined;
+    if (variant.kind === 'background' && (result.kind !== 'published'
+        || result.view.appearance.atmosphere.source === 'none'
+        || (!variant.selection && result.view.appearance.atmosphere.source !== 'picture'))) return undefined;
+    // The page says how long ago it synced, so its validator follows that age rather than the serving instant.
+    const rendered = variant.kind === 'html' ? { kind: variant.kind, service: variant.service } : variant;
+    const age = variant.kind === 'html' && variant.nowMs !== undefined && result.kind === 'published'
+        ? [publicProfileSyncedAge(result.view.snapshot.computedAtMs, variant.nowMs)] : [];
+    return `W/"public-profile-render-1-${createHash('sha256').update(JSON.stringify([rendered, result, ...age])).digest('hex')}"`;
 }
 
 /** Owner recovery remains reachable even when public capability is unavailable. */
@@ -48,34 +79,26 @@ export async function readPublicProfileDelivery(handle: string, env: NodeJS.Proc
     return readAdmittedPublicProfileDelivery(handle, env, deps);
 }
 
-/** Native/font rendering must finish before current disclosure and validators are admitted. */
+/** Admit each finite representation once; matching validators avoid media IO and painting. */
 export async function readPublicProfileRepresentation<T>(handle: string, env: NodeJS.ProcessEnv, deps: PublicProfileServerDependencies,
-    materialize: (result: PublicProfileReadResultV1) => Promise<T>): Promise<{ result: PublicProfileReadResultV1; representation: T }> {
-    return materializeCurrentRepresentation(handle, env, deps, await resolvePublicProfile(handle, env, deps),
-        delivery => materialize(delivery.result));
+    materialize: (result: PublicProfileReadResultV1) => Promise<T>, condition: PublicProfileRepresentationCondition): Promise<PublicProfileRepresentation<T>> {
+    return readCurrentRepresentation(handle, env, deps, delivery => materialize(delivery.result), condition, false);
 }
 
 export async function readPublicProfileDeliveryRepresentation<T>(handle: string, env: NodeJS.ProcessEnv, deps: PublicProfileServerDependencies,
-    materialize: (delivery: PublicProfileDelivery) => Promise<T>): Promise<{ result: PublicProfileReadResultV1; representation: T }> {
-    const captured = isServerFeatureEnabledForRequest('account.publicProfiles', env)
-        ? await resolvePublicProfileDelivery(handle, env, deps) : { result: { kind: 'unavailable' as const } };
-    return materializeCurrentRepresentation(handle, env, deps, captured, materialize);
+    materialize: (delivery: PublicProfileDelivery) => Promise<T>, condition: PublicProfileRepresentationCondition): Promise<PublicProfileRepresentation<T>> {
+    return readCurrentRepresentation(handle, env, deps, materialize, condition, true);
 }
 
-async function materializeCurrentRepresentation<T>(handle: string, env: NodeJS.ProcessEnv, deps: PublicProfileServerDependencies,
-    captured: ResolvedPublicProfileDelivery, materialize: (delivery: PublicProfileDelivery) => Promise<T>): Promise<{ result: PublicProfileReadResultV1; representation: T }> {
-    let painted: { ok: true; value: T } | { ok: false; error: unknown };
-    try { painted = { ok: true, value: await materialize({ result: captured.result,
-        ...(captured.picture ? { picture: captured.picture } : {}) }) }; }
-    catch (error) { painted = { ok: false, error }; }
-    const current = await resolvePublicProfile(handle, env, deps);
-    // Account identity also protects a handle recycled during asynchronous painting.
-    if (current.accountId !== captured.accountId || !isDeepStrictEqual(current.result, captured.result)) {
-        const result = { kind: 'unavailable' } as const;
-        return { result, representation: await materialize({ result }) };
-    }
-    if (!painted.ok) throw painted.error;
-    return { result: current.result, representation: painted.value };
+async function readCurrentRepresentation<T>(handle: string, env: NodeJS.ProcessEnv, deps: PublicProfileServerDependencies,
+    materialize: (delivery: PublicProfileDelivery) => Promise<T>, condition: PublicProfileRepresentationCondition,
+    includePicture: boolean): Promise<PublicProfileRepresentation<T>> {
+    const captured = await resolvePublicProfile(handle, env, deps);
+    const etag = representationEtag(captured.result, condition.variant);
+    if (etag && matchesPublicProfileEtag(condition.ifNoneMatch, etag)) return { kind: 'not_modified', result: captured.result, etag };
+    const delivery = includePicture ? await materializePublicProfileDelivery(captured) : captured;
+    const representation = await materialize({ result: delivery.result, ...(delivery.picture ? { picture: delivery.picture } : {}) });
+    return { kind: 'rendered', result: delivery.result, representation, etag: representationEtag(delivery.result, condition.variant) };
 }
 
 /** Post-feature admission owns the current publication and its private media custody. */
@@ -85,33 +108,20 @@ export async function readAdmittedPublicProfileDelivery(handle: string, env: Nod
 }
 
 async function resolvePublicProfileDelivery(handle: string, env: NodeJS.ProcessEnv, deps: PublicProfileServerDependencies): Promise<ResolvedPublicProfileDelivery> {
-    return readSnapshotWithCurrentAdmission<MaterializedPublicProfile, ResolvedPublicProfileDelivery>({
-        capture: tx => resolvePublicProfileInTx(tx, handle, env, deps),
-        materialize: async (captured): Promise<MaterializedPublicProfile> => {
-            if (!captured.accountId || captured.result.kind !== 'published' || captured.result.view.appearance.atmosphere.source !== 'picture') return captured;
-            const media = await readPublicProfilePicture({ accountId: captured.accountId,
-                pictureId: captured.result.view.appearance.atmosphere.picture.ref.id });
-            return { ...captured, media };
-        },
-    }, async (tx, captured) => {
-        if (!captured.accountId) return { result: { kind: 'unavailable' } };
-        const current = await resolvePublicProfileInTx(tx, handle, env, deps);
-        if (current.accountId !== captured.accountId) return { result: { kind: 'unavailable' } };
-        if (current.result.kind !== 'published') return current;
-        const atmosphere = current.result.view.appearance.atmosphere;
-        if (atmosphere.source !== 'picture') return captured.media ? { result: { kind: 'unavailable' } } : current;
-        if (captured.result.kind !== 'published' || captured.result.view.appearance.atmosphere.source !== 'picture'
-            || atmosphere.picture.ref.id !== captured.result.view.appearance.atmosphere.picture.ref.id || !captured.media) {
-            return { result: { kind: 'unavailable' } };
-        }
-        // Current policy and the exact binding win over a failure reading a retired image.
-        if (!captured.media.ok) {
-            if (captured.media.reason === 'not_found') return { result: { kind: 'unavailable' } };
-            throw new Error('public_profile_picture_unavailable');
-        }
-        return { ...current, picture: { bytes: Buffer.from(captured.media.bytes), mimeType: captured.media.mimeType,
-            width: captured.media.width, height: captured.media.height } };
-    });
+    const captured = await inReadSnapshot(tx => resolvePublicProfileInTx(tx, handle, env, deps));
+    return materializePublicProfileDelivery(captured);
+}
+
+async function materializePublicProfileDelivery(captured: ResolvedPublicProfile): Promise<ResolvedPublicProfileDelivery> {
+    if (!captured.accountId || captured.result.kind !== 'published' || captured.result.view.appearance.atmosphere.source !== 'picture') return captured;
+    const pictureId = captured.result.view.appearance.atmosphere.picture.ref.id;
+    const media = await readPublicProfilePicture({ accountId: captured.accountId, pictureId });
+    if (!media.ok) {
+        if (media.reason === 'not_found') return { result: { kind: 'unavailable' } };
+        throw new Error('public_profile_picture_unavailable');
+    }
+    return { ...captured, picture: { bytes: Buffer.from(media.bytes), mimeType: media.mimeType,
+        width: media.width, height: media.height } };
 }
 
 async function resolvePublicProfile(handle: string, env: NodeJS.ProcessEnv, deps: PublicProfileServerDependencies): Promise<ResolvedPublicProfile> {
@@ -146,7 +156,7 @@ async function readAdmittedPublicProfileInTx(tx: Tx, accountId: string, handle: 
     if (!current.snapshot || !current.metadata || !current.layout || !current.appearance) return { kind: 'unavailable' };
     try {
         const view = projectPublicProfile({ context, policy: current.policy, metadata: current.metadata,
-            snapshot: current.snapshot, layout: current.layout, appearance: current.appearance });
+            snapshot: current.snapshot, layout: current.layout, appearance: current.appearance, relativePeriod: current.query?.period.relative });
         return view ? { kind: 'published', view } : { kind: 'unavailable' };
     } catch { return { kind: 'unavailable' }; }
 }

@@ -3,7 +3,7 @@ import { inTx } from '@/storage/inTx';
 import { authorizeHomeGovernanceMutationInTx } from '@/app/home/governance/homeCapabilities';
 import { recordHomeAdministrationEventInTx } from '@/app/home/audit/homeAdministrationEvents';
 import { acquireHomeGovernanceAdmissionInTx, publishHomeGovernanceChangedInTx } from '@/app/home/governance/governanceChanges';
-import { readPublicProfileForMutationInTx } from './publicProfileStorage';
+import { readPublicProfileForMutationInTx, createPublicProfileInTx, updatePublicProfileInTx } from './publicProfileStorage';
 
 export type PublicProfileModerationResult = HomePublicProfileModerationResultV1 | { kind: 'forbidden' } | { kind: 'not_found' };
 /** Restriction is operator state on the publication row, independent of owner disclosure. */
@@ -18,7 +18,8 @@ export async function moderatePublicProfile(actorAccountId: string, accountId: s
         const data = operation === 'restrict'
             ? { removedAt: row?.removedAt ?? new Date(), removedByAccountId: actorAccountId, removalReason: reason }
             : { removedAt: null, removedByAccountId: null, removalReason: null };
-        await tx.accountPublicProfile.upsert({ where: { accountId }, create: { accountId, ...data }, update: data });
+        if (row) await updatePublicProfileInTx(tx, row, data);
+        else await createPublicProfileInTx(tx, { accountId, ...data });
         await recordHomeAdministrationEventInTx(tx, { actor: { kind: 'account', accountId: actorAccountId },
             target: { kind: 'account', id: accountId }, detail: { action: operation === 'restrict' ? 'public_profile.restricted' : 'public_profile.restored', summary: { reason } } });
         await publishHomeGovernanceChangedInTx(tx);

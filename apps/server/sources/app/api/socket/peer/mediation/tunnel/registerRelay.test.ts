@@ -1,7 +1,6 @@
 import {
     createPeerTcpTunnelRelayAuthorizationSigningInputV2,
     decodePeerTcpTunnelBinaryFrameV2,
-    encodePeerApplicationEncryptedFrameV1,
     encodePeerTcpTunnelBinaryFrameV2,
     PEER_TCP_TUNNEL_BINARY_FRAME_ENCODING_V2,
     PEER_TCP_TUNNEL_RELAY_SOCKET_EVENT,
@@ -2366,7 +2365,7 @@ describe('registerPeerTcpTunnelRelaySocketHandler', () => {
         ]));
     });
 
-    it('emits only bounded Voice encryption classification after relay state cleanup', async () => {
+    it('routes opaque Voice payloads without classifying or exposing them after relay state cleanup', async () => {
         const mod = await loadRegisterRelayModule();
         expect(mod?.registerPeerTcpTunnelRelaySocketHandler).toBeTypeOf('function');
         if (!mod?.registerPeerTcpTunnelRelaySocketHandler) return;
@@ -2417,12 +2416,8 @@ describe('registerPeerTcpTunnelRelaySocketHandler', () => {
         await socket.trigger('peer:tunnel:v1', createBinaryEnvelope({
             tunnelId: 'tun_voice_encrypted',
             substreamId: 'voice-substream',
-            payload: encodePeerApplicationEncryptedFrameV1({
-                v: 1,
-                kind: 'data',
-                nonceBase64Url: 'AAAAAAAAAAAAAAAA',
-                ciphertextBase64Url: 'AAAAAAAAAAAAAAAAAAAAAA',
-            }),
+            // Stream-key ciphertext (E2EE) or PCM (plain) is opaque to the relay either way.
+            payload: new TextEncoder().encode('AAAAAAAAAAAAAAAAAAAAAA'),
         }));
         await socket.trigger('peer:tunnel:v1', createCloseEnvelope('tun_voice_encrypted'));
         await postCloseCheck;
@@ -2440,9 +2435,6 @@ describe('registerPeerTcpTunnelRelaySocketHandler', () => {
                 kind: 'flow.closed',
                 flow: expect.objectContaining({ flowKind: 'voice_media' }),
                 data: expect.objectContaining({
-                    encryptedApplicationFrames: 1,
-                    unprotectedApplicationFrames: 0,
-                    allApplicationFramesEncrypted: true,
                     cleanupSettled: true,
                 }),
             }),
@@ -2455,26 +2447,9 @@ describe('registerPeerTcpTunnelRelaySocketHandler', () => {
             }),
         }));
 
-        await openVoiceTunnel('tun_voice_unprotected');
-        await socket.trigger('peer:tunnel:v1', createBinaryEnvelope({
-            tunnelId: 'tun_voice_unprotected',
-            substreamId: 'voice-substream',
-            payload: new Uint8Array([1, 2, 3, 4]),
-        }));
-        await socket.trigger('peer:tunnel:v1', createCloseEnvelope('tun_voice_unprotected'));
-
-        expect(emitted).toEqual(expect.arrayContaining([
-            expect.objectContaining({
-                kind: 'flow.closed',
-                flow: expect.objectContaining({ flowId: 'tun_voice_unprotected' }),
-                data: expect.objectContaining({
-                    encryptedApplicationFrames: 0,
-                    unprotectedApplicationFrames: 1,
-                    allApplicationFramesEncrypted: false,
-                    cleanupSettled: true,
-                }),
-            }),
-        ]));
+        const closed = emitted.find(event => event.kind === 'flow.closed');
+        expect(closed?.data).not.toHaveProperty('encryptedApplicationFrames');
+        expect(closed?.data).not.toHaveProperty('unprotectedApplicationFrames');
         expect(JSON.stringify(emitted)).not.toContain('AAAAAAAAAAAAAAAAAAAAAA');
     });
 

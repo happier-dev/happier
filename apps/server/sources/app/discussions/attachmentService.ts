@@ -5,7 +5,7 @@ import type { DiscussionAttachmentReadInputV1, DiscussionAttachmentReadResponseV
 import type { DiscussionPostRequestV1 } from '@happier-dev/protocol/discussions/api';
 import { db } from '@/storage/db';
 import type { Tx } from '@/storage/inTx';
-import { readSnapshotWithCurrentAdmission } from '@/storage/readSnapshotWithCurrentAdmission';
+import { captureReadSnapshot } from '@/storage/captureReadSnapshot';
 import { normalizePrivateFileKey } from '@/storage/privateFiles/privateFileKeys';
 import { storePrivateBinaryContent, openPrivateBinaryContent } from '@/storage/privateFiles/privateBinaryContent';
 import { writeAccountPrivateFileCandidate, settleAccountPrivateFileUploadInTx, discardAccountPrivateFileCandidate,
@@ -126,23 +126,15 @@ async function captureAttachmentInTx(tx: Tx, input: Reader) {
     return discussionSuccess({ row, mode: context.storageMode, dataEncryptionKey: context.dataEncryptionKey, ownerAccountId: context.ownerAccountId });
 }
 
-/** Exact current message disclosure captures a locator; slow IO precedes a fresh policy admission. */
+/** Capture authorized message, mode, key and immutable locator before slow private IO. */
 export async function readDiscussionAttachment(input: Reader): Promise<DiscussionResult<DiscussionAttachmentReadResponseV1>> {
-    const result = await readSnapshotWithCurrentAdmission({ capture: tx => captureAttachmentInTx(tx, input), materialize: async captured => {
+    const result = await captureReadSnapshot({ capture: tx => captureAttachmentInTx(tx, input), materialize: async captured => {
         if (!captured.ok) return captured;
         try {
             const bytes = privacyKit.encodeBase64(new Uint8Array(await openDiscussionAttachmentBytes(captured.value.row)));
             const content: BinaryBlobStoredContentV1 = captured.value.mode === 'plain' ? { t: 'plain', v: bytes } : { t: 'encrypted', c: bytes };
             return discussionSuccess({ ...captured.value, content });
         } catch { return discussionFailure('discussion_content_unavailable'); }
-    } }, async (tx, captured) => {
-        if (!captured.ok) return captured;
-        const current = await captureAttachmentInTx(tx, input);
-        if (!current.ok) return current;
-        if (current.value.ownerAccountId !== captured.value.ownerAccountId || current.value.mode !== captured.value.mode
-            || current.value.dataEncryptionKey !== captured.value.dataEncryptionKey
-            || current.value.row.storageKey !== captured.value.row.storageKey) return discussionFailure('discussion_content_unavailable');
-        return captured;
-    });
+    } });
     return result.ok ? discussionSuccess({ blobId: input.blobId, content: result.value.content }) : result;
 }

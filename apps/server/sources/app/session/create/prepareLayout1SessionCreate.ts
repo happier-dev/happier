@@ -1,7 +1,7 @@
-import { SessionManagedCreationV1Schema, type SessionManagedCreationV1 } from '@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1';
+import type { UsageSessionTimingV1 } from '@happier-dev/protocol/usage/usageWorkEvidence';
 import * as z from 'zod/mini';
 import { isSessionEncryptionModeAllowedByStoragePolicy, resolveEffectiveDefaultAccountEncryptionMode } from '@happier-dev/protocol/encryption/storagePolicyDecisions';
-import { SessionSharedMetadataV1Schema, validateSessionOwnerMetadataEnvelopeForAccountModeV1, type SessionOwnerMetadataEnvelopeV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
+import { SessionSharedMetadataV1Schema, validateAdmittedSessionOwnerMetadataEnvelopeForAccountModeV1, type SessionOwnerMetadataEnvelopeV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import type { SessionDisplayProjectionV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import { type SessionInitialAccessMaterializedV1 } from '@happier-dev/protocol/sessions/access/sessionInitialAccessDraftV1';
 import { SessionCreateOriginFieldsV1Schema, type SessionCreateOriginFieldsV1 } from '@happier-dev/protocol/sessions/creation/sessionCreateOriginV1';
@@ -10,6 +10,7 @@ import { SessionInitialTriggerAdmissionV1Schema, type SessionInitialTriggerAdmis
 import type { SessionAccessGrantErrorCode } from "@/app/session/access/sessionAccessGrantService";
 import type { SessionTeamCredentialBindingIntentListV1 } from '@happier-dev/protocol/teams/credentials/sessionBindingIntentV1';
 import type { SessionTeamCredentialBindingRejection } from "@/app/teams/credentials/sessionBinding";
+import { SessionManagedCreationV1Schema, type SessionManagedCreationV1 } from '@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1';
 
 import {
     resolveRequestedSessionModeRejectionCode,
@@ -75,6 +76,7 @@ export type Layout1SessionCreateRequest = Readonly<SessionCreateOriginFieldsV1 &
     ownerMetadata: SessionOwnerMetadataEnvelopeV1;
     displayProjectionV1?: SessionDisplayProjectionV1 | null;
     agentState: string | null;
+    usageTimingV1?: UsageSessionTimingV1;
     /** Base64 Session data key; only an E2EE Session may carry one. */
     dataEncryptionKey: string | null;
     requestedEncryptionMode: "e2ee" | "plain" | undefined;
@@ -98,6 +100,7 @@ export type PreparedLayout1SessionCreate = Readonly<SessionCreateOriginFieldsV1 
     ownerMetadata: SessionOwnerMetadataEnvelopeV1;
     displayProjectionV1?: SessionDisplayProjectionV1 | null;
     agentState: string | null;
+    usageTimingV1?: UsageSessionTimingV1;
     dataEncryptionKey: Uint8Array<ArrayBuffer> | null;
     /** Resolved from the Account row observed before the fence; the transaction re-resolves it. */
     effectiveEncryptionMode: "e2ee" | "plain";
@@ -163,8 +166,9 @@ export function validateLayout1SessionStoredContentForMode(params: Readonly<{
     ownerMetadata: SessionOwnerMetadataEnvelopeV1;
     metadata: string;
     agentState: string | null;
+    usageTimingV1?: UsageSessionTimingV1;
 }>): boolean {
-    if (!validateSessionOwnerMetadataEnvelopeForAccountModeV1({
+    if (!validateAdmittedSessionOwnerMetadataEnvelopeForAccountModeV1({
         accountMode: params.accountEncryptionMode,
         envelope: params.ownerMetadata,
     }).ok) {

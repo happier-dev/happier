@@ -1,12 +1,15 @@
-import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { PGlite } from '@electric-sql/pglite';
 import { describe, expect, it } from 'vitest';
 import { FollowPolicyV1Schema, resolveFollowDeliveryV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowPolicyV1';
+import { applySqliteMigrations } from '../../../../scripts/prismaMigrations';
 
 const migrations = resolve(import.meta.dirname, '../../../../prisma/sqlite/migrations');
 const managerMigration = '20261018213000_merge_manager_follow_relation';
+const machineSourceMigration = '20261024200000_execution_run_follow_machine_source';
 
 describe('Session Follow source identity upgrades', () => {
     it('preserves every existing frontier and attachment while admitting a disjoint Discussion source', () => {
@@ -34,7 +37,7 @@ describe('Session Follow source identity upgrades', () => {
                 INSERT INTO "SessionReportsTo" VALUES ('same-id', 'destination', '2026-10-18 12:00:00.123', 3, 4, 5, 'manager-turn', 'completed');`);
             sqlite.exec(readFileSync(resolve(migrations, managerMigration, 'migration.sql'), 'utf8'));
             const before = sqlite.prepare('SELECT * FROM "SessionFollowEdge" ORDER BY "relation"').all();
-            for (const name of readdirSync(migrations).filter(name => name > managerMigration).sort()) {
+            for (const name of readdirSync(migrations).filter(name => name > managerMigration && name < machineSourceMigration).sort()) {
                 if (name === 'migration_lock.toml') continue;
                 const sql = readFileSync(resolve(migrations, name, 'migration.sql'), 'utf8');
                 if (/\b(?:ALTER TABLE|CREATE TABLE) "(?:new_)?SessionFollowEdge"/u.test(sql)) sqlite.exec(sql);
@@ -137,6 +140,117 @@ describe('Session Follow source identity upgrades', () => {
             expect((await postgres.query('SELECT COUNT(*)::int AS n FROM "SessionFollowEdge"')).rows).toEqual([{ n: 0 }]);
         } finally {
             await postgres.close();
+        }
+    });
+
+    it.each(['sqlite', 'postgres'] as const)('adds exact Machine Run anchors without changing existing Follow custody (%s)', async provider => {
+        const directory = provider === 'sqlite' ? mkdtempSync(resolve(tmpdir(), 'happier-follow-source-migration-')) : null;
+        const databasePath = directory ? resolve(directory, 'follow.sqlite') : null;
+        const database = databasePath ? new DatabaseSync(databasePath) : new PGlite();
+        const execute = async (sql: string) => { await database.exec(sql); };
+        const query = async (sql: string) => database instanceof DatabaseSync
+            ? database.prepare(sql).all() : (await database.query<Record<string, unknown>>(sql)).rows;
+        const root = provider === 'sqlite' ? migrations : resolve(migrations, '../../migrations');
+        const migrate = async (name: string) => {
+            const sql = readFileSync(resolve(root, name, 'migration.sql'), 'utf8');
+            if (directory && databasePath && name === machineSourceMigration) {
+                // Use the same Node adapter and transaction owner as deployed
+                // SQLite migrations; raw exec alone misses nested BEGIN/COMMIT.
+                const catalog = resolve(directory, 'migrations');
+                const migrationDirectory = resolve(catalog, name);
+                mkdirSync(migrationDirectory, { recursive: true });
+                // The old migration wrapper must fail through the real runner;
+                // a retry with canonical bytes must preserve the original rows.
+                writeFileSync(resolve(migrationDirectory, 'migration.sql'), `BEGIN;\n${sql}\nCOMMIT;\n`);
+                await expect(applySqliteMigrations({ databasePath, migrationsDir: catalog }))
+                    .rejects.toThrow(/cannot start a transaction within a transaction/);
+                writeFileSync(resolve(migrationDirectory, 'migration.sql'), sql);
+                await expect(applySqliteMigrations({ databasePath, migrationsDir: catalog }))
+                    .resolves.toEqual({ applied: [name] });
+                await expect(applySqliteMigrations({ databasePath, migrationsDir: catalog }))
+                    .resolves.toEqual({ applied: [] });
+                return;
+            }
+            await execute(sql);
+        };
+        try {
+            if (database instanceof PGlite) await database.waitReady;
+            else database.exec('PRAGMA foreign_keys = ON;');
+            await execute(`CREATE TABLE "Account" ("id" TEXT PRIMARY KEY);
+                CREATE TABLE "Session" ("id" TEXT PRIMARY KEY);
+                CREATE TABLE "Machine" ("id" TEXT PRIMARY KEY);
+                CREATE TABLE "Discussion" ("id" TEXT PRIMARY KEY, "messageSeq" INTEGER);
+                CREATE TABLE "AutomationRun" ("id" TEXT PRIMARY KEY);
+                CREATE TABLE "DiscussionParticipant" ("discussionId" TEXT, "sessionId" TEXT, "removedAt" ${provider === 'sqlite' ? 'DATETIME' : 'TIMESTAMP(3)'});
+                CREATE TABLE "ManagedMachine" ("homeId" TEXT, "custodianAccountId" TEXT, "archivedAt" TEXT, "createdAt" TEXT);
+                CREATE INDEX "ManagedMachine_homeId_custodianAccountId_archivedAt_createdAt_idx"
+                    ON "ManagedMachine" ("homeId", "custodianAccountId", "archivedAt", "createdAt");
+                INSERT INTO "Account" VALUES ('account');
+                INSERT INTO "Session" VALUES ('source'), ('destination');
+                INSERT INTO "Machine" VALUES ('machine');
+                INSERT INTO "Discussion" VALUES ('discussion', 3);
+                INSERT INTO "AutomationRun" VALUES ('workflow');`);
+            for (const name of ['20260906120000_add_account_session_follows', '20261018120000_account_follow_personal_once',
+                '20261019150000_account_follow_generic_sources', '20261021045500_personal_run_permission_progress',
+                '20261022140000_account_follow_policy_only', '20261023233000_account_follow_source_identity_required',
+                '20260905230000_add_session_follow_edges']) await migrate(name);
+            await execute(`CREATE TABLE "SessionReportsTo" (
+                "sessionId" TEXT, "leadSessionId" TEXT, "attachedAt" ${provider === 'sqlite' ? 'DATETIME' : 'TIMESTAMP(3)'},
+                "deliveredTranscriptSeq" INTEGER, "deliveredReadyEventSeq" INTEGER,
+                "deliveredAgentStateVersion" INTEGER, "deliveredTurnId" TEXT, "deliveredTurnStatus" ${provider === 'sqlite' ? 'TEXT' : '"SessionFollowDeliveredTurnStatus"'}
+            );
+            INSERT INTO "SessionFollowEdge" VALUES ('source', 'destination', 'wake_on_human_change', 7, 8, 9, 'turn', 'failed');
+            INSERT INTO "SessionReportsTo" VALUES ('source', 'destination', '2026-10-18 12:00:00.123', 3, 4, 5, 'manager-turn', 'completed');`);
+            for (const name of [managerMigration, '20261018230000_session_follow_source_identity',
+                '20261018233000_session_follow_policy', '20261019150100_session_follow_run_sources',
+                '20261021200000_shorten_overlong_index_names']) await migrate(name);
+            await execute(`INSERT INTO "AccountSessionFollow" ("id", "accountId", "sessionId", "followPolicy", "voiceDeliveredFrontier", "notifyOnce")
+                VALUES ('legacy', 'account', 'source', '{"preset":"quiet"}', 'voice-frontier', '{"kind":"first_needs_you"}');
+                INSERT INTO "AccountSessionFollow" ("id", "accountId", "sourceKey", "sourceExecutionRunSessionId", "sourceExecutionRunId", "deliveredExecutionRunTerminalEventId", "deliveredExecutionRunPermissionKey", "followPolicy")
+                VALUES ('session-run', 'account', 'execution_run:session', 'source', 'run', 'terminal', 'permission', '{"preset":"important"}');
+                INSERT INTO "SessionFollowEdge" ("sourceKey", "sourceExecutionRunSessionId", "sourceExecutionRunId", "destinationSessionId", "policyJson", "deliveredExecutionRunTerminalEventId")
+                VALUES ('execution_run:session', 'source', 'run', 'destination', '{"preset":"important"}', 'terminal');`);
+            const beforeAccount = await query('SELECT * FROM "AccountSessionFollow" ORDER BY "id"');
+            const beforeEdges = await query('SELECT * FROM "SessionFollowEdge" ORDER BY "sourceKey", "relation"');
+            // Before the additive migration exists, the intended Machine insert below
+            // fails at the real storage boundary, establishing missing source support.
+            if (existsSync(resolve(root, machineSourceMigration, 'migration.sql'))) await migrate(machineSourceMigration);
+            await execute(`INSERT INTO "AccountSessionFollow" ("id", "accountId", "sourceKey", "sourceExecutionRunMachineId", "sourceExecutionRunId", "following", "hasPersistentFollow", "followPolicy", "notifyOnce", "deliveredExecutionRunTerminalEventId", "deliveredExecutionRunPermissionKey")
+                VALUES ('machine-run', 'account', 'execution_run:machine', 'machine', 'run', false, false, NULL, '{"kind":"run_settled"}', 'machine-terminal', 'machine-permission');
+                INSERT INTO "SessionFollowEdge" ("sourceKey", "sourceExecutionRunMachineId", "sourceExecutionRunId", "destinationSessionId", "policyJson", "deliveredExecutionRunTerminalEventId")
+                VALUES ('execution_run:machine', 'machine', 'run', 'destination', '{"preset":"quiet"}', 'machine-terminal');`);
+            expect((await query('SELECT * FROM "AccountSessionFollow" WHERE "id" <> \'machine-run\' ORDER BY "id"'))
+                .map(({ sourceExecutionRunMachineId, ...row }) => row)).toEqual(beforeAccount);
+            expect((await query('SELECT * FROM "SessionFollowEdge" WHERE "sourceKey" <> \'execution_run:machine\' ORDER BY "sourceKey", "relation"'))
+                .map(({ sourceExecutionRunMachineId, ...row }) => row)).toEqual(beforeEdges);
+            for (const table of ['AccountSessionFollow', 'SessionFollowEdge']) {
+                for (const mutation of [
+                    '"sourceExecutionRunSessionId" = \'source\'',
+                    '"sourceExecutionRunMachineId" = NULL',
+                    '"sourceExecutionRunId" = NULL',
+                    '"sourceDiscussionId" = \'discussion\'',
+                    '"sourceWorkflowRunId" = \'workflow\'',
+                    '"sourceKey" = \'workflow_run:machine\'',
+                    '"sourceKey" = \'executionXrun:machine\'',
+                ]) await expect(execute(`UPDATE "${table}" SET ${mutation} WHERE "sourceKey" = 'execution_run:machine'`))
+                    .rejects.toThrow(new RegExp(`${table}_source_identity_check`));
+                await expect(execute(`UPDATE "${table}" SET "sourceExecutionRunMachineId" = 'machine' WHERE "sourceKey" = 'execution_run:session'`))
+                    .rejects.toThrow(new RegExp(`${table}_source_identity_check`));
+                await expect(execute(`UPDATE "${table}" SET "sourceExecutionRunMachineId" = 'missing-machine' WHERE "sourceKey" = 'execution_run:machine'`))
+                    .rejects.toThrow();
+            }
+            await expect(execute(`UPDATE "SessionFollowEdge" SET "relation" = 'manager', "managerSourceSessionId" = 'source'
+                WHERE "sourceKey" = 'execution_run:machine'`)).rejects.toThrow(/SessionFollowEdge_manager_relation_check/);
+            await execute('DELETE FROM "Machine" WHERE "id" = \'machine\'');
+            expect((await query('SELECT * FROM "AccountSessionFollow" ORDER BY "id"')).map(({ sourceExecutionRunMachineId, ...row }) => row)).toEqual(beforeAccount);
+            expect((await query('SELECT * FROM "SessionFollowEdge" ORDER BY "sourceKey", "relation"')).map(({ sourceExecutionRunMachineId, ...row }) => row)).toEqual(beforeEdges);
+            if (database instanceof DatabaseSync) {
+                expect(await query('PRAGMA integrity_check')).toEqual([{ integrity_check: 'ok' }]);
+                expect(await query('PRAGMA foreign_key_check')).toEqual([]);
+            }
+        } finally {
+            await database.close();
+            if (directory) rmSync(directory, { recursive: true, force: true });
         }
     });
 });

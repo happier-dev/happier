@@ -14,6 +14,7 @@ import { admitDeploymentStoredContentsInTx } from '@/app/deployments/deploymentS
 import type { Tx } from '@/storage/inTx';
 import { resolveProjectSourceAudienceInTx } from './projectSourceService';
 
+/** Artifact owns mode, keys and envelope currentness; Source only consumes its recipient facts. */
 async function recipientsReadyInTx(tx: Tx, actorAccountId: string, artifactId: string, audience: readonly string[]) {
     const census = await readArtifactRecipientCensusInTx(tx, { actorAccountId,
         artifactId });
@@ -28,7 +29,6 @@ async function recipientsReadyInTx(tx: Tx, actorAccountId: string, artifactId: s
 }
 
 /** Existing Source CAS consumes prepared custody; it never copies grants, content or CI authority. */
-
 export async function hasProjectSourceOwnerContinuityInTx(tx: Tx, actorAccountId: string,
     input: Readonly<{ source: ProjectSourceV1; owner: ProjectSourceOwnerV1 }>,
 ): Promise<boolean> {

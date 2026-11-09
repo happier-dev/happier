@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { getSocketRooms } from "@/app/api/socketRooms";
 import { createMachineSocketOwnershipRegistry } from '@/app/api/socket/machineSocketOwnershipRegistry';
 import { resolveRedisAdapterValidationRedisUrl } from "../../../scripts/resolveRedisAdapterValidationRedisUrl";
+import { readRedisStreamsAdapterOptionsFromEnv } from "@/config/socketAdapter";
 
 async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
     let timeout: ReturnType<typeof setTimeout> | undefined;
@@ -31,7 +32,7 @@ describe("Redis client silent network partition recovery", () => {
 
     it("reconnects and accepts a fresh adapter command after a blocking read loses its TCP path", async () => {
         const { redisUrl, redisMemory } = await resolveRedisAdapterValidationRedisUrl({
-            env: process.env,
+            env: {},
         });
         if (redisMemory) cleanup.push(async () => {
             await redisMemory.stop();
@@ -53,7 +54,7 @@ describe("Redis client silent network partition recovery", () => {
             redis.once("close", resolve);
         });
         const blockingRead = redis
-            .xread("BLOCK", 100, "STREAMS", "socket.io-partition-test", "$")
+            .xread("BLOCK", readRedisStreamsAdapterOptionsFromEnv({}).blockTimeInMs, "STREAMS", "socket.io-partition-test", "$")
             .catch(() => null);
         await proxy.waitForForwardedCommand("xread");
         proxy.partition();
@@ -160,7 +161,7 @@ describe("Redis client silent network partition recovery", () => {
         const adapterPoll = (async () => {
             while (polling) {
                 await redis
-                    .xread("BLOCK", 100, "STREAMS", "socket.io-restart-test", "$")
+                    .xread("BLOCK", readRedisStreamsAdapterOptionsFromEnv({}).blockTimeInMs, "STREAMS", "socket.io-restart-test", "$")
                     .catch(() => null);
             }
         })();

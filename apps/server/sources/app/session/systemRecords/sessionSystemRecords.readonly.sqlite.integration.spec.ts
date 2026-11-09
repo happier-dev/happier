@@ -48,7 +48,7 @@ describe("Session SystemRecords read snapshots on SQLite", () => {
         await harness?.close();
     });
 
-    it('denies SystemRecord disclosure after share revocation during its snapshot', async () => {
+    it('finishes the admitted SystemRecord read and refuses the next read after share revocation', async () => {
         const { withSqliteReadSnapshot } = await import('@/storage/prisma');
         const owner = await db.account.create({ data: { ...createSignedAccountContentBinding(), encryptionMode: 'plain' } });
         const collaborator = await db.account.create({ data: { ...createSignedAccountContentBinding(), encryptionMode: 'plain' } });
@@ -85,14 +85,14 @@ describe("Session SystemRecords read snapshots on SQLite", () => {
             resume();
             const result = await response;
             expect(await readSessionSystemRecordV1(params)).toMatchObject({ ok: false, code: 'plugin_session_not_found' });
-            expect(result).toMatchObject({ ok: false, code: 'plugin_session_not_found' });
+            expect(result).toMatchObject({ ok: true, record: { content: { t: 'plain', v: { synopsis: 'private record' } } } });
         } finally {
             resume(); await response;
             Object.defineProperty(delegate, 'findFirst', { configurable: true, writable: true, value: original });
         }
     });
 
-    it('denies a V1 record when its Session storage mode changes during the content snapshot', async () => {
+    it('retains the admitted V1 record mode and rejects a mismatched mode on the next read', async () => {
         const { withSqliteReadSnapshot } = await import('@/storage/prisma');
         const account = await db.account.create({ data: { ...createSignedAccountContentBinding(), encryptionMode: 'plain' } });
         const session = await db.session.create({ data: { accountId: account.id, tag: 'record-mode-currentness', encryptionMode: 'plain', metadata: '{}' } });
@@ -119,14 +119,14 @@ describe("Session SystemRecords read snapshots on SQLite", () => {
             resume();
             const result = await response;
             expect(await readSessionSystemRecordV1(params)).toMatchObject({ ok: false, code: 'plugin_session_record_storage_mode_mismatch' });
-            expect(result).toMatchObject({ ok: false, code: 'plugin_session_record_storage_mode_mismatch' });
+            expect(result).toMatchObject({ ok: true, record: { content: { t: 'plain', v: { synopsis: 'private plain bytes' } } } });
         } finally {
             resume(); await response;
             Object.defineProperty(delegate, 'findFirst', { configurable: true, writable: true, value: original });
         }
     });
 
-    it('denies a runtime-principal record after its materialized binding changes during the snapshot', async () => {
+    it('finishes the admitted runtime-principal record and refuses the next read after its binding changes', async () => {
         const { withSqliteReadSnapshot } = await import('@/storage/prisma');
         const account = await db.account.create({ data: { ...createSignedAccountContentBinding(), encryptionMode: 'plain' } });
         const session = await db.session.create({ data: { accountId: account.id, tag: crypto.randomUUID(), encryptionMode: 'plain', metadata: '{}' } });
@@ -172,7 +172,7 @@ describe("Session SystemRecords read snapshots on SQLite", () => {
             resume();
             const result = await response;
             expect(await readSessionSystemRecordV1(params)).toMatchObject({ ok: false, code: 'plugin_session_not_found' });
-            expect(result).toMatchObject({ ok: false, code: 'plugin_session_not_found' });
+            expect(result).toMatchObject({ ok: true, record: { content: { t: 'plain', v: { synopsis: 'runtime private record' } } } });
         } finally {
             resume(); await response;
             Object.defineProperty(delegate, 'findFirst', { configurable: true, writable: true, value: original });

@@ -32,10 +32,16 @@ export async function resolveDiscussionDocTargetInTx(tx: Tx, input: Readonly<{
 
 /** Resolve root inheritance in batches, including roots outside the requested page. */
 export async function resolveDiscussionDocSourcesInTx(tx: Tx, input: Readonly<{
-    discussionId: string; messages: readonly Readonly<{ id: string; replyTargetV1: unknown }>[];
-}>): Promise<DiscussionResult<ReadonlyMap<string, DiscussionDocSource | null>>> {
-    const targets = new Map<string, ReturnType<typeof DiscussionReplyTargetV1Schema.parse> | null>();
-    let rows = input.messages;
+    discussionId: string;
+    /** Read projection reuses this same ancestry walk for Session-quoted roots. */
+    rootMessageIds?: Map<string, string>;
+}> & (Readonly<{ messages: readonly Readonly<{ id: string; replyTargetV1: unknown }>[]; admittedMessages?: never }>
+    | Readonly<{ admittedMessages: readonly Readonly<{ id: string; replyTargetV1: ReturnType<typeof DiscussionReplyTargetV1Schema.parse> | null }>[]; messages?: never }>)
+): Promise<DiscussionResult<ReadonlyMap<string, DiscussionDocSource | null>>> {
+    const targets = new Map<string, ReturnType<typeof DiscussionReplyTargetV1Schema.parse> | null>(
+        input.admittedMessages?.map(row => [row.id, row.replyTargetV1]));
+    const messages = input.admittedMessages ?? input.messages!;
+    let rows: readonly Readonly<{ id: string; replyTargetV1: unknown }>[] = input.messages ?? [];
     const provider = getDbProviderFromEnv(process.env, 'postgres');
     for (;;) {
         for (const row of rows) {
@@ -85,7 +91,7 @@ export async function resolveDiscussionDocSourcesInTx(tx: Tx, input: Readonly<{
         break;
     }
     const sources = new Map<string, DiscussionDocSource | null>();
-    for (const row of input.messages) {
+    for (const row of messages) {
         let id = row.id;
         const visited = new Set<string>();
         for (;;) {
@@ -93,6 +99,7 @@ export async function resolveDiscussionDocSourcesInTx(tx: Tx, input: Readonly<{
             visited.add(id);
             const target = targets.get(id);
             if (target?.kind !== 'message') {
+                input.rootMessageIds?.set(row.id, id);
                 sources.set(row.id, target?.kind === 'doc_passage' ? target.doc : null);
                 break;
             }

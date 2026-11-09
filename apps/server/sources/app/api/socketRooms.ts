@@ -10,11 +10,6 @@ export function getAccountRevocationSocketRoom(userId: string): string {
     return `account-revocation:${userId}`;
 }
 
-export function getAccountTerminalSocketRoom(accountId: string): string {
-    if (!accountId) throw new Error("getAccountTerminalSocketRoom: accountId is required");
-    return `account-terminal:${accountId}`;
-}
-
 export function getMachineSocketRoom(userId: string, machineId: string): string {
     if (!userId || !machineId) throw new Error("getMachineSocketRoom: userId and machineId are required");
     return `machine:${machineId}:${userId}`;

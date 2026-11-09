@@ -33,13 +33,15 @@ export async function acquireProviderBrokerConsumerAdmissionInTx(tx: Tx, input: 
     });
 }
 
-/** The peer carrier requires distinct Machine and advertised endpoint identities.
+/** A Machine can broker through its own active carrier admission. Endpoint
+ * identity must agree with Machine identity: another Machine cannot claim that
+ * endpoint, and a self placement cannot redirect to a different endpoint.
  * Endpoint availability remains the transport admission owner's separate check. */
 export function admitProviderBrokerTopology(
     initiator: Readonly<{ machineId: string; endpointId: string }>,
     target: Readonly<{ machineId: string; endpointId: string | null }>,
 ): Readonly<{ ok: true }> | Readonly<{ ok: false; reasonCode: 'resource_unavailable' }> {
-    return initiator.machineId === target.machineId || initiator.endpointId === target.endpointId
+    return (initiator.machineId === target.machineId) !== (initiator.endpointId === target.endpointId)
         ? { ok: false, reasonCode: 'resource_unavailable' }
         : { ok: true };
 }

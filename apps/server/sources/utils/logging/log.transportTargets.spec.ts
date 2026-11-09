@@ -86,6 +86,64 @@ describe('createLoggingTransportTargets', () => {
 });
 
 describe('structured errors', () => {
+  it('retains a closed Run release reason in the existing completion projection without payloads', () => {
+    const output: string[] = [];
+    const logger = structuredErrorLogger;
+    const previousLevel = logger.level;
+    logger.level = 'info';
+    const stream = Reflect.get(logger, pino.symbols.streamSym);
+    Reflect.set(logger, pino.symbols.streamSym, { write: (chunk: string) => output.push(chunk) });
+    try {
+      logger.info({ res: { statusCode: 409, request: { authTokenKind: 'terminal', userId: 'fixture-account',
+        headers: { authorization: 'PRIVATE_SENTINEL' }, body: { private: 'PRIVATE_SENTINEL' },
+        followSourceRoute: { resultCode: 'source_unavailable', sourceKind: 'execution_run',
+          sourceSessionId: 'parent', sourceRunId: 'run', releaseReason: 'target_machine', payload: 'PRIVATE_SENTINEL' },
+      } } }, 'request completed');
+      const record = JSON.parse(output.join(''));
+      expect(record.res.followSourceRoute).toEqual({ resultCode: 'source_unavailable', sourceKind: 'execution_run',
+        sourceSessionId: 'parent', sourceRunId: 'run', releaseReason: 'target_machine' });
+      expect(output.join('')).not.toContain('PRIVATE_SENTINEL');
+    } finally { Reflect.set(logger, pino.symbols.streamSym, stream); logger.level = previousLevel; }
+  });
+  it.each(['connected-accounts:daemon-coordinator', 'connected-accounts:requester-coordinator', 'connected-accounts:qualification',
+    'connected-accounts:purpose-binding', 'connected-accounts:startup-hydration', 'connected-accounts:quota-qualification',
+    'connected-accounts:usage-persistence', 'connected-accounts:request-auth-replacement', 'connected-accounts:auth-group',
+    'connected-accounts:spawn', 'connected-accounts:persistence'])(
+    'retains the bounded connected-account purpose %s without request or credential data', purpose => {
+      const output: string[] = [];
+      const logger = structuredErrorLogger;
+      const previousLevel = logger.level;
+      logger.level = 'info';
+      const stream = Reflect.get(logger, pino.symbols.streamSym);
+      Reflect.set(logger, pino.symbols.streamSym, { write: (chunk: string) => output.push(chunk) });
+      try {
+        logger.info({ res: { statusCode: 200, request: { authTokenKind: 'terminal', authAuthority: 'present_user',
+          userId: 'fixture-account', headers: { 'x-happier-request-purpose': purpose, authorization: 'PRIVATE_SENTINEL' },
+          body: { private: 'PRIVATE_SENTINEL' } } } }, 'request completed');
+        const record = JSON.parse(output.join(''));
+        expect(record.res).toMatchObject({ statusCode: 200, requestPurpose: purpose, authTokenKind: 'terminal' });
+        expect(output.join('')).not.toContain('PRIVATE_SENTINEL');
+        expect(record.res).not.toHaveProperty('request');
+      } finally { Reflect.set(logger, pino.symbols.streamSym, stream); logger.level = previousLevel; }
+    },
+  );
+
+  it.each([{ purpose: 'PRIVATE_SENTINEL' }, { purpose: ['connected-accounts:qualification', 'PRIVATE_SENTINEL'] }])(
+    'rejects unrecognized or malformed purpose headers without logging their contents', ({ purpose }) => {
+      const output: string[] = [];
+      const logger = structuredErrorLogger;
+      const previousLevel = logger.level;
+      logger.level = 'info';
+      const stream = Reflect.get(logger, pino.symbols.streamSym);
+      Reflect.set(logger, pino.symbols.streamSym, { write: (chunk: string) => output.push(chunk) });
+      try {
+        logger.info({ res: { statusCode: 200, request: { headers: { 'x-happier-request-purpose': purpose } } } }, 'request completed');
+        expect(JSON.parse(output.join('')).res.requestPurpose).toBe('unrecognized');
+        expect(output.join('')).not.toContain('PRIVATE_SENTINEL');
+      } finally { Reflect.set(logger, pino.symbols.streamSym, stream); logger.level = previousLevel; }
+    },
+  );
+
   it('preserves non-enumerable error details under the existing error field', async () => {
     setBunRuntime(true);
     const logger = structuredErrorLogger;
@@ -108,6 +166,49 @@ describe('structured errors', () => {
   });
 });
 
+
+describe('pretty stdout', () => {
+  it('writes one line per request event while retaining warning, slow and failed request diagnostics', async () => {
+    const requestCount = 10;
+    const result = await promisify(execFile)(process.execPath, [
+      '--conditions=happier-source', '--import', pathToFileURL(createRequire(import.meta.url).resolve('tsx')).href, '--eval',
+      `(async () => { const mod = await import(${JSON.stringify(new URL('./log.ts', import.meta.url).href)});
+       const { default: Fastify } = await import(${JSON.stringify(pathToFileURL(createRequire(import.meta.url).resolve('fastify')).href)});
+       mod.initializeServerLogging(process.env);
+       const { logger } = mod;
+       const app = Fastify({ loggerInstance: logger });
+       app.get('/logging-check', async () => ({ ok: true }));
+       app.get('/logging-failure', async (_request, reply) => reply.code(503).send());
+       for (let i = 0; i < ${requestCount}; i++) await app.inject({ method: 'GET', url: '/logging-check' });
+       logger.warn({ diagnostic: { phase: 'warning', detail: 'warning context retained' } }, 'warning detail retained');
+       await app.inject({ method: 'GET', url: '/logging-failure' });
+       await app.close();
+       logger.info({ res: { statusCode: 200 }, responseTime: 12345 }, 'slow request retained');
+       logger.error({ error: new Error('failure detail retained') }, 'failed request retained');
+      })();`,
+    ], {
+      encoding: 'utf8',
+      env: { ...process.env, HAPPIER_SERVER_LOG_FORMAT: 'pretty', HAPPIER_SERVER_LOG_LEVEL: 'info',
+        DANGEROUSLY_LOG_TO_SERVER_FOR_AI_AUTO_DEBUGGING: '' },
+    });
+    const lines = result.stdout.trim().split('\n').filter(line => line.trim());
+    const requestLines = lines.slice(0, lines.findIndex(line => line.includes('warning detail retained')));
+    expect(requestLines.length).toBe(requestCount * 2);
+    expect(requestLines.filter(line => line.includes('incoming request')).length).toBe(requestCount);
+    expect(requestLines.filter(line => line.includes('request completed')).length).toBe(requestCount);
+    expect(requestLines.filter(line => line.includes('/logging-check')).length).toBe(requestCount);
+    expect(requestLines.filter(line => /statusCode[" ]*:\s*200/.test(line)).length).toBe(requestCount);
+    expect(result.stdout).toContain('warning context retained');
+    expect(result.stdout).toContain('slow request retained');
+    expect(result.stdout).toMatch(/responseTime[" ]*:\s*12345/);
+    expect(result.stdout).toContain('failed request retained');
+    expect(result.stdout).toContain('/logging-failure');
+    expect(result.stdout).toMatch(/statusCode[" ]*:\s*503/);
+    expect(result.stdout).toContain('failure detail retained');
+    expect(result.stdout).toMatch(/\n\s+at /);
+    console.info(`pretty-request-cost requests=${requestCount} lines=${requestLines.length} bytes=${Buffer.byteLength(requestLines.join('\n'))}`);
+  });
+});
 
 describe('JSON stdout', () => {
   it.each([false, true])('keeps structured stdout and optional debug file output (debug=%s)', async (debug) => {

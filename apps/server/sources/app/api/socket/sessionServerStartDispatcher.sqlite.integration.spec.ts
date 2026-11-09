@@ -15,6 +15,7 @@ import { encodeAutomationRunCause } from "@/app/automations/automationRunCauseCo
 import { cancelAutomationRun } from "@/app/automations/automationRunService";
 import { db } from "@/storage/db";
 import { inTx } from "@/storage/inTx";
+import { markAccountChanged } from "@/app/changes/markAccountChanged";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
 
 import {
@@ -33,7 +34,7 @@ function sessionStartRecipe(targetMachineId: string): string {
             kind: "newSession",
             spawn: {
                 executionTarget: { serverId: "server-1", machineId: targetMachineId },
-                directory: "/workspace",
+                directory: { kind: "path", path: "/workspace" },
                 agentTarget: {
                     kind: "agent",
                     identity: { pluginId: "happier.agent.codex", localId: "codex" },
@@ -407,9 +408,12 @@ describe("Session server-start Automation ingress on SQLite", () => {
         })).resolves.toEqual({ producedSessionId: null });
     });
 
-    it("submits the Session start while the derived Run claim stays current", async () => {
+    it("submits the Session start after an unrelated Account publication while the derived Run claim stays current", async () => {
         const seeded = await seedCrossMachineRun();
         const request = await dispatchRequestFor(seeded);
+        await inTx(async tx => {
+            await markAccountChanged(tx, { accountId: seeded.account.id, kind: "kv", entityId: "unrelated-start-write" });
+        });
         const target = exactTargetSocket(seeded);
         const operation = vi.fn(async () => sessionStartSuccess("session-current", seeded.targetMachineId));
         const forwardRpc = vi.fn(async (params: Readonly<{

@@ -1,10 +1,11 @@
 import Fastify from "fastify";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { io as ioClient, type Socket } from "socket.io-client";
 import { startSocket } from "@/app/api/socket";
 import type { Fastify as AppFastify } from "@/app/api/types";
 import { auth } from "@/app/auth/auth";
 import { db } from "@/storage/db";
+import { withSqliteReadSnapshot } from "@/storage/prisma";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
 import { SessionHumanPresenceSnapshotV1Schema, type SessionHumanPresenceSnapshotV1 } from "@happier-dev/protocol/sessions";
 import { inTx } from "@/storage/inTx";
@@ -103,6 +104,150 @@ describe("authenticated human presence over real memory-adapter sockets", () => 
         });
     }, 120_000);
     afterAll(async () => { await harness?.close(); });
+
+    it("projects admitted pending edits for the socket lifetime without metadata writes or false human viewers", async () => {
+        const [owner, editor, viewer] = await Promise.all(["Edit owner", "Editor", "Read only"].map(name =>
+            db.account.create({ data: { publicKey: crypto.randomUUID(), name, encryptionMode: "plain" } })));
+        const session = await db.session.create({ data: {
+            accountId: owner.id, tag: crypto.randomUUID(), encryptionMode: "plain", metadata: JSON.stringify({ t: "plain", v: {} }),
+        } });
+        const otherSession = await db.session.create({ data: {
+            accountId: owner.id, tag: crypto.randomUUID(), encryptionMode: "plain", metadata: JSON.stringify({ t: "plain", v: {} }),
+        } });
+        for (const [account, accessLevel] of [[editor, "edit"], [viewer, "view"]] as const) {
+            await db.userRelationship.create({ data: { fromUserId: owner.id, toUserId: account.id, status: "friend" } });
+            expect(await inTx(tx => putSessionAccessGrantInTx(tx, {
+                actorAccountId: owner.id, sessionId: session.id,
+                subject: { kind: "account", accountId: account.id },
+                grant: { accessLevel, canApprovePermissions: false }, authentication: ownerAuthentication(),
+            }))).toMatchObject({ ok: true });
+        }
+        const app = Fastify({ logger: false }) as unknown as AppFastify;
+        startSocket(app);
+        await app.listen({ port: 0, host: "127.0.0.1" });
+        const address = app.server.address();
+        if (!address || typeof address === "string") throw new Error("Expected TCP listener");
+        const clients: Socket[] = [];
+        const observations = new Map<Socket, SessionHumanPresenceSnapshotV1[]>();
+        const connect = async (accountId: string, observer = false) => {
+            const token = await auth.createToken(accountId, undefined, { kind: "account", authority: "present_user" });
+            const client = ioClient(`http://127.0.0.1:${address.port}`, {
+                path: "/v1/updates", transports: ["websocket"], reconnection: false, autoConnect: false,
+                auth: { token, ...(observer ? { clientType: "session-scoped", sessionId: session.id } : {}) },
+            });
+            clients.push(client);
+            observations.set(client, []);
+            client.on(snapshotEvent, value => observations.get(client)!.push(SessionHumanPresenceSnapshotV1Schema.parse(value)));
+            await new Promise<void>((resolve, reject) => {
+                client.once("connect", resolve); client.once("connect_error", reject); client.connect();
+            });
+            return client;
+        };
+        const declare = (client: Socket, sessionIds: string[], pendingMessageEdits: Array<{ sessionId: string; holdId: string }>) =>
+            client.timeout(ACK_TIMEOUT_MS).emitWithAck(visibleEvent, { v: 1, sessionIds, pendingMessageEdits });
+        const latest = (client: Socket) => observations.get(client)!.filter(
+            (value): value is Extract<SessionHumanPresenceSnapshotV1, { sessionId: string }> => value.sessionId === session.id,
+        ).at(-1);
+        const hold = { sessionId: session.id, holdId: "drainhold:editing-device" };
+        try {
+            const editorSocket = await connect(editor.id);
+            const before = await db.session.findUniqueOrThrow({ where: { id: session.id }, select: { metadata: true, metadataVersion: true } });
+            expect(await declare(editorSocket, [], [hold])).toEqual({
+                v: 1, ok: true, admittedSessionIds: [], admittedPendingMessageEdits: [hold],
+            });
+            const declareAdmittedObserver = async (client: Socket) => {
+                // The socket handshake already admitted this exact Session. A
+                // second database read can fail independently and strand the queue
+                // before it joins the room that owns projection recovery.
+                const reader = await withSqliteReadSnapshot(async tx => tx.session);
+                const originalFindMany = reader.findMany;
+                const admissionReads = vi.fn(async () => { throw new Error("admission read unavailable"); });
+                Reflect.set(reader, "findMany", admissionReads);
+                try {
+                    expect(await declare(client, [session.id], [])).toEqual({
+                        v: 1, ok: true, admittedSessionIds: [session.id], admittedPendingMessageEdits: [],
+                    });
+                    expect(admissionReads).not.toHaveBeenCalled();
+                } finally { Reflect.set(reader, "findMany", originalFindMany); }
+            };
+            let observer = await connect(owner.id, true);
+            await declareAdmittedObserver(observer);
+            await expect.poll(() => latest(observer)).toMatchObject({ viewers: [], pendingMessageEditHoldIds: [hold.holdId] });
+            await expect.poll(() => latest(editorSocket)).toMatchObject({ viewers: [] });
+            expect(latest(editorSocket)).not.toHaveProperty("pendingMessageEditHoldIds");
+            expect(await declare(observer, [otherSession.id], [])).toEqual({ v: 1, ok: false, errorCode: "INVALID_REQUEST" });
+            await expect(connect(viewer.id, true)).rejects.toMatchObject({
+                data: { error: "invalid-session", statusCode: 403 },
+            });
+
+            observer.close();
+            observer = await connect(owner.id, true);
+            // A real profile-read outage after room admission uses the existing
+            // projection repair, preserving the other device's live edit.
+            const profileReader = db.account;
+            const originalFindMany = profileReader.findMany;
+            const profileReads = vi.fn(originalFindMany.bind(profileReader)).mockRejectedValueOnce(new Error("projection profile unavailable"));
+            Reflect.set(profileReader, "findMany", profileReads);
+            try {
+                await declareAdmittedObserver(observer);
+                await expect.poll(() => profileReads.mock.calls.length).toBeGreaterThan(0);
+                expect(latest(observer)).toBeUndefined();
+            } finally { Reflect.set(profileReader, "findMany", originalFindMany); }
+            await expect.poll(() => latest(observer), { timeout: 8_000 }).toMatchObject({
+                viewers: [], pendingMessageEditHoldIds: [hold.holdId],
+            });
+
+            const legacy = await connect(owner.id);
+            expect(await legacy.timeout(ACK_TIMEOUT_MS).emitWithAck(visibleEvent, { v: 1, sessionIds: [session.id] }))
+                .toEqual({ v: 1, ok: true, admittedSessionIds: [session.id] });
+            await expect.poll(() => latest(legacy)?.viewers).toHaveLength(1);
+            expect(latest(legacy)).not.toHaveProperty("pendingMessageEditHoldIds");
+            const reader = await connect(viewer.id);
+            expect(await declare(reader, [], [{ sessionId: session.id, holdId: "read-only-hold" }])).toEqual({
+                v: 1, ok: true, admittedSessionIds: [], admittedPendingMessageEdits: [],
+            });
+
+            // Changing actual visibility must neither release the edit nor turn
+            // the session-scoped queue observer into a human viewer.
+            expect(await declare(editorSocket, [session.id], [hold])).toMatchObject({ admittedPendingMessageEdits: [hold] });
+            await expect.poll(() => latest(observer)?.viewers.map(value => value.account.accountId).sort())
+                .toEqual([owner.id, editor.id].sort());
+            expect(await inTx(tx => putSessionAccessGrantInTx(tx, {
+                actorAccountId: owner.id, sessionId: session.id,
+                subject: { kind: "account", accountId: editor.id },
+                grant: { accessLevel: "view", canApprovePermissions: false }, authentication: ownerAuthentication(),
+            }))).toMatchObject({ ok: true });
+            // The committed access change withdraws open-ended queue control,
+            // even though the socket retains its readable declaration identity.
+            await expect.poll(() => latest(observer)?.pendingMessageEditHoldIds).toEqual([]);
+            // A replacement cannot revive that hold while input access is absent;
+            // a new edit still needs its own admission.
+            expect(await declare(editorSocket, [], [hold, { sessionId: session.id, holdId: "new-after-downgrade" }]))
+                .toMatchObject({ admittedPendingMessageEdits: [hold] });
+            await expect.poll(() => latest(observer)).toMatchObject({
+                viewers: [{ account: { accountId: owner.id } }], pendingMessageEditHoldIds: [],
+            });
+            expect(await db.session.findUniqueOrThrow({ where: { id: session.id }, select: { metadata: true, metadataVersion: true } })).toEqual(before);
+
+            expect(await inTx(tx => putSessionAccessGrantInTx(tx, {
+                actorAccountId: owner.id, sessionId: session.id,
+                subject: { kind: "account", accountId: editor.id },
+                grant: { accessLevel: "edit", canApprovePermissions: false }, authentication: ownerAuthentication(),
+            }))).toMatchObject({ ok: true });
+            await expect.poll(() => latest(observer)?.pendingMessageEditHoldIds).toEqual([hold.holdId]);
+            expect(await declare(editorSocket, [], [])).toMatchObject({ admittedPendingMessageEdits: [] });
+            await expect.poll(() => latest(observer)?.pendingMessageEditHoldIds).toEqual([]);
+            expect(await declare(editorSocket, [], [hold])).toMatchObject({ admittedPendingMessageEdits: [hold] });
+            await expect.poll(() => latest(observer)?.pendingMessageEditHoldIds).toEqual([hold.holdId]);
+            legacy.close();
+            editorSocket.close();
+            await expect.poll(() => latest(observer)).toMatchObject({ viewers: [], pendingMessageEditHoldIds: [] });
+            expect(await db.session.findUniqueOrThrow({ where: { id: session.id }, select: { metadata: true, metadataVersion: true } })).toEqual(before);
+        } finally {
+            clients.forEach(client => client.close());
+            await app.close();
+        }
+    }, 30_000);
 
     it("negotiates on the actual visible replacement, admits readable sessions, replaces and clears rooms", async () => {
         const owner = await db.account.create({ data: { publicKey: crypto.randomUUID(), name: "Owner" } });
@@ -499,6 +644,7 @@ describe("authenticated human presence over real memory-adapter sockets", () => 
         expect(await putDiscussion(viewer.id, "view")).toMatchObject({ ok: true });
         const team = await db.team.create({ data: { name: crypto.randomUUID() } });
         const membership = await db.teamMembership.create({ data: { teamId: team.id, accountId: guest.id, role: "guest" } });
+        await db.teamMembership.create({ data: { teamId: team.id, accountId: owner.id, role: "member" } });
         const group = await db.teamGroup.create({ data: { teamId: team.id, name: "Guests", nameKey: "guests" } });
         await db.teamGroupMembership.create({ data: { teamId: team.id, teamGroupId: group.id, teamMembershipId: membership.id } });
         await db.sessionGroupGrant.create({ data: { sessionId: session.id, teamGroupId: group.id, accessLevel: "edit", effectiveAt: new Date() } });

@@ -77,6 +77,7 @@ export function registerAccountProfileRoute(app: Fastify): void {
                 tx,
                 accountId: userId,
                 includeGroups: connectedServiceAccountGroupsEnabled,
+                env: requestHomeEnv,
             });
             const [currentLinkedProviders, currentManagement] = await Promise.all([
                 fetchLinkedProvidersForAccount({ tx, accountId: userId }),

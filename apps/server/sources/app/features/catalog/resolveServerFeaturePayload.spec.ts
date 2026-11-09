@@ -65,6 +65,15 @@ async function loadSessionFoldersFeatureModule(): Promise<Record<string, any> | 
 }
 
 describe("resolveServerFeaturePayload", () => {
+    beforeEach(() => {
+        resetSessionSystemRecordsProtocolV1ActivationForTests();
+    });
+
+    it("advertises turn projection without operator activation", () => {
+        expect(resolveServerFeaturePayload({}, serverFeatureRegistry).capabilities.session.messages.turns).toBe(true);
+        expect(resolveServerFeaturePayload({}, serverFeatureRegistry).capabilities.changes?.cursorHeaderVersion).toBe(1);
+    });
+
     it('advertises compact Usage delivery through the existing Usage producer and Home feature registry', () => {
         const direct = resolveServerFeaturePayload({}, [resolveServerUsageAnalyticsCapabilitiesFeature]);
         const registered = resolveServerFeaturePayload({}, serverFeatureRegistry);
@@ -75,14 +84,6 @@ describe("resolveServerFeaturePayload", () => {
         expect(registered.capabilities.server.usageAnalytics).not.toHaveProperty('compactBatch');
     });
 
-    beforeEach(() => {
-        resetSessionSystemRecordsProtocolV1ActivationForTests();
-    });
-
-    it("advertises turn projection without operator activation", () => {
-        expect(resolveServerFeaturePayload({}, serverFeatureRegistry).capabilities.session.messages.turns).toBe(true);
-    });
-
     it('advertises public Account profiles by default with a live operator opt-out independent of Friends', () => {
         expect(readServerEnabledBit(resolveServerFeaturePayload({ HAPPIER_FEATURE_SOCIAL_FRIENDS__ENABLED: '0' }, serverFeatureRegistry),
             'account.publicProfiles')).toBe(true);
@@ -90,7 +91,7 @@ describe("resolveServerFeaturePayload", () => {
             'account.publicProfiles')).toBe(false);
     });
 
-    it("advertises approved Workflow activation only while its Automations dependency is enabled", () => {
+    it("publishes the released Automations bit as an alias of the final Workflow decision", () => {
         expect(readServerEnabledBit(
             resolveServerFeaturePayload({}, serverFeatureRegistry),
             "workflows",
@@ -103,6 +104,19 @@ describe("resolveServerFeaturePayload", () => {
             resolveServerFeaturePayload({ HAPPIER_FEATURE_WORKFLOWS__ENABLED: "0" }, serverFeatureRegistry),
             "workflows",
         )).toBe(false);
+        for (const env of [
+            {},
+            { HAPPIER_FEATURE_WORKFLOWS__ENABLED: '0' },
+            { HAPPIER_FEATURE_WORKFLOWS__ENABLED: '1', HAPPIER_FEATURE_AUTOMATIONS__ENABLED: '0' },
+            { HAPPIER_BUILD_FEATURES_DENY: 'workflows' },
+            { HAPPIER_BUILD_FEATURES_DENY: 'automations' },
+        ]) {
+            const payload = resolveServerFeaturePayload(env, serverFeatureRegistry);
+            expect(payload.features.automations.enabled).toBe(payload.features.workflows.enabled);
+        }
+        expect(readServerEnabledBit(resolveServerFeaturePayload({
+            HAPPIER_FEATURE_WORKFLOWS__ENABLED: '1', HAPPIER_FEATURE_AUTOMATIONS__ENABLED: '0',
+        }, serverFeatureRegistry), 'workflows')).toBe(true);
     });
 
     it("publishes credential resources by default and keeps them dependent on Teams", () => {
@@ -465,7 +479,7 @@ describe("resolveServerFeaturePayload", () => {
         expect(readOptionalPath(payload, ["features", "sessions", "agentSwitching", "enabled"])).toBe(false);
     });
 
-    it("keeps server-routed tunnel relay disabled by default while advertising capped diagnostics", async () => {
+    it("keeps relay disabled by default and advertises transport bounds without concurrency defaults", async () => {
         const mod = await loadMachineTunnelFeatureModule();
         expect(mod?.resolveMachineTunnelFeature).toBeTypeOf("function");
 
@@ -474,15 +488,13 @@ describe("resolveServerFeaturePayload", () => {
         expect(payload.features.machines.tunnel.directPeer.enabled).toBe(true);
         expect(payload.features.machines.tunnel.serverRouted.enabled).toBe(false);
         expect(payload.capabilities.machines.tunnel.serverRouted).toMatchObject({
-            maxActiveTunnelsPerSocket: 8,
             maxFrameBytes: 64 * 1024,
             supportedEncodings: ["binary_frame_v2"],
             preferredEncoding: "binary_frame_v2",
-            substreams: {
-                maxConcurrentSubstreams: 32,
-            },
+            substreams: {},
             disabledReason: "relay_disabled_by_server_policy",
         });
+        expect(payload.capabilities.machines.tunnel.serverRouted.maxActiveTunnelsPerSocket).toBeUndefined();
     });
 
     it("does not emit retired channel bridge gates when historic env keys are set", () => {

@@ -3,6 +3,9 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { db, initDbMysql, initDbPostgres } from '@/storage/db';
 import { initEncrypt } from '@/modules/encrypt';
 import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lightSqliteHarness';
+import { withAuthenticatedTestApp } from '@/app/api/testkit/sqliteFastify';
+import { QualifiedConnectedAccountMultiServiceListResponseV4Schema } from '@happier-dev/protocol/connect/qualified-connected-account-projections';
+import { registerQualifiedConnectedAccountCredentialRoutesV4 } from './registerQualifiedConnectedAccountCredentialRoutesV4';
 import { createQualifiedConnectedAccountIdentityDigest } from './identity';
 import { portableQueryChunks } from '@/storage/portableQueryChunks';
 import {
@@ -197,4 +200,73 @@ describe('qualified Connected Account list payload admission', () => {
         expect(rowCounts).toHaveLength(chunks.length);
     });
 
+    it('serves multi-service projections through the real route and refuses malformed or mixed selectors', async () => {
+        const account = await createAccount();
+        const outsider = await createAccount();
+        const services = [service, { ...service, localId: 'second' }];
+        await createCredential(account.id, 'first');
+        await createCredential(account.id, 'second', false, 'second');
+        await createCredential(account.id, 'unrelated', true, 'unrelated');
+        await createCredential(outsider.id, 'outsider');
+        const expected = (await Promise.all(services.map(selected => listQualifiedConnectedAccountsInTx(db, {
+            accountId: account.id, service: selected,
+        })))).flat().sort((a, b) => a.ref.accountId.localeCompare(b.ref.accountId));
+        const originalQueryRaw = db.$queryRaw;
+        const readColumns: string[][] = [];
+        // Observe the real SQL boundary while preserving the default route →
+        // repository wiring and all real internal projection/validation logic.
+        db.$queryRaw = new Proxy(originalQueryRaw, { async apply(target, receiver, args: unknown[]) {
+            const rows: unknown = await Reflect.apply(target, receiver, args);
+            if (!Array.isArray(rows)) throw new Error('Expected a database row set');
+            readColumns.push(rows.flatMap(row => Object.keys(row)));
+            return rows;
+        } });
+        try {
+            await withAuthenticatedTestApp(registerQualifiedConnectedAccountCredentialRoutesV4, async app => {
+                const headers = { 'x-test-user-id': account.id };
+                const request = (query: URLSearchParams) => app.inject({ method: 'GET',
+                    url: `/v4/connect/qualified/accounts?${query}`, headers });
+                const response = await request(new URLSearchParams({ services: JSON.stringify(services) }));
+                expect(response.statusCode, response.body).toBe(200);
+                expect(QualifiedConnectedAccountMultiServiceListResponseV4Schema.parse(response.json())).toEqual({ services, accounts: expected });
+                expect(readColumns).toHaveLength(1);
+                expect(readColumns.flat()).not.toContain('token');
+                expect(readColumns.flat()).not.toContain('configurationContent');
+                const empty = await request(new URLSearchParams({ services: '[]' }));
+                expect(empty.statusCode, empty.body).toBe(200);
+                expect(empty.json()).toEqual({ services: [], accounts: [] });
+                const beforeInvalid = readColumns.length;
+                for (const query of [
+                    new URLSearchParams({ service: JSON.stringify(service), services: JSON.stringify(services) }),
+                    new URLSearchParams({ services: JSON.stringify([{ ...service, unexpected: true }]) }),
+                    new URLSearchParams({ services: JSON.stringify(service) }),
+                    new URLSearchParams({ services: '[' }),
+                    new URLSearchParams([['services', '[]'], ['services', '[]']]),
+                    new URLSearchParams(),
+                ]) {
+                    expect((await request(query)).statusCode).toBe(400);
+                }
+                expect(readColumns).toHaveLength(beforeInvalid);
+            });
+        } finally {
+            db.$queryRaw = originalQueryRaw;
+        }
+    });
+
+    // Only SQLite has a connection-local check-constraint bypass. The same
+    // admission branch sees both invalid states here; other providers enforce
+    // the constraint and exercise configured/unconfigured rows above.
+    it.skipIf(externalProvider !== null).each(['content', 'revision'] as const)('rejects a missing configuration %s without reading its body', async missing => {
+        const account = await createAccount();
+        await createCredential(account.id, 'inconsistent');
+        await db.$executeRawUnsafe('PRAGMA ignore_check_constraints = ON');
+        try {
+            await db.serviceAccountToken.updateMany({ where: { accountId: account.id }, data:
+                missing === 'content' ? { configurationContent: null } : { configurationRevision: null } });
+        } finally {
+            await db.$executeRawUnsafe('PRAGMA ignore_check_constraints = OFF');
+        }
+        await expect(listQualifiedConnectedAccountsInTx(db, { accountId: account.id, service }))
+            .rejects.toThrow(/configuration sidecar is incomplete/);
+    });
 });

@@ -13,6 +13,11 @@ import { homeConfigSnapshotPostgresQueryMock } from '@/app/home/settings/homeCon
 const mocks = createDbMocks({ artifact: ['findFirst'], publicSessionShare: ['findUnique', 'create', 'update'], session: ['findUnique'], sessionMessage: ['findFirst'], sessionSystemRecord: ['findFirst'], homeSettings: ['findUnique'], homeGovernancePolicy: ['findUnique'] } as const);
 const transactions = createDbTransactionMock(() => ({ ...inTxPostgresControlStatementMock, ...homeConfigSnapshotPostgresQueryMock, ...mocks.db }));
 installDbModuleMock(() => ({ db: transactions.wrapDb(mocks.db) }));
+// Replace the SQLite connection boundary as well as the Prisma write transport.
+vi.doMock('@/storage/prisma', async importOriginal => ({
+    ...await importOriginal<typeof import('@/storage/prisma')>(),
+    withSqliteReadSnapshot: transactions.readSnapshot,
+}));
 const { withAuthenticatedTestApp } = await import('../../testkit/sqliteFastify');
 const { registerStoredContentPublicShareRoutes } = await import('./registerStoredContentPublicShareRoutes');
 const { storePlainArtifactDbBytes } = await import('@/app/artifacts/artifactStoredContent');

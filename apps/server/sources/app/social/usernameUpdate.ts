@@ -61,11 +61,8 @@ export async function readUsernameAvailabilityInTx(
     if (current?.username === username) return { username, availability: "available" };
     if (!validateUsername(username, env).ok) return { username, availability: "invalid" };
     if (isReservedUsername(username)) return { username, availability: "reserved" };
-    const [holder, hold] = await Promise.all([
-        tx.account.findUnique({ where: { username }, select: { id: true } }),
-        tx.releasedUsername.findUnique({ where: { username }, select: { expiresAt: true } }),
-    ]);
-    return { username, availability: holder || (hold && hold.expiresAt.getTime() > Date.now()) ? "unavailable" : "available" };
+    const holder = await tx.account.findUnique({ where: { username }, select: { id: true } });
+    return { username, availability: holder ? "unavailable" : "available" };
 }
 
 /** Two presentation candidates, never reservations or an unbounded namespace search. */
@@ -95,9 +92,8 @@ export function changeUsernameInTx(tx: Tx, accountId: string, change: { kind: "r
 export function changeUsernameInTx(tx: Tx, accountId: string, change: { kind: "operator_reclaim"; username: string }, env?: NodeJS.ProcessEnv): Promise<UsernameReclaimResult>;
 export function changeUsernameInTx(tx: Tx, accountId: string, change: UsernameChange, env?: NodeJS.ProcessEnv): Promise<{ username: string | null }>;
 /**
- * The sole username writer. Claiming callers use an admitted serializable
- * transaction so claim/hold reads and identity lifecycle commit together.
- * Explicit release instead relies on the exclusive Account admission below.
+ * The sole username writer. Account exclusion protects identity lifecycle;
+ * the unique username constraint arbitrates competing claims.
  */
 export async function changeUsernameInTx(
     tx: Tx, accountId: string, change: UsernameChange, env: NodeJS.ProcessEnv = process.env,
@@ -138,13 +134,10 @@ export async function changeUsernameInTx(
             if (account.usernameAutoFillEnabled) await tx.account.update({ where: { id: accountId }, data: { usernameAutoFillEnabled: false } });
             return { username: null, released: false, reservedUntilMs: null };
         }
-        // The approved hold is exactly thirty days, independent of Account lifetime.
-        const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
-        await tx.releasedUsername.upsert({ where: { username: account.username }, create: { username: account.username, expiresAt }, update: { expiresAt } });
         await withdrawPublicProfileInTx(tx, accountId);
         await tx.account.update({ where: { id: accountId }, data: { username: null, usernameAutoFillEnabled: false } });
         await publishUsernameChangeInTx(tx, accountId, null);
-        return { username: null, released: true, reservedUntilMs: expiresAt.getTime() };
+        return { username: null, released: true, reservedUntilMs: null };
     }
 
     if (change.kind === "identity_unlink") {
@@ -175,7 +168,6 @@ export async function changeUsernameInTx(
         if (change.kind === "identity_fill") throw new TransactionReplayRequiredError("username-admission-changed");
         throw new UsernameTakenError();
     }
-    if (account.username !== admission.username) await withdrawPublicProfileInTx(tx, accountId);
     await publishUsernameChangeInTx(tx, accountId, admission.username);
     return { username: admission.username };
 }
@@ -187,12 +179,12 @@ function assertUsernameAvailable(admission: UsernameAvailability): void {
 
 /** Legacy explicit update wrapper, preserving typed conflict and normalized result. */
 export async function usernameUpdate(ctx: Context, username: string, env: NodeJS.ProcessEnv = process.env): Promise<string> {
-    const result = await inTx(tx => changeUsernameInTx(tx, ctx.uid, { kind: "manual_set", username }, env), { isolationLevel: "Serializable" });
+    const result = await inTx(tx => changeUsernameInTx(tx, ctx.uid, { kind: "manual_set", username }, env), { isolationLevel: "ReadCommitted" });
     if (result.username === null) throw new Error("Manual username admission returned no username");
     return result.username;
 }
 
-/** Explicit release and hold commit once; a repeated release never extends expiry. */
+/** Explicit release withdraws disclosure and disables automatic refilling. */
 export async function usernameRelease(ctx: Context, env: NodeJS.ProcessEnv = process.env): Promise<UsernameReleaseResult> {
     return inTx(tx => changeUsernameInTx(tx, ctx.uid, { kind: "release" }, env), { isolationLevel: "ReadCommitted" });
 }

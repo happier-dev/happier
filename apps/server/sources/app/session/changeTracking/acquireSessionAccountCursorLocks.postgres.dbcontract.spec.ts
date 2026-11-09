@@ -1,4 +1,6 @@
+import { buildSessionFollowReceiverChangeEntityIdV1 } from '@happier-dev/protocol/sessions/follow/changes';
 import { randomUUID } from "node:crypto";
+import { PrismaClient, type Prisma } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { db, getDbProviderFromEnv, initDbPostgres } from "@/storage/db";
@@ -161,13 +163,52 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("P
                     expect(await acquireSessionAccountCursorLocksInTx(observed, [session.id])).toEqual([owner.id]);
                 }
                 expect(resourceLocks).toBe(1);
-                // Initial discovery + before/after resource locking; one fresh read per reentry.
-                expect(audienceReads).toBe(5);
+                // One fresh read per entry: a reentry can observe this transaction's own writes.
+                expect(audienceReads).toBe(3);
                 await tx.session.update({ where: { id: session.id }, data: { seq: { increment: 1 } } });
                 await markAccountChangesForSessionAccounts({ tx, sessionId: session.id, accountIds: [owner.id] });
             }, { isolationLevel: "ReadCommitted" });
             expect(await db.accountChange.findMany({ where: { sessionId: session.id }, select: { accountId: true, cursor: true } }))
                 .toEqual([{ accountId: owner.id, cursor: 1 }]);
+        } finally {
+            await db.session.delete({ where: { id: session.id } });
+            await db.account.delete({ where: { id: owner.id } });
+        }
+    });
+
+    it("skips the census reread for a re-entrant caller that adds no audience, and still fences without a held scope", async () => {
+        const owner = await db.account.create({ data: { publicKey: randomUUID(), encryptionMode: "plain" } });
+        const session = await db.session.create({ data: {
+            accountId: owner.id, tag: randomUUID(), metadata: "{}", encryptionMode: "plain",
+        } });
+        try {
+            await inTx(async tx => {
+                let audienceReads = 0;
+                const observed = new Proxy(tx, { get(target, property, receiver) {
+                    const value = Reflect.get(target, property, receiver);
+                    if (property !== "sessionFollowEdge") return value;
+                    return new Proxy(target.sessionFollowEdge, { get(delegate, key) {
+                        const method = Reflect.get(delegate, key, delegate);
+                        if (key !== "findMany" || typeof method !== "function") return method;
+                        return (...args: unknown[]) => {
+                            audienceReads += 1;
+                            return Reflect.apply(method, delegate, args);
+                        };
+                    } });
+                } });
+                // Nothing held yet: the option must still run the full census and fence.
+                expect(await acquireSessionAccountCursorLocksInTx(observed, [session.id], [], { reuseHeldAudience: true })).toEqual([owner.id]);
+                expect(audienceReads).toBe(1);
+                await expect(db.$queryRaw`
+                    SELECT id FROM "Session" WHERE id = ${session.id} FOR NO KEY UPDATE NOWAIT
+                `).rejects.toMatchObject({ code: "P2010", meta: { code: "55P03" } });
+                // The same scope is held: no reread, same admitted audience.
+                expect(await acquireSessionAccountCursorLocksInTx(observed, [session.id], [], { reuseHeldAudience: true })).toEqual([owner.id]);
+                expect(audienceReads).toBe(1);
+                // Without the option a re-entry keeps its fresh read.
+                expect(await acquireSessionAccountCursorLocksInTx(observed, [session.id])).toEqual([owner.id]);
+                expect(audienceReads).toBe(2);
+            }, { isolationLevel: "ReadCommitted" });
         } finally {
             await db.session.delete({ where: { id: session.id } });
             await db.account.delete({ where: { id: owner.id } });
@@ -260,35 +301,142 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("P
         }
     });
 
-    it("replays an audience that grows after domain admission before terminal publication", async () => {
+    it("publishes the admitted audience when a grant commits after admission, and the next write reaches it", async () => {
         const owner = await db.account.create({ data: { publicKey: randomUUID(), encryptionMode: "plain" } });
         const recipient = await db.account.create({ data: { publicKey: randomUUID(), encryptionMode: "plain" } });
         const session = await db.session.create({ data: {
             accountId: owner.id, tag: randomUUID(), metadata: "{}", encryptionMode: "plain",
         } });
         let attempts = 0;
+        const write = (afterAdmission?: () => Promise<unknown>) => inTx(async tx => {
+            attempts += 1;
+            const recipients = await acquireSessionAccountCursorLocksInTx(tx, [session.id]);
+            await afterAdmission?.();
+            await tx.session.update({ where: { id: session.id }, data: { seq: { increment: 1 } } });
+            await markAccountChangesForSessionAccounts({ tx, sessionId: session.id, accountIds: recipients });
+        }, { isolationLevel: "ReadCommitted" });
+        const changed = () => db.accountChange.findMany({ where: { sessionId: session.id },
+            orderBy: { accountId: "asc" }, select: { accountId: true } });
         try {
-            await inTx(async tx => {
-                attempts += 1;
-                const recipients = await acquireSessionAccountCursorLocksInTx(tx, [session.id]);
-                if (attempts === 1) {
-                    await db.sessionShare.create({ data: {
-                        sessionId: session.id, sharedByUserId: owner.id, sharedWithUserId: recipient.id,
-                    } });
-                }
-                await tx.session.update({ where: { id: session.id }, data: { seq: { increment: 1 } } });
-                await markAccountChangesForSessionAccounts({ tx, sessionId: session.id, accountIds: recipients });
-            }, { isolationLevel: "ReadCommitted" });
-            expect(attempts).toBe(2);
-            expect(await db.session.findUniqueOrThrow({ where: { id: session.id }, select: { seq: true } }))
-                .toEqual({ seq: 1 });
-            expect(await db.accountChange.findMany({ where: { sessionId: session.id },
-                orderBy: { accountId: "asc" }, select: { accountId: true, cursor: true } }))
-                .toEqual([owner.id, recipient.id].sort().map(accountId => ({ accountId, cursor: 1 })));
+            await write(() => db.sessionShare.create({ data: {
+                sessionId: session.id, sharedByUserId: owner.id, sharedWithUserId: recipient.id,
+            } }));
+            // Accepted glitch (owner, 2026-10-31): the newcomer's client learns of
+            // this write on its next change or open; reads are authorized at read time.
+            expect(attempts).toBe(1);
+            expect(await changed()).toEqual([{ accountId: owner.id }]);
+            await write();
+            expect(await changed()).toEqual([owner.id, recipient.id].sort().map(accountId => ({ accountId })));
         } finally {
             await db.session.delete({ where: { id: session.id } });
             await db.account.deleteMany({ where: { id: { in: [owner.id, recipient.id] } } });
         }
+    });
+
+    describe("audience reads per Session write", () => {
+        const statements: Prisma.QueryEvent[] = [];
+        let client: PrismaClient<Prisma.PrismaClientOptions, "query">;
+        let originalTransaction: typeof db.$transaction;
+        beforeAll(async () => {
+            client = new PrismaClient({ log: [{ emit: "event", level: "query" }] });
+            client.$on("query", event => statements.push(event));
+            await client.$connect();
+            originalTransaction = db.$transaction;
+            // Real Postgres through a query-observing twin of the transaction transport.
+            db.$transaction = new Proxy(originalTransaction, { apply: (_target, _receiver, args) =>
+                Reflect.apply(client.$transaction, client, args) });
+        });
+        afterAll(async () => {
+            db.$transaction = originalTransaction;
+            await client.$disconnect();
+        });
+        const censusReads = () => statements.filter(({ query }) => /FROM\s+"(?:public"\.")?SessionShare"/.test(query)).length;
+
+        it("reads the lock census once when a transcript write re-enters its held admission", async () => {
+            vi.stubEnv("HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY", "optional");
+            const owner = await db.account.create({ data: { publicKey: randomUUID(), encryptionMode: "plain" } });
+            const recipient = await db.account.create({ data: { publicKey: randomUUID(), encryptionMode: "plain" } });
+            const session = await db.session.create({ data: {
+                accountId: owner.id, tag: randomUUID(), metadata: "{}", encryptionMode: "plain", currentStorageState: "hosted",
+            } });
+            await db.sessionShare.create({ data: { sessionId: session.id, sharedByUserId: owner.id, sharedWithUserId: recipient.id } });
+            try {
+                statements.length = 0;
+                const written = await createSessionMessage({ actorUserId: owner.id, sessionId: session.id,
+                    inputAdmission: "authenticatedAccount", authentication: createPresentUserSessionAccessAuthentication(),
+                    localId: randomUUID(), messageRole: "user", content: { t: "plain", v: { text: "once" } } });
+                expect(written.ok).toBe(true);
+                if (!written.ok) throw new Error("Append was refused");
+                expect(written.recipientCursors.map(row => row.accountId).sort()).toEqual([owner.id, recipient.id].sort());
+                const lockCensusReads = statements.filter(({ query }) => /sourceExecutionRunSessionId/.test(query)
+                    && /FROM\s+"(?:public"\.")?SessionFollowEdge"/.test(query)).length;
+                console.info("SESSION_MESSAGE_LOCK_CENSUS", lockCensusReads, "statements", statements.length);
+                expect(lockCensusReads).toBe(1);
+            } finally {
+                vi.unstubAllEnvs();
+                await deleteOwnedSession({ sessionId: session.id, reason: "retention_policy" });
+                await db.account.deleteMany({ where: { id: { in: [owner.id, recipient.id] } } });
+            }
+        });
+
+        it("reads no Session row after its own seq update and still stamps a tracked follower unread", async () => {
+            vi.stubEnv("HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY", "optional");
+            const owner = await db.account.create({ data: { publicKey: randomUUID(), encryptionMode: "plain" } });
+            const follower = await db.account.create({ data: { publicKey: randomUUID(), encryptionMode: "plain" } });
+            const session = await db.session.create({ data: {
+                accountId: owner.id, tag: randomUUID(), metadata: "{}", encryptionMode: "plain", currentStorageState: "hosted",
+            } });
+            await db.sessionShare.create({ data: { sessionId: session.id, sharedByUserId: owner.id, sharedWithUserId: follower.id } });
+            await db.accountSessionFollow.create({ data: { accountId: follower.id, sessionId: session.id } });
+            await db.accountSessionReadState.create({ data: { accountId: follower.id, sessionId: session.id, lastViewedSessionSeq: 0 } });
+            try {
+                statements.length = 0;
+                const written = await createSessionMessage({ actorUserId: owner.id, sessionId: session.id,
+                    inputAdmission: "authenticatedAccount", authentication: createPresentUserSessionAccessAuthentication(),
+                    localId: randomUUID(), messageRole: "user", content: { t: "plain", v: { text: "once" } } });
+                expect(written.ok).toBe(true);
+                if (!written.ok) throw new Error("Append was refused");
+                expect(written.recipientCursors.map(row => row.accountId).sort()).toEqual([owner.id, follower.id].sort());
+                const seqUpdate = statements.findIndex(({ query }) => /UPDATE\s+"(?:public"\.")?Session"\s+SET\s+"seq"/.test(query));
+                expect(seqUpdate).toBeGreaterThanOrEqual(0);
+                const readsAfterOwnWrite = statements.slice(seqUpdate + 1).filter(({ query }) =>
+                    /^\s*SELECT\b/i.test(query) && /FROM\s+"(?:public"\.")?Session"/.test(query));
+                expect(readsAfterOwnWrite.map(({ query }) => query)).toEqual([]);
+                await expect(db.accountSessionReadState.findUniqueOrThrow({
+                    where: { accountId_sessionId: { accountId: follower.id, sessionId: session.id } },
+                })).resolves.toMatchObject({ unreadSince: expect.any(Date), lastViewedSessionSeq: 0 });
+            } finally {
+                vi.unstubAllEnvs();
+                await deleteOwnedSession({ sessionId: session.id, reason: "retention_policy" });
+                await db.account.deleteMany({ where: { id: { in: [owner.id, follower.id] } } });
+            }
+        });
+
+        it.each([
+            ["admitted in the transaction", (sessionId: string, accountId: string) => inTx(async tx => {
+                await acquireSessionAccountCursorLocksInTx(tx, [sessionId], [accountId]);
+                await tx.session.update({ where: { id: sessionId }, data: { seq: { increment: 1 } } });
+            }, { isolationLevel: "ReadCommitted" })],
+            ["prepared before the transaction", (sessionId: string, accountId: string) => inTx(async tx => {
+                await tx.session.update({ where: { id: sessionId }, data: { seq: { increment: 1 } } });
+            }, { isolationLevel: "ReadCommitted", prepare: () => prepareSessionAccountCursorLocks([sessionId], [accountId]) })],
+        ] as const)("takes one census for a write %s", async (_label, write) => {
+            const owner = await db.account.create({ data: { publicKey: randomUUID(), encryptionMode: "plain" } });
+            const recipient = await db.account.create({ data: { publicKey: randomUUID(), encryptionMode: "plain" } });
+            const session = await db.session.create({ data: {
+                accountId: owner.id, tag: randomUUID(), metadata: "{}", encryptionMode: "plain",
+            } });
+            await db.sessionShare.create({ data: { sessionId: session.id, sharedByUserId: owner.id, sharedWithUserId: recipient.id } });
+            try {
+                statements.length = 0;
+                await write(session.id, owner.id);
+                console.info("SESSION_WRITE_CENSUS", _label, censusReads());
+                expect(censusReads()).toBe(1);
+            } finally {
+                await db.session.delete({ where: { id: session.id } });
+                await db.account.deleteMany({ where: { id: { in: [owner.id, recipient.id] } } });
+            }
+        });
     });
 
     it.each(["Serializable", "ReadCommitted"] as const)("replays a changed follower audience and fences outgoing, incoming and Archive lifecycle Accounts at %s", async isolationLevel => {
@@ -328,13 +476,14 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("P
             } });
             let preparations = 0;
             await inTx(async tx => {
-                expect(preparations).toBe(2);
                 expect(await tx.$queryRaw<Array<{ isolation: string }>>`
                     SELECT current_setting('transaction_isolation') AS isolation
                 `).toEqual([{ isolation: isolationLevel === "Serializable" ? "serializable" : "read committed" }]);
                 // Each independent contender must observe the actual row fence;
                 // checking a union would hide a missing later audience member.
-                for (const account of accounts) {
+                // The first attempt's fan-out discovers the newcomer and replays
+                // through Account admission, which never extends its sorted lock set.
+                for (const account of preparations === 2 ? accounts : []) {
                     await expect(db.$queryRaw`
                         SELECT id FROM "Account" WHERE id = ${account.id} FOR UPDATE NOWAIT
                     `).rejects.toMatchObject({ code: "P2010", meta: { code: "55P03" } });
@@ -364,11 +513,17 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("P
                     return fence;
                 },
             });
+            expect(preparations).toBe(2);
             expect(await db.accountChange.findMany({ where: { sessionId: follower.id },
                 orderBy: { accountId: 'asc' }, select: { accountId: true, hint: true } }))
-                .toEqual([followerOwner.id, recipient.id].sort().map(accountId => ({ accountId, hint: null })));
+                .toEqual([followerOwner.id, recipient.id].sort().map(accountId => ({ accountId, hint: { followReceiverAvailabilityChanged: false } })));
             expect(await db.account.findUniqueOrThrow({ where: { id: leadOwner.id }, select: { seq: true } }))
-                .toEqual({ seq: 1 });
+                .toEqual({ seq: 2 });
+            expect(await db.accountChange.findMany({ where: { accountId: leadOwner.id }, orderBy: { cursor: 'asc' },
+                select: { kind: true, entityId: true, cursor: true } })).toEqual([
+                { kind: 'session', entityId: lead.id, cursor: 1 },
+                { kind: 'account', entityId: buildSessionFollowReceiverChangeEntityIdV1(lead.id), cursor: 2 },
+            ]);
         } finally {
             await db.session.deleteMany({ where: { accountId: { in: accounts.map(account => account.id) } } });
             await db.account.deleteMany({ where: { id: { in: accounts.map(account => account.id) } } });

@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { db } from "@/storage/db";
 import { inTx } from "@/storage/inTx";
-import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
+import { createDatabaseIntegrationHarness } from "@/testkit/databaseIntegrationHarness";
 import { sessionDraftPhysicalKey } from "@/app/account/sessionDrafts/sessionDraftPhysicalKey";
 import { captureSessionAccessMembershipImpactsInTx, applySessionAccessMembershipImpactsInTx } from "./sessionAccessMembershipImpact";
 import { eventRouter } from "@/app/events/connectionEventRouter";
@@ -13,9 +13,9 @@ import { sealEncryptedDataKeyEnvelopeV1 } from "@happier-dev/protocol/crypto/enc
 import { encodeBase64 } from "@happier-dev/protocol/crypto/base64";
 
 describe("Membership Session access effects (SQLite integration)", () => {
-    let harness: LightSqliteHarness;
+    let harness: Awaited<ReturnType<typeof createDatabaseIntegrationHarness>>;
     beforeAll(async () => {
-        harness = await createLightSqliteHarness({
+        harness = await createDatabaseIntegrationHarness({
             tempDirPrefix: "happier-membership-impact-",
             initAuth: false,
             env: {

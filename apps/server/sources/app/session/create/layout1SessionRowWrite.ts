@@ -2,7 +2,7 @@ import { initializeSessionOwnerReadStateInTx } from "@/app/session/personal/read
 import { resolveSessionAccessForOperation } from "@/app/session/access/sessionAccess";
 import { attachCreatedSessionManagerInTx, type SessionManagerSetResult } from "@/app/session/follow/sessionManagerService";
 import { workflowRunIdentityWhere } from "@/app/workflows/workflowRunService";
-import { encodeSessionOwnerMetadataEnvelopeV1, SESSION_METADATA_LAYOUT_VERSION_V1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
+import { SESSION_METADATA_LAYOUT_VERSION_V1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import { validateSessionDisplayProjectionV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import { AutomationDefinitionCreateRequestSchema } from '@happier-dev/protocol/automations/automationApiV3';
 
@@ -199,7 +199,6 @@ export async function insertLayout1SessionRowInTx(
         for (const binding of selectedTeamCredentialBindings) {
             const bindingAdmission = await validatePlannedSessionTeamCredentialBindingIntentInTx(tx, {
                 accountId: prepared.accountId,
-            managedCreationId: prepared.managedCreation?.managedId ?? null,
                 intent: binding,
                 plannedSession: {
                     primaryTeamId: prepared.primaryTeamId ?? null,
@@ -245,6 +244,7 @@ export async function insertLayout1SessionRowInTx(
         data: {
             ...(params.sessionId ? { id: params.sessionId } : {}),
             accountId: prepared.accountId,
+            managedCreationId: prepared.managedCreation?.managedId ?? null,
             createdByApiTokenId,
             originKind: prepared.originKind ?? "none",
             originSessionId: prepared.originSessionId ?? null,
@@ -256,9 +256,10 @@ export async function insertLayout1SessionRowInTx(
             encryptionMode: effectiveEncryptionMode,
             metadata: prepared.metadata,
             metadataLayoutVersion: SESSION_METADATA_LAYOUT_VERSION_V1,
-            ownerMetadata: encodeSessionOwnerMetadataEnvelopeV1(prepared.ownerMetadata),
+            ownerMetadata: JSON.stringify(prepared.ownerMetadata),
             displayProjectionV1: display?.ok ? JSON.stringify(display.projection) : null,
             agentState: prepared.agentState,
+            ...(prepared.usageTimingV1 ? { usageTimingV1: prepared.usageTimingV1 } : {}),
             createdAt,
             lastActiveAt: createdAt,
             meaningfulActivityAt: createdAt,

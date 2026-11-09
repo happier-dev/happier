@@ -1,4 +1,5 @@
 import { Tx } from "@/storage/inTx";
+import { getDbProviderFromEnv } from "@/config/databaseProvider";
 
 const DEFAULT_REPEAT_KEY_TTL_MS = 1000 * 60 * 60 * 24;
 
@@ -9,6 +10,18 @@ const DEFAULT_REPEAT_KEY_TTL_MS = 1000 * 60 * 60 * 24;
  */
 export function defaultRepeatKeyExpiresAt(now: Date): Date {
     return new Date(now.getTime() + DEFAULT_REPEAT_KEY_TTL_MS);
+}
+
+/**
+ * Serialize one creation intent without locking its Account publication cursor.
+ * PostgreSQL ReadCommitted creators take this before reading the repeat result;
+ * the lock ends with commit/rollback and adds no persistent reservation. Other
+ * providers retain their existing Serializable creation transactions.
+ */
+export async function lockPostgresRepeatKeyInTx(tx: Tx, key: string): Promise<void> {
+    if (getDbProviderFromEnv(process.env, 'postgres') === 'postgres') {
+        await tx.$executeRawUnsafe('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', key);
+    }
 }
 
 export async function fetchRepeatKey(tx: Tx, key: string, now: Date = new Date()) {

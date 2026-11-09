@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto';
 import { performance } from 'node:perf_hooks';
 import { Server, type Socket } from 'socket.io';
 import { io as connect } from 'socket.io-client';
+import type { Prisma } from '@prisma/client';
 import tweetnacl from 'tweetnacl';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -52,11 +53,39 @@ import { inTx } from '@/storage/inTx';
 import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lightSqliteHarness';
 import { eventRouter } from './connectionEventRouter';
 import { buildNewMessageUpdate } from './eventPayloadBuilders';
+import * as sessionAccessOwner from '@/app/session/access/sessionAccess';
+import * as sessionInputOwner from '@/app/session/messages/sessionInputAdmission';
+import { sessionUpdateHandler } from '@/app/api/socket/sessionUpdateHandler';
+import * as publicationAdmissionOwner from '@/app/api/socket/currentSessionPublicationAdmission';
+import * as sessionBindingOwner from '@/app/api/socket/sessionScopedBinding';
+import * as sessionAudienceOwner from '@/app/session/access/sessionRecipients';
+
+const flowSql = vi.hoisted(() => ({ statements: 0, accessKeyReads: 0, sessionReads: 0 }));
+// Observe real SQLite statements through the existing generated Prisma adapter.
+// Generated provider clients share Prisma's constructor/event boundary shape.
+vi.mock('../../../generated/sqlite-client/index.js', async importOriginal => {
+    const original = await importOriginal<typeof import('@prisma/client')>();
+    return { ...original, PrismaClient: class extends original.PrismaClient<Prisma.PrismaClientOptions, 'query'> {
+        constructor(options: Prisma.PrismaClientOptions) {
+            super({ ...options, log: [{ emit: 'event', level: 'query' }] });
+            this.$on('query', event => {
+                flowSql.statements++;
+                const query = event.query.replace(/["`]/gu, '');
+                if (/^SELECT\b/iu.test(query)) {
+                    if (/\b(?:FROM|JOIN)\s+(?:main\.)?AccessKey\b/iu.test(query)) flowSql.accessKeyReads++;
+                    if (/\b(?:FROM|JOIN)\s+(?:main\.)?Session\b/iu.test(query)) flowSql.sessionReads++;
+                }
+            });
+        }
+    } };
+});
 
 export function registerTranscriptFollowTimingTests(provider: 'sqlite' | 'postgres',
-    httpRoundTripDelayMs = 0, scenario: 'timing' | 'heavy-history-transfer' = 'timing'): void {
+    httpRoundTripDelayMs = 0, scenario: 'timing' | 'heavy-history-transfer' | 'socket-flow-budget' = 'timing'): void {
 const measureTransfer = scenario === 'heavy-history-transfer';
-describe(`Home Action transcript follow through real HTTP, RPC, Socket.IO and ${provider}, HTTP delay ${httpRoundTripDelayMs}ms${measureTransfer ? ', heavy-history-transfer' : ''}`, () => {
+const measureSocketFlow = scenario === 'socket-flow-budget';
+const enforcePolicyShape = scenario === 'timing' && httpRoundTripDelayMs === 0;
+describe(`Home Action transcript follow through real HTTP, RPC, Socket.IO and ${provider}, HTTP delay ${httpRoundTripDelayMs}ms${measureTransfer ? ', heavy-history-transfer' : measureSocketFlow ? ', FLOWBUDGET socket publication' : ''}`, () => {
     let harness: LightSqliteHarness;
     const originalEnv = snapshotEnv();
     beforeAll(async () => {
@@ -83,10 +112,29 @@ describe(`Home Action transcript follow through real HTTP, RPC, Socket.IO and ${
         else await harness?.close();
     });
 
-    it.each([1, 2] as const)(measureTransfer ? 'reports V%s transfer after heavy history without changing retained content' : provider === 'postgres'
-        ? 'queues committed rows through V%s behind a held writer, then returns with a retained subscription'
-        : 'returns committed rows promptly through V%s, with a held writer and retained subscription', async version => {
+    const runJourney = async (version: 1 | 2, enforceStreamShape = false) => {
         const material = version === 2 ? { type: 'dataKey' as const, machineKey: tweetnacl.randomBytes(32) } : null;
+        const accessChecks = vi.spyOn(sessionAccessOwner, 'resolveSessionAccessForOperation');
+        // Same-module lexical calls do not cross the exported resolver spy.
+        // Observe their public composition entries too, forwarding real logic.
+        const lexicalPolicyEntries = [
+            vi.spyOn(sessionAccessOwner, 'assertSessionCapabilityInTx'),
+            vi.spyOn(sessionAccessOwner, 'readCurrentSessionAccessForOperation'),
+            vi.spyOn(sessionAccessOwner, 'resolveEffectiveSessionAccess'),
+            vi.spyOn(sessionAccessOwner, 'resolveSessionAccessForRowsInTx'),
+            vi.spyOn(sessionAccessOwner, 'resolveEffectiveSessionAccessForSessionsInTx'),
+            vi.spyOn(sessionAccessOwner, 'resolveSessionAccessForAccountsInTx'),
+            vi.spyOn(sessionAccessOwner, 'resolveSessionAccessForSessionsInTx'),
+            vi.spyOn(sessionAccessOwner, 'canManageSharing'),
+            vi.spyOn(sessionAccessOwner, 'canApprovePermissions'),
+            vi.spyOn(sessionAccessOwner, 'canManagePermissionDelegation'),
+        ];
+        const policyEvaluationCount = () => accessChecks.mock.calls.length
+            + lexicalPolicyEntries.reduce((total, entry) => total + entry.mock.calls.length, 0);
+        const inputAdmissions = vi.spyOn(sessionInputOwner, 'buildSessionInputAdmissionReceipt');
+        const publicationAdmissions = vi.spyOn(publicationAdmissionOwner, 'admitCurrentSessionPublication');
+        const structuralAccessChecks = vi.spyOn(sessionAccessOwner, 'resolveStructuralSessionAccess');
+        const audienceReads = vi.spyOn(sessionAudienceOwner, 'readCurrentSessionPublicationAudienceInTx');
         const contentPublicKey = material ? tweetnacl.box.keyPair.fromSecretKey(material.machineKey).publicKey : null;
         const owner = await db.account.create({ data: contentPublicKey
             ? { ...createSignedAccountContentBinding(contentPublicKey), encryptionMode: 'e2ee' }
@@ -139,10 +187,22 @@ describe(`Home Action transcript follow through real HTTP, RPC, Socket.IO and ${
         let observerConnections = 0;
         const stamps: Record<string, number> = {};
         const pages: { url: string; start: number; end?: number }[] = [];
+        const flowHttp: string[] = [];
+        let flowRpc = 0;
+        let flowAuthorizations = 0;
+        let flowMessagePushes = 0;
+        const flowOutgoingKinds: Record<string, number> = {};
+        const streamFrames: Array<{ type: string; tick: number; content: unknown }> = [];
+        let streamDelivered: (() => void) | undefined;
+        let expectedStreamTick = 0;
+        let streamCounts: { publicationAdmissions: number; structuralAccessChecks: number; permissionChecks: number;
+            audienceReads: number; sqlStatements: number; accessKeyReads: number;
+            sessionReads: number; inputAdmissions: number; http: number } | undefined;
         let baselineRead: (() => void) | undefined;
         let receivedRunner!: (socket: Socket) => void;
         const runnerSocket = new Promise<Socket>(resolve => { receivedRunner = resolve; });
         app.addHook('onRequest', async request => {
+            flowHttp.push(`${request.method} ${request.url.split('?')[0]}`);
             if (request.url.startsWith(`/v1/sessions/${session.id}/messages`)) pages.push({ url: request.url, start: performance.now() });
         });
         app.addHook('onResponse', async request => {
@@ -155,6 +215,18 @@ describe(`Home Action transcript follow through real HTTP, RPC, Socket.IO and ${
         const presence = createSessionPublisherPresence();
         registerExternalActionRoutes(app, { dispatch: createExternalActionDaemonDispatcher({ io,
             sessionPublisherPresence: presence }) });
+        io.use(async (socket, next) => {
+            if (socket.handshake.auth.clientType === 'machine-scoped') { next(); return; }
+            const binding = await sessionBindingOwner.resolveSessionScopedSocketBinding({
+                userId: owner.id, sessionId: session.id,
+                ...(measureSocketFlow && socket.handshake.auth.runner === true ? { machineId: machine.id } : {}),
+            });
+            if (!binding.ok) { next(new Error('Session fixture binding refused')); return; }
+            // Match production: the canonical binding settles before protected
+            // rooms and publication handlers become reachable on connect.
+            socket.data.sessionScopedBinding = binding.binding;
+            next();
+        });
         io.on('connection', socket => {
             // Socket authentication/installation stamping is the only substituted boundary.
             // HTTP auth, grant admission, placement, RPC and event qualification remain real.
@@ -169,13 +241,30 @@ describe(`Home Action transcript follow through real HTTP, RPC, Socket.IO and ${
                 Object.assign(socket.data, { userId: owner.id, clientType: 'session-scoped', sessionId: session.id,
                     authAuthority: 'present_user', authTokenAuthenticationEvidence: [] });
                 socket.onAnyOutgoing((event, payload: unknown) => {
+                    const kind = payload && typeof payload === 'object' && 'body' in payload
+                        && payload.body && typeof payload.body === 'object' && 't' in payload.body
+                        ? String(payload.body.t) : payload && typeof payload === 'object' && 'type' in payload
+                            ? String(payload.type) : event;
+                    const outgoingKind = `${event}:${kind}`;
+                    flowOutgoingKinds[outgoingKind] = (flowOutgoingKinds[outgoingKind] ?? 0) + 1;
                     if (socket.handshake.auth.runner !== true && event === 'update'
                         && payload && typeof payload === 'object' && 'body' in payload
                         && payload.body && typeof payload.body === 'object' && 't' in payload.body
-                        && payload.body.t === 'new-message') stamps.socketEmit = performance.now();
+                        && payload.body.t === 'new-message') {
+                        stamps.socketEmit = performance.now();
+                        flowMessagePushes++;
+                    }
                 });
                 void socket.join(`session:${session.id}:${owner.id}`);
-                if (socket.handshake.auth.runner === true) receivedRunner(socket);
+                if (socket.handshake.auth.runner === true) {
+                    if (measureSocketFlow) {
+                        socket.data.machineId = machine.id;
+                        sessionUpdateHandler(owner.id, socket, { connectionType: 'session-scoped', socket,
+                            userId: owner.id, sessionId: session.id }, { presence,
+                            binding: { accountId: owner.id, machineId: machine.id, sessionId: session.id } });
+                    }
+                    receivedRunner(socket);
+                }
             }
         });
         const upstream = await app.listen({ host: '127.0.0.1', port: 0 });
@@ -218,7 +307,7 @@ describe(`Home Action transcript follow through real HTTP, RPC, Socket.IO and ${
             reconnection: false, auth: { clientType: 'machine-scoped' } });
         const runner = connect(endpoint, { path: '/v1/updates/', transports: ['websocket'],
             reconnection: false, auth: { clientType: 'session-scoped', runner: true } });
-        const meter = measureTransfer ? connect(endpoint, { path: '/v1/updates/', transports: ['websocket'],
+        const meter = measureTransfer || measureSocketFlow ? connect(endpoint, { path: '/v1/updates/', transports: ['websocket'],
             reconnection: false, query: { transferObserver: 'measured' }, auth: { clientType: 'session-scoped' } }) : null;
         let receivedPackets = 0;
         let decodedPacketBytes = 0;
@@ -235,14 +324,27 @@ describe(`Home Action transcript follow through real HTTP, RPC, Socket.IO and ${
         meter?.on('update', (payload: ReturnType<typeof buildNewMessageUpdate>) => {
             if (payload.body.t === 'new-message' && payload.body.message.seq === expectedMeterSeq) meterDelivered?.();
         });
+        meter?.on('ephemeral', (payload: unknown) => {
+            if (!measureSocketFlow || !payload || typeof payload !== 'object' || !('type' in payload)
+                || (payload.type !== 'transcript-stream-segment' && payload.type !== 'transcript-stream-segment-delta')
+                || !('message' in payload) || !payload.message || typeof payload.message !== 'object'
+                || !('tick' in payload.message) || typeof payload.message.tick !== 'number'
+                || !('content' in payload.message)) return;
+            streamFrames.push({ type: payload.type, tick: payload.message.tick, content: payload.message.content });
+            if (payload.message.tick === expectedStreamTick) streamDelivered?.();
+        });
         const abort = new AbortController();
         daemon.on(SOCKET_RPC_EVENTS.REQUEST, async (rpc: SocketRpcRequestPayload, acknowledge: (value: unknown) => void) => {
+            flowRpc++;
             const request = rpc.params as ExternalActionDaemonDispatchRequest;
             stamps.dispatch = performance.now();
             const result = await runWithServerHttpBaseUrl(endpoint, () => executeExternalAction({
                 ...request, currentMachineId: machine.id, currentServerId: 'follow-test',
                 currentInstallationId: machine.installationId!, externalActionMachineRequestPrivateKey: keyPair.secretKey,
-                verifyExecutionAuthorization: async ({ authorization }) => Boolean(await verifyCurrentExternalActionPrincipal(authorization.binding)),
+                verifyExecutionAuthorization: async ({ authorization }) => {
+                    flowAuthorizations++;
+                    return Boolean(await verifyCurrentExternalActionPrincipal(authorization.binding));
+                },
                 ...(material ? { resolveEncryption: async () => ({ serverIdentityId, material }) } : {}),
                 resolveTarget: createDaemonExternalActionTargetResolver({ credentials: { token,
                     encryption: material && contentPublicKey ? { ...material, publicKey: contentPublicKey } : null },
@@ -291,16 +393,32 @@ describe(`Home Action transcript follow through real HTTP, RPC, Socket.IO and ${
             const publisherAuthority = { ...binding, committedFence: registration.committedFence };
             let cursor = 'tail';
             for (let index = 1; index <= 2; index++) {
+                flowHttp.length = 0;
+                flowRpc = 0;
+                flowAuthorizations = 0;
+                flowMessagePushes = 0;
+                for (const key of Object.keys(flowOutgoingKinds)) delete flowOutgoingKinds[key];
+                flowSql.statements = 0;
+                accessChecks.mockClear();
+                for (const entry of lexicalPolicyEntries) entry.mockClear();
+                inputAdmissions.mockClear();
+                const pagesBefore = pages.length;
+                let inputPolicyEvaluations = 0;
+                let admittedStepPolicyEvaluations = 0;
                 if (index === 1) {
+                    const beforeInput = policyEvaluationCount();
                     const enqueued = await enqueuePendingMessage({ actorUserId: owner.id,
                         authentication: createPresentUserSessionAccessAuthentication(), sessionId: session.id,
                         localId: 'follow-1', targetMachineId: machine.id, requestedAction: { v: 1, kind: 'send_now' },
                         content: sealSessionStoredContent({ ...contentContext,
                             payload: { role: 'user', content: { type: 'text', text: 'row-1' } } }) });
                     if (!enqueued.ok) throw new Error(`Canonical pending admission failed: ${JSON.stringify(enqueued)}`);
+                    inputPolicyEvaluations = policyEvaluationCount() - beforeInput;
+                    const beforeMaterialize = policyEvaluationCount();
                     expect(await materializeNextPendingMessage({ actorUserId: owner.id, sessionId: session.id,
                         deliveryState: 'provider', deliveryTiming: 'after_foreground_ready', foregroundState: 'ready', publisherAuthority }))
                         .toMatchObject({ ok: true, didMaterialize: true });
+                    admittedStepPolicyEvaluations += policyEvaluationCount() - beforeMaterialize;
                 }
                 const baseline = new Promise<void>(resolve => { baselineRead = resolve; });
                 for (const key of Object.keys(stamps)) delete stamps[key];
@@ -309,6 +427,47 @@ describe(`Home Action transcript follow through real HTTP, RPC, Socket.IO and ${
                 await Promise.race([baseline, response.then(() => {
                     throw new Error('Home follow returned before a transcript baseline was read');
                 })]);
+                const baselinePages = pages.length;
+                if (measureSocketFlow && index === 2) {
+                    // The same admitted publisher and live Follow consumer used
+                    // below exchange real Socket.IO packets. Only handshake
+                    // authentication is substituted by this existing composition.
+                    const before = { publicationAdmissions: publicationAdmissions.mock.calls.length,
+                        structuralAccessChecks: structuralAccessChecks.mock.calls.length,
+                        permissionChecks: accessChecks.mock.calls.length,
+                        audienceReads: audienceReads.mock.calls.length, sqlStatements: flowSql.statements,
+                        accessKeyReads: flowSql.accessKeyReads, sessionReads: flowSql.sessionReads,
+                        inputAdmissions: inputAdmissions.mock.calls.length, http: flowHttp.length };
+                    const chunks = ['row', '-', '2'];
+                    const contents = chunks.map(text => sealSessionStoredContent({ ...contentContext,
+                        payload: { role: 'agent', content: { type: 'text', text } } }));
+                    for (const [chunkIndex, content] of contents.entries()) {
+                        expectedStreamTick = chunkIndex + 1;
+                        const delivered = new Promise<void>(resolve => { streamDelivered = resolve; });
+                        const event = chunkIndex === 0 ? 'transcript-stream-segment' : 'transcript-stream-segment-delta';
+                        runner.emit(event, { sid: session.id, message: { localId: 'follow-2', messageRole: 'agent',
+                            tick: expectedStreamTick, ...(chunkIndex === 0 ? {} : { baseLength: chunks.slice(0, chunkIndex).join('').length }),
+                            content, createdAt: 1_000, updatedAt: 1_000 + chunkIndex } });
+                        await delivered;
+                    }
+                    streamCounts = { publicationAdmissions: publicationAdmissions.mock.calls.length - before.publicationAdmissions,
+                        structuralAccessChecks: structuralAccessChecks.mock.calls.length - before.structuralAccessChecks,
+                        permissionChecks: accessChecks.mock.calls.length - before.permissionChecks,
+                        audienceReads: audienceReads.mock.calls.length - before.audienceReads,
+                        sqlStatements: flowSql.statements - before.sqlStatements,
+                        accessKeyReads: flowSql.accessKeyReads - before.accessKeyReads,
+                        sessionReads: flowSql.sessionReads - before.sessionReads,
+                        inputAdmissions: inputAdmissions.mock.calls.length - before.inputAdmissions,
+                        http: flowHttp.length - before.http };
+                    console.info('FLOWBUDGET_SESSION_SOCKET_STREAM', JSON.stringify({ provider, version,
+                        chunks: chunks.length, frames: streamFrames.length, ...streamCounts }));
+                    expect(streamFrames).toEqual(contents.map((content, chunkIndex) => ({
+                        type: chunkIndex === 0 ? 'transcript-stream-segment' : 'transcript-stream-segment-delta',
+                        tick: chunkIndex + 1, content,
+                    })));
+                    expect(streamCounts.inputAdmissions).toBe(0);
+                    expect(streamCounts.http).toBe(0);
+                }
                 const transferBefore = network?.entries() ?? [];
                 const packetsBefore = receivedPackets;
                 const decodedBefore = decodedPacketBytes;
@@ -327,6 +486,7 @@ describe(`Home Action transcript follow through real HTTP, RPC, Socket.IO and ${
                         return result;
                     });
                 } });
+                const beforeWrite = policyEvaluationCount();
                 const written = await (async () => {
                     try {
                         return index === 1
@@ -337,6 +497,7 @@ describe(`Home Action transcript follow through real HTTP, RPC, Socket.IO and ${
                                     payload: { role: 'agent', content: { type: 'text', text: `row-${index}` } } }) });
                     } finally { db.$transaction = transaction; }
                 })();
+                admittedStepPolicyEvaluations += policyEvaluationCount() - beforeWrite;
                 stamps.writeServiceReturn = performance.now();
                 if (!written.ok) throw new Error(`Append failed: ${written.error}`);
                 const message = written.message;
@@ -425,10 +586,47 @@ describe(`Home Action transcript follow through real HTTP, RPC, Socket.IO and ${
                         result: { items: [{ seq: message.seq }], nextCursor: String(message.seq) } } } });
                     const items = observed!.body.execution.result.items;
                     expect(items).toHaveLength(1);
+                    // This scalar policy owner admits each transcript page and
+                    // each socket recipient disclosure. Action authorization and
+                    // document-set admission keep their separate owners.
+                    const naturalTranscriptRequests = pages.length - pagesBefore;
+                    const naturalDocumentRequests = flowHttp.filter(route => route === `GET /v2/sessions/${session.id}`).length;
+                    const recipientDisclosures = ['update:new-message', 'update:message-updated',
+                        'update:update-session', 'ephemeral:session-personal-event']
+                        .reduce((total, kind) => total + (flowOutgoingKinds[kind] ?? 0), 0);
+                    console.info('FLOWBUDGET_TRANSCRIPT_DELIVERY', JSON.stringify({ provider, version, index, httpRoundTripDelayMs,
+                        http: Object.fromEntries([...new Set(flowHttp)].map(route => [route, flowHttp.filter(value => value === route).length])),
+                        rpc: flowRpc, daemonAuthorizations: flowAuthorizations, messagePushes: flowMessagePushes,
+                        permissionChecks: accessChecks.mock.calls.length, inputAdmissions: inputAdmissions.mock.calls.length,
+                        policyEvaluations: policyEvaluationCount(), lexicalPolicyEvaluations: lexicalPolicyEntries.map(entry => entry.mock.calls.length),
+                        naturalTranscriptRequests, naturalDocumentRequests, recipientDisclosures,
+                        outgoingKinds: flowOutgoingKinds,
+                        inputPolicyEvaluations, admittedStepPolicyEvaluations,
+                        sqlStatements: provider === 'sqlite' ? flowSql.statements : null,
+                        messagePages: pages.length - pagesBefore, bodiesReturned: items.length, deliveryTransactions }));
+                    // Measured HTTP/SQL totals are informational. Admission follows
+                    // the dispatched request; each new input gets one receipt,
+                    // while transcript-only Agent output does not re-admit input.
+                    if (provider === 'sqlite' && httpRoundTripDelayMs === 0 && !measureTransfer) {
+                        expect(flowAuthorizations).toBe(flowRpc);
+                        expect(inputAdmissions.mock.calls).toHaveLength(index === 1 ? 1 : 0);
+                        expect(pages.slice(pagesBefore, baselinePages)).toHaveLength(1);
+                        expect(pages.slice(baselinePages)).toHaveLength(items.length);
+                        expect(flowMessagePushes).toBe(items.length * observerConnections);
+                        expect(flowSql.statements,
+                            'The real SQL observer must see the exercised database boundary').toBeGreaterThan(0);
+                        if (enforcePolicyShape) {
+                            expect(inputPolicyEvaluations).toBe(index === 1 ? 1 : 0);
+                            expect(admittedStepPolicyEvaluations,
+                                'Retained input settlement and publisher replies reuse admission').toBe(0);
+                            expect(policyEvaluationCount()).toBe(naturalTranscriptRequests
+                                + naturalDocumentRequests + recipientDisclosures + (index === 1 ? 1 : 0));
+                        }
+                    }
                     const nextCursor = observed!.body.execution.result.nextCursor;
                     if (typeof nextCursor !== 'string') throw new Error('Committed row must advance the follow cursor');
                     cursor = nextCursor;
-                    expect(observerConnections).toBe(measureTransfer ? 2 : 1);
+                    expect(observerConnections).toBe(measureTransfer || measureSocketFlow ? 2 : 1);
                     if (measureTransfer && network && meter) {
                         await receivedByMeter;
                         const after = network.entries();
@@ -475,10 +673,23 @@ describe(`Home Action transcript follow through real HTTP, RPC, Socket.IO and ${
                     orderBy: { seq: 'asc' }, select: { seq: true, content: true } });
                 expect(retained).toEqual(history.map(row => ({ seq: row.seq, content: row.content })));
             }
+            if (enforceStreamShape) {
+                expect(streamCounts).toBeDefined();
+                // Connect admitted the publisher; each chunk only asks the audience owner who receives it.
+                expect(streamCounts?.structuralAccessChecks, 'Reply chunks must not reopen publisher authority').toBe(0);
+                expect(streamCounts?.accessKeyReads).toBe(0);
+                expect(streamCounts?.audienceReads).toBe(streamCounts?.publicationAdmissions);
+            }
         } catch (error) {
             testFailed = true;
             throw error;
         } finally {
+            accessChecks.mockRestore();
+            for (const entry of lexicalPolicyEntries) entry.mockRestore();
+            inputAdmissions.mockRestore();
+            publicationAdmissions.mockRestore();
+            structuralAccessChecks.mockRestore();
+            audienceReads.mockRestore();
             releaseWriter?.();
             abort.abort();
             const cleanupErrors: unknown[] = [];
@@ -511,6 +722,17 @@ describe(`Home Action transcript follow through real HTTP, RPC, Socket.IO and ${
                 console.error(cleanupError);
             }
         }
-    });
+    };
+    it.each([1, 2] as const)(enforcePolicyShape ? 'FLOWBUDGET V%s input and reply admit policy once per natural request'
+        : measureTransfer ? 'reports V%s transfer after heavy history without changing retained content' : provider === 'postgres'
+        ? 'queues committed rows through V%s behind a held writer, then returns with a retained subscription'
+        : 'returns committed rows promptly through V%s, with a held writer and retained subscription', version => runJourney(version));
+    if (measureSocketFlow) {
+        // Measured 2026-10-31 in both modes (sqlite): 3 chunks -> 3 received frames,
+        // SQL 60 -> 42 once the publisher decisions left the chunk path. Audience
+        // reads stay one per chunk: recipients are the current census (CR-12).
+        // Totals are information, never limits.
+        it.each([1, 2] as const)('FLOWBUDGET V%s reply chunks reuse admitted publication authority', version => runJourney(version, true));
+    }
 });
 }

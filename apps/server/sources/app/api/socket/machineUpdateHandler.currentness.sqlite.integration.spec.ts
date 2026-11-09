@@ -15,6 +15,7 @@ import tweetnacl from "tweetnacl";
 import { TEAM_CREDENTIAL_EXTERNAL_PROVIDER_OPERATION_RETIRE_EVENT_V1 } from "@happier-dev/protocol/teams";
 import { auth } from "@/app/auth/auth";
 import { eventRouter } from "@/app/events/connectionEventRouter";
+import type { ClientConnection } from "@/app/events/eventPayloadTypes";
 import { setAccountStatusInTx } from "@/app/home/governance/accountLifecycle";
 import { db, getActivePrismaRuntime } from "@/storage/db";
 import { inReadSnapshot, inTx } from "@/storage/inTx";
@@ -23,6 +24,7 @@ import { createSignedAccountContentBinding } from "@/testkit/accountEncryption";
 import { encodeBase64, decodeBase64 } from "privacy-kit";
 import { sealSessionDataKeyBundleV0, openSessionDataKeyBundleV0 } from "@happier-dev/protocol/crypto/sessionDataKeyBundleWebCrypto";
 import * as machineAccess from "@/app/machines/machineAccess";
+import { setEligibleMachineAccessGrantInTx } from "@/testkit/machineAccessGrant.testkit";
 import { evaluateAccountStoredContentSocketCompatibility, writeAccountStoredContentCompatibilityForSocket } from "@/app/clientCompatibility/accountStoredContentCompatibility";
 
 import { createFakeSocket, getSocketHandler } from "../testkit/socketHarness";
@@ -49,6 +51,7 @@ const PUBLISHED_METADATA = {
     host: "policy-host", platform: "linux", happyCliVersion: "0.3.0",
     homeDir: "/home/policy", happyHomeDir: "/home/policy/.happier",
 };
+const establishedConnections: ClientConnection[] = [];
 
 async function createEstablishedMachineFixture(label: string) {
     const installationId = randomUUID();
@@ -71,14 +74,16 @@ async function createEstablishedMachineFixture(label: string) {
 
     // The socket is already admitted: the handshake token it presented at
     // connect is the only credential an established socket carries.
-    const disconnect = vi.fn();
-    const socket = Object.assign(
-        createFakeSocket({ data: {
+    const transport = createFakeSocket({ data: {
             clientType: "machine-scoped", machineId: machine.id,
             [VERIFIED_MACHINE_INSTALLATION_ID_SOCKET_DATA_KEY]: installationId,
-        } }),
-        { handshake: { auth: { token } }, disconnect },
-    );
+        } });
+    const socket = Object.assign(transport,
+        { handshake: { auth: { token } }, disconnect: vi.fn(() => { transport.connected = false; }) });
+    const connection: ClientConnection = { userId: account.id, connectionType: 'machine-scoped', machineId: machine.id,
+        socket: socket as unknown as Socket };
+    eventRouter.addConnection(account.id, connection);
+    establishedConnections.push(connection);
     machineUpdateHandler(account.id, socket as unknown as Socket, HANDLER_OPTIONS);
 
     return { accountId: account.id, machineId: machine.id, socket, content };
@@ -140,7 +145,7 @@ async function createSharedMetadataFixture() {
         dataEncryptionKey: ownerEnvelope, metadata: originalMetadata,
         daemonState: encodeBase64(await sealSessionDataKeyBundleV0({ status: "offline" }, dataKey)), active: false,
     } });
-    const grant = (level: "view" | "admin") => inTx(tx => machineAccess.setMachineAccessGrantInTx(tx, {
+    const grant = (level: "view" | "admin") => inTx(tx => setEligibleMachineAccessGrantInTx(tx, {
         actorAccountId: owner.accountId, machineId: owner.machineId,
         principal: { kind: "account", accountId: manager.accountId }, level,
     }));
@@ -182,10 +187,7 @@ async function createSharedMetadataFixture() {
 }
 
 async function suspend(fixture: Fixture) {
-    // The eager eviction leg is stubbed to a no-op: this is exactly the state a
-    // lost cross-node disconnect publication leaves behind, and the only state
-    // this guard exists for.
-    const eviction = vi.spyOn(eventRouter, "disconnectAccountSockets").mockImplementation(() => {});
+    const eviction = vi.spyOn(eventRouter, "disconnectAccountSockets");
     const applied = await inTx(async (tx) => await setAccountStatusInTx(tx, {
         actorAccountId: fixture.accountId,
         targetAccountId: fixture.accountId,
@@ -194,6 +196,7 @@ async function suspend(fixture: Fixture) {
     }));
     expect(applied).toEqual({ status: "applied" });
     expect(eviction).toHaveBeenCalledWith(fixture.accountId);
+    expect(fixture.socket.connected).toBe(false);
 }
 
 describe("Machine authority mutations on an established socket", () => {
@@ -214,6 +217,7 @@ describe("Machine authority mutations on an established socket", () => {
 
     afterEach(async () => {
         vi.restoreAllMocks();
+        for (const connection of establishedConnections.splice(0)) eventRouter.removeConnection(connection.userId, connection);
         harness.resetEnv({
             HANDY_MASTER_SECRET: "machine-update-currentness-secret",
             AUTH_REQUIRED_LOGIN_PROVIDERS: "",
@@ -328,7 +332,7 @@ describe("Machine authority mutations on an established socket", () => {
             daemonState: encodePlainMachineStoredContent({ status: 'running' }),
             dataEncryptionKey: decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER),
         } });
-        await inTx(tx => machineAccess.setMachineAccessGrantInTx(tx, { actorAccountId: host.accountId,
+        await inTx(tx => setEligibleMachineAccessGrantInTx(tx, { actorAccountId: host.accountId,
             machineId: host.machineId, principal: { kind: 'account', accountId: requester.id }, level: 'view' }));
         const session = await db.session.create({ data: {
             accountId: requester.id, tag: randomUUID(), metadata: '{}', active: false,
@@ -467,9 +471,10 @@ describe("Machine authority mutations on an established socket", () => {
         expect(await broker.read()).toBe(JSON.stringify(broker.operation));
     });
 
-    it("refuses a daemon-state write and disconnects when the Account credential is no longer current", async () => {
+    it("uses the admitted socket without token verifications for daemon-state writes", async () => {
         const subject = await createEstablishedMachineFixture("state");
         const control = await createEstablishedMachineFixture("state-control");
+        const verifications = vi.spyOn(auth, "verifyTokenForRoute");
 
         const admitted = await emit(subject, "machine-update-state", {
             machineId: subject.machineId,
@@ -479,22 +484,22 @@ describe("Machine authority mutations on an established socket", () => {
         });
         expect(admitted).toHaveBeenCalledWith(expect.objectContaining({ result: "success", version: 1 }));
 
-        await suspend(subject);
-
-        const refused = await emit(subject, "machine-update-state", {
+        const changed = await emit(subject, "machine-update-state", {
             machineId: subject.machineId,
             daemonState: "daemon-state-2",
             expectedVersion: 1,
             expectedDataEncryptionKey: null,
         });
-        expect(refused).toHaveBeenCalledWith({ result: "error", message: "Forbidden" });
-        expect(subject.socket.disconnect).toHaveBeenCalledWith(true);
+        expect(changed).toHaveBeenCalledWith(expect.objectContaining({ result: "success", version: 2 }));
+        for (let beat = 0; beat < 3; beat++) expect(await emit(subject, "machine-update-state", {
+            machineId: subject.machineId, daemonState: "daemon-state-2", expectedVersion: 2, expectedDataEncryptionKey: null,
+        })).toHaveBeenCalledWith(expect.objectContaining({ result: "success", version: 2 }));
 
         const stored = await db.machine.findUnique({
             where: { id: subject.machineId },
             select: { daemonState: true, daemonStateVersion: true },
         });
-        expect(stored).toEqual({ daemonState: "daemon-state-1", daemonStateVersion: 1 });
+        expect(stored).toEqual({ daemonState: "daemon-state-2", daemonStateVersion: 2 });
 
         const unaffected = await emit(control, "machine-update-state", {
             machineId: control.machineId,
@@ -504,6 +509,7 @@ describe("Machine authority mutations on an established socket", () => {
         });
         expect(unaffected).toHaveBeenCalledWith(expect.objectContaining({ result: "success", version: 1 }));
         expect(control.socket.disconnect).not.toHaveBeenCalled();
+        expect(verifications.mock.calls.length).toBe(0);
     });
 
     it("rejects unverified and replaced installations before daemon-state or capability publication", async () => {
@@ -578,8 +584,9 @@ describe("Machine authority mutations on an established socket", () => {
         });
     });
 
-    it("refuses a metadata write and disconnects when the Account credential is no longer current", async () => {
+    it("uses the admitted socket without token verifications for metadata writes", async () => {
         const subject = await createEstablishedMachineFixture("metadata");
+        const verifications = vi.spyOn(auth, "verifyTokenForRoute");
 
         const admitted = await emit(subject, "machine-update-metadata", {
             machineId: subject.machineId,
@@ -589,22 +596,20 @@ describe("Machine authority mutations on an established socket", () => {
         });
         expect(admitted).toHaveBeenCalledWith(expect.objectContaining({ result: "success", version: 1 }));
 
-        await suspend(subject);
-
-        const refused = await emit(subject, "machine-update-metadata", {
+        const changed = await emit(subject, "machine-update-metadata", {
             machineId: subject.machineId,
             metadata: "metadata-2",
             expectedVersion: 1,
             expectedDataEncryptionKey: null,
         });
-        expect(refused).toHaveBeenCalledWith({ result: "error", message: "Forbidden" });
-        expect(subject.socket.disconnect).toHaveBeenCalledWith(true);
+        expect(changed).toHaveBeenCalledWith(expect.objectContaining({ result: "success", version: 2 }));
 
         const stored = await db.machine.findUnique({
             where: { id: subject.machineId },
             select: { metadata: true, metadataVersion: true },
         });
-        expect(stored).toEqual({ metadata: "metadata-1", metadataVersion: 1 });
+        expect(stored).toEqual({ metadata: "metadata-2", metadataVersion: 2 });
+        expect(verifications.mock.calls.length).toBe(0);
     });
 
     it("admits a legacy owner's user-scoped metadata edit without making that row RPC-installation-ready", async () => {
@@ -669,7 +674,9 @@ describe("Machine authority mutations on an established socket", () => {
 
     it("publishes committed daemon state, cursor and browser freshness from the current custodian installation", async () => {
         const subject = await createEstablishedMachineFixture("state-projection");
+        await db.machine.update({ where: { id: subject.machineId }, data: { active: false } });
         const published = vi.spyOn(eventRouter, "emitUpdate").mockImplementation(() => {});
+        const presence = vi.spyOn(eventRouter, "emitEphemeral").mockImplementation(() => {});
         expect(await emit(subject, "machine-update-state", {
             machineId: subject.machineId, daemonState: "daemon-state-1", expectedVersion: 0, expectedDataEncryptionKey: null,
         })).toHaveBeenCalledWith({ result: "success", version: 1, daemonState: "daemon-state-1" });
@@ -681,8 +688,11 @@ describe("Machine authority mutations on an established socket", () => {
             payload: expect.objectContaining({ seq: account.seq, body: expect.objectContaining({
                 t: "update-machine", machineId: subject.machineId,
                 keyBasis: { dataEncryptionKey: null, metadataVersion: 0, daemonStateVersion: 1 },
-                daemonState: { value: "daemon-state-1", version: 1 }, active: true, activeAt: machine.lastActiveAt.getTime(),
+                daemonState: { value: "daemon-state-1", version: 1 },
             }) }),
+        }));
+        expect(presence).toHaveBeenCalledWith(expect.objectContaining({ userId: subject.accountId,
+            payload: { type: 'machine-activity', id: subject.machineId, active: true, activeAt: machine.lastActiveAt.getTime() },
         }));
     });
 
@@ -737,7 +747,7 @@ describe("Machine authority mutations on an established socket", () => {
         expect(await db.machine.findUniqueOrThrow({ where: { id: subject.machineId } })).toMatchObject({
             metadata, metadataVersion: 0, daemonState, daemonStateVersion: 0,
         });
-        expect(await emit(subject, `machine-update-${field}`, request)).toHaveBeenCalledWith(expect.objectContaining({ result: "success", version: 1 }));
+        expect(await emit(subject, `machine-update-${field}`, request)).toHaveBeenCalledWith(expect.objectContaining({ result: "success", version: field === "state" ? 0 : 1 }));
     });
 
     it("leaves metadata and publication unchanged for revoked or deleted Machines", async () => {
@@ -807,7 +817,7 @@ describe("Machine authority mutations on an established socket", () => {
         await db.machine.update({ where: { id: owner.machineId }, data: {
             metadata, daemonState, dataEncryptionKey: decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER), active: false,
         } });
-        expect(await inTx(tx => machineAccess.setMachineAccessGrantInTx(tx, {
+        expect(await inTx(tx => setEligibleMachineAccessGrantInTx(tx, {
             actorAccountId: owner.accountId, machineId: owner.machineId,
             principal: { kind: "account", accountId: recipient.accountId }, level: "admin",
         }))).toMatchObject({ kind: "saved", readiness: "ready" });
@@ -847,7 +857,7 @@ describe("Machine authority mutations on an established socket", () => {
             metadata: originalMetadata, daemonState: encodePlainMachineStoredContent({ status: "offline" }),
             dataEncryptionKey: decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER), active: false,
         } });
-        expect(await inTx(tx => machineAccess.setMachineAccessGrantInTx(tx, {
+        expect(await inTx(tx => setEligibleMachineAccessGrantInTx(tx, {
             actorAccountId: owner.accountId, machineId: owner.machineId,
             principal: { kind: "account", accountId: manager.accountId }, level: "admin",
         }))).toMatchObject({ kind: "saved", readiness: "ready" });
@@ -957,17 +967,18 @@ describe("Machine authority mutations on an established socket", () => {
         expect(await emit(subject, "machine-update-state", { machineId: subject.machineId, daemonState, expectedVersion: 0, expectedDataEncryptionKey: null }))
             .toHaveBeenCalledWith({ result: "key-mismatch" });
         expect(await emit(subject, "machine-update-state", { machineId: subject.machineId, daemonState, expectedVersion: 0, expectedDataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER }))
-            .toHaveBeenCalledWith({ result: "success", version: 1, daemonState });
+            .toHaveBeenCalledWith({ result: "success", version: 0, daemonState });
         expect(await emit(subject, "machine-update-metadata", { machineId: subject.machineId, metadata, expectedVersion: 0, expectedDataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER }))
             .toHaveBeenCalledWith({ result: "success", version: 1, metadata });
         await db.account.update({ where: { id: subject.accountId }, data: { encryptionMode: "e2ee" } });
-        expect(await emit(subject, "machine-update-state", { machineId: subject.machineId, daemonState, expectedVersion: 1, expectedDataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER }))
+        expect(await emit(subject, "machine-update-state", { machineId: subject.machineId, daemonState, expectedVersion: 0, expectedDataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER }))
             .toHaveBeenCalledWith(expect.objectContaining({ result: "error" }));
-        expect(await db.machine.findUniqueOrThrow({ where: { id: subject.machineId } })).toMatchObject({ daemonState, daemonStateVersion: 1 });
+        expect(await db.machine.findUniqueOrThrow({ where: { id: subject.machineId } })).toMatchObject({ daemonState, daemonStateVersion: 0 });
     });
 
-    it("refuses an operation-capability projection and disconnects when the Account credential is no longer current", async () => {
+    it("uses the admitted socket without token verifications for operation-capability publication", async () => {
         const subject = await createEstablishedMachineFixture("capabilities");
+        const verifications = vi.spyOn(auth, "verifyTokenForRoute");
 
         const admitted = await emit(subject, MACHINE_UPDATE_OPERATION_PROTOCOL_CAPABILITIES_EVENT_V1, {
             machineId: subject.machineId,
@@ -975,19 +986,17 @@ describe("Machine authority mutations on an established socket", () => {
         });
         expect(admitted).toHaveBeenCalledWith(expect.objectContaining({ v: 1, result: "success", revision: 1 }));
 
-        await suspend(subject);
-
-        const refused = await emit(subject, MACHINE_UPDATE_OPERATION_PROTOCOL_CAPABILITIES_EVENT_V1, {
+        const changed = await emit(subject, MACHINE_UPDATE_OPERATION_PROTOCOL_CAPABILITIES_EVENT_V1, {
             machineId: subject.machineId,
             capabilities: { sessionSpawn: { protocolVersions: [1] }, pluginWebhookClaim: { protocolVersions: [1] } },
         });
-        expect(refused).toHaveBeenCalledWith({ v: 1, result: "error", code: "machine_unavailable" });
-        expect(subject.socket.disconnect).toHaveBeenCalledWith(true);
+        expect(changed).toHaveBeenCalledWith(expect.objectContaining({ v: 1, result: "success", revision: 2 }));
 
         const stored = await db.machine.findUnique({
             where: { id: subject.machineId },
             select: { operationProtocolCapabilitiesRevision: true },
         });
-        expect(stored?.operationProtocolCapabilitiesRevision).toBe(1);
+        expect(stored?.operationProtocolCapabilitiesRevision).toBe(2);
+        expect(verifications.mock.calls.length).toBe(0);
     });
 });

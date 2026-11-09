@@ -6,6 +6,7 @@ import * as privacyKit from 'privacy-kit';
 import { db, getDbProviderFromEnv, initDbPostgres } from '@/storage/db';
 import { inTx, readPostgresTransactionSqlState, type Tx } from '@/storage/inTx';
 import { createSignedAccountContentBinding } from '@/testkit/accountEncryption';
+import { makeShareEligibleForTest } from '@/testkit/shareEligibility.testkit';
 import { acquireAccountSessionOwnerMetadataFenceInTx } from '@/app/encryption/accountSessionOwnerMetadataFence';
 import { markAccountChanged } from '@/app/changes/markAccountChanged';
 import { updateArtifact } from '@/app/artifacts/artifactWriteService';
@@ -84,6 +85,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('A
             vi.stubEnv('HAPPIER_DB_TX_MAX_RETRIES', '1');
             const owner = await db.account.create({ data: { encryptionMode: 'e2ee', ...createSignedAccountContentBinding() } });
             const recipient = await db.account.create({ data: { encryptionMode: 'e2ee', ...createSignedAccountContentBinding() } });
+            await makeShareEligibleForTest(owner.id, recipient.id);
             const key = tweetnacl.randomBytes(32);
             const wrap = (publicKey: Uint8Array) => new Uint8Array(sealEncryptedDataKeyEnvelopeV1({
                 dataKey: key, recipientPublicKey: publicKey, randomBytes: tweetnacl.randomBytes,

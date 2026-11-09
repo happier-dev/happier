@@ -18,6 +18,7 @@ import { requireLightDataDir } from "./migrate.light.deployPlan";
 import { applySqliteMigrations } from "./prismaMigrations";
 import { resolveServerWorkspaceRoot } from "./prismaCli";
 import { runCommand } from "./runCommand";
+import { runPluginCollectionUsageMigrationDeployment } from '../sources/app/plugins/data/collections/usageTotalsBackfill';
 
 function ensureSqliteDatabaseUrl(env: NodeJS.ProcessEnv): void {
     const raw = env.DATABASE_URL?.trim();
@@ -74,11 +75,13 @@ export async function runSqliteMigrationDeploy(
             provider: "sqlite",
             databaseUrl,
         }),
-        deploy: async (stage) => await applySqliteMigrations({
-            databasePath,
-            busyTimeoutMs: resolveSqliteMigrationBusyTimeoutMs(databaseUrl),
-            migrationsDir: stage.migrationsDir,
-        }),
+        deploy: async (stage) => {
+            const totals = await runPluginCollectionUsageMigrationDeployment({ ...stage, provider: 'sqlite', databaseUrl, env,
+                deploy: async target => await applySqliteMigrations({ databasePath,
+                    busyTimeoutMs: resolveSqliteMigrationBusyTimeoutMs(databaseUrl), migrationsDir: target.migrationsDir }),
+            });
+            return { applied: [...(totals.expand?.applied ?? []), ...(totals.contract?.applied ?? []), ...totals.final.applied] };
+        },
         runFinalContractBackfill: async () => {
             await runSessionSystemRecordFinalContractBackfill({ provider: "sqlite", databaseUrl });
         },

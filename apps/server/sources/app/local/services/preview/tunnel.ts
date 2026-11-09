@@ -70,13 +70,7 @@ export function createLocalServicePreviewTunnelOpener(
     const sessions = new Map<string, PreviewTunnelSession>();
 
     function sessionKey(accountId: string, preview: LocalServicePreviewResourceV1): string {
-        return [
-            accountId,
-            preview.machineId,
-            preview.target.scheme,
-            preview.target.host,
-            preview.target.port,
-        ].join(":");
+        return JSON.stringify([accountId, localServicePreviewDirectBindingV1(preview)]);
     }
 
     function sendEnvelope(session: PreviewTunnelSession, envelope: PeerTcpTunnelRelayEnvelope): void {
@@ -102,10 +96,10 @@ export function createLocalServicePreviewTunnelOpener(
         });
     }
 
-    function closeSession(key: string, session: PreviewTunnelSession): void {
+    function closeSession(key: string, session: PreviewTunnelSession, reasonCode?: string): void {
         if (session.closed) return;
         session.closed = true;
-        for (const stream of session.streams.values()) stream.relaySubstream.closeFromTunnel();
+        for (const stream of session.streams.values()) stream.relaySubstream.closeFromTunnel(reasonCode);
         session.streams.clear();
         sendBinaryFrame(session, {
             version: 2,
@@ -183,7 +177,7 @@ export function createLocalServicePreviewTunnelOpener(
             if (envelope.v === 1) {
                 const tunnelIdFromFrame = envelope.frame.kind === "open" ? envelope.frame.open.tunnelId : envelope.frame.tunnelId;
                 if (tunnelIdFromFrame === session.tunnelId && envelope.frame.kind === "abort") {
-                    closeSession(key, session);
+                    closeSession(key, session, envelope.frame.reasonCode);
                 }
                 return;
             }
@@ -196,7 +190,7 @@ export function createLocalServicePreviewTunnelOpener(
             const substreamId = decoded.header.substreamId;
             if (!substreamId) {
                 if (decoded.header.kind === "close" || decoded.header.kind === "abort") {
-                    closeSession(key, session);
+                    closeSession(key, session, decoded.header.reasonCode);
                 }
                 return;
             }
@@ -279,11 +273,11 @@ export function createLocalServicePreviewTunnelOpener(
             substreamId,
             write: async (chunk) => {
                 const result = await relaySubstream.stream.write(chunk);
-                if (!result.ok) throw createTunnelUnavailableError(result.reasonCode);
+                if (!result.ok) throw createTunnelUnavailableError(relaySubstream.readTerminalReasonCode() ?? result.reasonCode);
             },
             endWrite: async () => {
                 const result = await relaySubstream.stream.endWrite();
-                if (!result.ok) throw createTunnelUnavailableError(result.reasonCode);
+                if (!result.ok) throw createTunnelUnavailableError(relaySubstream.readTerminalReasonCode() ?? result.reasonCode);
             },
             read: relaySubstream.stream.read,
             close: async () => {

@@ -1,4 +1,5 @@
 import { inTx, transactionResult } from "@/storage/inTx";
+import { migrateSavedSecretResourcesForAccountModeInTx } from "@/app/account/savedSecrets/savedSecretResourceService";
 import {
     acquireAccountEncryptionTransitionCoordinatorFenceInTx,
     finalizeAccountEncryptionTransitionCoordinatorInTx,
@@ -146,6 +147,13 @@ export async function updateAccountEncryptionMode(params: Readonly<{
         if (projectRows.status !== 'applied') return { status: 'migration_required' };
         const projectTrust = await migrateProjectTrustForAccountModeInTx(tx, { accountId: params.accountId, toMode: params.mode });
         if (projectTrust.status !== 'applied') return { status: 'migration_required' };
+        // The one Saved Secret migration step, with no reseal: an empty-only
+        // switch proceeds only when no owned, ungranted resource would be stranded.
+        if (account.currentness.encryptionMode !== params.mode) {
+            const savedSecrets = await migrateSavedSecretResourcesForAccountModeInTx(tx, { accountId: params.accountId,
+                fromMode: account.currentness.encryptionMode, toMode: params.mode, ownerContentPublicKeyFingerprint: null, directive: undefined });
+            if (savedSecrets.status !== 'applied') return { status: 'migration_required' };
+        }
         const pluginDataCensus =
             await inspectPluginAccountDataForEncryptionTransitionInTx(
                 tx,

@@ -29,6 +29,15 @@ import { listSessionsForAccount } from "@/app/session/listing/service";
 import { createV2SessionListServerTiming } from "@/app/session/listing/timing";
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER } from "@happier-dev/protocol";
 import { decodeBase64 } from "privacy-kit";
+import { setAccountFollowRule } from "@/app/session/follow/accountFollowRuleService";
+import { normalizeSessionListFilterV1 } from "@happier-dev/protocol/sessions/listFilter/sessionListFilterV1";
+import { readSessionDetail } from "@/app/api/routes/session/registerSessionListingRoutes";
+import { evaluateAccountStoredContentCompatibility } from "@/app/clientCompatibility/accountStoredContentCompatibility";
+import { SessionViewerProjectionV1Schema } from "@happier-dev/protocol/sessions/personal/viewer";
+import { registerSessionReadBatchRoute } from "@/app/api/routes/session/registerSessionReadBatchRoute";
+import { withAuthenticatedTestApp } from "@/app/api/testkit/sqliteFastify";
+import { SessionReadBatchResponseV1Schema } from "@happier-dev/protocol/sessions/read/sessionReadBatchV1";
+import { observeSqliteRequests } from "@/testkit/observeSqliteRequests";
 
 const authentication = createPresentUserSessionAccessAuthentication();
 
@@ -52,6 +61,7 @@ describe("private viewer read state (SQLite integration)", () => {
             () => db.discussion.deleteMany(),
             () => db.accountSessionReadState.deleteMany(),
             () => db.sessionShare.deleteMany(),
+            () => db.userKVStore.deleteMany(),
             () => db.accountChange.deleteMany(),
             () => db.session.deleteMany(),
             () => db.account.deleteMany(),
@@ -90,6 +100,87 @@ describe("private viewer read state (SQLite integration)", () => {
         });
         return { owner, collaborator, session };
     }
+
+    it("projects a never-opened personal rule's inception boundary without enrollment and clears it through the normal read cursor", async () => {
+        const { collaborator, session } = await createSharedSession({ seq: 0 });
+        await db.session.update({ where: { id: session.id }, data: { encryptionMode: "plain", metadataLayoutVersion: 1,
+            metadata: JSON.stringify({ v: 1 }), ownerMetadata: JSON.stringify({ t: "plain", v: { v: 1 } }) } });
+        const append = async (createdAt: number) => inTx(tx => writeSessionTranscriptMessageInTx(tx, {
+            sessionId: session.id, writeAuthority: "hosted", sessionEncryptionMode: "plain", storagePolicy: "optional",
+            content: { t: "plain", v: { role: "user", content: { type: "text", text: "Original" } } },
+            localId: crypto.randomUUID(), sidechainId: null, messageRole: "user", createdAt: new Date(createdAt),
+        }));
+        expect(await append(0)).toMatchObject({ ok: true });
+        const ruleId = crypto.randomUUID();
+        const created = await setAccountFollowRule({ accountId: collaborator.id, authentication, ruleId,
+            mutation: { receiver: { kind: "account" }, expectedVersion: -1, content: { t: "plain", v: {
+                v: 1, enabled: true, filter: normalizeSessionListFilterV1(), policy: { preset: "important" },
+            } } } });
+        if (!created.ok) throw new Error(created.error);
+        const inception = created.value.rule.inception;
+        if (!inception) throw new Error("Missing rule inception");
+        const read = () => loadSessionViewerProjection({ accountId: collaborator.id, sessionId: session.id, authentication });
+        const ruleState = { ruleId, ruleVersion: created.value.rule.version,
+            readState: { state: "tracking", lastViewedSessionSeq: 1, unreadSince: null } };
+        expect(await read()).toMatchObject({ readState: { state: "not_started" }, ruleReadStates: [ruleState] });
+        expect(await append(inception.createdAt + 1)).toMatchObject({ ok: true });
+        expect(await read()).toMatchObject({ readState: { state: "not_started" }, ruleReadStates: [{ ...ruleState,
+            readState: { ...ruleState.readState, unreadSince: inception.createdAt } }] });
+        const detail = await readSessionDetail({ userId: collaborator.id, sessionId: session.id, authentication,
+            accessProjectionVersion: 1, storedContentCompatibility: evaluateAccountStoredContentCompatibility({
+                status: "valid", declaration: { v: 1, protocolVersion: 4 },
+            }) });
+        expect(detail.status).toBe(200);
+        if (detail.status !== 200) throw new Error("Detail read did not succeed");
+        expect(SessionViewerProjectionV1Schema.parse(detail.body.session.viewer)).toMatchObject({ ruleReadStates: [{ ...ruleState,
+            readState: { ...ruleState.readState, unreadSince: inception.createdAt } }] });
+        const second = await db.session.create({ data: { accountId: session.accountId, tag: crypto.randomUUID(),
+            encryptionMode: "plain", metadataLayoutVersion: 1, metadata: JSON.stringify({ v: 1 }),
+            ownerMetadata: JSON.stringify({ t: "plain", v: { v: 1 } }), currentStorageState: "hosted" } });
+        await db.sessionShare.create({ data: { sessionId: second.id, sharedByUserId: session.accountId,
+            sharedWithUserId: collaborator.id, accessLevel: "view" } });
+        await withAuthenticatedTestApp(registerSessionReadBatchRoute, async app => {
+            let ruleCensusReads = 0;
+            const stop = observeSqliteRequests({ before: request => {
+                if (request.model === "UserKVStore" && request.action === "findMany") ruleCensusReads += 1;
+            } });
+            try {
+                const response = await app.inject({ method: "POST", url: "/v2/sessions/read-batch",
+                    headers: { "x-test-user-id": collaborator.id, "x-happier-account-stored-content-protocol": "4" }, payload: {
+                        sessionIds: [session.id, second.id, "inaccessible-source", session.id], accessProjectionVersion: 1,
+                        includeSnapshot: true, includeTurns: false, includeMessages: false,
+                    } });
+                expect(response.statusCode).toBe(200);
+                const batch = SessionReadBatchResponseV1Schema.parse(response.json());
+                expect(batch.results[0]?.detail).toMatchObject({ status: 200, body: { session: { viewer: { ruleReadStates: [{ ...ruleState,
+                    readState: { ...ruleState.readState, unreadSince: inception.createdAt } }] } } } });
+                expect(batch.results[1]?.detail).toMatchObject({ status: 200, body: { session: { viewer: { ruleReadStates: [{ ...ruleState,
+                    readState: { ...ruleState.readState, lastViewedSessionSeq: 0 } }] } } } });
+                expect(batch.results[2]?.detail).toMatchObject({ status: 404 });
+                expect(batch.results[3]?.detail).toEqual(batch.results[0]?.detail);
+                expect(ruleCensusReads).toBe(1);
+            } finally { stop(); }
+        });
+        for (const initialLegacy of [false, true]) {
+            const listed = await listSessionsForAccount({ userId: collaborator.id, authentication,
+                source: initialLegacy ? { kind: "legacy", storage: "active", includeAttention: true } : {
+                    kind: "query", query: { v: 1, storage: "active", includeInactive: true,
+                        scope: "all_accessible", attention: "any", audiences: [], tagIds: [], limit: 50 } },
+                rowRepresentabilityWhere: {}, timing: createV2SessionListServerTiming({}),
+            });
+            expect(listed?.sessions.find(row => row.id === session.id)?.viewer).toMatchObject({ ruleReadStates: [{ ...ruleState,
+                readState: { ...ruleState.readState, unreadSince: inception.createdAt } }] });
+        }
+        const identity = { accountId: collaborator.id, sessionId: session.id };
+        expect(await db.accountSessionReadState.count({ where: identity })).toBe(0);
+        expect(await db.accountSessionFollow.count({ where: identity })).toBe(0);
+        expect(await applyViewerReadCursorOperation({ ...identity, operation: { kind: "mark-read" }, authentication }))
+            .toMatchObject({ ok: true });
+        expect(await read()).toMatchObject({ ruleReadStates: [{ ...ruleState,
+            readState: { ...ruleState.readState, lastViewedSessionSeq: 2 } }] });
+        expect(await db.accountSessionReadState.count({ where: identity })).toBe(1);
+        expect(await db.accountSessionFollow.count({ where: identity })).toBe(0);
+    });
 
     it("clears only the reading viewer's committed failure anchor and preserves it across unrelated updates and reload", async () => {
         const { owner, collaborator, session } = await createSharedSession({ seq: 5 });

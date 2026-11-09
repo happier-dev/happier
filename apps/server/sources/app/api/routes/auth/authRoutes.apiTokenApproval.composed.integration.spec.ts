@@ -6,7 +6,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { Server } from 'socket.io';
 import {
     AccountApiTokensCreateActionOutputV1Schema, API_TOKEN_FULL_GRANT_V1, accountSettingsParse,
-    normalizeActionsSettingsV1, describeApprovalRequestFields, requiresExactDaemonApprovalReplay, decodePlainArtifactStoredContent,
+    normalizeActionsSettingsV1, describeApprovalRequestFields, resolveApprovalExecutor, decodePlainArtifactStoredContent,
     createActionExecutor, EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER, StrictJsonValueSchema,
     type ActionExecutorDeps, type ActionExecuteResult,
 } from '@happier-dev/protocol';
@@ -521,7 +521,7 @@ describe('API-token requests through CLI wiring, approval and real Account stora
                 await new Promise<void>(resolve => setTimeout(resolve, 126_813));
                 expect(Date.now() - pending.createdAtMs).toBeGreaterThan(126_812);
             }
-            expect(requiresExactDaemonApprovalReplay(pending!)).toBe(true);
+            expect(resolveApprovalExecutor(pending!)).toEqual({ kind: 'live_invocation' });
             expect(JSON.stringify(describeApprovalRequestFields(pending!))).toContain(input.grant.automationIds[0]);
             let replayExecutor = executor;
             let humanTokenActions: Pick<ActionExecutorDeps, 'accountApiTokensCreateAction' | 'accountApiTokensRevokeAction' | 'accountApiTokensRevokeAllAction'> | undefined;
@@ -634,8 +634,11 @@ describe('API-token requests through CLI wiring, approval and real Account stora
             // replay transport. Only that authenticated transport boundary is in-process.
             const decider = createActionExecutor({ ...deps, ...humanTokenActions,
                 isApprovalExecutionOriginCurrent: async () => true,
-                approvalRequestApprovedReplay: async ({ request }) => requiresExactDaemonApprovalReplay(request)
-                    ? replayExecutor.replayApprovedApprovalRequest({ artifactId, callerAuthority: 'present_user' }) : null,
+                approvalRequestApprovedReplay: async ({ request }) => {
+                    const owner = resolveApprovalExecutor(request);
+                    return owner.kind === 'daemon' || owner.kind === 'live_invocation'
+                        ? replayExecutor.replayApprovedApprovalRequest({ artifactId, callerAuthority: 'present_user' }) : null;
+                },
             } as ActionExecutorDeps);
             if (origin === 'signed-session-detached') {
                 cancellation.abort(); await invocation;

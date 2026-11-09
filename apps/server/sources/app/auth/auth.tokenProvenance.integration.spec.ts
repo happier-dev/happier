@@ -59,15 +59,12 @@ describe("auth token provenance (integration)", () => {
         await harness.close();
     });
 
-    it("applies the current Account terminal policy to the same signed bearer, including cache hits", async () => {
-        const account = await db.account.create({ data: { publicKey: "terminal-policy-currentness" } });
+    it("keeps the signed terminal floor while verifying a terminal as the person", async () => {
+        const account = await db.account.create({ data: { publicKey: "terminal-person-currentness" } });
         const token = await auth.createToken(account.id, undefined, { kind: "terminal", authority: "account_automation" });
         expect(decodeJwtPayload(token)).toMatchObject({ provenance: { kind: "terminal", authority: "account_automation" } });
-        await expect(auth.verifyToken(token)).resolves.toMatchObject({ authTokenKind: "terminal", authority: "present_user" });
-        await db.account.update({ where: { id: account.id }, data: { terminalPresentUserPolicy: "disallowed" } });
-        await expect(auth.verifyToken(token)).resolves.toMatchObject({ authTokenKind: "terminal", authority: "account_automation" });
-        await db.account.update({ where: { id: account.id }, data: { terminalPresentUserPolicy: "allowed" } });
-        await expect(auth.verifyToken(token)).resolves.toMatchObject({ authTokenKind: "terminal", authority: "present_user" });
+        await expect(auth.verifyToken(token)).resolves.toMatchObject({ authTokenKind: "terminal",
+            authTokenMintedAuthority: "account_automation", authority: "present_user" });
     });
 
     it("mints provenance as a signed top-level claim and projects every closed kind", async () => {

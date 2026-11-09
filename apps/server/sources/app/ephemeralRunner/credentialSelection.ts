@@ -3,7 +3,8 @@ import { pluginJsonValuesEqual } from '@happier-dev/protocol/plugins/contributio
 import { RunnerCredentialSelectionBindingV1Schema } from "@happier-dev/protocol/ephemeralRunner/review";
 import { RunnerCredentialSelectionResolutionRequestV1Schema, type RunnerCredentialSelectionResolutionRequestV1, type RunnerCredentialSelectionResolutionResponseV1 } from '@happier-dev/protocol/teams';
 import { TeamCredentialRequestPolicyV1Schema } from '@happier-dev/protocol/teams/credentials/resourceV1';
-import { TeamCredentialSourceBindingV1Schema, type TeamCredentialSourceBindingV1 } from '@happier-dev/protocol/teams/credentials/sourceBindingV1';
+import { type TeamCredentialSourceBindingV1 } from '@happier-dev/protocol/teams/credentials/sourceBindingV1';
+import { readTeamCredentialSourceBinding } from '@/app/teams/credentials/sourceBindingRead';
 
 import {
     acquireAccountSessionOwnerMetadataFenceInTx,
@@ -314,13 +315,7 @@ async function selectRunnerBrokerMachine(input: Readonly<{
     if (placement.placement === null) return { ok: false, reason: "broker_unavailable" };
     if (placement.placement.kind === "machine") return { ok: true, brokerMachineId: null };
 
-    let rawSource: unknown;
-    try {
-        rawSource = JSON.parse(resource.sourceBindingJson);
-    } catch {
-        return { ok: false, reason: "resource_corrupt" };
-    }
-    const source = TeamCredentialSourceBindingV1Schema.safeParse(rawSource);
+    const source = readTeamCredentialSourceBinding(resource.sourceBindingJson);
     if (!source.success) return { ok: false, reason: "resource_corrupt" };
 
     let presence: MachineDaemonPresenceInventory;
@@ -415,15 +410,13 @@ async function readCurrentSelection(input: Readonly<{
             if (resource.teamId !== input.request.selection.teamId) {
                 return { ok: false, reason: "resource_changed" } as const;
             }
-            let rawSource: unknown;
             let rawPolicy: unknown = null;
             try {
-                rawSource = JSON.parse(resource.sourceBindingJson);
                 rawPolicy = resource.requestPolicyJson === null ? null : JSON.parse(resource.requestPolicyJson);
             } catch {
                 return { ok: false, reason: "resource_corrupt" } as const;
             }
-            const source = TeamCredentialSourceBindingV1Schema.safeParse(rawSource);
+            const source = readTeamCredentialSourceBinding(resource.sourceBindingJson);
             const policy = z.nullable(TeamCredentialRequestPolicyV1Schema).safeParse(rawPolicy);
             if (!source.success || !policy.success) return { ok: false, reason: "resource_corrupt" } as const;
             const resolved = await resolvePlannedRunnerCredentialSelectionBindingInTx(tx, {

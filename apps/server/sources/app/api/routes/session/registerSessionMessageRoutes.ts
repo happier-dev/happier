@@ -1,64 +1,38 @@
-import type { SessionAccessAuthentication } from '@/app/session/access/sessionAccessAuthentication';
-import { buildSessionAccessWhere } from "@/app/session/access/sessionAccessWhere";
-import type { Prisma } from "@prisma/client";
-import type { FastifyRequest } from "fastify";
+import { UsageTimingBoundsV1Schema } from '@happier-dev/protocol/usage/usageWorkEvidence';
 import { projectSessionTurnWaitingHttpResponse } from '@/app/clientCompatibility/sessionTurnWaitingCompatibility';
 import { z } from "zod/mini";
-import { SESSION_HISTORICAL_TRANSCRIPT_IMPORT_MAX_ITEMS, SessionHistoricalTranscriptImportV3Schema, SessionTranscriptSurfaceItemReferenceInputV1Schema } from '@happier-dev/protocol/sessions/messages/transcriptObservationV1';
-
+import { SESSION_HISTORICAL_TRANSCRIPT_IMPORT_MAX_ITEMS, SessionHistoricalTranscriptImportV3Schema } from '@happier-dev/protocol/sessions/messages/transcriptObservationV1';
 import { buildMessageUpdatedUpdate, buildNewMessageUpdate, eventRouter } from "@/app/events/eventRouter";
-import { catchupFollowupFetchesCounter, catchupFollowupReturnedCounter } from "@/app/monitoring/metrics/index";
 import { SessionMessageDeliveryResolutionV1Schema, readStoredSessionMessageDeliveryResolutionV1 } from '@happier-dev/protocol/sessions/messages/sessionMessageDeliveryResolutionV1';
 import { FollowDeliveryProjectionV1Schema } from '@happier-dev/protocol/sessions/follow/sessionFollowDeliveryProjectionV1';
-import { SessionMessageRoleSchema, type SessionMessageRole } from '@happier-dev/protocol/sessions/messages/sessionMessageRole';
+import { SessionMessageRoleSchema } from '@happier-dev/protocol/sessions/messages/sessionMessageRole';
 import { MessageActionDurableResolutionV1Schema, MessageActionReferenceV1Schema } from '@happier-dev/protocol/sessions/messages/messageActionReferenceV1';
-import { ExternalShareableActorV1Schema, EXTERNAL_SHAREABLE_TRANSCRIPT_MAX_PAGE_ROWS_V1, EXTERNAL_SHAREABLE_TRANSCRIPT_MAX_REFERENCED_USER_ROWS_V1, EXTERNAL_SHAREABLE_TRANSCRIPT_MAX_SNAPSHOT_TURNS_V1, ExternalShareableTranscriptSnapshotV1Schema, deriveExternalShareableActorFromAdmissionReceiptV1 } from '@happier-dev/protocol/sessions/messages/sessionExternalShareableTranscriptV1';
+import { EXTERNAL_SHAREABLE_TRANSCRIPT_MAX_PAGE_ROWS_V1 } from '@happier-dev/protocol/sessions/messages/sessionExternalShareableTranscriptV1';
 import { SessionMessageAccountActorV1Schema } from '@happier-dev/protocol/sessions/messages/sessionMessageAccountActorV1';
-import { SessionInputAdmissionReceiptV1Schema } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
+import { SessionInputAdmissionReceiptV1Schema, SessionInputRefusalDispositionV1Schema } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import { SessionTurnV1Schema } from '@happier-dev/protocol/sessions/turns/sessionTurnV1';
 import { SESSION_TRANSCRIPT_MAX_PAGE_ROWS_V1 } from '@happier-dev/protocol/sessions/messages/sessionTranscriptPageLimits';
-import { SessionStoredMessageContentSchema } from '@happier-dev/protocol/sessions/messages/sessionStoredMessageContent';
-import { SessionTranscriptObservationProvenanceV1Schema, isRecoveredHistoryTranscriptObservationProvenance } from '@happier-dev/protocol/sessions/messages/transcriptObservationV1';
+import { SessionStoredMessageContentSchema, type SessionStoredMessageContent } from '@happier-dev/protocol/sessions/messages/sessionStoredMessageContent';
+import { SessionTranscriptObservationProvenanceV1Schema } from '@happier-dev/protocol/sessions/messages/transcriptObservationV1';
 import { isSessionAgentTransitionDividerLocalId } from '@happier-dev/protocol/sessions/agentTransitionDivider';
 import { parseSessionMessageRole } from "@/app/session/messageRole/resolveSessionMessageRole";
 import {
     importHistoricalSessionTranscript,
     type HistoricalSessionTranscriptImportItem,
 } from "@/app/session/importHistoricalSessionTranscript";
-import {
-    projectSessionMessageAccountActors,
-    resolveSessionMessageAccountActor,
-} from "@/app/session/messages/projectSessionMessageAccountActors";
+import { resolveSessionMessageAccountActor } from "@/app/session/messages/projectSessionMessageAccountActors";
 import { createSessionMessage } from "@/app/session/sessionWriteService";
 import { parseSessionMessageSidechainId } from "@/app/session/parseSessionMessageSidechainId";
-import {
-    issueSessionMessageActionReference,
-    resolveSessionMessageActionLookup,
-} from "@/app/session/sessionMessageActionLookup";
-import {
-    buildSessionMessagePublicationWhere,
-    buildShareableSessionMessagePublicationWhere,
-    isExternalShareableSessionTurnVisible,
-    isSessionTranscriptPublicationBlocked,
-    loadSessionTranscriptPublication,
-    resolveExternalShareableTranscriptBlockedFromSeq,
-    resolveExternalShareableTranscriptTurnSettlementBlockedFromSeq,
-    SESSION_TRANSCRIPT_PUBLICATION_SELECT,
-} from "@/app/session/sessionTranscriptPublicationPolicy";
-import { parseStoredSessionTurns } from "@/app/session/turns/parseSessionTurnState";
-import { isSessionTurnTranscriptAnchorProjectionCurrent } from "@/app/session/turns/sessionTurnTranscriptAnchorProjection";
-import {
-    resolveSessionTurnProjectionSeqs,
-    type SessionTurnProjectionSeqs,
-} from "./resolveSessionTurnProjectionSeqs";
+import { resolveSessionMessageActionLookup } from "@/app/session/sessionMessageActionLookup";
+import { SESSION_TRANSCRIPT_PUBLICATION_SELECT } from "@/app/session/sessionTranscriptPublicationPolicy";
 import { publishSessionReadyProjectionUpdate } from "@/app/session/ready/publishSessionReadyProjectionUpdate";
 import { readCurrentSessionAccessForOperation, resolveSessionAccessForOperation } from "@/app/session/access/sessionAccess";
 import { readSessionAccessAuthenticationFromRequest } from "@/app/session/access/sessionAccessAuthentication";
-import { db } from "@/storage/db";
 import { randomKeyNaked } from "@/utils/keys/randomKeyNaked";
 import { resolveApiHotEndpointRateLimit } from "@/app/api/utils/apiRateLimitCatalog";
 import { refreshTrackedSessionAccountBadgePushes } from "@/app/activity/refreshAccountActivityBadgePushes";
-import { inReadSnapshot, inTx } from "@/storage/inTx";
+import { inTx } from "@/storage/inTx";
+import { captureReadSnapshot } from '@/storage/captureReadSnapshot';
 import { type Fastify } from "../../types";
 import { PRESENT_USER_REQUIRED_ERROR } from "@/app/api/utils/apiTokenRouteAdmission";
 import { projectSessionInputAdmissionReceipt } from "@/app/session/messages/sessionInputAdmission";
@@ -67,9 +41,6 @@ import { readSessionMessageRepliesInTx, readSessionMessageReplyInTx, mutateSessi
 import { readCommittedSessionMessageInTx } from '@/app/session/messages/readCommittedSessionMessage';
 import { SessionMessageReplyReadResultV1Schema, SessionMessageReplyMutationResultV1Schema, SessionMessageReplyPendingPageV1Schema, SessionMessageReplyCapabilityV1Schema, SessionMessageReplyAccountMutationV1Schema,
     SessionMessageReplyReadBatchRequestV1Schema, SessionMessageReplyReadBatchResponseV1Schema } from '@happier-dev/protocol/sessions/messages/sessionMessageReplyV1';
-
-type SessionStoredMessageContent = z.infer<typeof SessionStoredMessageContentSchema>;
-
 import { readSessionMessagePage } from './readSessionMessagePage';
 export { readSessionMessagePage } from './readSessionMessagePage';
 import { SessionTranscriptMessagePageResponseSchema, SessionTranscriptStoredContentUnavailableResponseSchema } from './sessionMessagePageProjection';
@@ -103,40 +74,35 @@ export function registerSessionMessageRoutes(app: Fastify) {
             return reply.send({ status: "unavailable" });
         }
 
-        const resolution = await inReadSnapshot(async (tx) => await resolveSessionMessageActionLookup({
-            actorUserId: request.userId,
-            sessionId,
-            messageId: reference.messageId,
-            reference,
-            readAccess: async (actorUserId, ownedSessionId) =>
-                (await resolveSessionAccessForOperation(tx, { accountId: actorUserId, sessionId: ownedSessionId, authentication })).status === "allowed",
-            readMessage: async (ownedSessionId, messageId) => await tx.sessionMessage.findFirst({
-                where: {
-                    id: messageId,
-                    sessionId: ownedSessionId,
-                    session: { AND: [{ id: ownedSessionId }, await buildSessionAccessWhere({ tx, accountId: request.userId, capability: 'readTranscript', mode: 'effective_access_v1', authentication })] },
-                },
-                select: {
-                    id: true,
-                    sessionId: true,
-                    seq: true,
-                    messageRole: true,
-                    updatedAt: true,
-                },
-            }),
-            readPublication: async (ownedSessionId) => {
-                if ((await resolveSessionAccessForOperation(tx, { accountId: request.userId, sessionId: ownedSessionId, authentication })).status !== "allowed") return null;
-                return await tx.session.findFirst({
-                    where: { AND: [{ id: ownedSessionId }, await buildSessionAccessWhere({ tx, accountId: request.userId, capability: 'readTranscript', mode: 'effective_access_v1', authentication })] },
+        const resolution = await captureReadSnapshot(async (tx) => {
+            const access = await resolveSessionAccessForOperation(tx, { accountId: request.userId,
+                sessionId, authentication, capability: 'readTranscript' });
+            if (access.status !== 'allowed') return { status: 'unavailable' as const };
+            return await resolveSessionMessageActionLookup({
+                actorUserId: request.userId,
+                sessionId,
+                messageId: reference.messageId,
+                reference,
+                readAccess: async () => access.status === 'allowed',
+                readMessage: async (ownedSessionId, messageId) => await tx.sessionMessage.findFirst({
+                    where: {
+                        id: messageId,
+                        sessionId: ownedSessionId,
+                    },
+                    select: {
+                        id: true,
+                        sessionId: true,
+                        seq: true,
+                        messageRole: true,
+                        updatedAt: true,
+                    },
+                }),
+                readPublication: async (ownedSessionId) => await tx.session.findUnique({
+                    where: { id: ownedSessionId },
                     select: SESSION_TRANSCRIPT_PUBLICATION_SELECT,
-                });
-            },
-        }));
-        if (resolution.status !== "unavailable" && (await readCurrentSessionAccessForOperation({
-            accountId: request.userId, sessionId, authentication, capability: "readTranscript",
-        })).status !== "allowed") {
-            return reply.send({ status: "unavailable" });
-        }
+                }),
+            });
+        });
         return reply.send(resolution);
     });
 
@@ -159,7 +125,7 @@ export function registerSessionMessageRoutes(app: Fastify) {
         schema: { body: SessionMessageReplyReadBatchRequestV1Schema, response: { 200: SessionMessageReplyReadBatchResponseV1Schema } },
     }, async (request, reply) => {
         const authentication = readSessionAccessAuthenticationFromRequest(request);
-        const results = await inReadSnapshot(tx => readSessionMessageRepliesInTx(tx, {
+        const results = await captureReadSnapshot(tx => readSessionMessageRepliesInTx(tx, {
             requests: request.body.requests, accountId: request.userId, authentication,
         }));
         return reply.header('Cache-Control', 'no-store').send({ results });
@@ -173,18 +139,8 @@ export function registerSessionMessageRoutes(app: Fastify) {
     }, async (request, reply) => {
         const authentication = readSessionAccessAuthenticationFromRequest(request);
         const params = { accountId: request.userId, sessionId: request.params.sessionId, afterLocalId: request.query.afterLocalId, authentication };
-        const result = await inReadSnapshot(tx => listSessionMessageRepliesPendingInTx(tx, params));
-        if ((await readCurrentSessionAccessForOperation({ accountId: params.accountId, sessionId: params.sessionId,
-            authentication, capability: 'readTranscript' })).status !== 'allowed') return reply.send({ v: 1, entries: [], nextAfterLocalId: null });
-        const entries = await inReadSnapshot(async tx => {
-            const admitted = [];
-            for (const entry of result.entries) {
-                const current = await readSessionMessageReplyInTx(tx, { ...params, localId: entry.requestLocalId });
-                if (current.status === 'available') admitted.push(entry);
-            }
-            return admitted;
-        });
-        return reply.send({ ...result, entries });
+        const result = await captureReadSnapshot(tx => listSessionMessageRepliesPendingInTx(tx, params));
+        return reply.send(result);
     });
 
     app.post('/v2/sessions/:sessionId/messages/by-local-id/:localId/reply', {
@@ -205,12 +161,7 @@ export function registerSessionMessageRoutes(app: Fastify) {
     }, async (request, reply) => {
         const params = { accountId: request.userId, sessionId: request.params.sessionId, localId: request.params.localId,
             authentication: readSessionAccessAuthenticationFromRequest(request) };
-        const result = await inReadSnapshot(tx => readSessionMessageReplyInTx(tx, params));
-        if (result.status === 'available' && ((await readCurrentSessionAccessForOperation({ accountId: params.accountId,
-            sessionId: params.sessionId, authentication: params.authentication, capability: 'readTranscript' })).status !== 'allowed'
-            || (await inReadSnapshot(tx => readSessionMessageReplyInTx(tx, params))).status !== 'available')) {
-            return reply.send({ v: 1, status: 'unavailable' });
-        }
+        const result = await captureReadSnapshot(tx => readSessionMessageReplyInTx(tx, params));
         return reply.send(result);
     });
 
@@ -243,7 +194,7 @@ export function registerSessionMessageRoutes(app: Fastify) {
                         turn: z.optional(SessionTurnV1Schema),
                     }),
                 }),
-                404: z.looseObject({ error: z.string() }),
+                404: z.looseObject({ error: z.string(), inputDisposition: z.optional(SessionInputRefusalDispositionV1Schema) }),
                 403: z.union([
                     z.strictObject({ error: z.literal("team_authentication_required") }),
                     z.strictObject({ error: z.literal(PRESENT_USER_REQUIRED_ERROR) }),
@@ -265,11 +216,8 @@ export function registerSessionMessageRoutes(app: Fastify) {
         const targetMachineId = authentication.apiTokenGrant
             ? await app.resolveCurrentSessionMachine?.({ accountId: userId, sessionId }) : undefined;
 
-        const { row, accessDecision: snapshotAccessDecision, accountActor } = await inReadSnapshot(tx =>
+        const { row, accessDecision, accountActor, inputDisposition } = await captureReadSnapshot(tx =>
             readCommittedSessionMessageInTx(tx, { accountId: userId, sessionId, localId, authentication, targetMachineId }));
-        const accessDecision = snapshotAccessDecision.status === "allowed"
-            ? await readCurrentSessionAccessForOperation({ accountId: userId, sessionId, authentication, capability: "readTranscript" })
-            : snapshotAccessDecision;
         if (accessDecision.status === "authentication_required") {
             return reply.code(403).send({ error: "team_authentication_required" });
         }
@@ -280,7 +228,7 @@ export function registerSessionMessageRoutes(app: Fastify) {
             return reply.code(404).send({ error: 'Session not found' });
         }
         if (!row) {
-            return reply.code(404).send({ error: 'Message not found' });
+            return reply.code(404).send({ error: 'Message not found', ...(inputDisposition ? { inputDisposition } : {}) });
         }
 
         const messageRole = parseSessionMessageRole(row.messageRole);
@@ -415,6 +363,7 @@ export function registerSessionMessageRoutes(app: Fastify) {
                 items: z.array(z.object({
                     localId: z.string().check(z.trim(), z.minLength(1)),
                     content: SessionStoredMessageContentSchema,
+                    usageTimingV1: z.optional(z.nullable(UsageTimingBoundsV1Schema)),
                     messageRole: z.optional(SessionMessageRoleSchema),
                 })).check(z.minLength(1), z.maxLength(SESSION_HISTORICAL_TRANSCRIPT_IMPORT_MAX_ITEMS)),
             }),
@@ -475,6 +424,7 @@ export function registerSessionMessageRoutes(app: Fastify) {
                 z.object({
                     ciphertext: z.string().check(z.minLength(1)),
                     localId: z.optional(z.string()),
+                    usageTimingV1: z.optional(z.nullable(UsageTimingBoundsV1Schema)),
                     sidechainId: z.optional(z.nullable(z.string().check(z.minLength(1)))),
                     messageRole: z.optional(z.unknown()),
                     sessionEventType: z.optional(z.literal("ready")),
@@ -485,6 +435,7 @@ export function registerSessionMessageRoutes(app: Fastify) {
                 z.object({
                     content: SessionStoredMessageContentSchema,
                     localId: z.optional(z.string()),
+                    usageTimingV1: z.optional(z.nullable(UsageTimingBoundsV1Schema)),
                     sidechainId: z.optional(z.nullable(z.string().check(z.minLength(1)))),
                     messageRole: z.optional(z.unknown()),
                     sessionEventType: z.optional(z.literal("ready")),
@@ -567,6 +518,7 @@ export function registerSessionMessageRoutes(app: Fastify) {
                       sessionId,
                       content: body.content,
                       localId: effectiveLocalId,
+                      usageTimingV1: body.usageTimingV1,
                       sidechainId,
                       messageRole: body.messageRole,
                       ...(trustedSessionEventType ? { trustedSessionEventType } : {}),
@@ -577,6 +529,7 @@ export function registerSessionMessageRoutes(app: Fastify) {
                       sessionId,
                       ciphertext: body.ciphertext,
                       localId: effectiveLocalId,
+                      usageTimingV1: body.usageTimingV1,
                       sidechainId,
                       messageRole: body.messageRole,
                       ...(trustedSessionEventType ? { trustedSessionEventType } : {}),

@@ -1,4 +1,4 @@
-import { SESSION_METADATA_LAYOUT_VERSION_V1, validateSessionOwnerMetadataEnvelopeForAccountModeV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
+import { SESSION_METADATA_LAYOUT_VERSION_V1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 
 import { acquireAccountSessionOwnerMetadataFenceInTx } from "@/app/encryption/accountSessionOwnerMetadataFence";
 import { publishSessionArchiveTransition } from "@/app/session/archive/publishSessionArchiveTransition";
@@ -91,13 +91,11 @@ async function resolveExistingLayout1SessionInTx(
         metadataLayoutVersion: existing.metadataLayoutVersion ?? 0,
         accountMode: accountEncryptionMode,
         ownerMetadata: existing.ownerMetadata,
+
     });
     if (
         (existing.metadataLayoutVersion ?? 0) === SESSION_METADATA_LAYOUT_VERSION_V1
-        && !validateSessionOwnerMetadataEnvelopeForAccountModeV1({
-            accountMode: accountEncryptionMode,
-            envelope: storedOwnerEnvelope,
-        }).ok
+        && storedOwnerEnvelope === null
     ) {
         return { kind: "rejected", rejection: { reason: "privacy-upgrade-required" } };
     }
@@ -161,7 +159,7 @@ export async function createOrRejoinLayout1SessionByTagInTx(
     authentication: SessionAccessAuthentication,
     sessionCreationAuthorization?: SessionCreationExecutionAuthorization,
 ): Promise<Layout1SessionCreateOutcome | TransactionResult<Layout1SessionCreateOutcome>> {
-    await acquireLayout1SessionCreatePublicationAdmissionInTx(tx, prepared);
+    await acquireLayout1SessionCreatePublicationAdmissionInTx(tx, { ...prepared, sessionCreationAuthorization });
     // Both fresh creation and the released tag-rejoin mutation consume the
     // same already-verified invocation inside this transaction.
     await readSessionCreationApiTokenIdInTx(tx, prepared.accountId, sessionCreationAuthorization);
@@ -176,7 +174,9 @@ export async function createOrRejoinLayout1SessionByTagInTx(
         invariants.accountEncryptionMode,
         authentication,
     );
-    if (existing) return existing;
+    if (existing) {
+        return existing;
+    }
 
     return await insertAdmittedLayout1SessionInTx(tx, prepared, authentication, invariants, sessionCreationAuthorization);
 }
@@ -261,7 +261,7 @@ export async function rejoinLayout1SessionByTagInTx(
     sessionCreationAuthorization?: SessionCreationExecutionAuthorization,
     authentication?: SessionAccessAuthentication,
 ): Promise<Layout1SessionCreateOutcome | TransactionResult<Layout1SessionCreateOutcome> | null> {
-    await acquireLayout1SessionCreatePublicationAdmissionInTx(tx, prepared);
+    await acquireLayout1SessionCreatePublicationAdmissionInTx(tx, { ...prepared, sessionCreationAuthorization });
     // The unique-insert loser starts a fresh transaction: its original
     // invocation must still be current before restoring the winner's row.
     await readSessionCreationApiTokenIdInTx(tx, prepared.accountId, sessionCreationAuthorization);
@@ -273,12 +273,13 @@ export async function rejoinLayout1SessionByTagInTx(
     if (currentness === null || currentness.status !== "ready") {
         return { kind: "rejected", rejection: { reason: "invalid-params" } };
     }
-    return resolveExistingLayout1SessionInTx(
+    const existing = await resolveExistingLayout1SessionInTx(
         tx,
         prepared,
         currentness.currentness.encryptionMode,
         authentication,
     );
+    return existing;
 }
 
 /**
@@ -307,7 +308,7 @@ export async function createOrRejoinLayout1SessionByTag(
         const outcome = fresh ?? await inTx(async (tx) => createOrRejoinLayout1SessionByTagInTx(tx, prepared, authentication, sessionCreationAuthorization), {
             isolationLevel,
             transactionClass: "session.create-or-rejoin",
-            prepare: () => prepareLayout1SessionCreatePublicationAdmission(prepared),
+            prepare: () => prepareLayout1SessionCreatePublicationAdmission({ ...prepared, sessionCreationAuthorization }),
         });
         if (outcome.kind === "rejoined" && outcome.publication) {
             await publishSessionArchiveTransition(outcome.publication);
@@ -329,7 +330,7 @@ export async function createOrRejoinLayout1SessionByTag(
         const rejoined = await inTx(async (tx) => rejoinLayout1SessionByTagInTx(tx, prepared, sessionCreationAuthorization, authentication), {
             isolationLevel,
             transactionClass: "session.rejoin-after-create-race",
-            prepare: () => prepareLayout1SessionCreatePublicationAdmission(prepared),
+            prepare: () => prepareLayout1SessionCreatePublicationAdmission({ ...prepared, sessionCreationAuthorization }),
         });
         if (rejoined === null) throw error;
         if (rejoined.kind === "rejoined" && rejoined.publication) {

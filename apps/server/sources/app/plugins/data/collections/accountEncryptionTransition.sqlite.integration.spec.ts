@@ -20,6 +20,8 @@ import {
     inspectPluginCollectionAccountEncryptionTransitionInTx,
     validatePluginCollectionAccountEncryptionTransitionStageInTx,
 } from "./accountEncryptionTransition";
+import { backfillPluginCollectionUsageTotalsInTx } from "./usageTotals";
+import { assertPluginCollectionUsageTotalsMatchRows } from "./usageTotals.testkit";
 
 const ACCOUNT_ID = "collection-transition-account";
 /** Whatever a plaintext Account's unkeyed derivation produced for this row. */
@@ -123,6 +125,7 @@ describe("Collection Account-encryption transition inventory", () => {
         await db.pluginCollectionIndexEntry.create({ data: { indexStateId: index.id, rowId: row.rowId,
             rowRevision: 1, encodedSortKey: new Uint8Array([1, 2, 3]) } });
         await db.pluginCollectionAccountGrant.create({ data: { rowDbId: row.id, accountId: peer, accessLevel: 'edit', createdByAccountId: owner } });
+        await inTx(tx => backfillPluginCollectionUsageTotalsInTx({ tx, accountId: owner }));
         const rowKey = randomBytes(32);
         const wraps = identities.map(identity => ({ recipientAccountId: identity.accountId,
             recipientContentPublicKeyFingerprint: identity.fingerprint, encryptedDataKey: encodeBase64(sealEncryptedDataKeyEnvelopeV1({
@@ -280,6 +283,7 @@ describe("Collection Account-encryption transition inventory", () => {
                 randomBytes: (length) => new Uint8Array(length).fill(7),
             }),
         };
+        await inTx(tx => backfillPluginCollectionUsageTotalsInTx({ tx, accountId: ACCOUNT_ID }));
         await expect(inTx(async (tx) => (
             await applyPluginCollectionAccountEncryptionTransitionInTx({
                 tx,
@@ -305,6 +309,7 @@ describe("Collection Account-encryption transition inventory", () => {
                 },
             })
         ))).resolves.toEqual({ status: "applied" });
+        await assertPluginCollectionUsageTotalsMatchRows(ACCOUNT_ID);
 
         await expect(db.pluginCollectionRow.findUniqueOrThrow({
             where: { id: live.id },

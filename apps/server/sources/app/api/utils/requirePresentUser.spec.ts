@@ -9,32 +9,22 @@ function createReply() {
 }
 
 describe("requirePresentUser", () => {
-    it("admits a terminal credential only when the verifier grants present-user authority", async () => {
-        const accepted = createReply();
-        await expect(requirePresentUser({
-            authAuthority: "present_user",
-            authTokenKind: "terminal",
-        }, accepted.reply)).resolves.toBeUndefined();
-        const rejected = createReply();
-        await expect(requirePresentUser({
-            authAuthority: "account_automation",
-            authTokenKind: "terminal",
-        }, rejected.reply)).resolves.toEqual({ error: PRESENT_USER_REQUIRED_ERROR });
-        expect(rejected.code).toHaveBeenCalledWith(403);
+    it("admits person-class Account and terminal credentials whatever their per-invocation authority", async () => {
+        for (const authTokenKind of ["account", "terminal"]) {
+            for (const authAuthority of ["present_user", "account_automation", undefined]) {
+                const accepted = createReply();
+                await expect(requirePresentUser({ authAuthority, authTokenKind }, accepted.reply)).resolves.toBeUndefined();
+                expect(accepted.code).not.toHaveBeenCalled();
+            }
+        }
     });
-    it("admits only an explicitly verified ordinary account present-user credential", async () => {
-        const accepted = createReply();
-        await expect(requirePresentUser({
-            authAuthority: "present_user",
-            authTokenKind: "account",
-        }, accepted.reply)).resolves.toBeUndefined();
-        expect(accepted.code).not.toHaveBeenCalled();
-
+    it("refuses scoped, directory, runner, missing and unknown credential provenance", async () => {
         for (const request of [
             { authAuthority: "present_user" },
             { authAuthority: "present_user", authTokenKind: "account_directory" },
+            { authAuthority: "account_automation", authTokenKind: "api_token" },
+            { authAuthority: "session_runtime", authTokenKind: "ephemeral_session_runner" },
             { authAuthority: "present_user", authTokenKind: "unknown" },
-            { authAuthority: "account_automation", authTokenKind: "account" },
         ]) {
             const rejected = createReply();
             await expect(requirePresentUser(request, rejected.reply)).resolves.toEqual({

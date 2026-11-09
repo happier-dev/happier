@@ -24,6 +24,10 @@ export async function markPendingStateChangedRecipients(params: {
     return await markSessionProjectionRecipientsChanged({
         tx: params.tx,
         sessionId: params.sessionId,
+        // Queue bookkeeping is not a committed source occurrence. Promotion
+        // into an original message publishes through its own writer.
+        followSourceChanged: false,
+        usageAccountingChanged: false,
         hint,
         ...(params.activationTarget
             ? {

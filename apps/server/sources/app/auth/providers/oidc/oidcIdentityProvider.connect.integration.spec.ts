@@ -74,7 +74,7 @@ describe("oidcIdentityProvider.connect (integration)", () => {
         expect(identity?.providerUserId).toBe("sub-1");
         expect(identity?.providerLogin).toBe("alice2");
         const change = await db.accountChange.findUnique({
-            where: { accountId_kind_entityId: { accountId: account.id, kind: "account", entityId: "self" } },
+            where: { accountId_kind_entityId: { accountId: account.id, kind: "account", entityId: "linked-identities" } },
         });
         expect(change?.hint).toEqual({ linkedProviders: true });
     });

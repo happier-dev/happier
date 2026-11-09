@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 
 import { parseBooleanEnv } from '@/config/env';
 import { assertForwardRecoveryCapableUpdater } from '@/app/runtime/updaterMigrationAdmission';
+import { runPluginCollectionUsageMigrationDeployment } from '@/app/plugins/data/collections/usageTotalsBackfill';
 import { expandHomeDirPath } from '@happier-dev/cli-common/path';
 import {
   readSqliteMigrationCatalog,
@@ -396,6 +397,11 @@ export async function applySqliteMigrations(params: Readonly<{
         }
         throw error;
       }
+    } catch (error) {
+      throw Object.assign(new Error(
+        `[sqlite-migrations] migrationName=${migration.name} failed: ${error instanceof Error ? error.message : String(error)}`,
+        { cause: error },
+      ), { code: 'ESQLITEMIGRATIONFAILED', migrationName: migration.name });
     } finally {
       if (temporarilyDisablesForeignKeys) {
         await params.executor.exec('PRAGMA foreign_keys=ON');
@@ -447,7 +453,13 @@ export async function applySqliteMigrationsFromEnvironment(params: Readonly<{
         provider: 'sqlite',
         databaseUrl,
       }),
-      deploy: async (stage) => await applySqliteMigrations({ executor, migrationsDir: stage.migrationsDir }),
+      deploy: async (stage) => {
+        const usage = await runPluginCollectionUsageMigrationDeployment({
+          provider: 'sqlite', databaseUrl, env: params.env, migrationsDir: stage.migrationsDir,
+          deploy: async (usageStage) => await applySqliteMigrations({ executor, migrationsDir: usageStage.migrationsDir }),
+        });
+        return { applied: [...(usage.expand?.applied ?? []), ...(usage.contract?.applied ?? []), ...usage.final.applied] };
+      },
       runFinalContractBackfill: async () => {
         await runSessionSystemRecordFinalContractBackfill({ provider: 'sqlite', databaseUrl });
       },

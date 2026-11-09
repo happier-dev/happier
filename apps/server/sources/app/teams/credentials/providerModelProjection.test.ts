@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { TeamCredentialSourceBindingV1Schema } from "@happier-dev/protocol/teams";
+import { ProviderBindingAuthorizationTicketV1Schema, projectProviderBindingAuthorizationTicketReferenceV1 } from '@happier-dev/protocol/providers/grants/v1';
 
 import {
     projectTeamCredentialProviderModels,
@@ -101,6 +102,30 @@ function response(fingerprint: typeof source.connectionSecurityFingerprint = sou
 }
 
 describe("projectTeamCredentialProviderModels", () => {
+    it('projects only the native source comparison and requires that exact source evidence', () => {
+        const ticket = ProviderBindingAuthorizationTicketV1Schema.parse({ connectionId: source.connectionId, connectionRevision: 1,
+            machineId: 'controller', connectionSecurityFingerprint: source.connectionSecurityFingerprint,
+            bindingSecurityFingerprint: 'binding', grantFingerprint: 'grant', selectedSecretBindingId: 'private-selected-secret',
+            selectedSecretRecordFingerprint: 'private-secret-record' });
+        const providerTicket = projectProviderBindingAuthorizationTicketReferenceV1(ticket);
+        const current = response();
+        const nativeResponse = { ...current, groups: current.groups.map(group => ({ ...group,
+            rows: group.rows.map(row => ({ ...row, nativeSource: { authorizationTicket: ticket, providerTicket,
+                endpoint: row.directMaterialization.endpoint, credentialTransport: row.directMaterialization.credentialTransport } })),
+        })) };
+        const input = { resourceId: 'resource-1', teamId: 'team-1', resourceRevision: 7,
+            agentTargetKey: application.agentTargetKey, application, source, allowedModelIds: null,
+            deliveryMode: 'vendor-native' as const };
+        const projected = projectTeamCredentialProviderModels({ ...input, response: nativeResponse });
+        expect(projected).toMatchObject({ status: 'success', models: [{ selection: { deliveryMode: 'vendor-native' },
+            nativeSource: { providerTicket }, sourceRevision: 'source-1', availability: 'available' }] });
+        expect(JSON.stringify(projected)).not.toContain('authorizationTicket');
+        expect(JSON.stringify(projected)).not.toContain('private-selected-secret');
+        expect(projectTeamCredentialProviderModels({ ...input, response: current })).toMatchObject({
+            status: 'success', models: [{ availability: 'source_owner_required' }],
+        });
+    });
+
     it("preserves source catalog uncertainty independently of route availability", () => {
         const observed = response();
         Object.assign(observed.groups[0]!.rows[0]!, { confidence: 'account_unverified',
@@ -235,12 +260,17 @@ describe("projectTeamCredentialRequestPolicySupportModels", () => {
 
     it("projects only exact enforceable protocol and reasoning facts from current model rows", () => {
         const row = response().groups[0]!.rows[0]!;
+        const sourceApplication = {
+            implementationIdentity: application.implementationIdentity,
+            endpointTemplateId: application.endpointTemplateId,
+            protocol: application.protocol,
+        };
         expect(projectTeamCredentialRequestPolicySupportModels({
             status: "success",
-            models: [{ ...row.requestPolicySupport, descriptor: row.descriptor }],
+            models: [{ ...row.requestPolicySupport, application: sourceApplication, descriptor: row.descriptor }],
         })).toEqual([expect.objectContaining({
             descriptor: expect.objectContaining({ id: "gpt-5" }),
-            application,
+            application: sourceApplication,
             sourceRevision: "source-1",
             allowedProtocolKinds: ["openai_responses"],
             reasoningEffort: { allowedValues: ["low", "medium"], defaultValue: "medium" },

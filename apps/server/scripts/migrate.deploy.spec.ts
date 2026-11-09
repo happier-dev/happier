@@ -1,9 +1,34 @@
 import { describe, expect, it } from 'vitest';
 import { resolveMigrationDeployScript } from './migrate.deploy';
-import { spawnSync } from 'node:child_process';
+import { execFile, spawnSync } from 'node:child_process';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { promisify } from 'node:util';
+
+const execFileAsync = promisify(execFile);
+const MODULE_IMPORT_TIMEOUT_MS = 60_000;
+
+describe('SQLite migration module initialization', () => {
+    it.each(['default', 'happier-source'])(
+        'loads the migration entry in a fresh process with %s package resolution',
+        async (condition) => {
+            // Import only: exercise the real migration graph without opening a database.
+            // Vitest's warmed module graph otherwise hides initialization-order failures.
+            const { stdout } = await execFileAsync(process.execPath, [
+                ...(condition === 'happier-source' ? ['--conditions=happier-source'] : []),
+                '--import', 'tsx', '--input-type=module', '--eval',
+                'await import("./scripts/migrate.sqlite.deploy.ts"); console.log("MIGRATION_ENTRY_IMPORT_READY");',
+            ], {
+                cwd: resolve(__dirname, '..'),
+                encoding: 'utf8',
+                timeout: MODULE_IMPORT_TIMEOUT_MS,
+            });
+            expect(stdout.trim()).toBe('MIGRATION_ENTRY_IMPORT_READY');
+        },
+        MODULE_IMPORT_TIMEOUT_MS + 5_000,
+    );
+});
 
 describe('resolveMigrationDeployScript', () => {
     it.each([

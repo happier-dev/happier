@@ -129,30 +129,6 @@ describe("browser server feature resolver", () => {
         expect(payload.capabilities.browser.automation).toMatchObject({
             enabled: true,
             available: true,
-            supportedActions: [
-                "getStatus",
-                "snapshot",
-                "semanticSnapshot",
-                "queryElements",
-                "getDiagnosticsSummary",
-                "getActionTimeline",
-                "waitFor",
-                "navigate",
-                "reload",
-                "goBack",
-                "goForward",
-                "click",
-                "tap",
-                "type",
-                "press",
-                "scroll",
-                "hover",
-                "focus",
-                "select",
-                "setValue",
-                "upload",
-                "drag",
-            ],
             supportedFidelities: ["cdp", "nativeWebView", "injectedPage", "previewProxy", "streamedSurface", "webIframe"],
             supportedAdapterKinds: [
                 "localPreview",
@@ -183,6 +159,21 @@ describe("browser server feature resolver", () => {
         expect(payload.capabilities.browser.automation.supportedActions).not.toContain("evaluate");
         expect(payload.capabilities.browser.automation.supportedActions).not.toContain("startElementPicker");
         expect(payload.capabilities.browser.automation.supportedActions).not.toContain("cancelElementPicker");
+    });
+
+    it("advertises recording cursor overlays only with enabled recording and managed producer", () => {
+        const enabled = resolveServerFeaturePayload({} as NodeJS.ProcessEnv, serverFeatureRegistry);
+        expect(enabled.capabilities.browser.recording.cursorOverlaySupported).toBe(true);
+        expect(enabled.capabilities.browser.recording.supportedCaptureKinds).toContain("cdpScreencast");
+        const disabled = resolveServerFeaturePayload({
+            HAPPIER_FEATURE_BROWSER_RECORDING__ENABLED: "0",
+        } as NodeJS.ProcessEnv, serverFeatureRegistry);
+        expect(disabled.capabilities.browser.recording.cursorOverlaySupported).toBe(false);
+        const noProducer = resolveServerFeaturePayload({
+            HAPPIER_FEATURE_BROWSER_SIDECAR__ENABLED: "0",
+        } as NodeJS.ProcessEnv, serverFeatureRegistry);
+        expect(noProducer.capabilities.browser.recording.enabled).toBe(true);
+        expect(noProducer.capabilities.browser.recording.cursorOverlaySupported).toBe(false);
     });
 
     it("defaults the managed-sidecar browser surface on after the managed Chromium sidecar shipped", () => {

@@ -161,12 +161,14 @@ export function composeHomeConnectionDescriptor(
     }
     const iroh = facts.iroh.status === "active" && facts.iroh.snapshot ? facts.iroh.snapshot : null;
     const priorEndpointId = revisionOwner?.irohEndpointId;
-    // Starting, stopping, unavailable, failure, and an initial uncomposed
-    // observation say nothing about explicit operator retirement. If the last
-    // published set carried Iroh, publish nothing and preserve client state.
-    // Only the explicit `retired` lifecycle state may remove it.
+    // An in-progress transition does not settle the carrier set. A settled
+    // optional-carrier failure does: publish the remaining ingress without
+    // retiring its pinned EndpointId, so ordinary Home access stays available
+    // and recovery can rejoin only the original native identity.
     if (!iroh
         && facts.iroh.status !== "retired"
+        && facts.iroh.status !== "unavailable"
+        && facts.iroh.status !== "failed"
         && contentKeyCarriesIrohEndpoint(revisionOwner?.contentKey)) {
         return undefined;
     }
@@ -484,8 +486,8 @@ export async function reserveRelocatedHomeConnectionDescriptor(params: Readonly<
         throw new HomeConnectionDescriptorPublicationUnavailableError();
     }
     // This explicit stopped relocation selects the destination's carrier set.
-    // A null endpoint allows only configured HTTPS ingress; ordinary lifecycle
-    // unavailability still cannot retire an incumbent Iroh publication.
+    // A null endpoint explicitly retires the native identity. Ordinary carrier
+    // failures only withdraw its route and keep the pinned identity recoverable.
     const iroh: HomeIrohEndpointState = params.irohEndpoint ? {
         status: "active",
         snapshot: { endpoint: params.irohEndpoint },

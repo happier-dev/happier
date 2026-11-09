@@ -11,8 +11,64 @@ import { applyEnvValues, snapshotEnv, restoreEnv } from "../testkit/env";
 import { enableErrorHandlers } from './enableErrorHandlers';
 import { InactiveAccountError } from '@/app/auth/accountStatus';
 import { TransactionAcquisitionUnavailableError, TransactionConflictExhaustedError, TransactionDeadlineExceededError } from '@/storage/inTx';
+import { request as requestHttp, type ClientRequest } from 'node:http';
+import { once } from 'node:events';
+import { Readable } from 'node:stream';
+import { finished } from 'node:stream/promises';
 
 describe('enableErrorHandlers', () => {
+    it.each([true, false])('classifies a native premature stream close by whether the HTTP peer cancelled (%s)', async cancelled => {
+        const records: Record<string, unknown>[] = [];
+        const stream = Reflect.get(logger, symbols.streamSym) as DestinationStream;
+        const sink = vi.spyOn(stream, 'write').mockImplementation(chunk => { records.push(JSON.parse(String(chunk))); });
+        const app = Fastify({ logger: false });
+        enableErrorHandlers(app as Parameters<typeof enableErrorHandlers>[0]);
+        const errorCodes: string[] = [];
+        const sendsAfterClose: number[] = [];
+        let client: ClientRequest | undefined;
+        let responseStatus: number | undefined;
+        // Both are native streams. The connected control closes its source
+        // prematurely; the cancellation case closes only the real HTTP peer.
+        const payload = cancelled ? new Readable({ read() {} })
+            : new Readable({ read() { this.destroy(); } });
+        const streamSettled = finished(payload, { cleanup: true }).catch(() => {});
+        app.addHook('onSend', async (_request, reply, value) => {
+            if (reply.raw.destroyed) sendsAfterClose.push(reply.statusCode);
+            if (cancelled && value === payload) {
+                const peerClosed = once(reply.raw, 'close');
+                client!.destroy();
+                await peerClosed;
+            }
+        });
+        app.addHook('onError', async (_request, _reply, error) => {
+            if (typeof error.code === 'string') errorCodes.push(error.code);
+        });
+        app.post('/native-stream', async (_request, reply) => reply.type('application/x-ndjson').send(payload));
+        try {
+            const baseUrl = await app.listen({ host: '127.0.0.1', port: 0 });
+            client = requestHttp(`${baseUrl}/native-stream`, { method: 'POST', headers: { 'content-type': 'application/json' } });
+            client.on('error', () => {}); // A cancelled peer intentionally sees ECONNRESET.
+            client.on('response', response => { responseStatus = response.statusCode; response.resume(); });
+            const clientClosed = new Promise<void>(resolve => { client!.once('close', resolve); });
+            client.end('{}');
+            await streamSettled;
+            await clientClosed;
+        } finally {
+            client?.destroy();
+            await app.close();
+            sink.mockRestore();
+        }
+        expect(errorCodes).toContain('ERR_STREAM_PREMATURE_CLOSE');
+        const failures = records.filter(record => record.module === 'fastify-error' && Number(record.statusCode) >= 500);
+        if (cancelled) {
+            expect(sendsAfterClose).toEqual([]);
+            expect(failures).toEqual([]);
+        } else {
+            expect(responseStatus).toBe(500);
+            expect(failures).toEqual(expect.arrayContaining([expect.objectContaining({ statusCode: 500 })]));
+        }
+    });
+
     it.each([
         { error: new TransactionAcquisitionUnavailableError(new Error('private database detail')), code: 'database_connection_unavailable' },
         { error: new TransactionDeadlineExceededError(new Error('private database detail'), 'test-request'), code: 'database_transaction_timeout' },
@@ -75,6 +131,9 @@ describe('enableErrorHandlers', () => {
                 ? { error: 'database_connection_unavailable' } : { code: 'internal_error' });
             expect(records).toEqual(expect.arrayContaining([expect.objectContaining({ module: 'fastify-error',
                 httpRequestId: 'qb80-http-request', errorClass: diagnostic.errorClass,
+                method: 'POST', route: '/v1/machines/managed/controller/report',
+                statusCode: response.statusCode,
+                responseCode: 'statusCode' in diagnostic ? 'database_connection_unavailable' : 'internal_error',
                 requestId: 'admit-own-action', actionId: 'session.attention.set',
                 ...(diagnostic.prismaCode ? { prismaCode: diagnostic.prismaCode } : {}),
                 ...('sqlState' in diagnostic ? { sqlState: diagnostic.sqlState } : {}),

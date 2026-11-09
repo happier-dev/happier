@@ -65,11 +65,13 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== "postgres")("Team member adm
             await client.teamGroup.createMany({ data: groups.slice(1) });
             await client.teamInvitation.createMany({ data: invitations.slice(1) });
             const largeOwnerCosts = await routeOwnerCosts();
+            console.info("TEAM_PAGE_OWNER_PHYSICAL_SELECTS", { fixture: { members: [2, 122], invitations: [1, 120], groups: [1, 120] }, small: smallOwnerCosts, large: largeOwnerCosts });
             const large = await page();
             selects = 0;
             const detail = await client.$transaction(tx => getTeamMemberForActorInTx(tx, { teamId: team.id, actorAccountId: owner!.id, membershipId: readerMembership.id }), { isolationLevel: "RepeatableRead" });
             const detailSelects = selects;
             expect(detail).toMatchObject({ ok: true, value: { id: readerMembership.id, capabilities: { suspend: true } } });
+            console.info("TEAM_MEMBERS_ADMITTED_CONTEXT_COST", { members: [2, 122], pageSelects: [small.selects, large.selects], detailSelects });
             expect([small.selects, large.selects, detailSelects]).toEqual([6, 6, 6]);
 
             // A non-admin reader retains visibility but never gains management.

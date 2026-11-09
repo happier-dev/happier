@@ -365,7 +365,10 @@ describe("workflow Run live state", () => {
         for (const summary of result.summaries) {
             const own = records.filter((row) => row.sourceArtifactId === summary.sourceArtifactId).reverse();
             expect(summary.lastRun).toMatchObject({ runId: own[0].runId, state: own[0].state });
-            expect(summary.recent).toEqual(own.slice(0, 2).map(({ runId, state }) => ({ runId, state })));
+            expect(summary.recent).toEqual(own.slice(0, 2).map(({ runId, state }) => ({ runId, state,
+                workflowCustodyState: state === "succeeded" ? "settled" : "pending",
+                attentionRequired: state !== "succeeded", failureUnseen: false, invocationAttentionRequired: state !== "succeeded",
+            })));
             const attention = await service.listWorkflowRuns({ accountId: seeded.accountId, sourceArtifactId: summary.sourceArtifactId, attention: "required", pageByteLimit: EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES });
             expect(summary.needsYouCount).toBe(attention.runs.length);
             expect(summary.needsYouCount).toBe(2);

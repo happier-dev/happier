@@ -3,6 +3,7 @@ import { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { Tx } from "@/storage/inTx";
 import * as catalog from "./resourceRead";
+import { readTeamCredentialCustodianResourcePageInTx } from './resourceCustodianRead';
 
 describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== "postgres")("Account credential discovery (PostgreSQL)", () => {
     const client = new PrismaClient({ log: [{ emit: "event", level: "query" }] });
@@ -18,7 +19,9 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== "postgres")("Account credent
     } } });
     client.$on("query", event => {
         if (/^SELECT\b/i.test(event.query)) selects++;
-        const bindings = (JSON.parse(event.params) as unknown[]).length;
+        // Prisma's parameter display is not JSON for quoted stored-source data.
+        // This PostgreSQL suite counts the actual numbered SQL bind positions.
+        const bindings = [...event.query.matchAll(/\$(\d+)\b/g)].reduce((maximum, match) => Math.max(maximum, Number(match[1])), 0);
         maxBindings = Math.max(maxBindings, bindings);
     });
     beforeAll(async () => {
@@ -29,6 +32,97 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== "postgres")("Account credent
         await client.$connect();
     });
     afterAll(async () => { await client.$disconnect(); });
+
+    it("reads exactly one authorized resource in a large Team and observes withdrawal", async () => {
+        const actor = await client.account.create({ data: { encryptionMode: "plain" } });
+        const owner = await client.account.create({ data: { encryptionMode: "plain" } });
+        const team = await client.team.create({ data: { name: "Exact catalog" } });
+        const ids = Array.from({ length: 351 }, () => randomUUID());
+        let candidates = 0;
+        let usageIdentityRows = 0;
+        const observed = client.$extends({ query: { teamCredentialResource: {
+            async findMany({ args, query }) {
+                const rows = await query(args);
+                // Count the candidate window, not the existing exact usage
+                // identity projection (teamCredentialUsageLimits.ts:441).
+                if (args.select) {
+                    expect(args.select).toEqual({ id: true, teamId: true });
+                    expect(rows.map(row => row.id)).toEqual([ids[350]]);
+                    usageIdentityRows += rows.length;
+                } else candidates += rows.length;
+                return rows;
+            },
+        } } });
+        try {
+            await client.teamMembership.createMany({ data: [
+                { teamId: team.id, accountId: owner.id, role: "owner" },
+                { teamId: team.id, accountId: actor.id, role: "member" },
+            ] });
+            await client.teamCredentialResource.createMany({ data: ids.map((id, index) => ({
+                id, teamId: team.id, custodianAccountId: owner.id, displayName: `Resource ${String(index).padStart(3, "0")}`,
+                sourceBindingJson: "{}", disclosureCeiling: "brokered_only", sessionUsePolicy: "personal_allowed",
+                allMembersDeliveryMode: "brokered",
+            })) });
+            const input = { teamId: team.id, resourceId: ids[350]!, actorAccountId: actor.id,
+                authentication: { authenticationAuthority: "present_user" as const } };
+            const read = () => observed.$transaction(tx => catalog.readTeamCredentialCatalogInTx(tx as unknown as Tx, input));
+            const result = await read();
+            expect(candidates).toBe(1);
+            expect(usageIdentityRows).toBe(1);
+            expect(result.ok && result.page.resources.map(row => row.id)).toEqual([ids[350]]);
+            expect(result.ok && result.page.nextCursor).toBeNull();
+            await client.teamCredentialResource.update({ where: { id: ids[350] }, data: { allMembersDeliveryMode: null } });
+            const withdrawn = await read();
+            expect(withdrawn.ok && withdrawn.page.resources).toEqual([]);
+            expect(candidates).toBe(2);
+            expect(usageIdentityRows).toBe(1);
+            await client.teamMembership.update({ where: { teamId_accountId: { teamId: team.id, accountId: actor.id } },
+                data: { status: "suspended" } });
+            expect(await read()).toEqual({ ok: false, error: "not_found_or_not_visible" });
+            expect(candidates).toBe(2);
+            console.info("EXACT_TEAM_CATALOG", { inventory: ids.length, candidatesPerRead: candidates / 2, usageIdentityRows });
+        } finally {
+            await client.team.delete({ where: { id: team.id } });
+            await client.account.deleteMany({ where: { id: { in: [actor.id, owner.id] } } });
+        }
+    });
+
+    it('selects one owned direct source across 101 Teams and 351 resources on PostgreSQL', async () => {
+        const actor = await client.account.create({ data: { encryptionMode: 'plain' } });
+        const foreign = await client.account.create({ data: { encryptionMode: 'plain' } });
+        const teamIds = Array.from({ length: 101 }, () => randomUUID());
+        const ownedId = randomUUID();
+        let candidates = 0;
+        const observed = client.$extends({ query: { teamCredentialResource: {
+            async findMany({ args, query }) { const rows = await query(args); candidates += rows.length; return rows; },
+        } } });
+        try {
+            await client.team.createMany({ data: teamIds.map(id => ({ id, name: 'Custodian count' })) });
+            await client.teamMembership.createMany({ data: teamIds.map(teamId => ({ teamId, accountId: actor.id, role: 'owner' })) });
+            const sourceBindingJson = JSON.stringify({ v: 1, kind: 'provider_connection', connectionId: 'pc_source',
+                connectionSecurityFingerprint: 'connection-security:v1:test', credentialSlotId: 'apiKey' });
+            const base = { sourceBindingJson, displayName: 'Direct source', disclosureCeiling: 'direct_allowed',
+                sessionUsePolicy: 'personal_allowed', allMembersDeliveryMode: 'direct' };
+            await client.teamCredentialResource.createMany({ data: [
+                ...Array.from({ length: 350 }, (_, index) => ({ ...base, id: randomUUID(), teamId: teamIds[index % 101]!, custodianAccountId: foreign.id })),
+                { ...base, id: ownedId, teamId: teamIds[100]!, custodianAccountId: actor.id },
+            ] });
+            const read = () => observed.$transaction(tx => readTeamCredentialCustodianResourcePageInTx(tx as unknown as Tx, {
+                actorAccountId: actor.id, authentication: { authenticationAuthority: 'present_user' },
+            }));
+            const result = await read();
+            expect(result.ok && result.page.resources.map(row => row.id)).toEqual([ownedId]);
+            expect(candidates).toBe(1);
+            await client.teamCredentialResource.update({ where: { id: ownedId }, data: { custodianAccountId: foreign.id } });
+            const withdrawn = await read();
+            expect(withdrawn.ok && withdrawn.page.resources).toEqual([]);
+            expect(candidates).toBe(1);
+            console.info('EXACT_CUSTODIAN_CATALOG', { teams: 101, resources: 351, selectedCandidates: candidates });
+        } finally {
+            await client.team.deleteMany({ where: { id: { in: teamIds } } });
+            await client.account.deleteMany({ where: { id: { in: [actor.id, foreign.id] } } });
+        }
+    });
 
     it("keeps catalog SQL independent of Team count, chunks inventory binds, and preserves current refusals", async () => {
         const actor = await client.account.create({ data: { encryptionMode: "plain" } });
@@ -84,6 +178,9 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== "postgres")("Account credent
                     teamId, actorAccountId: actor.id, authentication,
                 }));
             }
+            console.info("TEAM_CREDENTIAL_DISCOVERY_SQL", { oneTeam: single.selects, sixTeams: six.selects,
+                teams1001: inventory.selects, maxBindings: inventory.maxBindings, oldSixTeamReads: selects,
+                projectedMembershipRows: six.projectedMembershipRows });
 
             const old = await client.$transaction(tx => catalog.readTeamCredentialCatalogInTx(tx, {
                 teamId: teamIds[0]!, actorAccountId: actor.id, authentication,

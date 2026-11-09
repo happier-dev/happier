@@ -1,14 +1,3 @@
-import { buildAccountStoredContentCompatibilitySocketAuthV1, CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION } from '@happier-dev/protocol/clientCompatibility/accountStoredContentCompatibilityV1';
-import { eventRouter } from '@/app/events/eventRouter';
-import type { EphemeralUpdate } from '@happier-dev/protocol/updates';
-import { inTx } from '@/storage/inTx';
-import { createAuthenticatedTestApp } from './testkit/sqliteFastify';
-import { stopLocalMachinePresenceTimeout } from '@/app/presence/timeout';
-import tweetnacl from 'tweetnacl';
-import { decodeBase64 } from 'privacy-kit';
-import { MACHINE_PLAIN_DATA_KEY_MARKER, encodePlainMachineStoredContent } from '@happier-dev/protocol';
-import { encodeBase64 as encodeProtocolBase64 } from '@happier-dev/protocol/crypto/base64';
-import { signMachineInstallationProof } from '@happier-dev/protocol/machines/identity/installationIdentity';
 import Fastify from "fastify";
 import { Server } from "socket.io";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -20,6 +9,21 @@ import type { Fastify as AppFastify } from "./types";
 import { auth } from "@/app/auth/auth";
 import { db, withSqliteReadSnapshot } from "@/storage/db";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
+import { stopLocalMachinePresenceTimeout } from '@/app/presence/timeout';
+import tweetnacl from 'tweetnacl';
+import { decodeBase64 } from 'privacy-kit';
+import { MACHINE_UPDATE_OPERATION_PROTOCOL_CAPABILITIES_EVENT_V1, MACHINE_PLAIN_DATA_KEY_MARKER, encodePlainMachineStoredContent } from '@happier-dev/protocol';
+import { encodeBase64 as encodeProtocolBase64 } from '@happier-dev/protocol/crypto/base64';
+import { signMachineInstallationProof } from '@happier-dev/protocol/machines/identity/installationIdentity';
+import { resolveMachineAdmissionInTx, setMachineAccessGrantInTx } from '@/app/machines/machineAccess';
+import { inReadSnapshot, inTx } from '@/storage/inTx';
+import { makeShareEligibleForTest } from '@/testkit/shareEligibility.testkit';
+import { createAuthenticatedTestApp } from './testkit/sqliteFastify';
+import { registerAccountSessionsSignOutEverywhereRoute } from './routes/auth/registerAccountSessionsSignOutEverywhereRoute';
+import { ACCOUNT_SESSIONS_SIGN_OUT_EVERYWHERE_HTTP_PATH_V1 } from '@happier-dev/protocol/auth/accountSessions';
+import { eventRouter } from '@/app/events/eventRouter';
+import type { EphemeralUpdate } from '@happier-dev/protocol/updates';
+import { buildAccountStoredContentCompatibilitySocketAuthV1, CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION } from '@happier-dev/protocol/clientCompatibility/accountStoredContentCompatibilityV1';
 
 type ProviderRequiredErrorPayload = {
     message: string;
@@ -184,50 +188,67 @@ type PausedAdmissionBoundary = Readonly<{
     restore: () => void;
 }>;
 
+function pauseNextWriteTransaction(): PausedAdmissionBoundary {
+    const reached = deferred();
+    const release = deferred();
+    const transaction = db.$transaction;
+    let paused = false;
+    // Hold the actual DB acquisition boundary, before any SQLite connection is
+    // occupied. The replacement handshake can still read and withdraw safely.
+    db.$transaction = new Proxy(transaction, { apply(target, receiver, args) {
+        if (paused) return Reflect.apply(target, receiver, args);
+        paused = true;
+        reached.resolve();
+        return release.promise.then(() => Reflect.apply(target, receiver, args));
+    } });
+    return { reached: reached.promise, release: release.resolve, restore: () => { db.$transaction = transaction; } };
+}
+
 async function pausePostConnectAccountCurrentnessRead(
     server: Server,
     accountId: string,
 ): Promise<PausedAdmissionBoundary> {
     const reached = deferred();
     const release = deferred();
-    const accountReader = await withSqliteReadSnapshot(async reader => reader.account);
-    const originalFindUnique = accountReader.findUnique;
+    const accountReaders = new Set([db.account, await withSqliteReadSnapshot(async reader => reader.account)]);
+    const restorers: Array<() => void> = [];
     let paused = false;
     // Intercept only the persistence boundary once the real socket has joined
-    // the revocation room. No verifier is mocked or selected by call count.
-    const findUniqueSpy = vi.spyOn(accountReader, "findUnique").mockImplementation((...args) => {
-        const query = originalFindUnique(...args);
-        if (
-            paused
-            || args[0].where.id !== accountId
-            || args[0].select?.tokenEpoch !== true
-            || !server.sockets.adapter.rooms.has(getAccountRevocationSocketRoom(accountId))
-        ) return query;
-        paused = true;
-        return new Proxy(query, {
-            get(target, property, receiver) {
-                if (property !== "then") return Reflect.get(target, property, receiver);
-                return (...callbacks: unknown[]) => {
-                    const result = Promise.resolve(target).then(async (value) => {
-                        // Preserve the database's real result, including the old
-                        // epoch, while a lifecycle mutation commits concurrently.
-                        reached.resolve();
-                        await release.promise;
-                        return value;
-                    });
-                    return Reflect.apply(result.then, result, callbacks);
-                };
-            },
+    // the revocation room. Auth's signed-epoch lookup uses the ordinary reader;
+    // full token verification uses its read snapshot. Neither owner is mocked.
+    for (const accountReader of accountReaders) {
+        const originalFindUnique = accountReader.findUnique;
+        const findUniqueSpy = vi.spyOn(accountReader, "findUnique").mockImplementation((...args) => {
+            const query = originalFindUnique(...args);
+            if (
+                paused
+                || args[0].where.id !== accountId
+                || args[0].select?.tokenEpoch !== true
+                || !server.sockets.adapter.rooms.has(getAccountRevocationSocketRoom(accountId))
+            ) return query;
+            paused = true;
+            return new Proxy(query, {
+                get(target, property, receiver) {
+                    if (property !== "then") return Reflect.get(target, property, receiver);
+                    return (...callbacks: unknown[]) => {
+                        const result = Promise.resolve(target).then(async (value) => {
+                            // Preserve the database's real result, including the old
+                            // epoch, while a lifecycle mutation commits concurrently.
+                            reached.resolve();
+                            await release.promise;
+                            return value;
+                        });
+                        return Reflect.apply(result.then, result, callbacks);
+                    };
+                },
+            });
         });
-    });
-    return {
-        reached: reached.promise,
-        release: release.resolve,
-        restore: () => {
+        restorers.push(() => {
             findUniqueSpy.mockRestore();
             Reflect.set(accountReader, "findUnique", originalFindUnique);
-        },
-    };
+        });
+    }
+    return { reached: reached.promise, release: release.resolve, restore: () => { for (const restore of restorers) restore(); } };
 }
 
 describe("startSocket (auth policy enforcement)", () => {
@@ -295,6 +316,126 @@ describe("startSocket (auth policy enforcement)", () => {
             await app.close();
         }
     });
+
+    it.each([true, false])('withdraws retained connection capabilities before a same-installation predecessor reconnect (requester protection: %s)', async retainedRequesterProtection => {
+        const account = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const member = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const installation = tweetnacl.sign.keyPair();
+        const installationId = `installation-${account.id}`;
+        const siblingCapabilities = { sessionSpawn: { protocolVersions: [1] } };
+        const capabilities = { ...siblingCapabilities, requesterExecutionIsolation: { protocolVersions: [1] },
+            connectedAccountAuthentication: { protocolVersions: [1] } };
+        const retainedSiblings = { ...siblingCapabilities, futureOperation: { protocolVersions: [2] } };
+        const machine = await db.machine.create({ data: { id: `downgrade-${account.id}`, accountId: account.id,
+            installationId, installationPublicKey: new Uint8Array(installation.publicKey), active: true,
+            metadata: encodePlainMachineStoredContent({ host: 'downgrade-host', platform: 'linux', happyCliVersion: '0.3.0',
+                homeDir: '/home/test', happyHomeDir: '/home/test/.happier' }),
+            dataEncryptionKey: decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER),
+            operationProtocolCapabilities: { ...retainedSiblings,
+                ...(retainedRequesterProtection ? { requesterExecutionIsolation: capabilities.requesterExecutionIsolation } : {}),
+                connectedAccountAuthentication: capabilities.connectedAccountAuthentication },
+            operationProtocolCapabilitiesRevision: 7 } });
+        // Observe actual database content writes, including equal-value updates,
+        // without replacing transaction or publication logic with mocks.
+        await db.$executeRawUnsafe('CREATE TABLE CapabilityLifecycleWrite (machineId TEXT NOT NULL)');
+        await db.$executeRawUnsafe(`CREATE TRIGGER capability_lifecycle_write AFTER UPDATE OF
+            operationProtocolCapabilities, operationProtocolCapabilitiesRevision ON Machine
+            BEGIN INSERT INTO CapabilityLifecycleWrite (machineId) VALUES (NEW.id); END`);
+        const contentWrites = async () => Number((await db.$queryRaw<Array<{ count: bigint }>>`
+            SELECT COUNT(*) AS count FROM CapabilityLifecycleWrite WHERE machineId = ${machine.id}`)[0].count);
+        await makeShareEligibleForTest(account.id, member.id);
+        await inTx(tx => setMachineAccessGrantInTx(tx, { actorAccountId: account.id, machineId: machine.id,
+            principal: { kind: 'account', accountId: member.id }, level: 'view' }));
+        const admission = (actorAccountId: string) => inReadSnapshot(tx => resolveMachineAdmissionInTx(tx, {
+            actorAccountId, machineId: machine.id, actionId: 'session.spawn_new',
+        }));
+        expect(await admission(member.id)).toMatchObject(retainedRequesterProtection
+            ? { kind: 'admitted' } : { kind: 'denied', code: 'daemon_upgrade_required' });
+        const token = await auth.createToken(account.id, undefined, { kind: 'account', authority: 'present_user' });
+        const app = Fastify({ logger: false }) as unknown as AppFastify;
+        startSocket(app);
+        await app.listen({ port: 0, host: '127.0.0.1' });
+        const address = app.server.address();
+        if (!address || typeof address === 'string') throw new Error('Missing socket listener');
+        // ../0.2 at 285ee7c5acb3bea1489896a254e4445f2483a213 sends this signed
+        // installation handshake, but never publishes operation capabilities.
+        const connect = () => ioClient(`http://127.0.0.1:${address.port}`, { path: '/v1/updates', transports: ['websocket'],
+            reconnection: false, autoConnect: false, auth: { token, clientType: 'machine-scoped', machineId: machine.id,
+                runtimeId: 'same-installation-downgrade', startupSource: 'manual', serviceManaged: false,
+                installationId, installationPublicKey: encodeProtocolBase64(installation.publicKey, 'base64url'),
+                installationProof: signMachineInstallationProof({ payload: { version: 1, installationId,
+                    machineId: machine.id, accountId: account.id }, privateKey: installation.secretKey }) } });
+        const oldDaemon = connect();
+        const currentDaemon = connect();
+        const downgradedAgain = connect();
+        try {
+            let connected = waitForConnectionSuccess(oldDaemon); oldDaemon.connect(); await connected;
+            // The connect event itself must already observe withdrawal; no daemon publication is sent.
+            expect(await admission(member.id)).toEqual({ kind: 'denied', code: 'daemon_upgrade_required' });
+            expect(await admission(account.id)).toMatchObject({ kind: 'admitted' });
+            await oldDaemon.timeout(10_000).emitWithAck('ping');
+            expect(await db.machine.findUniqueOrThrow({ where: { id: machine.id },
+                select: { operationProtocolCapabilities: true, operationProtocolCapabilitiesRevision: true } })).toEqual({
+                operationProtocolCapabilities: retainedSiblings, operationProtocolCapabilitiesRevision: 8,
+            });
+            expect(await contentWrites()).toBe(1);
+            const publicationState = () => db.account.findMany({ where: { id: { in: [account.id, member.id] } },
+                select: { id: true, seq: true }, orderBy: { id: 'asc' } });
+            const beforeEqual = await publicationState();
+            connected = waitForConnectionSuccess(currentDaemon); currentDaemon.connect(); await connected;
+            await currentDaemon.timeout(10_000).emitWithAck('ping');
+            expect(await publicationState()).toEqual(beforeEqual);
+            expect(await contentWrites()).toBe(1);
+            expect(await db.machine.findUniqueOrThrow({ where: { id: machine.id },
+                select: { operationProtocolCapabilities: true, operationProtocolCapabilitiesRevision: true } })).toEqual({
+                operationProtocolCapabilities: retainedSiblings, operationProtocolCapabilitiesRevision: 8,
+            });
+            expect(await currentDaemon.timeout(10_000).emitWithAck(MACHINE_UPDATE_OPERATION_PROTOCOL_CAPABILITIES_EVENT_V1,
+                { capabilities })).toMatchObject({ result: 'success', revision: 9 });
+            expect((await db.machine.findUniqueOrThrow({ where: { id: machine.id },
+                select: { operationProtocolCapabilities: true } })).operationProtocolCapabilities).toEqual(capabilities);
+            expect(await admission(member.id)).toMatchObject({ kind: 'admitted' });
+            expect(await contentWrites()).toBe(2);
+
+            // Hold an already-dispatched changed projection at DB acquisition
+            // while a predecessor takes over the same installation.
+            const server = app.machineDaemonPresence as Server;
+            const serverSocket = server.sockets.sockets.get(currentDaemon.id!);
+            if (!serverSocket) throw new Error('Missing current Machine socket');
+            let completePublication!: (value: unknown) => void;
+            const publicationResult = new Promise<unknown>(resolve => { completePublication = resolve; });
+            serverSocket.use((packet, next) => {
+                if (packet[0] === MACHINE_UPDATE_OPERATION_PROTOCOL_CAPABILITIES_EVENT_V1) {
+                    const acknowledge = packet[packet.length - 1];
+                    packet[packet.length - 1] = (value: unknown) => {
+                        completePublication(value);
+                        if (typeof acknowledge === 'function') acknowledge(value);
+                    };
+                }
+                next();
+            });
+            const paused = pauseNextWriteTransaction();
+            try {
+                currentDaemon.emit(MACHINE_UPDATE_OPERATION_PROTOCOL_CAPABILITIES_EVENT_V1,
+                    { capabilities: { ...capabilities, sessionFollow: { contextV1: true } } }, () => {});
+                await paused.reached;
+                connected = waitForConnectionSuccess(downgradedAgain); downgradedAgain.connect(); await connected;
+                await downgradedAgain.timeout(10_000).emitWithAck('ping');
+                expect((await db.machine.findUniqueOrThrow({ where: { id: machine.id },
+                    select: { operationProtocolCapabilities: true } })).operationProtocolCapabilities).toEqual(siblingCapabilities);
+                expect(await admission(member.id)).toEqual({ kind: 'denied', code: 'daemon_upgrade_required' });
+                paused.release();
+                expect(await publicationResult).toEqual({ v: 1, result: 'error', code: 'machine_unavailable' });
+                expect(await admission(member.id)).toEqual({ kind: 'denied', code: 'daemon_upgrade_required' });
+                expect(await admission(account.id)).toMatchObject({ kind: 'admitted' });
+                expect(await contentWrites()).toBe(3);
+            } finally { paused.release(); paused.restore(); }
+        } finally {
+            oldDaemon.close(); currentDaemon.close(); downgradedAgain.close(); await app.close();
+            await db.$executeRawUnsafe('DROP TRIGGER capability_lifecycle_write');
+            await db.$executeRawUnsafe('DROP TABLE CapabilityLifecycleWrite');
+        }
+    }, 60_000);
 
     it('admits connect only when ready and keeps superseded and ordinary disconnects out of presence transitions', async () => {
         const account = await db.account.create({ data: { publicKey: `presence-socket-${Date.now()}` } });
@@ -398,7 +539,7 @@ describe("startSocket (auth policy enforcement)", () => {
         });
     }, 30_000);
 
-    it("rejects an API token before it can enter every generic Socket.IO admission family", async () => {
+    it("rejects API tokens outside an admitted Session viewer socket", async () => {
         const account = await db.account.create({
             data: { publicKey: `pk-api-token-${Date.now()}` },
             select: { id: true },
@@ -440,11 +581,14 @@ describe("startSocket (auth policy enforcement)", () => {
 
                 try {
                     const payload = await waitForConnectionFailure(socket);
-                    expect(payload.message, admission.name).toBe("invalid-token");
+                    // PATs may use the Session-viewer composition, but this
+                    // nonexistent Session cannot pass its real access owner.
+                    const error = admission.name === "session" ? "credential_scope_denied" : "invalid-token";
+                    expect(payload.message, admission.name).toBe(error);
                     expect(payload.data, admission.name).toEqual({
-                        error: "invalid-token",
+                        error,
                         provider: undefined,
-                        statusCode: 401,
+                        statusCode: admission.name === "session" ? 403 : 401,
                         owner: undefined,
                     });
                 } finally {
@@ -562,17 +706,8 @@ describe("startSocket (auth policy enforcement)", () => {
                 name: "machine",
                 configure: async (accountId: string): Promise<Readonly<Record<string, string>>> => {
                     const machineId = `m-epoch-race-${Date.now()}`;
-                    await db.machine.create({
-                        data: {
-                            id: machineId,
-                            accountId,
-                            metadata: "metadata",
-                            metadataVersion: 1,
-                            daemonState: null,
-                            daemonStateVersion: 0,
-                            active: false,
-                        },
-                    });
+                    await db.machine.create({ data: { id: machineId, accountId, metadata: "metadata",
+                        metadataVersion: 1, daemonState: null, daemonStateVersion: 0, active: false } });
                     return { clientType: "machine-scoped", machineId };
                 },
                 pauseAdmission: (): PausedAdmissionBoundary => {
@@ -583,14 +718,11 @@ describe("startSocket (auth policy enforcement)", () => {
                         admissionReached.resolve();
                         return pausePrismaQuery(originalFindFirst(...args), releaseAdmission.promise);
                     });
-                    return {
-                        reached: admissionReached.promise,
-                        release: releaseAdmission.resolve,
+                    return { reached: admissionReached.promise, release: releaseAdmission.resolve,
                         restore: () => {
                             findFirstSpy.mockRestore();
                             Reflect.set(db.machine, "findFirst", originalFindFirst);
-                        },
-                    };
+                        } };
                 },
             },
         ] as const;
@@ -671,17 +803,8 @@ describe("startSocket (auth policy enforcement)", () => {
                 name: "machine",
                 configure: async (accountId: string): Promise<Readonly<Record<string, string>>> => {
                     const machineId = `m-post-connect-epoch-${Date.now()}`;
-                    await db.machine.create({
-                        data: {
-                            id: machineId,
-                            accountId,
-                            metadata: "metadata",
-                            metadataVersion: 1,
-                            daemonState: null,
-                            daemonStateVersion: 0,
-                            active: false,
-                        },
-                    });
+                    await db.machine.create({ data: { id: machineId, accountId, metadata: "metadata",
+                        metadataVersion: 1, daemonState: null, daemonStateVersion: 0, active: false } });
                     return { clientType: "machine-scoped", machineId };
                 },
             },
@@ -770,21 +893,10 @@ describe("startSocket (auth policy enforcement)", () => {
                 name: "machine",
                 configure: async (accountId: string) => {
                     const machineId = `m-room-currentness-${crypto.randomUUID()}`;
-                    await db.machine.create({
-                        data: {
-                            id: machineId,
-                            accountId,
-                            metadata: "metadata",
-                            metadataVersion: 1,
-                            daemonState: null,
-                            daemonStateVersion: 0,
-                            active: false,
-                        },
-                    });
-                    return {
-                        socketAuth: { clientType: "machine-scoped", machineId },
-                        protectedRoom: `machine:${machineId}:${accountId}`,
-                    };
+                    await db.machine.create({ data: { id: machineId, accountId, metadata: "metadata",
+                        metadataVersion: 1, daemonState: null, daemonStateVersion: 0, active: false } });
+                    return { socketAuth: { clientType: "machine-scoped", machineId },
+                        protectedRoom: `machine:${machineId}:${accountId}` };
                 },
             },
         ] as const;
@@ -1455,6 +1567,222 @@ describe("startSocket (auth policy enforcement)", () => {
         }
     }, 30_000);
 
+    it("makes a cleanly stopped Machine offline immediately and admits its replacement without the presence timeout", async () => {
+        const account = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const installation = tweetnacl.sign.keyPair();
+        const installationId = `clean-stop-${account.id}`;
+        const machine = await db.machine.create({ data: {
+            id: `clean-stop-${account.id}`, accountId: account.id, installationId,
+            installationPublicKey: new Uint8Array(installation.publicKey), active: false,
+            metadata: encodePlainMachineStoredContent({ host: 'clean-stop', platform: 'linux', happyCliVersion: '0.3.0',
+                homeDir: '/home/test', happyHomeDir: '/home/test/.happier' }),
+            dataEncryptionKey: decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER),
+        } });
+        const token = await auth.createToken(account.id, undefined, { kind: 'account', authority: 'present_user' });
+        const app = createAuthenticatedTestApp({ authentication: 'real' }) as AppFastify;
+        startSocket(app);
+        await app.listen({ port: 0, host: '127.0.0.1' });
+        const address = app.server.address();
+        if (!address || typeof address === 'string') { await app.close(); throw new Error('Missing socket listener'); }
+        const connect = (runtimeId: string) => ioClient(`http://127.0.0.1:${address.port}`, {
+            path: '/v1/updates', transports: ['websocket'], reconnection: false, autoConnect: false,
+            auth: { token, clientType: 'machine-scoped', machineId: machine.id, runtimeId,
+                startupSource: 'manual', serviceManaged: false, installationId,
+                installationPublicKey: encodeProtocolBase64(installation.publicKey, 'base64url'),
+                installationProof: signMachineInstallationProof({ payload: { version: 1, installationId,
+                    machineId: machine.id, accountId: account.id }, privateKey: installation.secretKey }),
+            },
+        });
+        const publisher = connect('clean-stop-first');
+        const replacement = connect('clean-stop-replacement');
+        const viewer = ioClient(`http://127.0.0.1:${address.port}`, {
+            path: '/v1/updates', transports: ['websocket'], reconnection: false, autoConnect: false,
+            auth: { token, clientType: 'user-scoped' },
+        });
+        const currentViewer = ioClient(`http://127.0.0.1:${address.port}`, {
+            path: '/v1/updates', transports: ['websocket'], reconnection: false, autoConnect: false,
+            auth: { token, clientType: 'user-scoped',
+                ...buildAccountStoredContentCompatibilitySocketAuthV1(CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION) },
+        });
+        const activity: Array<Extract<EphemeralUpdate, { type: 'machine-activity' }>> = [];
+        const currentActivity: typeof activity = [];
+        currentViewer.on('ephemeral', (event: EphemeralUpdate) => {
+            if (event.type === 'machine-activity' && event.id === machine.id) currentActivity.push(event);
+        });
+        viewer.on('ephemeral', (event: EphemeralUpdate) => {
+            if (event.type === 'machine-activity' && event.id === machine.id) activity.push(event);
+        });
+        const readPresence = () => db.machine.findUniqueOrThrow({ where: { id: machine.id } });
+        try {
+            expect(await auth.verifyTokenForRoute(token)).toMatchObject({ userId: account.id });
+            const watching = waitForConnectionSuccess(viewer); viewer.connect(); await watching;
+            await viewer.timeout(7_500).emitWithAck('ping');
+            const watchingCurrent = waitForConnectionSuccess(currentViewer); currentViewer.connect(); await watchingCurrent;
+            await currentViewer.timeout(7_500).emitWithAck('ping');
+            const connected = waitForConnectionSuccess(publisher); publisher.connect(); await connected;
+            await publisher.timeout(7_500).emitWithAck('ping');
+            let online = await readPresence();
+            expect(online.active).toBe(true);
+            await expect.poll(() => currentActivity.length).toBe(1);
+            publisher.emit('machine-alive', { machineId: machine.id, time: Date.now() });
+            await expect.poll(() => activity.length).toBe(2);
+            online = await readPresence();
+            expect(activity[1]).toEqual({ type: 'machine-activity', id: machine.id, active: true,
+                activeAt: online.lastActiveAt.getTime() });
+            expect(currentActivity).toHaveLength(1);
+            activity.pop(); // Keep the transition assertions independent of the legacy observation.
+            publisher.disconnect();
+            await expect.poll(async () => (await readPresence()).active).toBe(false);
+            expect((await readPresence()).lastActiveAt).toEqual(online.lastActiveAt);
+            await expect.poll(() => activity.filter(event => !event.active)).toEqual([
+                { type: 'machine-activity', id: machine.id, active: false, activeAt: online.lastActiveAt.getTime() },
+            ]);
+            const reconnected = waitForConnectionSuccess(replacement); replacement.connect(); await reconnected;
+            await replacement.timeout(7_500).emitWithAck('ping');
+            expect((await readPresence()).active).toBe(true);
+            await expect.poll(() => activity.map(event => event.active)).toEqual([true, false, true]);
+            // An unexpected transport loss retains the existing missed-beat grace.
+            const serverSocket = [...eventRouter.getConnections(account.id) ?? []]
+                .find(connection => connection.socket.id === replacement.id)?.socket;
+            if (!serverSocket) throw new Error('Missing admitted replacement socket');
+            const transportClosed = new Promise<void>(resolve => serverSocket.once('disconnect', () => { setImmediate(resolve); }));
+            replacement.io.engine.close();
+            await transportClosed;
+            expect((await inTx(tx => tx.machine.findUniqueOrThrow({ where: { id: machine.id } }))).active).toBe(true);
+        } finally {
+            publisher.close(); replacement.close(); viewer.close(); currentViewer.close(); await app.close();
+        }
+    }, 30_000);
+
+    it("verifies an installed Machine publisher once at connect, accepts semantic beats without reverification, and evicts it on sign-out", async () => {
+        const account = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const installation = tweetnacl.sign.keyPair();
+        const installationId = `publisher-installation-${account.id}`;
+        const lastSeen = new Date(Date.now() - 70_000);
+        const machine = await db.machine.create({ data: {
+            id: `publisher-${account.id}`, accountId: account.id,
+            installationId, installationPublicKey: new Uint8Array(installation.publicKey),
+            metadata: encodePlainMachineStoredContent({ host: 'publisher-host', platform: 'linux', happyCliVersion: '0.3.0',
+                homeDir: '/home/test', happyHomeDir: '/home/test/.happier' }),
+            dataEncryptionKey: decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER),
+            active: false, lastActiveAt: lastSeen,
+        } });
+        const token = await auth.createToken(account.id, undefined, { kind: 'account', authority: 'present_user' });
+        const app = createAuthenticatedTestApp({ authentication: 'real' }) as AppFastify;
+        startSocket(app);
+        registerAccountSessionsSignOutEverywhereRoute(app);
+        await app.listen({ port: 0, host: '127.0.0.1' });
+        const address = app.server.address();
+        if (!address || typeof address === 'string') { await app.close(); throw new Error('Missing socket listener'); }
+        const publisherAuth = {
+            token, clientType: 'machine-scoped', machineId: machine.id,
+            runtimeId: 'installed-machine-publisher', startupSource: 'manual', serviceManaged: false,
+            installationId, installationPublicKey: encodeProtocolBase64(installation.publicKey, 'base64url'),
+            installationProof: signMachineInstallationProof({ payload: { version: 1, installationId,
+                machineId: machine.id, accountId: account.id }, privateKey: installation.secretKey }),
+        };
+        const connect = () => ioClient(`http://127.0.0.1:${address.port}`, { path: '/v1/updates', transports: ['websocket'],
+            reconnection: false, autoConnect: false, auth: publisherAuth });
+        const publisher = connect();
+        // Observe the real verifier without replacing credential admission.
+        const verification = vi.spyOn(auth, 'verifyTokenForRoute');
+        const epochReads = vi.spyOn(auth, 'isSignedCredentialCurrent');
+        const readPresence = () => db.machine.findUniqueOrThrow({ where: { id: machine.id },
+            select: { active: true, lastActiveAt: true } });
+        try {
+            const connected = waitForConnectionSuccess(publisher); publisher.connect(); await connected;
+            // Ping only waits for production packet admission to become ready.
+            await publisher.timeout(7_500).emitWithAck('ping');
+            const admitted = await readPresence();
+            expect(admitted.active).toBe(true);
+            expect(admitted.lastActiveAt.getTime()).toBeGreaterThan(lastSeen.getTime());
+            expect.soft(verification.mock.calls.length).toBe(1);
+            expect(epochReads.mock.calls.length).toBe(1);
+            verification.mockClear();
+            epochReads.mockClear();
+
+            let lastActiveAt = admitted.lastActiveAt.getTime();
+            for (let beat = 0; beat < 3; beat += 1) {
+                await expect.poll(() => Date.now()).toBeGreaterThan(lastActiveAt);
+                publisher.emit('machine-alive', { machineId: machine.id, time: Date.now() });
+                // Observe the semantic write itself; a ping would acknowledge
+                // dispatch without waiting for the async liveness transaction.
+                await expect.poll(async () => (await readPresence()).lastActiveAt.getTime()).toBeGreaterThan(lastActiveAt);
+                const presence = await readPresence();
+                expect(presence.active).toBe(true);
+                lastActiveAt = presence.lastActiveAt.getTime();
+            }
+            expect.soft(verification.mock.calls.length).toBe(0);
+            expect(epochReads.mock.calls.length).toBe(0);
+
+            const disconnected = new Promise<void>(resolve => publisher.once('disconnect', () => resolve()));
+            const signedOut = await app.inject({ method: 'POST', url: ACCOUNT_SESSIONS_SIGN_OUT_EVERYWHERE_HTTP_PATH_V1,
+                headers: { authorization: `Bearer ${token}` }, payload: {} });
+            expect(signedOut.statusCode).toBe(200);
+            expect(signedOut.json()).toEqual({ status: 'signed_out' });
+            await disconnected;
+            expect(publisher.connected).toBe(false);
+            const retry = connect();
+            try {
+                const refused = waitForConnectionFailure(retry); retry.connect();
+                expect((await refused).message).toBe('invalid-token');
+            } finally { retry.close(); }
+        } finally {
+            verification.mockRestore();
+            epochReads.mockRestore();
+            publisher.close();
+            await app.close();
+        }
+    }, 30_000);
+
+    it("admits a machine-bound Session publisher once and retires it through Account eviction", async () => {
+        const account = await db.account.create({ data: { publicKey: `pk-publisher-${Date.now()}` }, select: { id: true } });
+        await db.machine.create({ data: { id: "m-publisher", accountId: account.id, metadata: "metadata", metadataVersion: 1,
+            daemonState: null, daemonStateVersion: 0, active: false } });
+        await db.session.create({ data: { id: "s-publisher", tag: `t-publisher-${Date.now()}`, accountId: account.id,
+            encryptionMode: "e2ee", metadata: "{}" } });
+        await db.accessKey.create({ data: { accountId: account.id, machineId: "m-publisher", sessionId: "s-publisher", data: "envelope" } });
+        const token = await auth.createToken(account.id, undefined, { kind: "account", authority: "present_user" });
+        const app = Fastify({ logger: false }) as unknown as AppFastify;
+        startSocket(app);
+        await app.listen({ port: 0, host: "127.0.0.1" });
+        const address = app.server.address();
+        const port = typeof address === "object" && address ? address.port : null;
+        if (!port) { await app.close(); throw new Error("Failed to bind socket server"); }
+        const publisherAuth = { token, clientType: "session-scoped", sessionId: "s-publisher", machineId: "m-publisher" };
+        const publisher = ioClient(`http://127.0.0.1:${port}`, { path: "/v1/updates", transports: ["websocket"],
+            reconnection: false, autoConnect: false, auth: publisherAuth });
+        const verification = vi.spyOn(auth, "verifyTokenForRoute");
+        try {
+            await new Promise<void>((resolve, reject) => {
+                publisher.once("connect", resolve); publisher.once("connect_error", reject); publisher.connect();
+            });
+            await publisher.timeout(7_500).emitWithAck("ping");
+            // Connect admission owns the credential decision; later packets of
+            // the admitted publisher do not re-verify it.
+            verification.mockClear();
+            for (let packet = 0; packet < 3; packet += 1) await publisher.timeout(7_500).emitWithAck("ping");
+            expect(verification).toHaveBeenCalledTimes(0);
+
+            // Revocation takes effect through the committed owner and its eviction push.
+            const disconnected = new Promise<void>(resolve => publisher.once("disconnect", () => resolve()));
+            await auth.signOutEverywhere(account.id);
+            app.disconnectAccountSockets(account.id);
+            await disconnected;
+            const retry = ioClient(`http://127.0.0.1:${port}`, { path: "/v1/updates", transports: ["websocket"],
+                reconnection: false, auth: publisherAuth });
+            try {
+                expect((await waitForConnectionFailure(retry)).message).toBe("invalid-token");
+            } finally {
+                retry.close();
+            }
+        } finally {
+            verification.mockRestore();
+            publisher.close();
+            await app.close();
+        }
+    }, 30_000);
+
     it("disconnects a session-scoped socket when machineId is provided without a bound access key", async () => {
         const account = await db.account.create({
             data: { publicKey: `pk-${Date.now()}` },
@@ -1574,94 +1902,4 @@ describe("startSocket (auth policy enforcement)", () => {
             statusCode: 403,
         });
     }, 30_000);
-
-    it("makes a cleanly stopped Machine offline immediately and admits its replacement without the presence timeout", async () => {
-        const account = await db.account.create({ data: { encryptionMode: 'plain' } });
-        const installation = tweetnacl.sign.keyPair();
-        const installationId = `clean-stop-${account.id}`;
-        const machine = await db.machine.create({ data: {
-            id: `clean-stop-${account.id}`, accountId: account.id, installationId,
-            installationPublicKey: new Uint8Array(installation.publicKey), active: false,
-            metadata: encodePlainMachineStoredContent({ host: 'clean-stop', platform: 'linux', happyCliVersion: '0.3.0',
-                homeDir: '/home/test', happyHomeDir: '/home/test/.happier' }),
-            dataEncryptionKey: decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER),
-        } });
-        const token = await auth.createToken(account.id, undefined, { kind: 'account', authority: 'present_user' });
-        const app = createAuthenticatedTestApp({ authentication: 'real' }) as AppFastify;
-        startSocket(app);
-        await app.listen({ port: 0, host: '127.0.0.1' });
-        const address = app.server.address();
-        if (!address || typeof address === 'string') { await app.close(); throw new Error('Missing socket listener'); }
-        const connect = (runtimeId: string) => ioClient(`http://127.0.0.1:${address.port}`, {
-            path: '/v1/updates', transports: ['websocket'], reconnection: false, autoConnect: false,
-            auth: { token, clientType: 'machine-scoped', machineId: machine.id, runtimeId,
-                startupSource: 'manual', serviceManaged: false, installationId,
-                installationPublicKey: encodeProtocolBase64(installation.publicKey, 'base64url'),
-                installationProof: signMachineInstallationProof({ payload: { version: 1, installationId,
-                    machineId: machine.id, accountId: account.id }, privateKey: installation.secretKey }),
-            },
-        });
-        const publisher = connect('clean-stop-first');
-        const replacement = connect('clean-stop-replacement');
-        const viewer = ioClient(`http://127.0.0.1:${address.port}`, {
-            path: '/v1/updates', transports: ['websocket'], reconnection: false, autoConnect: false,
-            auth: { token, clientType: 'user-scoped' },
-        });
-        const currentViewer = ioClient(`http://127.0.0.1:${address.port}`, {
-            path: '/v1/updates', transports: ['websocket'], reconnection: false, autoConnect: false,
-            auth: { token, clientType: 'user-scoped',
-                ...buildAccountStoredContentCompatibilitySocketAuthV1(CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION) },
-        });
-        const activity: Array<Extract<EphemeralUpdate, { type: 'machine-activity' }>> = [];
-        const currentActivity: typeof activity = [];
-        currentViewer.on('ephemeral', (event: EphemeralUpdate) => {
-            if (event.type === 'machine-activity' && event.id === machine.id) currentActivity.push(event);
-        });
-        viewer.on('ephemeral', (event: EphemeralUpdate) => {
-            if (event.type === 'machine-activity' && event.id === machine.id) activity.push(event);
-        });
-        const readPresence = () => db.machine.findUniqueOrThrow({ where: { id: machine.id } });
-        try {
-            expect(await auth.verifyTokenForRoute(token)).toMatchObject({ userId: account.id });
-            const watching = waitForConnectionSuccess(viewer); viewer.connect(); await watching;
-            await viewer.timeout(7_500).emitWithAck('ping');
-            const watchingCurrent = waitForConnectionSuccess(currentViewer); currentViewer.connect(); await watchingCurrent;
-            await currentViewer.timeout(7_500).emitWithAck('ping');
-            const connected = waitForConnectionSuccess(publisher); publisher.connect(); await connected;
-            await publisher.timeout(7_500).emitWithAck('ping');
-            let online = await readPresence();
-            expect(online.active).toBe(true);
-            await expect.poll(() => currentActivity.length).toBe(1);
-            publisher.emit('machine-alive', { machineId: machine.id, time: Date.now() });
-            await expect.poll(() => activity.length).toBe(2);
-            online = await readPresence();
-            expect(activity[1]).toEqual({ type: 'machine-activity', id: machine.id, active: true,
-                activeAt: online.lastActiveAt.getTime() });
-            expect(currentActivity).toHaveLength(1);
-            activity.pop(); // Keep the transition assertions independent of the legacy observation.
-            publisher.disconnect();
-            await expect.poll(async () => (await readPresence()).active).toBe(false);
-            expect((await readPresence()).lastActiveAt).toEqual(online.lastActiveAt);
-            await expect.poll(() => activity.filter(event => !event.active)).toEqual([
-                { type: 'machine-activity', id: machine.id, active: false, activeAt: online.lastActiveAt.getTime() },
-            ]);
-            const reconnected = waitForConnectionSuccess(replacement); replacement.connect(); await reconnected;
-            await replacement.timeout(7_500).emitWithAck('ping');
-            expect((await readPresence()).active).toBe(true);
-            await expect.poll(() => activity.map(event => event.active)).toEqual([true, false, true]);
-            // An unexpected transport loss retains the existing missed-beat grace.
-            const serverSocket = [...eventRouter.getConnections(account.id) ?? []]
-                .find(connection => connection.socket.id === replacement.id)?.socket;
-            if (!serverSocket) throw new Error('Missing admitted replacement socket');
-            const transportClosed = new Promise<void>(resolve => serverSocket.once('disconnect', () => { setImmediate(resolve); }));
-            replacement.io.engine.close();
-            await transportClosed;
-            expect((await inTx(tx => tx.machine.findUniqueOrThrow({ where: { id: machine.id } }))).active).toBe(true);
-        } finally {
-            publisher.close(); replacement.close(); viewer.close(); currentViewer.close(); await app.close();
-        }
-    }, 30_000);
-
-
-
 });

@@ -15,6 +15,19 @@ import { db } from "@/storage/db";
 import { inTx } from "@/storage/inTx";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
 import { ensureAutomationEventCatalogStateTx } from "./automationCrudService";
+import { transitionDeploymentInTx } from '@/app/deployments/deploymentService';
+import { computeDeploymentTransitionRequestDigestV1, type DeploymentTransitionInputV1 } from '@happier-dev/protocol';
+import { signMachineInstallationProof } from '@happier-dev/protocol/machines/identity/installationIdentity';
+import nacl from 'tweetnacl';
+import { setDeploymentEnvironmentControllerInTx } from '@/app/deployments/deploymentControllerService';
+import { unlinkDeploymentTargetInTx } from '@/app/deployments/deploymentDispositionService';
+import { createProjectSourceInTx } from '@/app/projects/sources/projectSourceService';
+import { createDeploymentEnvironmentInTx, updateDeploymentEnvironmentInTx } from '@/app/deployments/deploymentEnvironmentService';
+import { createArtifact } from '@/app/artifacts/artifactWriteService';
+import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol';
+import { encodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
+import { createDeploymentEnvironmentV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import * as privacyKit from 'privacy-kit';
 
 import {
     AutomationEventStoredDefinitionsReadError,
@@ -209,6 +222,7 @@ describe("Automation Event stored-definition projection", () => {
         harness = await createLightSqliteHarness({
             tempDirPrefix: "happier-automation-stored-definitions-",
             initAuth: false,
+            initEncrypt: true,
             env: { HAPPIER_SERVER_IDENTITY_ID: SERVER_IDENTITY_ID },
         });
     }, 120_000);
@@ -231,9 +245,18 @@ describe("Automation Event stored-definition projection", () => {
             () => db.pluginMachineMaterialization.deleteMany(),
             () => db.accountPluginIntent.deleteMany(),
             () => db.accountPluginRelease.deleteMany(),
+            () => db.deploymentEnvironment.updateMany({ data: { runtimeTargetLinkId: null } }),
+            () => db.deployment.deleteMany(),
+            () => db.deploymentTargetLinkMachine.deleteMany(),
+            () => db.deploymentTargetLink.deleteMany(),
+            () => db.deploymentEnvironmentDeployer.deleteMany(),
+            () => db.deploymentEnvironment.deleteMany(),
+            () => db.projectSource.deleteMany(),
+            () => db.artifact.deleteMany(),
             () => db.machine.deleteMany(),
             () => db.account.deleteMany(),
         ]);
+        await db.account.deleteMany();
     });
 
     async function seed(definitionCount: number, catalogRevision: bigint | null = 7n): Promise<void> {
@@ -300,6 +323,112 @@ describe("Automation Event stored-definition projection", () => {
             });
         }
     }
+
+    it.each(['unlink', 'leave production', 'leave production with prepared placement', 'teardown'] as const)('moves the same Environment source without resealing and applies the next catalog boundary on %s', async withdrawal => {
+        await seed(1);
+        const changesProtection = withdrawal === 'leave production' || withdrawal === 'leave production with prepared placement';
+        const publishedMachine = { metadata: encodePlainMachineStoredContent({ host: 'Controller', platform: 'linux',
+            happyCliVersion: 'test', homeDir: '/home/test', happyHomeDir: '/home/test/.happier' }),
+            dataEncryptionKey: privacyKit.decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER) };
+        await db.machine.update({ where: { id: MACHINE_ID }, data: publishedMachine });
+        const source = await inTx(tx => createProjectSourceInTx(tx, ACCOUNT_ID, {
+            serverId: SERVER_IDENTITY_ID, requestKey: crypto.randomUUID(), name: 'Observed platform', audience: [],
+        }));
+        if (!source.ok) throw new Error(source.error);
+        const content = createDeploymentEnvironmentV1().content;
+        if (content.t !== 'plain') throw new Error('Expected plain Environment fixture');
+        const artifact = await createArtifact({ actorUserId: ACCOUNT_ID, artifactId: crypto.randomUUID(),
+            header: privacyKit.decodeBase64(encodePlainArtifactStoredContent({ kind: 'deployment-environment.v1', title: 'Observed platform' })),
+            body: privacyKit.decodeBase64(encodePlainArtifactStoredContent({ body: JSON.stringify(content.v) })),
+            dataEncryptionKey: privacyKit.decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER) });
+        if (!artifact.ok) throw new Error(artifact.error);
+        const reference = { contentArtifactId: artifact.artifact.id, contentHeaderVersion: 1, contentBodyVersion: 1 };
+        const created = await inTx(tx => createDeploymentEnvironmentInTx(tx, ACCOUNT_ID, { ...reference,
+            serverId: SERVER_IDENTITY_ID, projectSourceId: source.source.id, requestKey: crypto.randomUUID(),
+            protection: 'production', purpose: 'standard', deployerMode: 'managers', controllerMachineId: MACHINE_ID }));
+        if (!created.ok) throw new Error(created.error);
+        const environmentId = created.environmentId;
+        const link = await db.deploymentTargetLink.create({ data: { ...reference, environmentId,
+            createdByAccountId: ACCOUNT_ID, role: 'runtime', state: 'configured',
+            ...(changesProtection
+                ? { sourceKind: 'plugin', pluginId: PLUGIN_ID, contributionLocalId: 'runtime', targetKind: 'platform' }
+                : { sourceKind: 'host', hostTargetId: 'own-server', targetKind: 'ownServer', machines: { create: {
+                    machineId: MACHINE_ID, installationId: MACHINE_INSTALLATION_ID, position: 0, state: 'active' } } }) } });
+        await db.deploymentEnvironment.update({ where: { id: environmentId }, data: { runtimeTargetLinkId: link.id } });
+        await db.automation.update({ where: { id: 'automation-0001' }, data: { targetType: null, deploymentEnvironmentId: environmentId,
+            templateCiphertext: JSON.stringify({ kind: 'observationOnly', templateVersion: 1, deploymentEnvironment: {
+                serverId: SERVER_IDENTITY_ID, environmentId, projectSourceId: source.source.id } }) } });
+        const read = (reader: Parameters<typeof readAutomationEventStoredDefinitionsV1>[0]['caller'] = caller) => readAutomationEventStoredDefinitionsV1({ accountId: ACCOUNT_ID, caller: reader,
+            input: { transport: { kind: 'checkpointedPull' }, pageSize: 10 } });
+        expect(await read()).toMatchObject({ kind: 'page', definitions: [{ automationId: 'automation-0001' }] });
+        const before = await db.automationTrigger.findUniqueOrThrow({ where: { id: triggerId(1) } });
+        const nextMachineId = 'controller-next';
+        const nextInstallationId = 'installation-next';
+        await db.machine.create({ data: { id: nextMachineId, accountId: ACCOUNT_ID, ...publishedMachine,
+            installationId: nextInstallationId, pluginMaterializationRevision: 1n } });
+        const oldMaterialization = await db.pluginMachineMaterialization.findFirstOrThrow({ where: { machineId: MACHINE_ID } });
+        const { id: _oldId, ...materialization } = oldMaterialization;
+        const unavailable = await inTx(tx => setDeploymentEnvironmentControllerInTx(tx, ACCOUNT_ID, {
+            serverId: SERVER_IDENTITY_ID, environmentId, expectedRevision: created.revision, controllerMachineId: nextMachineId }));
+        expect(unavailable).toMatchObject({ ok: true });
+        expect(await db.automationTrigger.findUniqueOrThrow({ where: { id: triggerId(1) } })).toEqual({ ...before,
+            watcherMachineId: null, watcherMachineInstallationId: null,
+            watcherPluginId: null, watcherMaterializationId: null });
+        expect(await read()).toMatchObject({ kind: 'page', definitions: [] });
+        if (!unavailable.ok) throw new Error('Expected unavailable watcher handoff');
+        await db.pluginMachineMaterialization.create({ data: { ...materialization, machineId: nextMachineId } });
+        const moved = await inTx(tx => setDeploymentEnvironmentControllerInTx(tx, ACCOUNT_ID, {
+            serverId: SERVER_IDENTITY_ID, environmentId, expectedRevision: unavailable.revision, controllerMachineId: nextMachineId }));
+        expect(moved).toMatchObject({ ok: true });
+        const after = await db.automationTrigger.findUniqueOrThrow({ where: { id: triggerId(1) } });
+        expect(after).toEqual({ ...before, watcherMachineId: nextMachineId, watcherMachineInstallationId: nextInstallationId });
+        expect(await read()).toMatchObject({ kind: 'page', definitions: [] });
+        const nextCaller = { ...caller, machineId: nextMachineId, machineInstallationId: nextInstallationId };
+        expect(await read(nextCaller)).toMatchObject({ kind: 'page', definitions: [{ automationId: 'automation-0001', triggerRevision: 1 }] });
+        if (!moved.ok) throw new Error('Expected controller move');
+        let withdrawn;
+        if (withdrawal === 'teardown') {
+            const keys = nacl.sign.keyPair();
+            await db.machine.update({ where: { id: nextMachineId }, data: { installationPublicKey: new Uint8Array(keys.publicKey) } });
+            const receipt = await db.deployment.create({ data: { ...reference, environmentId, targetLinkId: link.id,
+                operation: 'teardown', state: 'running', requestKey: crypto.randomUUID(), actionOperationId: crypto.randomUUID(),
+                requestedByAccountId: ACCOUNT_ID, acceptedControllerMachineId: nextMachineId,
+                acceptedControllerInstallationId: nextInstallationId } });
+            const body: Omit<DeploymentTransitionInputV1, 'proof'> = { serverId: SERVER_IDENTITY_ID, environmentId,
+                deploymentId: receipt.id, actionOperationId: receipt.actionOperationId, expectedRevision: receipt.revision,
+                machineId: nextMachineId, installationId: nextInstallationId, kind: 'settle', state: 'succeeded',
+                teardownProof: { targetLinkRevision: link.revision, machines: [{ machineId: MACHINE_ID, installationId: MACHINE_INSTALLATION_ID }],
+                    workloadAbsent: true, retainedProviderResource: false,
+                    steps: ['admit', 'settleDeploy', 'removeTarget', 'removeDomain', 'removeRelease', 'withdrawBindings', 'verify'] } };
+            const proof = signMachineInstallationProof({ payload: { version: 1, machineId: nextMachineId,
+                installationId: nextInstallationId, accountId: ACCOUNT_ID, deploymentTransition: { serverId: SERVER_IDENTITY_ID,
+                    environmentId, deploymentId: receipt.id, actionOperationId: receipt.actionOperationId,
+                    expectedRevision: receipt.revision, requestBodyDigest: computeDeploymentTransitionRequestDigestV1(body) } }, privateKey: keys.secretKey });
+            withdrawn = await inTx(tx => transitionDeploymentInTx(tx, ACCOUNT_ID, { ...body, proof }));
+        } else withdrawn = withdrawal === 'unlink'
+            ? await inTx(tx => unlinkDeploymentTargetInTx(tx, ACCOUNT_ID, { serverId: SERVER_IDENTITY_ID,
+                environmentId, expectedRevision: moved.revision, targetLinkId: link.id, expectedTargetLinkRevision: link.revision,
+                requestKey: crypto.randomUUID(), detachKeepRunning: true }))
+            : await inTx(tx => updateDeploymentEnvironmentInTx(tx, ACCOUNT_ID, { ...reference, serverId: SERVER_IDENTITY_ID,
+                environmentId, expectedRevision: moved.revision,
+                patch: { protection: 'nonProduction', ...(withdrawal === 'leave production with prepared placement'
+                    ? { buildMachineId: nextMachineId } : {}) },
+                ...(withdrawal === 'leave production with prepared placement'
+                    ? { preparedBindings: { grants: [], referencedSavedSecretRevisions: [] } } : {}) }));
+        expect(withdrawn).toMatchObject({ ok: true });
+        if (changesProtection) {
+            expect(await read(nextCaller)).toMatchObject({ kind: 'page', definitions: [{ automationId: 'automation-0001', triggerRevision: 1 }] });
+            expect(await db.automationTrigger.findUniqueOrThrow({ where: { id: triggerId(1) } })).toEqual(after);
+            expect(await db.automation.findUniqueOrThrow({ where: { id: 'automation-0001' } })).toMatchObject({ enabled: true });
+            expect(await db.deploymentEnvironment.findUniqueOrThrow({ where: { id: environmentId } })).toMatchObject({
+                protection: 'nonProduction', controllerMachineId: nextMachineId });
+            if (!withdrawn.ok) throw new Error('Expected protection update');
+            expect(await inTx(tx => unlinkDeploymentTargetInTx(tx, ACCOUNT_ID, { serverId: SERVER_IDENTITY_ID,
+                environmentId, expectedRevision: withdrawn.revision, targetLinkId: link.id, expectedTargetLinkRevision: link.revision,
+                requestKey: crypto.randomUUID(), detachKeepRunning: true }))).toMatchObject({ ok: true });
+        }
+        expect(await read(nextCaller)).toMatchObject({ kind: 'page', definitions: [] });
+    });
 
     async function seedCurrentDurablePushEndpoint(): Promise<void> {
         const route = await db.pluginWebhookRoute.create({
@@ -598,7 +727,21 @@ describe("Automation Event stored-definition projection", () => {
     });
 
     it("classifies only retired checkpoint identities at one unchanged catalog revision", async () => {
-        await seed(5);
+        await seed(6);
+        await db.accountPluginRelease.update({
+            where: { accountId_pluginId_version: { accountId: ACCOUNT_ID, pluginId: PLUGIN_ID, version: PLUGIN_VERSION } },
+            data: { normalizedManifest: releaseFacts({ supportedObservationTransports: ["checkpointedPull", "durablePush"] }).normalizedManifest },
+        });
+        await seedCurrentDurablePushEndpoint();
+        await db.automationTrigger.updateMany({
+            where: { id: { in: [triggerId(4), triggerId(6)] } },
+            data: {
+                observationTransport: "durablePush", webhookEndpointId: DURABLE_PUSH_ENDPOINT_ID,
+                observationStartsAt: new Date(1_723_247_200_000),
+                watcherMachineId: null, watcherMachineInstallationId: null,
+                watcherPluginId: null, watcherMaterializationId: null,
+            },
+        });
         const eventRef = { pluginId: PLUGIN_ID, localId: EVENT_LOCAL_ID } as const;
         const candidates = [
             {
@@ -655,6 +798,14 @@ describe("Automation Event stored-definition projection", () => {
                 triggerRevision: 4,
                 eventRef,
                 sourceSelectorId: sourceSelector(94),
+                sourceContractVersion: 1,
+            },
+            {
+                automationId: "automation-0006",
+                triggerId: triggerId(6),
+                triggerRevision: 6,
+                eventRef,
+                sourceSelectorId: sourceSelector(6),
                 sourceContractVersion: 1,
             },
         ] as const;
@@ -823,6 +974,43 @@ describe("Automation Event stored-definition projection", () => {
             definitions: [{ automationId: "automation-0001" }],
         });
         const initialScope = (initial as Readonly<{ scope?: string }>).scope;
+
+        for (const unavailable of [
+            { enabled: false },
+            { enabled: true, revokedAt: new Date() },
+        ]) {
+            await db.pluginWebhookEndpoint.update({
+                where: { id: DURABLE_PUSH_ENDPOINT_ID },
+                data: unavailable,
+            });
+            await expect(readAutomationEventStoredDefinitionsV1({
+                accountId: ACCOUNT_ID,
+                caller,
+                input: { transport: { kind: "durablePush" } },
+            })).resolves.toMatchObject({
+                kind: "page", definitions: [{ automationId: "automation-0001" }],
+            });
+            await expect(readAutomationEventStoredDefinitionsV1({
+                accountId: ACCOUNT_ID, caller,
+                input: { transport: { kind: "durablePush" } },
+                webhookInvocationReference,
+            })).rejects.toMatchObject({ code: "durable_push_endpoint_context_unavailable" });
+        }
+        await db.pluginWebhookEndpoint.update({
+            where: { id: DURABLE_PUSH_ENDPOINT_ID }, data: { enabled: true, revokedAt: null },
+        });
+        await db.pluginWebhookRoute.update({
+            where: { accountEndpointId: DURABLE_PUSH_ENDPOINT_ID }, data: { enabled: false, revokedAt: new Date() },
+        });
+        await expect(readAutomationEventStoredDefinitionsV1({
+            accountId: ACCOUNT_ID, caller, input: { transport: { kind: "durablePush" } },
+        })).resolves.toMatchObject({ kind: "page", definitions: [{ automationId: "automation-0001" }] });
+
+        await db.automationTrigger.update({ where: { id: triggerId(1) }, data: { enabled: false } });
+        await expect(readAutomationEventStoredDefinitionsV1({
+            accountId: ACCOUNT_ID, caller, input: { transport: { kind: "durablePush" } },
+        })).resolves.toMatchObject({ kind: "page", definitions: [] });
+        await db.automationTrigger.update({ where: { id: triggerId(1) }, data: { enabled: true } });
 
         await db.pluginWebhookEndpoint.update({
             where: { id: DURABLE_PUSH_ENDPOINT_ID },

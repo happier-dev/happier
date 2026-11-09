@@ -71,6 +71,8 @@ function createTx(options: Readonly<{
             update: vi.fn(async () => ({ seq: ++sequence })),
         },
         userKVStore: {
+            findMany: vi.fn(async (input: { where: { key: { in: string[] } } }) =>
+                input.where.key.in.flatMap(key => rows.has(key) ? [rows.get(key)!] : [])),
             findUnique: vi.fn(async (input: {
                 where: { accountId_key: { key: string } };
             }) => rows.get(input.where.accountId_key.key) ?? null),
@@ -294,7 +296,7 @@ describe("plugin Account KV storage", () => {
         ];
         expect(admissionCallOrder).toHaveLength(1);
         expect(admissionCallOrder[0]).toBeLessThan(
-            tx.userKVStore.findUnique.mock.invocationCallOrder[0],
+            tx.userKVStore.findMany.mock.invocationCallOrder[0],
         );
     });
 

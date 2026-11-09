@@ -64,6 +64,18 @@ describe("acquireAccountSessionOwnerMetadataFenceInTx", () => {
         );
     });
 
+    it('uses the explicit maintenance client provider independently of the runtime provider', async () => {
+        applyEnvValues({ HAPPY_DB_PROVIDER: undefined, HAPPIER_DB_PROVIDER: 'postgres' });
+        const executeRawUnsafe = vi.fn(async () => 1);
+        const queryRawUnsafe = vi.fn(async () => [{ id: 'account-1' }]);
+        const tx = { $executeRawUnsafe: executeRawUnsafe, $queryRawUnsafe: queryRawUnsafe } as unknown as Tx;
+        await acquireAccountSessionOwnerMetadataFenceInTx(tx, 'account-1', 'serializing', 'sqlite');
+        expect(executeRawUnsafe).toHaveBeenCalledWith(
+            'UPDATE "Account" SET "settingsVersion" = "settingsVersion" WHERE "id" = ?', 'account-1',
+        );
+        expect(queryRawUnsafe).not.toHaveBeenCalled();
+    });
+
     it("admits the sorted complete PostgreSQL audience and omits absent recipients", async () => {
         applyEnvValues({ HAPPY_DB_PROVIDER: undefined, HAPPIER_DB_PROVIDER: "postgres" });
         const queryRawUnsafe = vi.fn(async () => [{ id: "a" }, { id: "z" }]);

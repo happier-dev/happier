@@ -6,7 +6,7 @@ import { createRouteTestBuilder } from "../../testkit/routeTestBuilder";
 const { db, reset: resetDbMocks } = createDbMocks({
     account: ["findUnique"],
     accountChange: ["findMany", "findUnique"],
-    session: ["findUnique"],
+    session: ["findUnique", "findMany"],
     sessionShare: ["findUnique"],
     sessionPendingMessage: ["findMany"],
 });
@@ -15,6 +15,7 @@ const accountFindUnique = db.account.findUnique;
 const accountChangeFindMany = db.accountChange.findMany;
 const accountChangeFindUnique = db.accountChange.findUnique;
 const sessionFindUnique = db.session.findUnique;
+const sessionFindMany = db.session.findMany;
 const sessionShareFindUnique = db.sessionShare.findUnique;
 const { transaction, wrapDb } = createDbTransactionMock(() => ({ ...inTxPostgresControlStatementMock, ...db }));
 
@@ -163,7 +164,7 @@ describe("changesRoutes (/v2/changes cursor safety)", () => {
             { cursor: 11, kind: "session", entityId: "s1", changedAt: new Date(1), hint: null },
             { cursor: 12, kind: "machine", entityId: "m1", changedAt: new Date(2), hint: { a: 1 } },
         ]);
-        sessionFindUnique.mockResolvedValue(hostedSession("u1", "s1"));
+        sessionFindMany.mockResolvedValue([hostedSession("u1", "s1")]);
 
         const route = createRouteTestBuilder({
             method: "GET",
@@ -209,8 +210,10 @@ describe("changesRoutes (/v2/changes cursor safety)", () => {
         ]);
         // The Session domain's canonical adapter recognizes this AccountChange
         // as a durable deletion tombstone after the Session foreign key clears.
-        sessionFindUnique.mockResolvedValue(null);
-        accountChangeFindUnique.mockResolvedValue({ sessionId: null });
+        sessionFindMany.mockResolvedValue([]);
+        accountChangeFindMany.mockResolvedValueOnce([
+            { cursor: 11, kind: "session", entityId: "session-deleted", changedAt: new Date(1), hint: null },
+        ]).mockResolvedValueOnce([{ entityId: "session-deleted", sessionId: null }]);
 
         const route = createRouteTestBuilder({
             method: "GET",
@@ -240,15 +243,9 @@ describe("changesRoutes (/v2/changes cursor safety)", () => {
                 },
             },
         });
-        expect(accountChangeFindUnique).toHaveBeenCalledWith({
-            where: {
-                accountId_kind_entityId: {
-                    accountId: "u1",
-                    kind: "session",
-                    entityId: "session-deleted",
-                },
-            },
-            select: { sessionId: true },
+        expect(accountChangeFindMany).toHaveBeenLastCalledWith({
+            where: { accountId: "u1", kind: "session", entityId: { in: ["session-deleted"] } },
+            select: { entityId: true, sessionId: true },
         });
     });
 
@@ -257,9 +254,11 @@ describe("changesRoutes (/v2/changes cursor safety)", () => {
         accountChangeFindMany.mockResolvedValue([
             { cursor: 12, kind: "session", entityId: "session-revoked", changedAt: new Date(2), hint: null },
         ]);
-        sessionFindUnique.mockResolvedValue(hostedSession("owner", "session-revoked"));
+        sessionFindMany.mockResolvedValue([hostedSession("owner", "session-revoked")]);
         sessionShareFindUnique.mockResolvedValue(null);
-        accountChangeFindUnique.mockResolvedValue({ sessionId: "session-revoked" });
+        accountChangeFindMany.mockResolvedValueOnce([
+            { cursor: 12, kind: "session", entityId: "session-revoked", changedAt: new Date(2), hint: null },
+        ]).mockResolvedValueOnce([{ entityId: "session-revoked", sessionId: "session-revoked" }]);
 
         const route = createRouteTestBuilder({
             method: "GET",
@@ -292,31 +291,29 @@ describe("changesRoutes (/v2/changes cursor safety)", () => {
         expect(sessionShareFindUnique).not.toHaveBeenCalled();
     });
 
-    it("fails a change page recoverably instead of presenting indeterminate Team authentication as revocation", async () => {
-        accountFindUnique.mockResolvedValue({ seq: 100, changesFloor: 0 });
+    it.each([undefined, "machine"])("rejects a page when retention advances after its row read (kinds=%s)", async (kinds) => {
+        accountFindUnique.mockResolvedValueOnce({ seq: 100, changesFloor: 0 })
+            .mockResolvedValueOnce({ seq: 101, changesFloor: 11 });
         accountChangeFindMany.mockResolvedValue([
-            { cursor: 12, kind: "session", entityId: "session-restricted", changedAt: new Date(2), hint: null },
+            { cursor: 12, kind: "machine", entityId: "machine-current", changedAt: new Date(2), hint: null },
         ]);
-        sessionFindUnique.mockResolvedValue(credentialRestrictedTeamSession("recipient"));
-
         const route = createRouteTestBuilder({
             method: "GET",
             path: "/v2/changes",
             defaultRequest: {
                 userId: "recipient",
                 authAuthority: "present_user",
-                authTokenAuthenticationEvidence: [],
-                query: { after: 10, limit: 10 },
+                query: { after: 10, limit: 10, kinds },
                 accountStoredContentCompatibility: currentSessionAccessWitnessCompatibility,
             },
             registerRoutes(app) {
-                changesRoutes(app as any);
+                // The fixture implements Fastify's route-registration boundary.
+                changesRoutes(app as unknown as Parameters<typeof changesRoutes>[0]);
             },
         });
-
         const { reply, response } = await route.invoke();
-        expect(reply.code).toHaveBeenCalledWith(503);
-        expect(response).toEqual({ error: "session_access_authentication_unavailable" });
+        expect(reply.code).toHaveBeenCalledWith(410);
+        expect(response).toEqual({ error: "cursor-gone", currentCursor: 101 });
         expect(response).not.toHaveProperty("sessionAccessWitness");
     });
 
@@ -327,7 +324,7 @@ describe("changesRoutes (/v2/changes cursor safety)", () => {
             { cursor: 12, kind: "session", entityId: "session-1", changedAt: new Date(2), hint: null },
             { cursor: 13, kind: "machine", entityId: "m1", changedAt: new Date(3), hint: null },
         ]);
-        sessionFindUnique.mockResolvedValue(hostedSession("u1", "session-1"));
+        sessionFindMany.mockResolvedValue([hostedSession("u1", "session-1")]);
 
         const route = createRouteTestBuilder({
             method: "GET",
@@ -353,7 +350,7 @@ describe("changesRoutes (/v2/changes cursor safety)", () => {
                 },
             },
         });
-        expect(sessionFindUnique).toHaveBeenCalledTimes(1);
+        expect(sessionFindMany).toHaveBeenCalledTimes(1);
     });
 
     it("filters pluginDomain rows for V1/V2 clients while advancing across the raw page", async () => {

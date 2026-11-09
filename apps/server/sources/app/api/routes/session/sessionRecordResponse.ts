@@ -1,7 +1,6 @@
 import { z } from 'zod/mini';
 import { V2SessionRecordSchema, V2SessionByIdResponseSchema, SessionLookupByTagsResponseV2Schema, SESSION_LOOKUP_BY_TAGS_MAX_TAGS_V2 } from '@happier-dev/protocol/sessions/control/contract';
-import { SessionReadBatchDetailV1Schema, SessionReadBatchResultV1Schema, SessionReadBatchResponseV1Schema,
-    type SessionReadBatchResponseV1 } from '@happier-dev/protocol/sessions/read/sessionReadBatchV1';
+import { SessionReadBatchDetailV1Schema } from '@happier-dev/protocol/sessions/read/sessionReadBatchV1';
 import type { SessionOwnerMetadataEnvelopeV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 
 type ProjectedSessionRecord = Readonly<Record<string, unknown>> & Readonly<{
@@ -21,9 +20,6 @@ const batchDetailResponse = z.union([
     z.safeExtend(SessionReadBatchDetailV1Schema._zod.def.options[0], { body: byIdResponse }),
     SessionReadBatchDetailV1Schema._zod.def.options[1],
 ]);
-const batchResponse = z.safeExtend(SessionReadBatchResponseV1Schema, {
-    results: z.array(z.safeExtend(SessionReadBatchResultV1Schema, { detail: z.optional(batchDetailResponse) })),
-});
 
 export function parseProjectedSessionRecord(record: ProjectedSessionRecord) {
     return recordResponse.parse(record);
@@ -42,8 +38,4 @@ export function parseProjectedSessionLookupResponse(body: Readonly<{ sessions: r
 /** Compatibility projections return `unknown`; this parse is their typed admission. */
 export function parseProjectedSessionBatchDetail(detail: unknown) {
     return batchDetailResponse.parse(detail);
-}
-
-export function parseProjectedSessionBatchResponse(body: SessionReadBatchResponseV1) {
-    return batchResponse.parse(body);
 }

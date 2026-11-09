@@ -1,4 +1,3 @@
-import { setEligibleMachineAccessGrantInTx } from '@/testkit/machineAccessGrant.testkit';
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import axios from 'axios';
@@ -11,11 +10,14 @@ import { symbols, type DestinationStream } from 'pino';
 import { logger } from '@/utils/logging/log';
 import { inTx } from '@/storage/inTx';
 import { createSessionMachineAccessKeyInTx } from '@/app/accessKeys/sessionMachineAccessKeyMutations';
-import { enqueuePendingMessage, updatePendingRequestedAction, markPendingActivationFailed } from '@/app/session/pending/pendingMessageService';
+import { blockPendingDelivery, enqueuePendingMessage, materializeNextPendingMessage, resolveAcceptedPendingDelivery, updatePendingRequestedAction, markPendingActivationFailed } from '@/app/session/pending/pendingMessageService';
+import { sessionPendingRoutes } from '@/app/api/routes/session/pendingRoutes';
+import { createSessionPublisherPresence } from '@/app/presence/sessionPublisherPresence';
 import { createPresentUserSessionAccessAuthentication } from '@/app/session/access/sessionAccessAuthentication.testkit';
 import * as privacyKit from 'privacy-kit';
 import { db } from '@/storage/db';
 import { makeShareEligibleForTest } from '@/testkit/shareEligibility.testkit';
+import { setEligibleMachineAccessGrantInTx } from '@/testkit/machineAccessGrant.testkit';
 import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lightSqliteHarness';
 import { createSignedAccountContentBinding } from '@/testkit/accountEncryption';
 import { encryptWithDataKey, decryptWithDataKey } from '../../../../../../cli/src/api/encryption';
@@ -71,29 +73,35 @@ describe('Machine accessible discovery and access HTTP (SQLite)', () => {
         return { owner, recipient, other, machine };
     }
 
-    it.each([false, true])('projects the finite owner new-Session wake decision to guest Use recipients (controller: %s)', async hasController => {
-        const { owner, recipient, machine } = await fixture();
-        const controller = hasController ? await db.machine.create({ data: {
-            id: `controller-${randomUUID()}`, accountId: owner.id, installationId: `installation-${randomUUID()}`,
-            metadata: machine.metadata, daemonState: machine.daemonState, dataEncryptionKey: machine.dataEncryptionKey,
-        } }) : null;
-        await db.managedMachine.create({ data: {
-            homeId: await getOrCreateServerIdentityId(), custodianAccountId: owner.id, enrolledMachineId: machine.id,
-            ...(controller ? { controllerMachineId: controller.id, controllerInstallationId: controller.installationId } : {}),
+    it('publishes enrollment identity changes to the existing Machine refresh feed in both directions', async () => {
+        const { owner, machine } = await fixture();
+        const managed = await db.managedMachine.create({ data: {
+            homeId: await getOrCreateServerIdentityId(), custodianAccountId: owner.id,
             admittedActionRequestId: randomUUID(), admittedInput: {}, allocation: 'bound', creationState: 'active',
             launch: { provider: { pluginId: 'fixture.compute', localId: 'vm' }, schemaVersion: 1, name: 'Guest', choices: {} },
             resource: { contributionRef: { pluginId: 'fixture.compute', localId: 'vm' }, schemaVersion: 1, value: {} },
             desired: 'stop', retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: true,
-            observation: { observedAt: 1, availability: 'present', power: 'stopped', storage: 'retained' },
         } });
-        await inTx(tx => setEligibleMachineAccessGrantInTx(tx, { actorAccountId: owner.id, machineId: machine.id,
-            principal: { kind: 'account', accountId: recipient.id }, level: 'view' }));
         await withAuthenticatedTestApp(machinesRoutes, async app => {
-            const response = await app.inject({ method: 'GET', url: `/v1/machines/${machine.id}`, headers: headers(recipient.id) });
-            expect(response.statusCode, response.body).toBe(200);
-            expect(response.json().machine.managedInputRuntime.newSessionWake).toEqual(hasController
-                ? { kind: 'available' } : { kind: 'unavailable', reason: 'no_controller' });
-            expect(response.json().machine.managedInputRuntime).not.toHaveProperty('controller');
+            let cursor = 0;
+            for (const enrolledMachineId of [machine.id, null]) {
+                await inTx(async tx => {
+                    const previous = await tx.managedMachine.findUniqueOrThrow({ where: { id: managed.id } });
+                    await tx.managedMachine.update({ where: { id: managed.id }, data: { enrolledMachineId } });
+                    await invalidateManagedMachineInTx(tx, previous);
+                });
+                const changed = await db.accountChange.findFirst({ where: {
+                    accountId: owner.id, kind: 'machine', entityId: machine.id,
+                } });
+                expect(changed?.cursor).toBeGreaterThan(cursor);
+                cursor = changed!.cursor;
+                const response = await app.inject({ method: 'GET', url: `/v1/machines/${machine.id}`, headers: {
+                    ...headers(owner.id), accept: 'application/json;happier-machine-projection=host-facts',
+                } });
+                expect(response.statusCode, response.body).toBe(200);
+                expect(response.json()).toMatchObject({ machine: { managedMachineRef: enrolledMachineId === null
+                    ? null : { homeId: managed.homeId, managedId: managed.id } } });
+            }
         });
     });
 
@@ -113,33 +121,6 @@ describe('Machine accessible discovery and access HTTP (SQLite)', () => {
             principal: { kind: 'account', accountId: recipient.id }, level: 'view' }));
         return { owner, recipient, machine, managed };
     }
-
-    it('projects native lifecycle independently of accepted-input wake eligibility to guest Use recipients', async () => {
-        const { recipient, machine, managed } = await sharedManagedRuntimeFixture();
-        await withAuthenticatedTestApp(machinesRoutes, async app => {
-            const read = () => app.inject({ method: 'GET', url: `/v1/machines/${machine.id}`, headers: headers(recipient.id) });
-            const asleep = await read();
-            expect(asleep.statusCode, asleep.body).toBe(200);
-            expect(asleep.json().machine.managedInputRuntime.state).toBe('asleep');
-            await inTx(async tx => {
-                const previous = await tx.managedMachine.findUniqueOrThrow({ where: { id: managed.id } });
-                await tx.managedMachine.update({ where: { id: managed.id }, data: { wakeOnAcceptedMessage: false } });
-                await invalidateManagedMachineInTx(tx, previous);
-            });
-            // Disabling accepted-input wake preserves the stopped native lifecycle.
-            expect((await read()).json().machine.managedInputRuntime).toEqual(expect.objectContaining({ wakeState: null, state: 'asleep' }));
-            for (const storage of ['retained', 'lost'] as const) {
-                await inTx(async tx => {
-                    const previous = await tx.managedMachine.findUniqueOrThrow({ where: { id: managed.id } });
-                    await tx.managedMachine.update({ where: { id: managed.id }, data: {
-                        observation: { observedAt: 2, availability: 'present', power: 'running', storage },
-                    } });
-                    await invalidateManagedMachineInTx(tx, previous);
-                });
-                expect((await read()).json().machine.managedInputRuntime.state).toBeNull();
-            }
-        });
-    });
 
     it('projects owner-enabled accepted-input wake to guest Use recipients and refreshes policy changes', async () => {
         const { owner, recipient, machine, managed } = await sharedManagedRuntimeFixture();
@@ -180,35 +161,157 @@ describe('Machine accessible discovery and access HTTP (SQLite)', () => {
         });
     });
 
-    it('publishes enrollment identity changes to the existing Machine refresh feed in both directions', async () => {
+    it('projects native lifecycle independently of accepted-input wake eligibility to guest Use recipients', async () => {
+        const { recipient, machine, managed } = await sharedManagedRuntimeFixture();
+        await withAuthenticatedTestApp(machinesRoutes, async app => {
+            const read = () => app.inject({ method: 'GET', url: `/v1/machines/${machine.id}`, headers: headers(recipient.id) });
+            const asleep = await read();
+            expect(asleep.statusCode, asleep.body).toBe(200);
+            expect(asleep.json().machine.managedInputRuntime.state).toBe('asleep');
+            await inTx(async tx => {
+                const previous = await tx.managedMachine.findUniqueOrThrow({ where: { id: managed.id } });
+                await tx.managedMachine.update({ where: { id: managed.id }, data: { wakeOnAcceptedMessage: false } });
+                await invalidateManagedMachineInTx(tx, previous);
+            });
+            // Disabling accepted-input wake preserves the stopped native lifecycle.
+            expect((await read()).json().machine.managedInputRuntime).toEqual(expect.objectContaining({ wakeState: null, state: 'asleep' }));
+            for (const storage of ['retained', 'lost'] as const) {
+                await inTx(async tx => {
+                    const previous = await tx.managedMachine.findUniqueOrThrow({ where: { id: managed.id } });
+                    await tx.managedMachine.update({ where: { id: managed.id }, data: {
+                        observation: { observedAt: 2, availability: 'present', power: 'running', storage },
+                    } });
+                    await invalidateManagedMachineInTx(tx, previous);
+                });
+                expect((await read()).json().machine.managedInputRuntime.state).toBeNull();
+            }
+        });
+    });
+
+    it.each([false, true])('projects the finite owner new-Session wake decision to guest Use recipients (controller: %s)', async hasController => {
+        const { owner, recipient, machine } = await fixture();
+        const controller = hasController ? await db.machine.create({ data: {
+            id: `controller-${randomUUID()}`, accountId: owner.id, installationId: `installation-${randomUUID()}`,
+            metadata: machine.metadata, daemonState: machine.daemonState, dataEncryptionKey: machine.dataEncryptionKey,
+        } }) : null;
+        await db.managedMachine.create({ data: {
+            homeId: await getOrCreateServerIdentityId(), custodianAccountId: owner.id, enrolledMachineId: machine.id,
+            ...(controller ? { controllerMachineId: controller.id, controllerInstallationId: controller.installationId } : {}),
+            admittedActionRequestId: randomUUID(), admittedInput: {}, allocation: 'bound', creationState: 'active',
+            launch: { provider: { pluginId: 'fixture.compute', localId: 'vm' }, schemaVersion: 1, name: 'Guest', choices: {} },
+            resource: { contributionRef: { pluginId: 'fixture.compute', localId: 'vm' }, schemaVersion: 1, value: {} },
+            desired: 'stop', retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: true,
+            observation: { observedAt: 1, availability: 'present', power: 'stopped', storage: 'retained' },
+        } });
+        await inTx(tx => setEligibleMachineAccessGrantInTx(tx, { actorAccountId: owner.id, machineId: machine.id,
+            principal: { kind: 'account', accountId: recipient.id }, level: 'view' }));
+        await withAuthenticatedTestApp(machinesRoutes, async app => {
+            const response = await app.inject({ method: 'GET', url: `/v1/machines/${machine.id}`, headers: headers(recipient.id) });
+            expect(response.statusCode, response.body).toBe(200);
+            expect(response.json().machine.managedInputRuntime.newSessionWake).toEqual(hasController
+                ? { kind: 'available' } : { kind: 'unavailable', reason: 'no_controller' });
+            expect(response.json().machine.managedInputRuntime).not.toHaveProperty('controller');
+        });
+    });
+
+    it.each(['plain', 'e2ee'] as const)('omits private bodies from %s fleet and exact host-facts reads while ordinary reads retain them', async mode => {
         const { owner, machine } = await fixture();
         const managed = await db.managedMachine.create({ data: {
-            homeId: await getOrCreateServerIdentityId(), custodianAccountId: owner.id,
+            homeId: await getOrCreateServerIdentityId(), custodianAccountId: owner.id, enrolledMachineId: machine.id,
             admittedActionRequestId: randomUUID(), admittedInput: {}, allocation: 'bound', creationState: 'active',
             launch: { provider: { pluginId: 'fixture.compute', localId: 'vm' }, schemaVersion: 1, name: 'Guest', choices: {} },
             resource: { contributionRef: { pluginId: 'fixture.compute', localId: 'vm' }, schemaVersion: 1, value: {} },
             desired: 'stop', retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: true,
         } });
+        const managedMachineRef = { homeId: managed.homeId, managedId: managed.id };
+        let content = { metadata: machine.metadata, daemonState: machine.daemonState,
+            dataEncryptionKey: machine.dataEncryptionKey };
+        if (mode === 'e2ee') {
+            const keys = tweetnacl.box.keyPair();
+            const key = tweetnacl.randomBytes(32);
+            await db.account.update({ where: { id: owner.id }, data: {
+                encryptionMode: 'e2ee', ...createSignedAccountContentBinding(keys.publicKey),
+            } });
+            content = { metadata: privacyKit.encodeBase64(encryptWithDataKey({ host: 'private-worker' }, key)),
+                daemonState: privacyKit.encodeBase64(encryptWithDataKey({ status: 'running' }, key)),
+                dataEncryptionKey: new Uint8Array(sealEncryptedDataKeyEnvelopeV1({ dataKey: key,
+                    recipientPublicKey: keys.publicKey, randomBytes: tweetnacl.randomBytes })) };
+            await db.machine.update({ where: { id: machine.id }, data: content });
+        }
+        await db.machine.createMany({ data: Array.from({ length: 128 }, () => ({ id: randomUUID(),
+            accountId: owner.id, ...content, installationId: randomUUID(), active: true })) });
         await withAuthenticatedTestApp(machinesRoutes, async app => {
-            let cursor = 0;
-            for (const enrolledMachineId of [machine.id, null]) {
-                await inTx(async tx => {
-                    const previous = await tx.managedMachine.findUniqueOrThrow({ where: { id: managed.id } });
-                    await tx.managedMachine.update({ where: { id: managed.id }, data: { enrolledMachineId } });
-                    await invalidateManagedMachineInTx(tx, previous);
-                });
-                const changed = await db.accountChange.findFirst({ where: {
-                    accountId: owner.id, kind: 'machine', entityId: machine.id,
-                } });
-                expect(changed?.cursor).toBeGreaterThan(cursor);
-                cursor = changed!.cursor;
-                const response = await app.inject({ method: 'GET', url: `/v1/machines/${machine.id}`, headers: {
-                    ...headers(owner.id), accept: 'application/json;happier-machine-projection=host-facts',
-                } });
-                expect(response.statusCode, response.body).toBe(200);
-                expect(response.json()).toMatchObject({ machine: { managedMachineRef: enrolledMachineId === null
-                    ? null : { homeId: managed.homeId, managedId: managed.id } } });
+            const read = (path: string, compact: boolean) => app.inject({ method: 'GET', url: path,
+                headers: { ...headers(owner.id), ...(compact
+                    ? { accept: 'application/json;happier-machine-projection=host-facts' } : {}) } });
+            const full = await read('/v1/machines', false);
+            expect(full.statusCode, full.body).toBe(200);
+            const fullRows: readonly { id: string; kind: string; active: boolean; activeAt: number;
+                managedMachineRef: { homeId: string; managedId: string } | null;
+                revokedAt: number | null; replacedByMachineId: string | null; access: unknown }[] = full.json();
+            expect(fullRows.find(row => row.id === machine.id)?.managedMachineRef).toEqual(managedMachineRef);
+            expect(fullRows.filter(row => row.id !== machine.id).every(row => row.managedMachineRef === null)).toBe(true);
+            const expected = fullRows.map(row => ({
+                    id: row.id, kind: row.kind, active: row.active, activeAt: row.activeAt,
+                    presenceProtocolVersion: 1,
+                    revokedAt: row.revokedAt, replacedByMachineId: row.replacedByMachineId, access: row.access,
+                    managedMachineRef: row.id === machine.id ? managedMachineRef : null,
+                    managedInputRuntime: row.id === machine.id ? expect.objectContaining({ nativeReady: false, wakeState: null }) : null,
+                }));
+            expect(expected).toHaveLength(129);
+            const compact = await read('/v1/machines', true);
+            expect(compact.statusCode, compact.body).toBe(200);
+            expect(compact.json()).toEqual(expected);
+            const apiToken = await app.inject({ method: 'GET', url: '/v1/machines', headers: { ...headers(owner.id),
+                'x-test-auth-token-kind': 'api_token', accept: 'application/json;happier-machine-projection=host-facts' } });
+            expect(apiToken.statusCode, apiToken.body).toBe(200);
+            expect(apiToken.json()).toEqual(expected);
+            const ordinaryApiToken = await app.inject({ method: 'GET', url: '/v1/machines', headers: {
+                ...headers(owner.id), 'x-test-auth-token-kind': 'api_token' } });
+            expect(ordinaryApiToken.statusCode, ordinaryApiToken.body).toBe(200);
+            expect(ordinaryApiToken.json()[0]).toHaveProperty('dataEncryptionKey');
+            expect(ordinaryApiToken.json()[0]).not.toHaveProperty('metadata');
+            expect(ordinaryApiToken.json()[0]).not.toHaveProperty('activeAt');
+            const bootstrapRows: readonly { id: string; managedMachineRef: unknown }[] = ordinaryApiToken.json();
+            expect(bootstrapRows.find(row => row.id === machine.id)?.managedMachineRef).toEqual(managedMachineRef);
+            expect(bootstrapRows.find(row => row.id !== machine.id)?.managedMachineRef).toBeNull();
+            const exact = await read(`/v1/machines/${machine.id}`, true);
+            expect(exact.statusCode, exact.body).toBe(200);
+            expect(exact.json()).toEqual({ machine: expected.find(row => row.id === machine.id) });
+            const ordinary = await read(`/v1/machines/${machine.id}`, false);
+            expect(ordinary.statusCode, ordinary.body).toBe(200);
+            expect(ordinary.json()).toMatchObject({ machine: { metadata: content.metadata, daemonState: content.daemonState } });
+            const missing = await read(`/v1/machines/${randomUUID()}`, true);
+            expect(missing.statusCode).toBe(404);
+        });
+    });
+
+    it('keeps fresh shared-content refusal and access withdrawal in the host-facts projection', async () => {
+        const { owner, recipient, machine } = await fixture();
+        await db.machineAccountGrant.create({ data: { machineId: machine.id, accountId: recipient.id,
+            accessLevel: 'view', createdByAccountId: owner.id } });
+        await withAuthenticatedTestApp(machinesRoutes, async app => {
+            const read = (compact: boolean) => app.inject({ method: 'GET', url: `/v1/machines/${machine.id}`,
+                headers: { ...headers(recipient.id), ...(compact
+                    ? { accept: 'application/json;happier-machine-projection=host-facts' } : {}) } });
+            const ready = await read(true);
+            expect(ready.statusCode, ready.body).toBe(200);
+            expect(ready.json()).toMatchObject({ machine: { access: { accessState: 'ready' } } });
+            expect(ready.json().machine).not.toHaveProperty('metadata');
+            await db.machine.update({ where: { id: machine.id }, data: {
+                metadata: encodePlainMachineStoredContent({ host: 'worker', privateSecret: 'not-recipient-safe' }),
+            } });
+            for (const compact of [false, true]) {
+                const refused = await read(compact);
+                expect(refused.statusCode, refused.body).toBe(200);
+                expect(refused.json()).toMatchObject({ machine: { access: { accessState: 'key_pending' } } });
             }
+            await db.machineAccountGrant.deleteMany({ where: { machineId: machine.id, accountId: recipient.id } });
+            expect((await read(true)).statusCode).toBe(404);
+            await db.machineAccountGrant.create({ data: { machineId: machine.id, accountId: recipient.id,
+                accessLevel: 'view', createdByAccountId: owner.id } });
+            await db.machine.update({ where: { id: machine.id }, data: { metadata: machine.metadata } });
+            expect((await read(true)).json()).toMatchObject({ machine: { access: { accessState: 'ready' } } });
         });
     });
 
@@ -355,9 +458,87 @@ describe('Machine accessible discovery and access HTTP (SQLite)', () => {
         });
     });
 
+    it('recovers the exact pre-effect blocked input after Use is restored and delivers the following input', async () => {
+        await getOrCreateServerIdentityId();
+        const { owner, other: requester, machine } = await fixture();
+        await db.machine.update({ where: { id: machine.id }, data: {
+            operationProtocolCapabilitiesRevision: 1,
+            operationProtocolCapabilities: { sessionInputAdmission: { protocolVersions: [1, 2] } },
+        } });
+        await withAuthenticatedTestApp(app => { machinesRoutes(app); sessionPendingRoutes(app); }, async app => {
+            const principal = { kind: 'account', accountId: requester.id } as const;
+            const grant = () => app.inject({ method: 'PUT', url: `/v1/machines/${machine.id}/access`,
+                headers: headers(owner.id), payload: { principal, level: 'view' } });
+            expect((await grant()).json()).toMatchObject({ kind: 'saved', readiness: 'ready' });
+            const session = await db.session.create({ data: { accountId: requester.id, tag: randomUUID(),
+                metadata: '{}', encryptionMode: 'plain' } });
+            expect(await inTx(tx => createSessionMachineAccessKeyInTx(tx, { accountId: requester.id,
+                sessionId: session.id, machineId: machine.id, data: 'fixture-key' }))).toMatchObject({ ok: true });
+            const input = { actorUserId: requester.id, authentication: createPresentUserSessionAccessAuthentication(),
+                sessionId: session.id, targetMachineId: machine.id, messageRole: 'user',
+                requestedAction: { v: 1, kind: 'send_now' },
+                content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'retained input' } } } } as const;
+            const localId = randomUUID();
+            const accepted = await enqueuePendingMessage({ ...input, localId });
+            expect(accepted, JSON.stringify(accepted)).toMatchObject({ ok: true, didWrite: true });
+            const original = await db.sessionPendingMessage.findUniqueOrThrow({
+                where: { sessionId_localId: { sessionId: session.id, localId } },
+            });
+            const removed = await app.inject({ method: 'DELETE', url: `/v1/machines/${machine.id}/access`,
+                headers: headers(owner.id), payload: { principal } });
+            expect(removed.json()).toMatchObject({ kind: 'removed' });
+            expect(await enqueuePendingMessage({ ...input, localId: randomUUID() })).toMatchObject({
+                ok: false, error: 'session-not-found', admissionRejectionCode: 'session_input_target_unavailable',
+            });
+            expect(await blockPendingDelivery({ actorUserId: requester.id, sessionId: session.id, localId,
+                reason: 'session_input_target_unavailable' })).toMatchObject({ ok: true, pendingBlockedCount: 1 });
+            expect((await grant()).json()).toMatchObject({ kind: 'saved', readiness: 'ready' });
+            const nextLocalId = randomUUID();
+            expect(await enqueuePendingMessage({ ...input, localId: nextLocalId,
+                requestedAction: { v: 1, kind: 'enqueue' } }))
+                .toMatchObject({ ok: true, didWrite: true, pendingCount: 2, pendingBlockedCount: 1 });
+            expect(await db.sessionPendingMessage.findUniqueOrThrow({
+                where: { sessionId_localId: { sessionId: session.id, localId } },
+            })).toMatchObject({ deliveryState: 'blocked', deliveryBlockedReason: 'session_input_target_unavailable' });
+            const action = await app.inject({ method: 'PATCH',
+                url: `/v2/sessions/${session.id}/pending/${localId}/action`, headers: headers(requester.id),
+                payload: { requestedAction: { v: 1, kind: 'send_now' } } });
+            expect(action.statusCode, action.body).toBe(200);
+            expect(action.json()).toMatchObject({ ok: true, pendingCount: 2, pendingBlockedCount: 0 });
+            expect(await db.sessionPendingMessage.findUniqueOrThrow({
+                where: { sessionId_localId: { sessionId: session.id, localId } },
+            })).toMatchObject({ id: original.id, content: original.content, inputAdmissionReceipt: original.inputAdmissionReceipt,
+                status: 'queued', deliveryState: null, deliveryBlockedReason: null, providerAction: null });
+            expect(await db.session.findUniqueOrThrow({ where: { id: session.id } })).toMatchObject({
+                pendingActivationRequestId: localId, pendingActivationStatus: 'waiting', pendingActivationFailureCode: null,
+            });
+            const binding = { accountId: requester.id, machineId: machine.id, sessionId: session.id };
+            const presence = createSessionPublisherPresence();
+            const registered = await presence.registerPublisher({ socket: {}, binding,
+                completeActivitySnapshot: { state: 'idle', activeCount: 0 } });
+            if (registered.status !== 'registered') throw new Error(`publisher registration failed: ${registered.status}`);
+            const publisherAuthority = { ...binding, committedFence: registered.committedFence };
+            for (const requestId of [localId, nextLocalId]) {
+                expect(await materializeNextPendingMessage({ actorUserId: requester.id, sessionId: session.id,
+                    publisherAuthority, deliveryState: 'provider', deliveryTiming: 'after_foreground_ready',
+                    foregroundState: 'ready' })).toMatchObject({ ok: true, didMaterialize: true, message: { localId: requestId } });
+                expect(await resolveAcceptedPendingDelivery({ actorUserId: requester.id, sessionId: session.id,
+                    publisherAuthority, localId: requestId })).toMatchObject({ ok: true, didResolve: true });
+            }
+            expect(await db.sessionPendingMessage.count({ where: { sessionId: session.id } })).toBe(0);
+            expect(await db.sessionMessage.findMany({ where: { sessionId: session.id }, orderBy: { seq: 'asc' },
+                select: { localId: true, authorAccountId: true } })).toEqual([
+                { localId, authorAccountId: requester.id }, { localId: nextLocalId, authorAccountId: requester.id },
+            ]);
+            expect(await db.session.findUniqueOrThrow({ where: { id: session.id } }))
+                .toMatchObject({ pendingCount: 0, pendingBlockedCount: 0, pendingActivationRequestId: null });
+        });
+    });
+
     it.each(['waiting', 'failed'] as const)('reverts a controller grant from a stale Use draft with an active guest binding and %s activation', async status => {
         const { owner, machine: original } = await fixture();
         const requester = await db.account.create({ data: { encryptionMode: 'plain' } });
+        await makeShareEligibleForTest(owner.id, requester.id);
         const controller = await db.machine.create({ data: { ...original, id: randomUUID(),
             installationId: randomUUID(), installationPublicKey: tweetnacl.sign.keyPair().publicKey, active: true,
         } });
@@ -450,6 +631,7 @@ describe('Machine accessible discovery and access HTTP (SQLite)', () => {
         const owner = await db.account.create({ data: { ...createSignedAccountContentBinding(ownerKeys.publicKey), encryptionMode: 'e2ee' } });
         const recipientKeys = tweetnacl.box.keyPair();
         const recipient = await db.account.create({ data: { ...createSignedAccountContentBinding(recipientKeys.publicKey), encryptionMode: 'e2ee' } });
+        await makeShareEligibleForTest(owner.id, recipient.id);
         const editedMetadata = { host: 'workstation', platform: 'linux', happyCliVersion: '0.2.0', homeDir: '/home/alice', happyHomeDir: '/home/alice/.happier', displayName: 'Edited workstation', username: 'alice' };
         const editedState = { status: 'running', pid: 42, httpPort: 4321 };
         const machine = await db.machine.create({ data: {
@@ -524,6 +706,7 @@ describe('Machine accessible discovery and access HTTP (SQLite)', () => {
         const owner = await db.account.create({ data: { ...createSignedAccountContentBinding(ownerKeys.publicKey), encryptionMode: 'e2ee' } });
         const recipientKeys = tweetnacl.box.keyPair();
         const recipient = await db.account.create({ data: { ...createSignedAccountContentBinding(recipientKeys.publicKey), encryptionMode: 'e2ee' } });
+        await makeShareEligibleForTest(owner.id, recipient.id);
         const dataKey = tweetnacl.randomBytes(32);
         const envelope = sealEncryptedDataKeyEnvelopeV1({ dataKey, recipientPublicKey: ownerKeys.publicKey, randomBytes: tweetnacl.randomBytes });
         const machine = await db.machine.create({ data: {

@@ -3,11 +3,12 @@ import { PublicProfilePublishBodyV1Schema, PublicProfileRefreshBodyV1Schema, Pub
 import { projectPublicProfileSnapshot, projectPublicProfileMetadata, validatePublicProfileLayout } from '@happier-dev/protocol/account/projectPublicProfile';
 import { normalizeUsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
 import { inTx } from '@/storage/inTx';
-import { publicProfileUnavailable, publicProfileUpdated, readStoredPublicProfileAppearance, readPublicProfileForMutationInTx, type PublicProfileServerDependencies } from './publicProfileStorage';
+import { publicProfileUnavailable, publicProfileUpdated, readStoredPublicProfileAppearance, readPublicProfileForMutationInTx, updatePublicProfileInTx, createPublicProfileInTx, type PublicProfileServerDependencies } from './publicProfileStorage';
 import { replacePublicProfileSnapshotInTx } from './publicProfileRefresh';
 import { preparePublicProfilePicture, completePublicProfilePictureInTx, retirePublicProfilePictureInTx,
     discardPublicProfilePicture, cleanupPublicProfilePicturesAfterCommit } from './publicProfilePicture';
 import { log } from '@/utils/logging/log';
+import { acquireAccountChangePublicationLocksInTx } from '@/app/changes/markAccountChanged';
 
 /** Stores only the exact reviewed public disclosure, without changing Account mode or keys. */
 export async function publishPublicProfile(accountId: string, input: PublicProfilePublishBodyV1, env: NodeJS.ProcessEnv, deps: PublicProfileServerDependencies): Promise<PublicProfileMutationResultV1> {
@@ -19,6 +20,9 @@ export async function publishPublicProfile(accountId: string, input: PublicProfi
     try {
         const appearance = PublicProfileAppearanceV1Schema.parse({ ...body.appearance, atmosphere: prepared.atmosphere });
         return await inTx(async tx => {
+            // Publishing admits the current identity and may create the row;
+            // release must not clear the handle between that admission and creation.
+            await acquireAccountChangePublicationLocksInTx(tx, [accountId], { includeSingleAccount: true, intent: 'exclusive' });
             const row = await readPublicProfileForMutationInTx(tx, accountId);
             const context = await deps.readPublicationContext(tx, accountId, env);
             if (!context.handle) return publicProfileUnavailable('username_required');
@@ -36,7 +40,8 @@ export async function publishPublicProfile(accountId: string, input: PublicProfi
                 projectSelections: body.policy.fields.projects ? body.projectSelections : [] }), queryJson: JSON.stringify(normalizeUsageQuery(body.query)),
                 snapshotJson: JSON.stringify(projectPublicProfileSnapshot(body.snapshot, body.policy)), layoutJson: JSON.stringify(layout),
                 appearanceJson: JSON.stringify(appearance), publishedAt: row?.publishedAt ?? new Date() };
-            return publicProfileUpdated(await tx.accountPublicProfile.upsert({ where: { accountId }, create: { accountId, ...data }, update: data }));
+            return publicProfileUpdated(row ? await updatePublicProfileInTx(tx, row, data)
+                : await createPublicProfileInTx(tx, { accountId, ...data }));
         }, { isolationLevel: 'ReadCommitted' });
     } finally {
         await discardPublicProfilePicture(prepared).catch(() => {

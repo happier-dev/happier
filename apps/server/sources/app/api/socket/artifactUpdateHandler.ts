@@ -9,6 +9,7 @@ import { createArtifact, deleteArtifact, updateArtifact } from "@/app/artifacts/
 import { readArtifactForCallerInTx } from "@/app/artifacts/artifactAccessService";
 import { hasCurrentSocketCredential } from "./socketCredentialCurrentness";
 import { ArtifactStoredKindV1Schema } from '@happier-dev/protocol/artifacts/artifactKindV1';
+import { ApprovalArtifactQueryHintsV1Schema, type ApprovalArtifactQueryHintsV1 } from '@happier-dev/protocol/approvals/approvalArtifactKindV1';
 
 /**
  * Refuses a socket operation whose credential is no longer current and closes
@@ -99,11 +100,17 @@ export function artifactUpdateHandler(userId: string, socket: Socket) {
         };
         provenance?: string | null;
         provenanceDataEncryptionKey?: string | null;
-    }, callback: (response: any) => void) => {
+    } & Partial<ApprovalArtifactQueryHintsV1>, callback: (response: any) => void) => {
         try {
             websocketEventsCounter.inc({ event_type: 'artifact-update' });
 
             const { artifactId, header, body } = data;
+
+            if (!ApprovalArtifactQueryHintsV1Schema.safeParse({ approvalState: data.approvalState ?? null,
+                approvalSessionId: data.approvalSessionId ?? null }).success) {
+                callback?.({ result: 'error', message: 'Invalid parameters' });
+                return;
+            }
 
             if (data.kind !== undefined && !ArtifactStoredKindV1Schema.safeParse(data.kind).success) {
                 callback?.({ result: 'error', message: 'Invalid parameters' });
@@ -157,6 +164,7 @@ export function artifactUpdateHandler(userId: string, socket: Socket) {
                 actorUserId: userId,
                 artifactId,
                 kind: data.kind,
+                approvalState: data.approvalState, approvalSessionId: data.approvalSessionId,
                 expectedHeaderVersion: data.expectedHeaderVersion,
                 header: header ? { bytes: privacyKit.decodeBase64(header.data), expectedVersion: header.expectedVersion } : undefined,
                 body: body ? { bytes: privacyKit.decodeBase64(body.data), expectedVersion: body.expectedVersion } : undefined,
@@ -248,11 +256,17 @@ export function artifactUpdateHandler(userId: string, socket: Socket) {
         dataEncryptionKey: string;
         provenance?: string | null;
         provenanceDataEncryptionKey?: string | null;
-    }, callback: (response: any) => void) => {
+    } & Partial<ApprovalArtifactQueryHintsV1>, callback: (response: any) => void) => {
         try {
             websocketEventsCounter.inc({ event_type: 'artifact-create' });
 
             const { id, header, body, dataEncryptionKey } = data;
+
+            if (!ApprovalArtifactQueryHintsV1Schema.safeParse({ approvalState: data.approvalState ?? null,
+                approvalSessionId: data.approvalSessionId ?? null }).success) {
+                callback?.({ result: 'error', message: 'Invalid parameters' });
+                return;
+            }
 
             if (data.kind !== undefined && !ArtifactStoredKindV1Schema.safeParse(data.kind).success) {
                 callback?.({ result: 'error', message: 'Invalid parameters' });
@@ -288,6 +302,7 @@ export function artifactUpdateHandler(userId: string, socket: Socket) {
                 actorUserId: userId,
                 artifactId: id,
                 kind: data.kind,
+                approvalState: data.approvalState, approvalSessionId: data.approvalSessionId,
                 header: privacyKit.decodeBase64(header),
                 body: privacyKit.decodeBase64(body),
                 dataEncryptionKey: privacyKit.decodeBase64(dataEncryptionKey),

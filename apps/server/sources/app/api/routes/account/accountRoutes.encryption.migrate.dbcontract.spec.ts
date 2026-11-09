@@ -66,6 +66,10 @@ import {
     createUsageSnapshot,
 } from "../connect/providerAccountUsageTestkit";
 import { registerAccountEncryptionMigrateRoutes } from "./registerAccountEncryptionMigrateRoutes";
+import { registerAccountSettingsRoutes } from "./registerAccountSettingsRoutes";
+import { registerAccountSettingsHistoryRoutes } from "./registerAccountSettingsHistoryRoutes";
+import { exerciseSettingsHistoryEncryptionMigrationContract, exerciseSettingsHistoryMigrationPagingContract,
+    exerciseNullOnlySettingsHistoryLegacyTransitionContract } from "@/testkit/accountEncryption";
 
 type NativeDbProvider = "postgres" | "mysql";
 type StaleFence =
@@ -1323,6 +1327,33 @@ describe(
                 "HAPPIER_FEATURE_ENCRYPTION__PLAIN_ACCOUNT_ARTIFACTS_AT_REST",
                 previousEnv.artifactsAtRest,
             );
+        });
+
+        it("refuses a legacy mode switch with null-only retained Settings history (ENCHIST null-only)", async () => {
+            await exerciseNullOnlySettingsHistoryLegacyTransitionContract({ trackAccount: accountId => { createdAccountIds.add(accountId); } });
+        });
+
+        it("reseals all retained Settings history without losing versions or timestamps (ENCHIST)", async () => {
+            const historyApp = createTestApp();
+            registerAccountSettingsRoutes(historyApp);
+            registerAccountSettingsHistoryRoutes(historyApp);
+            await historyApp.ready();
+            const previousHistoryLimit = process.env.HAPPIER_ACCOUNT_SETTINGS_HISTORY_LIMIT;
+            process.env.HAPPIER_ACCOUNT_SETTINGS_HISTORY_LIMIT = "250";
+            try {
+                const transport = { trackAccount: (accountId: string) => { createdAccountIds.add(accountId); },
+                    request: async (accountId: string, input: Readonly<{ method: "GET" | "POST"; url: string; payload?: object }>) => {
+                        const token = await auth.createToken(accountId, undefined, { kind: "account", authority: "present_user" });
+                        return historyApp.inject({ ...input, headers: { authorization: `Bearer ${token}`,
+                            ...buildAccountStoredContentCompatibilityHttpHeadersV1(CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION) } });
+                    } };
+                await exerciseSettingsHistoryEncryptionMigrationContract(transport);
+                await exerciseSettingsHistoryMigrationPagingContract(transport);
+            } finally {
+                await historyApp.close();
+                if (previousHistoryLimit === undefined) delete process.env.HAPPIER_ACCOUNT_SETTINGS_HISTORY_LIMIT;
+                else process.env.HAPPIER_ACCOUNT_SETTINGS_HISTORY_LIMIT = previousHistoryLimit;
+            }
         });
 
         it(

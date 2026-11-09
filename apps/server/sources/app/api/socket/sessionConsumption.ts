@@ -18,6 +18,14 @@ export function isUiConsumptionSocket(data: Socket["data"]): boolean {
         && (data.clientPurpose === "sync" || data.clientPurpose === "concurrent-server-cache");
 }
 
+/**
+ * The app's sync socket applies a durable message revision as an append against the revision it
+ * holds (and reads the full message when it does not). Other consumers receive full rows.
+ */
+export function appliesDurableMessageAppends(data: Socket["data"]): boolean {
+    return data.clientType === "user-scoped" && data.clientPurpose === "sync";
+}
+
 // One ordered lane per socket: declarations and access-change retirement never
 // interleave, so a declaration admitted before a revocation cannot outlive it.
 const consumptionLanes = new WeakMap<Socket, Promise<void>>();

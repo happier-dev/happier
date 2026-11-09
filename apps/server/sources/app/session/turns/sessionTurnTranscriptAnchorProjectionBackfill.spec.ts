@@ -36,7 +36,7 @@ type ProjectionUpdateArgs = Readonly<{
 }>;
 
 describe("backfillSessionTurnTranscriptAnchorProjectionPage", () => {
-    it("factually upgrades an unrelated historical v0 turn from its persisted anchors", async () => {
+    it("upgrades an admitted Session historical v0 turn from its persisted anchors", async () => {
         const findMany = vi.fn(async () => [{
             id: "turn-history",
             transcriptAnchorsJson: ANCHORED_TURN_JSON,
@@ -50,7 +50,7 @@ describe("backfillSessionTurnTranscriptAnchorProjectionPage", () => {
             sessionTurn: { findMany, updateMany },
         } as unknown as Parameters<typeof backfillSessionTurnTranscriptAnchorProjectionPage>[0]["db"];
 
-        await expect(backfillSessionTurnTranscriptAnchorProjectionPage({ db, limit: 25 })).resolves.toEqual({
+        await expect(backfillSessionTurnTranscriptAnchorProjectionPage({ sessionId: "requested-session", db, limit: 25 })).resolves.toEqual({
             processed: 1,
             updated: 1,
             nextAfterId: null,
@@ -82,7 +82,7 @@ describe("backfillSessionTurnTranscriptAnchorProjectionPage", () => {
         });
     });
 
-    it("rebackfills a stale v1 projection but leaves a concurrent capable writer's replacement intact", async () => {
+    it("leaves a concurrent capable writer's replacement intact", async () => {
         const staleRow = {
             id: "turn-race",
             transcriptAnchorsJson: ANCHORED_TURN_JSON,
@@ -90,27 +90,21 @@ describe("backfillSessionTurnTranscriptAnchorProjectionPage", () => {
             transcriptAnchorMinSeq: null,
             transcriptAnchorMaxSeq: null,
         };
-        const capableWriterRow = {
-            ...staleRow,
-            transcriptAnchorProjectionVersion: 1,
-            transcriptAnchorMinSeq: 7,
-            transcriptAnchorMaxSeq: 12,
-        };
         const findMany = vi.fn()
             .mockResolvedValueOnce([staleRow])
-            .mockResolvedValueOnce([capableWriterRow]);
+            .mockResolvedValueOnce([]);
         // A zero-count compare-and-set means the capable writer won after this page read.
         const updateMany = vi.fn(async () => ({ count: 0 }));
         const db = {
             sessionTurn: { findMany, updateMany },
         } as unknown as Parameters<typeof backfillSessionTurnTranscriptAnchorProjectionPage>[0]["db"];
 
-        await expect(backfillSessionTurnTranscriptAnchorProjectionPage({ db })).resolves.toMatchObject({
+        await expect(backfillSessionTurnTranscriptAnchorProjectionPage({ sessionId: "requested-session", db })).resolves.toMatchObject({
             processed: 1,
             updated: 0,
         });
-        await expect(backfillSessionTurnTranscriptAnchorProjectionPage({ db })).resolves.toMatchObject({
-            processed: 1,
+        await expect(backfillSessionTurnTranscriptAnchorProjectionPage({ sessionId: "requested-session", db })).resolves.toMatchObject({
+            processed: 0,
             updated: 0,
         });
 
@@ -137,7 +131,7 @@ describe("backfillSessionTurnTranscriptAnchorProjectionPage", () => {
             sessionTurn: { findMany, updateMany },
         } as unknown as Parameters<typeof backfillSessionTurnTranscriptAnchorProjectionPage>[0]["db"];
 
-        await expect(backfillSessionTurnTranscriptAnchorProjectionPage({ db })).resolves.toMatchObject({
+        await expect(backfillSessionTurnTranscriptAnchorProjectionPage({ sessionId: "requested-session", db })).resolves.toMatchObject({
             processed: 1,
             updated: 1,
         });
@@ -149,7 +143,7 @@ describe("backfillSessionTurnTranscriptAnchorProjectionPage", () => {
             },
         }));
     });
-    it("repairs stale v1 scalar values when rescanning after an anchor change", async () => {
+    it("resumes conversion after a concurrent anchor rewrite wins the snapshot predicate", async () => {
         const row = {
             id: "turn-predecessor-update",
             transcriptAnchorsJson: ANCHORED_TURN_JSON,
@@ -157,8 +151,12 @@ describe("backfillSessionTurnTranscriptAnchorProjectionPage", () => {
             transcriptAnchorMinSeq: null as number | null,
             transcriptAnchorMaxSeq: null as number | null,
         };
-        const findMany = vi.fn(async () => [{ ...row }]);
+        const findMany = vi.fn(async () => row.transcriptAnchorProjectionVersion === 0 ? [{ ...row }] : []);
         const updateMany = vi.fn(async ({ where, data }: ProjectionUpdateArgs) => {
+            // The database boundary simulates a rewrite committed after the page read.
+            if (row.transcriptAnchorsJson === ANCHORED_TURN_JSON) {
+                row.transcriptAnchorsJson = PREDECESSOR_REPLACED_ANCHOR_JSON;
+            }
             if (
                 row.id !== where.id
                 || row.transcriptAnchorsJson !== where.transcriptAnchorsJson
@@ -177,19 +175,16 @@ describe("backfillSessionTurnTranscriptAnchorProjectionPage", () => {
             sessionTurn: { findMany, updateMany },
         } as unknown as Parameters<typeof backfillSessionTurnTranscriptAnchorProjectionPage>[0]["db"];
 
-        await expect(backfillSessionTurnTranscriptAnchorProjectionPage({ db })).resolves.toMatchObject({
-            updated: 1,
+        await expect(backfillSessionTurnTranscriptAnchorProjectionPage({ sessionId: "requested-session", db })).resolves.toMatchObject({
+            updated: 0,
         });
         expect(row).toMatchObject({
-            transcriptAnchorProjectionVersion: 1,
-            transcriptAnchorMinSeq: 7,
-            transcriptAnchorMaxSeq: 12,
+            transcriptAnchorProjectionVersion: 0,
+            transcriptAnchorMinSeq: null,
+            transcriptAnchorMaxSeq: null,
         });
 
-        // An interrupted conversion can resume after the anchors have changed.
-        row.transcriptAnchorsJson = PREDECESSOR_REPLACED_ANCHOR_JSON;
-
-        await expect(backfillSessionTurnTranscriptAnchorProjectionPage({ db })).resolves.toMatchObject({
+        await expect(backfillSessionTurnTranscriptAnchorProjectionPage({ sessionId: "requested-session", db })).resolves.toMatchObject({
             updated: 1,
         });
         expect(row).toMatchObject({
@@ -197,6 +192,6 @@ describe("backfillSessionTurnTranscriptAnchorProjectionPage", () => {
             transcriptAnchorMinSeq: 20,
             transcriptAnchorMaxSeq: 24,
         });
-        await expect(backfillSessionTurnTranscriptAnchorProjectionPage({ db })).resolves.toMatchObject({ updated: 0 });
+        await expect(backfillSessionTurnTranscriptAnchorProjectionPage({ sessionId: "requested-session", db })).resolves.toMatchObject({ updated: 0 });
     });
 });

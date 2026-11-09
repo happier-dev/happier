@@ -30,6 +30,8 @@ export type PluginWebhookEndpointReadinessFactsV1 = PluginWebhookEndpointBinding
      * route's *current* credential, and cleared again by credential rotation.
      */
     providerConfirmedAt: Date | null;
+    /** Capability URLs require no provider signature/confirmation setup. */
+    receiptOnly?: boolean;
     /**
      * Response-scoped: an ensure rejoin can no longer return the one-time
      * generated secret its creating response disclosed, so provider setup
@@ -76,7 +78,7 @@ export function projectPluginWebhookEndpointReadinessV1(
 ): PluginWebhookEndpointReadinessV1 {
     const availability = projectPluginWebhookEndpointBindingAvailabilityV1(facts);
     if (availability !== "available") return availability;
-    if (facts.providerConfirmedAt !== null) return "ready";
+    if (facts.receiptOnly || facts.providerConfirmedAt !== null) return "ready";
     return facts.oneTimeCredentialDisclosureLost
         ? "credentialDisclosureLost"
         : "providerConfirmationRequired";

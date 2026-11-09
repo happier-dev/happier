@@ -155,7 +155,7 @@ const txDbMocks = createDbMocks({
     session: ["create", "findFirst", "findMany", "findUnique", "update", "updateMany"],
     sessionMessage: ["findMany", "findFirst"],
     sessionShare: ["findMany"],
-    sessionTurn: ["findFirst", "findMany"],
+    sessionTurn: ["findFirst", "findMany", "updateMany"],
     sessionPin: ["count", "deleteMany", "findMany", "findUnique", "updateMany", "upsert"],
     sessionFolderAssignment: ["deleteMany", "findMany", "updateMany", "upsert"],
     sessionOrganizationFolder: ["count", "findMany", "updateMany", "upsert"],
@@ -199,6 +199,17 @@ const txSessionFindFirstDelegate = txDbMocks.db.session.findFirst;
 const txSessionFindManyDelegate = txDbMocks.db.session.findMany;
 const txAccountFindManyDelegate = txDbMocks.db.account.findMany;
 const txAccountFindUniqueDelegate = txDbMocks.db.account.findUnique;
+const txSessionTurnFindManyDelegate = txDbMocks.db.sessionTurn.findMany;
+Object.assign(txDb, { sessionTurn: {
+    ...txDbMocks.db.sessionTurn,
+    findMany: vi.fn(async (...args: Parameters<typeof txSessionTurnFindManyDelegate>) => {
+        // Route fixtures supply current publication rows, not predecessor rows.
+        // Keep preparation separate from their v1 snapshot-query observations;
+        // real SQLite/Postgres composition covers predecessor conversion and CAS.
+        if (args[0]?.where?.transcriptAnchorProjectionVersion === 0) return [];
+        return await txSessionTurnFindManyDelegate(...args);
+    }),
+} });
 function readSessionIdFilter(value: unknown): ReadonlySet<string> | undefined {
     if (!value || typeof value !== "object") return undefined;
     if (Array.isArray(value)) {
@@ -354,7 +365,7 @@ export const txSessionMessageFindMany = txDbMocks.db.sessionMessage.findMany;
 export const txSessionMessageFindFirst = txDbMocks.db.sessionMessage.findFirst;
 export const txSessionShareFindMany = txDbMocks.db.sessionShare.findMany;
 export const txSessionTurnFindFirst = txDbMocks.db.sessionTurn.findFirst;
-export const txSessionTurnFindMany = txDbMocks.db.sessionTurn.findMany;
+export const txSessionTurnFindMany = txSessionTurnFindManyDelegate;
 export const txSessionPinCount = txDbMocks.db.sessionPin.count;
 export const txSessionPinDeleteMany = txDbMocks.db.sessionPin.deleteMany;
 export const txSessionPinFindMany = txDbMocks.db.sessionPin.findMany;
@@ -730,6 +741,7 @@ export function resetSessionRouteMocks(): void {
     txSessionShareFindMany.mockResolvedValue([]);
     txSessionTurnFindFirst.mockResolvedValue(null);
     txSessionTurnFindMany.mockResolvedValue([]);
+    txDbMocks.db.sessionTurn.updateMany.mockRejectedValue(new Error('Route fixture has no predecessor turns to update'));
     txAccountFindUnique.mockReset();
     txDiscussionAggregate.mockResolvedValue({ _max: { lastMessageAt: null } });
     txDiscussionFindMany.mockResolvedValue([]);

@@ -5,6 +5,7 @@ import { type Tx } from '@/storage/inTx';
 import { initEncrypt } from '@/modules/encrypt';
 import { observeLazyPrismaQuery } from '@/app/changes/accountPublicationContention.testkit';
 import { createPresentUserSessionAccessAuthentication } from '@/app/session/access/sessionAccessAuthentication.testkit';
+import { encodeFollowListCursorV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowListV1';
 import { listAccountSessionFollows } from './accountFollowService';
 import { listSessionFollowSources } from './sessionFollowEdgeService';
 import { sourceKeyForSessionFollowSourceV1 } from './sessionFollowSourceIdentity';
@@ -82,6 +83,7 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== 'postgres')('Follow list dem
         const f = await fixture(1_000);
         const input = { ...f, source: { kind: 'session' as const, sessionId: f.selected } };
         const measured = await measure(() => listAccountSessionFollows(input));
+        console.info('FOLLOW_LIST_COST exact-session', measured.counts);
         expect(measured.counts.followRows).toBeLessThanOrEqual(2);
         expect(measured.counts.sessionReads).toBeLessThan(20);
         expect(measured.result).toMatchObject({ ok: true, value: { follows: expect.arrayContaining([
@@ -90,10 +92,50 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== 'postgres')('Follow list dem
         if (!measured.result.ok) throw new Error(measured.result.error);
         expect(measured.result.value.follows).toHaveLength(2);
     });
+    it('selects Run kinds before pagination without acquiring 2,000 unrelated Follows', async () => {
+        const f = await fixture(2_000);
+        const input = { ...f, sourceKinds: ['execution_run' as const, 'workflow_run' as const], limit: 1 };
+        const first = await measure(() => listAccountSessionFollows(input));
+        console.info('FOLLOW_LIST_COST run-kind', first.counts);
+        expect(first.result).toMatchObject({ ok: true, value: { follows: [expect.objectContaining({ source: f.runSource })] } });
+        expect(first.counts.followRows).toBe(1);
+        expect(first.counts.sessionReads).toBeLessThan(20);
+        if (!first.result.ok) throw new Error(first.result.error);
+        expect(first.result.value.continuation).toBeUndefined();
+
+        const workflow = await db.automationRun.create({ data: { accountId: f.accountId, originKind: 'direct',
+            automationId: null, causeKind: null, causeOccurredAt: null, workflowAcceptedSnapshotEnvelope: '{}',
+            state: 'running', workflowCustodyState: 'pending', scheduledAt: new Date(), dueAt: new Date(), revision: 1 } });
+        const workflowSource = { kind: 'workflow_run' as const, runId: workflow.id };
+        await db.accountSessionFollow.create({ data: { accountId: f.accountId,
+            sourceKey: sourceKeyForSessionFollowSourceV1(workflowSource), sourceWorkflowRunId: workflow.id,
+            following: true, followPolicy: '{"preset":"important"}' } });
+        const page = await measure(() => listAccountSessionFollows(input));
+        if (!page.result.ok) throw new Error(page.result.error);
+        expect(page.counts.followRows).toBe(2);
+        expect(page.result.value.continuation).toEqual(expect.any(String));
+        const next = await listAccountSessionFollows({ ...input,
+            sourceKinds: ['workflow_run', 'execution_run', 'execution_run'], cursor: page.result.value.continuation });
+        if (!next.ok) throw new Error(next.error);
+        expect([...page.result.value.follows, ...next.value.follows].map(row => 'source' in row ? row.source : null))
+            .toEqual([f.runSource, workflowSource]);
+        expect(next.value.continuation).toBeUndefined();
+        expect(await listAccountSessionFollows({ ...f, cursor: page.result.value.continuation }))
+            .toEqual({ ok: false, error: 'invalid_parameters' });
+        expect(await listAccountSessionFollows({ ...input, sourceKinds: ['workflow_run'], cursor: page.result.value.continuation }))
+            .toEqual({ ok: false, error: 'invalid_parameters' });
+        await db.accountSessionFollow.deleteMany({ where: { accountId: f.accountId,
+            OR: [{ sourceExecutionRunSessionId: f.selected }, { sourceWorkflowRunId: workflow.id }] } });
+        const empty = await measure(() => listAccountSessionFollows(input));
+        expect(empty.result).toEqual({ ok: true, value: { follows: [] } });
+        expect(empty.counts.followRows).toBe(0);
+        expect(empty.counts.sessionReads).toBe(0);
+    });
     it('pages candidates before admission for both owners and keeps complete default and continuation results', async () => {
         const f = await fixture(1_000);
         const first = await measure(() => listAccountSessionFollows({ ...f, limit: 1 }));
         const sources = await measure(() => listSessionFollowSources({ ...f, limit: 1 }));
+        console.info('FOLLOW_LIST_COST page', { account: first.counts, session: sources.counts });
         expect(first.counts.followRows).toBeLessThanOrEqual(4);
         expect(first.counts.sessionReads).toBeLessThan(20);
         expect(sources.counts.followRows).toBeLessThanOrEqual(2);
@@ -118,10 +160,22 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== 'postgres')('Follow list dem
             .toEqual({ ok: false, error: 'invalid_parameters' });
         expect(await listAccountSessionFollows({ ...f, cursor: first.value.continuation }))
             .toEqual({ ok: false, error: 'invalid_parameters' });
-        const existingCursor = JSON.stringify({ v: 1, scope: JSON.stringify([f.accountId, 'following']),
-            after: sourceKeyForSessionFollowSourceV1(f.runSource) });
-        const existing = await listAccountSessionFollows({ ...f, cursor: existingCursor });
-        expect(existing).toMatchObject({ ok: true, value: { follows: [expect.any(Object), expect.any(Object)] } });
+    });
+    it.each([
+        { owner: 'account', filtered: false }, { owner: 'account', filtered: true },
+        { owner: 'destination', filtered: false }, { owner: 'destination', filtered: true },
+    ] as const)('rejects an unsealed canonical V1 cursor before reading Follow rows ($owner, filtered=$filtered)', async ({ owner, filtered }) => {
+        const f = await fixture();
+        const source = filtered ? { kind: 'session' as const, sessionId: f.selected } : undefined;
+        const scope = JSON.stringify([f.accountId, 'following',
+            ...(owner === 'destination' ? [f.destinationSessionId] : []), ...(source ? [source] : [])]);
+        const cursor = encodeFollowListCursorV1(scope, sourceKeyForSessionFollowSourceV1(f.runSource));
+        const input = { ...f, source, cursor };
+        const measured = owner === 'account'
+            ? await measure(() => listAccountSessionFollows(input))
+            : await measure(() => listSessionFollowSources(input));
+        expect(measured.result).toEqual({ ok: false, error: 'invalid_parameters' });
+        expect(measured.counts).toEqual({ followRows: 0, sessionReads: 0 });
     });
     it('keeps exact Run identity and source selection on every destination continuation', async () => {
         const f = await fixture();

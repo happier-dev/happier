@@ -58,13 +58,11 @@ export function settleQualifiedConnectedAccountCredentialMetadata(
         metadata: QualifiedConnectedAccountCredentialMetadataV4;
     }>
     | Readonly<{ status: "provider_identity_mismatch" }> {
-    if (
-        !params.allowProviderIdentityChange
-        && settlesChangedEstablishedIdentity({
-            current: params.current?.providerIdentity,
-            incoming: params.incoming.providerIdentity,
-        })
-    ) {
+    const changedIdentity = settlesChangedEstablishedIdentity({
+        current: params.current?.providerIdentity,
+        incoming: params.incoming.providerIdentity,
+    });
+    if (!params.allowProviderIdentityChange && changedIdentity) {
         return { status: "provider_identity_mismatch" };
     }
     const providerIdentity = mergeProviderIdentity(

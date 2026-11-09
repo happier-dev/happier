@@ -1,10 +1,11 @@
 import type { Tx } from '@/storage/inTx';
 import type { SessionAccessAuthentication } from '@/app/session/access/sessionAccessAuthentication';
-import { buildSessionAccessWhere } from '@/app/session/access/sessionAccessWhere';
 import { resolveSessionAccessForOperation } from '@/app/session/access/sessionAccess';
 import { buildSessionMessagePublicationWhere, loadSessionTranscriptPublication, isExternalShareableSessionTurnVisible } from '@/app/session/sessionTranscriptPublicationPolicy';
 import { parseStoredSessionTurn } from '@/app/session/turns/parseSessionTurnState';
 import { projectSessionMessageAccountActors } from './projectSessionMessageAccountActors';
+import { isUnclaimedUnavailableExecutionRunInput } from '@/app/session/pending/selectPendingProviderInvocation';
+import { normalizePendingRequestedActionV1 } from '@happier-dev/protocol/sessions/pending/pendingRequestedActionV1';
 
 /** Exact committed reads share transcript publication and current credential admission. */
 export async function readCommittedSessionMessageInTx(tx: Tx, input: Readonly<{
@@ -17,15 +18,13 @@ export async function readCommittedSessionMessageInTx(tx: Tx, input: Readonly<{
     const accessDecision = await resolveSessionAccessForOperation(tx, { accountId: input.accountId,
         sessionId: input.sessionId, authentication: input.authentication, capability: 'readTranscript',
         apiTokenAction: { actionId: 'session.transcript.get', targetMachineId: input.targetMachineId } });
-    if (accessDecision.status !== 'allowed') return { row: null, accessDecision, accountActor: null };
+    if (accessDecision.status !== 'allowed') return { row: null, accessDecision, accountActor: null, inputDisposition: null };
     const publication = await loadSessionTranscriptPublication(tx, input.sessionId);
     const row = await tx.sessionMessage.findFirst({
         where: buildSessionMessagePublicationWhere({
             where: {
                 sessionId: input.sessionId,
                 ...('messageId' in input ? { id: input.messageId } : { localId: input.localId }),
-                session: { AND: [{ id: input.sessionId }, await buildSessionAccessWhere({ tx, accountId: input.accountId,
-                    capability: 'readTranscript', mode: 'effective_access_v1', authentication: input.authentication })] },
             },
             publication,
         }),
@@ -36,6 +35,19 @@ export async function readCommittedSessionMessageInTx(tx: Tx, input: Readonly<{
             transcriptObservationProvenance: true, inputAdmissionReceipt: true, authorAccountId: true,
         },
     });
+    // A refused recovery has no accepted transcript anchor. Read its existing
+    // Pending disposition by the Session-wide input identity, never an inventory
+    // or the main queue (which cannot describe an exact Run target).
+    const pending = !row && 'localId' in input ? await tx.sessionPendingMessage.findUnique({
+        where: { sessionId_localId: { sessionId: input.sessionId, localId: input.localId } },
+        select: { localId: true, targetExecutionRunId: true, requestedAction: true, status: true,
+            deliveryState: true, deliveryBlockedReason: true, providerAction: true },
+    }) : null;
+    const inputDisposition = pending?.status === 'queued'
+        && normalizePendingRequestedActionV1(pending.requestedAction, 'stored').kind === 'recover_execution_run'
+        && isUnclaimedUnavailableExecutionRunInput(pending.targetExecutionRunId, pending)
+        ? { localId: pending.localId, result: { status: 'rejected' as const, code: 'session_input_target_unavailable' as const } }
+        : null;
     const turnRow = 'localId' in input && row?.turnStartWitnessId ? await tx.sessionTurn.findUnique({ where: {
         sessionId_turnId: { sessionId: input.sessionId, turnId: row.turnStartWitnessId },
     } }) : null;
@@ -44,6 +56,7 @@ export async function readCommittedSessionMessageInTx(tx: Tx, input: Readonly<{
     return {
         row: row ? { ...row, turn } : null,
         accessDecision,
+        inputDisposition,
         accountActor: row ? (await projectSessionMessageAccountActors(tx, [row]))[0] ?? null : null,
     };
 }

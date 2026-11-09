@@ -80,7 +80,7 @@ export async function enforceLoginEligibility(params: {
             account = await inTx(tx => tx.account.findUnique({
                 where: { id: accountId },
                 select: { id: true, status: true },
-            }), { readOnly: true });
+            }), { readOnly: true, singleStatementRead: true });
             observeLoginEligibilityStage({
                 stage: "account_lookup",
                 result: "ok",

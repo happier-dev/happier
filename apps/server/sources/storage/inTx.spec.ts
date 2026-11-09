@@ -212,6 +212,38 @@ describe("inTx", () => {
         failure.code === "P2028" ? "Database transaction deadline expired" : "Database transaction rollback recovery exhausted");
     });
 
+    it.each([
+        { message: "canceling statement due to statement timeout", expected: "database_transaction_timeout" },
+        { message: "canceling statement due to user request", expected: "database_transaction_conflict_exhausted" },
+    ])("projects a cancelled single-statement read ($message) as the transaction owner does", async ({ message, expected }) => {
+        applyEnvValues({ HAPPIER_DB_PROVIDER: "postgres" });
+        const cancelled = Object.assign(new Error("private SQL contents"), { code: "P2010", meta: { code: "57014", message } });
+        const failure = await inTx(async () => { throw cancelled; }, { readOnly: true, singleStatementRead: true }).catch(error => error);
+        const { readDatabaseErrorCode } = await import("./transactionErrors");
+        expect(readDatabaseErrorCode(failure)).toBe(expected);
+        expect(transaction).not.toHaveBeenCalled();
+    });
+
+    it("leaves other single-statement read failures to the global storage projection", async () => {
+        applyEnvValues({ HAPPIER_DB_PROVIDER: "postgres" });
+        const unavailable = Object.assign(new Error("private SQL contents"), { code: "P2024" });
+        await expect(inTx(async () => { throw unavailable; }, { readOnly: true, singleStatementRead: true })).rejects.toBe(unavailable);
+    });
+
+    it.each([
+        ["prepare", { prepare: async () => async () => {} }],
+        ["deadlineAtMs", { deadlineAtMs: Date.now() + 1_000 }],
+        ["timeoutMs", { timeoutMs: 1_000 }],
+        ["maxWaitMs", { maxWaitMs: 1_000 }],
+    ] as const)("refuses %s on a single-statement read before reading", async (_name, extra) => {
+        for (const provider of ["postgres", "sqlite"]) {
+            applyEnvValues({ HAPPIER_DB_PROVIDER: provider });
+            const read = vi.fn(async () => "value");
+            await expect(inTx(read, { readOnly: true, singleStatementRead: true, ...extra })).rejects.toThrow(/singleStatementRead/);
+            expect(read).not.toHaveBeenCalled();
+        }
+    });
+
     it("uses read-committed transactions by default", async () => {
         restoreEnv(envSnapshot);
         applyEnvValues({
@@ -533,14 +565,20 @@ describe("inTx", () => {
         expect(delayMock).toHaveBeenCalledTimes(1);
     });
 
-    it.each([false, true])("replays audience acquisition under the existing retry budget (exhausted: %s)", async (exhausted) => {
+    it.each([
+        { reason: "session-account-audience-changed", exhausted: false },
+        { reason: "session-account-audience-changed", exhausted: true },
+        { reason: "public-profile-changed", exhausted: false },
+        { reason: "public-profile-changed", exhausted: true },
+    ] satisfies readonly { reason: import("./inTx").TransactionReplayReason; exhausted: boolean }[])(
+        "replays $reason under the existing retry budget (exhausted: $exhausted)", async ({ reason, exhausted }) => {
         applyEnvValues({ HAPPIER_DB_PROVIDER: "postgres", HAPPIER_DB_TX_MAX_RETRIES: "1" });
         let attempts = 0;
         const published: number[] = [];
         const operation = inTx(async tx => {
             const attempt = ++attempts;
             afterTx(tx, () => published.push(attempt));
-            if (exhausted || attempt === 1) throw new inTxModule.TransactionReplayRequiredError("session-account-audience-changed");
+            if (exhausted || attempt === 1) throw new inTxModule.TransactionReplayRequiredError(reason);
             return "committed";
         });
 

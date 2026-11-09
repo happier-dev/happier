@@ -53,7 +53,7 @@ describe("createPeerTcpTunnelRelayStream", () => {
             await substream.stream.close();
         }
     });
-    it("settles a credit-blocked write when the parent tunnel closes", async () => {
+    it.each(['tunnel_closed', 'application_ended'])("settles a credit-blocked write and retains parent reason %s", async (reasonCode) => {
         const substream = createPeerTcpTunnelRelayStream({
             tunnelId: "tunnel-1",
             substreamId: "substream-1",
@@ -66,9 +66,10 @@ describe("createPeerTcpTunnelRelayStream", () => {
         });
 
         const write = substream.stream.write(new Uint8Array([1, 2]));
-        substream.closeFromTunnel();
+        substream.closeFromTunnel(reasonCode);
 
         await expect(write).resolves.toEqual({ ok: false, reasonCode: "tunnel_closed" });
+        expect(substream.readTerminalReasonCode()).toBe(reasonCode);
     });
 
     it("provides target-neutral framed byte transport while isolating the exact substream", async () => {

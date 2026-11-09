@@ -3,13 +3,15 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest
 import type { AutomationReplyHandoffDispatchRequestV1 } from "@happier-dev/protocol";
 
 import { db } from "@/storage/db";
-import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
+import { createDatabaseIntegrationHarness } from "@/testkit/databaseIntegrationHarness";
+import { observePrismaRequests } from "@/testkit/observeSqliteRequests";
+import * as logging from "@/utils/logging/log";
 
 import {
-    DEFAULT_AUTOMATION_REPLY_HANDOFF_RETRY_AFTER_MS,
+    DEFAULT_AUTOMATION_REPLY_HANDOFF_LEASE_DURATION_MS,
     retryBlockedAutomationReplyHandoff,
 } from "./automationReplyHandoffService";
-import { runAutomationReplyHandoffWorkerPass, startAutomationReplyHandoffWorker } from "./automationReplyHandoffWorker";
+import { DEFAULT_AUTOMATION_REPLY_HANDOFF_IDLE_POLL_MS, runAutomationReplyHandoffWorkerPass, startAutomationReplyHandoffWorker } from "./automationReplyHandoffWorker";
 
 const ACCOUNT_ID = "account-reply-handoff-worker";
 const AUTOMATION_ID = "automation-reply-handoff-worker";
@@ -17,6 +19,25 @@ const RUN_ID = "run-reply-handoff-worker";
 const HANDOFF_ID = "handoff-reply-handoff-worker";
 const OCCURRENCE_KEY = "A".repeat(43);
 const NOW = new Date("2026-08-10T12:00:00.000Z");
+
+function observeFallbackClock() {
+    vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
+    const setTimeoutAtBoundary = globalThis.setTimeout;
+    let fires = 0;
+    const timers = vi.spyOn(globalThis, "setTimeout").mockImplementation((callback, delay, ...args) =>
+        setTimeoutAtBoundary(() => {
+            if (delay === DEFAULT_AUTOMATION_REPLY_HANDOFF_IDLE_POLL_MS) fires += 1;
+            callback(...args);
+        }, delay));
+    return {
+        get fires() { return fires; },
+        get arms() { return timers.mock.calls.filter(([, delay]) => delay === DEFAULT_AUTOMATION_REPLY_HANDOFF_IDLE_POLL_MS).length; },
+        async waitForArm(count: number) {
+            await vi.waitFor(() => expect(timers.mock.calls.filter(([, delay]) => delay === DEFAULT_AUTOMATION_REPLY_HANDOFF_IDLE_POLL_MS).length).toBeGreaterThanOrEqual(count));
+        },
+        close() { timers.mockRestore(); vi.useRealTimers(); },
+    };
+}
 
 const RESULT_ENVELOPE = {
     t: "plain" as const,
@@ -47,10 +68,10 @@ const REPLY_CONTEXT_ENVELOPE = {
 };
 
 describe("Automation reply handoff worker", () => {
-    let harness: LightSqliteHarness | undefined;
+    let harness: Awaited<ReturnType<typeof createDatabaseIntegrationHarness>> | undefined;
 
     beforeAll(async () => {
-        harness = await createLightSqliteHarness({
+        harness = await createDatabaseIntegrationHarness({
             tempDirPrefix: "happier-automation-reply-handoff-worker-",
             initAuth: false,
         });
@@ -116,6 +137,54 @@ describe("Automation reply handoff worker", () => {
         });
     }
 
+    it("keeps one existing fallback scan for cross-API writes and database-only recovery while honoring a future reply deadline", async () => {
+        await seedReadyHandoff();
+        const futureDueAt = new Date(Date.now() + 600_000);
+        await db.automationRun.update({ where: { id: RUN_ID }, data: { replyHandoffDueAt: futureDueAt } });
+        const clock = observeFallbackClock();
+        let reads = 0;
+        let transactions = 0;
+        const originalTransaction = db.$transaction;
+        db.$transaction = new Proxy(originalTransaction, {
+            apply(transaction, receiver, args: unknown[]) {
+                transactions += 1;
+                return Reflect.apply(transaction, receiver, args);
+            },
+        });
+        const release = observePrismaRequests(db, { before: request => {
+            if (request.model === "AutomationRun" && request.action.startsWith("find")) reads += 1;
+        } });
+        const worker = startAutomationReplyHandoffWorker({ dispatch: async () => {
+            throw new Error("The future handoff must not dispatch before its own deadline");
+        } });
+        try {
+            await clock.waitForArm(1);
+            expect(reads).toBe(1);
+            expect(transactions).toBe(0);
+            const startupReads = reads;
+            for (let wake = 1; wake <= 6; wake += 1) {
+                await vi.advanceTimersByTimeAsync(DEFAULT_AUTOMATION_REPLY_HANDOFF_IDLE_POLL_MS);
+                await clock.waitForArm(wake + 1);
+                expect(clock.fires).toBe(wake);
+            }
+            expect(reads - startupReads).toBe(6);
+            expect(transactions).toBe(0);
+            await expect(db.automationRun.findUniqueOrThrow({ where: { id: RUN_ID },
+                select: { replyHandoffDueAt: true, replyHandoffAttempt: true } }))
+                .resolves.toEqual({ replyHandoffDueAt: futureDueAt, replyHandoffAttempt: 0 });
+            await worker.stop();
+            const stoppedReads = reads;
+            await vi.advanceTimersByTimeAsync(DEFAULT_AUTOMATION_REPLY_HANDOFF_IDLE_POLL_MS);
+            expect(clock.fires).toBe(6);
+            expect(reads).toBe(stoppedReads);
+        } finally {
+            await worker.stop();
+            release();
+            db.$transaction = originalTransaction;
+            clock.close();
+        }
+    });
+
     async function readCurrentness() {
         const account = await db.account.findUniqueOrThrow({
             where: { id: ACCOUNT_ID },
@@ -125,17 +194,99 @@ describe("Automation reply handoff worker", () => {
         return { mode: "plain" as const, version: account.seq, contentKeyFingerprint: null };
     }
 
-    it("discovers a newly ready handoff while an unrelated future retry is sleeping", async () => {
+    it("reports real database failures privately and recovers through the existing fallback without reconnect or push", async () => {
+        await seedReadyHandoff();
+        const clock = observeFallbackClock();
+        const privateDetails = "private-prompt result-envelope account-secret";
+        const warnings = vi.spyOn(logging, "warn").mockImplementation(() => {});
+        let unavailable = true;
+        const release = observePrismaRequests(db, { before: request => {
+            if (unavailable && request.model === "AutomationRun" && request.action.startsWith("find")) throw new Error(privateDetails);
+        } });
+        const worker = startAutomationReplyHandoffWorker({ dispatch: async () => ({ kind: "settled",
+            settlement: { kind: "accepted" }, accountCurrentness: await readCurrentness() }) });
+        try {
+            await vi.waitFor(() => {
+                expect(warnings).toHaveBeenCalledWith({ module: "automation-reply-handoff-worker", operation: "pass" }, expect.any(String));
+                expect(warnings).toHaveBeenCalledWith({ module: "automation-reply-handoff-worker", operation: "due-scan" }, expect.any(String));
+            });
+            await clock.waitForArm(1);
+            unavailable = false;
+            await vi.advanceTimersByTimeAsync(DEFAULT_AUTOMATION_REPLY_HANDOFF_IDLE_POLL_MS);
+            await vi.waitFor(async () => expect(await db.automationRun.findUniqueOrThrow({ where: { id: RUN_ID },
+                select: { replyHandoffState: true, replyHandoffAttempt: true } }))
+                .toEqual({ replyHandoffState: "accepted", replyHandoffAttempt: 1 }));
+            expect(JSON.stringify(warnings.mock.calls)).not.toContain(privateDetails);
+        } finally {
+            await worker.stop();
+            release();
+            warnings.mockRestore();
+            clock.close();
+        }
+    });
+
+    it.each([0, 1_234])("settles a late RPC retry hint %i at the response clock while retaining the same high-attempt handoff", async (retryAfterMs) => {
+        await seedReadyHandoff();
+        await db.automationRun.update({ where: { id: RUN_ID }, data: { replyHandoffAttempt: 2 } });
+        let clock = NOW;
+        const responseAt = new Date(NOW.getTime() + DEFAULT_AUTOMATION_REPLY_HANDOFF_LEASE_DURATION_MS + 5_000);
+        await runAutomationReplyHandoffWorkerPass({
+            now: () => clock,
+            dispatch: async () => {
+                clock = responseAt;
+                return { kind: "settled", settlement: { kind: "retry", retryAfterMs }, accountCurrentness: await readCurrentness() };
+            },
+        });
+        await expect(db.automationRun.findUniqueOrThrow({ where: { id: RUN_ID },
+            select: { replyHandoffId: true, replyHandoffAttempt: true, replyHandoffState: true, replyHandoffDueAt: true } }))
+            .resolves.toEqual({ replyHandoffId: HANDOFF_ID, replyHandoffAttempt: 3, replyHandoffState: "ready",
+                replyHandoffDueAt: retryAfterMs > 0 ? new Date(responseAt.getTime() + retryAfterMs)
+                    : new Date(NOW.getTime() + DEFAULT_AUTOMATION_REPLY_HANDOFF_LEASE_DURATION_MS) });
+    });
+
+    it("retries a late expired handoff through the existing fallback without an immediate self-wake or attempt ceiling", async () => {
+        await seedReadyHandoff();
+        await db.automationRun.update({ where: { id: RUN_ID }, data: { replyHandoffAttempt: 2 } });
+        const clock = observeFallbackClock();
+        let dispatches = 0;
+        const worker = startAutomationReplyHandoffWorker({ dispatch: async (raw) => {
+            const request = raw as AutomationReplyHandoffDispatchRequestV1;
+            expect(request.handoff.handoffId).toBe(HANDOFF_ID);
+            dispatches += 1;
+            if (dispatches === 1) vi.setSystemTime(Date.now() + DEFAULT_AUTOMATION_REPLY_HANDOFF_LEASE_DURATION_MS + 1);
+            return { kind: "unavailable", code: "contractInvalid" };
+        } });
+        try {
+            await clock.waitForArm(1);
+            expect(dispatches).toBe(1);
+            await vi.advanceTimersByTimeAsync(0);
+            expect(dispatches).toBe(1);
+            await vi.advanceTimersByTimeAsync(DEFAULT_AUTOMATION_REPLY_HANDOFF_IDLE_POLL_MS);
+            await clock.waitForArm(2);
+            expect(dispatches).toBe(2);
+            await vi.advanceTimersByTimeAsync(DEFAULT_AUTOMATION_REPLY_HANDOFF_IDLE_POLL_MS);
+            await clock.waitForArm(3);
+            expect(clock.fires).toBe(2);
+            expect(dispatches).toBe(2);
+            await expect(db.automationRun.findUniqueOrThrow({ where: { id: RUN_ID },
+                select: { replyHandoffState: true, replyHandoffAttempt: true, replyHandoffId: true } }))
+                .resolves.toEqual({ replyHandoffState: "ready", replyHandoffAttempt: 4, replyHandoffId: HANDOFF_ID });
+            await expect(db.automationRun.count()).resolves.toBe(1);
+        } finally {
+            await worker.stop();
+            clock.close();
+        }
+    });
+
+    it("discovers a cross-API ready handoff without a push while an unrelated future retry is sleeping", async () => {
         await seedReadyHandoff();
         const retryAt = new Date(Date.now() + 60_000);
         const futureRun = await db.automationRun.update({
             where: { id: RUN_ID },
             data: { replyHandoffDueAt: retryAt, replyHandoffAttempt: 3 },
         });
-        const idlePollMs = 100;
-        const timers = vi.spyOn(globalThis, "setTimeout");
+        const clock = observeFallbackClock();
         const worker = startAutomationReplyHandoffWorker({
-            idlePollMs,
             dispatch: async () => ({
                 kind: "settled",
                 settlement: { kind: "accepted" },
@@ -143,11 +294,7 @@ describe("Automation reply handoff worker", () => {
             }),
         });
         try {
-            // Observe the real worker entering its discovery sleep before the
-            // database commit; no in-process wake or service mock rescues it.
-            await vi.waitFor(() => expect(timers.mock.calls.some(([, delay]) => (
-                delay === idlePollMs || (typeof delay === "number" && delay > 10_000)
-            ))).toBe(true), { interval: 20 });
+            await clock.waitForArm(1);
             const runId = `${RUN_ID}-new`;
             const handoffId = `${HANDOFF_ID}-new`;
             const occurrenceKey = `${"B".repeat(42)}A`;
@@ -173,6 +320,7 @@ describe("Automation reply handoff worker", () => {
                     }),
                 },
             });
+            await vi.advanceTimersByTimeAsync(DEFAULT_AUTOMATION_REPLY_HANDOFF_IDLE_POLL_MS);
             await vi.waitFor(async () => {
                 await expect(db.automationRun.findUniqueOrThrow({
                     where: { id: runId },
@@ -185,21 +333,20 @@ describe("Automation reply handoff worker", () => {
             })).resolves.toEqual({ replyHandoffState: "ready", replyHandoffDueAt: retryAt, replyHandoffAttempt: 3 });
         } finally {
             await worker.stop();
-            timers.mockRestore();
+            clock.close();
         }
     });
 
     it("routes only the frozen target and opaque stored envelopes, then persists accepted custody", async () => {
         await seedReadyHandoff();
-        let claimedCurrentness: Awaited<ReturnType<typeof readCurrentness>> | null = null;
+        const claimedCurrentness = await readCurrentness();
         let dispatched: unknown = null;
 
         await runAutomationReplyHandoffWorkerPass({
-            now: NOW,
+            now: () => NOW,
             dispatch: async (request) => {
                 dispatched = request;
                 const accountCurrentness = await readCurrentness();
-                claimedCurrentness = accountCurrentness;
                 return {
                     kind: "settled",
                     settlement: { kind: "accepted" },
@@ -207,7 +354,6 @@ describe("Automation reply handoff worker", () => {
                 };
             },
         });
-        if (!claimedCurrentness) throw new Error("expected claimed Account currentness");
 
         expect(dispatched).toEqual({
             v: 1,
@@ -250,7 +396,7 @@ describe("Automation reply handoff worker", () => {
         await seedReadyHandoff();
 
         await runAutomationReplyHandoffWorkerPass({
-            now: NOW,
+            now: () => NOW,
             dispatch: async () => ({ kind: "unavailable", code }),
         });
 
@@ -264,17 +410,17 @@ describe("Automation reply handoff worker", () => {
         })).resolves.toEqual({
             replyHandoffState: "ready",
             replyHandoffAttempt: 1,
-            replyHandoffDueAt: new Date(NOW.getTime() + DEFAULT_AUTOMATION_REPLY_HANDOFF_RETRY_AFTER_MS),
+            replyHandoffDueAt: new Date(NOW.getTime() + DEFAULT_AUTOMATION_REPLY_HANDOFF_LEASE_DURATION_MS),
         });
     });
 
-    it("doubles the retry delay across consecutive unavailable attempts instead of repeating a fixed cadence", async () => {
+    it("reuses each exact claim expiry across consecutive unavailable attempts without a retry backoff", async () => {
         await seedReadyHandoff();
         const unavailableDispatch = async () =>
             ({ kind: "unavailable" as const, code: "targetUnavailable" as const });
 
-        await runAutomationReplyHandoffWorkerPass({ now: NOW, dispatch: unavailableDispatch });
-        const firstRetryAt = new Date(NOW.getTime() + DEFAULT_AUTOMATION_REPLY_HANDOFF_RETRY_AFTER_MS);
+        await runAutomationReplyHandoffWorkerPass({ now: () => NOW, dispatch: unavailableDispatch });
+        const firstRetryAt = new Date(NOW.getTime() + DEFAULT_AUTOMATION_REPLY_HANDOFF_LEASE_DURATION_MS);
         await expect(db.automationRun.findUniqueOrThrow({
             where: { id: RUN_ID },
             select: {
@@ -288,7 +434,7 @@ describe("Automation reply handoff worker", () => {
             replyHandoffDueAt: firstRetryAt,
         });
 
-        await runAutomationReplyHandoffWorkerPass({ now: firstRetryAt, dispatch: unavailableDispatch });
+        await runAutomationReplyHandoffWorkerPass({ now: () => firstRetryAt, dispatch: unavailableDispatch });
         await expect(db.automationRun.findUniqueOrThrow({
             where: { id: RUN_ID },
             select: {
@@ -300,7 +446,7 @@ describe("Automation reply handoff worker", () => {
             replyHandoffState: "ready",
             replyHandoffAttempt: 2,
             replyHandoffDueAt: new Date(
-                firstRetryAt.getTime() + 2 * DEFAULT_AUTOMATION_REPLY_HANDOFF_RETRY_AFTER_MS,
+                firstRetryAt.getTime() + DEFAULT_AUTOMATION_REPLY_HANDOFF_LEASE_DURATION_MS,
             ),
         });
     });
@@ -309,7 +455,7 @@ describe("Automation reply handoff worker", () => {
         await seedReadyHandoff();
 
         await runAutomationReplyHandoffWorkerPass({
-            now: NOW,
+            now: () => NOW,
             dispatch: async () => ({ kind: "unavailable", code: "actionUnavailable" }),
         });
 
@@ -323,7 +469,7 @@ describe("Automation reply handoff worker", () => {
         await seedReadyHandoff();
 
         await runAutomationReplyHandoffWorkerPass({
-            now: NOW,
+            now: () => NOW,
             dispatch: async () => ({ kind: "unavailable", code: "invalidRequest" }),
         });
 
@@ -337,7 +483,7 @@ describe("Automation reply handoff worker", () => {
         await seedReadyHandoff();
 
         await runAutomationReplyHandoffWorkerPass({
-            now: NOW,
+            now: () => NOW,
             dispatch: async () => ({ kind: "unavailable", code: "actionExecutionFailed" }),
         });
 
@@ -346,7 +492,7 @@ describe("Automation reply handoff worker", () => {
             select: { replyHandoffState: true, replyHandoffDueAt: true },
         })).resolves.toEqual({
             replyHandoffState: "ready",
-            replyHandoffDueAt: new Date(NOW.getTime() + DEFAULT_AUTOMATION_REPLY_HANDOFF_RETRY_AFTER_MS),
+            replyHandoffDueAt: new Date(NOW.getTime() + DEFAULT_AUTOMATION_REPLY_HANDOFF_LEASE_DURATION_MS),
         });
     });
 
@@ -354,7 +500,7 @@ describe("Automation reply handoff worker", () => {
         await seedReadyHandoff();
 
         await runAutomationReplyHandoffWorkerPass({
-            now: NOW,
+            now: () => NOW,
             dispatch: async () => ({ kind: "unavailable", code: "contractInvalid" }),
         });
 
@@ -363,7 +509,7 @@ describe("Automation reply handoff worker", () => {
             select: { replyHandoffState: true, replyHandoffDueAt: true },
         })).resolves.toEqual({
             replyHandoffState: "ready",
-            replyHandoffDueAt: new Date(NOW.getTime() + DEFAULT_AUTOMATION_REPLY_HANDOFF_RETRY_AFTER_MS),
+            replyHandoffDueAt: new Date(NOW.getTime() + DEFAULT_AUTOMATION_REPLY_HANDOFF_LEASE_DURATION_MS),
         });
     });
 
@@ -383,125 +529,15 @@ describe("Automation reply handoff worker", () => {
         };
     }
 
-    it("moves contractInvalid custody through one retry, blocked custody, and manual reopen of the same handoff identity", async () => {
+
+    it("rejoins repeated malformed dispatch responses without changing the frozen identity", async () => {
         await seedReadyHandoff();
         const dispatched: AutomationReplyHandoffDispatchRequestV1[] = [];
-        const recordDispatch = () => async (request: unknown) => {
-            dispatched.push(request as AutomationReplyHandoffDispatchRequestV1);
-            return { kind: "unavailable" as const, code: "contractInvalid" as const };
-        };
-        const retryAt = new Date(NOW.getTime() + DEFAULT_AUTOMATION_REPLY_HANDOFF_RETRY_AFTER_MS);
-        const firstReopenAt = new Date(retryAt.getTime() + DEFAULT_AUTOMATION_REPLY_HANDOFF_RETRY_AFTER_MS);
-        const secondReopenAt = new Date(firstReopenAt.getTime() + DEFAULT_AUTOMATION_REPLY_HANDOFF_RETRY_AFTER_MS);
-
-        // First automatic attempt: the matched custody Action returned an
-        // invalid result, so custody may already have committed. The ambiguity
-        // budget schedules exactly one retry of the same durable handoff.
-        await runAutomationReplyHandoffWorkerPass({ now: NOW, dispatch: recordDispatch() });
-        await expect(db.automationRun.findUniqueOrThrow({
-            where: { id: RUN_ID },
-            select: {
-                replyHandoffState: true,
-                replyHandoffAttempt: true,
-                replyHandoffDueAt: true,
-            },
-        })).resolves.toEqual({
-            replyHandoffState: "ready",
-            replyHandoffAttempt: 1,
-            replyHandoffDueAt: retryAt,
-        });
-
-        // Second absolute attempt: an invalid result cannot become valid
-        // through unattended repetition, so the existing typed blocked custody
-        // takes over.
-        await runAutomationReplyHandoffWorkerPass({ now: retryAt, dispatch: recordDispatch() });
-        await expect(db.automationRun.findUniqueOrThrow({
-            where: { id: RUN_ID },
-            select: {
-                replyHandoffState: true,
-                replyHandoffAttempt: true,
-                replyHandoffDueAt: true,
-            },
-        })).resolves.toEqual({
-            replyHandoffState: "blocked",
-            replyHandoffAttempt: 2,
-            replyHandoffDueAt: null,
-        });
-
-        // Present-user recovery reopens the same custody in place: identical
-        // frozen identity, preserved absolute attempt budget.
-        await expect(retryBlockedAutomationReplyHandoff({
-            accountId: ACCOUNT_ID,
-            runId: RUN_ID,
-            now: firstReopenAt,
-        })).resolves.toMatchObject({
-            id: RUN_ID,
-            replyHandoffState: "ready",
-            replyHandoffDueAt: firstReopenAt,
-        });
-        await expect(db.automationRun.findUniqueOrThrow({
-            where: { id: RUN_ID },
-            select: { replyHandoffAttempt: true, replyHandoffId: true },
-        })).resolves.toEqual({ replyHandoffAttempt: 2, replyHandoffId: HANDOFF_ID });
-
-        // Absolute attempt semantics: the reopened custody receives exactly
-        // one more dispatch, and a still-invalid result blocks again instead
-        // of retry-looping.
-        await runAutomationReplyHandoffWorkerPass({ now: firstReopenAt, dispatch: recordDispatch() });
-        await expect(db.automationRun.findUniqueOrThrow({
-            where: { id: RUN_ID },
-            select: { replyHandoffState: true, replyHandoffAttempt: true },
-        })).resolves.toEqual({ replyHandoffState: "blocked", replyHandoffAttempt: 3 });
-
-        // A deliberate manual retry that succeeds settles the same custody
-        // through the ordinary accepted path.
-        await expect(retryBlockedAutomationReplyHandoff({
-            accountId: ACCOUNT_ID,
-            runId: RUN_ID,
-            now: secondReopenAt,
-        })).resolves.toMatchObject({ id: RUN_ID, replyHandoffState: "ready" });
-        await runAutomationReplyHandoffWorkerPass({
-            now: secondReopenAt,
-            dispatch: async (request) => {
-                dispatched.push(request as AutomationReplyHandoffDispatchRequestV1);
-                const accountCurrentness = await readCurrentness();
-                return {
-                    kind: "settled" as const,
-                    settlement: { kind: "accepted" as const },
-                    accountCurrentness,
-                };
-            },
-        });
-        await expect(db.automationRun.findUniqueOrThrow({
-            where: { id: RUN_ID },
-            select: {
-                replyHandoffState: true,
-                replyHandoffDueAt: true,
-            },
-        })).resolves.toMatchObject({
-            replyHandoffState: "accepted",
-            replyHandoffDueAt: null,
-        });
-
-        // Every dispatch rejoined the one durable custody obligation: the
-        // frozen handoff identity never rotated and no second Run/queue row
-        // was created.
-        expect(dispatched).toHaveLength(4);
-        const frozenIdentity = dispatchedFrozenIdentity(dispatched[0]!);
-        for (const request of dispatched) {
-            expect(dispatchedFrozenIdentity(request)).toEqual(frozenIdentity);
-        }
-        await expect(db.automationRun.count()).resolves.toBe(1);
-    });
-
-    it("blocks the second absolute attempt after a malformed dispatch response and reopens the same frozen identity", async () => {
-        await seedReadyHandoff();
-        const dispatched: AutomationReplyHandoffDispatchRequestV1[] = [];
-        const retryAt = new Date(NOW.getTime() + DEFAULT_AUTOMATION_REPLY_HANDOFF_RETRY_AFTER_MS);
-        const reopenAt = new Date(retryAt.getTime() + DEFAULT_AUTOMATION_REPLY_HANDOFF_RETRY_AFTER_MS);
+        const retryAt = new Date(NOW.getTime() + DEFAULT_AUTOMATION_REPLY_HANDOFF_LEASE_DURATION_MS);
+        const reopenAt = new Date(retryAt.getTime() + DEFAULT_AUTOMATION_REPLY_HANDOFF_LEASE_DURATION_MS);
 
         await runAutomationReplyHandoffWorkerPass({
-            now: NOW,
+            now: () => NOW,
             dispatch: async (request) => {
                 dispatched.push(request as AutomationReplyHandoffDispatchRequestV1);
                 return { kind: "settled", settlement: { kind: "accepted" } } as never;
@@ -521,7 +557,7 @@ describe("Automation reply handoff worker", () => {
         });
 
         await runAutomationReplyHandoffWorkerPass({
-            now: retryAt,
+            now: () => retryAt,
             dispatch: async (request) => {
                 dispatched.push(request as AutomationReplyHandoffDispatchRequestV1);
                 return { kind: "settled", settlement: { kind: "accepted" } } as never;
@@ -535,9 +571,9 @@ describe("Automation reply handoff worker", () => {
                 replyHandoffDueAt: true,
             },
         })).resolves.toEqual({
-            replyHandoffState: "blocked",
+            replyHandoffState: "ready",
             replyHandoffAttempt: 2,
-            replyHandoffDueAt: null,
+            replyHandoffDueAt: reopenAt,
         });
 
         await expect(retryBlockedAutomationReplyHandoff({
@@ -546,7 +582,7 @@ describe("Automation reply handoff worker", () => {
             now: reopenAt,
         })).resolves.toMatchObject({ id: RUN_ID, replyHandoffState: "ready" });
         await runAutomationReplyHandoffWorkerPass({
-            now: reopenAt,
+            now: () => reopenAt,
             dispatch: async (request) => {
                 dispatched.push(request as AutomationReplyHandoffDispatchRequestV1);
                 const accountCurrentness = await readCurrentness();
@@ -575,5 +611,4 @@ describe("Automation reply handoff worker", () => {
         }
         await expect(db.automationRun.count()).resolves.toBe(1);
     });
-
 });

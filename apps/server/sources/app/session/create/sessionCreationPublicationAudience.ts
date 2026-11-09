@@ -1,4 +1,4 @@
-import { acquireAccountChangePublicationLocksInTx, assertAccountChangePublicationAudienceInTx, beforeAccountChangePublication } from "@/app/changes/markAccountChanged";
+import { acquireAccountChangePublicationLocksInTx } from "@/app/changes/markAccountChanged";
 import { resolveDiscussionAudienceInTx } from "@/app/discussions/access";
 import { readManagedWakePublicationAccountIdsInTx } from "@/app/machines/managed/managedWake";
 import { readInitialSessionAccessAccountIdsInTx } from "@/app/session/access/sessionAccessGrantService";
@@ -7,10 +7,13 @@ import { getSessionLifecycleAutomationPublicationAudienceInTx } from "@/app/work
 import { inReadSnapshot, TransactionReplayRequiredError, type Tx } from "@/storage/inTx";
 import { getDbProviderFromEnv } from "@/storage/prisma";
 import type { PreparedLayout1SessionCreate } from "./prepareLayout1SessionCreate";
+import type { SessionCreationExecutionAuthorization } from "./apiTokenSessionCreationAuthorization";
 
 export type SessionCreationPublicationInput = Pick<PreparedLayout1SessionCreate,
     "accountId" | "tag" | "initialAccess" | "primaryTeamId" | "manager"
-    | "discussionParticipant" | "originSessionId" | "initialTriggers" | "teamCredentialBindings">;
+    | "discussionParticipant" | "originSessionId" | "initialTriggers" | "teamCredentialBindings"> & Readonly<{
+        sessionCreationAuthorization?: SessionCreationExecutionAuthorization;
+    }>;
 
 export interface SessionCreationPublicationAudience {
     readonly seedSessionIds: readonly string[];
@@ -58,8 +61,7 @@ async function validateCreationAudienceInTx(tx: Tx, input: SessionCreationPublic
 }
 
 async function fenceCreationAudienceInTx(tx: Tx, input: SessionCreationPublicationInput, captured: SessionCreationPublicationAudience): Promise<void> {
-    // Each composed owner rechecks mutable admission during terminal
-    // publication; entry content admission remains compatible with cursor writes.
+    // Entry content admission remains compatible with cursor writes.
     await acquireAccountChangePublicationLocksInTx(tx, captured.accountIds, {
         includeSingleAccount: true,
         intent: "content",
@@ -67,13 +69,7 @@ async function fenceCreationAudienceInTx(tx: Tx, input: SessionCreationPublicati
     await validateCreationAudienceInTx(tx, input, captured);
     await fenceSessionAccountCursorAudienceInTx(tx,
         { projectionSessionIds: captured.sessionIds, accountIds: captured.accountIds },
-        // Revalidate the original census roots. Expanding its projection again
-        // would add another relation hop even when no audience changed.
         captured.seedSessionIds, captured.accountIds);
-    beforeAccountChangePublication(tx, captured.accountIds, async client => {
-        const audience = await readLayout1SessionCreatePublicationAudienceInTx(client, input);
-        assertAccountChangePublicationAudienceInTx(client, audience.accountIds);
-    });
 }
 
 /** Direct composition entry; callers must invoke before their first resource fence. */

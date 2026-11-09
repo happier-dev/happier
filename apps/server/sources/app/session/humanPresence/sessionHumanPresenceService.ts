@@ -1,6 +1,6 @@
 import type { Server, Socket } from "socket.io";
 import { z } from "zod/mini";
-import { SESSION_HUMAN_PRESENCE_SNAPSHOT_EVENT, type SessionHumanPresenceLocationV1, type SessionHumanPresenceSnapshotV1, type SessionHumanPresenceTypingSetV1 } from '@happier-dev/protocol/sessions';
+import { SESSION_HUMAN_PRESENCE_SNAPSHOT_EVENT, type SessionHumanPresenceLocationV1, type SessionHumanPresencePendingMessageEditV1, type SessionHumanPresenceSnapshotV1, type SessionHumanPresenceTypingSetV1 } from '@happier-dev/protocol/sessions';
 import { type SessionAccessAccountSummaryV1 } from '@happier-dev/protocol/sessions/access/sessionAccessPrincipalV1';
 import { SessionIdSchema } from '@happier-dev/protocol/sessions/idsV1';
 import { DiscussionIdSchema } from '@happier-dev/protocol/discussions/content';
@@ -142,6 +142,8 @@ function notifyHumanPresenceAccessChanged(input: PresenceLocation): void {
 export function createSessionHumanPresenceService(input: Readonly<{
     io: Server;
     clusterAccessChangePublicationEnabled?: boolean;
+    /** This node's other live-access owner for the same committed Session transition. */
+    onSessionAccessChanged?: (sessionId: string) => void;
 }>) {
     const { io } = input;
     let closed = false;
@@ -169,7 +171,10 @@ export function createSessionHumanPresenceService(input: Readonly<{
         const { sessionId, discussionId } = location;
         const room = sessionHumanPresenceLocationRoom(location);
         const sockets = (await io.in(room).fetchSockets()).filter(socket =>
-            socket.data.clientType === "user-scoped" && typeof socket.data.userId === "string" && socket.data.userId.length > 0);
+            (socket.data.clientType === "user-scoped"
+                || (sessionId !== undefined && socket.data.clientType === "session-scoped"
+                    && socket.data.humanPresencePendingMessageEdits !== undefined))
+            && typeof socket.data.userId === "string" && socket.data.userId.length > 0);
         if (closed || sockets.length === 0) return;
         const accountIds = [...new Set(sockets.map(socket => socket.data.userId!))];
         // Presence is a best-effort, present-tense projection with no writes or
@@ -220,6 +225,8 @@ export function createSessionHumanPresenceService(input: Readonly<{
         const now = Date.now();
         const viewers = new Map<string, SessionHumanPresenceSnapshotV1["viewers"][number]>();
         const recipients: string[] = [];
+        const editRecipients: string[] = [];
+        const pendingMessageEditHoldIds = new Set<string>();
         for (const socket of sockets) {
             const accountId = socket.data.userId!;
             const account = profiles.get(accountId);
@@ -234,6 +241,20 @@ export function createSessionHumanPresenceService(input: Readonly<{
                 const localSocket = io.sockets.sockets.get(socket.id);
                 if (localSocket) clearTyping(localSocket, location);
             }
+            if (sessionId !== undefined && canType) {
+                for (const edit of socket.data.humanPresencePendingMessageEdits ?? []) {
+                    if (edit.sessionId === sessionId) pendingMessageEditHoldIds.add(edit.holdId);
+                }
+            }
+            if (sessionId !== undefined && socket.data.clientType === "session-scoped") {
+                editRecipients.push(socket.id);
+            } else {
+                recipients.push(socket.id);
+            }
+            const visible = socket.data.clientType === "user-scoped" && (sessionId === undefined
+                || socket.data.humanPresenceVisibleSessionIds === undefined
+                || socket.data.humanPresenceVisibleSessionIds.includes(sessionId));
+            if (!visible) continue;
             const target = readTypingLocation(socket);
             const typing = canType
                 && target !== null
@@ -241,9 +262,8 @@ export function createSessionHumanPresenceService(input: Readonly<{
                 && (socket.data.humanPresenceTypingExpiresAt ?? 0) > now;
             const previous = viewers.get(accountId);
             viewers.set(accountId, { account, typing: typing || previous?.typing === true });
-            recipients.push(socket.id);
         }
-        if (closed || recipients.length === 0) return;
+        if (closed || (recipients.length === 0 && editRecipients.length === 0)) return;
         const name = (account: SessionAccessAccountSummaryV1) =>
             resolveAccountDisplayLabelV1(account)?.toLowerCase() ?? "";
         const snapshot: SessionHumanPresenceSnapshotV1 = {
@@ -263,7 +283,10 @@ export function createSessionHumanPresenceService(input: Readonly<{
         // presence ceiling: rejecting, truncating, paginating, or retrying a valid
         // snapshot would trade a truthful awareness view for an unrelated framing
         // threshold.
-        io.to(recipients).emit(SESSION_HUMAN_PRESENCE_SNAPSHOT_EVENT, snapshot);
+        if (recipients.length > 0) io.to(recipients).emit(SESSION_HUMAN_PRESENCE_SNAPSHOT_EVENT, snapshot);
+        if (editRecipients.length > 0) io.to(editRecipients).emit(SESSION_HUMAN_PRESENCE_SNAPSHOT_EVENT, {
+            ...snapshot, pendingMessageEditHoldIds: [...pendingMessageEditHoldIds].sort(),
+        });
     }
 
     async function drainProjection(room: string): Promise<void> {
@@ -327,9 +350,18 @@ export function createSessionHumanPresenceService(input: Readonly<{
         accountId: string,
         requestedSessionIds: readonly string[],
         requestedLocations: readonly SessionHumanPresenceLocationV1[] = [],
+        requestedPendingMessageEdits?: readonly SessionHumanPresencePendingMessageEditV1[],
     ) {
         if (closed || !socket.connected) throw new Error("Human presence socket unavailable");
-        const replacement = await inReadSnapshot(async tx => {
+        // The socket handler constrains observers to their handshake-admitted
+        // Session and releases them only after final socket currentness. Joining
+        // that room needs no second database admission: project() authorizes the
+        // outbound snapshot and owns recovery if its reads are unavailable.
+        const replacement = socket.data.clientType === "session-scoped" ? {
+            admittedSessionIds: [...requestedSessionIds],
+            admittedLocations: [],
+            admittedPendingMessageEdits: [],
+        } : await inReadSnapshot(async tx => {
             const where = await buildSessionAccessWhere({
                 tx,
                 accountId,
@@ -356,14 +388,50 @@ export function createSessionHumanPresenceService(input: Readonly<{
                 for (const discussionId of readable ?? []) admittedLocations.push({ discussionId });
             }
             admittedLocations.sort((left, right) => left.discussionId.localeCompare(right.discussionId));
-            return { admittedSessionIds, admittedLocations };
+            // An edit is admitted once through the existing input capability
+            // owner. Its later liveness comes only from this socket, with no
+            // metadata renewal or per-projection permission re-admission.
+            const admittedPendingMessageEdits: SessionHumanPresencePendingMessageEditV1[] = [];
+            const admittedHoldIdsBySession = new Map<string, Set<string>>();
+            for (const edit of socket.data.humanPresencePendingMessageEdits ?? []) {
+                const holdIds = admittedHoldIdsBySession.get(edit.sessionId) ?? new Set<string>();
+                holdIds.add(edit.holdId);
+                admittedHoldIdsBySession.set(edit.sessionId, holdIds);
+            }
+            const editsBySession = new Map<string, SessionHumanPresencePendingMessageEditV1[]>();
+            for (const edit of requestedPendingMessageEdits ?? []) {
+                const edits = editsBySession.get(edit.sessionId) ?? [];
+                edits.push(edit);
+                editsBySession.set(edit.sessionId, edits);
+            }
+            for (const [sessionId, edits] of editsBySession) {
+                const admittedHoldIds = admittedHoldIdsBySession.get(sessionId);
+                let admitNewEdits = false;
+                if (edits.some(edit => !admittedHoldIds?.has(edit.holdId))) {
+                    const decision = await resolveSessionAccessForOperation(tx, {
+                        accountId, sessionId, authentication: readSessionAccessAuthenticationFromSocket(socket),
+                        capability: "submitAgentInput",
+                    });
+                    admitNewEdits = decision.status === "allowed" && decision.access.capabilities.submitAgentInput;
+                }
+                admittedPendingMessageEdits.push(...edits.filter(edit => admittedHoldIds?.has(edit.holdId) || admitNewEdits));
+            }
+            return { admittedSessionIds, admittedLocations, admittedPendingMessageEdits };
         });
         if (closed || !socket.connected) throw new Error("Human presence socket unavailable");
         const previous = sessionHumanPresenceLocationsFromRooms(socket.rooms);
-        const next = [
+        const visible = [
             ...replacement.admittedSessionIds.map(sessionId => ({ sessionId })),
             ...replacement.admittedLocations,
         ];
+        const next = [
+            ...visible,
+            ...replacement.admittedPendingMessageEdits.map(edit => ({ sessionId: edit.sessionId })),
+        ];
+        socket.data.humanPresenceVisibleSessionIds = socket.data.clientType === "user-scoped"
+            ? replacement.admittedSessionIds : [];
+        socket.data.humanPresencePendingMessageEdits = requestedPendingMessageEdits === undefined
+            ? undefined : replacement.admittedPendingMessageEdits;
         const nextRooms = new Set(next.map(sessionHumanPresenceLocationRoom));
         for (const location of previous) {
             const room = sessionHumanPresenceLocationRoom(location);
@@ -371,7 +439,7 @@ export function createSessionHumanPresenceService(input: Readonly<{
         }
         await socket.join([...nextRooms]);
         const typingLocation = readTypingLocation(socket);
-        if (typingLocation && !nextRooms.has(sessionHumanPresenceLocationRoom(typingLocation))) clearTyping(socket);
+        if (typingLocation && !visible.some(location => sameLocation(location, typingLocation))) clearTyping(socket);
         return { ...replacement, affectedLocations: [...previous, ...next] };
     }
 
@@ -385,6 +453,9 @@ export function createSessionHumanPresenceService(input: Readonly<{
             : { discussionId: value.discussionId };
         const room = sessionHumanPresenceLocationRoom(location);
         if (closed || !socket.connected || !socket.rooms.has(room)) return;
+        if (socket.data.clientType !== "user-scoped" || (value.sessionId !== undefined
+            && socket.data.humanPresenceVisibleSessionIds !== undefined
+            && !socket.data.humanPresenceVisibleSessionIds.includes(value.sessionId))) return;
         const authentication = readSessionAccessAuthenticationFromSocket(socket);
         let allowed = false;
         if (value.discussionId === undefined) {
@@ -428,6 +499,7 @@ export function createSessionHumanPresenceService(input: Readonly<{
     }
 
     function scheduleSessionAccessChanged(sessionId: string): void {
+        input.onSessionAccessChanged?.(sessionId);
         const locations = new Map<string, PresenceLocation>();
         locations.set(sessionHumanPresenceLocationRoom({ sessionId }), { sessionId });
         for (const socket of io.sockets.sockets.values()) {

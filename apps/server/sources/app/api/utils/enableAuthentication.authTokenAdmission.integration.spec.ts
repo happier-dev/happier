@@ -23,6 +23,7 @@ function createApp() {
         tokenKind: request.authTokenKind,
     }));
     app.get("/ordinary-present", { preHandler: [app.authenticate, requirePresentUser] }, async () => ({ ok: true }));
+    app.get("/pat-present", { config: { allowApiToken: true }, preHandler: [app.authenticate, requirePresentUser] }, async () => ({ ok: true }));
     app.get(
         "/directory",
         {
@@ -201,22 +202,29 @@ describe("authentication token admission (integration)", () => {
         }
     });
 
-    it("uses current terminal policy for HTTP admission and accepts only a lowering ceiling", async () => {
-        const account = await db.account.create({ data: { publicKey: "terminal-http-policy" } });
-        const token = await auth.createToken(account.id, undefined, { kind: "terminal", authority: "account_automation" });
+    it("admits a terminal credential to person routes by credential class, with or without a caller-attribution ceiling", async () => {
+        const account = await db.account.create({ data: { publicKey: "terminal-http-person" } });
+        const [token, pat] = await Promise.all([
+            auth.createToken(account.id, undefined, { kind: "terminal", authority: "account_automation" }),
+            auth.createApiToken({ accountId: account.id, tokenId: crypto.randomUUID(), label: "person-route PAT" }),
+        ]);
         const app = createApp();
         try {
-            const response = (ceiling?: string) => app.inject({ method: "GET", url: "/ordinary-present", headers: {
-                authorization: `Bearer ${token}`,
+            const response = (bearer: string, url: string, ceiling?: string) => app.inject({ method: "GET", url, headers: {
+                authorization: `Bearer ${bearer}`,
                 ...(ceiling ? { [AUTHORITY_CEILING_HEADER_V1]: ceiling } : {}),
             } });
-            expect((await response()).statusCode).toBe(200);
-            expect((await response("account_automation")).statusCode).toBe(403);
-            await db.account.update({ where: { id: account.id }, data: { terminalPresentUserPolicy: "disallowed" } });
-            expect((await response()).statusCode).toBe(403);
-            expect((await response("present_user")).statusCode).toBe(403);
-            await db.account.update({ where: { id: account.id }, data: { terminalPresentUserPolicy: "allowed" } });
-            expect((await response()).statusCode).toBe(200);
+            // A terminal is the person's own tool: no Account policy is consulted.
+            expect((await response(token, "/ordinary-present")).statusCode).toBe(200);
+            // The per-invocation ceiling attributes an agent-originated call; the
+            // host Action executor's approval policy gates it, not this route.
+            expect((await response(token, "/ordinary-present", "account_automation")).statusCode).toBe(200);
+            // Scoped credentials are never a person, whatever header they send.
+            for (const ceiling of [undefined, "present_user", "account_automation"]) {
+                const refused = await response(pat.token, "/pat-present", ceiling);
+                expect(refused.statusCode).toBe(403);
+                expect(refused.json()).toEqual({ error: "present_user_required" });
+            }
         } finally {
             await app.close();
         }

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { Socket } from 'node:net';
 
 import {
     ACCOUNT_IDENTITY_PROVIDER_LOGIN_MAX_CODE_UNITS,
@@ -6,9 +7,13 @@ import {
 } from "@/app/auth/providers/accountIdentityBounds";
 import { resolveMtlsIdentityFromForwardedHeaders } from "@/app/auth/providers/mtls/mtlsIdentity";
 
+// An ordinary accepted socket boundary; no network connection or file descriptor is opened.
+const request = { socket: new Socket() };
+
 describe("resolveMtlsIdentityFromForwardedHeaders", () => {
     it("returns null when forwarded headers are not trusted", () => {
         const identity = resolveMtlsIdentityFromForwardedHeaders({
+            request,
             env: {
                 HAPPIER_FEATURE_AUTH_MTLS__TRUST_FORWARDED_HEADERS: "0",
             } as any,
@@ -22,6 +27,7 @@ describe("resolveMtlsIdentityFromForwardedHeaders", () => {
 
     it("normalizes SAN email/UPN to lowercase and includes issuer in the profile", () => {
         const identity = resolveMtlsIdentityFromForwardedHeaders({
+            request,
             env: {
                 HAPPIER_FEATURE_AUTH_MTLS__TRUST_FORWARDED_HEADERS: "1",
                 HAPPIER_FEATURE_AUTH_MTLS__IDENTITY_SOURCE: "san_email",
@@ -51,6 +57,7 @@ describe("resolveMtlsIdentityFromForwardedHeaders", () => {
 
     it("extracts CN from the subject when identitySource=subject_cn", () => {
         const identity = resolveMtlsIdentityFromForwardedHeaders({
+            request,
             env: {
                 HAPPIER_FEATURE_AUTH_MTLS__TRUST_FORWARDED_HEADERS: "1",
                 HAPPIER_FEATURE_AUTH_MTLS__IDENTITY_SOURCE: "subject_cn",
@@ -72,6 +79,7 @@ describe("resolveMtlsIdentityFromForwardedHeaders", () => {
             HAPPIER_FEATURE_AUTH_MTLS__FORWARDED_SUBJECT_HEADER: "x-happier-client-cert-subject",
         } as any;
         const resolve = (commonName: string) => resolveMtlsIdentityFromForwardedHeaders({
+            request,
             env,
             headers: { "x-happier-client-cert-subject": `CN=${commonName},OU=Users` },
         });
@@ -92,6 +100,7 @@ describe("resolveMtlsIdentityFromForwardedHeaders", () => {
             HAPPIER_FEATURE_AUTH_MTLS__FORWARDED_EMAIL_HEADER: "x-happier-client-cert-email",
         } as any;
         const resolve = (email: string) => resolveMtlsIdentityFromForwardedHeaders({
+            request,
             env,
             headers: { "x-happier-client-cert-email": email },
         });

@@ -206,12 +206,12 @@ describe('managed Automation target custody (SQLite)', () => {
         const input = { automationId: randomUUID(), name: 'Custody', enabled: false, assignments: [], triggers: [],
             executionRecipe: { ...recipe(1), managedTarget } };
         const created = await createAutomation({ accountId: account.id, input });
-        expect(toAutomationDefinitionListItemApiDto(created)).toMatchObject({ managedTarget });
+        expect(toAutomationDefinitionListItemApiDto(created, null)).toMatchObject({ managedTarget });
         expect((await createAutomation({ accountId: account.id, input })).templateVersion).toBe(1);
         const legacyRewrite = await updateAutomation({ accountId: account.id, automationId: created.id,
             expectedTemplateVersion: 1, input: { executionRecipe: recipe(2) } });
         expect(legacyRewrite).toMatchObject({ managedTargetIndexed: false, managedTargetHomeId: managedTarget.homeId, managedTargetManagedId: managedTarget.managedId });
-        expect(toAutomationDefinitionListItemApiDto(legacyRewrite!)).not.toHaveProperty('managedTarget');
+        expect(toAutomationDefinitionListItemApiDto(legacyRewrite!, null)).not.toHaveProperty('managedTarget');
         expect((await listAutomationDefinitionsPage({ accountId: account.id, managedTarget })).automations).toEqual([]);
         expect((await listAutomationDefinitionsPage({ accountId: account.id, managedTarget, includeUnindexedManagedTargets: true })).automations.map(item => item.id)).toEqual([created.id]);
         await expect(updateAutomation({ accountId: account.id, automationId: created.id,
@@ -221,12 +221,12 @@ describe('managed Automation target custody (SQLite)', () => {
             executionRecipe: { ...recipe(3), managedTarget: null },
         } });
         expect(current).toMatchObject({ managedTargetIndexed: true, managedTargetHomeId: null, managedTargetManagedId: null });
-        expect(toAutomationDefinitionListItemApiDto(current!)).toHaveProperty('managedTarget', null);
+        expect(toAutomationDefinitionListItemApiDto(current!, null)).toHaveProperty('managedTarget', null);
         expect((await listAutomationDefinitionsPage({ accountId: account.id, managedTargetUnindexed: true })).automations).toEqual([]);
         const replacement = { homeId: 'home-next', managedId: 'managed-next' };
         const replaced = await updateAutomation({ accountId: account.id, automationId: created.id,
             expectedTemplateVersion: 3, input: { executionRecipe: { ...recipe(4), managedTarget: replacement } } });
-        expect(toAutomationDefinitionListItemApiDto(replaced!)).toMatchObject({ managedTarget: replacement });
+        expect(toAutomationDefinitionListItemApiDto(replaced!, null)).toMatchObject({ managedTarget: replacement });
     });
 
     it('recipe-only backfill preserves a newer metadata edit and every assignment and trigger', async () => {

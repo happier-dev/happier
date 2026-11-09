@@ -9,13 +9,19 @@ import {
 } from "vitest";
 
 import { db } from "@/storage/db";
+import { inTx } from '@/storage/inTx';
+import { createNativeSessionTeamCredentialFixture, createPlannedSessionTeamCredentialFixture,
+    TEST_AUTHENTICATION } from '@/app/teams/credentials/sessionBinding.testkit';
+import { writeSessionTeamCredentialBindingsInTx, stampSessionTeamCredentialNativeDeliveryInTx,
+    submitSessionTeamCredentialNativeDeliveryInTx, completeSessionTeamCredentialNativeDeliveryInTx,
+    readQualifiedSessionTeamCredentialNativeDeliveriesForManagedMachineInTx } from '@/app/teams/credentials/sessionBinding';
 import { sourceKeyForSessionFollowSourceV1 } from '@/app/session/follow/sessionFollowSourceIdentity';
 import {
     createLightSqliteHarness,
     type LightSqliteHarness,
 } from "@/testkit/lightSqliteHarness";
 
-const emitUpdate = vi.fn();
+const { emitUpdate } = vi.hoisted(() => ({ emitUpdate: vi.fn() }));
 vi.mock("@/app/events/eventRouter", async () => {
     const actual = await vi.importActual<
         typeof import("@/app/events/eventRouter")
@@ -35,6 +41,10 @@ describe("deleteOwnedSession stored-content compatibility (SQLite)", () => {
     beforeAll(async () => {
         harness = await createLightSqliteHarness({
             tempDirPrefix: "session-delete-compatibility-",
+            env: {
+                HAPPIER_FEATURE_TEAMS_CREDENTIAL_RESOURCES__ENABLED: '1',
+                HAPPIER_SERVER_IDENTITY_ID: `srv_${'a'.repeat(32)}`,
+            },
         });
     });
 
@@ -45,12 +55,86 @@ describe("deleteOwnedSession stored-content compatibility (SQLite)", () => {
     beforeEach(async () => {
         emitUpdate.mockReset();
         harness.resetEnv();
-        await harness.resetDbTables([
-            () => db.accountChange.deleteMany(),
-            () => db.session.deleteMany(),
-            () => db.account.deleteMany(),
-        ]);
+        await db.accountChange.deleteMany();
+        await db.session.deleteMany();
+        await db.teamCredentialResource.deleteMany();
+        // Canonical managed fixtures retain independent custody rows until the
+        // disposable harness closes; only these fixed Account ids are reused.
+        await db.account.deleteMany({ where: { id: { in: ['owner', 'collaborator'] } } });
         await db.account.create({ data: { id: "owner" } });
+    });
+
+    it.each(['prepared', 'confirmed', 'unknown', 'submitted', 'corrupt'] as const)(
+        'honors %s native evidence when deleting an inactive Session', async installation => {
+            const f = await createNativeSessionTeamCredentialFixture();
+            expect(f.session.active).toBe(false);
+            await expect(inTx(tx => writeSessionTeamCredentialBindingsInTx(tx, {
+                sessionId: f.session.id, accountId: f.creator.id, intents: [f.intent],
+                authentication: TEST_AUTHENTICATION,
+            }))).resolves.toEqual({ ok: true });
+            const prepared = await inTx(tx => stampSessionTeamCredentialNativeDeliveryInTx(tx, {
+                sessionId: f.session.id, accountId: f.creator.id, response: f.sourceResponse,
+                authentication: TEST_AUTHENTICATION,
+            }));
+            if (!prepared.ok) throw new Error('Expected prepared native delivery');
+            const complete = async (operation: 'install' | 'release', outcome: 'confirmed' | 'unknown') => {
+                const input = {
+                    sessionId: f.session.id, accountId: f.creator.id,
+                    bindingKey: prepared.binding.safeFacet.bindingKey,
+                    expectedResourceRevision: f.credential.revision,
+                    expectedSourceRevision: f.nativeSource.sourceRevision,
+                    expectedProviderTicket: f.nativeSource.providerTicket,
+                    requestId: crypto.randomUUID(), operation, outcome, authentication: TEST_AUTHENTICATION,
+                };
+                await expect(inTx(tx => submitSessionTeamCredentialNativeDeliveryInTx(tx, input)))
+                    .resolves.toEqual({ ok: true, submitted: true });
+                const cohort = await inTx(tx => readQualifiedSessionTeamCredentialNativeDeliveriesForManagedMachineInTx(tx, {
+                    accountId: input.accountId, request: { ...input, managedId: prepared.binding.managedId },
+                    authentication: input.authentication,
+                }));
+                if (!cohort.ok) throw new Error('Expected qualified submitted native cohort');
+                const completion = { ...input, appliedPolicy: {
+                    ownedBindingKeys: cohort.ownedBindings.map(row => row.safeFacet.bindingKey),
+                    desiredBindingKeys: cohort.desiredBindings.map(row => row.safeFacet.bindingKey),
+                } };
+                return inTx(tx => completeSessionTeamCredentialNativeDeliveryInTx(tx, completion));
+            };
+            if (installation === 'confirmed' || installation === 'unknown') {
+                await expect(complete('install', installation)).resolves.toEqual({ ok: true });
+            } else if (installation === 'submitted') {
+                await expect(inTx(tx => submitSessionTeamCredentialNativeDeliveryInTx(tx, {
+                    sessionId: f.session.id, accountId: f.creator.id, bindingKey: prepared.binding.safeFacet.bindingKey,
+                    expectedResourceRevision: f.credential.revision, expectedSourceRevision: f.nativeSource.sourceRevision,
+                    expectedProviderTicket: f.nativeSource.providerTicket, requestId: crypto.randomUUID(),
+                    operation: 'install', authentication: TEST_AUTHENTICATION,
+                }))).resolves.toEqual({ ok: true, submitted: true });
+            } else if (installation === 'corrupt') {
+                await db.sessionTeamCredentialBinding.updateMany({ where: { sessionId: f.session.id }, data: { nativeDeliveryJson: '{' } });
+            }
+            const { deleteOwnedSession } = await import('./deleteOwnedSession');
+            const remove = () => deleteOwnedSession({ sessionId: f.session.id,
+                ownerAccountId: f.creator.id, reason: 'user_request' });
+            await expect(remove()).resolves.toEqual({ ok: true });
+            expect(await db.session.findUnique({ where: { id: f.session.id } })).toBeNull();
+            expect(await db.sessionTeamCredentialBinding.findMany({ where: { sessionId: f.session.id } })).toEqual([]);
+        },
+    );
+
+    it.each(['brokered', 'direct'] as const)('deletes a Session with only a %s credential binding', async deliveryMode => {
+        const f = await createPlannedSessionTeamCredentialFixture('personal_allowed');
+        await db.teamCredentialResource.update({ where: { id: f.resource.id }, data: { disclosureCeiling: 'direct_allowed' } });
+        await db.teamCredentialMemberGrant.updateMany({ where: { resourceId: f.resource.id }, data: { deliveryMode } });
+        const session = await db.session.create({ data: { accountId: f.creator.id, tag: crypto.randomUUID(), metadata: '{}' } });
+        await expect(inTx(tx => writeSessionTeamCredentialBindingsInTx(tx, {
+            sessionId: session.id, accountId: f.creator.id, authentication: TEST_AUTHENTICATION,
+            intents: [{ v: 1, slot: { kind: 'provider_model' }, resourceId: f.resource.id,
+                expectedResourceRevision: f.resource.revision, deliveryMode }],
+        }))).resolves.toEqual({ ok: true });
+        const { deleteOwnedSession } = await import('./deleteOwnedSession');
+        await expect(deleteOwnedSession({ sessionId: session.id, ownerAccountId: f.creator.id, reason: 'user_request' }))
+            .resolves.toEqual({ ok: true });
+        expect(await db.session.findUnique({ where: { id: session.id } })).toBeNull();
+        expect(await db.sessionTeamCredentialBinding.findMany({ where: { sessionId: session.id } })).toEqual([]);
     });
 
     it("allows a caller to delete layout 1 without interpreting its content", async () => {
@@ -82,7 +166,7 @@ describe("deleteOwnedSession stored-content compatibility (SQLite)", () => {
             where: { id: "layout-1" },
         })).toBeNull();
         expect(await db.accountChange.findMany({
-            where: { accountId: "owner" },
+            where: { accountId: "owner", kind: "session" },
             select: {
                 kind: true,
                 entityId: true,

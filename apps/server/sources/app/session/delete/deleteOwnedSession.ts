@@ -1,4 +1,3 @@
-import { readNativeCredentialPolicyPublicationAccountIdsInTx } from '@/app/teams/credentials/nativePolicyChanges';
 import { afterTx, inTx, type Tx } from '@/storage/inTx';
 import type { Prisma } from '@prisma/client';
 import { log } from '@/utils/logging/log';
@@ -10,6 +9,7 @@ import { deleteAutomationTx } from '@/app/automations/automationCrudService';
 import { acquireSessionAccountCursorLocksInTx } from '@/app/session/changeTracking/acquireSessionAccountCursorLocksInTx';
 import { hasSessionFollowSessionSource } from '@/app/session/follow/sessionFollowSourceIdentity';
 import { publishSessionProviderBrokerConsumersChangedInTx } from '@/app/providers/brokerConsumerChanges';
+import { readNativeCredentialPolicyPublicationAccountIdsInTx } from '@/app/teams/credentials/nativePolicyChanges';
 
 import { deleteSessionTree, SessionDeleteConditionLostError } from './deleteSessionTree';
 import { emitSessionDeletedUpdate } from './emitSessionDeletedUpdate';

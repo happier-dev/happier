@@ -1,8 +1,6 @@
-import { PRESENCE_DEADLINE_EVENT, type PresenceDeadlineNotification } from '@/app/presence/presenceDeadlineNotification';
 import { log } from "@/utils/logging/log";
 import { recordEventFanoutDrop, recordEventFanoutEmit } from "@/app/monitoring/metrics/index";
 import { readAccountStoredContentCompatibilityForSocket } from "@/app/clientCompatibility/accountStoredContentCompatibility";
-import { projectSessionTurnWaitingCompatibility } from '@/app/clientCompatibility/sessionTurnWaitingCompatibility';
 import { getAccountStoredContentV3SocketRoom } from "@/app/api/socketRooms";
 import {
     type ClientConnection,
@@ -23,13 +21,15 @@ import { buildSessionAccessProjectionSelect, resolveSessionAccessForOperation } 
 import type { Socket } from "socket.io";
 import { readSessionAccessAuthenticationFromSocket } from "@/app/session/access/sessionAccessAuthentication";
 import { inTx } from "@/storage/inTx";
-import { readSnapshotWithCurrentAdmission } from "@/storage/readSnapshotWithCurrentAdmission";
+import { captureReadSnapshot } from "@/storage/captureReadSnapshot";
 import type { SessionBroadcastContainer } from '@happier-dev/protocol/updates';
 import type { VerifiedApiTokenPrincipal } from "@/app/auth/auth";
 import type { forwardRpcCall, RpcForwardResult } from '@/app/api/socket/rpc/forwardRpcCall';
 import { cancelRpcTarget } from '@/app/api/socket/rpc/cancelRpcTarget';
-import { buildSessionMessageObservationFactsV1, classifySessionEventDelivery, type SessionMessageV1 } from '@happier-dev/protocol';
-import { readSessionSocketConsumption } from '@/app/api/socket/sessionConsumption';
+import { classifyLiveSessionDelivery, projectSessionDeliveryForSocket } from './sessionDeliveryProjection';
+import { admitLiveSessionDelivery, withdrawSessionConsumption } from '@/app/api/socket/sessionConsumption';
+import { MACHINE_ACCESS_LOSS_EVENT, type MachineAccessLoss } from './machineAccessLoss';
+import { PRESENCE_DEADLINE_EVENT, type PresenceDeadlineNotification } from '@/app/presence/presenceDeadlineNotification';
 import { resolveCurrentMachineRecipientAccountIdsInTx } from '@/app/machines/machineAccess';
 import { db } from '@/storage/db';
 
@@ -38,7 +38,6 @@ export const LEGACY_MACHINE_HEARTBEAT_EVENT = 'happier:legacy-machine-heartbeat:
 import {
     getAccountRevocationSocketRoom,
     getApiTokenRevocationSocketRoom,
-    getAccountTerminalSocketRoom,
     getAccountSessionSocketRoom,
     getMachineBoundSessionSocketRoom,
     getMachineSocketRoom,
@@ -78,42 +77,6 @@ function estimateEventFanoutPayloadBytes(payload: any): number {
 
 function shouldSampleEventFanoutPayloadBytes(): boolean {
     return Math.random() < EVENT_FANOUT_PAYLOAD_BYTES_SAMPLE_RATE;
-}
-
-function projectPayloadForSocket(data: Socket['data'], payload: unknown): unknown {
-    payload = projectSessionTurnWaitingCompatibility(payload, readAccountStoredContentCompatibilityForSocket({ data }));
-    if (data.authTokenKind !== "api_token" || !payload || typeof payload !== "object") return payload;
-    const container = payload as Readonly<Record<string, unknown>>;
-    const body = container.body;
-    if (!body || typeof body !== "object" || Array.isArray(body)) return payload;
-    const update = body as Readonly<Record<string, unknown>>;
-    if (update.t !== "update-session" || !("access" in update)) return payload;
-    const { access: _access, ...viewerBody } = update;
-    return { ...container, body: viewerBody };
-}
-
-function projectSessionDeliveryForSocket(data: Socket['data'], sessionId: string, eventName: SocketRoomEventName, payload: unknown): unknown | null {
-    if (!payload || typeof payload !== 'object') return projectPayloadForSocket(data, payload);
-    const record = payload as Readonly<Record<string, unknown>>;
-    if (eventName === 'ephemeral' && (record.type === 'transcript-stream-segment' || record.type === 'transcript-stream-segment-delta')) {
-        const event = record.type === 'transcript-stream-segment' ? 'checkpoint' : 'delta';
-        return classifySessionEventDelivery({ event, consumption: readSessionSocketConsumption(data, sessionId) }).delivery === 'skip' ? null : payload;
-    }
-    if (eventName === 'update' && record.body && typeof record.body === 'object') {
-        const body = record.body as Readonly<Record<string, unknown>>;
-        if (body.t === 'new-message' || body.t === 'message-updated') {
-            if (body.delivery !== 'full' && body.delivery !== 'hint') {
-                log({ module: 'websocket', level: 'warn', sessionId }, 'Session message delivery discriminant unavailable');
-                return null;
-            }
-            const decision = classifySessionEventDelivery({ event: body.t, consumption: readSessionSocketConsumption(data, sessionId) });
-            if (decision.delivery === 'hint' && body.delivery === 'full') {
-                // Protected forwarding carries the canonical producer's already-serialized full row.
-                return { ...record, body: { ...body, delivery: 'hint', message: buildSessionMessageObservationFactsV1(body.message as SessionMessageV1) } };
-            }
-        }
-    }
-    return projectPayloadForSocket(data, payload);
 }
 
 class EventRouter {
@@ -236,6 +199,10 @@ class EventRouter {
         return () => { this.machineAccessLossListeners.delete(listener); };
     }
 
+    receiveMachineAccessLoss(input: MachineAccessLoss): void {
+        for (const listener of this.machineAccessLossListeners) listener(input);
+    }
+
     disconnectAccountSockets(accountId: string): void {
         if (this.io) {
             this.io.to([
@@ -247,16 +214,6 @@ class EventRouter {
         }
         for (const connection of this.userConnections.get(accountId) ?? []) {
             connection.socket.disconnect(true);
-        }
-    }
-
-    disconnectAccountTerminalSockets(accountId: string): void {
-        if (this.io) {
-            this.io.to(getAccountTerminalSocketRoom(accountId)).disconnectSockets(true);
-            return;
-        }
-        for (const connection of this.userConnections.get(accountId) ?? []) {
-            if (connection.socket.data.authTokenKind === "terminal") connection.socket.disconnect(true);
         }
     }
 
@@ -275,13 +232,31 @@ class EventRouter {
         }
     }
 
+    /** Presentation changes wake only this token and its children, after commit. */
+    emitApiTokenEmbedConfigChanged(params: Readonly<{ accountId: string; tokenId: string }>): void {
+        const payload = { type: 'api-token-embed-config-changed' } as const;
+        if (this.io) {
+            this.io.to(getApiTokenRevocationSocketRoom(params.tokenId)).emit('ephemeral', payload);
+            return;
+        }
+        for (const connection of this.userConnections.get(params.accountId) ?? []) {
+            const principal: VerifiedApiTokenPrincipal | undefined = connection.socket.data.apiTokenPrincipal;
+            if (principal && (principal.credentialId === params.tokenId || principal.parentTokenId === params.tokenId)) {
+                connection.socket.emit('ephemeral', payload);
+            }
+        }
+    }
+
     /** Disconnects exact-resource sockets through the configured cross-node adapter. */
     disconnectMachineAndSessionSockets(params: Readonly<{
         accountId: string;
         machineId: string;
         sessionBindings: readonly Readonly<{ accountId: string; sessionId: string }>[];
     }>): void {
-        for (const listener of this.machineAccessLossListeners) listener({ accountId: params.accountId, machineId: params.machineId });
+        const accessLoss = { accountId: params.accountId, machineId: params.machineId };
+        this.receiveMachineAccessLoss(accessLoss);
+        // RU2-SEC C2: clustered Homes must sweep previews on the node holding the in-flight mint or viewer.
+        this.broadcastServerSideEvent?.(MACHINE_ACCESS_LOSS_EVENT, accessLoss);
         if (this.io) {
             this.io.to([...new Set([
                 getMachineSocketRoom(params.accountId, params.machineId),
@@ -537,7 +512,7 @@ class EventRouter {
                 // publisher still requires a live Session before forwarding routing intent.
                 const exists = await inTx(tx => tx.session.findUnique({
                     where: { id: params.sessionId }, select: { id: true },
-                }), { readOnly: true });
+                }), { readOnly: true, singleStatementRead: true });
                 if (!exists) return;
                 if (!this.broadcastServerSideEvent) {
                     throw new Error("Protected Session forwarding is unavailable");
@@ -578,13 +553,14 @@ class EventRouter {
             const deliveredCount = await this.emitToQualifiedSessionSockets({
                 accountId: params.userId,
                 sessionId: params.sessionId,
+                live: classifyLiveSessionDelivery(params.eventName, params.payload),
                 sockets: [...this.userConnections.get(params.userId) ?? []]
                     .filter(connection => connection !== params.skipSenderConnection && this.shouldSendToConnection(connection, {
                         type: "all-interested-in-session", sessionId: params.sessionId,
                     }))
                     .map(connection => connection.socket),
-                emit: socket => {
-                    const payload = projectSessionDeliveryForSocket(socket.data, params.sessionId, params.eventName, params.payload);
+                emit: (socket, isSessionOwner, metadataLayoutVersion) => {
+                    const payload = projectSessionDeliveryForSocket(socket.data, params.sessionId, params.eventName, params.payload, isSessionOwner, metadataLayoutVersion);
                     if (payload === null) return false;
                     socket.emit(params.eventName, payload);
                     return true;
@@ -638,26 +614,40 @@ class EventRouter {
             `session:${delivery.sessionId}:${delivery.accountId}`,
             `user-scoped:${delivery.accountId}`,
         ]).fetchSockets();
+        const live = classifyLiveSessionDelivery(delivery.eventName, delivery.payload);
+        // Socket.IO encodes once per emit, so sockets sharing a projected payload share one emit.
+        // Live events keep their per-socket emit, in admission order.
+        const socketIdsByPayload = new Map<unknown, string[]>();
         const deliveredCount = await this.emitToQualifiedSessionSockets({
             accountId: delivery.accountId,
             sessionId: delivery.sessionId,
+            live,
             sockets: sockets.filter(socket => socket.id !== delivery.skipSocketId
                 && socket.data.userId === delivery.accountId
                 && socket.data.clientType !== "machine-scoped"
                 && (socket.data.clientType !== "session-scoped"
                     || socket.data.sessionId === delivery.sessionId
                     || socket.data.sessionScopedBinding?.sessionId === delivery.sessionId)),
-            emit: socket => {
+            emit: (socket, isSessionOwner, metadataLayoutVersion) => {
                 try {
-                    const payload = projectSessionDeliveryForSocket(socket.data, delivery.sessionId, delivery.eventName, delivery.payload);
+                    const payload = projectSessionDeliveryForSocket(socket.data, delivery.sessionId, delivery.eventName, delivery.payload, isSessionOwner, metadataLayoutVersion);
                     if (payload === null) return false;
-                    localIo.to(socket.id).emit(delivery.eventName, payload);
+                    if (live) {
+                        localIo.to(socket.id).emit(delivery.eventName, payload);
+                        return true;
+                    }
+                    const socketIds = socketIdsByPayload.get(payload);
+                    if (socketIds) socketIds.push(socket.id);
+                    else socketIdsByPayload.set(payload, [socket.id]);
                     return true;
                 } catch {
                     return false;
                 }
             },
         });
+        for (const [payload, socketIds] of socketIdsByPayload) {
+            localIo.to(socketIds).emit(delivery.eventName, payload);
+        }
         recordEventFanoutEmit({
             eventName: delivery.eventName,
             filterType: "all-interested-in-session",
@@ -668,20 +658,36 @@ class EventRouter {
         });
     }
 
-    /** One delivery snapshot shares structural facts, never a credential's access decision. */
+    /**
+     * One delivery snapshot shares structural facts, never a credential's access decision.
+     * A publisher's live event is admitted by the consumption owner, which holds each
+     * socket's answer until the Session access-change push retires it, so only durable
+     * deliveries are decided here, and a refusal here withdraws that socket's live delivery
+     * too. The publisher's held audience names the Accounts.
+     */
     private async emitToQualifiedSessionSockets<S extends SessionDeliverySocket>(params: Readonly<{
         accountId: string;
         sessionId: string;
+        live: ReturnType<typeof classifyLiveSessionDelivery>;
         sockets: readonly S[];
-        emit: (socket: S) => boolean;
+        emit: (socket: S, isSessionOwner: boolean, metadataLayoutVersion: number) => boolean;
     }>): Promise<number> {
+        if (params.live) {
+            let deliveredCount = 0;
+            for (const socket of params.sockets) {
+                if (await admitLiveSessionDelivery(socket, params.accountId, params.sessionId, params.live) && params.emit(socket, false, 0)) {
+                    deliveredCount += 1;
+                }
+            }
+            return deliveredCount;
+        }
         if (params.sockets.length === 0) return 0;
-        const qualifiedSockets = await readSnapshotWithCurrentAdmission(async tx => {
+        const qualifiedSockets = await captureReadSnapshot(async tx => {
             const row = await tx.session.findUnique({
                 where: { id: params.sessionId },
-                select: buildSessionAccessProjectionSelect(params.accountId),
+                select: { ...buildSessionAccessProjectionSelect(params.accountId), metadataLayoutVersion: true },
             });
-            const qualified: S[] = [];
+            const qualified: { socket: S; isSessionOwner: boolean; metadataLayoutVersion: number }[] = [];
             if (!row) return qualified;
             for (const socket of params.sockets) {
                 let decision: Awaited<ReturnType<typeof resolveSessionAccessForOperation>>;
@@ -696,30 +702,16 @@ class EventRouter {
                     // One malformed or stale credential cannot suppress another socket's delivery.
                     continue;
                 }
-                if (decision.status !== "allowed" || !decision.access.capabilities.readTranscript) continue;
-                qualified.push(socket);
+                if (decision.status !== "allowed" || !decision.access.capabilities.readTranscript) {
+                    withdrawSessionConsumption(socket, params.sessionId);
+                    continue;
+                }
+                qualified.push({ socket, isSessionOwner: decision.access.level === "owner", metadataLayoutVersion: row.metadataLayoutVersion });
             }
             return qualified;
-        }, async (tx, captured) => {
-            const current: S[] = [];
-            for (const socket of captured) {
-                try {
-                    const decision = await resolveSessionAccessForOperation(tx, {
-                        accountId: params.accountId, sessionId: params.sessionId,
-                        authentication: readSessionAccessAuthenticationFromSocket(socket), capability: "readTranscript",
-                    });
-                    if (decision.status === "allowed") current.push(socket);
-                } catch {
-                    // A stale credential only suppresses its own delivery.
-                }
-            }
-            return current;
         });
-        let deliveredCount = 0;
-        for (const socket of qualifiedSockets) {
-            if (params.emit(socket)) deliveredCount += 1;
-        }
-        return deliveredCount;
+        return qualifiedSockets.filter(({ socket, isSessionOwner, metadataLayoutVersion }) =>
+            params.emit(socket, isSessionOwner, metadataLayoutVersion)).length;
     }
 
     private getEmitterTargetForFilter(userId: string, filter: RecipientFilter): string | string[] {

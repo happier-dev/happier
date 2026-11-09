@@ -7,7 +7,8 @@ import { io as createClient, type Socket as ClientSocket } from "socket.io-clien
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { startSilentPartitionProxy } from "@/testkit/redisSilentPartitionProxy";
-import { startRedisAdapterRecoveryCluster } from "@/testkit/redisAdapterRecoveryCluster";
+import { startRedisAdapterRecoveryCluster, holdRedisAdapterDiscoveryRequests } from "@/testkit/redisAdapterRecoveryCluster";
+import { readSocketRoomSnapshot } from './socket/socketRoomDiscovery';
 
 import { RedisStreamsRoomEmitter } from "@/app/events/createRedisStreamsRoomEmitter";
 import { emitSocketPlannedRestart } from "./socket";
@@ -154,6 +155,33 @@ describe("socket.io redis streams adapter cluster integration", () => {
         return socket;
     }
 
+    it('admits a current-version positive room reply while an unrelated peer remains silent', async () => {
+        const cluster = await startRedisAdapterRecoveryCluster({ redisUrl, nodeCount: 3 });
+        openClusters.push(cluster);
+        const [caller, target, unrelated] = cluster.nodes;
+        const room = 'current-positive-room';
+        target.io.on('connection', socket => { void socket.join(room); });
+        const client = await connect(target.port);
+        const held = holdRedisAdapterDiscoveryRequests(unrelated!.io);
+        const targetHeld = holdRedisAdapterDiscoveryRequests(target.io);
+        try {
+            const reading = readSocketRoomSnapshot({ io: caller.io, room, timeoutMs: 1_000,
+                acceptPartial: async sockets => sockets.some(socket => 'id' in socket && socket.id === client.id) });
+            await Promise.all([held.received, targetHeld.received]);
+            targetHeld.release();
+            const snapshot = await reading;
+            expect(held.count).toBeGreaterThan(0);
+            // The peer has still not answered. A current-version positive reply is enough
+            // for this existential read, not for absence or global uniqueness.
+            expect(snapshot.sockets.map(socket => 'id' in socket ? socket.id : null)).toContain(client.id);
+            expect(snapshot.complete).toBe(false);
+            expect(snapshot.error).toBeUndefined();
+        } finally {
+            held.release();
+            targetHeld.release();
+        }
+    });
+
     it("announces a node shutdown only to that node's sockets, preserving healthy peer connections", async () => {
         const cluster = await startCluster();
         const [retiring, healthy] = cluster.nodes;
@@ -190,7 +218,7 @@ describe("socket.io redis streams adapter cluster integration", () => {
             .sort();
         const initialIds = await readConnectionIds();
         // More than two stall-timeout windows distinguishes a healthy BLOCK
-        // 100 reader from one continually reconnecting at the 5-second default.
+        // reader from one continually reconnecting at the 5-second default.
         await new Promise<void>((resolve) => setTimeout(resolve, 11_000));
         expect(await readConnectionIds()).toEqual(initialIds);
         const names = await readSocketClusterConnectionNames();
@@ -204,7 +232,46 @@ describe("socket.io redis streams adapter cluster integration", () => {
         ]);
     });
 
-    it("fans out ordered binary room broadcasts across nodes through Redis Streams", async () => {
+    it("bounds idle empty XREAD returns per replica per minute", async () => {
+        let emptyReturns = 0;
+        const sendCommand = Redis.prototype.sendCommand;
+        // Observe the real external Redis boundary; every command and adapter
+        // read-loop decision still executes unchanged.
+        const observed = vi.spyOn(Redis.prototype, "sendCommand").mockImplementation(function (this: Redis, command, stream) {
+            const result = sendCommand.call(this, command, stream);
+            if (command.name === "xread" && this.options.connectionName?.startsWith("happier-socket-cluster:adapter-")) {
+                void Promise.resolve(result).then(response => {
+                    if (response === null) emptyReturns += 1;
+                }, () => {});
+            }
+            return result;
+        });
+        try {
+            const cluster = await startCluster();
+            const initialReturns = emptyReturns;
+            await new Promise<void>(resolve => setTimeout(resolve, 60_000));
+            const idleReturns = emptyReturns - initialReturns;
+            console.info("redis-xread-idle", JSON.stringify({
+                blockTimeInMs: readRedisStreamsAdapterOptionsFromEnv({}).blockTimeInMs,
+                replicas: cluster.nodes.length,
+                emptyReturnsPerReplicaPerMinute: idleReturns / cluster.nodes.length,
+            }));
+            // Derived from the fixed 5-second socket deadline minus ioredis'
+            // 100-ms response grace and the retry owner's 50-ms timer grace.
+            expect(idleReturns).toBeGreaterThan(0);
+            expect(idleReturns).toBeLessThanOrEqual(cluster.nodes.length * Math.ceil(60_000 / (5_000 - 100 - 50)));
+            for (const node of cluster.nodes) {
+                // Pin the derived margin to actual ioredis defaults and the
+                // production factory, not just duplicated fixture constants.
+                expect(readRedisStreamsAdapterOptionsFromEnv({}).blockTimeInMs
+                    + node.redis.options.blockingTimeoutGrace! + 50).toBe(node.redis.options.socketTimeout);
+            }
+        } finally {
+            observed.mockRestore();
+        }
+    }, 90_000);
+
+    it("fans out ordered binary room broadcasts during a blocking XREAD without waiting for its expiry", async () => {
         const cluster = await startCluster();
         const room = "session:binary-fanout";
         const receiver = await connect(cluster.nodes[1].port, { room });
@@ -224,8 +291,17 @@ describe("socket.io redis streams adapter cluster integration", () => {
             async () => (await cluster.nodes[0].io.in(room).fetchSockets()).length === 1,
             "the remote socket to become visible from the publishing node",
         );
-        for (const frame of frames) cluster.nodes[0].io.to(room).emit("update", frame);
-        expect(await received).toEqual(frames);
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        try {
+            const beforeBlockExpires = new Promise<never>((_, reject) => {
+                timer = setTimeout(() => reject(new Error("Stream delivery waited for BLOCK expiry")),
+                    readRedisStreamsAdapterOptionsFromEnv({}).blockTimeInMs);
+            });
+            for (const frame of frames) cluster.nodes[0].io.to(room).emit("update", frame);
+            expect(await Promise.race([received, beforeBlockExpires])).toEqual(frames);
+        } finally {
+            clearTimeout(timer);
+        }
     });
 
     it("discovers remote sockets with fetchSockets before and after a remote disconnect", async () => {

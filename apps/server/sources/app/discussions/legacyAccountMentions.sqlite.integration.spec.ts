@@ -7,6 +7,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { buildDiscussionMutationRequestBodyV1 } from '@happier-dev/protocol/discussions/api';
 import { createPresentUserSessionAccessAuthentication } from '@/app/session/access/sessionAccessAuthentication.testkit';
 import { db } from '@/storage/db';
+import { makeShareEligibleForTest } from '@/testkit/shareEligibility.testkit';
 import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lightSqliteHarness';
 import { runSqliteMigrationDeploy } from '../../../scripts/migrate.sqlite.deploy';
 import { createDiscussion, postDiscussionMessage } from './mutations';
@@ -39,6 +40,7 @@ describe('Retained legacy Account mentions', () => {
     it('converts old plain mention bodies for validation, list and history without rewriting ciphertext or identity', async () => {
         const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
         const invitee = await db.account.create({ data: { encryptionMode: 'plain' } });
+        await makeShareEligibleForTest(owner.id, invitee.id);
         const typed = { v: 1 as const, parts: [{ t: 'mention' as const,
             participant: { kind: 'account' as const, accountId: invitee.id } }, { t: 'text' as const, text: ' please review' }] };
         const created = await createDiscussion({ authentication, actorAccountId: owner.id,

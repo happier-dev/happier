@@ -10,7 +10,12 @@ import { db, initDbPglite, shutdownDbPglite } from "@/storage/db";
 import { inTx, transactionResult } from "@/storage/inTx";
 import { applyEnvValues, restoreEnv, snapshotEnv } from "@/testkit/env";
 import { createPresentUserSessionAccessAuthentication } from "./access/sessionAccessAuthentication.testkit";
-import { applySessionTurnMutation } from "./sessionWriteService";
+import { applySessionTurnMutation, updateSessionMetadata } from "./sessionWriteService";
+import { isSessionSystemRecordUnchangedHintV1 } from "@happier-dev/protocol/sessions/board/changeHint";
+import { UpdateContainerSchema } from "@happier-dev/protocol/updates";
+import { eventRouter } from "@/app/events/eventRouter";
+import { createAuthenticatedTestApp } from "@/app/api/testkit/sqliteFastify";
+import { changesRoutes } from "@/app/api/routes/changes/changesRoutes";
 import { markAccountChanged, markAccountsChanged, markSessionAccountsChanged } from "@/app/changes/markAccountChanged";
 import { acquireSessionAccountCursorLocksInTx } from "./changeTracking/acquireSessionAccountCursorLocksInTx";
 
@@ -106,6 +111,49 @@ describe("Session and Account publication on PGlite", () => {
                 { kind: "session", entityId: session.id, cursor: 2, hint: null, sessionId: session.id },
                 { kind: "account", entityId: "hinted", cursor: 3, hint: { keys: ["theme"] }, sessionId: null },
             ]);
+    });
+
+    it("keeps ordinary Session row writes out of record invalidation in the wake and enriched changes read", async () => {
+        const account = await db.account.create({ data: { publicKey: randomUUID(), encryptionMode: "plain" } });
+        const session = await db.session.create({ data: {
+            accountId: account.id, tag: randomUUID(), encryptionMode: "plain", metadata: "{}",
+        } });
+        const updates: unknown[] = [];
+        // Socket.IO and HTTP authentication are the external boundaries; writes, cursors,
+        // publication policy, changes serialization and hint admission remain real.
+        eventRouter.setIo({ to: () => ({ emit: (_event: string, payload: unknown) => { updates.push(payload); }, disconnectSockets: () => {} }) });
+        const app = createAuthenticatedTestApp();
+        changesRoutes(app);
+        try {
+            const operations = [
+                () => updateSessionMetadata({ actorUserId: account.id, sessionId: session.id,
+                    authentication: createPresentUserSessionAccessAuthentication(), expectedVersion: 0,
+                    metadataCiphertext: '{"label":"changed"}' }),
+                () => applySessionTurnMutation({ actorUserId: account.id,
+                    authentication: createPresentUserSessionAccessAuthentication(), mutation: {
+                        v: 1, sessionId: session.id, mutationId: randomUUID(), turnId: randomUUID(), action: "begin", observedAt: 100,
+                    } }),
+            ];
+            for (const operation of operations) {
+                updates.length = 0;
+                expect(await operation()).toMatchObject({ ok: true });
+                const change = await db.accountChange.findFirstOrThrow({ where: { accountId: account.id, kind: "session", entityId: session.id } });
+                expect(isSessionSystemRecordUnchangedHintV1(change.hint)).toBe(true);
+                expect(updates.map(update => UpdateContainerSchema.parse(update).body)).toContainEqual(expect.objectContaining({
+                    t: "account-change", sessionSystemRecords: [],
+                }));
+                const response = await app.inject({ method: "GET", url: `/v2/changes?after=0&sessionId=${session.id}`,
+                    headers: { "x-test-user-id": account.id } });
+                expect(response.statusCode).toBe(200);
+                const body = response.json();
+                expect(body.changes).toHaveLength(1);
+                expect(body.changes[0].hint.pendingExecutionRunIds).toEqual([]);
+                expect(isSessionSystemRecordUnchangedHintV1(body.changes[0].hint)).toBe(true);
+            }
+        } finally {
+            eventRouter.clearIo();
+            await app.close();
+        }
     });
 
     it("executes the Session resource fence on the PostgreSQL-compatible engine", async () => {

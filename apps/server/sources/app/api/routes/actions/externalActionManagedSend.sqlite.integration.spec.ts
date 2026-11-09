@@ -1,19 +1,29 @@
 import { randomUUID } from 'node:crypto';
+import { writeFile } from 'node:fs/promises';
 import tweetnacl from 'tweetnacl';
 import { expect, it, vi } from 'vitest';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
-import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
-import { ExternalActionDaemonDispatchRequestSchema, createExternalActionDaemonDispatchResponse } from '@happier-dev/protocol/actions/externalActionApi';
-import { openExternalActionRequestV2, prepareExternalActionResponseV2 } from '@happier-dev/protocol/actions/externalActionEncryption';
+import { ExternalActionDaemonDispatchRequestSchema, EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { MANAGED_FINITE_WAKE_RPC_METHOD, ManagedFiniteWakeRequestV1Schema } from '@happier-dev/protocol/machines/managed/managedPolicyV1';
 import { sealEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
 import { decodeBase64, encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { db } from '@/storage/db';
+import { inTx } from '@/storage/inTx';
+import { createSessionMachineAccessKeyInTx } from '@/app/accessKeys/sessionMachineAccessKeyMutations';
 import { startWorkflowApprovedOperationServer } from '@/testkit/workflowApprovedOperationServer.testkit';
 import { createCliActionExecutorFromCredentials } from '../../../../../../cli/src/session/actions/createCliActionExecutorFromCredentials';
 import { runWithServerHttpBaseUrl } from '../../../../../../cli/src/api/client/serverHttpBaseUrl';
 import { encrypt, decrypt } from '../../../../../../cli/src/api/encryption';
 import { configuration } from '../../../../../../cli/src/configuration';
+import { ApiClient } from '../../../../../../cli/src/api/api';
+import { CURRENT_MACHINE_OPERATION_PROTOCOL_CAPABILITIES_V1 } from '../../../../../../cli/src/api/apiMachine';
+import { fetchServerFeaturesSnapshot } from '../../../../../../cli/src/features/serverFeaturesClient';
+import { registerExternalActionRpcHandler } from '../../../../../../cli/src/rpc/handlers/externalAction';
+import { createDaemonExternalActionTargetResolver } from '../../../../../../cli/src/daemon/externalActions/daemonExternalActionTargetResolver';
+import { verifyExternalActionExecutionAuthorizationCurrent } from '../../../../../../cli/src/api/externalActionExecutionAuthorization';
+import type { RpcHandler } from '../../../../../../cli/src/api/rpc/types';
+import { ACTION_API_SERVER_ORIGIN } from '@happier-dev/protocol/rpc';
+import { prepareRequesterAccountActionContext } from '../../../../../../cli/src/daemon/sessionEncryption/requesterAccountActionProjection';
 import { withConfiguredDaemonTestHome } from '../../../../../../cli/src/daemon/testkit/fakeDaemonLifecycle.testkit';
 import { forwardRpcCall } from '@/app/api/socket/rpc/forwardRpcCall';
 import { resolveRpcForwardTimeoutMs } from '@/app/api/socket/rpc/rpcForwardTimeout';
@@ -27,6 +37,8 @@ it.each([true, false])('admits stored-credential CLI Send-now through Home and w
     const delivered: unknown[] = [];
     const effects: string[] = [];
     let managedId = '';
+    let receive: RpcHandler | undefined;
+    let connectGuest: (() => Promise<void>) | undefined;
     const server = await startWorkflowApprovedOperationServer({ workflowSessions: true,
         e2ee: { contentPublicKey: publicKey,
             encodeMachine: (key, value) => encodeBase64(encrypt(key, 'dataKey', value)),
@@ -77,21 +89,12 @@ it.each([true, false])('admits stored-credential CLI Send-now through Home and w
                 } finally { vi.useRealTimers(); }
             }
             const packet = ExternalActionDaemonDispatchRequestSchema.parse(request.callParams);
-            const envelope = packet.envelope;
-            if (envelope.v !== 2) throw new Error('expected_encrypted_send');
-            const binding = { serverIdentityId: server.homeId, accountId: server.accountId,
-                authentication: { kind: 'account' as const, tokenEpoch: server.tokenEpoch },
-                actionId: packet.actionId, requestId: envelope.requestId, target: envelope.target! };
-            const opened = openExternalActionRequestV2({ envelope, binding, material,
-                projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1 });
-            expect(opened).not.toBeNull();
-            delivered.push(opened?.input);
+            if (!receive) throw new Error('Guest Action receiver was not registered');
+            await connectGuest?.();
             effects.push('send-now');
-            return { ok: true, result: createExternalActionDaemonDispatchResponse(prepareExternalActionResponseV2({
-                binding, request: envelope, material, randomBytes: tweetnacl.randomBytes,
-                executedMachineId: packet.placement.machineId,
-                execution: { ok: true, result: { status: 'accepted', localId: 'send-now-input' } },
-            })) };
+            delivered.push(packet.actionId);
+            return { ok: true, result: await receive(packet, { authorization: ACTION_API_SERVER_ORIGIN,
+                signal: request.cancellation?.signal }) };
         } });
     const [controller, guest] = server.machines;
     const sessionKey = tweetnacl.randomBytes(32);
@@ -101,6 +104,10 @@ it.each([true, false])('admits stored-credential CLI Send-now through Home and w
         dataKeyEnvelopes: { create: { recipientAccountId: server.accountId,
             encryptedDataKey: Uint8Array.from(sealEncryptedDataKeyEnvelopeV1({ recipientPublicKey: publicKey,
                 dataKey: sessionKey, randomBytes: tweetnacl.randomBytes })) } } } });
+    expect(await inTx(tx => createSessionMachineAccessKeyInTx(tx, { accountId: server.accountId,
+        sessionId: session.id, machineId: guest.id,
+        data: encodeBase64(encrypt(material.machineKey, 'dataKey', Array.from(sessionKey))) })))
+        .toMatchObject({ ok: true });
     try {
         const row = managed ? await db.managedMachine.create({ data: { homeId: server.homeId, custodianAccountId: server.accountId,
             controllerMachineId: controller.id, controllerInstallationId: controller.installationId,
@@ -118,24 +125,81 @@ it.each([true, false])('admits stored-credential CLI Send-now through Home and w
         await withConfiguredDaemonTestHome({ prefix: 'managed-send-now-' }, async () => {
             const credentials = { token: server.token, credentialProvenance: 'stored_session' as const,
                 encryption: { ...material, publicKey } };
+            await writeFile(configuration.installationIdentityFile, JSON.stringify({ version: 1,
+                installationId: guest.installationId, createdAt: Date.now(),
+                publicKey: encodeBase64(guest.keys.publicKey, 'base64url'),
+                privateKey: encodeBase64(guest.keys.secretKey, 'base64url') }), { mode: 0o600 });
+            const api = await runWithServerHttpBaseUrl(server.baseUrl, () => ApiClient.create(credentials));
+            const machine = await runWithServerHttpBaseUrl(server.baseUrl, () => api.getMachine(guest.id));
+            if (!machine) throw new Error('Guest Machine was not readable');
+            const snapshot = await fetchServerFeaturesSnapshot({ serverUrl: server.baseUrl, token: server.token });
+            const machineClient = runWithServerHttpBaseUrl(server.baseUrl, () => api.machineSyncClient(machine, undefined, {
+                getServerFeaturesSnapshot: () => snapshot, resolveCurrentServerIdentityId: () => server.homeId,
+            }));
+            let connected: Promise<void> | undefined;
+            connectGuest = () => runWithServerHttpBaseUrl(server.baseUrl,
+                () => connected ??= new Promise<void>((resolve, reject) => machineClient.connect({ onConnect: async () => {
+                // This receiver supports Pending input, without advertising a
+                // native Session-spawn host that this fixture does not install.
+                await machineClient.publishOperationProtocolCapabilities({
+                    sessionInputAdmission: CURRENT_MACHINE_OPERATION_PROTOCOL_CAPABILITIES_V1.sessionInputAdmission,
+                    externalActionExecutionAuthorization: CURRENT_MACHINE_OPERATION_PROTOCOL_CAPABILITIES_V1.externalActionExecutionAuthorization,
+                }).then(() => resolve(), reject);
+            } })));
             const executor = createCliActionExecutorFromCredentials({ credentials, externalActionClient: true,
                 serverId: configuration.activeServerId, serverIdentityId: server.homeId, serverApiUrl: server.baseUrl,
-                resolveServerFeaturesSnapshot: async () => ({ status: 'unsupported', reason: 'endpoint_missing' }),
+                resolveServerFeaturesSnapshot: () => snapshot,
                 actionsSettingsProvider: { getActionsSettings: () => ActionsSettingsV1Schema.parse({ v: 1 }) } });
-            const input = { sessionId: session.id, message: 'Wake and accept this input',
+            const receiver = createCliActionExecutorFromCredentials({ credentials,
+                serverId: configuration.activeServerId, serverIdentityId: server.homeId, serverApiUrl: server.baseUrl,
+                machineActionDirectTargetTransport: { machineId: guest.id,
+                    invoke: async () => { throw new Error('Send-now uses real Home Pending admission, not another Machine RPC'); } },
+                machineAdmissionTransport: (request, options) => machineClient.enqueueSessionPendingByMachine(request, options),
+                machineId: guest.id, externalActionMachineInstallationId: guest.installationId,
+                externalActionMachineRequestPrivateKey: guest.keys.secretKey,
+                resolveServerFeaturesSnapshot: () => snapshot,
+                actionsSettingsProvider: { getActionsSettings: () => ActionsSettingsV1Schema.parse({ v: 1 }) } });
+            registerExternalActionRpcHandler({ registerHandler: (method, handler) => {
+                if (method === EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1) receive = handler;
+            } }, { machineId: guest.id, currentServerId: configuration.activeServerId,
+                currentServerHttpBaseUrl: server.baseUrl, resolveAccountId: async () => server.accountId,
+                resolveInstallationId: () => guest.installationId,
+                externalActionMachineRequestPrivateKey: guest.keys.secretKey,
+                verifyExecutionAuthorization: request => verifyExternalActionExecutionAuthorizationCurrent({ ...request,
+                    privateKey: guest.keys.secretKey, installationId: guest.installationId, serverHttpBaseUrl: server.baseUrl }),
+                prepareRequesterAccountContext: request => prepareRequesterAccountActionContext({ ...request,
+                    purpose: { kind: 'external_action' }, machineId: guest.id, installationId: guest.installationId,
+                    installationPrivateKey: guest.keys.secretKey, serverId: configuration.activeServerId,
+                    serverIdentityId: server.homeId, serverHttpBaseUrl: server.baseUrl, ownCredentials: credentials,
+                    createExecutor: () => receiver,
+                    isCurrent: () => verifyExternalActionExecutionAuthorizationCurrent({ authorization: request.authorization,
+                        effectActionId: request.authorization.binding.actionId, target: request.authorization.binding.target,
+                        privateKey: guest.keys.secretKey, installationId: guest.installationId, serverHttpBaseUrl: server.baseUrl }),
+                }),
+                resolveEncryption: async () => ({ serverIdentityId: server.homeId, material }),
+                resolveTarget: createDaemonExternalActionTargetResolver({ credentials, serverApiUrl: server.baseUrl }),
+                executor: receiver });
+            const input = { sessionId: session.id, message: 'Wake and accept this input', localId: 'send-now-input',
                 requestedAction: { v: 1, kind: 'send_now' }, reply: 'none' };
-            const result = await runWithServerHttpBaseUrl(server.baseUrl,
-                () => executor.execute('session.message.send', input, { surface: 'cli' }));
-            if (managed) {
+            try {
+                const result = await runWithServerHttpBaseUrl(server.baseUrl,
+                    () => executor.execute('session.message.send', input, { surface: 'cli' }));
+                if (managed) {
                 expect(result, JSON.stringify({ result, effects, requests: server.readRequestCosts() }))
                     .toMatchObject({ ok: true, result: { status: 'accepted', localId: 'send-now-input' } });
-                expect(delivered).toEqual([expect.objectContaining(input)]);
+                expect(delivered).toEqual(['session.message.send']);
                 expect(effects).toEqual(['controller-wake', 'send-now']);
-            } else {
+                const admitted = await db.session.findUniqueOrThrow({ where: { id: session.id } });
+                expect(admitted).toMatchObject({ pendingCount: 1, pendingActivationStatus: 'waiting',
+                    pendingActivationRequestId: input.localId });
+                expect(await db.sessionPendingMessage.findMany({ where: { sessionId: session.id } }))
+                    .toMatchObject([{ localId: input.localId, status: 'queued' }]);
+                } else {
                 expect(result).toMatchObject({ ok: false, errorCode: 'target_unavailable' });
                 expect(delivered).toEqual([]);
                 expect(effects).toEqual([]);
-            }
+                }
+            } finally { connectGuest = undefined; await machineClient.shutdown(); }
         });
     } finally { await server.close(); }
 });

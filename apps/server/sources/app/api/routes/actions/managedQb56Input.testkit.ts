@@ -1,7 +1,8 @@
 import { ManagedAcquireInputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 
 // Credential-free capture: impl-C/qa-shots5/qb56/{attempt,prepared}.json,
-// 2026-10-18T04:52:56.574Z. Preserve the exact input and request correlation.
+// 2026-10-18T04:52:56.574Z. Preserve the captured choices and request correlation.
+// The current admission fixture explicitly reviews a sandbox identity.
 export const managedQb56RequestId = '887f79a3-8bf6-4152-a141-312b294b1b23';
 const controller = { machineId: '8af4e544-25b4-4d2a-a5e2-5cf759e40b46',
     installationId: '204630bf-252c-4541-b841-2413b155c606' };
@@ -11,6 +12,7 @@ const launch = { provider: { pluginId: 'happier.machine.lima', localId: 'lima' }
         arch: 'x86_64', vmType: 'qemu', cpus: 1, memoryGiB: 1, diskGiB: 4, mounts: [] } };
 const retention = { kind: 'unused', afterMs: 3_600_000, effect: 'stop' };
 const parsed = ManagedAcquireInputV1Schema.parse({
+    enrollmentIdentity: { kind: 'guestProcess', role: 'sandbox' },
     selection: { kind: 'one-off', homeId: 'srv_niq7wbpMyJviL4EtO5YlTEd0Us0Ou0nN', controller, launch,
         retention, wakeOnAcceptedMessage: true },
     reviewedFacts: { launch, controller, optionStatus: 'current', billing: { location: 'local', stoppedBilling: 'not-billed' },

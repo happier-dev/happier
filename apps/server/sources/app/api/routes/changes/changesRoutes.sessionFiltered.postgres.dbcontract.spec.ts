@@ -38,6 +38,41 @@ describe.skipIf(provider !== "postgres" && provider !== "postgresql")(
             await shutdownDbClient();
         });
 
+        it("selects kinds before paging across one thousand irrelevant rows with snapshot-bounded cursors", async () => {
+            const account = await db.account.create({ data: {
+                publicKey: `${accountPublicKeyPrefix}${randomUUID()}`,
+                encryptionMode: "plain",
+            } });
+            const unrelatedCount = 1_000;
+            const boundary = unrelatedCount + 2;
+            const throughCursor = boundary + 2;
+            await db.accountChange.createMany({ data: [
+                { accountId: account.id, kind: "machine", entityId: "acknowledged", cursor: 1 },
+                ...Array.from({ length: unrelatedCount }, (_, index) => ({
+                    accountId: account.id, kind: "automation", entityId: `irrelevant-${index}`, cursor: index + 2,
+                })),
+                { accountId: account.id, kind: "machine", entityId: "boundary", cursor: boundary },
+                { accountId: account.id, kind: "share", entityId: "tail", cursor: boundary + 1 },
+                { accountId: account.id, kind: "automation", entityId: "irrelevant-tail", cursor: throughCursor },
+                { accountId: account.id, kind: "machine", entityId: "beyond-snapshot", cursor: throughCursor + 1 },
+            ] });
+            await db.account.update({ where: { id: account.id }, data: { seq: throughCursor } });
+            await withAuthenticatedTestApp(changesRoutes, async (app) => {
+                const headers = { "x-test-user-id": account.id };
+                const first = await app.inject({ method: "GET", url: "/v2/changes?kinds=machine,share&after=1&limit=1", headers });
+                expect(first.statusCode).toBe(200);
+                expect(first.json()).toMatchObject({ changes: [{ kind: "machine", entityId: "boundary", cursor: boundary }], nextCursor: boundary });
+                const tail = await app.inject({ method: "GET", url: `/v2/changes?kinds=machine,share&after=${boundary}&limit=2`, headers });
+                expect(tail.json()).toMatchObject({ changes: [{ kind: "share", entityId: "tail", cursor: boundary + 1 }], nextCursor: throughCursor });
+                const drained = await app.inject({ method: "GET", url: `/v2/changes?kinds=machine,share&after=${throughCursor}`, headers });
+                expect(drained.json()).toMatchObject({ changes: [], nextCursor: throughCursor });
+                const noMatch = await app.inject({ method: "GET", url: "/v2/changes?kinds=session&after=1", headers });
+                expect(noMatch.json()).toMatchObject({ changes: [], nextCursor: throughCursor });
+                const unselected = await app.inject({ method: "GET", url: "/v2/changes?after=1&limit=1", headers });
+                expect(unselected.json()).toMatchObject({ changes: [{ kind: "automation", cursor: 2 }], nextCursor: 2 });
+            });
+        });
+
         it("serves one exact Session page despite one thousand unrelated Account changes", async () => {
             const account = await db.account.create({ data: {
                 publicKey: `${accountPublicKeyPrefix}${randomUUID()}`,

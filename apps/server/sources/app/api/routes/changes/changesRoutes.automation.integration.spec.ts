@@ -52,7 +52,7 @@ describe("changesRoutes automation changes (integration)", () => {
 
                 expect(response.statusCode).toBe(200);
                 const body = response.json() as any;
-                expect(body.nextCursor).toBe(changedAtCursor);
+                expect(body.nextCursor).toBe(changedAtCursor.resolveCursor());
                 expect(body.changes).toEqual([
                     expect.objectContaining({
                         kind: "automation",

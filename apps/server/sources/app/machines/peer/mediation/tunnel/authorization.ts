@@ -209,7 +209,7 @@ export function mintPeerTcpTunnelRelayAuthorizationV2(
     const maxIdleMs = budgets?.maxIdleMs ?? input.serverCaps.maxIdleMs;
     const maxDurationMs = budgets?.maxDurationMs ?? input.serverCaps.maxDurationMs;
     const maxTotalBytes = budgets?.maxTotalBytes ?? input.serverCaps.maxBytes;
-    const payload: PeerTcpTunnelRelayAuthorizationPayloadV2 = PeerTcpTunnelRelayAuthorizationPayloadV2Schema.parse({
+    const parsedPayload = PeerTcpTunnelRelayAuthorizationPayloadV2Schema.safeParse({
         v: 2,
         grantId: `relay_grant_${randomUUID()}`,
         accountId: input.accountId,
@@ -224,6 +224,7 @@ export function mintPeerTcpTunnelRelayAuthorizationV2(
         } : {}),
         relaySocketId: input.relaySocketId,
         destination: input.destination,
+        ...(input.scope.kind === 'tcp_tunnel' && input.scope.preview ? { preview: input.scope.preview } : {}),
         capProfileId: input.capProfileId ?? "default",
         maxFrameBytes: input.serverCaps.maxFrameBytes,
         ...(budgets ? {
@@ -235,6 +236,8 @@ export function mintPeerTcpTunnelRelayAuthorizationV2(
         exp: input.nowMs + input.ttlMs,
         aud: PEER_TCP_TUNNEL_RELAY_AUTHORIZATION_AUDIENCE_V1,
     });
+    if (!parsedPayload.success) return { ok: false, reasonCode: 'invalid_scope', receipt: PEER_MEDIATION_RECEIPTS.routeGrantRejected };
+    const payload: PeerTcpTunnelRelayAuthorizationPayloadV2 = parsedPayload.data;
     const signature = tweetnacl.sign.detached(
         Buffer.from(createPeerTcpTunnelRelayAuthorizationSigningInputV2(payload), "utf8"),
         input.signingKey.secretKey,

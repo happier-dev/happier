@@ -9,6 +9,7 @@ import { enableErrorHandlers } from '@/app/api/utils/enableErrorHandlers';
 import { observeLazyPrismaQuery } from '@/app/changes/accountPublicationContention.testkit';
 import { createPresentUserSessionAccessAuthentication } from '@/app/session/access/sessionAccessAuthentication.testkit';
 import { db, initDbPostgres, shutdownDbClient } from '@/storage/db';
+import { makeShareEligibleForTest } from '@/testkit/shareEligibility.testkit';
 import type { Tx } from '@/storage/inTx';
 import { kvMutate } from '@/app/kv/kvMutate';
 import { createDiscussion } from './mutations';
@@ -259,6 +260,7 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== 'postgres')('Discussion arch
     it.each(['archive', 'revoke'] as const)('rechecks %s committed while an append waits for its Discussion parent', async change => {
         const current = await fixture();
         const reader = await db.account.create({ data: { encryptionMode: 'plain' } });
+        await makeShareEligibleForTest(current.owner.id, reader.id);
         expect(await setDiscussionGrant({ authentication, actorAccountId: current.owner.id, discussionId: current.discussionId,
             request: { principal: { kind: 'account', accountId: reader.id }, accessLevel: 'edit' } })).toMatchObject({ ok: true });
         current.setActor(reader.id);

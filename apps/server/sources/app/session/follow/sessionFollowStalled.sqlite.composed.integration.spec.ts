@@ -23,7 +23,7 @@ import { readSessionManagerInTx, setSessionManager } from '@/app/session/follow/
 import { parseStoredSessionLatestTurnStatus } from '@/app/session/listing/rows';
 import { readCurrentSourceSessionFollowFrontier, writeSessionFollowFrontierColumns } from '@/app/session/relations/sessionEdgeFrontier';
 import { acknowledgeSessionFollowFrontierInTx, authorizeSessionFollowSourceKeyPreparer, observePendingSessionFollowForDestinationInTx,
-    projectSessionFollowSourceForRunnerInTx, setSessionFollowSource } from './sessionFollowEdgeService';
+    projectSessionFollowSourceForRunnerInTx, removeSessionFollowSource, setSessionFollowSource } from './sessionFollowEdgeService';
 import { acknowledgeAccountVoiceFollowInTx, observePendingAccountVoiceFollowInTx, setAccountSessionFollow } from './accountFollowService';
 import { acknowledgeAdmittedSessionFollowInputInTx } from './sessionFollowEdgeService';
 import { readAdmittedSessionFollowInputInTx, sessionFollowInputFrontiers } from './sessionFollowRuleProgress';
@@ -964,6 +964,83 @@ describe('session → Follow WorkerUpdate acceptance', () => {
             expect(f.acceptedPrompts).toHaveLength(2);
             expect(await intake.prepare('natural')).toBeNull();
         }
+    });
+
+    it.each(['source mute', 'relation policy', 'manager replacement'] as const)(
+        'ACKs native acceptance after %s without replaying or updating a successor route', async change => {
+        const f = await fixture();
+        await f.follow();
+        const intake = await f.originals();
+        const seq = await f.appendReport('Accepted before the Follow configuration changed');
+        const prepared = await intake.prepare('natural');
+        expect(prepared?.representedFollowLocalInputIds).toHaveLength(1);
+        const manager = await db.sessionFollowEdge.findUniqueOrThrow({ where: { managerSourceSessionId: f.source.id } });
+        f.ackTransport.beforeAcknowledge = async () => {
+            if (change === 'source mute') expect(await changeDeliveryMute({ accountId: f.account.id, authentication: f.authentication,
+                receiver: { kind: 'session', sessionId: f.destination.id },
+                scope: { kind: 'source', source: { kind: 'session', sessionId: f.source.id } }, operation: 'set',
+            })).toMatchObject({ ok: true });
+            else if (change === 'relation policy') await db.sessionFollowEdge.updateMany({ where: { destinationSessionId: f.destination.id },
+                data: { policyJson: serializeFollowPolicyV1({ preset: 'custom', events: {} }) } });
+            else await db.sessionFollowEdge.update({ where: { managerSourceSessionId: f.source.id },
+                data: { attachedAt: new Date(manager.attachedAt.getTime() + 1), deliveredTranscriptSeq: 0 } });
+        };
+        await intake.accept(prepared!);
+        expect(await Promise.all(f.acknowledgements)).toEqual([expect.objectContaining({ ok: true,
+            delivered: expect.objectContaining({ transcriptSeq: seq }) })]);
+        expect(await db.sessionFollowEdge.findUniqueOrThrow({ where: { destinationSessionId_sourceSessionId_relation: {
+            destinationSessionId: f.destination.id, sourceSessionId: f.source.id, relation: 'follower',
+        } } })).toMatchObject({ deliveredTranscriptSeq: seq });
+        expect(await inTx(tx => readSessionManagerInTx(tx, f.source.id)))
+            .toMatchObject({ deliveredTranscriptSeq: change === 'manager replacement' ? 0 : seq });
+        expect(f.acceptedPrompts).toHaveLength(1);
+        expect(await db.sessionMessage.count({ where: { sessionId: f.destination.id, acceptedTurnId: 'receiver-turn' } })).toBe(1);
+        if (change !== 'manager replacement') {
+            await f.appendReport('A fresh original must obey the changed configuration');
+            // Ordinary observation retains route headers for suppression;
+            // fresh content admission, not header absence, is the boundary.
+            await intake.dispatchPending();
+            expect(await db.sessionPendingMessage.count({ where: { sessionId: f.destination.id, status: 'queued' } })).toBe(0);
+            expect(f.acceptedPrompts).toHaveLength(1);
+            if (change === 'source mute') expect(await inTx(tx => projectSessionFollowSourceForRunnerInTx(tx, {
+                principal: { kind: 'destination_runtime', destinationRuntimeAccountId: f.account.id, authentication: f.authentication },
+                destinationSessionId: f.destination.id,
+                request: { v: 1, sourceSessionId: f.source.id, relation: 'follower',
+                    afterTranscriptSeq: seq, observedTranscriptSeq: seq + 1, limit: 1 },
+            }))).toBeNull();
+        }
+    });
+
+    it.each(['current source Turn', 'historical transcript coverage', 'unknown historical coverage'] as const)(
+        'does not let an accepted terminal ACK overwrite a detached and re-added follower frontier (%s)', async chronology => {
+        const f = await fixture();
+        await f.follow({ preset: 'everything' });
+        await f.recordTerminalTurn('worker-turn', 'completed', { startSeqInclusive: 1, endSeqInclusive: 1 });
+        const intake = await f.originals();
+        const prepared = await intake.prepare('natural');
+        expect(prepared?.representedFollowLocalInputIds).toHaveLength(1);
+        expect(intake.deliveries[0]?.delivery.original).toMatchObject({ sourceTurn: { id: 'worker-turn', status: 'completed' } });
+        const edgeKey = { destinationSessionId: f.destination.id, sourceSessionId: f.source.id, relation: 'follower' };
+        let successor: Awaited<ReturnType<typeof db.sessionFollowEdge.findUniqueOrThrow>> | undefined;
+        f.ackTransport.beforeAcknowledge = async () => {
+            expect(await removeSessionFollowSource({ accountId: f.account.id, authentication: f.authentication,
+                sourceSessionId: f.source.id, destinationSessionId: f.destination.id })).toMatchObject({ ok: true });
+            if (chronology === 'historical transcript coverage') await f.appendTurnInput('later-source-turn');
+            await f.recordTerminalTurn('later-source-turn', 'failed', chronology === 'historical transcript coverage'
+                ? { startSeqInclusive: 2, endSeqInclusive: 2 } : undefined);
+            await f.follow({ preset: 'everything' });
+            successor = await db.sessionFollowEdge.findUniqueOrThrow({ where: { destinationSessionId_sourceSessionId_relation: edgeKey } });
+            expect(successor).toMatchObject({ deliveredTurnId: 'later-source-turn', deliveredTurnStatus: 'failed' });
+            if (chronology !== 'current source Turn') {
+                await f.appendTurnInput('third-source-turn');
+                await f.recordTerminalTurn('third-source-turn', 'completed', { startSeqInclusive: 3, endSeqInclusive: 3 });
+            }
+        };
+        await intake.accept(prepared!);
+        expect(await Promise.all(f.acknowledgements)).toEqual([expect.objectContaining({ ok: true })]);
+        expect(await db.sessionFollowEdge.findUniqueOrThrow({ where: { destinationSessionId_sourceSessionId_relation: edgeKey } })).toEqual(successor);
+        expect(f.acceptedPrompts).toHaveLength(1);
+        expect(await db.sessionMessage.count({ where: { sessionId: f.destination.id, acceptedTurnId: 'receiver-turn' } })).toBe(1);
     });
 
     it('keeps a late ready original on the already accepted terminal Turn occurrence', async () => {

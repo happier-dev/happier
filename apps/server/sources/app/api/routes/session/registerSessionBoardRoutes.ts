@@ -8,16 +8,6 @@ import { createServerFeatureGatePreHandler } from "@/app/features/catalog/server
 import { resolveApiHotEndpointRateLimit } from "@/app/api/utils/apiRateLimitCatalog";
 import { mutateSessionBoard } from "@/app/session/board/service";
 import { readSessionAccessAuthenticationFromRequest } from "@/app/session/access/sessionAccessAuthentication";
-import type { SessionSystemRecordCreatorV1 } from '@happier-dev/protocol/sessions/system/records/sessionSystemRecord';
-
-function readVerifiedVisualCreator(request: FastifyRequest): SessionSystemRecordCreatorV1 {
-    const origin = request.externalActionExecutionAuthorized === true
-        ? request.externalActionExecutionAuthorizationBinding?.sessionActionOrigin : undefined;
-    if (origin) return { kind: "session", sessionId: origin.caller.sessionId };
-    const runner = request.sessionRuntimePrincipal;
-    if (runner?.authority === "session_runtime") return { kind: "session", sessionId: runner.sessionId };
-    return request.authAuthority === "present_user" ? { kind: "user" } : { kind: "unknown" };
-}
 
 function sessionBoardRouteErrorHandler(
     error: FastifyError,
@@ -100,7 +90,6 @@ export function registerSessionBoardRoutes(app: Fastify) {
             sessionId: request.params.sessionId,
             mutation: request.body,
             authentication: readSessionAccessAuthenticationFromRequest(request),
-            creator: readVerifiedVisualCreator(request),
         });
         if (result.ok) return reply.send(result.result);
         const error = result.result.error;

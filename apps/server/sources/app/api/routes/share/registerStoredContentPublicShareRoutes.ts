@@ -189,7 +189,12 @@ export function registerStoredContentPublicShareRoutes(app: Fastify): void {
                         ...(reference.success ? { surfaceItemReference: reference.data } : {}),
                         ...(parseSessionMessageRole(row.messageRole) ? { messageRole: parseSessionMessageRole(row.messageRole)! } : {}), createdAt: row.createdAt.getTime(), updatedAt: row.updatedAt.getTime() };
                 });
-                content = { kind: "session" as const, ...metadata, messages, hasMore, nextBeforeSeq: hasMore ? messages.at(-1)!.seq : null };
+                // Public transcript readers consume this closed wire projection, not
+                // the Session-list display or owner-only metadata projection.
+                content = { kind: "session" as const, metadata: metadata.metadata,
+                    metadataVersion: metadata.metadataVersion, metadataLayoutVersion: metadata.metadataLayoutVersion,
+                    agentState: metadata.agentState, agentStateVersion: metadata.agentStateVersion,
+                    messages, hasMore, nextBeforeSeq: hasMore ? messages.at(-1)!.seq : null };
             } else return { type: "missing" as const };
             if (encryptionMode === "e2ee" ? tryParseEncryptedDataKeyV0Bytes(share.encryptedDataKey).type === "error" : share.encryptedDataKey !== null) return { type: "missing" as const };
             if (!pageGrant) {

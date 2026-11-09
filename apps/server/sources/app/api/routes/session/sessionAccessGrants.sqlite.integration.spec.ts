@@ -945,13 +945,13 @@ describe("Session access HTTP and initial creation (SQLite integration)", () => 
         const legacyHeaders = { "x-test-user-id": owner.id };
 
         await withAuthenticatedTestApp(sessionRoutes, async (app) => {
-            const v1 = await app.inject({
+            const unpaged = await app.inject({
                 method: "GET",
-                url: "/v1/sessions",
+                url: "/v2/sessions",
                 headers: legacyHeaders,
             });
-            expect(v1.statusCode, v1.body).toBe(200);
-            expect(v1.json().sessions.map((row: { id: string }) => row.id))
+            expect(unpaged.statusCode, unpaged.body).toBe(200);
+            expect(unpaged.json().sessions.map((row: { id: string }) => row.id))
                 .toEqual([newest.id, middle.id, oldest.id]);
 
             const first = await app.inject({

@@ -216,6 +216,41 @@ function viewerStartMessage(
   } as const;
 }
 
+function personalViewerStartMessage(
+  viewerSocketId: string,
+  validity: Partial<Readonly<{ iat: number; exp: number }>> = {},
+  bindingOverrides: Partial<Readonly<{ viewerAccountId: string; sourceMachineInstallationId: string; sourceOccurrenceId: string }>> = {},
+  streamId = 'stream_personal',
+) {
+  const base = viewerStartMessage(viewerSocketId, streamId, { maxTotalBytes: 1_000 }, validity);
+  const payload = {
+    ...base.message.startRequest.authorization.payload,
+    v: 2 as const,
+    targetMachineId: 'machine-source',
+    sourceMachineInstallationId: bindingOverrides.sourceMachineInstallationId ?? TEST_MACHINE_INSTALLATION_ID,
+    viewerAccountId: bindingOverrides.viewerAccountId ?? 'guest-1',
+    sourceId: 'personal-screen',
+    personalSourceAdmission: {
+      homeServerIdentityId: 'home-1',
+      actorAccountId: bindingOverrides.viewerAccountId ?? 'guest-1',
+      streamFamily: 'screen',
+      sourceId: 'personal-screen',
+      sourceOccurrenceId: bindingOverrides.sourceOccurrenceId ?? 'occurrence-1',
+    },
+  };
+  const signature = {
+    ...base.message.startRequest.authorization.signature,
+    valueBase64Url: Buffer.from(tweetnacl.sign.detached(
+      Buffer.from(createMachineLiveStreamRelayAuthorizationSigningInputV1(payload), 'utf8'),
+      relaySigningKeyPair.secretKey,
+    )).toString('base64url'),
+  };
+  return { ...base, targetMachineId: 'machine-source', message: { ...base.message, startRequest: {
+    ...base.message.startRequest, targetMachineId: 'machine-source', sourceId: payload.sourceId,
+    sourceOccurrenceId: payload.personalSourceAdmission.sourceOccurrenceId, authorization: { payload, signature },
+  } } } as const;
+}
+
 function selfTargetRelayAuthorization(streamId = 'stream_1', caps: LiveStreamCaps = liveStreamCaps()) {
   const base = relayAuthorization(streamId, caps);
   const payload = { ...base.payload, targetMachineId: 'machine-source' };
@@ -269,6 +304,249 @@ describe('machineLiveStreamRelayHandler', () => {
   afterEach(async () => {
     // Exercise real teardown so owner state is isolated without recompiling the protocol graph.
     for (const socket of socketsToDisconnect.splice(0)) await socket.handlers.get('disconnect')?.();
+    vi.restoreAllMocks();
+  });
+
+  it.each(['plain', 'e2ee'] as const)('relays an admitted personal source to its guest tab and routes guest credit, sideband, renewal and stop to the custodian (%s)', async mode => {
+    const { machineLiveStreamRelayHandler } = await import('./machineLiveStreamRelayHandler');
+    const { db } = await import('@/storage/db');
+    const machineReads = vi.spyOn(db.machine, 'findUnique');
+    const delivered: Array<{ room: string; payload: unknown }> = [];
+    const source = createFakeSocket({ id: 'personal-source', data: { clientType: 'machine-scoped',
+      machineId: 'machine-source', verifiedMachineInstallationId: TEST_MACHINE_INSTALLATION_ID } });
+    const viewer = createFakeSocket({ id: 'personal-viewer', data: { clientType: 'user-scoped' } });
+    const context = {
+      io: { to: (room: string) => ({ emit: (_event: string, payload: unknown) => delivered.push({ room, payload }) }) },
+      resolveAccountEncryptionMode: async () => mode,
+      serverRoutedLiveStreamEnabled: true, relayCaps: { ...relayCaps, maxTotalBytes: 1_000 }, relayAuthorizationTrustRoots,
+      verifyViewerSocketOwnership: async ({ accountId, socketId }: { accountId: string; socketId: string }) => accountId === 'guest-1' && socketId === viewer.id,
+      nowMs: () => 1_000,
+    };
+    machineLiveStreamRelayHandler('user-1', source as unknown as LiveStreamRelaySocket, context);
+    machineLiveStreamRelayHandler('guest-1', viewer as unknown as LiveStreamRelaySocket, context);
+    const produce = getSocketHandler(source, MACHINE_LIVE_STREAM_SOCKET_EVENT);
+    const consume = getSocketHandler(viewer, MACHINE_LIVE_STREAM_SOCKET_EVENT);
+    const start = personalViewerStartMessage(viewer.id, { exp: 2_000 });
+    const envelope = { v: 1, sourceMachineId: 'machine-source', targetMachineId: 'machine-source', viewerSocketId: viewer.id } as const;
+    await produce(start);
+    expect(source.emit).not.toHaveBeenCalledWith(SOCKET_RPC_EVENTS.ERROR, expect.anything());
+    machineReads.mockClear();
+    const personalFrame = frame({ streamId: 'stream_personal', ...(mode === 'e2ee' ? { payload: { t: 'encrypted', c: 'YWJj' } } : {}) });
+    await produce({ ...envelope, message: { kind: 'frame', frame: personalFrame } });
+    expect(delivered).toContainEqual({ room: viewer.id, payload: expect.objectContaining({ message: { kind: 'frame', frame: expect.objectContaining({ streamId: 'stream_personal' }) } }) });
+    const ack = { ...envelope, message: { kind: 'control', control: { v: 1, streamId: 'stream_personal', kind: 'ack', nextSequence: 2 } } };
+    await consume(ack);
+    const sourceRoom = getMachineInstallationSocketRoom('user-1', 'machine-source', TEST_MACHINE_INSTALLATION_ID);
+    expect(delivered).toContainEqual({ room: sourceRoom, payload: ack });
+    const sideband = { ...envelope, message: { kind: 'sideband_control', control: { v: 1, streamId: 'stream_personal', payload: mode === 'e2ee' ? { t: 'encrypted', c: 'YWJj' } : { t: 'plain', v: {
+      v: 1, streamId: 'stream_personal', sourceId: 'personal-screen', eventId: 'input-1', kind: 'tap', x: 0.5, y: 0.5,
+    } } } } };
+    await consume(sideband);
+    expect(delivered).toContainEqual({ room: sourceRoom, payload: sideband });
+    const renewed = personalViewerStartMessage(viewer.id, { exp: 5_000 });
+    const renew = { ...renewed, message: { kind: 'renew', startRequest: renewed.message.startRequest } };
+    await consume(renew);
+    expect(delivered).toContainEqual({ room: sourceRoom, payload: renew });
+    const stop = { ...envelope, message: { kind: 'control', control: { v: 1, streamId: 'stream_personal', kind: 'stop' } } };
+    await consume(stop);
+    expect(delivered).toContainEqual({ room: sourceRoom, payload: stop });
+    expect(machineReads).not.toHaveBeenCalled();
+    expect(delivered.some(value => value.room.includes(':guest-1:'))).toBe(false);
+    await produce({ ...envelope, message: { kind: 'frame', frame: frame({ streamId: 'stream_personal', sequence: 2 }) } });
+    expect(source.emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.ERROR, expect.objectContaining({ error: 'live_stream_start_required' }));
+    machineReads.mockRestore();
+  });
+
+  it.each(['viewer', 'source'] as const)('isolates the admitted personal viewer Account, tab, source socket and renewal occurrence, then cleans up on %s disconnect', async disconnecting => {
+    const { machineLiveStreamRelayHandler } = await import('./machineLiveStreamRelayHandler');
+    const delivered: Array<{ room: string; payload: unknown }> = [];
+    const source = createFakeSocket({ id: 'personal-source', data: { clientType: 'machine-scoped',
+      machineId: 'machine-source', verifiedMachineInstallationId: TEST_MACHINE_INSTALLATION_ID } });
+    const viewer = createFakeSocket({ id: 'personal-viewer', data: { clientType: 'user-scoped' } });
+    const otherTab = createFakeSocket({ id: 'other-tab', data: { clientType: 'user-scoped' } });
+    const otherAccount = createFakeSocket({ id: viewer.id, data: { clientType: 'user-scoped' } });
+    const otherSource = createFakeSocket({ id: 'other-source', data: { ...source.data } });
+    const replacedSource = createFakeSocket({ id: 'replaced-source', data: { ...source.data, verifiedMachineInstallationId: 'other-installation' } });
+    const context = {
+      io: { to: (room: string) => ({ emit: (_event: string, payload: unknown) => delivered.push({ room, payload }) }) },
+      resolveAccountEncryptionMode: async (): Promise<'plain'> => 'plain',
+      serverRoutedLiveStreamEnabled: true, relayCaps: { ...relayCaps, maxTotalBytes: 1_000 }, relayAuthorizationTrustRoots,
+      verifyViewerSocketOwnership: async ({ accountId, socketId }: { accountId: string; socketId: string }) => accountId === 'guest-1' && socketId === viewer.id,
+      nowMs: () => 1_000,
+    };
+    for (const [accountId, endpoint] of [
+      ['user-1', source], ['guest-1', viewer], ['guest-1', otherTab], ['other-account', otherAccount],
+      ['other-account', otherSource], ['user-1', replacedSource],
+    ] as const) machineLiveStreamRelayHandler(accountId, endpoint as unknown as LiveStreamRelaySocket, context);
+    const produce = getSocketHandler(source, MACHINE_LIVE_STREAM_SOCKET_EVENT);
+    const consume = getSocketHandler(viewer, MACHINE_LIVE_STREAM_SOCKET_EVENT);
+    await produce(personalViewerStartMessage(viewer.id));
+    expect(source.emit).not.toHaveBeenCalledWith(SOCKET_RPC_EVENTS.ERROR, expect.anything());
+    const envelope = { v: 1, sourceMachineId: 'machine-source', targetMachineId: 'machine-source', viewerSocketId: viewer.id } as const;
+    const stop = { ...envelope, message: { kind: 'control', control: { v: 1, streamId: 'stream_personal', kind: 'stop' } } };
+    await getSocketHandler(otherTab, MACHINE_LIVE_STREAM_SOCKET_EVENT)({ ...stop, viewerSocketId: otherTab.id });
+    await getSocketHandler(otherAccount, MACHINE_LIVE_STREAM_SOCKET_EVENT)(stop);
+    await getSocketHandler(otherSource, MACHINE_LIVE_STREAM_SOCKET_EVENT)(stop);
+    await getSocketHandler(replacedSource, MACHINE_LIVE_STREAM_SOCKET_EVENT)(stop);
+    await getSocketHandler(otherAccount, 'disconnect')();
+    await getSocketHandler(otherTab, 'disconnect')();
+    expect(delivered).toEqual([]);
+    for (const changedBinding of [
+      { sourceOccurrenceId: 'other-occurrence' }, { viewerAccountId: 'other-account' },
+      { sourceMachineInstallationId: 'other-installation' },
+    ]) {
+      viewer.emit.mockClear();
+      const renewed = personalViewerStartMessage(viewer.id, { exp: 70_000 }, changedBinding);
+      await consume({ ...renewed, message: { kind: 'renew', startRequest: renewed.message.startRequest } });
+      expect(viewer.emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.ERROR, expect.objectContaining({ error: 'live_stream_authorization_mismatch' }));
+    }
+    expect(delivered).toEqual([]);
+    await produce({ ...envelope, message: { kind: 'frame', frame: frame({ streamId: 'stream_personal' }) } });
+    expect(delivered).toHaveLength(1);
+    expect(delivered[0]?.room).toBe(viewer.id);
+    delivered.length = 0;
+    await getSocketHandler(disconnecting === 'viewer' ? viewer : source, 'disconnect')();
+    expect(delivered).toEqual([{ room: disconnecting === 'viewer' ? getMachineInstallationSocketRoom('user-1', 'machine-source', TEST_MACHINE_INSTALLATION_ID) : viewer.id,
+      payload: expect.objectContaining({ message: { kind: 'control', control: expect.objectContaining({ kind: 'stop', reasonCode: disconnecting === 'viewer' ? 'viewer_disconnected' : 'socket_disconnected' }) } }) }]);
+    if (disconnecting === 'viewer') {
+      await produce({ ...envelope, message: { kind: 'frame', frame: frame({ streamId: 'stream_personal', sequence: 2 }) } });
+      expect(source.emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.ERROR, expect.objectContaining({ error: 'live_stream_start_required' }));
+    } else {
+      await consume(stop);
+      expect(viewer.emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.ERROR, expect.objectContaining({ error: 'live_stream_start_required' }));
+    }
+  });
+
+  it.each(['local', 'cluster'] as const)('stops only the revoked guest personal stream through the existing %s Machine access-loss event', async origin => {
+    const { machineLiveStreamRelayHandler } = await import('./machineLiveStreamRelayHandler');
+    const { eventRouter } = await import('@/app/events/eventRouter');
+    const delivered: Array<{ room: string; payload: unknown }> = [];
+    const source = createFakeSocket({ id: 'revocation-source', data: { clientType: 'machine-scoped',
+      machineId: 'machine-source', verifiedMachineInstallationId: TEST_MACHINE_INSTALLATION_ID } });
+    const viewer = createFakeSocket({ id: 'revocation-viewer', data: { clientType: 'user-scoped' } });
+    const context = {
+      io: { to: (room: string) => ({ emit: (_event: string, payload: unknown) => delivered.push({ room, payload }) }) },
+      resolveAccountEncryptionMode: async (): Promise<'plain'> => 'plain',
+      serverRoutedLiveStreamEnabled: true, relayCaps: { ...relayCaps, maxTotalBytes: 1_000,
+        maxConcurrentStreamsPerSocket: 2, maxConcurrentStreamsPerMachine: 2 }, relayAuthorizationTrustRoots,
+      verifyViewerSocketOwnership: async () => true, nowMs: () => 1_000,
+    };
+    machineLiveStreamRelayHandler('user-1', source as unknown as LiveStreamRelaySocket, context);
+    machineLiveStreamRelayHandler('guest-1', viewer as unknown as LiveStreamRelaySocket, context);
+    const produce = getSocketHandler(source, MACHINE_LIVE_STREAM_SOCKET_EVENT);
+    await produce(personalViewerStartMessage(viewer.id));
+    await produce(personalViewerStartMessage('other-guest-viewer', {}, { viewerAccountId: 'guest-2' }, 'stream_other_guest'));
+    expect(source.emit).not.toHaveBeenCalledWith(SOCKET_RPC_EVENTS.ERROR, expect.anything());
+    eventRouter.receiveMachineAccessLoss({ accountId: 'unrelated-account', machineId: 'machine-source' });
+    eventRouter.receiveMachineAccessLoss({ accountId: 'guest-1', machineId: 'unrelated-machine' });
+    expect(delivered).toEqual([]);
+    if (origin === 'local') {
+      eventRouter.disconnectMachineAndSessionSockets({ accountId: 'guest-1', machineId: 'machine-source', sessionBindings: [] });
+    } else {
+      eventRouter.receiveMachineAccessLoss({ accountId: 'guest-1', machineId: 'machine-source' });
+    }
+    const stopped = expect.objectContaining({ message: { kind: 'control', control: expect.objectContaining({
+      streamId: 'stream_personal', kind: 'stop', reasonCode: 'machine_unavailable',
+    }) } });
+    expect(delivered).toEqual(expect.arrayContaining([
+      { room: viewer.id, payload: stopped },
+      { room: getMachineInstallationSocketRoom('user-1', 'machine-source', TEST_MACHINE_INSTALLATION_ID), payload: stopped },
+    ]));
+    expect(delivered).toHaveLength(2);
+    delivered.length = 0;
+    const envelope = { v: 1, sourceMachineId: 'machine-source', targetMachineId: 'machine-source', viewerSocketId: viewer.id };
+    await produce({ ...envelope, message: { kind: 'frame', frame: frame({ streamId: 'stream_personal' }) } });
+    expect(source.emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.ERROR, expect.objectContaining({ error: 'live_stream_start_required' }));
+    await getSocketHandler(viewer, MACHINE_LIVE_STREAM_SOCKET_EVENT)({ ...envelope,
+      message: { kind: 'control', control: { v: 1, streamId: 'stream_personal', kind: 'ack', nextSequence: 2 } } });
+    expect(viewer.emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.ERROR, expect.objectContaining({ error: 'live_stream_start_required' }));
+    await produce({ ...envelope, viewerSocketId: 'other-guest-viewer', message: { kind: 'frame', frame: frame({ streamId: 'stream_other_guest' }) } });
+    expect(delivered).toEqual([{ room: 'other-guest-viewer', payload: expect.objectContaining({ message: { kind: 'frame', frame: expect.objectContaining({ streamId: 'stream_other_guest' }) } }) }]);
+  });
+
+  it('cancels only the revoked guest admission when access is lost during viewer ownership verification', async () => {
+    const { machineLiveStreamRelayHandler } = await import('./machineLiveStreamRelayHandler');
+    const { eventRouter } = await import('@/app/events/eventRouter');
+    const delivered: Array<{ room: string; payload: unknown }> = [];
+    const source = createFakeSocket({ id: 'pending-revocation-source', data: { clientType: 'machine-scoped',
+      machineId: 'machine-source', verifiedMachineInstallationId: TEST_MACHINE_INSTALLATION_ID } });
+    let releaseOwnership!: (owned: boolean) => void;
+    const ownership = new Promise<boolean>(resolve => { releaseOwnership = resolve; });
+    let ownershipChecks = 0;
+    let enteredOwnership!: () => void;
+    const bothOwnershipChecksEntered = new Promise<void>(resolve => { enteredOwnership = resolve; });
+    machineLiveStreamRelayHandler('user-1', source as unknown as LiveStreamRelaySocket, {
+      io: { to: (room: string) => ({ emit: (_event: string, payload: unknown) => delivered.push({ room, payload }) }) },
+      resolveAccountEncryptionMode: async () => 'plain', serverRoutedLiveStreamEnabled: true,
+      relayCaps: { ...relayCaps, maxTotalBytes: 1_000, maxConcurrentStreamsPerSocket: 2, maxConcurrentStreamsPerMachine: 2 },
+      relayAuthorizationTrustRoots, nowMs: () => 1_000,
+      verifyViewerSocketOwnership: () => {
+        if (++ownershipChecks === 2) enteredOwnership();
+        return ownership;
+      },
+    });
+    const produce = getSocketHandler(source, MACHINE_LIVE_STREAM_SOCKET_EVENT);
+    const revokedStart = produce(personalViewerStartMessage('pending-revoked-viewer'));
+    const otherStart = produce(personalViewerStartMessage('pending-other-viewer', {}, { viewerAccountId: 'guest-2' }, 'stream_other_guest'));
+    await bothOwnershipChecksEntered;
+    eventRouter.disconnectMachineAndSessionSockets({ accountId: 'guest-1', machineId: 'machine-source', sessionBindings: [] });
+    releaseOwnership(true);
+    await Promise.all([revokedStart, otherStart]);
+    const envelope = { v: 1, sourceMachineId: 'machine-source', targetMachineId: 'machine-source' };
+    await produce({ ...envelope, viewerSocketId: 'pending-revoked-viewer',
+      message: { kind: 'frame', frame: frame({ streamId: 'stream_personal' }) } });
+    expect(delivered).toEqual([{ room: 'pending-revoked-viewer', payload: expect.objectContaining({ message: {
+      kind: 'start_response', startResponse: { v: 1, streamId: 'stream_personal', accepted: false,
+        routeKind: 'server_relay', disabledReason: 'machine_unavailable' },
+    } }) }]);
+    delivered.length = 0;
+    expect(source.emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.ERROR, expect.objectContaining({ error: 'machine_unavailable' }));
+    expect(source.emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.ERROR, expect.objectContaining({ error: 'live_stream_start_required' }));
+    expect(source.emit).toHaveBeenCalledWith(MACHINE_LIVE_STREAM_SOCKET_EVENT, expect.objectContaining({
+      viewerSocketId: 'pending-revoked-viewer', message: { kind: 'control', control: {
+        v: 1, streamId: 'stream_personal', kind: 'stop', reasonCode: 'machine_unavailable',
+      } },
+    }));
+    await produce({ ...envelope, viewerSocketId: 'pending-other-viewer',
+      message: { kind: 'frame', frame: frame({ streamId: 'stream_other_guest' }) } });
+    expect(delivered).toEqual([{ room: 'pending-other-viewer', payload: expect.objectContaining({ message: {
+      kind: 'frame', frame: expect.objectContaining({ streamId: 'stream_other_guest' }),
+    } }) }]);
+  });
+
+  it.each(['installation', 'signature', 'viewer-ownership'] as const)('refuses a personal grant with invalid %s before relay admission', async refusal => {
+    const { machineLiveStreamRelayHandler } = await import('./machineLiveStreamRelayHandler');
+    const source = createFakeSocket({ id: 'personal-source', data: { clientType: 'machine-scoped',
+      machineId: 'machine-source', verifiedMachineInstallationId: TEST_MACHINE_INSTALLATION_ID } });
+    const emit = vi.fn();
+    machineLiveStreamRelayHandler('user-1', source as unknown as LiveStreamRelaySocket, {
+      io: { to: () => ({ emit }) }, resolveAccountEncryptionMode: async () => 'plain',
+      serverRoutedLiveStreamEnabled: true, relayCaps: { ...relayCaps, maxTotalBytes: 1_000 }, relayAuthorizationTrustRoots,
+      verifyViewerSocketOwnership: async ({ accountId }) => accountId === 'guest-1', nowMs: () => 1_000,
+    });
+    const start = personalViewerStartMessage('personal-viewer', {}, {
+      ...(refusal === 'installation' ? { sourceMachineInstallationId: 'other-installation' } : {}),
+      ...(refusal === 'viewer-ownership' ? { viewerAccountId: 'other-account' } : {}),
+    });
+    if (refusal === 'signature') {
+      const signature = start.message.startRequest.authorization.signature;
+      signature.valueBase64Url = `${signature.valueBase64Url[0] === 'A' ? 'B' : 'A'}${signature.valueBase64Url.slice(1)}`;
+    }
+    await getSocketHandler(source, MACHINE_LIVE_STREAM_SOCKET_EVENT)(start);
+    expect(source.emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.ERROR, expect.objectContaining({
+      error: refusal === 'installation' ? 'machine_unavailable' : refusal === 'signature' ? 'live_stream_authorization_bad_signature' : 'viewer_socket_not_owned',
+    }));
+    expect(source.emit).toHaveBeenCalledWith(MACHINE_LIVE_STREAM_SOCKET_EVENT, expect.objectContaining({
+      message: { kind: 'control', control: { v: 1, streamId: 'stream_personal', kind: 'stop',
+        reasonCode: refusal === 'installation' ? 'machine_unavailable' : refusal === 'signature'
+          ? 'live_stream_authorization_bad_signature' : 'viewer_socket_not_owned' } },
+    }));
+    if (refusal === 'installation') expect(emit).toHaveBeenCalledWith(MACHINE_LIVE_STREAM_SOCKET_EVENT,
+      expect.objectContaining({ viewerSocketId: 'personal-viewer', message: {
+        kind: 'start_response', startResponse: { v: 1, streamId: 'stream_personal', accepted: false,
+          routeKind: 'server_relay', disabledReason: 'machine_unavailable' },
+      } }));
+    else expect(emit).not.toHaveBeenCalled();
   });
 
   it('forwards only admitted viewer acknowledgements to wake the source capture', async () => {
@@ -489,30 +767,45 @@ describe('machineLiveStreamRelayHandler', () => {
     ]));
   });
 
-  it('refuses admission when the signed grant expires during the Account-mode read', async () => {
+  it.each(['before', 'during'] as const)('settles both endpoints when a signed grant expires %s the Account-mode read', async timing => {
     const { machineLiveStreamRelayHandler } = await import('./machineLiveStreamRelayHandler');
     const emit = vi.fn();
     const delivered: Array<{ room: string; payload: unknown }> = [];
     const socket = createFakeSocket({ emit, id: 'source-socket' });
     socket.data = { clientType: 'machine-scoped', verifiedMachineInstallationId: TEST_MACHINE_INSTALLATION_ID,
  machineId: 'machine-source' };
-    let nowMs = 1_000;
+    let nowMs = timing === 'before' ? 61_000 : 1_000;
     let releaseMode!: (mode: 'plain') => void;
     const mode = new Promise<'plain'>((resolve) => { releaseMode = resolve; });
+    let enteredMode!: () => void;
+    const modeRead = new Promise<void>((resolve) => { enteredMode = resolve; });
     machineLiveStreamRelayHandler('user-1', socket as unknown as LiveStreamRelaySocket, {
       io: { to: (room: string) => ({ emit: (_event: string, payload: unknown) => delivered.push({ room, payload }) }) },
-      resolveAccountEncryptionMode: () => mode,
+      resolveAccountEncryptionMode: () => { enteredMode(); return mode; },
       serverRoutedLiveStreamEnabled: true, relayCaps, relayAuthorizationTrustRoots,
       verifyViewerSocketOwnership: verifyUserOneViewerSocketOwnership, nowMs: () => nowMs,
     });
     const handler = getSocketHandler(socket, MACHINE_LIVE_STREAM_SOCKET_EVENT);
     const admitting = handler(viewerStartMessage('viewer-socket-1'));
+    if (timing === 'during') await modeRead;
     nowMs = 61_000;
     releaseMode('plain');
     await admitting;
     expect(emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.ERROR, {
       type: 'machine-live-stream', error: 'live_stream_authorization_expired',
     });
+    expect(emit).toHaveBeenCalledWith(MACHINE_LIVE_STREAM_SOCKET_EVENT, expect.objectContaining({
+      viewerSocketId: 'viewer-socket-1', message: { kind: 'control', control: {
+        v: 1, streamId: 'stream_1', kind: 'stop', reasonCode: 'live_stream_authorization_expired',
+      } },
+    }));
+    expect(delivered).toEqual([{ room: 'viewer-socket-1', payload: {
+      v: 1, sourceMachineId: 'machine-source', targetMachineId: 'machine-target',
+      viewerSocketId: 'viewer-socket-1', message: { kind: 'start_response', startResponse: {
+        v: 1, streamId: 'stream_1', accepted: false, routeKind: 'server_relay',
+        disabledReason: 'live_stream_authorization_expired',
+      } },
+    } }]);
     // An expired admission must not own state; a subsequent frame requires a fresh start.
     emit.mockClear();
     await handler({ v: 1, sourceMachineId: 'machine-source', targetMachineId: 'machine-target',
@@ -521,7 +814,6 @@ describe('machineLiveStreamRelayHandler', () => {
     expect(emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.ERROR, {
       type: 'machine-live-stream', error: 'live_stream_start_required',
     });
-    expect(delivered).toEqual([]);
   });
 
   it.each([PEER_MEDIATION_RECEIPTS.streamPaused, PEER_MEDIATION_RECEIPTS.streamBandwidthCapped])(
@@ -612,6 +904,17 @@ describe('machineLiveStreamRelayHandler', () => {
     });
     const handler = getSocketHandler(socket, MACHINE_LIVE_STREAM_SOCKET_EVENT);
     await handler(viewerStartMessage('viewer-socket-1', 'stream_1', {}, { exp: 2_000 }));
+    for (const [times, reasonCode] of [
+      [{ exp: 1_000 }, 'live_stream_authorization_expired'],
+      [{ iat: 2_000, exp: 5_000 }, 'live_stream_authorization_not_yet_valid'],
+    ] as const) {
+      const invalidRenewal = viewerStartMessage('viewer-socket-1', 'stream_1', {}, times);
+      await handler({ ...invalidRenewal, message: { kind: 'renew', startRequest: invalidRenewal.message.startRequest } });
+      expect(sourceEmit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.ERROR, {
+        type: 'machine-live-stream', error: reasonCode,
+      });
+    }
+    expect(delivered).toEqual([]);
     const renewed = viewerStartMessage('viewer-socket-1', 'stream_1', {}, { iat: 1_000, exp: 5_000 });
     await handler({ ...renewed, message: { kind: 'renew', startRequest: renewed.message.startRequest } });
     expect(delivered).toContainEqual({ room: 'viewer-socket-1', payload: expect.objectContaining({ message: {
@@ -735,6 +1038,28 @@ describe('machineLiveStreamRelayHandler', () => {
     });
     expect(JSON.stringify(socketEmit.mock.calls)).not.toContain('c2VudGluZWw=');
     expect(JSON.stringify(socketEmit.mock.calls)).not.toContain('sentinel');
+  });
+
+  it('settles a signed viewer start when relay availability changes after the grant was minted', async () => {
+    const { machineLiveStreamRelayHandler } = await import('./machineLiveStreamRelayHandler');
+    const source = createFakeSocket({ id: 'disabled-source', data: { clientType: 'machine-scoped',
+      verifiedMachineInstallationId: TEST_MACHINE_INSTALLATION_ID, machineId: 'machine-source' } });
+    const delivered: Array<{ room: string; payload: unknown }> = [];
+    machineLiveStreamRelayHandler('user-1', source as unknown as LiveStreamRelaySocket, {
+      io: { to: (room: string) => ({ emit: (_event: string, payload: unknown) => delivered.push({ room, payload }) }) },
+      resolveAccountEncryptionMode: async () => 'plain', serverRoutedLiveStreamEnabled: false,
+      relayCaps: null, relayAuthorizationTrustRoots,
+      verifyViewerSocketOwnership: verifyUserOneViewerSocketOwnership, nowMs: () => 1_000,
+    });
+    await getSocketHandler(source, MACHINE_LIVE_STREAM_SOCKET_EVENT)(viewerStartMessage('viewer-socket-1'));
+    expect(source.emit).toHaveBeenCalledWith(MACHINE_LIVE_STREAM_SOCKET_EVENT, expect.objectContaining({
+      message: { kind: 'control', control: { v: 1, streamId: 'stream_1', kind: 'stop',
+        reasonCode: 'server_routed_live_stream_disabled' } },
+    }));
+    expect(delivered).toEqual([{ room: 'viewer-socket-1', payload: expect.objectContaining({
+      message: { kind: 'start_response', startResponse: { v: 1, streamId: 'stream_1', accepted: false,
+        routeKind: 'server_relay', disabledReason: 'server_routed_live_stream_disabled' } },
+    }) }]);
   });
 
   it('relays stream frames under caps and emits a cap control when total bytes are exceeded', async () => {

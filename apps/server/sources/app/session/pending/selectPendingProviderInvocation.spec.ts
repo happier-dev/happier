@@ -9,6 +9,22 @@ const row = (localId: string, kind: 'enqueue' | 'steer_if_active' | 'steer_now' 
 });
 
 describe('selectPendingProviderInvocation', () => {
+    it('claims explicit Run recovery ahead of unclaimed blocked input only while ready', () => {
+        const recovery = { localId: 'recovery', position: 2, requestedAction: { v: 2, kind: 'recover_execution_run' } };
+        const readRuntimeActivity = vi.fn(() => 'active' as const);
+        const blocked = { ...row('old', 'enqueue', 1), deliveryState: 'blocked', deliveryBlockedReason: 'session_input_target_unavailable' };
+        expect(selectPendingProviderInvocation({ rows: [blocked, recovery], foregroundState: 'ready',
+            deliveryTiming: 'after_runtime_idle', readRuntimeActivity })).toEqual({ localId: 'recovery', providerAction: 'send' });
+        expect(readRuntimeActivity).not.toHaveBeenCalled();
+        for (const foregroundState of ['active_steerable', 'active_unsteerable'] as const) {
+            expect(selectPendingProviderInvocation({ rows: [recovery], foregroundState,
+                deliveryTiming: 'after_foreground_ready', readRuntimeActivity })).toEqual({ deferredReason: 'waiting_for_foreground_turn' });
+        }
+        expect(selectPendingProviderInvocation({ rows: [{ ...blocked, deliveryState: 'delivering' }, recovery],
+            foregroundState: 'ready', deliveryTiming: 'after_foreground_ready', readRuntimeActivity }))
+            .toEqual({ deferredReason: 'waiting_for_predecessor' });
+    });
+
     it.each(['enqueue', 'send_now'] as const)('selects a retained annotated %s action through the stored owner', kind => {
         expect(selectPendingProviderInvocation({
             rows: [{ ...row('retained', kind, 1), requestedAction: { v: 1, kind, retired: true } }],

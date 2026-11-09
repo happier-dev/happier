@@ -11,6 +11,7 @@ import { changesRoutes } from "./changesRoutes";
 import { auth } from "@/app/auth/auth";
 import { enableAuthentication } from "@/app/api/utils/enableAuthentication";
 import type { Fastify as AppFastify } from "../../types";
+import { buildChangesReadRequest, CHANGES_AFTER_CURSOR_HTTP_HEADER } from '@happier-dev/protocol/changes';
 
 describe("Session-filtered changes replay (SQLite)", () => {
     let harness: LightSqliteHarness;
@@ -41,6 +42,10 @@ describe("Session-filtered changes replay (SQLite)", () => {
             const own = await app.inject({ method: "GET", url: `/v2/changes?sessionId=${a.id}`, headers });
             expect(own.statusCode).toBe(200);
             expect(own.json().changes).toEqual([expect.objectContaining({ entityId: a.id, kind: "session" })]);
+            const scopedHeaderRead = buildChangesReadRequest({ after: 0, limit: 200, sessionId: a.id, cursorHeader: true });
+            expect((await app.inject({ method: "GET", url: scopedHeaderRead.path, headers: { ...headers, ...scopedHeaderRead.headers } })).statusCode).toBe(200);
+            expect((await app.inject({ method: "GET", url: '/v2/changes?limit=200',
+                headers: { ...headers, [CHANGES_AFTER_CURSOR_HTTP_HEADER]: '0' } })).statusCode).toBe(403);
             for (const url of ["/v2/changes", `/v2/changes?sessionId=${b.id}`,
                 `/v2/changes?sessionAccessSessionId=${a.id}`]) {
                 const denied = await app.inject({ method: "GET", url, headers });
@@ -55,6 +60,40 @@ describe("Session-filtered changes replay (SQLite)", () => {
             expect(probe.json()).toMatchObject({ changes: [], sessionAccessProbe: { sessionId: a.id, status: "available" } });
             expect((await app.inject({ method: "GET", url: "/v2/cursor", headers })).statusCode).toBe(200);
         } finally { await app.close(); }
+    });
+
+    it("reads advancing cursor headers through the same scoped page and retention owner as released query cursors", async () => {
+        const account = await db.account.create({ data: { publicKey: randomUUID(), encryptionMode: "plain" } });
+        const sessions = await Promise.all([0, 1].map(() => db.session.create({ data: {
+            accountId: account.id, tag: randomUUID(), metadata: "{}", encryptionMode: "plain",
+        } })));
+        const [selected, other] = sessions;
+        if (!selected || !other) throw new Error("Missing Session fixture");
+        const cursors: number[] = [];
+        for (const session of [selected, other, selected]) {
+            cursors.push(await inTx(tx => markAccountChanged(tx, { accountId: account.id, kind: "session", entityId: session.id }))
+                .then(publication => publication.resolveCursor()));
+        }
+        await withAuthenticatedTestApp(changesRoutes, async app => {
+            const url = `/v2/changes?limit=1&sessionId=${selected.id}`;
+            const headers = { "x-test-user-id": account.id };
+            for (const after of [0, cursors[0]!, cursors[2]!, cursors[2]! + 1]) {
+                const legacy = await app.inject({ method: "GET", url: `${url}&after=${after}`, headers });
+                const read = buildChangesReadRequest({ after, limit: 1, sessionId: selected.id, cursorHeader: true });
+                expect(read.path).toBe(url);
+                const stable = await app.inject({ method: "GET", url: read.path, headers: { ...headers, ...read.headers } });
+                expect(stable.statusCode).toBe(legacy.statusCode);
+                expect(stable.json()).toEqual(legacy.json());
+                expect(stable.headers["x-happier-changes-after"]).toBe(String(after));
+                expect(stable.headers["cache-control"]).toBe("no-store");
+            }
+            await db.account.update({ where: { id: account.id }, data: { changesFloor: cursors[2]! } });
+            const gone = await app.inject({ method: "GET", url, headers: { ...headers, "x-happier-changes-after": "0" } });
+            expect(gone.statusCode).toBe(410);
+            for (const value of ["invalid", "-1", "1.5"]) {
+                expect((await app.inject({ method: "GET", url, headers: { ...headers, "x-happier-changes-after": value } })).statusCode).toBe(400);
+            }
+        });
     });
 
     it("replays only exact Session and share entries with revision hints and stable cursors", async () => {
@@ -141,6 +180,68 @@ describe("Session-filtered changes replay (SQLite)", () => {
         });
     });
 
+    it("selects kinds before paging and advances only through the captured Account cursor", async () => {
+        const account = await db.account.create({ data: { publicKey: randomUUID(), encryptionMode: "plain" } });
+        const unrelatedCount = 1_000;
+        const boundary = unrelatedCount + 2;
+        const throughCursor = boundary + 2;
+        await db.accountChange.createMany({ data: [
+            { accountId: account.id, kind: "machine", entityId: "acknowledged", cursor: 1 },
+            ...Array.from({ length: unrelatedCount }, (_, index) => ({
+                accountId: account.id, kind: "automation", entityId: `irrelevant-${index}`, cursor: index + 2,
+            })),
+            { accountId: account.id, kind: "machine", entityId: "boundary", cursor: boundary },
+            { accountId: account.id, kind: "share", entityId: "tail", cursor: boundary + 1 },
+            { accountId: account.id, kind: "automation", entityId: "irrelevant-tail", cursor: throughCursor },
+            { accountId: account.id, kind: "machine", entityId: "beyond-snapshot", cursor: throughCursor + 1 },
+        ] });
+        await db.account.update({ where: { id: account.id }, data: { seq: throughCursor } });
+        await withAuthenticatedTestApp(changesRoutes, async (app) => {
+            const headers = { "x-test-user-id": account.id };
+            const first = await app.inject({ method: "GET", url: "/v2/changes?kinds=machine,share&after=1&limit=1", headers });
+            expect(first.statusCode).toBe(200);
+            expect(first.json()).toMatchObject({ changes: [{ kind: "machine", entityId: "boundary", cursor: boundary }], nextCursor: boundary });
+            const tail = await app.inject({ method: "GET", url: `/v2/changes?kinds=machine,share&after=${boundary}&limit=2`, headers });
+            expect(tail.json()).toMatchObject({ changes: [{ kind: "share", entityId: "tail", cursor: boundary + 1 }], nextCursor: throughCursor });
+            const drained = await app.inject({ method: "GET", url: `/v2/changes?kinds=machine,share&after=${throughCursor}`, headers });
+            expect(drained.json()).toMatchObject({ changes: [], nextCursor: throughCursor });
+            const noMatch = await app.inject({ method: "GET", url: "/v2/changes?kinds=session&after=1", headers });
+            expect(noMatch.json()).toMatchObject({ changes: [], nextCursor: throughCursor });
+            const unselected = await app.inject({ method: "GET", url: "/v2/changes?after=1&limit=1", headers });
+            expect(unselected.json()).toMatchObject({ changes: [{ kind: "automation", cursor: 2 }], nextCursor: 2 });
+            for (const kinds of ["", "unknown", "machine,", "machine,unknown"]) {
+                expect((await app.inject({ method: "GET", url: `/v2/changes?kinds=${kinds}`, headers })).statusCode).toBe(400);
+            }
+            await db.account.update({ where: { id: account.id }, data: { changesFloor: 1 } });
+            for (const after of [0, throughCursor + 1]) {
+                const selected = await app.inject({ method: "GET", url: `/v2/changes?kinds=machine&after=${after}`, headers });
+                const unselected = await app.inject({ method: "GET", url: `/v2/changes?after=${after}`, headers });
+                expect(selected.statusCode).toBe(410);
+                expect(selected.json()).toEqual(unselected.json());
+            }
+        });
+    });
+
+    it("intersects kinds with exact Session selection and retains removal access witnesses", async () => {
+        const account = await db.account.create({ data: { publicKey: randomUUID(), encryptionMode: "plain" } });
+        const sessionId = randomUUID();
+        await db.accountChange.createMany({ data: [
+            { accountId: account.id, kind: "session", entityId: sessionId, cursor: 1, hint: { v: 1, lifecycle: "deleted" } },
+            { accountId: account.id, kind: "share", entityId: sessionId, cursor: 2 },
+            { accountId: account.id, kind: "machine", entityId: sessionId, cursor: 3 },
+        ] });
+        await db.account.update({ where: { id: account.id }, data: { seq: 3 } });
+        await withAuthenticatedTestApp(changesRoutes, async (app) => {
+            const headers = { "x-test-user-id": account.id, "x-happier-account-stored-content-protocol": "4" };
+            const selected = await app.inject({ method: "GET", url: `/v2/changes?sessionId=${sessionId}&kinds=session,machine`, headers });
+            expect(selected.statusCode).toBe(200);
+            expect(selected.json()).toMatchObject({ changes: [{ kind: "session", entityId: sessionId, hint: { v: 1, lifecycle: "deleted" } }], nextCursor: 3,
+                sessionAccessWitness: { throughCursor: 3, entries: [{ sessionId, cursor: 1, status: "unavailable" }] } });
+            const emptyIntersection = await app.inject({ method: "GET", url: `/v2/changes?sessionId=${sessionId}&kinds=machine`, headers });
+            expect(emptyIntersection.json()).toMatchObject({ changes: [], nextCursor: 3, sessionAccessWitness: { entries: [] } });
+        });
+    });
+
     it("rejects combined selectors before the access probe and preserves the probe alone", async () => {
         const account = await db.account.create({ data: { publicKey: randomUUID(), encryptionMode: "plain" } });
         const session = await db.session.create({ data: { accountId: account.id, tag: randomUUID(), metadata: "{}", encryptionMode: "plain" } });
@@ -150,6 +251,9 @@ describe("Session-filtered changes replay (SQLite)", () => {
             const both = await app.inject({ method: "GET", url: `/v2/changes?sessionId=${session.id}&sessionAccessSessionId=${session.id}`, headers });
             expect(both.statusCode).toBe(400);
             expect(both.json()).toMatchObject({ error: "invalid_params" });
+            const kindProbe = await app.inject({ method: "GET", url: `/v2/changes?sessionAccessSessionId=${session.id}&kinds=session`, headers });
+            expect(kindProbe.statusCode).toBe(400);
+            expect(kindProbe.json()).toMatchObject({ error: "invalid_params" });
             const probe = await app.inject({ method: "GET", url: `/v2/changes?sessionAccessSessionId=${session.id}`, headers });
             expect(probe.statusCode).toBe(200);
             expect(probe.json()).toMatchObject({ changes: [], nextCursor: 10,

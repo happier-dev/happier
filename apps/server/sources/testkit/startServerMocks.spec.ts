@@ -5,6 +5,7 @@ import { createStartServerDbMocks, installStartServerDbModuleMock } from "./star
 describe("startServerMocks", () => {
     afterEach(() => {
         vi.doUnmock("@/storage/db");
+        vi.doUnmock("@/storage/prisma");
         vi.resetModules();
     });
 

@@ -277,19 +277,28 @@ export async function verifySparseSessionListing(provider: "sqlite" | "postgres"
         timing,
     }));
     const firstPage = SessionListQueryResponseV1Schema.parse(first.result);
-    expect(firstPage.sessions.map((row) => row.id)).toEqual(matchIds.slice(0, 2));
+    expect(firstPage.sessions).toEqual([]);
     expect(firstPage.hasNext).toBe(true);
 
-    const continued = await measure("query continued page", (timing) => listSessionsForAccount({
+    const collectedIds = firstPage.sessions.map(row => row.id);
+    const cursors = new Set<string>();
+    let candidateCursor = firstPage.nextCursor;
+    let continued = first;
+    while (candidateCursor) {
+        expect(cursors.has(candidateCursor)).toBe(false);
+        cursors.add(candidateCursor);
+        continued = await measure("query continued page", (timing) => listSessionsForAccount({
         userId: viewer.id,
         authentication: { env: process.env, authority: "present_user", authenticationEvidence: undefined },
-        source: { kind: "query", query: { ...query, cursor: firstPage.nextCursor ?? undefined } },
+        source: { kind: "query", query: { ...query, cursor: candidateCursor ?? undefined } },
         rowRepresentabilityWhere: {},
         timing,
     }));
-    const continuedPage = SessionListQueryResponseV1Schema.parse(continued.result);
-    expect(continuedPage.sessions.map((row) => row.id)).toEqual(matchIds.slice(2));
-    expect(continuedPage.hasNext).toBe(false);
+        const continuedPage = SessionListQueryResponseV1Schema.parse(continued.result);
+        collectedIds.push(...continuedPage.sessions.map(row => row.id));
+        candidateCursor = continuedPage.hasNext ? continuedPage.nextCursor : null;
+    }
+    expect(collectedIds).toEqual(matchIds);
 
     const exactFilteredAttentionCount = await inTx(async (tx) => {
         const authentication = { env: process.env, authority: "present_user" as const, authenticationEvidence: undefined };
@@ -360,8 +369,7 @@ export async function verifySparseSessionListing(provider: "sqlite" | "postgres"
         rowRepresentabilityWhere: {},
         timing,
     }));
-    expect(SessionListQueryResponseV1Schema.parse(bindProbe.result).sessions.map((row) => row.id))
-        .toEqual(matchIds.slice(0, 2));
+    expect(SessionListQueryResponseV1Schema.parse(bindProbe.result)).toMatchObject({ sessions: [], hasNext: true });
 
     // Access-path shape for one page: how many statements the composed
     // conjunction issues through the canonical row reader.

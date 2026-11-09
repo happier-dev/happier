@@ -59,6 +59,7 @@ import {
     countActiveHomeOwnersInTx,
     readHomeGovernanceAccountInTx,
     resolveHomeAccountMutationCapabilitiesV1,
+    resolveHomePublicProfileManagementCapabilityV1,
     resolveHomeCapabilitiesV1,
     resolveHomeGovernanceAuthority,
     type HomeGovernanceAccountFacts,
@@ -813,7 +814,10 @@ export async function readHomeAccountDetailInTx(tx: Tx, input: Readonly<{
     if (!actor || !resolveHomeGovernanceAuthority(actor).viewAdministration) {
         return { status: "rejected", code: "home_governance_forbidden" };
     }
-    const row = await tx.account.findUnique({ where: { id: input.accountId }, select: HOME_ACCOUNT_ROW_SELECT });
+    const row = await tx.account.findUnique({ where: { id: input.accountId }, select: {
+        ...HOME_ACCOUNT_ROW_SELECT,
+        publicProfile: { select: { removedAt: true } },
+    } });
     if (!row) return { status: "rejected", code: "home_account_not_found" };
 
     const authentication = (await readHomeAccountAuthenticationByIdInTx(tx, {
@@ -851,6 +855,12 @@ export async function readHomeAccountDetailInTx(tx: Tx, input: Readonly<{
         status: "ok",
         result: {
             ...account,
+            publicProfile: {
+                managementCapability: resolveHomePublicProfileManagementCapabilityV1({ actor, target: {
+                    accountId: row.id, homeRole: row.homeRole, status: row.status,
+                } }),
+                restricted: row.publicProfile?.removedAt != null,
+            },
             authentication: {
                 ...account.authentication,
                 linkedProviderIds: [...authentication.linkedProviderIds],

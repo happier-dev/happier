@@ -7,7 +7,7 @@ import { resolveEncryptionWriteRejectionCode, type EncryptionPolicyRejectionCode
 import { assertSessionCapabilityInTx } from "@/app/session/access/sessionAccess";
 import type { SessionAccessAuthentication } from "@/app/session/access/sessionAccessAuthentication";
 import { inReadSnapshot, inTx, type Tx } from '@/storage/inTx';
-import { readSnapshotWithCurrentAdmission } from '@/storage/readSnapshotWithCurrentAdmission';
+import { captureReadSnapshot } from '@/storage/captureReadSnapshot';
 import { isPrismaErrorCode } from '@/storage/prisma';
 
 const RECEIPT_PRUNE_BATCH_SIZE = 256;
@@ -345,7 +345,7 @@ export async function listSessionSubagentCustody(params: Readonly<{
     if (!params.actorUserId || !params.sessionId || !parsed.success) return { ok: false, error: 'invalid-params' };
     if (!hasValidCustodyKey({ sessionId: params.sessionId, request: parsed.data })) return { ok: false, error: 'invalid-params' };
     try {
-        const rows = await readSnapshotWithCurrentAdmission<CustodyRow[] | null | 'retired'>(async (tx) => {
+        const rows = await captureReadSnapshot<CustodyRow[] | null | 'retired'>(async (tx) => {
             if (!(await assertSessionCapabilityInTx({ tx, accountId: params.actorUserId, sessionId: params.sessionId, capability: 'readTranscript', authentication: params.authentication })).ok) return null;
             const sourceIdentity = createSessionSubagentSourceCustodyStorageIdentityV1(parsed.data.sourceCustody);
             const retiredSource = await tx.sessionSubagentCustodyRetiredSource.findUnique({
@@ -373,16 +373,6 @@ export async function listSessionSubagentCustody(params: Readonly<{
                 orderBy: [{ subagentKey: 'asc' }],
                 take: MAX_SESSION_SUBAGENT_CUSTODY_RECORDS,
             }) as Promise<CustodyRow[]>;
-        }, async (tx, captured) => {
-            if (captured === null || captured === 'retired') return captured;
-            if (!(await assertSessionCapabilityInTx({ tx, accountId: params.actorUserId, sessionId: params.sessionId,
-                capability: 'readTranscript', authentication: params.authentication })).ok) return null;
-            const sourceIdentity = createSessionSubagentSourceCustodyStorageIdentityV1(parsed.data.sourceCustody);
-            const retired = await tx.sessionSubagentCustodyRetiredSource.findUnique({ where: {
-                accountId_pluginId_sourceCustodyKind_sourceCustodyId: { accountId: params.actorUserId, pluginId: parsed.data.pluginId,
-                    sourceCustodyKind: sourceIdentity.kind, sourceCustodyId: sourceIdentity.id },
-            }, select: { id: true } });
-            return retired ? 'retired' : captured;
         });
         if (!rows) return { ok: false, error: 'session-not-found' };
         if (rows === 'retired') return { ok: false, error: 'source-retired' };

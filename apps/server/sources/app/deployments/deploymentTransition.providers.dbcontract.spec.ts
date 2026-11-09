@@ -3,13 +3,19 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import nacl from 'tweetnacl';
 import * as privacyKit from 'privacy-kit';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent,
-    computeDeploymentTransitionRequestDigestV1, readDeploymentAccountChangeV1, type DeploymentTransitionInputV1 } from '@happier-dev/protocol';
+    computeDeploymentTransitionRequestDigestV1, readDeploymentAccountChangeV1, type DeploymentTransitionInputV1,
+    type DeploymentDeployAdmissionInputV1, type DeploymentTeardownAdmissionInputV1, type DeploymentEnvironmentCreateStorageInputV1 } from '@happier-dev/protocol';
+import { createDeploymentEnvironmentV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { MACHINE_PLAIN_DATA_KEY_MARKER, encodePlainMachineStoredContent } from '@happier-dev/protocol/machines/machineStoredContent';
 import { signMachineInstallationProof } from '@happier-dev/protocol/machines/identity/installationIdentity';
 import { db, getDbProviderFromEnv, initDbMysql, initDbPostgres } from '@/storage/db';
-import { inTx } from '@/storage/inTx';
+import { inTx, type Tx } from '@/storage/inTx';
 import { withAuthenticatedTestApp } from '@/app/api/testkit/sqliteFastify';
 import { registerDeploymentRoutes } from '@/app/api/routes/deployments/deploymentRoutes';
-import { withAccountPublicationBeforeTransactionSql } from '@/app/changes/accountPublicationContention.testkit';
+import { registerSavedSecretResourceRoutes } from '@/app/api/routes/account/registerSavedSecretResourceRoutes';
+import { observeLazyPrismaQuery, withAccountPublicationBeforeTransactionSql } from '@/app/changes/accountPublicationContention.testkit';
+import { createSavedSecretResourceInTx } from '@/app/account/savedSecrets/savedSecretResourceService';
+import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import { initEncrypt } from '@/modules/encrypt';
 import { createArtifact } from '@/app/artifacts/artifactWriteService';
 import { readArtifactForCaller } from '@/app/artifacts/artifactAccessService';
@@ -45,7 +51,7 @@ describe.skipIf(provider !== 'postgres' && provider !== 'mysql')('deployment tra
         }
     });
 
-    it('admits teardown once despite unrelated Account publication and retains Environment exclusion', async () => {
+    it.each(['teardown', 'deploy'] as const)('admits %s once despite unrelated Account publication and retains Environment exclusion', async operation => {
         if (provider !== 'postgres') return;
         const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
         const source = await inTx(tx => createProjectSourceInTx(tx, owner.id, { serverId, requestKey: randomUUID(),
@@ -62,16 +68,18 @@ describe.skipIf(provider !== 'postgres' && provider !== 'mysql')('deployment tra
         const content = { contentArtifactId: artifact.artifact.id, contentHeaderVersion: 1, contentBodyVersion: 1 };
         const environment = await db.deploymentEnvironment.create({ data: { projectSourceId: source.source.id,
             createdByAccountId: owner.id, protection: 'nonProduction', purpose: 'standard', deployerMode: 'managers',
-            controllerMachineId: machine.id, ...content } });
+            controllerMachineId: machine.id, buildMachineId: machine.id, ...content } });
         const link = await db.deploymentTargetLink.create({ data: { environmentId: environment.id,
             role: 'runtime', sourceKind: 'host', hostTargetId: 'own-server', targetKind: 'ownServer', state: 'configured',
             createdByAccountId: owner.id, ...content,
             machines: { create: [{ machineId: machine.id, installationId: machine.installationId!, position: 0, state: 'active' }] } } });
+        await db.deploymentEnvironment.update({ where: { id: environment.id }, data: { runtimeTargetLinkId: link.id } });
         const input = { serverId, environmentId: environment.id, targetLinkId: link.id, expectedRevision: 1,
-            expectedTargetLinkRevision: 1, requestKey: randomUUID(), actionOperationId: randomUUID(), reason: 'manual', ...content };
+            expectedTargetLinkRevision: 1, requestKey: randomUUID(), actionOperationId: randomUUID(),
+            ...(operation === 'teardown' ? { reason: 'manual' as const } : {}), ...content } satisfies DeploymentDeployAdmissionInputV1 | DeploymentTeardownAdmissionInputV1;
         await withAuthenticatedTestApp(registerDeploymentRoutes, async app => {
             const request = (payload = input) => app.inject({ method: 'POST',
-                url: `/v1/deployments/environments/${environment.id}/teardown`,
+                url: `/v1/deployments/environments/${environment.id}/${operation}`,
                 headers: { 'x-test-user-id': owner.id }, payload });
             const atPublication = (sql: string) => sql.includes('FROM "Account"') && sql.includes('FOR NO KEY UPDATE');
             const { result: response, advances } = await withAccountPublicationBeforeTransactionSql(owner.id, atPublication, request);
@@ -93,6 +101,217 @@ describe.skipIf(provider !== 'postgres' && provider !== 'mysql')('deployment tra
             expect(concurrent.find(answer => answer.statusCode === 409)!.json()).toMatchObject({ error: 'deployment_in_progress' });
             expect(await db.deployment.count({ where: { environmentId: environment.id } })).toBe(2);
             expect((await db.deploymentEnvironment.findUniqueOrThrow({ where: { id: environment.id } })).revision).toBe(3);
+        });
+    });
+
+    it.each([false, true])('creates one Environment despite Account publication and concurrent replay (new Project: %s)', async newProject => {
+        if (provider !== 'postgres') return;
+        const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const source = await inTx(tx => createProjectSourceInTx(tx, owner.id, { serverId, requestKey: randomUUID(),
+            name: 'Existing install Project', audience: [] }));
+        if (!source.ok) throw new Error(source.error);
+        const machine = await db.machine.create({ data: { id: randomUUID(), accountId: owner.id, metadata: encodePlainMachineStoredContent({}),
+            dataEncryptionKey: privacyKit.decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER), installationId: randomUUID() } });
+        const definition = createDeploymentEnvironmentV1().content;
+        if (definition.t !== 'plain') throw new Error('Expected plain Environment fixture');
+        const artifact = await createArtifact({ actorUserId: owner.id, artifactId: randomUUID(),
+            header: privacyKit.decodeBase64(encodePlainArtifactStoredContent({ kind: 'deployment-environment.v1', title: 'Install' })),
+            body: privacyKit.decodeBase64(encodePlainArtifactStoredContent({ body: JSON.stringify(definition.v) })),
+            dataEncryptionKey: privacyKit.decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER) });
+        if (!artifact.ok) throw new Error(artifact.error);
+        const input = { serverId, requestKey: randomUUID(), protection: 'nonProduction', purpose: 'standard',
+            deployerMode: 'managers', controllerMachineId: machine.id, contentArtifactId: artifact.artifact.id,
+            contentHeaderVersion: 1, contentBodyVersion: 1,
+            ...(newProject ? { newProject: { requestKey: randomUUID(), name: 'New install Project', owner: { kind: 'account' as const, accountId: owner.id } } }
+                : { projectSourceId: source.source.id }) } satisfies DeploymentEnvironmentCreateStorageInputV1;
+        await withAuthenticatedTestApp(registerDeploymentRoutes, async app => {
+            const request = (payload: DeploymentEnvironmentCreateStorageInputV1 = input) => app.inject({ method: 'POST', url: '/v1/deployments/environments',
+                headers: { 'x-test-user-id': owner.id }, payload });
+            const atPublication = (sql: string) => sql.includes('FROM "Account"') && sql.includes('FOR NO KEY UPDATE');
+            const { result: response, advances } = await withAccountPublicationBeforeTransactionSql(owner.id, atPublication, request);
+            expect(response.statusCode, response.body).toBe(200);
+            expect(advances).toBe(1);
+            const sequence = (await db.account.findUniqueOrThrow({ where: { id: owner.id } })).seq;
+            expect((await request()).json()).toEqual(response.json());
+            expect((await db.account.findUniqueOrThrow({ where: { id: owner.id } })).seq).toBe(sequence);
+            const next = { ...input, requestKey: randomUUID(),
+                ...(newProject ? { newProject: { requestKey: randomUUID(), name: 'Concurrent install Project', owner: { kind: 'account' as const, accountId: owner.id } } } : {}) };
+            const concurrent = await Promise.all([request(next), request(next)]);
+            expect(concurrent.map(answer => answer.statusCode), concurrent.map(answer => answer.body).join('\n')).toEqual([200, 200]);
+            expect(concurrent[0].json()).toEqual(concurrent[1].json());
+            expect(await db.deploymentEnvironment.count({ where: { createdByAccountId: owner.id } })).toBe(2);
+            expect(await db.projectSource.count({ where: { createdByAccountId: owner.id } })).toBe(newProject ? 3 : 1);
+            expect((await request({ ...next, protection: 'production' })).json()).toMatchObject({ ok: false, error: 'deployment_conflict' });
+            if (newProject) {
+                const sharedProject = { requestKey: randomUUID(), name: 'One Project for two Environments', owner: { kind: 'account' as const, accountId: owner.id } };
+                const siblings = await Promise.all([0, 1].map(() => request({ ...input, requestKey: randomUUID(), newProject: sharedProject })));
+                expect(siblings.map(answer => answer.statusCode), siblings.map(answer => answer.body).join('\n')).toEqual([200, 200]);
+                expect(siblings[0].json().projectSourceId).toBe(siblings[1].json().projectSourceId);
+                expect(await db.projectSource.count({ where: { createdByAccountId: owner.id } })).toBe(4);
+            }
+        });
+    });
+
+    it('saves Store bindings despite unrelated Account publication', async () => {
+        if (provider !== 'postgres') return;
+        const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const source = await inTx(tx => createProjectSourceInTx(tx, owner.id, { serverId, requestKey: randomUUID(), name: 'Store bindings' }));
+        if (!source.ok) throw new Error(source.error);
+        const machine = await db.machine.create({ data: { id: randomUUID(), accountId: owner.id, metadata: '{}', installationId: randomUUID() } });
+        const definition = createDeploymentEnvironmentV1().content;
+        if (definition.t !== 'plain') throw new Error('Expected plain Environment fixture');
+        const content = async () => {
+            const artifact = await createArtifact({ actorUserId: owner.id, artifactId: randomUUID(),
+                header: privacyKit.decodeBase64(encodePlainArtifactStoredContent({ kind: 'deployment-environment.v1', title: 'Store bindings' })),
+                body: privacyKit.decodeBase64(encodePlainArtifactStoredContent({ body: JSON.stringify({ ...definition.v, bindings: [] }) })),
+                dataEncryptionKey: privacyKit.decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER) });
+            if (!artifact.ok) throw new Error(artifact.error);
+            return { contentArtifactId: artifact.artifact.id, contentHeaderVersion: 1, contentBodyVersion: 1 };
+        };
+        const environment = await db.deploymentEnvironment.create({ data: { projectSourceId: source.source.id,
+            createdByAccountId: owner.id, protection: 'nonProduction', purpose: 'standard', deployerMode: 'managers',
+            controllerMachineId: machine.id, ...await content() } });
+        const input = { serverId, environmentId: environment.id, expectedRevision: 1, ...await content(),
+            referencedSavedSecretRevisions: [], grants: [] };
+        await withAuthenticatedTestApp(registerDeploymentRoutes, async app => {
+            const request = () => app.inject({ method: 'POST', url: `/v1/deployments/environments/${environment.id}/bindings`,
+                headers: { 'x-test-user-id': owner.id }, payload: input });
+            const atPublication = (sql: string) => sql.includes('FROM "Account"') && sql.includes('FOR NO KEY UPDATE');
+            const { result: response, advances } = await withAccountPublicationBeforeTransactionSql(owner.id, atPublication, request);
+            expect(response.statusCode, response.body).toBe(200);
+            expect(response.json()).toMatchObject({ ok: true, revision: 2 });
+            expect(advances).toBe(1);
+            expect(await db.deploymentEnvironment.findUniqueOrThrow({ where: { id: environment.id } }))
+                .toMatchObject({ revision: 2, contentArtifactId: input.contentArtifactId });
+        });
+    });
+
+    it('cannot resurrect retired Secret delivery grants when rotation races an admitted binding write', async () => {
+        if (provider !== 'postgres') return;
+        const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const donor = await db.account.create({ data: { encryptionMode: 'plain' } });
+        await makeShareEligibleForTest(donor.id, owner.id);
+        const resourceId = randomUUID();
+        const secret = { v: 1 as const, name: 'Binding rotation', kind: 'token' as const, value: 'synthetic-original' };
+        expect(await inTx(tx => createSavedSecretResourceInTx(tx, { accountId: donor.id, resourceId,
+            displayName: secret.name, kind: secret.kind, encryptionMode: 'plain', accountGrants: [owner.id],
+            storedContent: { t: 'plain', v: secret } }))).toMatchObject({ ok: true });
+        const source = await inTx(tx => createProjectSourceInTx(tx, owner.id, { serverId,
+            requestKey: randomUUID(), name: 'Binding rotation' }));
+        if (!source.ok) throw new Error(source.error);
+        const machine = await db.machine.create({ data: { id: randomUUID(), accountId: owner.id,
+            metadata: encodePlainMachineStoredContent({ host: 'Binding rotation', platform: 'linux',
+                happyCliVersion: 'test', homeDir: '/home/test', happyHomeDir: '/home/test/.happier' }),
+            dataEncryptionKey: privacyKit.decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER), installationId: randomUUID() } });
+        const definition = createDeploymentEnvironmentV1().content;
+        if (definition.t !== 'plain') throw new Error('Expected plain Environment fixture');
+        const content = async (bindings: unknown[]) => {
+            const artifact = await createArtifact({ actorUserId: owner.id, artifactId: randomUUID(),
+                header: privacyKit.decodeBase64(encodePlainArtifactStoredContent({ kind: 'deployment-environment.v1', title: 'Binding rotation' })),
+                body: privacyKit.decodeBase64(encodePlainArtifactStoredContent({ body: JSON.stringify({ ...definition.v, bindings }) })),
+                dataEncryptionKey: privacyKit.decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER) });
+            if (!artifact.ok) throw new Error(artifact.error);
+            return { contentArtifactId: artifact.artifact.id, contentHeaderVersion: 1, contentBodyVersion: 1 };
+        };
+        const initialContent = await content([]);
+        const environment = await db.deploymentEnvironment.create({ data: { projectSourceId: source.source.id,
+            createdByAccountId: owner.id, protection: 'nonProduction', purpose: 'standard', deployerMode: 'managers',
+            controllerMachineId: machine.id, referencedSavedSecretRevisions: [], ...initialContent } });
+        const link = await db.deploymentTargetLink.create({ data: { environmentId: environment.id,
+            role: 'runtime', sourceKind: 'host', hostTargetId: 'own-server', targetKind: 'ownServer', state: 'configured',
+            createdByAccountId: owner.id, ...initialContent,
+            machines: { create: [{ machineId: machine.id, installationId: machine.installationId!, position: 0, state: 'active' }] } } });
+        await db.deploymentEnvironment.update({ where: { id: environment.id }, data: { runtimeTargetLinkId: link.id } });
+        const input = { serverId, environmentId: environment.id, expectedRevision: 1,
+            ...await content([{ purpose: 'variable', phase: 'runtime', name: 'TOKEN',
+                source: { kind: 'secret', ref: formatSharedSavedSecretRefV1(resourceId), resourceRevision: 1 } }]),
+            referencedSavedSecretRevisions: [{ resourceId, revision: 1 }], grants: [{ v: 1, kind: 'secret',
+                environmentId: environment.id, machineId: machine.id, installationId: machine.installationId!,
+                resourceId, resourceRevision: 1, sealedContent: 'synthetic-revision-one-seal' }] };
+        await withAuthenticatedTestApp(app => {
+            registerDeploymentRoutes(app);
+            registerSavedSecretResourceRoutes(app);
+        }, async app => {
+            const transaction = db.$transaction;
+            let firstTransaction = true;
+            let bindingPid = 0;
+            let rotationPid = 0;
+            let suspended = false;
+            let pause!: () => void;
+            let release!: () => void;
+            const paused = new Promise<void>(resolve => { pause = resolve; });
+            const released = new Promise<void>(resolve => { release = resolve; });
+            // The real grant read follows authoritative Secret capture validation.
+            // Pause its SQL consumption, keeping both public route writers real.
+            db.$transaction = new Proxy(transaction, { apply(target, receiver, args: unknown[]) {
+                const callback = args[0];
+                if (typeof callback !== 'function') return Reflect.apply(target, receiver, args);
+                const bindingTransaction = firstTransaction;
+                firstTransaction = false;
+                return Reflect.apply(target, receiver, [async (tx: Tx) => {
+                    const [backend] = await tx.$queryRaw<Array<{ pid: number }>>`SELECT pg_backend_pid() AS pid`;
+                    if (bindingTransaction) bindingPid = backend.pid;
+                    else rotationPid = backend.pid;
+                    return callback(new Proxy(tx, { get(inner, property, innerReceiver) {
+                        if (!bindingTransaction || property !== 'machineSecretGrant') return Reflect.get(inner, property, innerReceiver);
+                        return new Proxy(inner.machineSecretGrant, { get(delegate, method, delegateReceiver) {
+                            const query = Reflect.get(delegate, method, delegateReceiver);
+                            if (method !== 'findMany') return query;
+                            return (...values: unknown[]) => observeLazyPrismaQuery(Reflect.apply(query, delegate, values),
+                                () => ({ started() {}, settled() {} }), async () => {
+                                    if (suspended) return;
+                                    suspended = true;
+                                    pause();
+                                    await released;
+                                });
+                        } });
+                    } }));
+                }, ...args.slice(1)]);
+            } });
+            type HttpResponse = { statusCode: number; body: string };
+            let binding: Promise<HttpResponse> | undefined;
+            let rotation: Promise<HttpResponse> | undefined;
+            let rotationSettled = false;
+            try {
+                binding = Promise.resolve(app.inject({ method: 'POST',
+                    url: `/v1/deployments/environments/${environment.id}/bindings`,
+                    headers: { 'x-test-user-id': owner.id }, payload: input }));
+                // Surface fixture/admission failures instead of stranding the pause.
+                void binding.then(pause, pause);
+                await paused;
+                if (!suspended) {
+                    const response = await binding;
+                    throw new Error(`Binding did not reach grant SQL: ${response.statusCode} ${response.body}`);
+                }
+                rotation = Promise.resolve(app.inject({ method: 'POST', url: '/v1/account/saved-secrets/resources/update',
+                    headers: { 'x-test-user-id': donor.id }, payload: { resourceId, expectedRevision: 1,
+                        displayName: secret.name, kind: secret.kind,
+                        storedContent: { t: 'plain', v: { ...secret, value: 'synthetic-rotated' } } } }))
+                    .finally(() => { rotationSettled = true; });
+                // The corrected owner blocks rotation at Account admission. The
+                // broken owner lets it commit before the paused grant insertion.
+                let waiting = false;
+                while (!waiting && !rotationSettled) {
+                    const [state] = await db.$queryRaw<Array<{ waiting: boolean }>>`
+                        SELECT EXISTS(SELECT 1 FROM pg_stat_activity
+                            WHERE pid = ${rotationPid} AND ${bindingPid} = ANY(pg_blocking_pids(pid))) AS waiting`;
+                    waiting = state.waiting;
+                }
+                release();
+                const bound = await binding;
+                expect(bound.statusCode, bound.body).toBe(200);
+                const rotated = await rotation;
+                expect(rotated.statusCode, rotated.body).toBe(200);
+                expect(await db.savedSecretResource.findUniqueOrThrow({ where: { id: resourceId }, select: { revision: true } }))
+                    .toEqual({ revision: 2 });
+                expect(await db.machineSecretGrant.findMany({ where: { environmentId: environment.id,
+                    kind: 'secret', resourceId, resourceRevision: 1 } }),
+                'future installed delivery must not recover a retired revision-one seal').toEqual([]);
+            } finally {
+                release();
+                db.$transaction = transaction;
+                await Promise.allSettled([binding, rotation]);
+            }
         });
     });
 

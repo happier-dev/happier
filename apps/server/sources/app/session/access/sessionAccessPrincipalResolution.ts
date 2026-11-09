@@ -1,6 +1,6 @@
 import type { ResolveSessionAccessPrincipalsResponseV1 } from '@happier-dev/protocol/sessions/access/sessionAccessOperationsV1';
 import { projectAccountDisplayProfileV1, ACCOUNT_DISPLAY_PROFILE_SELECT } from "@/app/account/profile/accountDisplayProfile";
-import { buildSessionAccessCollaborationAccountWhere } from "./sessionAccessGrantEligibility";
+import { buildShareEligibleAccountWhere } from "@/app/teams/shareEligibility";
 import { resolveGrantableTeamsForActorInTx } from "@/app/teams/queries";
 import { resolveGrantableTeamGroupsForActorInTx } from "@/app/teams/groups/groupService";
 import {
@@ -61,7 +61,7 @@ export async function resolveSessionAccessPrincipalsInTx(input: Readonly<{
         .map((subject) => subject.accountId);
     // Nine collaboration bindings plus Prisma's unbounded-findMany OFFSET binding.
     const accounts = (await Promise.all(portableQueryChunks({ values: accountIds, bindingsPerValue: 1, fixedBindings: 10 }).map(ids => input.tx.account.findMany({
-        where: { AND: [{ id: { in: [...ids] } }, buildSessionAccessCollaborationAccountWhere(input.actorAccountId)] },
+        where: { AND: [{ id: { in: [...ids] } }, buildShareEligibleAccountWhere(input.actorAccountId)] },
         select: ACCOUNT_DISPLAY_PROFILE_SELECT,
     })))).flat();
     const accountsById = new Map(accounts.map((account) => [account.id, account]));

@@ -47,6 +47,7 @@ type AccountDisplayProfileReader = Readonly<{
 export async function projectAuthenticatedAccountActorsById(
     reader: AccountDisplayProfileReader,
     accountIds: readonly (string | null)[],
+    accessibility: readonly (SessionMessageAccountActorV1['accessibility'])[] = [],
 ): Promise<(SessionMessageAccountActorV1 | null)[]> {
     const validAccountIds = accountIds.map((value) => {
         const parsed = SessionMessageAccountActorV1Schema.shape.accountId.safeParse(value);
@@ -66,12 +67,13 @@ export async function projectAuthenticatedAccountActorsById(
     const profilesByAccountId = new Map(
         accounts.map((account) => [account.id, projectAccountDisplayProfileV1(account)] as const),
     );
-    return validAccountIds.map((accountId) => accountId === null
+    return validAccountIds.map((accountId, index) => accountId === null
         ? null
         : SessionMessageAccountActorV1Schema.parse({
             v: 1,
             accountId,
             profile: profilesByAccountId.get(accountId) ?? null,
+            ...(accessibility[index] === undefined ? {} : { accessibility: accessibility[index] }),
         }));
 }
 

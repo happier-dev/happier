@@ -1,10 +1,9 @@
-import { endCollectionSharingInTx, readCollectionSharingAudienceInTx } from './collections/sharingStorage';
-import { publishNativeCredentialPolicyChangesInTx } from '@/app/teams/credentials/nativePolicyChanges';
 import { recordHomeAdministrationEventInTx } from "@/app/home/audit/homeAdministrationEvents";
 import { PluginIdSchema } from '@happier-dev/protocol/plugins/plugin-id';
 import { type ManagedResourceDependencyV1, type ManagedResourceDispositionV1 } from '@happier-dev/protocol/machines/managed/managedDependencyV1';
 import { acceptsManagedResourceDispositions, readManagedResourceDependenciesInTx } from "@/app/machines/managed/managedRead";
 import { buildPluginDomainAccountChangeEntityId } from '@happier-dev/protocol/changes/pluginDomain';
+import { endCollectionSharingInTx, readCollectionSharingAudienceInTx } from './collections/sharingStorage';
 
 import { acquireAccountChangePublicationLocksInTx, enqueueAccountChangePublication, markAccountChanged } from "@/app/changes/markAccountChanged";
 import { withdrawPublicProfileInTx } from '@/app/account/profile/publicProfileWithdrawal';
@@ -26,6 +25,7 @@ import { cleanupPluginWebhooksForAccountDeletionTxV1 } from "@/app/plugins/webho
 import { deleteDefaultAccountPetPrivateObject } from "@/app/pets/accountPetLibraryRuntime";
 import { deleteSessionWithRecipientsInTx } from "@/app/session/delete/deleteOwnedSession";
 import { SessionDeleteConditionLostError } from "@/app/session/delete/deleteSessionTree";
+import { publishNativeCredentialPolicyChangesInTx } from '@/app/teams/credentials/nativePolicyChanges';
 import { eraseSessionAccessGrantsForAccountInTx, readSessionAccessGrantsForAccountErasureInTx } from "@/app/session/access/sessionAccessGrantService";
 import { eraseDiscussionAccessGrantsForAccountInTx, readDiscussionAccessGrantsForAccountErasureInTx } from "@/app/discussions/accessService";
 import { resolveDiscussionAudienceInTx } from "@/app/discussions/access";
@@ -47,6 +47,12 @@ import { getActivePrismaRuntime, getDbProviderFromEnv } from "@/storage/prisma";
 
 import { retirePluginCollectionCandidatePreparationStagesTx } from "./collections/candidatePreparationLifecycle";
 import { advancePluginCollectionRevision } from "./collections/mutation";
+import {
+    applyPluginCollectionUsageDeltaInTx,
+    buildPluginCollectionUsageSnapshot,
+    createPluginCollectionUsageDelta,
+    resetPluginCollectionIndexUsageInTx,
+} from "./collections/usageTotals";
 
 type PluginAccountDataEraseTombstoneResult = Readonly<{
     status: "tombstoned" | "already-tombstoned";
@@ -84,7 +90,12 @@ type CollectionChange = Readonly<{
 
 type ErasureLiveCollectionRow = Readonly<{
     id: string;
+    pluginId: string;
     collectionId: string;
+    rowId: string;
+    contractId: string;
+    contentEnvelope: unknown;
+    projections: readonly Readonly<{ fieldId: string; typedEncodedValue: string }>[];
     contractDigest: string;
     revision: number;
 }>;
@@ -260,7 +271,12 @@ export async function erasePluginAccountDataInTx(input: Readonly<{
             take: maximumBatchRows,
             select: {
                 id: true,
+                pluginId: true,
                 collectionId: true,
+                rowId: true,
+                contractId: true,
+                contentEnvelope: true,
+                projections: { select: { fieldId: true, typedEncodedValue: true } },
                 contractDigest: true,
                 revision: true,
             },
@@ -283,6 +299,14 @@ export async function erasePluginAccountDataInTx(input: Readonly<{
         });
         tombstonedRowCount += rowTombstone.count;
         await endCollectionSharingInTx(input.tx, liveRows.map(row => row.id));
+        await applyPluginCollectionUsageDeltaInTx({
+            tx: input.tx,
+            accountId: input.accountId,
+            delta: createPluginCollectionUsageDelta({
+                before: buildPluginCollectionUsageSnapshot({ rows: liveRows }),
+                after: { rows: [], indexEntries: [] },
+            }),
+        });
         lastLiveRowId = liveRows[liveRows.length - 1]!.id;
     }
 
@@ -357,6 +381,11 @@ export async function erasePluginAccountDataInTx(input: Readonly<{
             where: { indexStateId: { in: indexStateIds } },
         });
         deletedIndexEntryCount += indexEntryDeletion.count;
+        await resetPluginCollectionIndexUsageInTx({
+            tx: input.tx,
+            accountId: input.accountId,
+            indexStateIds,
+        });
         const indexStateReset = await input.tx.pluginCollectionIndexState.updateMany({
             where: {
                 id: { in: indexStateIds },
@@ -492,8 +521,8 @@ export type DeleteAccountForErasureResult =
  * body. `self` is the released present-user erasure of one's own Account and
  * carries no authority over anyone else, so it is also the safe default for
  * trusted internal cleanup compositions. `home_administration` is the only way
- * to erase a different Account, and it must name the verified actor so both
- * protected transactions can reread that actor's current authority.
+ * to erase a different Account, and it must name the verified actor so the
+ * admitting transaction can decide that actor's current authority once.
  */
 export type AccountErasureActor =
     | Readonly<{ kind: "self" }>
@@ -502,14 +531,13 @@ export type AccountErasureActor =
 type AccountErasureActorRejection = "home_governance_forbidden" | "home_account_not_found";
 
 /**
- * Rereads an administrative actor's current `eraseAccounts` authority inside
- * the deciding transaction.
+ * Decides an administrative actor's current `eraseAccounts` authority inside
+ * the admitting transaction, before anything is retired or deleted.
  *
- * An admitted self-erasure is deliberately not rechecked: Phase A revokes that
- * Account's own credentials on purpose, and its own intentional revocation must
- * not make the invocation it already admitted impossible to finish. A later
- * self request cannot reach here at all, because those credentials no longer
- * authenticate.
+ * The decision covers this one invocation. A demotion that lands while the
+ * admitted erasure runs takes effect at the actor's next request (owner ruling
+ * 2026-10-29: revocation at the next natural boundary), so the final
+ * transaction does not re-admit the actor.
  */
 async function admitAccountErasureActorInTx(tx: Tx, input: Readonly<{
     actor: AccountErasureActor;
@@ -693,12 +721,12 @@ export async function deleteAccountForErasure(input: Readonly<{
     managedResourceDispositions?: readonly ManagedResourceDispositionV1[];
 }>): Promise<DeleteAccountForErasureResult> {
     const actor: AccountErasureActor = input.actor ?? { kind: "self" };
-    const fenceAccounts = async (tx: Tx, erasureActor: AccountErasureActor) => {
+    const fenceAccounts = async (tx: Tx, admittingActorAccountId: string | null) => {
         const captured = await readAccountErasureScopeInTx(tx, input.accountId);
         await acquireAccountLifecycleAdmissionInTx(tx, {
             accountId: input.accountId,
             additionalAccountIds: [...captured.accountIds,
-                ...(erasureActor.kind === "home_administration" ? [erasureActor.actorAccountId] : [])],
+                ...(admittingActorAccountId ? [admittingActorAccountId] : [])],
             additionalSessionIds: captured.sessionIds,
             includeLifecyclePublications: true,
         });
@@ -717,7 +745,7 @@ export async function deleteAccountForErasure(input: Readonly<{
         return current;
     };
     const capturePreflight = async (tx: Tx) => {
-        await fenceAccounts(tx, actor);
+        await fenceAccounts(tx, actor.kind === "home_administration" ? actor.actorAccountId : null);
         const fence = await acquireAccountEncryptionTransitionFenceInTx(
             tx,
             input.accountId,
@@ -833,12 +861,8 @@ export async function deleteAccountForErasure(input: Readonly<{
         if (preflight.code === "account_erasure_managed_resources_review_required") return { status: "failed", code: preflight.code, resources: preflight.resources };
         return { status: "failed", code: preflight.code };
     }
+    // The actor was admitted above; Phase C finishes this admitted invocation.
     const capturedLocators = preflight.locators;
-    // Initial administrative admission has succeeded. Only this invocation's
-    // exact self-target may now continue through its own deliberate revocation;
-    // an independent administrator keeps current-authority checks in Phase C.
-    const continuationActor: AccountErasureActor = actor.kind === "home_administration"
-        && actor.actorAccountId === input.accountId ? { kind: "self" } : actor;
 
     const blobsDeleted = await deleteAccountErasureBlobLocators(capturedLocators);
     if (!blobsDeleted) {
@@ -851,21 +875,14 @@ export async function deleteAccountForErasure(input: Readonly<{
     return await inTx(async (tx) => {
         // Retirement already removed this Account from active ownership and
         // prevents new ownership/admission. Its existing Account fence also
-        // serializes Session, content and managed-resource publication. Lock an
-        // independent administrator in the same ordered audience before reading
-        // current authority, so demotion cannot race the physical deletion.
-        const erasureScope = await fenceAccounts(tx, continuationActor);
+        // serializes Session, content and managed-resource publication.
+        const erasureScope = await fenceAccounts(tx, null);
         const fence = await acquireAccountEncryptionTransitionFenceInTx(
             tx,
             input.accountId,
             "exclusive",
         );
-        if (fence.status === "account_not_found") {
-            const actorRejection = await admitAccountErasureActorForAbsentTargetInTx(tx, continuationActor);
-            return actorRejection
-                ? { status: "failed", code: actorRejection }
-                : { status: "already-deleted" };
-        }
+        if (fence.status === "account_not_found") return { status: "already-deleted" };
         if (fence.status === "account_inconsistent") {
             throw new Error("Plugin Account deletion requires a consistent Account encryption mode.");
         }
@@ -877,20 +894,10 @@ export async function deleteAccountForErasure(input: Readonly<{
             where: { id: input.accountId },
             select: { status: true },
         });
-        if (!lifecycle) {
-            const actorRejection = await admitAccountErasureActorForAbsentTargetInTx(tx, continuationActor);
-            return actorRejection
-                ? { status: "failed", code: actorRejection }
-                : { status: "already-deleted" };
-        }
+        if (!lifecycle) return { status: "already-deleted" };
         if (lifecycle.status !== "disabled") {
             return { status: "failed", code: "account_erasure_not_retired" };
         }
-        // This transaction is the one that destroys rows, so an independent
-        // administrative actor must still hold `eraseAccounts` right now. The
-        // target stays terminally retired for a currently authorized retry.
-        const actorRejection = await admitAccountErasureActorInTx(tx, { actor: continuationActor, accountId: input.accountId });
-        if (actorRejection) return { status: "failed", code: actorRejection };
         // Ownership is rechecked defensively: another transaction may have
         // demoted or retired the remaining owners while the external objects
         // were being deleted.
@@ -937,8 +944,8 @@ export async function deleteAccountForErasure(input: Readonly<{
         await tx.publicShareAccessLog.deleteMany({ where: { userId: input.accountId } });
         await eraseSessionAccessGrantsForAccountInTx(tx, { accountId: input.accountId });
         await eraseDiscussionAccessGrantsForAccountInTx(tx, { accountId: input.accountId });
-        await tx.artifactSignedInLink.deleteMany({ where: { createdByUserId: input.accountId } });
         await tx.publicSessionShare.deleteMany({ where: { createdByUserId: input.accountId } });
+        await tx.artifactSignedInLink.deleteMany({ where: { createdByUserId: input.accountId } });
         for (const session of sessions) {
             const deleted = await deleteSessionWithRecipientsInTx(tx, {
                 sessionId: session.id,

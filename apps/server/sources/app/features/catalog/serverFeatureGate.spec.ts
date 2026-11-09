@@ -6,6 +6,13 @@ import { createServerFeatureGatedRouteApp, isServerFeatureEnabledForRequest, res
 import { serverFeatureRegistry } from "./serverFeatureRegistry";
 
 describe("serverFeatureGate", () => {
+    it.each(['deployments', 'bots'] as const)('%s advertises support by default and obeys env and build opt-outs', featureId => {
+        expect(isServerFeatureEnabledForRequest(featureId, {})).toBe(true);
+        expect(isServerFeatureEnabledForRequest(featureId, { [`HAPPIER_FEATURE_${featureId.toUpperCase()}__ENABLED`]: '0' })).toBe(false);
+        expect(isServerFeatureEnabledForRequest(featureId, { HAPPIER_BUILD_FEATURES_DENY: featureId })).toBe(false);
+        expect(isServerFeatureEnabledForRequest(featureId, { HAPPIER_BUILD_FEATURES_DENY: featureId,
+            [`HAPPIER_FEATURE_${featureId.toUpperCase()}__ENABLED`]: '1' })).toBe(false);
+    });
     it("does not read unrelated diagnostic configuration while checking a Session sharing bit", () => {
         let capabilityReads = 0;
         const env: NodeJS.ProcessEnv = {};

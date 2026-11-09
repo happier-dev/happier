@@ -2,8 +2,9 @@ import { describe, expect, it } from 'vitest';
 import { transform } from 'esbuild';
 import { DEFAULT_PUBLIC_PROFILE_POLICY_V1, PublicProfileSnapshotV1Schema } from '@happier-dev/protocol/account/publicProfile';
 import { projectPublicProfile } from '@happier-dev/protocol/account/projectPublicProfile';
-import { PublicProfileLayoutV1Schema, PublicProfileViewV1Schema } from '@happier-dev/protocol/account/publicProfilePublication';
+import { PublicProfileLayoutV1Schema, PublicProfileViewV1Schema, PUBLIC_USAGE_CHART_COPY_EN } from '@happier-dev/protocol/account/publicProfilePublication';
 import { renderPublicProfileHtml } from './publicProfileHtml';
+import { publicProfilePageLabels } from './publicProfileLabels';
 
 function published(tokens = true) {
     const view = projectPublicProfile({ context: { handle: 'nadia', identity: { name: '<Nadia> Müller' },
@@ -24,6 +25,48 @@ function published(tokens = true) {
 }
 
 describe('cold public-profile document', () => {
+    it('keeps shared Totals figures visible when their evidence is unavailable', () => {
+        const { view } = published();
+        const totals = PublicProfileViewV1Schema.parse({ ...view,
+            snapshot: { ...view.snapshot, facts: { tokens: 321 }, fieldCoverage: {
+                agentTime: { status: 'unavailable', method: 'unknown' },
+                mergedPrs: { status: 'unavailable', method: 'unknown' },
+                peakParallel: { status: 'unavailable', method: 'unknown' },
+            } },
+            layout: { v: 1, items: [{ kind: 'widget', id: 'totals', title: 'Totals', size: 'full', frameStyle: 'plain',
+                presentation: { kind: 'usage', widgetId: 'usage_period_summary', inputs: {} } }] },
+        });
+        const html = renderPublicProfileHtml({ kind: 'published', view: totals });
+        expect(html.includes('Agent time'), 'shared Agent time remains visible').toBe(true);
+        expect(html.includes('Merged pull requests'), 'shared Merged PRs remains visible').toBe(true);
+        expect(html.includes('Peak parallel'), 'shared Peak parallel remains visible').toBe(true);
+    });
+
+    it('uses the declared contributed Agent name in the generated cold Crew renderer', () => {
+        const { view } = published();
+        const crew = PublicProfileViewV1Schema.parse({ ...view,
+            snapshot: { ...view.snapshot, facts: { ...view.snapshot.facts,
+                agentMix: [{ agentId: 'custom-acp', share: 1, coverage: { status: 'partial', method: 'runtime' } }] } },
+            layout: { v: 1, items: [{ kind: 'widget', id: 'crew', title: 'Crew', size: 'medium', frameStyle: 'plain',
+                presentation: { kind: 'usage', widgetId: 'usage_breakdowns', inputs: { style: 'crew' } } }] },
+        });
+        const html = renderPublicProfileHtml({ kind: 'published', view: crew });
+        expect(html).toContain('Custom ACP Agent');
+        expect(html).not.toContain('Custom Acp');
+    });
+
+    it('shows the handle once when no display name is shared, keeping the service and membership date', () => {
+        const { view } = published();
+        view.identity = { sinceMs: Date.UTC(2026, 2, 1) };
+        expect(publicProfilePageLabels(view).identityLine).toBe('My Home · since March 2026');
+        const html = renderPublicProfileHtml({ kind: 'published', view });
+        const names = [...html.matchAll(/data-testid="public-profile-name"[^>]*>([^<]*)</g)].map(match => match[1]);
+        expect(names.length).toBeGreaterThan(0);
+        expect(new Set(names)).toEqual(new Set(['@nadia']));
+        expect(html.split('<body>')[1]).not.toContain('@nadia · My Home');
+        view.identity.name = 'Nadia';
+        expect(publicProfilePageLabels(view).identityLine).toBe('@nadia · My Home · since March 2026');
+    });
     it.each([
         ['usage_daily', {}], ['usage_period_summary', {}], ['usage_footprint', {}], ['usage_source_coverage', {}],
         ['usage_rhythm', { style: 'heatmap' }], ['usage_rhythm', { style: 'weekdayHour' }],
@@ -101,6 +144,50 @@ describe('cold public-profile document', () => {
         expect(used.filter(name => !defined.has(name))).toEqual([]);
     });
 
+    it('opens a published visitor page with the brand bar: Happier, the service and what Happier is', () => {
+        const html = renderPublicProfileHtml(published());
+        const bar = html.match(/data-testid="public-profile-brand"[\s\S]*?What is Happier\?/)?.[0] ?? '';
+        expect(bar).toContain('Happier');
+        expect(bar).toContain('My Home');
+        expect(html).toContain('href="https://happier.dev"');
+    });
+
+    it('names the period the owner chose above the dates, and keeps a neutral title for a period without a preset', () => {
+        const { view } = published();
+        const chosen = renderPublicProfileHtml({ kind: 'published', view: PublicProfileViewV1Schema.parse({ ...view, relativePeriod: '30days' }) });
+        expect(chosen).toContain('Last 30 days');
+        expect(chosen.split('<body>')[1]).not.toContain('Public activity');
+        expect(renderPublicProfileHtml({ kind: 'published', view: PublicProfileViewV1Schema.parse({ ...view, relativePeriod: 'year' }) }))
+            .toContain('Last year');
+        expect(renderPublicProfileHtml(published())).toContain('Public activity');
+    });
+
+    it('paints a paused page as its quiet horizon, one line and the identity the owner shares, with no numbers', () => {
+        const html = renderPublicProfileHtml({ kind: 'paused', handle: 'nadia', identity: { name: 'Nadia' } }, undefined, { service: 'My Home' });
+        expect(html).toContain('Nadia paused this profile');
+        expect(html).toContain('Badges read');
+        expect(html).toContain('@nadia · My Home');
+        expect(html).toMatch(/data-testid="public-profile-hero-band"[^>]*>\s*<svg[\s\S]*?<circle/);
+        expect(html).toContain('public-profile-phone');
+        expect(html).not.toContain('987,654,321');
+        expect(html).not.toContain('<script');
+    });
+
+    it('puts the shared planet fallback beside a paused identity', () => {
+        const html = renderPublicProfileHtml({ kind: 'paused', handle: 'nadia',
+            identity: { name: 'Nadia', avatar: { kind: 'planet', reason: 'account_image_unavailable' } } }, undefined, { service: 'My Home' });
+        expect(html).toMatch(/data-testid="public-profile-avatar"[^>]*>\s*<svg[\s\S]*?<circle/);
+    });
+
+    it('tells a visitor of a missing profile that there is none here and links what Happier is', () => {
+        const html = renderPublicProfileHtml({ kind: 'unavailable' }, undefined, { service: 'My Home' });
+        expect(html).toContain('No public profile here');
+        expect(html).toContain('Profile unavailable');
+        expect(html).toMatch(/<a[^>]*data-testid="public-profile-about"[^>]*>|<a[^>]*href="https:\/\/happier\.dev"[^>]*data-testid="public-profile-about"/);
+        expect(html).toContain('My Home');
+        expect(html).not.toContain('public-profile-identity');
+    });
+
     it('draws the shared Usage portrait through the real Brand slot without inventing absent public facts', () => {
         const result = published(false);
         const view = PublicProfileViewV1Schema.parse({ ...result.view, layout: { v: 1, items: [
@@ -110,9 +197,10 @@ describe('cold public-profile document', () => {
         const html = renderPublicProfileHtml({ kind: 'published', view });
         expect(html).toContain('Shared planet');
         expect(html).toContain('Light');
-        expect(html).toContain('Not shared or not recorded');
+        expect(html).toContain(PUBLIC_USAGE_CHART_COPY_EN.notRecorded);
         expect(html).toContain('<circle');
         expect(html).not.toContain('987,654,321');
         expect(html).not.toContain('<script');
     });
+
 });

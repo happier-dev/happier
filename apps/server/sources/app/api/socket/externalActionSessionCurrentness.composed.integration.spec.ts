@@ -454,9 +454,17 @@ describe('original external Session Action currentness composition', () => {
                 }
                 expect((await signed(`/v1/machines/${machineId}`)).statusCode).toBe(200);
                 expect((await signed('/v1/machines/another-machine')).statusCode).toBe(401);
-                expect((await signed('/v2/sessions/foreign-session?accessProjectionVersion=1')).statusCode).toBe(401);
-                expect((await signed(`/v2/sessions/${session.id}/qa8-unbound`)).statusCode).toBe(401);
                 const foreign = await db.account.create({ data: { publicKey: null, encryptionMode: 'plain' } });
+                const foreignSession = await db.session.create({ data: { accountId: foreign.id, tag: randomUUID(),
+                    encryptionMode: 'plain', metadata: JSON.stringify({ private: 'foreign-session-content' }) } });
+                // Selector preparation signs operand reads; the Session access
+                // owner must deny inaccessible and missing operands identically.
+                for (const sessionId of [foreignSession.id, `missing-${randomUUID()}`]) {
+                    const denied = await signed(`/v2/sessions/${sessionId}?accessProjectionVersion=1`);
+                    expect(denied.statusCode).toBe(404);
+                    expect(denied.json()).toEqual({ error: 'Session not found' });
+                }
+                expect((await signed(`/v2/sessions/${session.id}/qa8-unbound`)).statusCode).toBe(401);
                 const foreignToken = await auth.createToken(foreign.id, undefined, { kind: 'account', authority: 'present_user' });
                 const foreignResponse = await app.inject({ method: 'POST', url: '/v1/actions/session.message.send',
                     headers: { authorization: `Bearer ${foreignToken}` }, payload: ExternalActionRequestEnvelopeV1Schema.parse({

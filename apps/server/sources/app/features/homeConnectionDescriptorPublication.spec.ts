@@ -41,6 +41,7 @@ vi.mock("node:fs/promises", async (importOriginal) => {
 });
 
 import type { HomeIrohEndpointState } from "@/app/iroh/homeIrohEndpoint";
+import { projectHomeReachability } from "@/app/home/reachability/homeReachability";
 
 import {
     composeHomeConnectionDescriptor,
@@ -306,30 +307,63 @@ describe("home connection descriptor publication owner", () => {
         expect(JSON.stringify(descriptor)).not.toContain("192.168.1.10:4242");
     });
 
-    it("never retires a published Iroh endpoint because the endpoint lifecycle failed closed", () => {
+    it("withdraws a failed Iroh carrier while keeping the Home reachable and its native identity recoverable", () => {
         const published = composeHomeConnectionDescriptor(facts({
             publicServerUrl: "https://ingress.example.test",
             iroh: activeIroh(),
         }));
         expect(published?.revision).toBe(1);
 
-        // A fail-closed Iroh startup is a transient carrier failure, not the
-        // operator retiring the endpoint. Publishing the remaining HTTPS-only
-        // set at a greater revision would make every client adopt a descriptor
-        // that permanently drops the Iroh endpoint.
+        // A settled optional-carrier failure withdraws that carrier, while
+        // the explicitly configured ingress keeps ordinary Home access ready.
         expect(composeHomeConnectionDescriptor(facts({
             publicServerUrl: "https://ingress.example.test",
             iroh: { status: "failed", snapshot: null, failureReason: "acceptor_not_running" },
-        }))).toBeUndefined();
+        }))).toMatchObject({ revision: 2, endpoints: [{ kind: "https" }] });
 
-        // The failure must not have moved the revision either.
+        // Recovery is a real endpoint-set change, with the same native identity.
         expect(composeHomeConnectionDescriptor(facts({
             publicServerUrl: "https://ingress.example.test",
             iroh: activeIroh(),
-        }))?.revision).toBe(1);
+        }))?.revision).toBe(3);
     });
 
-    it("does not treat a fail-closed lifecycle as retirement across a restart", () => {
+    it.each(["unavailable", "failed"] as const)("keeps ordinary Home readiness available when the retained Iroh carrier is %s", (status) => {
+        const publicServerUrl = "http://127.0.0.1:15728";
+        const previous = {
+            homeServerIdentityId: "srv_home",
+            canonicalServerUrl: publicServerUrl,
+            endpoints: [{ kind: "https" as const, url: publicServerUrl }, {
+                kind: "iroh" as const, endpointId: irohSnapshot.endpoint.endpointId,
+            }],
+        };
+        const irohState: HomeIrohEndpointState = { status, snapshot: null, failureReason: "endpoint_identity_drift" };
+        const descriptor = composeHomeConnectionDescriptor(facts({
+            publicServerUrl,
+            canonicalServerUrl: publicServerUrl,
+            persistedOuterRevisionOwner: { revision: 6,
+                contentKey: createHomeConnectionDescriptorContentKey(previous),
+                irohEndpointId: irohSnapshot.endpoint.endpointId },
+            iroh: irohState,
+        }));
+        expect(descriptor).toMatchObject({
+            homeServerIdentityId: "srv_home", revision: 7,
+            endpoints: [{ kind: "https", url: publicServerUrl }],
+        });
+        expect(projectHomeReachability({ env: { HAPPIER_PUBLIC_SERVER_URL: publicServerUrl },
+            access: null, iroh: irohState, irohAvailable: true,
+        }).iroh).toMatchObject({ state: status, failureReason: "endpoint_identity_drift", endpointId: null });
+        // Temporary carrier unavailability does not retire or replace its pinned
+        // identity. Only the original endpoint can rejoin this Home afterwards.
+        expect(composeHomeConnectionDescriptor(facts({ publicServerUrl, canonicalServerUrl: publicServerUrl,
+            iroh: { status: "active", snapshot: { endpoint: { endpointId: "b".repeat(64) } }, failureReason: null },
+        }))).toBeUndefined();
+        expect(composeHomeConnectionDescriptor(facts({ publicServerUrl, canonicalServerUrl: publicServerUrl,
+            iroh: activeIroh(),
+        }))?.revision).toBe(8);
+    });
+
+    it("keeps explicit ingress reachable across a restart with a failed optional carrier", () => {
         const irohContentKey = createHomeConnectionDescriptorContentKey({
             homeServerIdentityId: "srv_home",
             canonicalServerUrl: "https://home.example.test",
@@ -344,7 +378,7 @@ describe("home connection descriptor publication owner", () => {
             publicServerUrl: "https://ingress.example.test",
             persistedOuterRevisionOwner: { revision: 7, contentKey: irohContentKey },
             iroh: { status: "failed", snapshot: null, failureReason: "native_error" },
-        }))).toBeUndefined();
+        }))).toMatchObject({ revision: 8, endpoints: [{ kind: "https" }] });
     });
 
     it("does not treat an uncomposed startup transition as an explicit Iroh retirement", () => {
@@ -722,7 +756,7 @@ describe("home connection descriptor production read path", () => {
         })).resolves.toMatchObject({ homeServerIdentityId: "srv_home" });
         if (restartBeforeFailure) resetHomeConnectionDescriptorRevisionOwnerForTests();
         await expect(readRequiredAuthenticatedHomeConnectionDescriptor({
-            env,
+            env: { ...env, HAPPIER_PUBLIC_SERVER_URL: undefined },
             continuityStore: store,
             resolveIrohEndpointState: async () => ({
                 status: "failed",
@@ -732,6 +766,32 @@ describe("home connection descriptor production read path", () => {
         })).rejects.toMatchObject({
             code: "home_connection_descriptor_publication_unavailable",
         });
+    });
+
+    it("durably publishes ordinary ingress after optional Iroh failure without retiring its pinned identity", async () => {
+        const ingressEnv = { ...env, HAPPIER_CANONICAL_SERVER_URL: "http://127.0.0.1:15728",
+            HAPPIER_PUBLIC_SERVER_URL: "http://127.0.0.1:15728" };
+        const continuityStore = createFileHomeConnectionDescriptorContinuityStore(continuityPath());
+        const initial = await readRequiredAuthenticatedHomeConnectionDescriptor({ env: ingressEnv,
+            continuityStore, resolveIrohEndpointState: activeIroh });
+        expect(initial?.endpoints.map(endpoint => endpoint.kind)).toEqual(["https", "iroh"]);
+        restart();
+        const unavailable = (): HomeIrohEndpointState => ({ status: "failed", snapshot: null,
+            failureReason: "endpoint_identity_drift" });
+        const fallback = await readRequiredAuthenticatedHomeConnectionDescriptor({ env: ingressEnv,
+            continuityStore, resolveIrohEndpointState: unavailable });
+        expect(fallback).toMatchObject({ homeServerIdentityId: "srv_home", revision: initial!.revision + 1,
+            endpoints: [{ kind: "https", url: ingressEnv.HAPPIER_PUBLIC_SERVER_URL }] });
+        expect(await continuityStore.read()).toMatchObject({ revision: fallback!.revision,
+            irohEndpointId: irohSnapshot.endpoint.endpointId });
+        expect(await readRequiredAuthenticatedHomeConnectionDescriptor({ env: ingressEnv,
+            continuityStore, resolveIrohEndpointState: unavailable })).toEqual(fallback);
+        expect(await readCommittedHomeConnectionDescriptor({ env: ingressEnv,
+            continuityStore, resolveIrohEndpointState: unavailable })).toEqual(fallback);
+        const recovered = await readRequiredAuthenticatedHomeConnectionDescriptor({ env: ingressEnv,
+            continuityStore, resolveIrohEndpointState: activeIroh });
+        expect(recovered?.revision).toBe(fallback!.revision + 1);
+        expect(recovered?.endpoints.map(endpoint => endpoint.kind)).toEqual(["https", "iroh"]);
     });
 
     it("retries publication after a transient continuity write failure", async () => {

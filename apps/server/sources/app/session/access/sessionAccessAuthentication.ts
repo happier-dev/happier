@@ -22,6 +22,10 @@ export type SessionAccessAuthentication = Readonly<{
     apiTokenGrant?: ApiTokenGrantV1;
     /** Verified caller constraints also survive signed Action-effect admission. */
     callerInputConstraints?: CallerInputConstraintsV1;
+    /** Home-signed scope of the installed decision's non-publishing reply settlement. */
+    approvalDecisionAdmission?: ExternalActionExecutionAuthorizationBindingV1['approvalDecisionAdmission'];
+    /** Verified external signature, including generic roots without decision admission. */
+    externalActionExecutionAuthorized?: true;
 }>;
 
 /** Exact request credential context stamped by the central authentication decorator. */
@@ -34,7 +38,8 @@ export function readSessionAccessAuthenticationFromRequest(request: Readonly<{
     externalActionExecutionAuthorized?: boolean;
     externalActionSessionAccessAdmitted?: boolean;
     externalActionInputConstraints?: CallerInputConstraintsV1;
-    externalActionExecutionAuthorizationBinding?: Pick<ExternalActionExecutionAuthorizationBindingV1, 'sessionActionOrigin'>;
+    externalActionExecutionAuthorizationBinding?: Pick<ExternalActionExecutionAuthorizationBindingV1, 'sessionActionOrigin'>
+        & Partial<Pick<ExternalActionExecutionAuthorizationBindingV1, 'actionId' | 'approvalDecisionAdmission'>>;
 }>): SessionAccessAuthentication {
     if (!request.authAuthority) {
         throw new Error("Verified request authentication authority is unavailable");
@@ -49,8 +54,12 @@ export function readSessionAccessAuthenticationFromRequest(request: Readonly<{
         env: process.env,
         authority: request.authAuthority,
         authenticationEvidence: request.authTokenAuthenticationEvidence,
+        ...(request.externalActionExecutionAuthorized === true
+            && request.externalActionExecutionAuthorizationBinding?.actionId === 'approval.request.decide'
+            ? { approvalDecisionAdmission: request.externalActionExecutionAuthorizationBinding.approvalDecisionAdmission } : {}),
         ...(contentDisclosureSessionId ? { contentDisclosureSessionId } : {}),
         ...(request.externalActionExecutionAuthorized === true ? {
+            externalActionExecutionAuthorized: true,
             callerInputConstraints: request.externalActionInputConstraints,
         } : request.apiTokenPrincipal ? {
             callerInputConstraints: {

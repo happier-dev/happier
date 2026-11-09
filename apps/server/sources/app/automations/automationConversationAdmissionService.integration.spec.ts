@@ -3,7 +3,6 @@ import tweetnacl from "tweetnacl";
 
 import {
     signAccountContentKeyBindingV1,
-    MAX_NON_TERMINAL_EVENT_CONVERSATION_RUNS_PER_ACCOUNT,
     AutomationConversationAdmitInputV1Schema,
     AutomationConversationOccurrenceEvidenceV1Schema,
     AutomationStoredContentEnvelopeV1Schema,
@@ -33,6 +32,9 @@ import {
 } from "@happier-dev/protocol";
 
 import { db } from "@/storage/db";
+import { inTx } from "@/storage/inTx";
+import { observeSqliteRequests } from "@/testkit/observeSqliteRequests";
+import { markAccountChanged } from "@/app/changes/markAccountChanged";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
 
 import { encodePlainAutomationOccurrenceEvidence } from "./automationOccurrencePersistence";
@@ -543,15 +545,15 @@ describe("Automation Conversation admission database boundary", () => {
         await db.automationTrigger.create({ data: { id: scopedTrigger.triggerId, automationId: AUTOMATION_ID,
             kind: triggerKind, enabled: true, sourceSessionId: scopedTrigger.sessionId, definitionEnvelope: JSON.stringify(envelope) } });
         const admit = async (evidence: AutomationConversationScopedTriggerEvidenceV1, occurrenceId = 'scoped-pr-first',
-            sender: unknown = { principalId: evidence.observationActorPrincipalId }) => {
+            sender: unknown = { principalId: evidence.observationActorPrincipalId }, update = prUpdate) => {
             if (!account) return await admitPlainAutomationConversationV1({ accountId: ACCOUNT_ID, caller,
-                input: { ...conversationInput({ resultDelivery: { kind: 'none' } }), occurrenceId, sender, prUpdate, hostEvidence: evidence } });
+                input: { ...conversationInput({ resultDelivery: { kind: 'none' } }), occurrenceId, sender, prUpdate: update, hostEvidence: evidence } });
             // The real admission host fetches currentness for each new effect;
             // admitting the previous occurrence advanced the Account sequence.
             const { seq: version } = await db.account.findUniqueOrThrow({ where: { id: ACCOUNT_ID }, select: { seq: true } });
             return await admitEncryptedAutomationConversationV1({ accountId: ACCOUNT_ID, caller,
                 hostEvidence: encryptedConversationHostEvidence({ account: { ...account,
-                    accountCurrentness: { ...account.accountCurrentness, version } }, nonceSeed: 19, scopedTrigger: evidence, occurrenceId, prUpdate }) });
+                    accountCurrentness: { ...account.accountCurrentness, version } }, nonceSeed: 19, scopedTrigger: evidence, occurrenceId, prUpdate: update }) });
         };
         for (const [repositoryWriteAccess, reason] of [[null, 'repositoryWriteAccessUnknown'], [false, 'repositoryWriteAccessDenied']] as const) {
             expect(await admit({ ...scopedTrigger, actor: { ...scopedTrigger.actor, repositoryWriteAccess } })).toEqual({
@@ -581,10 +583,33 @@ describe("Automation Conversation admission database boundary", () => {
                 });
             }
         }
-        const first = await admit(scopedTrigger);
+        const eventActors = [
+            { occurrenceId: 'scoped-pr-first', sender: { principalId: 'github:user:7' },
+                observationActorPrincipalId: 'github:user:7', actor: scopedTrigger.actor },
+            { occurrenceId: 'scoped-pr-member', sender: { principalId: 'github:user:8' },
+                observationActorPrincipalId: 'github:user:8', actor: { principalId: 'github:user:8', repositoryWriteAccess: true } },
+        ];
+        const batchedPrUpdate = { ...prUpdate, events: [...prUpdate.events, { ...prUpdate.events[0]!,
+            id: 'comment-8', author: { principalId: 'github:user:8', kind: 'person' } }] };
+        for (const [repositoryWriteAccess, reason] of [[null, 'repositoryWriteAccessUnknown'], [false, 'repositoryWriteAccessDenied']] as const) {
+            expect(await admit({ ...scopedTrigger, eventActors: [eventActors[0]!, { ...eventActors[1]!,
+                actor: { ...eventActors[1]!.actor, repositoryWriteAccess } }] }, 'scoped-pr-first', undefined, batchedPrUpdate)).toEqual({
+                kind: 'refused', reason, checkpointSafe: true,
+            });
+        }
+        for (const forgedActors of [[], [eventActors[0]!, eventActors[0]!],
+            [eventActors[0]!, { ...eventActors[1]!, sender: eventActors[0]!.sender }]]) {
+            expect(await admit({ ...scopedTrigger, eventActors: forgedActors }, 'scoped-pr-first', undefined, batchedPrUpdate)).toEqual({
+                kind: 'refused', reason: 'scopedTriggerIdentityMismatch', checkpointSafe: true,
+            });
+        }
+        expect(await db.automationRun.count()).toBe(0);
+        const compositeEvidence = { ...scopedTrigger, eventActors };
+        const first = await admit(compositeEvidence, 'scoped-pr-first', undefined, batchedPrUpdate);
         expect(first).toMatchObject({ kind: 'admitted', checkpointSafe: true });
         if (first.kind !== 'admitted') throw new Error('Expected scoped writer admission');
-        expect(await admit(scopedTrigger)).toEqual({ kind: 'rejoined', runId: first.runId, checkpointSafe: true });
+        expect(await db.automationRun.count()).toBe(1);
+        expect(await admit(compositeEvidence, 'scoped-pr-first', undefined, batchedPrUpdate)).toEqual({ kind: 'rejoined', runId: first.runId, checkpointSafe: true });
         expect(await admit(scopedTrigger, 'scoped-pr-second')).toMatchObject({ kind: 'admitted', checkpointSafe: true });
         const runs = await db.automationRun.findMany({ where: { triggerId: scopedTrigger.triggerId } });
         expect(runs).toHaveLength(2);
@@ -595,22 +620,18 @@ describe("Automation Conversation admission database boundary", () => {
             const opened = stored.t === 'plain' ? stored.v : account === undefined ? null : openAccountScopedBlobCiphertext({
                 kind: 'automation_trigger_evidence', material: account.snapshot.material, ciphertext: stored.c,
             })?.value;
-            expect(AutomationConversationOccurrenceEvidenceV1Schema.parse(opened).input).toMatchObject({ prUpdate });
+            expect(AutomationConversationOccurrenceEvidenceV1Schema.parse(opened).input).toMatchObject({
+                prUpdate: run.id === first.runId ? batchedPrUpdate : prUpdate,
+            });
             if (account) expect(JSON.stringify(run)).not.toContain('The complete original review body');
         }
     });
 
-    it('keeps scoped Conversation work outside Account capacity while retaining distinct pending occurrences', async () => {
+    it('retains distinct scoped Conversation occurrences alongside unscoped work', async () => {
         const unscopedAutomationId = 'automation-unscoped-capacity';
         await db.automation.create({ data: { id: unscopedAutomationId, accountId: ACCOUNT_ID, name: 'Unscoped capacity',
             targetType: 'execution_run', templateCiphertext: strictConversationRunRecipe(), templateVersion: 3,
             assignments: { create: { machineId: MACHINE_ID, enabled: true } } } });
-        const now = new Date();
-        await db.automationRun.createMany({ data: Array.from(
-            { length: MAX_NON_TERMINAL_EVENT_CONVERSATION_RUNS_PER_ACCOUNT - 1 },
-            (_, index) => ({ ...conversationCapacityRunSeed({ id: `unscoped-capacity-${index}`, index, now }),
-                automationId: unscopedAutomationId }),
-        ) });
         const scopedTrigger: AutomationConversationScopedTriggerEvidenceV1 = {
             bindingId: BINDING_ID, sessionId: 'session-scoped-capacity', triggerId: AutomationTriggerIdSchema.parse('trigger-scoped-capacity'),
             triggerRevision: 0, triggerKind: 'prComment', pullRequest: { repository: 'happier-dev/happier', number: 42 },
@@ -1135,70 +1156,26 @@ describe("Automation Conversation admission database boundary", () => {
         await expect(db.automationRun.count({ where: { accountId: ACCOUNT_ID } })).resolves.toBe(1);
     });
 
-    it("releases Conversation Run capacity after an exhausted execution Run is terminally failed", async () => {
+    it("admits and rejoins Conversation occurrences beyond the former Account capacity without counting occupancy", async () => {
         const now = new Date();
-        await db.automationRun.createMany({
-            data: Array.from(
-                { length: MAX_NON_TERMINAL_EVENT_CONVERSATION_RUNS_PER_ACCOUNT },
-                (_, index) => conversationCapacityRunSeed({
-                    id: `conversation-capacity-run-${index}`,
-                    index,
-                    now,
-                }),
-            ),
-        });
-
-        const input = conversationInput({ resultDelivery: { kind: "none" } });
-        await expect(admitAutomationConversationV1({
-            accountId: ACCOUNT_ID,
-            caller,
-            input,
-        })).resolves.toEqual({
-            kind: "blocked",
-            reason: "capacity",
-            checkpointSafe: false,
-        });
-
-        await db.automationRun.update({
-            where: { id: "conversation-capacity-run-9999" },
-            data: {
-                state: "failed",
-                executionDispatchState: "settled",
-                executionAttempt: 3,
-                executionDispatchDueAt: null,
-                executionNativeRunId: null,
-                executionNativeCallId: null,
-                executionNativeSidechainId: null,
-                claimedByMachineId: null,
-                leaseExpiresAt: null,
-                finishedAt: now,
-                errorCode: "execution_run_retry_exhausted",
-            },
-        });
-
-        await expect(admitAutomationConversationV1({
-            accountId: ACCOUNT_ID,
-            caller,
-            input,
-        })).resolves.toEqual({
-            kind: "admitted",
-            runId: expect.any(String),
-            checkpointSafe: true,
-        });
-        await expect(db.automationRun.findUniqueOrThrow({
-            where: { id: "conversation-capacity-run-9999" },
-            select: {
-                state: true,
-                executionDispatchState: true,
-                executionAttempt: true,
-                errorCode: true,
-            },
-        })).resolves.toEqual({
-            state: "failed",
-            executionDispatchState: "settled",
-            executionAttempt: 3,
-            errorCode: "execution_run_retry_exhausted",
-        });
+        const retainedCount = 10_001; // Exceeds the removed 10,000-Run admission ceiling.
+        await db.automationRun.createMany({ data: Array.from({ length: retainedCount }, (_, index) =>
+            conversationCapacityRunSeed({ id: 'uncapped-conversation-' + index, index, now })) });
+        const counts: string[] = [];
+        const stop = observeSqliteRequests({ before: request => {
+            if (request.model === 'AutomationRun' && request.action === 'aggregate') counts.push(request.action);
+        } });
+        try {
+            const input = conversationInput({ resultDelivery: { kind: 'none' } });
+            const result = await admitAutomationConversationV1({ accountId: ACCOUNT_ID, caller, input });
+            expect(result).toEqual({ kind: 'admitted', runId: expect.any(String), checkpointSafe: true });
+            if (result.kind !== 'admitted') throw new Error('Expected Conversation admission');
+            await expect(admitAutomationConversationV1({ accountId: ACCOUNT_ID, caller, input })).resolves.toEqual({
+                kind: 'rejoined', runId: result.runId, checkpointSafe: true,
+            });
+            expect(counts).toEqual([]);
+        } finally { stop(); }
+        expect(await db.automationRun.count({ where: { accountId: ACCOUNT_ID } })).toBe(retainedCount + 1);
     });
 
     it("admits the same observed occurrence independently for each matching Automation", async () => {
@@ -2121,7 +2098,7 @@ describe("Automation Conversation admission database boundary", () => {
         await expect(db.automationRun.count({ where: { accountId: ACCOUNT_ID } })).resolves.toBe(0);
     });
 
-    it("refuses sealed evidence that is not current for this Account key and version", async () => {
+    it("refuses a changed Account key but admits unchanged sealed Conversation evidence after unrelated publication", async () => {
         const account = await configureE2eeAccount();
 
         // Current Account version, superseded content key. Only the content-key
@@ -2144,31 +2121,28 @@ describe("Automation Conversation admission database boundary", () => {
             checkpointSafe: false,
         });
 
-        // Current content key, but the Account version advanced between sealing
-        // and admission. Only the exact version match on a new insert can
-        // refuse this; the fingerprint still agrees.
+        // An unrelated publication between sealing and admission changes no
+        // content identity or permission for this immutable occurrence.
         const supersededVersion = encryptedConversationHostEvidence({ account, nonceSeed: 12 });
-        const advanced = await db.account.update({
-            where: { id: ACCOUNT_ID },
-            data: { seq: { increment: 1 } },
-            select: { seq: true },
+        await inTx(async tx => {
+            await markAccountChanged(tx, { accountId: ACCOUNT_ID, kind: "kv", entityId: "unrelated-conversation-write" });
         });
+        const advanced = await db.account.findUniqueOrThrow({ where: { id: ACCOUNT_ID }, select: { seq: true } });
         expect(advanced.seq).not.toBe(supersededVersion.accountCurrentness.version);
         await expect(admitEncryptedAutomationConversationV1({
             accountId: ACCOUNT_ID,
             caller,
             hostEvidence: supersededVersion,
         })).resolves.toEqual({
-            kind: "blocked",
-            reason: "temporarilyUnavailable",
-            checkpointSafe: false,
+            kind: "admitted",
+            runId: expect.any(String),
+            checkpointSafe: true,
         });
 
-        await expect(db.automationRun.count({ where: { accountId: ACCOUNT_ID } })).resolves.toBe(0);
+        await expect(db.automationRun.count({ where: { accountId: ACCOUNT_ID } })).resolves.toBe(1);
 
-        // Positive twin: the same producer witnessing the now-current Account
-        // version is admitted, so neither refusal above is the arm simply
-        // being broken.
+        // A newly sealed replay with a newer transported cursor rejoins the
+        // same evidence identity without creating another Run.
         await expect(admitEncryptedAutomationConversationV1({
             accountId: ACCOUNT_ID,
             caller,
@@ -2180,7 +2154,7 @@ describe("Automation Conversation admission database boundary", () => {
                 },
             },
         })).resolves.toEqual({
-            kind: "admitted",
+            kind: "rejoined",
             runId: expect.any(String),
             checkpointSafe: true,
         });

@@ -9,10 +9,11 @@ import { acquireTeamMutationAccountAdmissionInTx } from "../memberships/sessionA
 import { admitTeamCredentialWithdrawalInTx } from "./resourceWithdrawalAdmission";
 import { readSessionAccountCursorAudienceInTx } from "@/app/session/changeTracking/acquireSessionAccountCursorLocksInTx";
 import { acquireTeamMutationLockInTx, resolveTeamActorContextInTx, type TeamOperationAuthenticationContext } from "../actorContext";
-import { resolveTeamCredentialEntitlementInTx } from "./resourceAccess";
+import { resolveTeamCredentialEntitlementInTx, resolveTeamCredentialEntitlementsInTx } from "./resourceAccess";
 import { qualifyTeamCredentialOperationInTx } from "./resourceRead";
 import {
     parsePublishedTeamCredentialSourceVersions,
+    projectTeamCredentialDirectSourceCurrentnesses,
     listTeamCredentialDirectSourceMembersInTx,
     resolveTeamCredentialSourceMemberCurrentnessInTx,
     resolveTeamCredentialResourceSourceInTx,
@@ -159,12 +160,12 @@ export async function readTeamCredentialDirectMaterialCensusInTx(
             recipientContentPublicKeyFingerprint: true,
         },
     });
+    const entitlements = await resolveTeamCredentialEntitlementsInTx(tx, {
+        resourceId: resource.id, accountIds: page.map(membership => membership.accountId),
+    });
     const recipients = [];
     for (const membership of page) {
-        const entitlement = await resolveTeamCredentialEntitlementInTx(tx, {
-            resourceId: resource.id,
-            accountId: membership.accountId,
-        });
+        const entitlement = entitlements.get(membership.accountId)!;
         if (!entitlement.ok || !entitlement.mayReceiveDirect) continue;
         const encryption = deriveAccountEncryptionCurrentnessFromRow(membership.account);
         if (encryption.status !== "ready") {
@@ -241,12 +242,12 @@ export async function retainEntitledTeamCredentialRecipientMaterialInTx(
         select: { recipientAccountId: true },
         distinct: ["recipientAccountId"],
     });
+    const entitlements = await resolveTeamCredentialEntitlementsInTx(tx, {
+        resourceId: input.resourceId, accountIds: rows.map(row => row.recipientAccountId),
+    });
     const unentitled: string[] = [];
     for (const row of rows) {
-        const entitlement = await resolveTeamCredentialEntitlementInTx(tx, {
-            resourceId: input.resourceId,
-            accountId: row.recipientAccountId,
-        });
+        const entitlement = entitlements.get(row.recipientAccountId)!;
         if (!entitlement.ok || !entitlement.mayReceiveDirect) unentitled.push(row.recipientAccountId);
     }
     if (unentitled.length === 0) return;
@@ -356,12 +357,12 @@ export async function prepareTeamCredentialRecipientMaterialInTx(
         },
     });
     const existingByRecipient = new Map(materials.map(row => [row.recipientAccountId, row]));
+    const entitlements = await resolveTeamCredentialEntitlementsInTx(tx, {
+        resourceId: resource.id, accountIds: page.map(row => row.accountId),
+    });
     const recipients = [];
     for (const row of page) {
-        const entitlement = await resolveTeamCredentialEntitlementInTx(tx, {
-            resourceId: resource.id,
-            accountId: row.accountId,
-        });
+        const entitlement = entitlements.get(row.accountId)!;
         if (!entitlement.ok || !entitlement.mayReceiveDirect) continue;
         const encryption = deriveAccountEncryptionCurrentnessFromRow(row.account);
         if (encryption.status !== "ready") continue;
@@ -496,6 +497,21 @@ export async function readTeamCredentialRecipientMaterialInTx(
     ) {
         return { ok: false, reason: "recipient_mode_mismatch" };
     }
+    return readAdmittedTeamCredentialRecipientTupleInTx(tx, input);
+}
+
+/** Assemble stored material from the caller's admitted source and recipient binding. */
+async function readAdmittedTeamCredentialRecipientTupleInTx(
+    tx: Tx,
+    input: Readonly<{
+        resourceId: string;
+        recipientAccountId: string;
+        sourceMemberKey: string;
+        expectedSourceVersion: string | null;
+        recipientMode: RecipientMode;
+        expectedRecipientContentPublicKeyFingerprint: string | null;
+    }>,
+): Promise<TeamCredentialRecipientMaterialReadResult> {
     const row = await tx.teamCredentialRecipientMaterial.findUnique({
         where: {
             resourceId_recipientAccountId_sourceMemberKey: {
@@ -613,31 +629,9 @@ export async function readCurrentTeamCredentialRecipientMaterialInTx(
             service: input.disclosedMember.service,
             connectedAccountId: input.disclosedMember.accountId,
         });
-    const entitlement = await resolveTeamCredentialEntitlementInTx(tx, {
-        resourceId: input.resourceId,
-        accountId: input.recipientAccountId,
-    });
-    if (!entitlement.ok || !entitlement.mayReceiveDirect) {
-        return { ok: false as const, outcome: "unavailable" as const, reason: "access_removed" as const };
-    }
-    const source = parseResourceSource(resource.sourceBindingJson);
-    if (!source) return { ok: false as const, outcome: "unavailable" as const, reason: "resource_corrupt" as const };
-    const sourceResolution = await resolveTeamCredentialResourceSourceInTx(tx, {
-        custodianAccountId: resource.custodianAccountId,
-        source,
-    });
-    if (sourceResolution.status !== "current") {
-        return { ok: false as const, outcome: "unavailable" as const, reason: sourceResolution.reason === "invalid_source_binding"
-            ? "resource_corrupt" as const
-            : "source_changed" as const };
-    }
-    const sourceCurrentness = await resolveTeamCredentialSourceMemberCurrentnessInTx(tx, {
-        deliveryMode: 'direct',
-        custodianAccountId: resource.custodianAccountId,
-        source,
-        sourceMemberKey,
-    });
-    if (sourceCurrentness.status !== "current") {
+    const sourceCurrentness = projectTeamCredentialDirectSourceCurrentnesses(admitted.sourceBinding, admitted.source)
+        .find(member => computeTeamCredentialSourceMemberKeyV1(member.sourceMember) === sourceMemberKey);
+    if (!sourceCurrentness) {
         return { ok: false as const, outcome: "unavailable" as const, reason: "source_changed" as const };
     }
     const publishedSourceVersions = parsePublishedTeamCredentialSourceVersions(resource.directSourceVersionsJson);
@@ -647,38 +641,23 @@ export async function readCurrentTeamCredentialRecipientMaterialInTx(
         && (publishedSourceVersion === null || !matchesTeamCredentialSourceVersionBasisV1(publishedSourceVersion, sourceCurrentness.sourceVersion))) {
         return { ok: false as const, outcome: "unavailable" as const, reason: "source_changed" as const };
     }
-    const [recipient, row] = await Promise.all([
-        tx.account.findUnique({
-            where: { id: input.recipientAccountId },
-            select: { publicKey: true, encryptionMode: true, contentPublicKey: true, contentPublicKeySig: true },
-        }),
-        tx.teamCredentialRecipientMaterial.findUnique({
-            where: { resourceId_recipientAccountId_sourceMemberKey: {
-                resourceId: input.resourceId,
-                recipientAccountId: input.recipientAccountId,
-                sourceMemberKey,
-            } },
-            select: { sourceVersion: true },
-        }),
-    ]);
+    const recipient = await tx.account.findUnique({
+        where: { id: input.recipientAccountId },
+        select: { publicKey: true, encryptionMode: true, contentPublicKey: true, contentPublicKeySig: true },
+    });
     if (!recipient) return { ok: false as const, outcome: "unavailable" as const, reason: "resource_corrupt" as const };
     const currentness = deriveAccountEncryptionCurrentnessFromRow(recipient);
     if (currentness.status !== "ready") return { ok: false as const, outcome: "unavailable" as const, reason: "recipient_binding_changed" as const };
-    if (!row) return { ok: false as const, outcome: "unavailable" as const, reason: "preparing" as const };
-    if (publishedSourceVersion === null || row.sourceVersion !== publishedSourceVersion) {
-        return { ok: false as const, outcome: "unavailable" as const, reason: "source_changed" as const };
-    }
-    const material = await readTeamCredentialRecipientMaterialInTx(tx, {
+    const material = await readAdmittedTeamCredentialRecipientTupleInTx(tx, {
         resourceId: input.resourceId,
         recipientAccountId: input.recipientAccountId,
         sourceMemberKey,
-        expectedSourceVersion: row.sourceVersion,
+        expectedSourceVersion: publishedSourceVersion,
         recipientMode: currentness.currentness.encryptionMode,
         expectedRecipientContentPublicKeyFingerprint: currentness.currentness.contentPublicKeyFingerprint,
     });
     if (!material.ok) {
-        // A recipient key/mode change racing the read is a recipient-binding
-        // change at this boundary, not a distinct caller-visible vocabulary.
+        // Stored recipient binding mismatches share this boundary's vocabulary.
         return {
             ok: false as const,
             outcome: "unavailable" as const,

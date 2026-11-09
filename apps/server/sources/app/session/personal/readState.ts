@@ -312,7 +312,7 @@ export async function beginViewerReadTrackingOnFollowEntryInTx(params: Readonly<
  */
 export async function advanceCaughtUpViewerReadCursorsInTx(
     tx: ReadStateClient & SessionReader,
-    params: Readonly<{ sessionId: string; previousVisibleSeq: number; nextVisibleSeq: number }>,
+    params: Readonly<{ sessionId: string; previousVisibleSeq: number; nextVisibleSeq: number; ownerAccountId?: string }>,
 ): Promise<number> {
     const previous = normalizeReadSeq(params.previousVisibleSeq) ?? 0;
     const next = normalizeReadSeq(params.nextVisibleSeq) ?? 0;
@@ -336,7 +336,7 @@ export async function advanceCaughtUpViewerReadCursorsInTx(
  */
 export async function stampViewerUnreadEntryInTx(
     tx: ReadStateClient & SessionReader,
-    params: Readonly<{ sessionId: string; visibleSessionSeq: number; at: Date }>,
+    params: Readonly<{ sessionId: string; visibleSessionSeq: number; at: Date; ownerAccountId?: string }>,
 ): Promise<number> {
     const visible = normalizeReadSeq(params.visibleSessionSeq) ?? 0;
     if (visible <= 0) return 0;
@@ -361,15 +361,16 @@ export async function stampViewerUnreadEntryInTx(
  */
 export async function listRelevantAccountIdsForSessionBadgeRefreshInTx(
     tx: SessionReader,
-    params: Readonly<{ sessionId: string }>,
+    params: Readonly<{ sessionId: string; ownerAccountId?: string }>,
 ): Promise<readonly string[]> {
-    const session = await tx.session.findUnique({
+    // A writer that already holds the Session row passes its owner; only other callers read it.
+    const ownerAccountId = params.ownerAccountId ?? (await tx.session.findUnique({
         where: { id: params.sessionId },
         select: { accountId: true },
-    });
-    if (!session) return [];
+    }))?.accountId;
+    if (!ownerAccountId) return [];
     const following = await listActivelyFollowingAccountIdsInTx(tx, { sessionId: params.sessionId });
-    return [...new Set([session.accountId, ...following])];
+    return [...new Set([ownerAccountId, ...following])];
 }
 
 export async function listRelevantAccountIdsForSessionBadgeRefresh(

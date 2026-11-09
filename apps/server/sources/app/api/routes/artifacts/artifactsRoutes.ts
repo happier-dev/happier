@@ -1,4 +1,4 @@
-import { ArtifactTemplateAcceptedVersionInputV1Schema, ArtifactTemplateAcceptedVersionResponseV1Schema } from '@happier-dev/protocol/artifacts/artifactAccessV1';
+import { projectArtifactHttpRead } from '@/app/artifacts/artifactHttpRead';
 import { createArtifactHttpMutation, updateArtifactHttpMutation } from '@/app/artifacts/artifactMutationHttpResponse';
 import { ARTIFACT_LIST_PAGE_MAX_ITEMS_V1 } from '@happier-dev/protocol/artifacts/artifactListSelectionV1';
 import { registerArtifactUploadRoutes } from './registerArtifactUploadRoutes';
@@ -19,7 +19,6 @@ import {
     removeArtifactAccessGrantInTx,
     setArtifactAccessGrantInTx,
     reportArtifactTemplateAcceptedVersionInTx,
-    type ArtifactForCaller,
     type ArtifactListItemForCaller,
 } from "@/app/artifacts/artifactAccessService";
 import { ArtifactHttpReadV1Schema, ArtifactReadBatchHttpInputV1Schema, ArtifactReadBatchHttpResponseV1Schema,
@@ -33,20 +32,31 @@ import { createArtifact, deleteArtifact, updateArtifact } from "@/app/artifacts/
 import { listArtifactBodyRevisions, restoreArtifactBodyRevision } from "@/app/artifacts/artifactRevisionService";
 import { ArtifactStorageSizeUnavailableError, readArtifactStorageUsageInTx } from "@/app/artifacts/artifactStorageService";
 import { readArtifactBlob } from '@/app/artifacts/artifactBlobService';
-import { resolveIsolatedStoredContentPublicShareOrigin } from '@/app/share/storedContentPublicShareOrigin';
-import { registerArtifactHtmlViewerRoutes } from '../share/registerPublicShareViewerRoutes';
-import { readHomeConfigEnv } from '@/app/home/settings/homeSettings';
 import { resolveApiHotEndpointRateLimit } from "@/app/api/utils/apiRateLimitCatalog";
 import { ArtifactCallerAccessV1Schema, ArtifactAccessGrantSetStorageInputV1Schema, ArtifactAccessGrantRemoveInputV1Schema, ArtifactAccessGrantsListResponseV1Schema, ArtifactAccessGrantMutationResponseV1Schema, ArtifactAccessRecipientCensusResponseV1Schema, ArtifactRecipientKeyEnvelopeCommitInputV1Schema, ArtifactRecipientKeyEnvelopeCommitResponseV1Schema, ArtifactAccessErrorCodeV1Schema } from '@happier-dev/protocol/artifacts/artifactAccessV1';
 import { ArtifactRevisionListResponseV1Schema, ArtifactStorageUsageV1Schema, ArtifactQuotaExceededV1Schema } from '@happier-dev/protocol/artifacts/artifactActionsV1';
-import { ArtifactBlobWriteV1Schema, ArtifactBlobReadResponseV1Schema } from '@happier-dev/protocol/artifacts/artifactBinaryV1';
-import { ArtifactHtmlPreviewResponseV1Schema } from '@happier-dev/protocol/artifacts/artifactHtmlV1';
+import { ArtifactBlobReadResponseV1Schema } from '@happier-dev/protocol/artifacts/artifactBinaryV1';
 import { ArtifactAccountEncryptionMigrationInventoryV1Schema } from '@happier-dev/protocol/artifacts/artifactAccountEncryptionMigrationV1';
-import { CoordinationMessageRefV1Schema } from '@happier-dev/protocol/discussions/messageRefs';
 import { readSessionAccessAuthenticationFromRequest } from '@/app/session/access/sessionAccessAuthentication';
-import { ApprovalArtifactQueryHintsV1Schema, ApprovalArtifactStateV1Schema, type ApprovalArtifactStateV1 } from '@happier-dev/protocol/approvals/approvalArtifactKindV1';
+import { ApprovalArtifactStateV1Schema, type ApprovalArtifactStateV1 } from '@happier-dev/protocol/approvals/approvalArtifactKindV1';
+import { createArtifactUpdateHttpInputV1Schema } from '@/app/artifacts/artifactMutationHttpContract';
+import { createArtifactCreateHttpInputV1Schema } from '@happier-dev/protocol';
+import type { FastifyRequest } from 'fastify';
+import { createDeploymentCandidateArtifactMutationGuard, isDeploymentCandidatePublicationEffect } from '@/app/deployments/deploymentPreparationAuthorization';
+import { ArtifactTemplateAcceptedVersionInputV1Schema, ArtifactTemplateAcceptedVersionResponseV1Schema } from '@happier-dev/protocol/artifacts/artifactAccessV1';
 
 const DEFAULT_ARTIFACT_LIST_LIMIT = ARTIFACT_LIST_PAGE_MAX_ITEMS_V1;
+
+/** Only the authentication decorator's verified binding can carry native publication custody. */
+function candidateMutationGuard(request: FastifyRequest, artifactId: string) {
+    const binding = request.externalActionExecutionAuthorizationBinding;
+    if (request.externalActionExecutionAuthorized !== true || !binding
+        || !isDeploymentCandidatePublicationEffect(binding, request.externalActionEffectActionId ?? '')) return undefined;
+    return createDeploymentCandidateArtifactMutationGuard({ binding, artifactId,
+        effectActionId: request.externalActionEffectActionId ?? '',
+        proof: { method: request.method, path: request.url, body: request.body },
+    });
+}
 
 const artifactListItemSchema = z.object({
     id: z.string(), kind: z.nullable(ArtifactCoarseKindV1Schema), header: z.string(), headerVersion: z.number(),
@@ -56,6 +66,7 @@ const artifactListItemSchema = z.object({
     createdAt: z.number(), updatedAt: z.number(), ownerAccountId: z.string(), access: ArtifactCallerAccessV1Schema,
     ownerDisplayName: ArtifactHttpReadV1Schema.shape.ownerDisplayName,
     publicAudience: z.enum(['retained', 'none']),
+    sharedTeamIds: z.optional(z.array(z.string())),
     encryptionMode: ArtifactAccessRecipientCensusResponseV1Schema.shape.encryptionMode,
 });
 
@@ -64,22 +75,9 @@ function projectArtifactListItem(artifact: ArtifactListItemForCaller) {
         ...(artifact.ownerDisplayName === undefined ? {} : { ownerDisplayName: artifact.ownerDisplayName }),
         id: artifact.id, kind: artifact.kind, ...(artifact.kindHint === undefined ? {} : { kindHint: artifact.kindHint }), ownerAccountId: artifact.ownerAccountId, access: artifact.access,
         publicAudience: artifact.publicAudience,
+        ...(artifact.sharedTeamIds === undefined ? {} : { sharedTeamIds: [...artifact.sharedTeamIds] }),
         encryptionMode: artifact.encryptionMode, header: privacyKit.encodeBase64(artifact.header), headerVersion: artifact.headerVersion,
         ...(artifact.body === undefined ? {} : { body: privacyKit.encodeBase64(artifact.body) }), bodyVersion: artifact.bodyVersion,
-        provenance: artifact.provenance ? privacyKit.encodeBase64(artifact.provenance) : null,
-        provenanceDataEncryptionKey: artifact.provenanceDataEncryptionKey ? privacyKit.encodeBase64(artifact.provenanceDataEncryptionKey) : null,
-        dataEncryptionKey: privacyKit.encodeBase64(artifact.dataEncryptionKey), seq: artifact.seq,
-        createdAt: artifact.createdAt.getTime(), updatedAt: artifact.updatedAt.getTime(),
-    };
-}
-
-/** Both read transports project the same caller-authorized bytes and exposure facts. */
-function projectArtifactHttpRead(artifact: ArtifactForCaller & { publicAudience: 'retained' | 'none' }) {
-    return {
-        ...(artifact.ownerDisplayName === undefined ? {} : { ownerDisplayName: artifact.ownerDisplayName }),
-        id: artifact.id, kind: artifact.kind, ...(artifact.kindHint === undefined ? {} : { kindHint: artifact.kindHint }), ownerAccountId: artifact.ownerAccountId, access: artifact.access, encryptionMode: artifact.encryptionMode,
-        header: privacyKit.encodeBase64(artifact.header), headerVersion: artifact.headerVersion,
-        body: privacyKit.encodeBase64(artifact.body), bodyVersion: artifact.bodyVersion, publicAudience: artifact.publicAudience,
         provenance: artifact.provenance ? privacyKit.encodeBase64(artifact.provenance) : null,
         provenanceDataEncryptionKey: artifact.provenanceDataEncryptionKey ? privacyKit.encodeBase64(artifact.provenanceDataEncryptionKey) : null,
         dataEncryptionKey: privacyKit.encodeBase64(artifact.dataEncryptionKey), seq: artifact.seq,
@@ -120,7 +118,6 @@ function parseArtifactListCursor(value: string | undefined): { updatedAt: Date; 
 export function artifactsRoutes(app: Fastify) {
     registerArtifactEditProposalRoutes(app);
     registerArtifactUploadRoutes(app);
-    registerArtifactHtmlViewerRoutes(app);
     app.get('/v1/account/encryption/artifacts', {
         preHandler: app.authenticate,
         config: { rateLimit: resolveApiHotEndpointRateLimit(process.env, 'artifacts') },
@@ -132,22 +129,6 @@ export function artifactsRoutes(app: Fastify) {
         const inventory = await inReadSnapshot(tx => readArtifactAccountEncryptionMigrationInventoryInTx({ tx, accountId: request.userId,
             afterId: request.query.afterId, limit: request.query.limit ?? DEFAULT_ARTIFACT_LIST_LIMIT }));
         return inventory ? reply.send(inventory) : reply.code(503).send({ error: 'artifact_content_unavailable' });
-    });
-    app.get('/v1/artifacts/:id/html-preview', {
-        preHandler: app.authenticate,
-        config: { rateLimit: resolveApiHotEndpointRateLimit(process.env, 'artifacts') },
-        schema: { params: z.strictObject({ id: z.string().check(z.minLength(1)) }), response: {
-            200: ArtifactHtmlPreviewResponseV1Schema,
-            404: z.object({ error: z.literal('Artifact not found') }),
-            503: z.object({ error: z.enum(['artifact_content_unavailable', 'artifact_html_isolation_unavailable']) }),
-        } },
-    }, async (request, reply) => {
-        const read = await readArtifactForCaller({ actorAccountId: request.userId, artifactId: request.params.id });
-        if (!read.ok) return read.error === 'artifact_not_found'
-            ? reply.code(404).send({ error: 'Artifact not found' }) : reply.code(503).send({ error: 'artifact_content_unavailable' });
-        const origin = resolveIsolatedStoredContentPublicShareOrigin(request.params.id, await readHomeConfigEnv());
-        if (!origin) return reply.code(503).send({ error: 'artifact_html_isolation_unavailable' });
-        return reply.send({ url: `${origin}/a/${encodeURIComponent(request.params.id)}` });
     });
     app.get('/v1/artifacts/:id/blobs/:blobId', {
         preHandler: app.authenticate,
@@ -399,7 +380,8 @@ export function artifactsRoutes(app: Fastify) {
         const userId = request.userId;
         const { id } = request.params;
 
-        const read = await readArtifactForCaller({ actorAccountId: userId, artifactId: id });
+        const read = await readArtifactForCaller({ actorAccountId: userId, artifactId: id,
+            admittedContent: request.externalActionDeploymentChildArtifactRead });
         if (!read.ok) {
             const refusal = projectArtifactHttpReadFailure(read, userId);
             return reply.code(refusal.status).send({ error: refusal.error });
@@ -422,7 +404,6 @@ export function artifactsRoutes(app: Fastify) {
         });
         return result.ok ? reply.send(result.value) : reply.code(accessErrorStatus(result.error)).send({ error: result.error });
     });
-
     app.get('/v1/artifacts/:id/access/grants', {
         preHandler: app.authenticate,
         schema: { params: accessParams, response: { 200: ArtifactAccessGrantsListResponseV1Schema, ...accessErrors } },
@@ -439,7 +420,8 @@ export function artifactsRoutes(app: Fastify) {
         // The Artifact owner admits and rechecks the audience before its parent
         // lock, fencing mode/key changes. A Serializable snapshot instead goes
         // stale whenever a peer publishes on those same Account rows.
-        const result = await inTx(tx => setArtifactAccessGrantInTx(tx, { ...request.body, actorAccountId: request.userId }), {
+        const mutationGuard = candidateMutationGuard(request, request.params.id);
+        const result = await inTx(tx => setArtifactAccessGrantInTx(tx, { ...request.body, actorAccountId: request.userId }, mutationGuard), {
             isolationLevel: "ReadCommitted", transactionClass: "artifact-access-grant-set",
         });
         return result.ok ? reply.send(result.value) : reply.code(accessErrorStatus(result.error)).send({ error: result.error });
@@ -468,7 +450,8 @@ export function artifactsRoutes(app: Fastify) {
             response: { 200: ArtifactRecipientKeyEnvelopeCommitResponseV1Schema, ...accessErrors } },
     }, async (request, reply) => {
         if (request.body.artifactId !== request.params.id) return reply.code(400).send({ error: "artifact_not_found" });
-        const result = await inTx(tx => commitArtifactRecipientKeyEnvelopesInTx(tx, { ...request.body, actorAccountId: request.userId }), {
+        const mutationGuard = candidateMutationGuard(request, request.params.id);
+        const result = await inTx(tx => commitArtifactRecipientKeyEnvelopesInTx(tx, { ...request.body, actorAccountId: request.userId }, mutationGuard), {
             isolationLevel: "ReadCommitted", transactionClass: "artifact-recipient-key-envelopes-commit",
         });
         return result.ok ? reply.send(result.value) : reply.code(accessErrorStatus(result.error)).send({ error: result.error });
@@ -478,38 +461,9 @@ export function artifactsRoutes(app: Fastify) {
     const registerCreateArtifactRoute = (url: string, requiresBlob: boolean, requiresMemoryDecisionSource = false) => app.post(url, {
         preHandler: app.authenticate,
         schema: {
-            body: z.strictObject({
-                id: z.string().check(z.uuid()),
-                kind: z.optional(ArtifactStoredKindV1Schema),
-                approvalState: z.optional(ApprovalArtifactQueryHintsV1Schema.shape.approvalState),
-                approvalSessionId: z.optional(ApprovalArtifactQueryHintsV1Schema.shape.approvalSessionId),
-                header: z.string(),
-                body: z.string(),
-                dataEncryptionKey: z.string(),
-                blob: z.optional(ArtifactBlobWriteV1Schema),
-                memoryDecisionSource: requiresMemoryDecisionSource ? CoordinationMessageRefV1Schema : z.optional(z.never()),
-                provenance: z.optional(z.nullable(z.string())),
-                provenanceDataEncryptionKey: z.optional(z.nullable(z.string())),
-            }).check(z.refine(value => requiresBlob ? value.blob !== undefined : value.blob === undefined)),
+            body: createArtifactCreateHttpInputV1Schema({ requiresBlob, requiresMemoryDecisionSource }),
             response: {
-                200: z.object({
-                    id: z.string(),
-                    kind: z.nullable(ArtifactCoarseKindV1Schema),
-                    kindHint: z.optional(z.nullable(z.string())),
-                    header: z.string(),
-                    headerVersion: z.number(),
-                    body: z.string(),
-                    bodyVersion: z.number(),
-                    provenance: z.optional(z.nullable(z.string())),
-                    provenanceDataEncryptionKey: z.optional(z.nullable(z.string())),
-                    dataEncryptionKey: z.string(),
-                    seq: z.number(),
-                    createdAt: z.number(),
-                    updatedAt: z.number(),
-                    ownerAccountId: z.string(),
-                    access: ArtifactCallerAccessV1Schema,
-                    encryptionMode: ArtifactAccessRecipientCensusResponseV1Schema.shape.encryptionMode,
-                }),
+                200: ArtifactHttpReadV1Schema,
                 403: z.object({ error: z.string() }),
                 404: z.object({ error: z.literal('memory_decision_source_unavailable') }),
                 409: z.object({ error: z.enum(['Artifact with this ID already exists for another account', 'memory_decision_source_unsupported']) }),
@@ -520,12 +474,13 @@ export function artifactsRoutes(app: Fastify) {
                 500: z.object({
                     error: z.literal('Failed to create artifact')
                 }),
-                503: z.object({ error: z.enum(['database_transaction_conflict_exhausted', 'database_connection_unavailable']), statusCode: z.literal(503) }),
+                503: z.object({ error: z.enum(['database_transaction_conflict_exhausted', 'database_transaction_timeout', 'database_connection_unavailable']), statusCode: z.literal(503) }),
             }
         }
     }, async (request, reply) => {
         const result = await createArtifactHttpMutation(request.userId, request.body,
-            request.body.memoryDecisionSource === undefined ? undefined : readSessionAccessAuthenticationFromRequest(request));
+            request.body.memoryDecisionSource === undefined ? undefined : readSessionAccessAuthenticationFromRequest(request),
+            candidateMutationGuard(request, request.body.id));
         return reply.code(result.statusCode).send(result.body);
     });
 
@@ -540,19 +495,7 @@ export function artifactsRoutes(app: Fastify) {
             params: z.object({
                 id: z.string()
             }),
-            body: z.strictObject({
-                header: z.optional(z.string()),
-                kind: z.optional(ArtifactStoredKindV1Schema),
-                approvalState: z.optional(ApprovalArtifactQueryHintsV1Schema.shape.approvalState),
-                approvalSessionId: z.optional(ApprovalArtifactQueryHintsV1Schema.shape.approvalSessionId),
-                expectedHeaderVersion: z.optional(z.number().check(z.int(), z.minimum(0))),
-                body: z.optional(z.string()),
-                expectedBodyVersion: z.optional(z.number().check(z.int(), z.minimum(0))),
-                provenance: z.optional(z.nullable(z.string())),
-                provenanceDataEncryptionKey: z.optional(z.nullable(z.string())),
-                blob: z.optional(z.nullable(ArtifactBlobWriteV1Schema)),
-                memoryDecisionSource: requiresMemoryDecisionSource ? CoordinationMessageRefV1Schema : z.optional(z.never()),
-            }).check(z.refine(value => requiresBlob ? value.blob !== undefined : value.blob === undefined)),
+            body: createArtifactUpdateHttpInputV1Schema({ requiresBlob, requiresMemoryDecisionSource }),
             response: {
                 200: z.union([
                     z.object({
@@ -579,12 +522,13 @@ export function artifactsRoutes(app: Fastify) {
                 500: z.object({
                     error: z.literal('Failed to update artifact')
                 }),
-                503: z.object({ error: z.enum(['database_transaction_conflict_exhausted', 'database_connection_unavailable']), statusCode: z.literal(503) }),
+                503: z.object({ error: z.enum(['database_transaction_conflict_exhausted', 'database_transaction_timeout', 'database_connection_unavailable']), statusCode: z.literal(503) }),
             }
         }
     }, async (request, reply) => {
         const result = await updateArtifactHttpMutation(request.userId, request.params.id, request.body,
-            request.body.memoryDecisionSource === undefined ? undefined : readSessionAccessAuthenticationFromRequest(request));
+            request.body.memoryDecisionSource === undefined ? undefined : readSessionAccessAuthenticationFromRequest(request),
+            candidateMutationGuard(request, request.params.id));
         return reply.code(result.statusCode).send(result.body);
     });
 

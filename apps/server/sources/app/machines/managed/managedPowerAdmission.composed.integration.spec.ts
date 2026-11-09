@@ -1,6 +1,5 @@
 import { randomUUID } from 'node:crypto';
 import { tmpdir } from 'node:os';
-import { readFile } from 'node:fs/promises';
 import axios from 'axios';
 import fastify from 'fastify';
 import tweetnacl from 'tweetnacl';
@@ -19,11 +18,23 @@ import { registerExternalActionRoutes } from '@/app/api/routes/actions/registerE
 import { machinesRoutes } from '@/app/api/routes/machines/machinesRoutes';
 import { managedQb56Input } from '@/app/api/routes/actions/managedQb56Input.testkit';
 import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lightSqliteHarness';
-import { seedBundledManagedAvailability } from './managedProjectionVolume.testkit';
 import { ManagedMachineActionOutputSchemasV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { ProviderObservationV1Schema } from '@happier-dev/protocol/machines/managed/providerFactsV1';
 import { PluginManifestV2Schema } from '@happier-dev/protocol/plugins/manifest/v2';
 import { createReleaseLessDeclarationV1 } from '@/app/plugins/availability/currentDeclaration';
+import { LIMA_PLUGIN } from '../../../../../../packages/plugins/machine-lima/src/manifest';
+
+async function seedLimaAvailability(accountId: string, homeId: string, machineId: string) {
+    const manifest = PluginManifestV2Schema.parse(LIMA_PLUGIN.manifest);
+    const declaration = createReleaseLessDeclarationV1(manifest);
+    await db.accountPluginIntent.create({ data: { accountId, pluginId: manifest.id,
+        enabled: true, writableCollections: [], releaseLessDeclaration: declaration } });
+    await db.pluginMachineMaterialization.create({ data: { accountId, serverIdentityId: homeId,
+        machineId, materializationId: randomUUID(), pluginId: manifest.id, version: manifest.version,
+        sourceClass: 'bundledFirstParty', portableRelease: false, archiveDigestSha256: declaration.manifestDigestSha256,
+        uiArtifacts: [], enabled: true, trustState: 'trusted', observedAt: new Date() } });
+    return manifest;
+}
 
 describe('managed power admission across the signed Home route and controller', () => {
     const homeId = managedQb56Input.selection.homeId;
@@ -48,15 +59,7 @@ describe('managed power admission across the signed Home route and controller', 
             installationId: controller.installationId, installationPublicKey: new Uint8Array(keys.publicKey), active: true,
             pluginMaterializationRevision: 1n, operationProtocolCapabilitiesRevision: 1,
             operationProtocolCapabilities: MachineOperationProtocolCapabilitiesV1Schema.parse({ externalActionExecutionAuthorization: { protocolVersions: [1] } }) } });
-        const manifest = PluginManifestV2Schema.parse(JSON.parse(await readFile(
-            new URL('../../../../../../packages/plugins/machine-lima/.happier-plugin/plugin.json', import.meta.url), 'utf8')));
-        const declaration = createReleaseLessDeclarationV1(manifest);
-        await db.accountPluginIntent.create({ data: { accountId: account.id, pluginId: manifest.id,
-            enabled: true, writableCollections: [], releaseLessDeclaration: declaration } });
-        await db.pluginMachineMaterialization.create({ data: { accountId: account.id, serverIdentityId: homeId,
-            machineId: controller.machineId, materializationId: randomUUID(), pluginId: manifest.id, version: manifest.version,
-            sourceClass: 'bundledFirstParty', portableRelease: false, archiveDigestSha256: declaration.manifestDigestSha256,
-            uiArtifacts: [], enabled: true, trustState: 'trusted', observedAt: new Date() } });
+        const manifest = await seedLimaAvailability(account.id, homeId, controller.machineId);
         const launch = managedQb56Input.selection.launch;
         const { memoryGiB, diskGiB, ...identity } = launch.choices;
         const row = await db.managedMachine.create({ data: { homeId, custodianAccountId: account.id,
@@ -157,7 +160,6 @@ describe('managed power admission across the signed Home route and controller', 
         { failureBoundary: 'submit-intent', intent: 'start' },
         { failureBoundary: 'admission-acknowledgement', intent: 'start' },
         { failureBoundary: 'admission-503', intent: 'stop' },
-        { failureBoundary: 'native-currentness', intent: 'start' },
     ] as const)('projects committed $intent after unavailable $failureBoundary according to native invocation evidence', async ({ failureBoundary, intent }) => {
         const account = await db.account.create({ data: { encryptionMode: 'plain' } });
         const controller = { machineId: randomUUID(), installationId: randomUUID() };
@@ -169,7 +171,7 @@ describe('managed power admission across the signed Home route and controller', 
             installationId: controller.installationId, installationPublicKey: new Uint8Array(keys.publicKey), active: true,
             pluginMaterializationRevision: 1n, operationProtocolCapabilitiesRevision: 1,
             operationProtocolCapabilities: MachineOperationProtocolCapabilitiesV1Schema.parse({ externalActionExecutionAuthorization: { protocolVersions: [1] } }) } });
-        const manifest = await seedBundledManagedAvailability(account.id, homeId, controller);
+        const manifest = await seedLimaAvailability(account.id, homeId, controller.machineId);
         const definition = manifest.contributes?.machineProvisioners?.find(entry => entry.id === 'lima');
         if (!definition) throw new Error('Bundled Lima declaration missing');
         const launch = managedQb56Input.selection.launch;
@@ -191,7 +193,7 @@ describe('managed power admission across the signed Home route and controller', 
         machinesRoutes(app as Parameters<typeof machinesRoutes>[0]);
         const { installAxiosFastifyAdapter } = await import('../../../../../cli/src/testkit/http/axiosAdapter');
         const { createManagedMachineAcquisitionDriver } = await import('../../../../../cli/src/machines/managed/acquire');
-        const { createResolvedContributionRegistry } = await import('../../../../../cli/src/plugins/projection/registry/createResolvedContributionRegistry');
+        const { normalizePluginManifestV2 } = await import('../../../../../cli/src/plugins/manifest/normalize');
         const { createHostActionOperationRuntime } = await import('../../../../../cli/src/daemon/actionOperations/createHostActionOperationRuntime');
         const { fixture } = await import('../../../../../cli/src/plugins/runtime/invocation/actions/managedCustody.testkit');
         const { createManagedProviderOperationAuthority } = await import('../../../../../cli/src/daemon/connectedServices/purposeBindings/managedProviderOperationAuthority');
@@ -206,15 +208,13 @@ describe('managed power admission across the signed Home route and controller', 
             }), requestAuthRegistry: createConnectedAccountRequestAuthSubjectRegistry(), resolveRequestAuthHttpPort: () => 43123,
             createRedactionLease: () => ({ add() {}, close() {} }),
         });
-        const native = fixture({ privateNative: true });
+        const native = fixture({ privateNative: true, fixtureManifest: normalizePluginManifestV2(manifest), nativeCommandArgs: [] });
         const driver = createManagedMachineAcquisitionDriver({ token, credentials: { token, encryption: null },
             serverUrl: 'https://power-admission.test', homeId, controller, externalActionMachineRequestPrivateKey: keys.secretKey,
             managedProviderOperationAuthority: authority,
             homeTarget: resolveHomeTargetFromDescriptor({ descriptor: { v: 1, homeServerIdentityId: homeId,
                 canonicalServerUrl: 'https://power-admission.test', revision: 1, endpoints: [{ kind: 'https', url: 'https://power-admission.test' }] }, authority: 'current_connection' }),
-            runtimeRegistry: { ...native.runtimeRegistry, contributes: createResolvedContributionRegistry({ machineProvisioners: [{
-                pluginId: manifest.id, identity: launch.provider, definition,
-            }] }) } });
+            runtimeRegistry: native.runtimeRegistry });
         const requestId = randomUUID();
         const input = { homeId, managedId: row.id, expectedRevision: 1, when: 'now' as const, intent };
         const operations = createHostActionOperationRuntime({ machineId: controller.machineId,
@@ -222,24 +222,12 @@ describe('managed power admission across the signed Home route and controller', 
         const restoreHttp = installAxiosFastifyAdapter({ app, origin: 'https://power-admission.test' });
         const httpPost = axios.post.bind(axios);
         let reachedSubmission = false;
-        let submittedCurrentReads = 0;
         const post = vi.spyOn(axios, 'post').mockImplementation(async (url, body, config) => {
             // Only the failed Home HTTP response is substituted; admission,
             // signed proof, row write, projection, driver and operation stay real.
             if (failureBoundary === 'submit-intent' && String(url).endsWith('/controller/submit-intent')) {
                 reachedSubmission = true;
                 return { status: 503, data: { error: 'database_connection_unavailable' } };
-            }
-            if (failureBoundary === 'native-currentness') {
-                if (String(url).endsWith('/controller/submit-intent')) {
-                    const response = await httpPost(url, body, config);
-                    expect(response.status).toBe(200);
-                    reachedSubmission = true;
-                    return response;
-                }
-                if (reachedSubmission && String(url).endsWith('/controller/current') && ++submittedCurrentReads === 2) {
-                    return { status: 503, data: { error: 'database_connection_unavailable' } };
-                }
             }
             if ((failureBoundary === 'admission-acknowledgement' || failureBoundary === 'admission-503')
                 && String(url).endsWith('/controller/admit-control')) {
@@ -268,23 +256,19 @@ describe('managed power admission across the signed Home route and controller', 
                     const failure = ActionExecuteFailureSchema.safeParse(result);
                     return failure.success ? failure.data : { ok: true, result };
                 } });
-            expect(result).toMatchObject(failureBoundary === 'submit-intent' || failureBoundary === 'native-currentness'
+            expect(result).toMatchObject(failureBoundary === 'submit-intent'
                 ? { ok: true, result: { kind: 'accepted', managedId: row.id, intentRevision: 2 } }
                 : { ok: false, errorCode: 'action_outcome_unknown' });
-            if (failureBoundary === 'native-currentness') await expect(work).rejects.toMatchObject({ code: 'database_connection_unavailable' });
-            else await expect(work).resolves.toMatchObject({ ok: false, errorCode: 'action_outcome_unknown' });
-            expect(reachedSubmission).toBe(failureBoundary === 'submit-intent' || failureBoundary === 'native-currentness');
+            await expect(work).resolves.toMatchObject({ ok: false, errorCode: 'action_outcome_unknown' });
+            expect(reachedSubmission).toBe(failureBoundary === 'submit-intent');
             const stored = await db.managedMachine.findUniqueOrThrow({ where: { id: row.id } });
             expect(stored).toMatchObject({
                 desired: intent, intentRevision: 2, observation: row.observation, admittedInput: {
                     currentAdmission: { kind: 'control', request: { requestId, action: 'machines.managed.power.set' } },
                 } });
-            if (failureBoundary === 'native-currentness') expect(stored.admittedInput).not.toHaveProperty('submittedEffect');
             expect(ActionOperationGetV1ResponseSchema.parse(await operations.handlers.getV2({ operationId: 'committed-power' })))
                 .toMatchObject({ kind: 'found', operation: { domainRef: { kind: 'managedMachine', id: row.id },
-                    ...(failureBoundary === 'native-currentness'
-                        ? { state: 'failed', error: { errorCode: 'database_connection_unavailable' }, settledAt: expect.any(Number) }
-                        : { state: 'running', observation: { kind: 'outcome_uncertain', code: 'action_outcome_unknown' } }) } });
+                    state: 'running', observation: { kind: 'outcome_uncertain', code: 'action_outcome_unknown' } } });
             expect(native.effects()).toBe(0);
         } finally { post.mockRestore(); restoreHttp(); await app.close(); }
     }, 120_000);

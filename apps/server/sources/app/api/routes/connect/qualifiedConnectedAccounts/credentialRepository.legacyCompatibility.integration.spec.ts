@@ -734,6 +734,7 @@ describe("qualified Connected Account activated legacy compatibility", () => {
             tx: db,
             accountId: account.id,
             includeGroups: false,
+            env: process.env,
         })).resolves.toMatchObject({
             connectedServicesV2: [
                 {
@@ -823,6 +824,7 @@ describe("qualified Connected Account activated legacy compatibility", () => {
             tx: db,
             accountId: account.id,
             includeGroups: false,
+            env: process.env,
         });
 
         expect(projection.connectedServicesV2).toEqual([
@@ -881,6 +883,7 @@ describe("qualified Connected Account activated legacy compatibility", () => {
             tx: db,
             accountId: account.id,
             includeGroups: false,
+            env: process.env,
         });
         expect(projection.connectedServicesV2).toEqual([
             expect.objectContaining({
@@ -2752,6 +2755,7 @@ describe("qualified Connected Account activated legacy compatibility", () => {
             tx: db,
             accountId: account.id,
             includeGroups: false,
+            env: process.env,
         })).resolves.toMatchObject({
             connectedServiceCredentialRevisionsV1: [],
             connectedAccountsV4: expect.arrayContaining([

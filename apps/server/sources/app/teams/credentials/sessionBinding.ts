@@ -749,6 +749,9 @@ async function validateSessionTeamCredentialResourceForContextInTx(
         expectedResourceRevision?: number;
         expectedBrokerMachineId?: string;
         brokerSelection?: TeamCredentialBrokerPlacementSelection;
+        /** This operation's credential was qualified when the operation was
+         * admitted; Team sign-in policy changes apply to new admissions only. */
+        qualifiedAtAdmission?: true;
         deliveryMode: TeamCredentialRouteV1;
         policy: SessionTeamCredentialPolicyContext;
         authentication: SessionAccessAuthentication;
@@ -771,23 +774,26 @@ async function validateSessionTeamCredentialResourceForContextInTx(
     }
     const entitlement = await resolveTeamCredentialEntitlementInTx(tx, { resourceId: resource.id, accountId: input.accountId });
     if (!entitlement.ok) return entitlement;
-    // Always the presented credential's own current qualification. An
-    // established broker operation presents the opening credential's
-    // provenance, carried in its signed authority, so every request of an
-    // existing stream is re-qualified here (`04-private-iroh-broker-transport.md`
-    // §5.6); there is no "already qualified" shortcut.
-    const qualification = await qualifySessionTeamAuthenticationInTx(tx, {
-        accountId: input.accountId,
-        team: { id: resource.teamId, authenticationPolicy: resource.team.authenticationPolicy },
-        authentication: input.authentication,
-    });
-    if (qualification.status !== "satisfied") {
-        return {
-            ok: false,
-            reason: qualification.status === "unavailable"
-                ? "authentication_unavailable"
-                : "authentication_required",
-        };
+    // The presented credential's current qualification, decided at each
+    // admission (open, grant refresh, turn begin). An already-admitted
+    // operation's retained check skips it: tightening the Team sign-in policy
+    // applies at the next natural boundary, not to admitted routes (owner
+    // 10-29 next-boundary rule; ORCH 2026-10-30 22:00Z). Entitlement,
+    // Session-use policy, source and Machine checks below still apply.
+    if (!input.qualifiedAtAdmission) {
+        const qualification = await qualifySessionTeamAuthenticationInTx(tx, {
+            accountId: input.accountId,
+            team: { id: resource.teamId, authenticationPolicy: resource.team.authenticationPolicy },
+            authentication: input.authentication,
+        });
+        if (qualification.status !== "satisfied") {
+            return {
+                ok: false,
+                reason: qualification.status === "unavailable"
+                    ? "authentication_unavailable"
+                    : "authentication_required",
+            };
+        }
     }
     switch (resource.sessionUsePolicy) {
         case "personal_allowed":
@@ -814,6 +820,7 @@ async function validateSessionTeamCredentialResourceForContextInTx(
     if (source.status === "unavailable") {
         return { ok: false, reason: source.reason === "invalid_source_binding" ? "resource_corrupt" : "source_replaced_or_missing" };
     }
+    if (source.authenticationFailure) return { ok: false, reason: source.authenticationFailure };
     if (input.deliveryMode === "brokered") {
         if (!entitlement.mayBroker) return { ok: false, reason: "access_removed" };
         const placement = readTeamCredentialBrokerPlacement(resource);
@@ -879,6 +886,9 @@ export async function validatePlannedSessionTeamCredentialResourceInTx(
         expectedResourceRevision?: number;
         expectedBrokerMachineId?: string;
         brokerSelection?: TeamCredentialBrokerPlacementSelection;
+        /** This operation's credential was qualified when the operation was
+         * admitted; Team sign-in policy changes apply to new admissions only. */
+        qualifiedAtAdmission?: true;
         deliveryMode: TeamCredentialRouteV1;
         plannedSession: PlannedSessionTeamCredentialContext;
         authentication: SessionAccessAuthentication;
@@ -891,6 +901,7 @@ export async function validatePlannedSessionTeamCredentialResourceInTx(
         expectedResourceRevision: input.expectedResourceRevision,
         expectedBrokerMachineId: input.expectedBrokerMachineId,
         ...(input.brokerSelection ? { brokerSelection: input.brokerSelection } : {}),
+        ...(input.qualifiedAtAdmission ? { qualifiedAtAdmission: true as const } : {}),
         deliveryMode: input.deliveryMode,
         authentication: input.authentication,
         policy: {
@@ -999,6 +1010,9 @@ export async function validateExistingSessionTeamCredentialResourceInTx(
         expectedResourceRevision?: number;
         expectedBrokerMachineId?: string;
         brokerSelection?: TeamCredentialBrokerPlacementSelection;
+        /** This operation's credential was qualified when the operation was
+         * admitted; Team sign-in policy changes apply to new admissions only. */
+        qualifiedAtAdmission?: true;
         deliveryMode: TeamCredentialRouteV1;
         authentication: SessionAccessAuthentication;
     }>,
@@ -1017,6 +1031,7 @@ export async function validateExistingSessionTeamCredentialResourceInTx(
             ? { expectedBrokerMachineId: input.expectedBrokerMachineId }
             : {}),
         ...(input.brokerSelection ? { brokerSelection: input.brokerSelection } : {}),
+        ...(input.qualifiedAtAdmission ? { qualifiedAtAdmission: true as const } : {}),
         authentication: input.authentication,
         deliveryMode: input.deliveryMode,
         policy: {
@@ -1107,6 +1122,9 @@ export async function admitSessionTeamCredentialBindingInTx(
         /** The broker Machine this operation already froze, when it has one. */
         expectedBrokerMachineId?: string;
         brokerSelection?: TeamCredentialBrokerPlacementSelection;
+        /** This operation's credential was qualified when the operation was
+         * admitted; Team sign-in policy changes apply to new admissions only. */
+        qualifiedAtAdmission?: true;
     }>,
 ): Promise<SessionTeamCredentialAdmissionResult> {
     const binding = await readSessionTeamCredentialBindingInTx(tx, input);
@@ -1122,6 +1140,7 @@ export async function admitSessionTeamCredentialBindingInTx(
             ? { expectedBrokerMachineId: input.expectedBrokerMachineId }
             : {}),
         ...(input.brokerSelection ? { brokerSelection: input.brokerSelection } : {}),
+        ...(input.qualifiedAtAdmission ? { qualifiedAtAdmission: true as const } : {}),
         deliveryMode: binding.deliveryMode,
         authentication: input.authentication,
     });
@@ -1161,6 +1180,9 @@ export async function admitTeamCredentialOperationBindingInTx(
         expectedResourceRevision?: number;
         expectedBrokerMachineId?: string;
         brokerSelection?: TeamCredentialBrokerPlacementSelection;
+        /** This operation's credential was qualified when the operation was
+         * admitted; Team sign-in policy changes apply to new admissions only. */
+        qualifiedAtAdmission?: true;
     }>,
 ): Promise<SessionTeamCredentialAdmissionResult> {
     const placement = {
@@ -1171,6 +1193,7 @@ export async function admitTeamCredentialOperationBindingInTx(
             ? { expectedBrokerMachineId: input.expectedBrokerMachineId }
             : {}),
         ...(input.brokerSelection ? { brokerSelection: input.brokerSelection } : {}),
+        ...(input.qualifiedAtAdmission ? { qualifiedAtAdmission: true as const } : {}),
     };
     if (input.consumer.kind === "session") {
         return await admitSessionTeamCredentialBindingInTx(tx, {

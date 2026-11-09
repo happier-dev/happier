@@ -327,6 +327,7 @@ describe("local service API route composition", () => {
                 preview: createRegisteredPreviewRuntime(),
                 public: {
                     createExposure: vi.fn(),
+                    admitViewer: vi.fn(),
                     resolveExposure: vi.fn(),
                     resolveExposureByHost: () => null,
                     retainConnection: vi.fn(() => () => {}),
@@ -374,6 +375,7 @@ describe("local service API route composition", () => {
                 preview: createRegisteredPreviewRuntime(),
                 public: {
                     createExposure: vi.fn(),
+                    admitViewer: vi.fn(),
                     resolveExposure: vi.fn(),
                     resolveExposureByHost: () => null,
                     retainConnection: vi.fn(() => () => {}),
@@ -542,7 +544,7 @@ describe("local service API route composition", () => {
         }));
     });
 
-    it("allows composed public exposure creation with explicit local test audit and rate overrides", async () => {
+    it("ignores the retired Machine-admission mode in operator config and refuses it on create", async () => {
         const mod = await loadLocalServiceRoutesModule();
         expect(mod?.registerLocalServiceRoutes).toBeTypeOf("function");
         if (!mod?.registerLocalServiceRoutes) return;
@@ -554,7 +556,7 @@ describe("local service API route composition", () => {
                 HAPPIER_FEATURE_LOCAL_SERVICES_PREVIEW__ENABLED: "1",
                 HAPPIER_FEATURE_LOCAL_SERVICES_PREVIEW__HOST_ORIGIN_DOMAIN: "preview.example.test",
                 HAPPIER_FEATURE_LOCAL_SERVICES_PUBLIC_PREVIEW__ENABLED: "1",
-                HAPPIER_FEATURE_LOCAL_SERVICES_PUBLIC_PREVIEW__ALLOWED_MODES: "secret_link",
+                HAPPIER_FEATURE_LOCAL_SERVICES_PUBLIC_PREVIEW__ALLOWED_MODES: "secret_link,authenticated",
                 HAPPIER_FEATURE_LOCAL_SERVICES_PUBLIC_PREVIEW__MAX_TTL_MS: "60000",
                 HAPPIER_FEATURE_LOCAL_SERVICES_PUBLIC_PREVIEW__DNS_TLS_REQUIRED: "0",
                 HAPPIER_FEATURE_LOCAL_SERVICES_PUBLIC_PREVIEW__RATE_LIMIT_PROFILE_IDS: "default",
@@ -574,6 +576,30 @@ describe("local service API route composition", () => {
             body: preview,
         }, previewReply);
         expect(previewReply.statusCode).toBe(201);
+
+        const statusReply = createReplyStub();
+        await getRouteHandler(app, "POST", "/v1/local-services/public/status")({
+            userId: "user_1",
+            body: { previewId: "preview_1", sessionId: "session_1", machineId: "machine_1" },
+        }, statusReply);
+        expect(statusReply.statusCode).toBe(200);
+        expect(statusReply.send).toHaveBeenCalledWith(expect.objectContaining({
+            snapshot: expect.objectContaining({
+                policy: expect.objectContaining({ allowedModes: ["secret_link"] }),
+            }),
+        }));
+
+        const refusedReply = createReplyStub();
+        await getRouteHandler(app, "POST", "/v1/local-services/public")({
+            userId: "user_1",
+            body: {
+                previewId: "preview_1", sessionId: "session_1", machineId: "machine_1",
+                mode: "authenticated", ttlMs: 60_000, rateLimitProfileId: "default",
+                confirmation: { acknowledged: true },
+            },
+        }, refusedReply);
+        expect(refusedReply.statusCode).toBe(400);
+        expect(refusedReply.send).toHaveBeenCalledWith(expect.objectContaining({ reasonCode: "invalid_request" }));
 
         const exposureReply = createReplyStub();
         await getRouteHandler(app, "POST", "/v1/local-services/public")({

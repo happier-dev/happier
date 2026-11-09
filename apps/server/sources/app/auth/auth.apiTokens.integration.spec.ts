@@ -1,12 +1,24 @@
 import Fastify from "fastify";
+import tweetnacl from "tweetnacl";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { encodeBase64 } from "@happier-dev/protocol/crypto/base64";
 
 import { enableAuthentication } from "@/app/api/utils/enableAuthentication";
 import { auth } from "@/app/auth/auth";
+import { createArtifact } from "@/app/artifacts/artifactWriteService";
+import { createProjectSourceInTx } from "@/app/projects/sources/projectSourceService";
+import { addTeamGroupMemberForActorInTx, createTeamGroupForActorInTx } from "@/app/teams/groups/groupService";
+import { canDeployDeploymentEnvironment } from "@/app/deployments/deploymentAdmission";
+import { loadDeploymentEnvironmentInTx } from "@/app/deployments/deploymentEnvironmentService";
 import { db, getActivePrismaRuntime } from "@/storage/db";
+import { inTx } from "@/storage/inTx";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
 import {
     API_TOKEN_FULL_GRANT_V1,
+    ARTIFACT_PLAIN_DATA_KEY_MARKER,
+    decodeBase64,
+    DeploymentDeployInputV1Schema,
+    encodePlainArtifactStoredContent,
     parseAccountApiTokenBearerV1,
 } from "@happier-dev/protocol";
 
@@ -22,6 +34,7 @@ describe("auth (API tokens)", () => {
         harness = await createLightSqliteHarness({
             tempDirPrefix: "happier-auth-api-tokens-",
             initAuth: true,
+            initEncrypt: true,
             env: {
                 AUTH_REQUIRED_LOGIN_PROVIDERS: "",
                 AUTH_LOGIN_ELIGIBILITY_CACHE_TTL_MS: "0",
@@ -185,6 +198,46 @@ describe("auth (API tokens)", () => {
         });
     });
 
+    it.each(['plain', 'e2ee'] as const)("stores Automatic in the narrow grant and withdraws it on Ask, grant change and revoke (%s)", async (encryptionMode) => {
+        const account = await db.account.create({ data: { publicKey: `token-deployment-consent-${encryptionMode}`, encryptionMode } });
+        const tokenId = crypto.randomUUID();
+        const grant = { ...API_TOKEN_FULL_GRANT_V1, approve: false,
+            actions: { families: [], ids: ["deployments.deploy", "action.operations.get"] },
+            targets: { sessions: [], machines: [], environments: ["staging"] }, create: null };
+        const serverId = await (await import("@/app/serverIdentity/serverIdentity")).getOrCreateServerIdentityId();
+        const deployment = { serverId, environmentId: "staging", deployApproval: "automatic" as const };
+        await expect(apiTokenAuth.createApiToken(Object.assign({ accountId: account.id, tokenId,
+            label: "Staging CI", grant },
+            { deployment: { ...deployment, serverId: "unapproved-home" } })))
+            .rejects.toMatchObject({ code: "credential_scope_denied" });
+        const minted = await apiTokenAuth.createApiToken(Object.assign({ accountId: account.id, tokenId,
+            label: "Staging CI", grant }, { deployment }));
+        expect(minted.grant).toMatchObject({ deployApproval: 'automatic' });
+        expect(await db.accountApiToken.findUnique({ where: { id: tokenId } })).toMatchObject({ accessGrant: { deployApproval: 'automatic' } });
+        const principal = (await apiTokenAuth.verifyToken(minted.token))?.apiTokenPrincipal;
+        if (!principal) throw new Error('Expected token principal');
+        await expect(apiTokenAuth.createChildApiToken({ principal, tokenId: crypto.randomUUID(), label: 'Child',
+            expiresAt: new Date(Date.now() + 60_000), grant: minted.grant })).resolves.toMatchObject({
+                parentTokenId: minted.tokenId, grant: minted.grant,
+            });
+        await apiTokenAuth.updateApiToken(Object.assign({ accountId: account.id, tokenId },
+            { deployment: { ...deployment, deployApproval: "ask" as const } }));
+        expect((await apiTokenAuth.listApiTokens(account.id))[0]?.grant).not.toHaveProperty('deployApproval');
+        // A stale principal cannot recreate Automatic after the parent withdrew it.
+        await expect(apiTokenAuth.createChildApiToken({ principal, tokenId: crypto.randomUUID(), label: 'Stale child',
+            expiresAt: new Date(Date.now() + 60_000), grant: minted.grant })).rejects.toMatchObject({ code: 'api_token_child_invalid' });
+        // An Automatic update without a grant retains the current narrow grant.
+        await apiTokenAuth.updateApiToken(Object.assign({ accountId: account.id, tokenId }, { deployment }));
+        expect((await apiTokenAuth.listApiTokens(account.id))[0]?.grant).toMatchObject({ deployApproval: 'automatic' });
+        await expect(apiTokenAuth.updateApiToken({ accountId: account.id, tokenId,
+            grant: { ...API_TOKEN_FULL_GRANT_V1 }, deployment })).rejects.toMatchObject({ code: 'credential_scope_denied' });
+        await apiTokenAuth.updateApiToken({ accountId: account.id, tokenId, grant: { ...grant,
+            targets: { sessions: [], machines: [], environments: ["other"] } } });
+        expect((await apiTokenAuth.listApiTokens(account.id))[0]?.grant).not.toHaveProperty('deployApproval');
+        await apiTokenAuth.revokeApiToken({ accountId: account.id, tokenId });
+        await expect(apiTokenAuth.verifyToken(minted.token)).resolves.toBeNull();
+    });
+
     it("uses one captured creation time when validating and persisting a near-boundary expiry", async () => {
         const account = await db.account.create({
             data: { publicKey: "api-token-single-expiry-clock" },
@@ -203,6 +256,183 @@ describe("auth (API tokens)", () => {
 
         expect(minted.createdAt).toEqual(creationTime);
         expect(minted.expiresAt).toEqual(expiresAt);
+    });
+
+    it("binds Environment-only operation reads to the current token scope and requested original host", async () => {
+        const serverId = `srv_${"f".repeat(32)}`;
+        harness.resetEnv({ AUTH_REQUIRED_LOGIN_PROVIDERS: "", AUTH_LOGIN_ELIGIBILITY_CACHE_TTL_MS: "0",
+            HAPPIER_SERVER_IDENTITY_ID: serverId });
+        const account = await db.account.create({ data: {
+            publicKey: "deployment-token-operation-observation", encryptionMode: "plain",
+        } });
+        const machineId = "original-deployment-host";
+        await db.machine.createMany({ data: [machineId, 'new-controller'].map(id => ({
+            id, accountId: account.id, metadata: "{}", installationId: `${id}-installation`,
+        })) });
+        const source = await inTx(tx => createProjectSourceInTx(tx, account.id, {
+            serverId, requestKey: crypto.randomUUID(), name: 'CI observation', audience: [],
+            owner: { kind: 'account', accountId: account.id },
+        }));
+        if (!source.ok) throw new Error(source.error);
+        const content = await createArtifact({ actorUserId: account.id, artifactId: crypto.randomUUID(),
+            header: decodeBase64(encodePlainArtifactStoredContent({ kind: 'deployment-environment.v1', title: 'CI observation' })),
+            body: decodeBase64(encodePlainArtifactStoredContent({})),
+            dataEncryptionKey: decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER) });
+        if (!content.ok) throw new Error(content.error);
+        const environment = await db.deploymentEnvironment.create({ data: {
+            projectSourceId: source.source.id, createdByAccountId: account.id, protection: 'nonProduction',
+            purpose: 'standard', deployerMode: 'managers', controllerMachineId: machineId,
+            contentArtifactId: content.artifact.id, contentHeaderVersion: 1, contentBodyVersion: 1,
+        } });
+        await db.deploymentEnvironment.update({ where: { id: environment.id }, data: { controllerMachineId: 'new-controller' } });
+        const grant = { ...API_TOKEN_FULL_GRANT_V1,
+            actions: { families: [], ids: ["deployments.deploy", "action.operations.get"] },
+            targets: { sessions: [], machines: [], environments: ['another-granted-environment', environment.id] },
+            approve: false, create: null,
+        };
+        const minted = await auth.createApiToken({ accountId: account.id, tokenId: crypto.randomUUID(),
+            label: "Exact Environment deployment", grant });
+        const principal = await auth.verifyPat(minted.token);
+        if (!principal.ok) throw new Error("The real token issuer must produce an admitted principal");
+        const request = { accountId: account.id, principalId: principal.principalId,
+            credentialId: principal.credentialId, grant: principal.grant, serverIdentityId: serverId,
+            machineId, actionId: "action.operations.get" as const, requestId: "observe-original-operation",
+            requestEnvelopeDigest: "a".repeat(43), target: { kind: "machine" as const, machineId },
+        };
+        const context = { input: { serverId, machineId, operationId: "pre-receipt-operation", environmentId: environment.id } };
+
+        // The explicit Environment is grant-checked; the retained operation
+        // owner checks origin. Neither a singleton grant nor the new controller
+        // supplies the original operation's host or Environment.
+        try {
+            const root = await auth.mintExternalActionExecutionAuthorization(request, context);
+            expect(root.binding).toMatchObject({ credentialId: minted.tokenId, environmentId: environment.id, machineId,
+                target: { kind: "machine", machineId }, grant: { approve: false, targets: { machines: [] } } });
+            expect(root.binding).not.toHaveProperty("workflowActionOrigin");
+            expect(root.binding).not.toHaveProperty('deploymentCandidatePublication');
+            const { environmentId: _environmentId, ...unscoped } = context.input;
+            await expect(auth.mintExternalActionExecutionAuthorization(request, { input: unscoped }))
+                .rejects.toMatchObject({ code: 'credential_scope_denied' });
+            await expect(auth.mintExternalActionExecutionAuthorization({ ...request, environmentId: 'another-granted-environment' }, context))
+                .rejects.toMatchObject({ code: 'credential_scope_denied' });
+
+            await auth.revokeApiToken({ accountId: account.id, tokenId: minted.tokenId });
+            await expect(auth.mintExternalActionExecutionAuthorization(request, context))
+                .rejects.toMatchObject({ code: "invalid_token" });
+        } finally {
+            await db.deploymentEnvironment.delete({ where: { id: environment.id } });
+            await db.projectSource.delete({ where: { id: source.source.id } });
+            await db.artifact.delete({ where: { id: content.artifact.id } });
+            await db.machine.deleteMany({ where: { accountId: account.id } });
+        }
+    });
+
+    it.each(["members", "chosen"] as const)("admits restricted-Team deployment roots only with the current API token's own qualified evidence (%s)", async (deployerMode) => {
+        const serverId = `srv_${"e".repeat(32)}`;
+        harness.resetEnv({ AUTH_REQUIRED_LOGIN_PROVIDERS: "", AUTH_LOGIN_ELIGIBILITY_CACHE_TTL_MS: "0",
+            HAPPIER_FEATURE_AUTH_LOGIN__KEY_CHALLENGE_ENABLED: "1",
+            HAPPIER_SERVER_IDENTITY_ID: serverId });
+        const [creator, actor] = await Promise.all(["creator", "actor"].map(label => db.account.create({
+            // Key Challenge is a keyed-Account method; a plain Account cannot supply this evidence.
+            data: { publicKey: encodeBase64(tweetnacl.sign.keyPair().publicKey),
+                encryptionMode: label === "actor" ? "e2ee" : "plain" },
+        })));
+        const team = await db.team.create({ data: { name: "Restricted deployment" } });
+        try {
+            await db.teamMembership.createMany({ data: [
+                { teamId: team.id, accountId: creator.id, role: "owner" },
+                { teamId: team.id, accountId: actor.id, role: "member" },
+            ] });
+            let selectedGroupId: string | undefined;
+            if (deployerMode === "chosen") {
+                const group = await inTx(tx => createTeamGroupForActorInTx(tx, { teamId: team.id,
+                    actorAccountId: creator.id, name: "CI deployers", requestKey: crypto.randomUUID() }));
+                if (!group.ok) throw new Error(group.error);
+                const added = await inTx(tx => addTeamGroupMemberForActorInTx(tx, { teamId: team.id,
+                    actorAccountId: creator.id, groupId: group.value.id, accountId: actor.id,
+                    historyAccess: "from_membership" }));
+                if (!added.ok) throw new Error(added.error);
+                selectedGroupId = group.value.id;
+            }
+            const source = await inTx(tx => createProjectSourceInTx(tx, creator.id, {
+                serverId, requestKey: crypto.randomUUID(), name: "Restricted CI", audience: [],
+                owner: { kind: "team", teamId: team.id },
+            }));
+            if (!source.ok) throw new Error(source.error);
+            const machine = await db.machine.create({ data: { id: crypto.randomUUID(), accountId: creator.id,
+                metadata: "{}", installationId: crypto.randomUUID() } });
+            await db.machineTeamGrant.create({ data: { machineId: machine.id, teamId: team.id,
+                accessLevel: "view", createdByAccountId: creator.id } });
+            const content = async (kind: string) => {
+                const created = await createArtifact({ actorUserId: creator.id, artifactId: crypto.randomUUID(),
+                    header: decodeBase64(encodePlainArtifactStoredContent({ kind, title: "Restricted CI" })),
+                    body: decodeBase64(encodePlainArtifactStoredContent({})),
+                    dataEncryptionKey: decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER) });
+                if (!created.ok) throw new Error(created.error);
+                await db.artifactTeamGrant.create({ data: { artifactId: created.artifact.id, teamId: team.id,
+                    accessLevel: "admin", createdByAccountId: creator.id } });
+                return { contentArtifactId: created.artifact.id, contentHeaderVersion: 1, contentBodyVersion: 1 };
+            };
+            const reference = await content("deployment-environment.v1");
+            const environment = await db.deploymentEnvironment.create({ data: {
+                projectSourceId: source.source.id, createdByAccountId: creator.id, protection: "nonProduction",
+                purpose: "standard", deployerMode, controllerMachineId: machine.id, ...reference,
+            } });
+            if (selectedGroupId) await db.deploymentEnvironmentDeployer.create({ data: { environmentId: environment.id,
+                principalKind: "teamGroup", principalId: selectedGroupId, createdByAccountId: creator.id } });
+            const target = await db.deploymentTargetLink.create({ data: { environmentId: environment.id,
+                createdByAccountId: creator.id, role: "runtime", sourceKind: "host", hostTargetId: "own-server",
+                targetKind: "ownServer", state: "deployed", ...await content("deployment-target-link.v1") } });
+            await db.deploymentEnvironment.update({ where: { id: environment.id }, data: { runtimeTargetLinkId: target.id } });
+            await db.team.update({ where: { id: team.id }, data: { authenticationPolicy: {
+                v: 1, mode: "restricted", accepted: [{ kind: "home_method", methodId: "key_challenge" }],
+            } } });
+            const authenticationEvidence = [{ kind: "home_method" as const, methodId: "key_challenge" }];
+            const minted = await auth.createApiToken({ accountId: actor.id, tokenId: crypto.randomUUID(),
+                label: "Restricted CI", authenticationEvidence, grant: { ...API_TOKEN_FULL_GRANT_V1,
+                    actions: { families: [], ids: ["deployments.deploy"] },
+                    targets: { sessions: [], machines: [], environments: [environment.id] }, approve: false, create: null,
+                } });
+            const verified = await auth.verifyToken(minted.token);
+            const principal = verified?.apiTokenPrincipal;
+            if (!principal) throw new Error("Expected the real token owner's principal");
+            expect(principal).toMatchObject({ accountId: actor.id, authenticationEvidence });
+            expect(principal.accountId).not.toBe(creator.id);
+            const admitted = await loadDeploymentEnvironmentInTx(db, actor.id, serverId, environment.id, {
+                authenticationAuthority: "account_automation", authenticationEvidence: principal.authenticationEvidence,
+            });
+            if (!admitted.ok) throw new Error("Current own evidence must satisfy the canonical Source owner");
+            expect(canDeployDeploymentEnvironment(admitted.admission, admitted.row)).toBe(true);
+            expect(await loadDeploymentEnvironmentInTx(db, actor.id, serverId, environment.id)).toMatchObject({ ok: false });
+            const input = DeploymentDeployInputV1Schema.parse({ serverId, environmentId: environment.id,
+                expectedRevision: environment.revision, targetLinkId: target.id, expectedTargetLinkRevision: target.revision,
+                requestKey: crypto.randomUUID(), ...reference });
+            const request = { accountId: actor.id, principalId: principal.principalId,
+                credentialId: principal.credentialId, grant: principal.grant, serverIdentityId: serverId,
+                machineId: machine.id, actionId: "deployments.deploy" as const, requestId: crypto.randomUUID(),
+                requestEnvelopeDigest: "b".repeat(43), target: { kind: "machine" as const, machineId: machine.id } };
+            const unqualified = await auth.createApiToken({ accountId: actor.id, tokenId: crypto.randomUUID(),
+                label: "CI without own evidence", grant: minted.grant });
+            await expect(auth.mintExternalActionExecutionAuthorization({ ...request,
+                credentialId: unqualified.tokenId }, { input })).rejects.toMatchObject({ code: "credential_scope_denied" });
+            await expect(auth.mintExternalActionExecutionAuthorization(request, { input })).resolves.toMatchObject({
+                binding: { accountId: actor.id, credentialId: minted.tokenId, environmentId: environment.id },
+            });
+            // The creator still has a key; only this token's current Account evidence may admit the next root.
+            await db.account.update({ where: { id: actor.id }, data: { publicKey: null } });
+            await expect(auth.mintExternalActionExecutionAuthorization(request, { input }))
+                .rejects.toMatchObject({ code: "credential_scope_denied" });
+        } finally {
+            await db.deploymentEnvironment.updateMany({ where: { createdByAccountId: creator.id },
+                data: { runtimeTargetLinkId: null } });
+            await db.deploymentEnvironmentDeployer.deleteMany({ where: { environment: { createdByAccountId: creator.id } } });
+            await db.deploymentTargetLink.deleteMany({ where: { createdByAccountId: creator.id } });
+            await db.deploymentEnvironment.deleteMany({ where: { createdByAccountId: creator.id } });
+            await db.projectSource.deleteMany({ where: { createdByAccountId: creator.id } });
+            await db.artifact.deleteMany({ where: { accountId: creator.id } });
+            await db.machine.deleteMany({ where: { accountId: creator.id } });
+            await db.team.delete({ where: { id: team.id } });
+        }
     });
 
     it("exposes a PAT-only verification seam with stable credential provenance", async () => {
@@ -250,7 +480,7 @@ describe("auth (API tokens)", () => {
         await expect(auth.listApiTokens(account.id)).rejects.toMatchObject({ code: 'invalid_token' });
     });
 
-    it("reads stored grants and embed configurations by known fields while writes remain strict", async () => {
+    it("reads stored presentation config by known fields while permission grants fail closed and writes remain strict", async () => {
         const account = await db.account.create({ data: { publicKey: 'stored-grant-projection' } });
         const grant = { ...API_TOKEN_FULL_GRANT_V1, targets: { sessions: ['s1'], machines: [] } };
         const embedConfig = {
@@ -276,7 +506,7 @@ describe("auth (API tokens)", () => {
             },
         };
         await db.accountApiToken.update({
-            where: { id: minted.tokenId }, data: { accessGrant: storedGrant, embedConfig: storedConfig },
+            where: { id: minted.tokenId }, data: { accessGrant: grant, embedConfig: storedConfig },
         });
         expect(await auth.verifyPat(minted.token)).toMatchObject({ ok: true, grant, embedConfig });
         expect(await auth.listApiTokens(account.id)).toEqual([expect.objectContaining({ grant, embedConfig })]);
@@ -286,7 +516,13 @@ describe("auth (API tokens)", () => {
         expect(await db.accountApiToken.findUnique({
             where: { id: minted.tokenId }, select: { accessGrant: true, embedConfig: true },
         })).toEqual({ accessGrant: grant, embedConfig });
-        await db.accountApiToken.update({ where: { id: minted.tokenId }, data: { accessGrant: { ...storedGrant, approve: 'true' } } });
+        for (const unsupportedGrant of [{ ...grant, ignored: true },
+            { ...grant, targets: { ...grant.targets, ignored: true } }]) {
+            await db.accountApiToken.update({ where: { id: minted.tokenId }, data: { accessGrant: unsupportedGrant } });
+            expect(await auth.verifyPat(minted.token)).toEqual({ ok: false, reason: 'invalid_token' });
+            await expect(auth.listApiTokens(account.id)).rejects.toMatchObject({ code: 'invalid_token' });
+        }
+        await db.accountApiToken.update({ where: { id: minted.tokenId }, data: { accessGrant: { ...grant, approve: 'true' } } });
         expect(await auth.verifyPat(minted.token)).toEqual({ ok: false, reason: 'invalid_token' });
     });
 

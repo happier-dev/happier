@@ -19,6 +19,7 @@ import { createPresentUserSessionAccessAuthentication } from '@/app/session/acce
 import { createDiscussion, postDiscussionMessage } from '@/app/discussions/mutations';
 import { readDiscussionMessageInTx } from '@/app/discussions/queries';
 import { db } from '@/storage/db';
+import { makeShareEligibleForTest } from '@/testkit/shareEligibility.testkit';
 import { inTx } from '@/storage/inTx';
 import { createArtifact } from './artifactWriteService';
 import { readArtifactForCallerInTx, setArtifactAccessGrantInTx } from './artifactAccessService';
@@ -159,6 +160,8 @@ describe('Doc decision host codec → C3 transaction → Artifact writer', () =>
     it('accepts a plain Discussion proposal for an E2EE Doc through the admitted host Artifact codec', async () => {
         const f = await fixture('e2ee');
         const discussionOwner = await db.account.create({ data: { encryptionMode: 'plain' } });
+        await makeShareEligibleForTest(f.owner.id, discussionOwner.id);
+        await makeShareEligibleForTest(discussionOwner.id, f.owner.id);
         expect(await inTx(tx => setArtifactAccessGrantInTx(tx, { actorAccountId: f.owner.id, artifactId: f.doc.ref.artifactId,
             principal: { kind: 'account', accountId: discussionOwner.id }, accessLevel: 'view' }))).toMatchObject({ ok: true });
         const greeting = DiscussionMessageContentV1Schema.parse({ v: 1, parts: [{ t: 'text', text: 'Review this Doc' }] });

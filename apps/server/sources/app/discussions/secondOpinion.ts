@@ -1,17 +1,19 @@
 import { DiscussionSecondOpinionPreviewInputV1Schema, type DiscussionSecondOpinionPreviewInputV1,
     type DiscussionSecondOpinionPreviewV1, type DiscussionSecondOpinionPreviewSourceV1 } from '@happier-dev/protocol/discussions/secondOpinion';
 import { DiscussionAnchorV1Schema } from '@happier-dev/protocol/discussions/replyTargets';
-import { StrictSessionStoredMessageContentEnvelopeSchema } from '@happier-dev/protocol/sessions/messages/sessionStoredMessageContent';
+import { SessionStoredMessageContentSchema } from '@happier-dev/protocol/sessions/messages/sessionStoredMessageContent';
 import type { PrincipalRefV1 } from '@happier-dev/protocol/teams/principal';
 import type { SessionAccessAuthentication } from '@/app/session/access/sessionAccessAuthentication';
 import { resolveEffectiveSessionAccess, resolveStructuralSessionAccessForAccountsInTx } from '@/app/session/access/sessionAccess';
+import { resolveShareAccountSubjectsInTx } from '@/app/teams/shareEligibility';
 import { resolveCurrentSessionRecipientAccountIdsBySessionInTx } from '@/app/session/access/sessionRecipients';
 import { mayInjectResourceContextInTx, type ContextDisclosureResource, type ResourceContextInjectionDecision } from '@/app/session/access/sessionContextInjection';
-import { createSessionDataKeyEnvelopeViewerSelect, resolveViewerSessionNotificationContentAvailability } from '@/app/session/encryption/sessionDataKeyEnvelopePersistence';
+import { createSessionDataKeyEnvelopeViewerSelect, resolveViewerSessionContentReadAvailability } from '@/app/session/encryption/sessionDataKeyEnvelopePersistence';
+import { RECIPIENT_READINESS_SELECT } from '@/app/session/encryption/sessionDataKeyRecipientProjection';
 import { artifactContextStorageAdapter } from '@/app/artifacts/artifactContextInjection';
 import { resolveArtifactAccessInTx, resolveArtifactAudienceInTx, readArtifactForCallerInTx } from '@/app/artifacts/artifactAccessService';
 import { resolveResourceGrantAccessFromFacts, resolveResourceGrantAudienceFromFacts, resourceGrantRelationsSelect,
-    validateResourceGrantPrincipalInTx, type ResourceGrantAccessFacts } from '@/app/teams/resourceGrantAccess';
+    validateResourceGrantPrincipalInTx, validateResourceGrantAccountPrincipalsInTx, type ResourceGrantAccessFacts } from '@/app/teams/resourceGrantAccess';
 import { inReadSnapshot, type Tx } from '@/storage/inTx';
 import { discussionContextStorageAdapter, discussionGrantStorageAdapter, isDiscussionAccountCredentialAdmittedInTx, newDiscussionContextStorageAdapter } from './access';
 import { discussionFailure, discussionSuccess, type DiscussionResult } from './serviceTypes';
@@ -30,8 +32,14 @@ async function sourceFactsInTx(tx: Tx, input: Actor & Readonly<{ source: Discuss
         const access = await resolveArtifactAccessInTx(tx, { actorAccountId: input.actorAccountId, artifactId });
         if (!access) return null;
         const content = await readArtifactForCallerInTx(tx, { actorAccountId: input.actorAccountId, artifactId });
-        return { audience: await resolveArtifactAudienceInTx(tx, artifactId), ready: content.ok,
-            canGrant: access.level === 'owner' || access.level === 'admin',
+        const canGrant = access.level === 'owner' || access.level === 'admin';
+        return { audience: canGrant ? await resolveArtifactAudienceInTx(tx, artifactId) : [], ready: content.ok,
+            canGrant,
+            async grantableAccountIds(accountIds: readonly string[]) {
+                const eligibility = await validateResourceGrantAccountPrincipalsInTx(tx, {
+                    actorAccountId: input.actorAccountId, ownerAccountId: access.ownerAccountId, accountIds });
+                return new Set([...eligibility].filter(([, error]) => error === null).map(([accountId]) => accountId));
+            },
             async readable(accountIds: readonly string[]) {
                 const facts = await artifactContextStorageAdapter.readAccessFactsInTx(tx, artifactId);
                 return new Set(facts ? accountIds.filter(accountId => resolveResourceGrantAccessFromFacts(facts, accountId) !== null) : []);
@@ -45,15 +53,25 @@ async function sessionSourceFactsInTx(tx: Tx, input: Actor & Readonly<{ sessionI
     const access = await resolveEffectiveSessionAccess(tx, { accountId: input.actorAccountId, sessionId, authentication: input.authentication });
     if (!access?.capabilities.readTranscript) return null;
     const [session, message, audience] = await Promise.all([
-        tx.session.findUnique({ where: { id: sessionId }, select: createSessionDataKeyEnvelopeViewerSelect({ viewerAccountId: input.actorAccountId }) }),
+        tx.session.findUnique({ where: { id: sessionId }, select: {
+            ...createSessionDataKeyEnvelopeViewerSelect({ viewerAccountId: input.actorAccountId }),
+            accountId: true, account: { select: RECIPIENT_READINESS_SELECT },
+        } }),
         tx.sessionMessage.findFirst({ where: { sessionId, id: input.messageId }, select: { content: true } }),
-        resolveCurrentSessionRecipientAccountIdsBySessionInTx(tx, { sessionIds: [sessionId] }),
+        access.capabilities.manageAccess ? resolveCurrentSessionRecipientAccountIdsBySessionInTx(tx, { sessionIds: [sessionId] }) : new Map<string, readonly string[]>(),
     ]);
     if (!session || !message) return null;
-    const envelope = StrictSessionStoredMessageContentEnvelopeSchema.safeParse(message.content);
+    const envelope = SessionStoredMessageContentSchema.safeParse(message.content);
     const modeMatches = envelope.success && envelope.data.t === (session.encryptionMode === 'plain' ? 'plain' : 'encrypted');
-    return { audience: audience.get(sessionId) ?? [], ready: modeMatches && resolveViewerSessionNotificationContentAvailability(session),
+    return { audience: audience.get(sessionId) ?? [], ready: modeMatches && resolveViewerSessionContentReadAvailability(session, input.actorAccountId),
         canGrant: access.capabilities.manageAccess,
+        async grantableAccountIds(accountIds: readonly string[]) {
+            const subjects = await resolveShareAccountSubjectsInTx(tx, {
+                actorAccountId: input.actorAccountId, resourceOwnerAccountId: session.accountId,
+                subjectAccountIds: accountIds, hasExistingGrant: false,
+            });
+            return new Set(subjects.flatMap(subject => subject.ok && subject.subject.kind === 'account' ? [subject.subject.accountId] : []));
+        },
         async readable(accountIds: readonly string[]) {
             const access = await resolveStructuralSessionAccessForAccountsInTx(tx, { sessionId, accountIds });
             return new Set([...access].filter(([, value]) => value?.capabilities.readTranscript).map(([accountId]) => accountId));
@@ -121,7 +139,8 @@ export async function previewDiscussionSecondOpinionInTx(tx: Tx, input: Actor & 
             audience = [...new Set([...discussionAudience, ...session.audienceAccountIds])].sort();
             const pair = await mayInjectResourceContextInTx(tx, { configuringAccountId: input.actorAccountId,
                 authentication: input.authentication, source: sourceResource(request.source), destination: { kind: 'session', sessionId } });
-            if (disclosure.ok) disclosure = pair;
+            // A repairable Discussion audience gap must not hide a reviewer refusal that grants cannot repair.
+            if (disclosure.ok || (!pair.ok && pair.reason !== 'destination_audience_broader')) disclosure = pair;
         }
         const readable = await facts.readable(audience);
         reviewers.push({ selection: reviewer.selection,
@@ -131,9 +150,19 @@ export async function previewDiscussionSecondOpinionInTx(tx: Tx, input: Actor & 
             canGrantSource: facts.canGrant, disclosure });
     }
     const discussionReaders = await facts.readable(discussionAudience);
+    const missingDiscussionSourceAccountIds = discussionAudience.filter(accountId => !discussionReaders.has(accountId));
+    // Existing readers need no new grant. Resolve all new subjects together through
+    // the grant writer's owner; actor authority alone cannot promise these grants.
+    const missingAccountIds = [...new Set([...missingDiscussionSourceAccountIds, ...reviewers.flatMap(reviewer => reviewer.missingSourceAccountIds)])];
+    const grantableAccountIds = facts.canGrant && missingAccountIds.length > 0
+        ? await facts.grantableAccountIds(missingAccountIds) : new Set<string>();
+    for (const reviewer of reviewers) {
+        reviewer.canGrantSource = reviewer.canGrantSource && reviewer.missingSourceAccountIds.every(accountId => grantableAccountIds.has(accountId));
+    }
     return discussionSuccess({ source: request.source, sourceAudienceAccountIds: [...facts.audience].sort(), sourceContentReady: facts.ready,
-        discussionAudienceAccountIds: discussionAudience, missingDiscussionSourceAccountIds: discussionAudience.filter(accountId => !discussionReaders.has(accountId)),
-        discussionDisclosure, canGrantSource: facts.canGrant, ...(publisher ? { publisher } : {}), reviewers });
+        discussionAudienceAccountIds: discussionAudience, missingDiscussionSourceAccountIds,
+        discussionDisclosure, canGrantSource: facts.canGrant && missingDiscussionSourceAccountIds.every(accountId => grantableAccountIds.has(accountId)),
+        ...(publisher ? { publisher } : {}), reviewers });
 }
 
 export function previewDiscussionSecondOpinion(input: Parameters<typeof previewDiscussionSecondOpinionInTx>[1]) {

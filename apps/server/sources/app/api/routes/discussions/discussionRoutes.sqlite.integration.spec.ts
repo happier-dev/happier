@@ -7,6 +7,7 @@ import { DiscussionAttentionResponseV1Schema } from '@happier-dev/protocol/discu
 
 import { db } from "@/storage/db";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
+import { makeShareEligibleForTest } from "@/testkit/shareEligibility.testkit";
 import { createDiscussion } from "@/app/discussions/mutations";
 import { registerDiscussionRoutes } from "./registerDiscussionRoutes";
 import { createPresentUserSessionAccessAuthentication } from "@/app/session/access/sessionAccessAuthentication.testkit";
@@ -62,6 +63,7 @@ describe("Session discussion HTTP transport (SQLite)", () => {
     it('reads cold proposal attention independently of the read cursor and clears it only at the Doc disposition owner', async () => {
         const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
         const viewer = await db.account.create({ data: { encryptionMode: 'plain' } });
+        await makeShareEligibleForTest(owner.id, [viewer.id]);
         const createdDoc = await createArtifact({ actorUserId: owner.id, artifactId: crypto.randomUUID(),
             header: decodeBase64(encodePlainArtifactStoredContent({ title: 'Plan', kind: 'markdown' })),
             body: decodeBase64(encodePlainArtifactStoredContent({ body: 'Before' })),
@@ -114,6 +116,7 @@ describe("Session discussion HTTP transport (SQLite)", () => {
         const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
         const viewer = await db.account.create({ data: { encryptionMode: 'plain' } });
         const outsider = await db.account.create({ data: { encryptionMode: 'plain' } });
+        await makeShareEligibleForTest(owner.id, [viewer.id, outsider.id]);
         const ids: string[] = [];
         for (const mentioned of [false, true]) {
             const created = await createDiscussion({ authentication, actorAccountId: owner.id, request: {
@@ -191,6 +194,7 @@ describe("Session discussion HTTP transport (SQLite)", () => {
         const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
         const reader = await db.account.create({ data: { encryptionMode: 'plain' } });
         const outsider = await db.account.create({ data: { encryptionMode: 'plain' } });
+        await makeShareEligibleForTest(owner.id, [reader.id, outsider.id]);
         const created = await createDiscussion({ authentication, actorAccountId: owner.id, request: {
             creationLocalId: crypto.randomUUID(), titleContent: plainTitle('Check-in policy'),
             participants: [{ kind: 'account', accountId: reader.id }],
@@ -308,6 +312,7 @@ describe("Session discussion HTTP transport (SQLite)", () => {
         const owner = await db.account.create({ data: { publicKey: crypto.randomUUID(), encryptionMode: "plain" } });
         const invitee = await db.account.create({ data: { publicKey: crypto.randomUUID(), encryptionMode: "plain" } });
         const outsider = await db.account.create({ data: { publicKey: crypto.randomUUID(), encryptionMode: "plain" } });
+        await makeShareEligibleForTest(owner.id, [invitee.id, outsider.id]);
         const { app, actor } = createApp(owner.id);
         try {
             const created = await app.inject({ method: "POST", url: DISCUSSION_HTTP_PATHS_V1.collection, payload: {

@@ -254,7 +254,7 @@ describe("sessionRoutes v2 sessions snapshot", () => {
         sessionFindMany.mockResolvedValue([]);
     });
 
-    it("does not read Account currentness for an empty page", async () => {
+    it("adds no per-Session owner currentness reads beyond viewer-rule admission for an empty page", async () => {
         sessionFindMany.mockResolvedValue([]);
 
         const route = await createSessionRouteTestBuilder("GET", "/v2/sessions");
@@ -265,7 +265,7 @@ describe("sessionRoutes v2 sessions snapshot", () => {
             nextCursor: null,
             hasNext: false,
         });
-        expect(accountFindUnique).not.toHaveBeenCalled();
+        expect(accountFindUnique).toHaveBeenCalledTimes(FOLLOW_RULE_VIEWER_ACCOUNT_READS);
     });
 
     it("merges and acknowledges active rows when a predecessor client requests them", async () => {

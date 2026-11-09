@@ -2,7 +2,7 @@ import type { Tx } from "@/storage/inTx";
 import { evaluateExistingSessionAutomationEligibility } from "@happier-dev/agents";
 import { openPlainAccountSettingsDbValue } from "@/app/encryption/accountSettingsStorage";
 import { AUTOMATION_TEMPLATE_ENCRYPTED_V1_KIND, AutomationTemplateEnvelopeSchema, LegacyEncryptedAutomationTemplateEnvelopeSchema, LegacyPlainAutomationTemplateEnvelopeSchema, type AutomationTemplateEnvelope } from '@happier-dev/protocol/automations/automationTemplateEnvelope';
-import { SESSION_METADATA_LAYOUT_VERSION_V1, validateSessionOwnerMetadataEnvelopeForAccountModeV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
+import { SESSION_METADATA_LAYOUT_VERSION_V1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 
 import type { AutomationTargetType } from "./automationTypes";
 import { AutomationValidationError } from "./automationValidation";
@@ -200,13 +200,10 @@ export async function validateExistingSessionAutomationTargetTx(params: {
             metadataLayoutVersion: session.metadataLayoutVersion,
             accountMode,
             ownerMetadata: session.ownerMetadata,
+
         });
         if (
             !ownerEnvelope
-            || !validateSessionOwnerMetadataEnvelopeForAccountModeV1({
-                accountMode,
-                envelope: ownerEnvelope,
-            }).ok
         ) {
             throw new AutomationValidationError("existing session target metadata privacy upgrade required");
         }

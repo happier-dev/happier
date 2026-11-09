@@ -12,7 +12,7 @@ import { QUIET_SESSION_PERSONAL_DISCUSSION_FACTS } from '@/app/session/personal/
 import { resolveVisibleSessionSeq } from '@/app/session/personal/readState';
 import { readSessionFollowOriginalOccurrenceFrontiersInTx, readSessionFollowRuleProgressInTx,
     writeSessionFollowRuleProgressInTx, type AccountFollowRuleProgressAdmission } from './sessionFollowRuleProgress';
-import { isDeliveryMutedInTx } from './sessionDeliveryMuteService';
+import { createDeliveryMuteReaderInTx } from './sessionDeliveryMuteService';
 import { acquireAccountEncryptionTransitionFenceInTx } from '@/app/encryption/accountEncryptionTransition';
 import { readRunFollowOccurrenceInTx } from './sessionFollowEdgeService';
 import { readAccountRunFollowDeliveryInTx } from './accountFollowService';
@@ -126,9 +126,8 @@ export async function acceptAccountFollowPersonalProgress(input: Readonly<{
             const follow = projectSessionFollowFacts(source.accountFollows[0] ?? null);
             if (follow.follows === false && follow.notificationLevel === 'none') return unrepresented;
         }
-        const muted = await isDeliveryMutedInTx(tx, { accountId: input.accountId, receiver: { kind: 'account' },
-            candidate: { senderSessionId: source.id, source: { kind: 'session', sessionId: source.id } } });
-        if (muted !== false) return unrepresented;
+        const muted = createDeliveryMuteReaderInTx(tx, { accountId: input.accountId, receiver: { kind: 'account' } });
+        if (await muted({ senderSessionId: source.id, source: { kind: 'session', sessionId: source.id } }) !== false) return unrepresented;
         const original = await readSessionFollowOriginalOccurrenceFrontiersInTx(tx, {
             source, occurrence, delivered: SESSION_FOLLOW_ZERO_FRONTIER_V1,
         });
@@ -168,8 +167,7 @@ export async function acceptAccountFollowPersonalProgress(input: Readonly<{
             const progress = await readSessionFollowRuleProgressInTx(tx, { accountId: input.accountId,
                 sourceSessionId: source.id, rule });
             if (!progress || !progress.envelope.inception
-                || await isDeliveryMutedInTx(tx, { accountId: input.accountId, receiver: { kind: 'account' },
-                    candidate: { senderSessionId: source.id, source: { kind: 'rule', ruleId: rule.ruleId } } }) !== false) return unrepresented;
+                || await muted({ senderSessionId: source.id, source: { kind: 'rule', ruleId: rule.ruleId } }) !== false) return unrepresented;
             const inception = progress.envelope.inception.createdAt;
             if ('sourceTurn' in occurrence || occurrence.sourceMessage ? original.originalCreatedAt < inception
                 : !('requestIds' in rule) || rule.requestIds.some(requestId => {

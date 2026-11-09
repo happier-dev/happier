@@ -1,30 +1,29 @@
-import { readNativeCredentialPolicyPublicationAccountIdsInTx } from '@/app/teams/credentials/nativePolicyChanges';
 import { resolveCurrentSessionRecipientAccountIdsBySessionInTx } from '@/app/session/access/sessionRecipients';
 import {
   getTransactionContext,
   inReadSnapshot,
-  TransactionReplayRequiredError,
   type Tx,
 } from '@/storage/inTx';
 import { getDbProviderFromEnv } from '@/storage/prisma';
 import { resolveDbSqlDialect } from '@/config/databaseProvider';
 import { getSessionLifecycleAutomationPublicationAudienceInTx } from '@/app/workflows/workflowPublicationAudience';
 import { hasSessionFollowSessionSource } from '@/app/session/follow/sessionFollowSourceIdentity';
-import {
-  acquireAccountChangePublicationLocksInTx,
-  assertAccountChangePublicationAudienceInTx,
-  beforeAccountChangePublication,
-} from '@/app/changes/markAccountChanged';
+import { acquireAccountChangePublicationLocksInTx } from '@/app/changes/markAccountChanged';
 import type { AccountAdmissionIntent } from '@/app/encryption/accountSessionOwnerMetadataFence';
 import { portableQueryChunks } from '@/storage/portableQueryChunks';
 import { readSessionProviderBrokerCustodianAccountIdsInTx } from '@/app/providers/brokerConsumerChanges';
+import { readNativeCredentialPolicyPublicationAccountIdsInTx } from '@/app/teams/credentials/nativePolicyChanges';
 
 export type SessionAccountCursorLockOptions = Readonly<{
   includeLifecyclePublications?: boolean;
   intent?: AccountAdmissionIntent;
   /** Prospective recipients/authority scopes supplied by the mutation owner.
-   * Pure census only: every fence and publication recheck repeats this read. */
+   * Pure census only: the write's one census repeats this read on replay. */
   readAdditionalAccountIdsInTx?: (tx: Tx) => Promise<readonly string[]>;
+  /** The caller adds no audience of its own, so this attempt's held admission of the
+   * exact scope is enough; a grant committing later reaches the next write. A missing or
+   * different scope still runs the full census and fence. */
+  reuseHeldAudience?: boolean;
 }>;
 
 interface HeldSessionAudience {
@@ -123,7 +122,7 @@ export async function readSessionAccountCursorAudienceInTx(
   return { projectionSessionIds, accountIds };
 }
 
-/** Discover outside the mutation snapshot; fence and verify inside each attempt. */
+/** Discover outside the mutation snapshot; each attempt locks that one census. */
 export async function prepareSessionAccountCursorLocks(
   sessionIds: readonly string[],
   additionalAccountIds: readonly string[] = [],
@@ -166,25 +165,35 @@ export async function acquireSessionAccountCursorLocksInTx(
   const provider = getDbProviderFromEnv(process.env, 'postgres');
   // SQLite has one database writer rather than independently lockable rows.
   if (provider === 'sqlite') return [];
+  const requestedSessionIds = [...new Set(sessionIds)].sort();
+  const requestedAccountIds = [...new Set(additionalAccountIds)].sort();
+  const matchHeldScopes = (context: SessionAudienceContext | undefined) =>
+    context?.[heldSessionAudiences]?.filter(
+      (scope) =>
+        sameIds(scope.sessionIds, requestedSessionIds) &&
+        sameIds(scope.additionalAccountIds, requestedAccountIds) &&
+        scope.intent === (options?.intent ?? 'content') &&
+        scope.includeLifecyclePublications ===
+          (options?.includeLifecyclePublications === true) &&
+        scope.readAdditionalAccountIdsInTx ===
+          options?.readAdditionalAccountIdsInTx,
+    );
+  if (options?.reuseHeldAudience) {
+    const reusable = matchHeldScopes(
+      getTransactionContext(tx, { optional: true }) as SessionAudienceContext | undefined,
+    )?.[0];
+    if (reusable) return [...reusable.accountIds];
+  }
   const audience = await readSessionAccountCursorAudienceInTx(
     tx,
     sessionIds,
     additionalAccountIds,
     options,
   );
-  const requestedSessionIds = [...new Set(sessionIds)].sort();
-  const requestedAccountIds = [...new Set(additionalAccountIds)].sort();
-  const held = (getTransactionContext(tx) as SessionAudienceContext)[
-    heldSessionAudiences
-  ]?.find(
+  const held = matchHeldScopes(
+    getTransactionContext(tx) as SessionAudienceContext,
+  )?.find(
     (scope) =>
-      sameIds(scope.sessionIds, requestedSessionIds) &&
-      sameIds(scope.additionalAccountIds, requestedAccountIds) &&
-      scope.intent === (options?.intent ?? 'content') &&
-      scope.includeLifecyclePublications ===
-        (options?.includeLifecyclePublications === true) &&
-      scope.readAdditionalAccountIdsInTx ===
-        options?.readAdditionalAccountIdsInTx &&
       audience.accountIds.every((id) => scope.accountIds.has(id)) &&
       audience.projectionSessionIds.every((id) =>
         scope.projectionSessionIds.has(id),
@@ -207,7 +216,13 @@ export async function acquireSessionAccountCursorLocksInTx(
   );
 }
 
-/** Reuse a complete captured audience without extending its resource lock set. */
+/**
+ * Lock one captured audience, Accounts before Sessions. A grant that commits after
+ * the census is not re-read here: this write's change row may miss the newcomer, who
+ * learns of it from their next change or open, and content stays authorized at each
+ * read (owner, 2026-10-31). A fan-out that does discover a new Account replays
+ * through the Account admission owner, which never extends its sorted lock set.
+ */
 export async function fenceSessionAccountCursorAudienceInTx(
   tx: Tx,
   {
@@ -232,25 +247,6 @@ export async function fenceSessionAccountCursorAudienceInTx(
   // Direct captured-audience callers still reserve SQLite's single writer,
   // without querying independently lockable resource scopes it does not have.
   if (dialect === 'sqlite') return accountIds;
-  const admittedAccountIds = new Set(accountIds);
-  const admittedSessionIds = new Set(projectionSessionIds);
-  const validateInitialAudience = async () => {
-    const current = await readSessionAccountCursorAudienceInTx(
-      tx,
-      sessionIds,
-      additionalAccountIds,
-      options,
-    );
-    if (
-      current.accountIds.some((id) => !admittedAccountIds.has(id)) ||
-      current.projectionSessionIds.some((id) => !admittedSessionIds.has(id))
-    ) {
-      throw new TransactionReplayRequiredError(
-        'session-account-audience-changed',
-      );
-    }
-  };
-  await validateInitialAudience();
   if (projectionSessionIds.length > 0) {
     if (dialect === 'postgres') {
       await tx.$queryRawUnsafe(
@@ -264,19 +260,6 @@ export async function fenceSessionAccountCursorAudienceInTx(
       );
     }
   }
-  // ReadCommitted can admit a grant or manager change between discovery
-  // and lock acquisition. Never extend a captured lock set out of order:
-  // roll back and let inTx replay the complete transaction on its own budget.
-  await validateInitialAudience();
-  beforeAccountChangePublication(tx, accountIds, async (client) => {
-    const current = await readSessionAccountCursorAudienceInTx(
-      client,
-      sessionIds,
-      additionalAccountIds,
-      options,
-    );
-    assertAccountChangePublicationAudienceInTx(client, current.accountIds);
-  });
   const context = getTransactionContext(tx) as SessionAudienceContext;
   (context[heldSessionAudiences] ??= []).push({
     sessionIds: [...new Set(sessionIds)].sort(),
@@ -285,8 +268,8 @@ export async function fenceSessionAccountCursorAudienceInTx(
     includeLifecyclePublications:
       options?.includeLifecyclePublications === true,
     readAdditionalAccountIdsInTx: options?.readAdditionalAccountIdsInTx,
-    projectionSessionIds: admittedSessionIds,
-    accountIds: admittedAccountIds,
+    projectionSessionIds: new Set(projectionSessionIds),
+    accountIds: new Set(accountIds),
   });
   return accountIds;
 }

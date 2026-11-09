@@ -45,6 +45,58 @@ const transition = () => readFile(resolve(migrationRoot, '20261018120000_first_c
 const dispositionMigrationId = '20261019020000_discussion_doc_edit_proposal_disposition';
 const serverRoot = join(import.meta.dirname, '../..');
 
+describe('Discussion list summary migration', () => {
+    const summaryMigration = '20261025073000_discussion_list_summaries';
+    const docAnchor = { kind: 'doc', doc: { ref: { kind: 'doc', artifactId: 'doc', serverId: 'home' },
+        revision: { headerVersion: 1, bodyVersion: 1 } } };
+    const rootTarget = { kind: 'doc_passage', doc: docAnchor.doc };
+
+    it('backfills SQLite passage roots without counting replies or opening retained ciphertext', async () => {
+        const database = await legacyDatabase();
+        try {
+            database.exec(await transition());
+            database.prepare('UPDATE Discussion SET anchorV1 = ?').run(JSON.stringify(docAnchor));
+            database.prepare('UPDATE DiscussionMessage SET replyTargetV1 = ?').run(JSON.stringify(rootTarget));
+            const insert = database.prepare(`INSERT INTO DiscussionMessage
+                (id, discussionId, localId, requestEqualityEvidenceV1, seq, replyTargetV1, content)
+                VALUES (?, 'discussion', ?, '{}', ?, ?, '{"t":"encrypted","c":"retained-opaque"}')`);
+            insert.run('root-2', 'root-2', 2, JSON.stringify(rootTarget));
+            insert.run('reply', 'reply', 3, JSON.stringify({ kind: 'message', messageId: 'message' }));
+            insert.run('other-doc', 'other-doc', 4, JSON.stringify({ ...rootTarget,
+                doc: { ...docAnchor.doc, ref: { ...docAnchor.doc.ref, artifactId: 'other' } } }));
+            const before = database.prepare('SELECT * FROM DiscussionMessage ORDER BY seq').all();
+            database.exec(await readFile(join(migrationRoot, summaryMigration, 'migration.sql'), 'utf8'));
+            expect(database.prepare('SELECT roundOutcomeV1, openCommentCount FROM Discussion').get())
+                .toEqual({ roundOutcomeV1: null, openCommentCount: 2 });
+            expect(database.prepare('SELECT * FROM DiscussionMessage ORDER BY seq').all()).toEqual(before);
+            expect(database.prepare('PRAGMA foreign_key_check').all()).toEqual([]);
+            expect(database.prepare('PRAGMA integrity_check').all()).toEqual([{ integrity_check: 'ok' }]);
+        } finally { database.close(); }
+    });
+
+    it('backfills PostgreSQL metadata roots and leaves non-Doc Discussions and authored content unchanged', async () => {
+        const database = new PGlite();
+        try {
+            await database.exec(`CREATE TABLE "Discussion" ("id" TEXT PRIMARY KEY, "anchorV1" JSONB);
+                CREATE TABLE "DiscussionMessage" ("discussionId" TEXT, "replyTargetV1" JSONB, "content" JSONB);`);
+            await database.query('INSERT INTO "Discussion" VALUES ($1, $2), ($3, NULL)', ['doc-thread', docAnchor, 'ordinary']);
+            for (const discussionId of ['doc-thread', 'ordinary']) {
+                for (const target of [rootTarget, rootTarget, { kind: 'message', messageId: 'root' }]) {
+                    await database.query('INSERT INTO "DiscussionMessage" VALUES ($1, $2, $3)',
+                        [discussionId, target, { t: 'encrypted', c: 'retained-opaque' }]);
+                }
+            }
+            await database.exec(await readFile(join(serverRoot, 'prisma/migrations', summaryMigration, 'migration.sql'), 'utf8'));
+            expect((await database.query('SELECT * FROM "Discussion" ORDER BY "id"')).rows).toEqual([
+                { id: 'doc-thread', anchorV1: docAnchor, roundOutcomeV1: null, openCommentCount: 2 },
+                { id: 'ordinary', anchorV1: null, roundOutcomeV1: null, openCommentCount: 0 },
+            ]);
+            expect((await database.query('SELECT DISTINCT "content" FROM "DiscussionMessage"')).rows)
+                .toEqual([{ content: { t: 'encrypted', c: 'retained-opaque' } }]);
+        } finally { await database.close(); }
+    });
+});
+
 describe('Discussion proposal disposition migration', () => {
     it.each(['prisma', 'prisma/sqlite', 'prisma/mysql'])('projects nullable JSON from the canonical schema to %s', async providerPath => {
         const schema = await readFile(join(serverRoot, providerPath, 'schema.prisma'), 'utf8');

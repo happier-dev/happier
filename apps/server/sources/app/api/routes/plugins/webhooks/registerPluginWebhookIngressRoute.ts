@@ -15,6 +15,7 @@ import {
     preparePluginWebhookSignatureVerifierV1,
     type PreparedPluginWebhookSignatureVerifierV1,
 } from "@/app/plugins/webhooks/ingest";
+import { recordPluginWebhookHeartbeatReceiptV1 } from "@/app/plugins/webhooks/heartbeat";
 import {
     PLUGIN_WEBHOOK_INGRESS_DEADLINE_MS_V1,
     resolvePluginWebhookIngressPolicyV1,
@@ -39,7 +40,6 @@ const MAX_HEADER_BYTES_V1 = 32 * 1024;
 const DISTRIBUTED_RESERVATION_TTL_MS_V1 = PLUGIN_WEBHOOK_INGRESS_DEADLINE_MS_V1;
 const UNSUPPORTED_INGRESS_METHODS_V1 = [
     "DELETE",
-    "GET",
     "HEAD",
     "OPTIONS",
     "PATCH",
@@ -72,7 +72,7 @@ export type RegisterPluginWebhookIngressRouteOptions = Readonly<{
 }>;
 
 type RequestReservationV1 = {
-    declaredBytes: number;
+    declaredBytes: number | null;
     deadlineAtMs: number;
     ownerToken: string;
     localRelease: () => void;
@@ -218,7 +218,6 @@ export function registerPluginWebhookIngressRoute(
         maxWorkingBytes: policy.process.maxWorkingBytes,
     });
     const distributedAdmission = resolveDistributedAdmissionV1(env, options.distributedAdmission);
-    const distributedAdmissionRequired = options.distributedAdmission === undefined;
     const reservations = new WeakMap<object, RequestReservationV1>();
     const releaseTrackedReservation = async (request: object): Promise<void> => {
         const reservation = reservations.get(request);
@@ -241,16 +240,16 @@ export function registerPluginWebhookIngressRoute(
             (_request, payload, done) => done(null, payload),
         );
 
-        scoped.post("/v1/plugins/webhooks/:opaqueRouteId", {
+        scoped.route({
+            method: ["POST", "GET"],
+            exposeHeadRoute: false,
+            url: "/v1/plugins/webhooks/:opaqueRouteId",
             schema: {
                 params: z.strictObject({ opaqueRouteId: z.string().check(z.regex(ROUTE_ID_PATTERN_V1)) }),
             },
             onRequest: async (request, reply) => {
                 if (!await isServerFeatureEnabledForHome("plugins.webhooks", { env, request })) {
                     return publicEmpty(reply, 404);
-                }
-                if (distributedAdmissionRequired && !distributedAdmission) {
-                    return publicEmpty(reply, 503, 5);
                 }
                 if (request.headers["transfer-encoding"] !== undefined) {
                     return publicEmpty(reply, 415);
@@ -262,12 +261,13 @@ export function registerPluginWebhookIngressRoute(
                     return publicEmpty(reply, 400);
                 }
                 const declared = readWebhookDeclaredContentLengthV1(request.headers["content-length"]);
-                if (!declared.ok) {
+                if (!declared.ok && declared.code !== "missing") {
                     return publicEmpty(reply, declared.code === "tooLarge" ? 413 : 411);
                 }
+                const declaredBytes = declared.ok ? declared.bytes : null;
                 const deadlineAtMs = Date.now() + PLUGIN_WEBHOOK_INGRESS_DEADLINE_MS_V1;
-                // `declared.bytes` is already bounded to the protocol raw-body ceiling above.
-                const local = processAdmission.acquire(declared.bytes);
+                // Bodyless capabilities still pay request admission; signed handlers require a length below.
+                const local = processAdmission.acquire(declaredBytes ?? 0);
                 if (!local) return publicEmpty(reply, 503, 5);
                 const deadlineController = new AbortController();
                 let localReleased = false;
@@ -294,7 +294,7 @@ export function registerPluginWebhookIngressRoute(
                     }
                 }, Math.max(0, deadlineAtMs - Date.now()));
                 const requestReservation: RequestReservationV1 = {
-                    declaredBytes: declared.bytes,
+                    declaredBytes,
                     deadlineAtMs,
                     ownerToken: `wh_req_${randomBytes(16).toString("base64url")}`,
                     localRelease: releaseLocal,
@@ -366,16 +366,12 @@ export function registerPluginWebhookIngressRoute(
             onResponse: async (request) => {
                 await releaseTrackedReservation(request);
             },
-        }, async (request, reply) => {
+        handler: async (request, reply) => {
             const reservation = reservations.get(request);
             if (!reservation) return publicEmpty(reply, 503, 5);
             try {
                 if (reservation.deadlineController.signal.aborted) {
                     return reply.sent ? reply : publicEmpty(reply, 503, 5);
-                }
-                const body = request.body as unknown as AsyncIterable<Uint8Array> | null;
-                if (!body || typeof body[Symbol.asyncIterator] !== "function") {
-                    return publicEmpty(reply, 400);
                 }
                 const resolvedAdmissionFailure: {
                     current: Readonly<{ statusCode: 429 | 503; retryAfterMs: number }> | null;
@@ -411,12 +407,20 @@ export function registerPluginWebhookIngressRoute(
                     const prepared = await awaitUntilAbortedV1(
                         preparePluginWebhookSignatureVerifierV1({
                             opaqueRouteId: (request.params as { opaqueRouteId: string }).opaqueRouteId,
+                            method: request.method,
                             headers: request.headers,
                             signal: reservation.deadlineController.signal,
                         }),
                         reservation.deadlineController.signal,
                     );
+                    if (prepared.kind === "recordReceiptOnly") {
+                        const receipt = recordPluginWebhookHeartbeatReceiptV1({ routeId: prepared.route.routeId, deadlineAtMs: reservation.deadlineAtMs });
+                        reservation.custody = receipt;
+                        const accepted = await awaitUntilAbortedV1(receipt, reservation.deadlineController.signal);
+                        return publicEmpty(reply, accepted ? 202 : 404);
+                    }
                     if (prepared.kind !== "ready") {
+                        if (prepared.statusCode === 405) reply.header("Allow", "POST");
                         const rawRequest = request.raw as Readonly<{ destroy?(): void }>;
                         rawRequest.destroy?.();
                         return publicEmpty(
@@ -428,6 +432,14 @@ export function registerPluginWebhookIngressRoute(
                     streamingVerifier = prepared.verifier;
                 }
 
+                // Signed webhook handlers remain POST-only; capability receipts need no body.
+                if (request.method === "GET") {
+                    reply.header("Allow", "POST");
+                    return publicEmpty(reply, 405);
+                }
+                if (reservation.declaredBytes === null) return publicEmpty(reply, 411);
+                const body = request.body as unknown as AsyncIterable<Uint8Array> | null;
+                if (!body || typeof body[Symbol.asyncIterator] !== "function") return publicEmpty(reply, 400);
                 let rawBody: Uint8Array;
                 try {
                     rawBody = await awaitUntilAbortedV1(readWebhookRawBodyV1({
@@ -473,7 +485,7 @@ export function registerPluginWebhookIngressRoute(
                     });
                 reservation.custody = ingestPromise;
                 const result = await awaitUntilAbortedV1(ingestPromise, reservation.deadlineController.signal);
-                if (result.kind === "accepted") return publicEmpty(reply, 202);
+                if (result.kind === "accepted" || result.kind === "receiptAccepted") return publicEmpty(reply, 202);
                 if (resolvedAdmissionFailure.current) {
                     return publicEmpty(
                         reply,
@@ -487,6 +499,7 @@ export function registerPluginWebhookIngressRoute(
             } finally {
                 await releaseTrackedReservation(request);
             }
+        },
         });
         scoped.route({
             method: [...UNSUPPORTED_INGRESS_METHODS_V1],

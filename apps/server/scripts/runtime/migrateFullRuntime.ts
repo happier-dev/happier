@@ -5,6 +5,7 @@ import { dirname, join, resolve } from 'node:path';
 import { openPgliteMigrationSession } from '../pgliteMigrationSession';
 import { assertForwardRecoveryCapableUpdater } from '../../sources/app/runtime/updaterMigrationAdmission';
 import { resolveMigrationEnv } from '../migrationEnv';
+import { runPluginCollectionUsageMigrationDeployment } from '../../sources/app/plugins/data/collections/usageTotalsBackfill';
 
 import {
     hasSessionSystemRecordContractMigration,
@@ -233,7 +234,10 @@ export async function runFullRuntimeMigration({
                 provider,
                 databaseUrl,
             }),
-            deploy: async (stage) => await deploy(stage.schemaPath!),
+            deploy: async (stage) => await runPluginCollectionUsageMigrationDeployment({
+                provider, databaseUrl, env, migrationsDir: stage.migrationsDir, schemaPath: stage.schemaPath!,
+                deploy: async (usageStage) => await deploy(usageStage.schemaPath!),
+            }),
             runFinalContractBackfill: async () => {
                 await runSessionSystemRecordFinalContractBackfill({ provider, databaseUrl });
             },

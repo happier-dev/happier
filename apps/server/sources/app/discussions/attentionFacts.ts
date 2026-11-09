@@ -8,9 +8,8 @@ import { countUnreadMentionsInTx, countUnreadMessagesInTx, type DiscussionCursor
 import type { SessionAccessAuthentication } from "@/app/session/access/sessionAccessAuthentication";
 import { DISCUSSION_DEFAULT_PAGE_SIZE_V1, DISCUSSION_MAX_PAGE_SIZE_V1, type DiscussionAttentionQueryV1,
     type DiscussionAttentionResponseV1 } from '@happier-dev/protocol/discussions/api';
-import { DocEditProposalDispositionV1Schema } from '@happier-dev/protocol/discussions/models';
 import { discussionCandidateWhere, discussionCandidateSql, resolveDiscussionContextsInTx, hasDiscussionWithUnavailableKeyInTx } from './access';
-import { DISCUSSION_SELECT, DISCUSSION_MESSAGE_SELECT, discussionUnreadMessageSql, type DiscussionMessageRow, type DiscussionRow } from './projection';
+import { DISCUSSION_SELECT, DISCUSSION_MESSAGE_SELECT, discussionUnreadMessageSql, type AdmittedDiscussionMessageRow, type DiscussionMessageRow, type DiscussionRow } from './projection';
 import { projectDiscussionsForViewerInTx, projectReadableMessageGroupsInTx } from './queries';
 import { decodeDiscussionListCursorV1, encodeDiscussionListCursorV1 } from './pagination';
 import { admitArtifactEditProposalDecisionDocInTx } from '@/app/artifacts/artifactEditProposalService';
@@ -28,8 +27,13 @@ export async function readDiscussionAttention(input: Readonly<{
 }> & DiscussionAttentionQueryV1): Promise<DiscussionResult<DiscussionAttentionResponseV1>> {
     const cursor = input.cursor === undefined ? null : decodeDiscussionListCursorV1(input.cursor);
     if (input.cursor !== undefined && !cursor) return discussionFailure('discussion_invalid_content');
+    const afterCursor = input.afterCursor === undefined ? null : decodeDiscussionListCursorV1(input.afterCursor);
+    if (input.afterCursor !== undefined && (!afterCursor || input.discussionId === undefined)) {
+        return discussionFailure('discussion_invalid_content');
+    }
     return inReadSnapshot(async tx => {
-        let incomplete = await hasDiscussionWithUnavailableKeyInTx(tx, { accountId: input.actorAccountId, authentication: input.authentication });
+        let incomplete = await hasDiscussionWithUnavailableKeyInTx(tx, { accountId: input.actorAccountId,
+            authentication: input.authentication, discussionId: input.discussionId });
         const take = Math.min(input.limit ?? DISCUSSION_DEFAULT_PAGE_SIZE_V1, DISCUSSION_MAX_PAGE_SIZE_V1);
         const contexts = new Map<string, DiscussionContext>();
         const discussionsById = new Map<string, DiscussionRow>();
@@ -44,10 +48,13 @@ export async function readDiscussionAttention(input: Readonly<{
                 : provider === 'mysql' ? sql.sql`${disposition} = CAST(${JSON.stringify({ state: 'open' })} AS JSON)`
                 : sql.sql`${disposition} = ${JSON.stringify({ state: 'open' })}::jsonb`;
             const position = frontier ? discussionSqlTimestamp(new Date(frontier.at)) : sql.empty;
+            const oldestPosition = afterCursor ? discussionSqlTimestamp(new Date(afterCursor.at)) : sql.empty;
             const ids: { id: string }[] = await tx.$queryRaw(sql.sql`SELECT m.${name('id')} AS id FROM ${name('DiscussionMessage')} m
                 JOIN ${name('Discussion')} d ON d.${name('id')} = m.${name('discussionId')}
                 WHERE ${discussionCandidateSql(input.actorAccountId)} AND d.${name('archivedAt')} IS NULL
+                ${input.discussionId === undefined ? sql.empty : sql.sql`AND d.${name('id')} = ${input.discussionId}`}
                 AND (${open} OR ${discussionUnreadMessageSql(input.actorAccountId)})
+                ${afterCursor ? sql.sql`AND (m.${name('createdAt')} > ${oldestPosition} OR (m.${name('createdAt')} = ${oldestPosition} AND m.${name('id')} >= ${afterCursor.id}))` : sql.empty}
                 ${frontier ? sql.sql`AND (m.${name('createdAt')} < ${position} OR (m.${name('createdAt')} = ${position} AND m.${name('id')} < ${frontier.id}))` : sql.empty}
                 ORDER BY m.${name('createdAt')} DESC, m.${name('id')} DESC LIMIT ${take + 1 - rows.length}`);
             if (!ids.length) break;
@@ -56,7 +63,7 @@ export async function readDiscussionAttention(input: Readonly<{
             const discussionIds = [...new Set(messages.map(row => row.discussionId))];
             const candidates = await tx.discussion.findMany({ where: { id: { in: discussionIds } }, select: DISCUSSION_SELECT });
             const current = await resolveDiscussionContextsInTx(tx, { discussionIds,
-                accountId: input.actorAccountId, authentication: input.authentication });
+                accountId: input.actorAccountId, authentication: input.authentication, includeActorAudience: true });
             for (const row of candidates) {
                 const context = current.get(row.id);
                 if (context?.keyReadiness) { discussionsById.set(row.id, row); contexts.set(row.id, context); }
@@ -72,12 +79,13 @@ export async function readDiscussionAttention(input: Readonly<{
         const entries: DiscussionAttentionResponseV1['discussions'] = [];
         const active = discussions.filter(row => selected.some(message => message.discussionId === row.id));
         const docSourceAdmissions = new Map<string, DiscussionResult<void>>();
-        const summaries = await projectDiscussionsForViewerInTx(tx, { discussions: active, contexts, docSourceAdmissions,
-            viewerAccountId: input.actorAccountId, authentication: input.authentication });
+        const messageAdmissions = new Map<string, AdmittedDiscussionMessageRow>();
+        const summaries = await projectDiscussionsForViewerInTx(tx, { discussions: active, contexts, docSourceAdmissions, messageAdmissions,
+            viewerAccountId: input.actorAccountId, authentication: input.authentication, messages: selected });
         if (!summaries.ok) return summaries;
-        const readableGroups = await projectReadableMessageGroupsInTx(tx, { ...input, docSourceAdmissions,
+        const readableGroups = await projectReadableMessageGroupsInTx(tx, { ...input, docSourceAdmissions, messageAdmissions,
             groups: summaries.value.map(discussion => ({ discussionId: discussion.id, context: contexts.get(discussion.id)!,
-                rows: selected.filter(row => row.discussionId === discussion.id) })), unavailableDocSources: 'omit' });
+                rows: selected.filter(row => row.discussionId === discussion.id), discussion: discussionsById.get(discussion.id)! })), unavailableDocSources: 'omit' });
         if (!readableGroups.ok) return readableGroups;
         for (const discussion of summaries.value) {
             const sourceRows = selected.filter(row => row.discussionId === discussion.id);
@@ -86,10 +94,10 @@ export async function readDiscussionAttention(input: Readonly<{
             const decisions = new Map<string, Promise<boolean>>();
             const occurrences: DiscussionAttentionResponseV1['discussions'][number]['occurrences'] = [];
             for (const message of readable.messages) {
-                const disposition = DocEditProposalDispositionV1Schema.safeParse(message.docEditProposalDispositionV1);
+                const disposition = message.docEditProposalDispositionV1;
                 const source = readable.docSources.get(message.id);
                 let decision = false;
-                if (disposition.success && disposition.data.state === 'open' && source) {
+                if (disposition?.state === 'open' && source) {
                     let admitted = decisions.get(source.ref.artifactId);
                     if (!admitted) {
                         admitted = admitArtifactEditProposalDecisionDocInTx(tx, { ...input, discussionId: discussion.id }, source).then(result => result.ok);

@@ -1,7 +1,6 @@
 import { z } from "zod/mini";
-import { isServerFeatureEnabledForRequest } from "@/app/features/catalog/serverFeatureGate";
 import { AUTOMATION_INT_COLUMN_MAX } from '@happier-dev/protocol/automations/automationColumnBoundsV1';
-import { AUTOMATION_TEMPLATE_CIPHERTEXT_MAX_CHARS, AUTOMATION_TEMPLATE_ENCRYPTED_V1_KIND, AUTOMATION_TEMPLATE_PLAIN_V1_KIND, AutomationTemplateEnvelopeSchema, LegacyEncryptedAutomationTemplateEnvelopeSchema, LegacyPlainAutomationTemplateEnvelopeSchema } from '@happier-dev/protocol/automations/automationTemplateEnvelope';
+import { AUTOMATION_TEMPLATE_ENCRYPTED_V1_KIND, AUTOMATION_TEMPLATE_PLAIN_V1_KIND, AutomationTemplateEnvelopeSchema, LegacyEncryptedAutomationTemplateEnvelopeSchema, LegacyPlainAutomationTemplateEnvelopeSchema } from '@happier-dev/protocol/automations/automationTemplateEnvelope';
 import { type AutomationEventFilterPayloadSchemaValidationIssueV1 } from '@happier-dev/protocol/automations/event';
 
 import { computeNextDueAtForAutomation } from "./automationSchedulingService";
@@ -9,9 +8,6 @@ import { computeNextDueAtForAutomation } from "./automationSchedulingService";
 import type {
     AutomationAssignmentInput,
     AutomationLegacyTemplateEnvelopeAdmission,
-    AutomationLegacyUpsertInput,
-    AutomationPatchInput,
-    AutomationLegacyScheduleInput,
     AutomationScheduleInput,
 } from "./automationTypes";
 
@@ -38,11 +34,6 @@ export class AutomationEventFilterValidationError extends AutomationValidationEr
     }
 }
 
-const AssignmentSchema = z.strictObject({
-    machineId: z.string().check(z.trim(), z.minLength(1)),
-    enabled: z.optional(z.boolean()),
-    priority: z.optional(z.number().check(z.int(), z.minimum(-100), z.maximum(100))),
-});
 
 const ScheduleSchema = z.discriminatedUnion("kind", [
     z.strictObject({
@@ -57,30 +48,6 @@ const ScheduleSchema = z.discriminatedUnion("kind", [
     }),
 ]);
 
-const LegacyScheduleSchema = z.discriminatedUnion("kind", [
-    ...ScheduleSchema._zod.def.options,
-    z.strictObject({ kind: z.literal("manual") }),
-]);
-
-const UpsertSchema = z.strictObject({
-    name: z.string().check(z.trim(), z.minLength(1), z.maxLength(128)),
-    description: z.nullable(z.optional(z.string().check(z.maxLength(2_000)))),
-    enabled: z._default(z.boolean(), true),
-    schedule: LegacyScheduleSchema,
-    targetType: z.enum(["new_session", "existing_session"]),
-    templateCiphertext: z.string().check(z.trim(), z.minLength(1), z.maxLength(AUTOMATION_TEMPLATE_CIPHERTEXT_MAX_CHARS)),
-    assignments: z.optional(z.array(AssignmentSchema)),
-});
-
-const PatchSchema = z.strictObject({
-    name: z.optional(z.string().check(z.trim(), z.minLength(1), z.maxLength(128))),
-    description: z.nullable(z.optional(z.string().check(z.maxLength(2_000)))),
-    enabled: z.optional(z.boolean()),
-    schedule: z.optional(LegacyScheduleSchema),
-    targetType: z.optional(z.enum(["new_session", "existing_session"])),
-    templateCiphertext: z.optional(z.string().check(z.trim(), z.minLength(1), z.maxLength(AUTOMATION_TEMPLATE_CIPHERTEXT_MAX_CHARS))),
-    assignments: z.optional(z.array(AssignmentSchema)),
-});
 
 function toMessage(error: z.core.$ZodError): string {
     const issue = error.issues[0];
@@ -186,10 +153,7 @@ export function assertAutomationTemplateEnvelopeForAccountMode(
         }
     }
     if (!envelope) {
-        if (currentEnvelope.success) {
-            throw new AutomationValidationError("templateCiphertext: invalid template envelope");
-        }
-        throw new AutomationValidationError(`templateCiphertext: ${toMessage(currentEnvelope.error)}`);
+        throw new AutomationValidationError(`templateCiphertext: ${toMessage(currentEnvelope.error!)}`);
     }
 
     if (accountMode === "e2ee") {
@@ -251,106 +215,4 @@ export function parseAutomationScheduleInput(raw: unknown): AutomationScheduleIn
     }
     assertScheduleIsComputable(parsed.data);
     return parsed.data;
-}
-
-function parseAutomationLegacyScheduleInput(raw: unknown): AutomationLegacyScheduleInput {
-    const parsed = LegacyScheduleSchema.safeParse(raw);
-    if (!parsed.success) {
-        throw new AutomationValidationError(toMessage(parsed.error));
-    }
-    if (parsed.data.kind !== "manual") {
-        assertScheduleIsComputable(parsed.data);
-    }
-    return parsed.data;
-}
-
-export function parseAutomationUpsertInput(
-    raw: unknown,
-    opts?: Readonly<{
-        accountMode?: "e2ee" | "plain";
-        allowLegacyEncryptedExistingSessionTemplate?: boolean;
-    }>,
-): AutomationLegacyUpsertInput {
-    const parsed = UpsertSchema.safeParse(raw);
-    if (!parsed.success) {
-        throw new AutomationValidationError(toMessage(parsed.error));
-    }
-    const schedule = parseAutomationLegacyScheduleInput(parsed.data.schedule);
-
-    const accountMode = opts?.accountMode === "plain" ? "plain" : "e2ee";
-    const legacyTemplateEnvelopeAdmission =
-        opts?.allowLegacyEncryptedExistingSessionTemplate
-            ? readLegacyExistingSessionTemplateAdmission(
-                parsed.data.templateCiphertext,
-                parsed.data.targetType,
-            )
-            : undefined;
-    assertAutomationTemplateEnvelopeForAccountMode(
-        parsed.data.templateCiphertext,
-        accountMode,
-        parsed.data.targetType,
-        legacyTemplateEnvelopeAdmission,
-    );
-
-    return {
-        ...parsed.data,
-        schedule,
-        assignments: normalizeAutomationAssignments(parsed.data.assignments),
-        ...(legacyTemplateEnvelopeAdmission
-            ? { legacyTemplateEnvelopeAdmission }
-            : {}),
-    };
-}
-
-export function parseAutomationPatchInput(
-    raw: unknown,
-    opts?: Readonly<{
-        accountMode?: "e2ee" | "plain";
-        allowLegacyEncryptedExistingSessionTemplate?: boolean;
-        effectiveTargetType?: "new_session" | "existing_session";
-    }>,
-): AutomationPatchInput {
-    const parsed = PatchSchema.safeParse(raw);
-    if (!parsed.success) {
-        throw new AutomationValidationError(toMessage(parsed.error));
-    }
-    if (!Object.values(parsed.data).some((value) => value !== undefined)) {
-        throw new AutomationValidationError("Automation patch must include at least one field");
-    }
-    const schedule = parsed.data.schedule === undefined
-        ? undefined
-        : parseAutomationLegacyScheduleInput(parsed.data.schedule);
-
-    if (typeof parsed.data.templateCiphertext === "string") {
-        const accountMode = opts?.accountMode === "plain" ? "plain" : "e2ee";
-        const targetType = parsed.data.targetType
-            ?? opts?.effectiveTargetType
-            ?? null;
-        const legacyTemplateEnvelopeAdmission =
-            opts?.allowLegacyEncryptedExistingSessionTemplate
-                ? readLegacyExistingSessionTemplateAdmission(
-                    parsed.data.templateCiphertext,
-                    targetType,
-                )
-                : undefined;
-        assertAutomationTemplateEnvelopeForAccountMode(
-            parsed.data.templateCiphertext,
-            accountMode,
-            targetType,
-            legacyTemplateEnvelopeAdmission,
-        );
-        return {
-            ...parsed.data,
-            ...(schedule ? { schedule } : {}),
-            assignments: normalizeAutomationAssignments(parsed.data.assignments),
-            ...(legacyTemplateEnvelopeAdmission
-                ? { legacyTemplateEnvelopeAdmission }
-                : {}),
-        };
-    }
-    return {
-        ...parsed.data,
-        ...(schedule ? { schedule } : {}),
-        assignments: normalizeAutomationAssignments(parsed.data.assignments),
-    };
 }

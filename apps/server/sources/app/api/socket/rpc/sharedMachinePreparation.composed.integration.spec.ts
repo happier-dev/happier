@@ -5,6 +5,7 @@ import { io as connect } from 'socket.io-client';
 import { Server } from 'socket.io';
 import { join } from 'node:path';
 import { access } from 'node:fs/promises';
+import { makeShareEligibleForTest } from '@/testkit/shareEligibility.testkit';
 import tweetnacl from 'tweetnacl';
 import { decodeBase64, encodeBase64 } from 'privacy-kit';
 import { computeContentPublicKeyFingerprint, sealEncryptedDataKeyEnvelopeV1, openEncryptedDataKeyEnvelopeV1,
@@ -59,6 +60,7 @@ it('composes requester bound-v2 client, real Home sockets and guest inventory/pr
     const machine = await db.machine.create({ data: { id: crypto.randomUUID(), accountId: owner.id, metadata: 'opaque',
         dataEncryptionKey: ownerEnvelope, installationId: crypto.randomUUID(), installationPublicKey: new Uint8Array(installation.publicKey),
         active: true, lastActiveAt: new Date() } });
+    await makeShareEligibleForTest(owner.id, requester.id);
     expect(await inTx(tx => machineAccess.setMachineAccessGrantInTx(tx, { actorAccountId: owner.id, machineId: machine.id,
         principal: { kind: 'account', accountId: requester.id }, level: 'view' }))).toMatchObject({ kind: 'saved' });
     const census = await inTx(tx => machineAccess.readMachineRecipientCensusInTx(tx, { actorAccountId: owner.id, machineId: machine.id }));

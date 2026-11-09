@@ -37,13 +37,19 @@ describe("config/socketAdapter", () => {
         });
     });
 
-    it("keeps the 0.2.3-equivalent blocking read well below the socket stall boundary", () => {
-        // The dedicated Socket.IO cluster Redis client bounds silent stalls at
-        // 5_000 ms. Adapter 0.3.1 defaults `blockTimeInMs` to exactly that
-        // value, so a healthy blocking read would be indistinguishable from a
-        // stalled socket. 0.2.3 hard-coded 100 ms for ioredis; preserve it.
-        expect(REDIS_STREAMS_ADAPTER_BLOCK_TIME_MS).toBe(100);
-        expect(readRedisStreamsAdapterOptionsFromEnv({}).blockTimeInMs).toBe(100);
+    it("reserves the blocking-response and stale-timer grace below the fixed socket stall timeout", () => {
+        // 5 seconds is both the configured and minimum supported timeout for
+        // adapter connections (relay admission uses a separate client).
+        // ioredis 5.9.2 allows 100 ms beyond a finite blocking timeout; the
+        // socket retry owner also reserves 50 ms for stale timer delivery.
+        const blockTimeInMs = readRedisStreamsAdapterOptionsFromEnv({}).blockTimeInMs;
+        expect(blockTimeInMs).toBe(5_000 - 100 - 50);
+        expect(REDIS_STREAMS_ADAPTER_BLOCK_TIME_MS).toBe(blockTimeInMs);
+    });
+
+    it("allows at most thirteen idle empty returns per replica per minute", () => {
+        expect(Math.ceil(60_000 / readRedisStreamsAdapterOptionsFromEnv({}).blockTimeInMs))
+            .toBeLessThanOrEqual(13);
     });
 
     it("parses redis-streams adapter tuning from env", () => {

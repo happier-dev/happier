@@ -1,5 +1,5 @@
 import { InactiveAccountError } from "@/app/auth/accountStatus";
-import { readDatabaseErrorCode } from '@/app/api/utils/enableErrorHandlers';
+import { readDatabaseErrorCode } from '@/storage/transactionErrors';
 import { z } from "zod/mini";
 import { inTx } from "@/storage/inTx";
 import { createServerFeatureGatePreHandler } from "@/app/features/catalog/serverFeatureGate";
@@ -46,7 +46,7 @@ export function registerAccountEncryptionRoutes(app: Fastify): void {
                         contentPublicKey: true,
                         contentPublicKeySig: true,
                     },
-                }), { readOnly: true });
+                }), { readOnly: true, singleStatementRead: true });
                 if (!user) {
                     return reply.code(500).send({ error: "internal" });
                 }
@@ -99,7 +99,7 @@ export function registerAccountEncryptionRoutes(app: Fastify): void {
                         seq: true,
                         settingsVersion: true,
                     },
-                }), { readOnly: true });
+                }), { readOnly: true, singleStatementRead: true });
                 if (!user) {
                     return reply.code(500).send({ error: "internal" });
                 }

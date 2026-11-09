@@ -1,13 +1,18 @@
+import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
 import Fastify from "fastify";
 import fastifyRateLimit from "@fastify/rate-limit";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { serializerCompiler, validatorCompiler, ZodTypeProvider } from "fastify-type-provider-zod";
-import { prepareExternalActionResponseEnvelopeV1 } from "@happier-dev/protocol/actions";
-import { API_TOKEN_FULL_GRANT_V1, encodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER } from "@happier-dev/protocol";
+import { ExternalActionHttpErrorSchema, parseExternalActionResponseEnvelopeV1, prepareExternalActionResponseEnvelopeV1, sealExternalActionRequestV2 } from "@happier-dev/protocol/actions";
+import { API_TOKEN_FULL_GRANT_V1, encodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER,
+    ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent, createDeploymentApprovalScopeResolverV1,
+    DeploymentEnvironmentGetInputV1Schema } from "@happier-dev/protocol";
+import { createDeploymentEnvironmentV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { decodeBase64 } from "privacy-kit";
 import { ApiTokenGrantV1Schema } from "@happier-dev/protocol/auth/apiTokenGrant";
 import { AutomationV3RunMutationResponseSchema } from '@happier-dev/protocol/automations/automationApiV3';
-import { ExternalActionDaemonDispatchRequestSchema, createExternalActionDaemonDispatchResponseV1 } from "@happier-dev/protocol/actions/externalActionApi";
+import { ExternalActionDaemonDispatchRequestSchema, createExternalActionDaemonDispatchResponseV1,
+    type ExternalActionExecutionAuthorizationBindingV1 } from "@happier-dev/protocol/actions/externalActionApi";
 import { computeExternalActionRequestEnvelopeDigestV1 } from "@happier-dev/protocol/actions/externalActionExecutionAuthorization";
 import { Server } from "socket.io";
 
@@ -17,10 +22,22 @@ import { enableAuthentication } from "@/app/api/utils/enableAuthentication";
 import { resolveApiRateLimitPluginOptions } from "@/app/api/utils/apiRateLimitPolicy";
 import { createExternalActionDaemonDispatcher, type ExternalActionDaemonDispatcher, type ExternalActionForwardRpcCall } from "@/app/api/socket/externalActionDispatcher";
 import { verifyCurrentExternalActionPrincipal } from "@/app/auth/externalActionExecutionAuthorization";
+import { createSessionPublisherPresence } from '@/app/presence/sessionPublisherPresence';
 import { db } from "@/storage/db";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
+import { inTx } from '@/storage/inTx';
+import { createProjectSourceInTx } from '@/app/projects/sources/projectSourceService';
+import { createDeploymentEnvironmentInTx, loadDeploymentEnvironmentInTx,
+    projectDeploymentEnvironmentHeader } from '@/app/deployments/deploymentEnvironmentService';
+import { createArtifact } from '@/app/artifacts/artifactWriteService';
+import { getOrCreateServerIdentityId } from '@/app/serverIdentity/serverIdentity';
+import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import type { ActionExecutorContext, ActionExecutorDeps } from '@happier-dev/protocol/actions';
 
 import { registerExternalActionRoutes } from "./registerExternalActionRoutes";
+import { registerAccountProfileRoute } from '../account/registerAccountProfileRoute';
+import { WidgetInstanceActionInputSchemasV1 } from '@happier-dev/protocol/widgets/actionsV1';
+import { clientActionUnavailable } from '@happier-dev/protocol/actions/clientDispatchV1';
 
 function dispatchedResponse(response: unknown) {
     return {
@@ -50,6 +67,7 @@ describe("registerExternalActionRoutes (API-token provenance) (integration)", ()
         harness = await createLightSqliteHarness({
             tempDirPrefix: "happier-external-action-pat-provenance-",
             initAuth: true,
+            initEncrypt: true,
             env: {
                 AUTH_REQUIRED_LOGIN_PROVIDERS: "",
                 AUTH_LOGIN_ELIGIBILITY_CACHE_TTL_MS: "0",
@@ -66,6 +84,185 @@ describe("registerExternalActionRoutes (API-token provenance) (integration)", ()
 
     afterAll(async () => {
         await harness.close();
+    });
+
+    it("refuses an ungranted Open before stopped-Session publisher discovery", async () => {
+        const account = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const session = await db.session.create({ data: { accountId: account.id,
+            tag: crypto.randomUUID(), metadata: '{}', encryptionMode: 'plain', active: false } });
+        const parent = await auth.createApiToken({ accountId: account.id, tokenId: crypto.randomUUID(), label: 'Embed parent' });
+        const principal = await auth.verifyPat(parent.token);
+        if (!principal.ok) throw new Error('Expected verified test parent');
+        const sendOnly = await auth.createChildApiToken({ principal, tokenId: crypto.randomUUID(), label: 'Send only',
+            expiresAt: new Date(Date.now() + 60_000),
+            grant: ApiTokenGrantV1Schema.parse({ ...API_TOKEN_FULL_GRANT_V1,
+                actions: { families: ['messaging', 'session_transcripts'], ids: ['session.user_action.answer'] },
+                targets: { sessions: [session.id], machines: [] } }) });
+        const canOpen = await auth.createApiToken({ accountId: account.id, tokenId: crypto.randomUUID(), label: 'Open',
+            grant: ApiTokenGrantV1Schema.parse({ ...API_TOKEN_FULL_GRANT_V1,
+                actions: { families: [], ids: ['session.open'] }, targets: { sessions: [session.id], machines: [] } }) });
+        const io = new Server();
+        const discovery = vi.spyOn(io, 'in');
+        const app = createTestApp(createExternalActionDaemonDispatcher({ io,
+            sessionPublisherPresence: createSessionPublisherPresence() }));
+        io.attach(app.server);
+        await app.ready();
+        try {
+            // Real bearer admission, stored grant, dispatcher, publisher owner and
+            // strict HTTP response reader; the stopped Session has no publisher.
+            for (const actionId of ['session.open', 'teams.list'] as const) for (const v of [1, 2] as const) {
+                const denied = await app.inject({ method: 'POST', url: `/v1/actions/${actionId}`,
+                    headers: { authorization: `Bearer ${sendOnly.token}` },
+                    payload: { v, requestId: crypto.randomUUID(), target: { kind: 'session', sessionId: session.id },
+                        ...(v === 1 ? { input: actionId === 'teams.list' ? {} : { sessionId: session.id } }
+                            : { payload: { t: 'encrypted', c: 'opaque' } }) } });
+                expect(denied.statusCode).toBe(403);
+                expect(ExternalActionHttpErrorSchema.parse(denied.json())).toEqual({ error: 'credential_scope_denied' });
+                // An HTTP refusal is intentionally outside the success envelope.
+                // Consumers must read the strict error union on a non-2xx response.
+                expect(parseExternalActionResponseEnvelopeV1(denied.json())).toBeNull();
+            }
+            // An unavailable target cannot hide a known action denial or incur
+            // publisher transport reads. A granted Open still checks availability.
+            expect(discovery).not.toHaveBeenCalled();
+            const unavailable = await app.inject({ method: 'POST', url: '/v1/actions/session.open',
+                headers: { authorization: `Bearer ${canOpen.token}` }, payload: { v: 1,
+                    requestId: crypto.randomUUID(), target: { kind: 'session', sessionId: session.id }, input: { sessionId: session.id } } });
+            expect(unavailable.statusCode).toBe(200);
+            expect(unavailable.json()).toMatchObject({ execution: { ok: false, errorCode: 'target_unavailable' } });
+            expect(discovery).toHaveBeenCalled();
+        } finally {
+            await new Promise<void>(resolve => { io.close(() => resolve()); });
+            await app.close();
+            await db.session.delete({ where: { id: session.id } });
+        }
+    });
+
+    it("routes an Environment-only CI deploy without granting its controller Machine (prepared)", async () => {
+        const account = await db.account.create({ data: { encryptionMode: "plain" } });
+        const serverId = await getOrCreateServerIdentityId();
+        const controller = await db.machine.create({ data: { id: crypto.randomUUID(), accountId: account.id,
+            metadata: encodePlainMachineStoredContent({ host: 'ci-controller', platform: 'linux' }),
+            dataEncryptionKey: decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER, 'base64'),
+            installationId: crypto.randomUUID(), installationPublicKey: new Uint8Array(32), active: true,
+            operationProtocolCapabilitiesRevision: 1,
+            operationProtocolCapabilities: { externalActionExecutionAuthorization: { protocolVersions: [1] } },
+        } });
+        const source = await inTx(tx => createProjectSourceInTx(tx, account.id, { serverId,
+            requestKey: crypto.randomUUID(), name: 'CI app', audience: [],
+            repository: { provider: { id: 'github', kind: 'github', displayName: 'GitHub', baseUrl: 'https://github.com' },
+                repository: { nameWithOwner: 'owner/app', cloneUrl: 'https://github.com/owner/app.git' }, protocol: 'https' },
+        }));
+        if (!source.ok) throw new Error(source.error);
+        const content = createDeploymentEnvironmentV1().content;
+        if (content.t !== 'plain') throw new Error('Expected plain Environment fixture');
+        const artifact = await createArtifact({ actorUserId: account.id, artifactId: crypto.randomUUID(),
+            header: decodeBase64(encodePlainArtifactStoredContent({ kind: 'deployment-environment.v1', title: 'CI app' }), 'base64'),
+            body: decodeBase64(encodePlainArtifactStoredContent(content.v), 'base64'),
+            dataEncryptionKey: decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER, 'base64') });
+        if (!artifact.ok) throw new Error(artifact.error);
+        const environment = await inTx(tx => createDeploymentEnvironmentInTx(tx, account.id, { serverId,
+            requestKey: crypto.randomUUID(), projectSourceId: source.source.id,
+            protection: 'nonProduction', purpose: 'standard', deployerMode: 'managers',
+            controllerMachineId: controller.id, buildMachineId: controller.id,
+            contentArtifactId: artifact.artifact.id, contentHeaderVersion: 1, contentBodyVersion: 1,
+        }));
+        if (!environment.ok) throw new Error(environment.error);
+        const environmentId = environment.environmentId;
+        const grant = ApiTokenGrantV1Schema.parse({ ...API_TOKEN_FULL_GRANT_V1,
+            actions: { families: [], ids: ["deployments.deploy", "action.operations.get"] },
+            targets: { sessions: [], machines: [], environments: [environmentId] }, approve: false,
+        });
+        const deployment = { serverId, environmentId, deployApproval: 'automatic' as const };
+        const deploymentApproval = { input: { serverId, environmentId } };
+        const pat = await auth.createApiToken({ accountId: account.id, tokenId: crypto.randomUUID(),
+            label: "Staging CI", grant, deployment, deploymentApproval });
+        const forwarded: string[] = [];
+        let issuedBinding: ExternalActionExecutionAuthorizationBindingV1 | undefined;
+        const preparedInput = { serverId, environmentId, expectedRevision: 1, requestKey: '1-1',
+            targetLinkId: 'runtime', expectedTargetLinkRevision: 1,
+            contentArtifactId: 'prepared-receipt', contentHeaderVersion: 1, contentBodyVersion: 1 };
+        // Socket delivery is the boundary. Home's real ingress, persisted token,
+        // grant evaluator and dispatcher decide the Environment-only request.
+        const io = new Server();
+        const forwardRpc: ExternalActionForwardRpcCall = async ({ callParams }) => {
+            const request = ExternalActionDaemonDispatchRequestSchema.parse(callParams);
+            const authorization = request.executionAuthorization;
+            if (!authorization) throw new Error("Expected signed Environment admission");
+            expect(authorization.binding.environmentId).toBe(environmentId);
+            expect(authorization.binding.machineId).toBe(controller.id);
+            expect(await verifyCurrentExternalActionPrincipal(authorization.binding)).not.toBeNull();
+            forwarded.push(authorization.binding.machineId);
+            if ('authentication' in authorization.binding) throw new Error('Expected token principal');
+            const binding = authorization.binding;
+            issuedBinding = binding;
+            await expect(auth.mintExternalActionExecutionAuthorization({ ...binding, environmentId: 'forged-environment' },
+                { input: preparedInput })).rejects.toMatchObject({ code: 'credential_scope_denied' });
+            // The deployment port is the authenticated storage/effect transport
+            // boundary. Its typed refusal must survive the real decoded executor.
+            const executor = createActionExecutor({
+                resolveEnvironmentApprovalScope: createDeploymentApprovalScopeResolverV1(async (actionId, input) => {
+                    if (actionId !== 'deployments.environments.get') throw new Error('Unexpected scope read');
+                    const read = DeploymentEnvironmentGetInputV1Schema.parse(input);
+                    const loaded = await inTx(tx => loadDeploymentEnvironmentInTx(tx, account.id, read.serverId, read.environmentId));
+                    return loaded.ok ? { ok: true,
+                        environment: projectDeploymentEnvironmentHeader(loaded.row, read.serverId, loaded.admission), targetLinks: [] } : loaded;
+                }),
+                deploymentAction: async () => ({ ok: false, error: 'deployment_conflict' }),
+            } as unknown as ActionExecutorDeps);
+            const context: ActionExecutorContext = { surface: 'api', authority: 'account_automation',
+                bypassApprovals: true, externalActionExecutionAuthorization: authorization,
+                externalActionTarget: binding.target, externalActionCredential: { accountId: binding.accountId,
+                    principalId: binding.principalId, credentialId: binding.credentialId, grant: binding.grant } };
+            if (request.envelope.v !== 1) throw new Error('Expected plain test request');
+            const execution = await executor.execute('deployments.deploy', request.envelope.input, context);
+            expect(execution).toMatchObject({ ok: false, errorCode: 'deployment_conflict' });
+            for (const substitute of ['another-environment', undefined]) {
+                expect(await executor.execute('deployments.deploy', { ...preparedInput,
+                    environmentId: substitute }, context)).toMatchObject({ ok: false });
+            }
+            return { ok: true, result: createExternalActionDaemonDispatchResponseV1(
+                prepareExternalActionResponseEnvelopeV1({ v: 1, actionId: request.actionId,
+                    requestId: request.envelope.requestId, execution })) };
+        };
+        const app = createTestApp(createExternalActionDaemonDispatcher({ io, forwardRpc }));
+        io.attach(app.server);
+        await app.listen({ host: '127.0.0.1', port: 0 });
+        try {
+            const response = await app.inject({ method: "POST", url: "/v1/actions/deployments.deploy",
+                headers: { authorization: `Bearer ${pat.token}` }, payload: { v: 1, requestId: "ci-run-1",
+                    target: { kind: 'machine', machineId: controller.id }, input: preparedInput } });
+            // An explicit reviewed target is routing, not a grant to that Machine.
+            expect(response.statusCode, response.body).toBe(200);
+            expect(forwarded).toEqual([controller.id]);
+            if (!issuedBinding) throw new Error('Expected issued Environment root');
+            const nextController = await db.machine.create({ data: { id: crypto.randomUUID(), accountId: account.id,
+                metadata: controller.metadata, installationId: crypto.randomUUID() } });
+            await db.deploymentEnvironment.update({ where: { id: environmentId }, data: { controllerMachineId: nextController.id } });
+            // Moving future dispatch does not rewrite an already-issued root's native fact custody.
+            expect(await verifyCurrentExternalActionPrincipal(issuedBinding)).not.toBeNull();
+            const moved = await app.inject({ method: 'POST', url: '/v1/actions/deployments.deploy',
+                headers: { authorization: `Bearer ${pat.token}` }, payload: { v: 1, requestId: 'after-controller-change',
+                    target: { kind: 'machine', machineId: controller.id }, input: preparedInput } });
+            expect(moved.statusCode).toBe(403);
+            expect(forwarded).toEqual([controller.id]);
+            await auth.updateApiToken({ accountId: account.id, tokenId: pat.tokenId,
+                deployment: { ...deployment, deployApproval: 'ask' } });
+            expect(await verifyCurrentExternalActionPrincipal(issuedBinding)).toBeNull();
+            await auth.updateApiToken({ accountId: account.id, tokenId: pat.tokenId, deployment, deploymentApproval });
+            expect(await verifyCurrentExternalActionPrincipal(issuedBinding)).not.toBeNull();
+            await db.accountApiToken.update({ where: { id: pat.tokenId }, data: { expiresAt: new Date(Date.now() - 1) } });
+            expect(await verifyCurrentExternalActionPrincipal(issuedBinding)).toBeNull();
+            await db.accountApiToken.update({ where: { id: pat.tokenId }, data: { expiresAt: null } });
+            expect(await verifyCurrentExternalActionPrincipal(issuedBinding)).not.toBeNull();
+            await auth.revokeApiToken({ accountId: account.id, tokenId: pat.tokenId });
+            expect(await verifyCurrentExternalActionPrincipal(issuedBinding)).toBeNull();
+        } finally {
+            await db.deploymentEnvironment.delete({ where: { id: environmentId } });
+            await db.artifact.delete({ where: { id: artifact.artifact.id } });
+            await new Promise<void>(resolve => { io.close(() => resolve()); });
+            await app.close();
+        }
     });
 
     it("admits exactly the granted Automation through HTTP and the real signed relay", async () => {
@@ -257,12 +454,188 @@ describe("registerExternalActionRoutes (API-token provenance) (integration)", ()
         }
     });
 
-    it("rejects missing, invalid, and non-PAT credentials before the JSON parser", async () => {
-        const account = await db.account.create({
-            data: { publicKey: "external-action-on-request-admission" },
-            select: { id: true },
-        });
-        const signedToken = await auth.createToken(account.id, undefined, { kind: "account", authority: "present_user" });
+    it('distinguishes an authenticated Account Action refusal from a rejected bearer', async () => {
+        const account = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const token = await auth.createToken(account.id, undefined, { kind: 'account', authority: 'present_user' });
+        const dispatch = vi.fn<ExternalActionDaemonDispatcher>();
+        const app = createTestApp(dispatch, registerAccountProfileRoute);
+        const headers = { authorization: `Bearer ${token}` };
+        const envelope = { v: 1, requestId: crypto.randomUUID(), target: { kind: 'machine', machineId: crypto.randomUUID() }, input: {} };
+        try {
+            const profile = () => app.inject({ method: 'GET', url: '/v1/account/profile', headers });
+            expect((await profile()).statusCode).toBe(200);
+            for (const suffix of ['', '/execution-authorization']) {
+                const denied = await app.inject({ method: 'POST', url: `/v1/actions/ui.current_context.read${suffix}`,
+                    headers, payload: envelope });
+                expect(denied.statusCode).toBe(403);
+                expect(denied.json()).toEqual({ error: 'credential_scope_denied' });
+            }
+            const retained = await profile();
+            expect(retained.statusCode).toBe(200);
+            expect(retained.json()).toMatchObject({ id: account.id });
+            const rejected = await app.inject({ method: 'POST', url: '/v1/actions/ui.current_context.read',
+                headers: { authorization: 'Bearer invalid-fixture-token' }, payload: envelope });
+            expect(rejected.statusCode).toBe(401);
+            expect(rejected.json()).toEqual({ error: 'invalid_token' });
+            expect(dispatch).not.toHaveBeenCalled();
+        } finally { await app.close(); }
+    });
+
+    it.each(['account', 'terminal'] as const)('preserves client absence instead of invalid_token for an authenticated original Widget Refresh (%s)', async kind => {
+        const account = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const token = await auth.createToken(account.id, undefined, { kind,
+            authority: kind === 'account' ? 'present_user' : 'account_automation' });
+        const input = WidgetInstanceActionInputSchemasV1['widgets.item.refresh'].parse({ ref: {
+            surface: { serverId: await getOrCreateServerIdentityId(), accountId: account.id, owner: { kind: 'home' } },
+            instanceId: crypto.randomUUID(),
+        } });
+        // Only the remote daemon response is a boundary fixture. HTTP bearer,
+        // epoch, original-root admission and response projection remain real.
+        const dispatch = vi.fn<ExternalActionDaemonDispatcher>(async () => dispatchedResponse({
+            v: 1, actionId: 'widgets.item.refresh',
+            execution: clientActionUnavailable('widgets.item.refresh'),
+        }));
+        const app = createTestApp(dispatch, registerAccountProfileRoute);
+        await app.ready();
+        try {
+            const headers = { authorization: `Bearer ${token}` };
+            const profile = await app.inject({ method: 'GET', url: '/v1/account/profile', headers });
+            expect(profile.statusCode).toBe(200);
+            expect(profile.json()).toMatchObject({ id: account.id });
+            const invalid = await app.inject({ method: 'POST', url: '/v1/actions/widgets.item.refresh',
+                headers: { authorization: 'Bearer invalid-fixture-token' },
+                payload: { v: 1, requestId: crypto.randomUUID(), input } });
+            expect(invalid.statusCode).toBe(401);
+            expect(invalid.json()).toEqual({ error: 'invalid_token' });
+            expect(dispatch).not.toHaveBeenCalled();
+
+            const response = await app.inject({ method: 'POST', url: '/v1/actions/widgets.item.refresh', headers,
+                payload: { v: 1, requestId: crypto.randomUUID(), input } });
+            expect({ status: response.statusCode, body: response.json(), dispatches: dispatch.mock.calls.length })
+                .toMatchObject({ status: 200, dispatches: 1,
+                    body: { execution: clientActionUnavailable('widgets.item.refresh') } });
+        } finally {
+            await app.close();
+        }
+    });
+
+    it.each((['plain', 'e2ee'] as const).flatMap(encryptionMode => ([
+        { actionId: 'approval.request.create', kind: 'account', input: { actionId: 'session.title.set',
+            actionArgs: { sessionId: 'reviewed-session', title: 'Reviewed title' }, summary: 'Review title change', createdBy: { surface: 'cli' } } },
+        { actionId: 'action.invoke', kind: 'account', input: { action: { pluginId: 'happier.machine.services', localId: 'health/setup' }, input: {} } },
+        { actionId: 'approval.request.list', kind: 'account', input: {} },
+        { actionId: 'teams.list', kind: 'account', input: {} },
+        { actionId: 'approval.request.get', kind: 'account', input: { artifactId: 'reviewed-approval' } },
+        { actionId: 'workflow.run.get', kind: 'terminal', input: { runId: '46d53d20-11a7-4a49-93a8-cbf56381e2dc' } },
+        { actionId: 'workflow.run.invocations.list', kind: 'terminal', input: { runId: '46d53d20-11a7-4a49-93a8-cbf56381e2dc' } },
+        { actionId: 'deployments.receipts.list', kind: 'account', input: { serverId: 'srv_home', environmentId: 'environment' } },
+    ] as const).map(row => ({ encryptionMode, ...row }))))('admits an original Account root after real bearer authentication ($actionId, $encryptionMode)', async ({ encryptionMode, actionId, kind, input }) => {
+        const account = await db.account.create({ data: { encryptionMode } });
+        const authority = kind === 'terminal' ? 'account_automation' : 'present_user';
+        const token = await auth.createToken(account.id, undefined, { kind, authority });
+        const accountToken = kind === 'account' ? token
+            : await auth.createToken(account.id, undefined, { kind: 'account', authority: 'present_user' });
+        // The daemon hop is the only substituted boundary: auth, provenance,
+        // epoch and original-root admission use the actual HTTP owners and SQLite.
+        const dispatch = vi.fn<ExternalActionDaemonDispatcher>(async request => dispatchedResponse({
+            v: 1, actionId: request.actionId, requestId: request.envelope.requestId,
+            execution: { ok: true, result: { reachedDaemon: true } },
+        }));
+        const app = createTestApp(dispatch, registerAccountProfileRoute);
+        const headers = { authorization: `Bearer ${token}` };
+        const requestId = crypto.randomUUID();
+        const target = { kind: 'machine' as const, machineId: crypto.randomUUID() };
+        const envelope = encryptionMode === 'e2ee' ? sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1,
+            binding: { serverIdentityId: await getOrCreateServerIdentityId(), accountId: account.id,
+                authentication: { kind, tokenEpoch: account.tokenEpoch },
+                actionId, requestId, target },
+            input, material: { type: 'dataKey', machineKey: new Uint8Array(32) },
+            randomBytes: length => crypto.getRandomValues(new Uint8Array(length)),
+        }) : { v: 1, requestId, target, input };
+        try {
+            expect((await app.inject({ method: 'GET', url: '/v1/account/profile', headers })).statusCode).toBe(200);
+            for (const refusal of [
+                { actionId, headers: { authorization: 'Bearer invalid-fixture-token' }, status: 401, error: 'invalid_token' },
+                { actionId: 'ui.current_context.read', headers: { authorization: `Bearer ${accountToken}` },
+                    status: 403, error: 'credential_scope_denied' },
+                { actionId: encodeURIComponent('happier.machine.services/actions/health/setup'),
+                    headers: { authorization: `Bearer ${accountToken}` }, status: 403, error: 'credential_scope_denied' },
+            ]) {
+                const response = await app.inject({ method: 'POST', url: `/v1/actions/${refusal.actionId}`,
+                    headers: refusal.headers, payload: envelope });
+                expect(response.statusCode).toBe(refusal.status);
+                expect(response.json()).toEqual({ error: refusal.error });
+            }
+            expect(dispatch).not.toHaveBeenCalled();
+            const response = await app.inject({ method: 'POST', url: `/v1/actions/${actionId}`, headers, payload: envelope });
+            expect({ status: response.statusCode, body: response.json() }).toMatchObject({ status: 200,
+                body: { actionId, requestId, execution: { ok: true, result: { reachedDaemon: true } } } });
+            expect(dispatch).toHaveBeenCalledOnce();
+            expect(dispatch.mock.calls[0]?.[0]).toMatchObject({ envelope, principal: {
+                accountId: account.id, authority, authentication: { kind, tokenEpoch: account.tokenEpoch },
+            } });
+        } finally { await app.close(); }
+    });
+
+    it('never forwards client-variant Actions to another person\'s daemon under a Machine Use grant', async () => {
+        const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const grantee = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const machine = await db.machine.create({ data: { id: crypto.randomUUID(), accountId: owner.id,
+            metadata: encodePlainMachineStoredContent({ host: 'owner-host', platform: 'linux', happyCliVersion: '0.3.0',
+                homeDir: '/home/owner', happyHomeDir: '/home/owner/.happier' }),
+            dataEncryptionKey: decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER, 'base64'),
+            installationId: crypto.randomUUID(), installationPublicKey: new Uint8Array(32), active: true,
+            operationProtocolCapabilitiesRevision: 1,
+            operationProtocolCapabilities: { externalActionExecutionAuthorization: { protocolVersions: [1] } } } });
+        // `view` is the Machine Use role.
+        await db.machineAccountGrant.create({ data: { machineId: machine.id, accountId: grantee.id,
+            accessLevel: 'view', createdByAccountId: owner.id } });
+        const surface = { serverId: await getOrCreateServerIdentityId(), accountId: owner.id,
+            owner: { kind: 'companion' as const, sessionId: crypto.randomUUID() } };
+        const inputs = {
+            'widgets.item.list': { surface },
+            'localServices.actions.copyUrl': { requestId: crypto.randomUUID(), action: 'copy_url',
+                target: { kind: 'inventory_entry', inventoryEntryId: 'svc-1', machineId: machine.id } },
+        } as const;
+        // Only the daemon socket hop is substituted; HTTP, auth, SQLite, Machine
+        // admission and the real dispatcher run.
+        const forwarded: Array<{ actionId: string; requester: string | undefined }> = [];
+        const forwardRpc: ExternalActionForwardRpcCall = async ({ callParams }) => {
+            const request = ExternalActionDaemonDispatchRequestSchema.parse(callParams);
+            const binding = request.executionAuthorization?.binding;
+            forwarded.push({ actionId: request.actionId, requester: binding?.accountId });
+            return { ok: true, result: createExternalActionDaemonDispatchResponseV1(prepareExternalActionResponseEnvelopeV1({
+                v: 1, actionId: request.actionId, requestId: request.envelope.requestId,
+                execution: { ok: true, result: { reachedDaemon: true } } })) } as Awaited<ReturnType<ExternalActionForwardRpcCall>>;
+        };
+        const io = new Server();
+        const app = createTestApp(createExternalActionDaemonDispatcher({ io, forwardRpc }));
+        await app.ready();
+        try {
+            const token = (accountId: string, kind: 'account' | 'terminal') => auth.createToken(accountId, undefined,
+                { kind, authority: kind === 'account' ? 'present_user' : 'account_automation' });
+            const send = async (actionId: keyof typeof inputs, bearer: string) => {
+                const before = forwarded.length;
+                const response = await app.inject({ method: 'POST', url: `/v1/actions/${actionId}`,
+                    headers: { authorization: `Bearer ${bearer}` },
+                    payload: { v: 1, requestId: crypto.randomUUID(), target: { kind: 'machine', machineId: machine.id },
+                        input: inputs[actionId] } });
+                return { forwards: forwarded.slice(before), ok: response.json().execution?.ok };
+            };
+            for (const actionId of Object.keys(inputs) as Array<keyof typeof inputs>) {
+                for (const kind of ['account', 'terminal'] as const) {
+                    expect({ actionId, kind, ...await send(actionId, await token(grantee.id, kind)) })
+                        .toEqual({ actionId, kind, forwards: [], ok: false });
+                    expect({ actionId, kind, ...await send(actionId, await token(owner.id, kind)) })
+                        .toEqual({ actionId, kind, forwards: [{ actionId, requester: owner.id }], ok: true });
+                }
+            }
+        } finally {
+            await app.close();
+        }
+    });
+
+    it("rejects missing and invalid credentials before the JSON parser", async () => {
         const parse = vi.fn();
         const dispatch = vi.fn(async () => dispatchedResponse({
             v: 1 as const,
@@ -286,7 +659,6 @@ describe("registerExternalActionRoutes (API-token provenance) (integration)", ()
             for (const headers of [
                 {},
                 { authorization: "Bearer not-a-valid-token" },
-                { authorization: `Bearer ${signedToken}` },
             ]) {
                 const response = await app.inject({
                     method: "POST",

@@ -50,10 +50,14 @@ function isDnsLabel(label: string): boolean {
     return /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/u.test(label);
 }
 
+export function isLocalServicePreviewLocalhostHostname(hostname: string): boolean {
+    const normalized = hostname.toLowerCase().replace(/\.$/u, "");
+    return normalized === "localhost" || normalized.endsWith(".localhost");
+}
+
 function isSecurePreviewUrl(url: URL): boolean {
-    const hostname = url.hostname.toLowerCase().replace(/\.$/u, "");
     return url.protocol === "https:" || (url.protocol === "http:"
-        && (hostname === "localhost" || hostname.endsWith(".localhost")));
+        && isLocalServicePreviewLocalhostHostname(url.hostname));
 }
 
 export function normalizeLocalServiceHostOriginBaseDomain(rawDomain: string): string | null {

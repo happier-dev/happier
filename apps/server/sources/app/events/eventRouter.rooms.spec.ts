@@ -6,9 +6,10 @@ import { eventRouter } from "./eventRouter";
 import type { SessionAccessProjectionRow } from "@/app/session/access/sessionAccess";
 import type { ClientConnection } from "./eventPayloadTypes";
 import type { LocalSocketRoomEmitter, SocketRoomEmitter } from "./socketRoomEmitter";
-import { buildNewMessageUpdate } from "./eventPayloadBuilders";
+import { MACHINE_ACCESS_LOSS_EVENT } from './machineAccessLoss';
+import { buildNewMessageUpdate, buildUpdateSessionUpdate } from "./eventPayloadBuilders";
 import { registerSessionConsumptionSocketEvent, readSessionSocketConsumption } from "@/app/api/socket/sessionConsumption";
-import { SessionConsumptionReplaceAckV1Schema } from "@happier-dev/protocol";
+import { SessionConsumptionReplaceAckV1Schema, UpdateContainerSchema } from "@happier-dev/protocol";
 
 const { findSession, transactionBoundary } = vi.hoisted(() => ({
     findSession: vi.fn(),
@@ -68,6 +69,18 @@ async function readMetricSamples(name: string): Promise<MetricSample[]> {
 }
 
 describe("eventRouter (rooms)", () => {
+    it('pushes exact Machine access loss to other API nodes as well as retiring local access', () => {
+        const room = { emit() {}, disconnectSockets() {} };
+        const received: unknown[] = [];
+        const local: unknown[] = [];
+        const release = eventRouter.onMachineAccessLoss(input => local.push(input));
+        eventRouter.setIo({ to: () => room }, { broadcastServerSideEvent: (event, payload) => { received.push({ event, payload }); } });
+        try {
+            eventRouter.disconnectMachineAndSessionSockets({ accountId: 'viewer', machineId: 'machine', sessionBindings: [] });
+            expect(local).toEqual([{ accountId: 'viewer', machineId: 'machine' }]);
+            expect(received).toEqual([{ event: MACHINE_ACCESS_LOSS_EVENT, payload: local[0] }]);
+        } finally { release(); }
+    });
     let envSnapshot: ReturnType<typeof snapshotEnv>;
     beforeEach(() => {
         envSnapshot = snapshotEnv();
@@ -135,18 +148,23 @@ describe("eventRouter (rooms)", () => {
             .toEqual({ ok: false, error: "not_allowed" });
     });
 
-    it.each(["local", "receiving-node"] as const)("delivers bodies only to consuming UI sockets on %s", async mode => {
+    it.each([
+        ["local", "owner"], ["receiving-node", "owner"],
+        ["local", "recipient"], ["receiving-node", "recipient"],
+    ] as const)("delivers bodies by demand and preserves %s %s metadata", async (mode, accountId) => {
         findSession.mockResolvedValue({
+            metadataLayoutVersion: 1,
             id: "session", primaryTeamId: null, accountId: "owner", account: { status: "active" }, seq: 1,
             currentStorageState: "hosted", acceptedThroughServerSeq: null, materializationPublicationId: null,
             materializedThroughSourceAt: null, publishedThroughServerSeq: null,
-            shares: [], teamGrants: [], groupGrants: [],
-        } satisfies SessionAccessProjectionRow);
+            shares: [{ id: "share", sharedWithUserId: "recipient", accessLevel: "view", canApprovePermissions: false }],
+            teamGrants: [], groupGrants: [],
+        } satisfies SessionAccessProjectionRow & { metadataLayoutVersion: number });
         const received = new Map<string, unknown[]>();
         const sockets = ["hidden", "live", "durable", "concurrent", "scoped-rpc", "runtime"].map(id => ({
             id,
             data: {
-                userId: "owner", authAuthority: "present_user", clientType: "user-scoped",
+                userId: accountId, authAuthority: "present_user", clientType: "user-scoped",
                 clientPurpose: id === "concurrent" ? "concurrent-server-cache" : id === "runtime" ? "cli" : id === "scoped-rpc" ? "scoped-rpc" : "sync",
                 sessionConsumption: {
                     liveSessionIds: new Set(id === "live" ? ["session"] : []),
@@ -157,21 +175,21 @@ describe("eventRouter (rooms)", () => {
         }));
         const io: LocalSocketRoomEmitter = {
             in: () => ({ fetchSockets: async () => sockets }),
-            to: id => ({ emit: (event, payload) => { sockets.find(socket => socket.id === id)?.emit(event, payload); }, disconnectSockets: () => {} }),
+            to: ids => ({ emit: (event, payload) => { for (const id of [ids].flat()) sockets.find(socket => socket.id === id)?.emit(event, payload); }, disconnectSockets: () => {} }),
         };
         const connections: ClientConnection[] = sockets.map(socket => ({
-            connectionType: "user-scoped", userId: "owner", socket: socket as unknown as ClientConnection["socket"],
+            connectionType: "user-scoped", userId: accountId, socket: socket as unknown as ClientConnection["socket"],
         }));
-        if (mode === "local") for (const connection of connections) eventRouter.addConnection("owner", connection);
+        if (mode === "local") for (const connection of connections) eventRouter.addConnection(accountId, connection);
         const payload = buildNewMessageUpdate({ id: "message", seq: 1, localId: null,
             content: { t: "plain", v: { text: "private transcript" } }, createdAt: new Date(1), updatedAt: new Date(2) }, "session", 1, "event");
         const deliver = async (eventName: "update" | "ephemeral", body: unknown) => {
             if (mode === "receiving-node") await eventRouter.receiveCredentialQualifiedSessionDelivery(io, {
-                v: 1, accountId: "owner", sessionId: "session", eventName, payload: body,
+                v: 1, accountId, sessionId: "session", eventName, payload: body,
             });
-            else if (eventName === "update") await eventRouter.emitUpdate({ userId: "owner", payload,
+            else if (eventName === "update") await eventRouter.emitUpdate({ userId: accountId, payload: body as typeof payload,
                 recipientFilter: { type: "all-interested-in-session", sessionId: "session" } });
-            else await eventRouter.emitEphemeral({ userId: "owner", payload: body as Parameters<typeof eventRouter.emitEphemeral>[0]["payload"],
+            else await eventRouter.emitEphemeral({ userId: accountId, payload: body as Parameters<typeof eventRouter.emitEphemeral>[0]["payload"],
                 recipientFilter: { type: "all-interested-in-session", sessionId: "session" } });
         };
         try {
@@ -183,29 +201,41 @@ describe("eventRouter (rooms)", () => {
                 body: expect.objectContaining({ delivery: "full", message: expect.objectContaining({ content: { t: "plain", v: { text: "private transcript" } } }) }),
             })]);
             received.clear();
+            const metadataUpdate = buildUpdateSessionUpdate("session", 2, "metadata-event",
+                { version: 7, value: "private-metadata".repeat(1024) }, { version: 4, value: "private-agent-state" },
+                { active: true, pendingPermissionRequestCount: 1, pendingUserActionRequestCount: 0 });
+            // The real generic producer does not assert a metadata layout.
+            // Payload documents and access projections are not credential ownership
+            // evidence: both kinds of reader must work without either field.
+            for (const includeOwnerMetadata of accountId === "owner" ? [false, true] : [false]) {
+                if (includeOwnerMetadata) metadataUpdate.body.ownerMetadata = { value: { t: "plain", v: { v: 1 } } };
+                await deliver("update", metadataUpdate);
+                for (const id of ["hidden", "concurrent", "scoped-rpc"]) {
+                    const [update] = received.get(id)!;
+                    expect(UpdateContainerSchema.safeParse(update).success).toBe(true);
+                    if (accountId === "recipient") {
+                        expect(update).toEqual(metadataUpdate);
+                        continue;
+                    }
+                    expect(update).toMatchObject({ body: { metadataDocument: "omitted", metadataVersion: 7,
+                        metadataLayoutVersion: 1, agentState: { version: 4, value: "private-agent-state" },
+                        active: true, pendingPermissionRequestCount: 1 } });
+                    expect(update).not.toHaveProperty("body.metadata");
+                    expect(update).not.toHaveProperty("body.ownerMetadata");
+                    const fullBytes = Buffer.byteLength(JSON.stringify(metadataUpdate));
+                    const hintBytes = Buffer.byteLength(JSON.stringify(update));
+                    expect(hintBytes).toBeLessThan(fullBytes);
+                    if (mode === "local" && id === "hidden") console.info("L20 constructed metadata frame bytes", { fullBytes, hintBytes });
+                }
+                for (const id of ["live", "durable", "runtime"]) expect(received.get(id)).toEqual([metadataUpdate]);
+                received.clear();
+            }
+            received.clear();
             await deliver("ephemeral", { type: "transcript-stream-segment-delta", sessionId: "session", segmentId: "segment", tick: 1 });
             expect([...received.keys()]).toEqual(["live", "runtime"]);
         } finally {
-            if (mode === "local") for (const connection of connections) eventRouter.removeConnection("owner", connection);
+            if (mode === "local") for (const connection of connections) eventRouter.removeConnection(accountId, connection);
         }
-    });
-
-    it("disconnects only the Account terminal room after a policy change", () => {
-        const connections = [
-            { room: "account-terminal:u1", connected: true },
-            { room: "account-terminal:u2", connected: true },
-            { room: "user:u1", connected: true },
-        ];
-        // Socket.IO is the transport boundary; the router and room selection remain real.
-        eventRouter.setIo({
-            to: (room: string) => ({ disconnectSockets: () => {
-                for (const connection of connections) {
-                    if (connection.room === room) connection.connected = false;
-                }
-            } }),
-        } as unknown as Parameters<typeof eventRouter.setIo>[0]);
-        eventRouter.disconnectAccountTerminalSockets("u1");
-        expect(connections.map((connection) => connection.connected)).toEqual([false, true, true]);
     });
 
     it("throws when HAPPY_SOCKET_ROOMS_ONLY=1 and io is not initialized", () => {
@@ -323,7 +353,7 @@ describe("eventRouter (rooms)", () => {
             const io = {
                 in: () => ({ fetchSockets: async () => candidates }),
                 to: (room: string | string[]) => ({
-                    emit: () => emit(String(room)), disconnectSockets: () => {},
+                    emit: () => { for (const socketId of [room].flat()) emit(socketId); }, disconnectSockets: () => {},
                 }),
             } satisfies LocalSocketRoomEmitter;
             const connections: ClientConnection[] = [];
@@ -385,6 +415,81 @@ describe("eventRouter (rooms)", () => {
             }
         },
     );
+
+    it("sends one encoded emit per distinct payload across qualified sockets on a receiving node", async () => {
+        const row = {
+            id: "session", primaryTeamId: null, accountId: "owner", account: { status: "active" }, seq: 0,
+            currentStorageState: "hosted", acceptedThroughServerSeq: null, materializationPublicationId: null,
+            materializedThroughSourceAt: null, publishedThroughServerSeq: null,
+            shares: [], teamGrants: [], groupGrants: [],
+        } satisfies SessionAccessProjectionRow;
+        findSession.mockReset();
+        findSession.mockResolvedValue(row);
+        const sockets = Array.from({ length: 12 }, (_, index) => ({
+            id: `qualified-${index}`,
+            data: { userId: "owner", clientType: "user-scoped", authAuthority: "present_user" },
+        }));
+        const emits: Array<{ rooms: string[]; payload: unknown }> = [];
+        const io = {
+            in: () => ({ fetchSockets: async () => sockets }),
+            to: (room: string | string[]) => ({
+                emit: (_event: string, payload: unknown) => {
+                    emits.push({ rooms: Array.isArray(room) ? room : [room], payload });
+                },
+                disconnectSockets: () => {},
+            }),
+        } satisfies LocalSocketRoomEmitter;
+        const payload = { id: "delivery", seq: 1, createdAt: 0, body: { t: "delete-session" as const, sid: "session" } };
+
+        await eventRouter.receiveCredentialQualifiedSessionDelivery(io, {
+            v: 1, accountId: "owner", sessionId: "session", eventName: "update", payload,
+        });
+
+        expect(emits).toHaveLength(1);
+        expect(emits[0]!.rooms.sort()).toEqual(sockets.map(socket => socket.id).sort());
+        expect(emits[0]!.payload).toEqual(payload);
+    });
+
+    it("shares one hint projection across sockets that are not consuming the Session", async () => {
+        const row = {
+            id: "session", primaryTeamId: null, accountId: "owner", account: { status: "active" }, seq: 0,
+            currentStorageState: "hosted", acceptedThroughServerSeq: null, materializationPublicationId: null,
+            materializedThroughSourceAt: null, publishedThroughServerSeq: null,
+            shares: [], teamGrants: [], groupGrants: [],
+        } satisfies SessionAccessProjectionRow;
+        findSession.mockReset();
+        findSession.mockResolvedValue(row);
+        const sockets = Array.from({ length: 6 }, (_, index) => ({
+            id: `hint-${index}`,
+            data: {
+                userId: "owner", clientType: "user-scoped", authAuthority: "present_user", clientPurpose: "sync",
+                sessionConsumption: { liveSessionIds: new Set<string>(), durableSessionIds: new Set<string>() },
+            },
+        }));
+        const emits: Array<{ rooms: string[]; payload: { body: { delivery: string; message: object } } }> = [];
+        const io = {
+            in: () => ({ fetchSockets: async () => sockets }),
+            to: (room: string | string[]) => ({
+                emit: (_event: string, payload: unknown) => {
+                    emits.push({ rooms: Array.isArray(room) ? room : [room],
+                        payload: payload as { body: { delivery: string; message: object } } });
+                },
+                disconnectSockets: () => {},
+            }),
+        } satisfies LocalSocketRoomEmitter;
+        const payload = buildNewMessageUpdate({ id: "message", seq: 1, localId: null,
+            content: { t: "plain", v: { text: "private transcript" } }, createdAt: new Date(1), updatedAt: new Date(2) },
+            "session", 1, "delivery");
+
+        await eventRouter.receiveCredentialQualifiedSessionDelivery(io, {
+            v: 1, accountId: "owner", sessionId: "session", eventName: "update", payload,
+        });
+
+        expect(emits).toHaveLength(1);
+        expect(emits[0]!.rooms.sort()).toEqual(sockets.map(socket => socket.id).sort());
+        expect(emits[0]!.payload.body.delivery).toBe("hint");
+        expect(emits[0]!.payload.body.message).not.toHaveProperty("content");
+    });
 
     it("routes machine-scoped-only to machine + user-scoped rooms", () => {
         const ioTo = vi.fn();

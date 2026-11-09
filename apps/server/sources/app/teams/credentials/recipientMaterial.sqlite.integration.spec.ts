@@ -15,6 +15,7 @@ import {
 } from "@happier-dev/protocol";
 import type { ProviderConnectionId } from "@happier-dev/protocol/providers/ids";
 import tweetnacl from "tweetnacl";
+import { PrismaClient } from '../../../../generated/sqlite-client';
 
 const TEST_CONTRIBUTION_CONTRACT_VERSION = "artifact-example-1";
 const TEST_DIRECT_CONTRIBUTION_CONTRACT_VERSION = computeCanonicalDomainSeparatedDigest(
@@ -78,6 +79,15 @@ function createE2eeAccountMaterial(
 
 describe("Team credential recipient material", () => {
     let harness: LightSqliteHarness;
+    let queryClient: ReturnType<typeof createQueryClient>;
+    let originalTransaction: typeof db.$transaction;
+    const queries: string[] = [];
+    const entitlementReads = () => queries.filter(query => /\bSELECT\b/i.test(query)
+        && query.includes('TeamCredentialResource') && query.includes('disclosureCeiling')
+        && query.includes('allMembersDeliveryMode')).length;
+    function createQueryClient() {
+        return new PrismaClient({ log: [{ emit: 'event', level: 'query' }] });
+    }
     beforeAll(async () => {
         harness = await createLightSqliteHarness({
             tempDirPrefix: "team-credential-recipient-material-",
@@ -85,8 +95,20 @@ describe("Team credential recipient material", () => {
                 HAPPIER_FEATURE_TEAMS_CREDENTIAL_RESOURCES__ENABLED: "1",
             },
         });
+        queryClient = createQueryClient();
+        queryClient.$on('query', event => queries.push(event.query));
+        await queryClient.$connect();
+        originalTransaction = db.$transaction;
+        // Trace only the real database transport; all admission and material logic stays real.
+        db.$transaction = new Proxy(originalTransaction, { apply(_target, _receiver, args) {
+            return Reflect.apply(queryClient.$transaction, queryClient, args);
+        } });
     }, 120_000);
-    afterAll(async () => { await harness?.close(); });
+    afterAll(async () => {
+        if (originalTransaction) db.$transaction = originalTransaction;
+        await queryClient?.$disconnect();
+        await harness?.close();
+    });
 
     it('withdraws only the source owner’s exact publication and preserves other members and newer replacements', async () => {
         const owner = await db.account.create({ data: { encryptionMode: 'plain', publicKey: null } });
@@ -271,6 +293,7 @@ describe("Team credential recipient material", () => {
             ok: true,
             recipients: [{ recipientAccountId: recipient.id, readiness: "ready" }],
         });
+        queries.length = 0;
         const concurrentFirstOpens = await Promise.all([readCurrent(), readCurrent(), readCurrent()]);
         expect(concurrentFirstOpens).toEqual(Array.from({ length: 3 }, () => expect.objectContaining({
             ok: true,
@@ -279,6 +302,7 @@ describe("Team credential recipient material", () => {
             recipientMode: "plain",
             recipientContentPublicKeyFingerprint: null,
         })));
+        expect(entitlementReads()).toBe(concurrentFirstOpens.length);
         await expect(db.teamCredentialActivityEvent.findMany({
             where: { resourceId: resource.id, kind: "direct_delivered" },
             select: {
@@ -305,6 +329,10 @@ describe("Team credential recipient material", () => {
             sessionId: session.id, teamId: team.id, accessLevel: "edit",
             canApprovePermissions: false, effectiveAt: new Date(),
         } });
+        await expect(readCurrent()).resolves.toMatchObject({ ok: true });
+        await db.account.update({ where: { id: recipient.id }, data: { encryptionMode: 'e2ee' } });
+        await expect(readCurrent()).resolves.toEqual({ ok: false, outcome: 'unavailable', reason: 'recipient_binding_changed' });
+        await db.account.update({ where: { id: recipient.id }, data: { encryptionMode: 'plain' } });
 
         const wrongSourceMember = { ...payload.sourceMember, connectedAccountId: "another-source" };
         const wrongSourceMemberKey = computeTeamCredentialSourceMemberKeyV1(wrongSourceMember);
@@ -327,11 +355,13 @@ describe("Team credential recipient material", () => {
             expectedStoredSourceVersion: null,
             expectedPublishedSourceVersion: null,
         }))).resolves.toEqual({ ok: false, reason: "source_changed" });
+        queries.length = 0;
         await expect(inTx(tx => readTeamCredentialRecipientMaterialInTx(tx, {
             resourceId: resource.id, recipientAccountId: recipient.id, sourceMemberKey,
             expectedSourceVersion: sourceVersion, recipientMode: "plain",
             expectedRecipientContentPublicKeyFingerprint: null,
         }))).resolves.toMatchObject({ ok: true, stored });
+        expect(entitlementReads()).toBe(1);
         await expect(inTx(tx => upsertTeamCredentialRecipientMaterialInTx(tx, {
             actorAccountId: recipient.id, resourceId: resource.id, recipientAccountId: recipient.id,
             sourceMemberKey: `${sourceMemberKey}-2`, sourceVersion, recipientMode: "plain",
@@ -474,6 +504,7 @@ describe("Team credential recipient material", () => {
                 contentPublicKeySig: Buffer.from(e2eeMaterial.contentPublicKeySig),
             },
         });
+        await expect(readCurrent()).resolves.toEqual({ ok: false, outcome: 'unavailable', reason: 'recipient_binding_changed' });
         await expect(inTx(tx => readTeamCredentialDirectMaterialCensusInTx(tx, {
             actorAccountId: custodian.id,
             teamId: team.id,
@@ -504,6 +535,9 @@ describe("Team credential recipient material", () => {
                 storedMaterial: Buffer.from(JSON.stringify(encryptedStored)),
             },
         });
+        queries.length = 0;
+        await expect(readCurrent()).resolves.toMatchObject({ ok: true, recipientMode: 'e2ee', stored: encryptedStored });
+        expect(entitlementReads()).toBe(1);
         await expect(inTx(tx => readTeamCredentialDirectMaterialCensusInTx(tx, {
             actorAccountId: custodian.id,
             teamId: team.id,
@@ -524,6 +558,7 @@ describe("Team credential recipient material", () => {
                 contentPublicKeySig: Buffer.from(rotatedE2eeMaterial.contentPublicKeySig),
             },
         });
+        await expect(readCurrent()).resolves.toEqual({ ok: false, outcome: 'unavailable', reason: 'recipient_binding_changed' });
         await expect(inTx(tx => readTeamCredentialDirectMaterialCensusInTx(tx, {
             actorAccountId: custodian.id,
             teamId: team.id,

@@ -66,6 +66,7 @@ import {
 import { serializePendingMaterializedMessage } from "@/app/session/pending/serializePendingMaterializedMessage";
 import { loadPendingActivationPublication } from "@/app/session/pending/publishPendingMutation";
 import { normalizeIncomingSessionMessageContent } from "@/app/session/messageContent/normalizeIncomingSessionMessageContent";
+import { normalizeSessionMessageContentForStorage } from "@/app/session/normalizeSessionMessageContentForStorage";
 import { resolveStructuralSessionAccess } from "@/app/session/access/sessionAccess";
 import { readSessionAccessAuthenticationFromSocket } from "@/app/session/access/sessionAccessAuthentication";
 import { parseSessionMessageSidechainId } from "@/app/session/parseSessionMessageSidechainId";
@@ -1185,11 +1186,25 @@ export function sessionUpdateHandler(
                 ...result.message,
                 accountActor: await resolveSessionMessageAccountActor(result.message),
             };
+            // Relay the producer's append only when the row it replaced is exactly the base it names.
+            const previousRevision = result.didUpdate ? result.previousRevision : undefined;
+            const appendEnvelope = observation.append ? normalizeIncomingSessionMessageContent(observation.append.content) : null;
+            // The same storage normalization as the stored row, so base + append equals it.
+            const appendContent = appendEnvelope ? normalizeSessionMessageContentForStorage(appendEnvelope) : null;
+            // Storage mode is enforced at this write boundary too: an append is relayed only in the
+            // stored row's envelope mode (`encrypted` vs `plain`).
+            const storedContentMode = normalizeIncomingSessionMessageContent(observation.content)?.t;
+            const append = observation.append && appendContent && previousRevision
+                && appendContent.t === storedContentMode
+                && previousRevision.sourceUpdatedAt?.getTime() === observation.append.baseUpdatedAt
+                ? { content: appendContent, base: { updatedAt: previousRevision.updatedAt.getTime(), length: observation.append.baseLength } }
+                : undefined;
             await Promise.all(result.recipientCursors.map(async ({ accountId, cursor }) => {
                 const options = result.attentionImpact ? { attentionImpact: result.attentionImpact } : undefined;
                 const payload = result.didWrite
                     ? buildNewMessageUpdate(observedMessage, observation.sessionId, cursor, randomKeyNaked(12), options)
-                    : buildMessageUpdatedUpdate(observedMessage, observation.sessionId, cursor, randomKeyNaked(12), options);
+                    : buildMessageUpdatedUpdate(observedMessage, observation.sessionId, cursor, randomKeyNaked(12),
+                        append ? { ...options, append } : options);
                 eventRouter.emitUpdate({
                     userId: accountId,
                     payload,

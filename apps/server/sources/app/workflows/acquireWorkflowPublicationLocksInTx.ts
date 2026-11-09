@@ -4,6 +4,7 @@ import { acquireSessionAccountCursorLocksInTx, readSessionAccountCursorAudienceI
 import { assertAccountChangePublicationAudienceInTx, beforeAccountChangePublication } from "@/app/changes/markAccountChanged";
 import type { AccountAdmissionIntent } from "@/app/encryption/accountSessionOwnerMetadataFence";
 import { getWorkflowPublicationAudienceInTx, type WorkflowPublicationScope } from "./workflowPublicationAudience";
+import { acquireDiscussionMutationAccountsInTx } from '@/app/discussions/access';
 
 /** Acquire the composed union before any owner mode, Run, trigger or Session write fence. */
 export async function acquireWorkflowPublicationLocksInTx(
@@ -11,8 +12,15 @@ export async function acquireWorkflowPublicationLocksInTx(
     scope: WorkflowPublicationScope,
     options?: Readonly<{ intent?: AccountAdmissionIntent }>,
 ): Promise<void> {
-    if (getDbProviderFromEnv(process.env, "postgres") === "sqlite") return;
+    if (getDbProviderFromEnv(process.env, "postgres") === "sqlite") {
+        if (scope.discussionId) await acquireDiscussionMutationAccountsInTx(tx, { discussionId: scope.discussionId, actorAccountId: scope.accountId });
+        return;
+    }
     const captured = await getWorkflowPublicationAudienceInTx(tx, scope);
+    if (scope.discussionId) await acquireDiscussionMutationAccountsInTx(tx, {
+        discussionId: scope.discussionId, actorAccountId: scope.accountId,
+        additionalAccountIds: captured.accountIds, additionalSessionIds: captured.sessionIds,
+    });
     const admittedAccountIds = await acquireSessionAccountCursorLocksInTx(tx, captured.sessionIds, captured.accountIds, options);
     if (captured.runIds.length > 0) {
         if (getDbProviderFromEnv(process.env, "postgres") === "postgres") {

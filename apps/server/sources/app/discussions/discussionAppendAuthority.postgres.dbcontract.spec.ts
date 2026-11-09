@@ -20,6 +20,7 @@ import { inTx, type Tx } from '@/storage/inTx';
 import { createSessionMachineAccessKeyInTx } from '@/app/accessKeys/sessionMachineAccessKeyMutations';
 import { createArtifact, deleteArtifact } from '@/app/artifacts/artifactWriteService';
 import { removeArtifactAccessGrantInTx, setArtifactAccessGrantInTx } from '@/app/artifacts/artifactAccessService';
+import { makeShareEligibleForTest } from '@/testkit/shareEligibility.testkit';
 import { createDiscussion, renameDiscussion } from './mutations';
 import { setDiscussionReadCursor } from './readState';
 import { inviteDiscussionParticipant, setDiscussionGrant } from './accessService';
@@ -209,7 +210,7 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== 'postgres')('Discussion appe
             } finally { resume.resolve(); await Promise.allSettled([posting, revoking]); restore(); await current.close(); }
         });
 
-        it.each(['rename', 'read'] as const)(`orders ${kind} withdrawal against %s publication (surviving direct grant: ${direct})`, async operation => {
+        it.each(['rename', 'read'] as const)(`finishes admitted %s and checks ${kind} withdrawal on the next request (surviving direct grant: ${direct})`, async operation => {
             const current = await collectiveFixture();
             if (operation === 'rename') expect(await setDiscussionGrant({ authentication, actorAccountId: current.owner.id,
                 discussionId: current.discussionId, request: { principal: current.principal, accessLevel: 'admin' } })).toMatchObject({ ok: true });
@@ -235,13 +236,13 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== 'postgres')('Discussion appe
                 expect(revokedFirst).toBe(true);
                 resume.resolve();
                 const [result] = await Promise.all([mutation, revoking]);
-                const accepted = direct || !revokedFirst;
-                expect(result.ok).toBe(accepted);
+                expect(result.ok).toBe(true);
                 if (operation === 'rename') expect(await db.discussion.findUniqueOrThrow({ where: { id: current.discussionId } }))
-                    .toMatchObject({ titleContent: { t: 'plain', v: { title: accepted ? 'New title' : 'Authority contention' } } });
-                else if (!accepted) expect(await db.discussionReadState.findUnique({ where: { discussionId_accountId: {
-                    discussionId: current.discussionId, accountId: current.actor.id,
-                } } })).not.toMatchObject({ lastReadSeq: 1 });
+                    .toMatchObject({ titleContent: { t: 'plain', v: { title: 'New title' } } });
+                const next = operation === 'rename'
+                    ? await renameDiscussion({ ...input, titleContent: { t: 'plain', v: { v: 1, title: 'Next title' } } })
+                    : await setDiscussionReadCursor({ ...input, lastReadSeq: 1 });
+                expect(next.ok).toBe(direct);
             } finally { resume.resolve(); await Promise.allSettled([mutation, revoking]); restore(); await current.close(); }
         });
 
@@ -252,23 +253,41 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== 'postgres')('Discussion appe
             const payload = request();
             try {
                 const posted = await current.append(current.actor.id, payload);
-                expect(posted.statusCode, posted.body).toBe(direct ? 200 : 403);
                 await current.assertMessages(payload.localId, direct);
                 if (!direct) expect(await current.publicationState()).toEqual(withdrawn);
+                expect(posted.statusCode, posted.body).toBe(direct ? 200 : 400);
+                if (!direct) expect(posted.json()).toEqual({ error: 'discussion_publication_context_unavailable' });
             } finally { restore(); await current.close(); }
         });
 
-        if (kind === 'team' && !direct) it('does not borrow an unlocked re-created membership lifetime after the authority lookup missed', async () => {
+        if (kind === 'team' && !direct) it('refuses withdrawn authority before allocation and admits restored membership on the next request', async () => {
             const current = await collectiveFixture();
             const paused = signal(); const resume = signal();
-            const afterCapture = beforeMutationQuery(discussionAccess, async () => { await current.revoke(); }, 'after');
-            const afterMissingLock = beforeMutationQuery((delegate, _method, args) => delegate === '$queryRawUnsafe'
-                && /FROM "TeamMembership".*FOR SHARE/.test(String(args[0])), async () => { await current.add(); }, 'after');
+            let authorityState: Awaited<ReturnType<typeof current.publicationState>> | undefined;
+            const afterCapture = beforeMutationQuery(discussionAccess, async () => {
+                await current.revoke(); authorityState = await current.publicationState();
+            }, 'after');
             const beforeAllocation = beforeMutationQuery(allocation, async () => { paused.resolve(); await resume.promise; });
             const payload = request(); const posting = current.append(current.actor.id, payload).then(result => result);
             let revoking: ReturnType<typeof current.revoke> | undefined;
             try {
-                await Promise.race([paused.promise, posting.then(() => { throw new Error('Append ended before re-created membership pause'); })]);
+                const early = await Promise.race([paused.promise.then(() => null), posting]);
+                if (early) {
+                    // An admission refusal has no allocation phase to pause.
+                    // It must leave no publication or cursor effect to recover.
+                    await current.assertMessages(payload.localId, false);
+                    expect(authorityState).toBeDefined();
+                    expect(await current.publicationState()).toEqual(authorityState);
+                    expect(early.statusCode, early.body).toBe(400);
+                    expect(early.json()).toEqual({ error: 'discussion_publication_context_unavailable' });
+                    // Restore only after the refused transaction releases its
+                    // locks; rejoining inside its SQL callback deadlocks it.
+                    beforeAllocation();
+                    await current.add();
+                    const restored = await current.append(current.actor.id);
+                    expect(restored.statusCode, restored.body).toBe(200);
+                    return;
+                }
                 revoking = current.revoke();
                 const revokedFirst = await writerCommittedOrBlocked(revoking);
                 resume.resolve();
@@ -277,7 +296,7 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== 'postgres')('Discussion appe
                 await current.assertMessages(payload.localId, !revokedFirst);
             } finally {
                 resume.resolve(); await Promise.allSettled([posting, revoking]);
-                beforeAllocation(); afterMissingLock(); afterCapture(); await current.close();
+                beforeAllocation(); afterCapture(); await current.close();
             }
         });
     }
@@ -321,6 +340,8 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== 'postgres')('Discussion appe
                 const current = transport === 'socket' ? await publisherFixture() : await fixture();
                 const sourceOwner = await db.account.create({ data: { publicKey: randomUUID(), encryptionMode: 'plain' } });
                 const reader = await db.account.create({ data: { publicKey: randomUUID(), encryptionMode: 'plain' } });
+                await makeShareEligibleForTest(sourceOwner.id, [current.owner.id, reader.id]);
+                await makeShareEligibleForTest(current.owner.id, reader.id);
                 const artifactId = randomUUID();
                 const artifact = await createArtifact({ actorUserId: sourceOwner.id, artifactId,
                     header: decodeBase64(encodePlainArtifactStoredContent({ kind: 'markdown', title: 'Source authority' })),

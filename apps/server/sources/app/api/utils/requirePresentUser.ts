@@ -10,8 +10,6 @@ export const PresentUserRequiredResponseSchema = z.lazy(() => z.strictObject({
 }));
 
 type AuthenticatedRouteRequest = Readonly<{
-    /** Set only by `enableAuthentication`; absent authority fails closed. */
-    authAuthority?: unknown;
     /** Current verifier projection; absent or unknown provenance fails closed. */
     authTokenKind?: unknown;
 }>;
@@ -23,22 +21,20 @@ type AuthenticatedRouteReply = Readonly<{
 }>;
 
 /**
- * Admits only a credential whose server-verified provenance represents a
- * present interactive user. Authentication itself remains responsible for
- * absent and invalid bearer credentials; this guard deliberately knows only
- * the authority stamped after successful authentication.
+ * Admits only a person-class credential: an Account (app) or terminal (CLI
+ * login) credential, whatever its per-invocation authority. An
+ * `account_automation` authority ceiling attributes an agent- or
+ * plugin-originated call; the host Action executor's per-Action approval
+ * policy gates that call, so the ceiling does not make this route refuse.
+ * Authentication remains responsible for absent and invalid bearers.
  */
 export async function requirePresentUser(
     request: AuthenticatedRouteRequest,
     reply: AuthenticatedRouteReply,
 ): Promise<unknown> {
-    // Directory credentials intentionally carry present-user authority for
-    // identity operations, but must never reach ordinary Home present-user
-    // routes. Authentication stamps this kind on every live request; missing,
-    // restricted, and unknown provenance all fail closed.
-    if (
-        request.authAuthority === "present_user"
-        && (request.authTokenKind === "account" || request.authTokenKind === "terminal")
-    ) return undefined;
+    // Scoped credentials are never a person: API tokens, Account Directory
+    // credentials (identity operations only), ephemeral Session runners, and
+    // missing or unknown provenance all fail closed.
+    if (request.authTokenKind === "account" || request.authTokenKind === "terminal") return undefined;
     return reply.code(403).send({ error: PRESENT_USER_REQUIRED_ERROR });
 }

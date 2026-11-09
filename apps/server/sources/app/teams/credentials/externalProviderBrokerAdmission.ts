@@ -163,6 +163,7 @@ export async function admitTeamCredentialExternalProviderRequestInTx(
         custodianAccountId: resource.custodianAccountId, source: source.data,
     });
     if (current.status !== 'current') return failure('resource_unavailable');
+    if (current.authenticationFailure) return failure(current.authenticationFailure);
     const requestId = `external:${binding.externalApiKeyId}:${binding.requestId}`;
     const usage = await admitTeamCredentialUsageInTx(tx, {
         storageAccountId: binding.assignedAccountId,
@@ -203,8 +204,8 @@ export async function admitTeamCredentialExternalProviderRequestInTx(
 /** Authenticates the reporting broker Machine, then delegates the immutable
  * terminal fact to the canonical UsageEvent writer. The broker carries the
  * Provider's own observed tokens for the routes whose protocol reports them and
- * `unavailable` otherwise; no cost is accepted because no canonical price
- * exists for these routes and an estimate is not a Team usage fact. Revocation
+ * `unavailable` otherwise. Explicit reported charges reuse the same request
+ * identity; estimates are not broker usage facts. Revocation
  * after admission does not erase the already-observed terminal outcome. */
 export async function recordTeamCredentialExternalProviderTerminalUsageInTx(
     tx: Tx,
@@ -250,7 +251,13 @@ export async function recordTeamCredentialExternalProviderTerminalUsageInTx(
             measurement: request.measurement,
             modelId: request.actualModelId,
             tokens: request.tokens,
-            cost: null,
+            cost: request.reportedCostUsd === undefined ? null : {
+                reportedUsd: request.reportedCostUsd,
+                estimatedUsd: 0,
+                currency: 'USD',
+                costSource: 'provider_reported',
+                billingContext: 'api_usage',
+            },
             authority: {
                 kind: 'teamCredentialExternalTerminal',
                 admissionUsageEventId: request.admissionUsageEventId,

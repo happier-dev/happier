@@ -101,9 +101,14 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("T
             const result = await resolveTeamAdmissionModeApplicabilityInTx({ tx: observed.tx, env, teamId: team.id });
             expect(result.modes).toMatchObject({ provisioned: { status: "available" }, jit: { status: "available" } });
             expect(observed.reads.filter(read => read.model === "teamDirectorySource" && read.method === "findUnique").length).toBe(0);
-            // One provider-policy snapshot plus the canonical feature gate's
-            // authentication-policy overlay, independent of source count.
-            expect(observed.reads.filter(read => read.model === "homeGovernancePolicy").length).toBe(2);
+            // Provider and directory currentness share the admitted Home snapshot.
+            expect(observed.reads.filter(read => read.model === "homeGovernancePolicy")).toHaveLength(1);
+        });
+        await db.identityProviderInstance.updateMany({
+            where: { id: { in: connections.map(connection => connection.providerInstanceId) } }, data: { enabled: false },
+        });
+        await expect(inTx(tx => resolveTeamAdmissionModeApplicabilityInTx({ tx, env, teamId: team.id }))).resolves.toMatchObject({
+            modes: { provisioned: { status: "unavailable" }, jit: { status: "unavailable" } },
         });
     });
 
@@ -278,6 +283,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("T
                 const result = await inTx(tx => resolveTeamAdmissionModeApplicabilityInTx({ tx, env, teamId: team.id }));
                 const registrationDecryptions = decryptions.mock.calls.filter(([path]) => path[1] === "github_app_registration"
                     && path[2] === registration.id).length;
+                console.info("TEAM_ADMISSION_GITHUB_DECRYPTIONS", JSON.stringify({ clientSecretConfigured, registrationDecryptions }));
                 expect(result.modes.provisioned).toEqual({ status: "available" });
                 expect(result.modes.jit.status).toBe(clientSecretConfigured ? "available" : "unavailable");
                 expect(registrationDecryptions).toBe(1);

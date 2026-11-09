@@ -2121,7 +2121,9 @@ export function createPluginAvailabilityOperations(options: Readonly<{
                 const readPluginIds = list ? candidates.slice(0, PLUGIN_ACCOUNT_AVAILABILITY_INTENT_PAGE_SIZE) : candidates;
                 const pageIds = new Set(readPluginIds);
                 const intentRows = rows.filter(row => pageIds.has(row.pluginId));
-                const listDeclarations = await readIntentListDeclarations(tx, params.accountId, intentRows);
+                const listDeclarations: Awaited<ReturnType<typeof readIntentListDeclarations>> = list?.omitDeclarations
+                    ? new Map()
+                    : await readIntentListDeclarations(tx, params.accountId, intentRows);
                 const coordinates = intentRows.flatMap(row => row.desiredVersion
                     ? [{ pluginId: row.pluginId, version: row.desiredVersion }] : []);
                 const releases = coordinates.length > 0
@@ -2181,7 +2183,8 @@ export function createPluginAvailabilityOperations(options: Readonly<{
             const intent = intentRow ? intentFromRow(intentRow) : null;
             const capturedDeclaration = current.listDeclarations.get(pluginId);
             const listDeclaration = capturedDeclaration ? decodeIntentListDeclaration(capturedDeclaration) : undefined;
-            const machineDeclarations = listDeclaration?.machineDeclarations ?? readCurrentMachinePluginDeclarationsV1(intentRow, pluginId);
+            const machineDeclarations = list?.omitDeclarations ? []
+                : listDeclaration?.machineDeclarations ?? readCurrentMachinePluginDeclarationsV1(intentRow, pluginId);
             // Releases written before package assets have no immutable descriptor.
             // They are intentionally unavailable to the current release-facts ABI
             // rather than being populated with a guessed empty archive.
@@ -2197,8 +2200,10 @@ export function createPluginAvailabilityOperations(options: Readonly<{
                 hostingCapability: hosting.value,
                 intent,
                 release: facts,
-                currentDeclaration: listDeclaration ? listDeclaration.currentDeclaration
-                    : readCurrentPluginDeclarationV1({ pluginId, intent: intentRow, release }),
+                ...(list?.omitDeclarations ? {} : {
+                    currentDeclaration: listDeclaration ? listDeclaration.currentDeclaration
+                        : readCurrentPluginDeclarationV1({ pluginId, intent: intentRow, release }),
+                }),
                 ...(machineDeclarations.length > 0 ? { machineDeclarations: list
                     ? machineDeclarations.map(entry => ({ machineId: entry.machineId,
                         machineInstallationId: entry.machineInstallationId,

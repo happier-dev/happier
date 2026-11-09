@@ -1,9 +1,16 @@
 import { describe, expect, it } from "vitest";
 
-import {
-    createGitHubWebhookHmacSha256V1Verifier,
-    verifyGitHubWebhookHmacSha256V1,
-} from "./githubHmacSha256";
+import { readPluginWebhookSignedVerifierV1 } from "./catalog";
+
+function createGitHubWebhookHmacSha256V1Verifier(secret: string) {
+    return readPluginWebhookSignedVerifierV1("github_hmac_sha256_v1")!.createVerifier(secret);
+}
+
+function verifyGitHubWebhookHmacSha256V1(params: { rawBody: Uint8Array; secret: string; signatureHeader: unknown }): boolean {
+    const verifier = createGitHubWebhookHmacSha256V1Verifier(params.secret);
+    verifier.update(params.rawBody);
+    return verifier.verify(params.signatureHeader);
+}
 
 describe("verifyGitHubWebhookHmacSha256V1", () => {
     const rawBody = new TextEncoder().encode("Hello, World!");

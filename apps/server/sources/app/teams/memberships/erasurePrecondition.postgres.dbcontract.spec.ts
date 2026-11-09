@@ -54,6 +54,7 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== "postgres")("Team owner cont
                 await assertDecision(true); // The guest alone is still somebody left to strand.
                 await client.teamMembership.deleteMany({ where: { teamId: team.id, role: "guest" } });
                 await assertDecision(false); // No other structurally active member remains.
+                console.info("TEAM_ERASURE_OWNER_QUERY_COST", { memberCounts: [3, 123], selectsPerPage: small });
             } finally {
                 await client.account.deleteMany({ where: { id: { in: workers.map(worker => worker.id) } } });
             }
@@ -79,6 +80,7 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== "postgres")("Team owner cont
             expect(decisions.get(target!.id)).toEqual({ status: "rejected", code: "team_owner_transfer_required", teamIds: [`${prefix}1`] });
             expect(decisions.get(worker!.id)).toEqual({ status: "ok" });
             expect(selects).toBe(1);
+            console.info("TEAM_ERASURE_OWNER_BIND_BOUNDARY", { ownedTeams: 35_000, selects, blockedTeams: 1 });
         } finally {
             await client.team.deleteMany({ where: { id: { startsWith: prefix } } });
             await client.account.deleteMany({ where: { id: { in: [target!.id, worker!.id] } } });

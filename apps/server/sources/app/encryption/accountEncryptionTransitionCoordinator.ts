@@ -1,6 +1,3 @@
-import { readCollectionResourceRecipientCensusInTx } from '@/app/plugins/data/collections/sharingAccessService';
-import { readCollectionSharingAudienceInTx } from '@/app/plugins/data/collections/sharingStorage';
-import { ResourceRecipientKeyEnvelopesV1Schema } from '@happier-dev/protocol/teams/resourceGrantAccessV1';
 import { randomUUID } from "node:crypto";
 import type { Prisma } from "@prisma/client";
 import { ACCOUNT_ENCRYPTION_MIGRATE_TRANSITION_COLLECTION_PAGE_MAX_ITEMS, type AccountEncryptionMigrateCollectionInventoryItem, type AccountEncryptionMigrateCollectionStageItem, type AccountEncryptionMigrateTransitionPrepareRequest, type AccountEncryptionMigrateTransitionPrepareResponse } from '@happier-dev/protocol/account/encryptionMigrate';
@@ -8,11 +5,15 @@ import { computeAccountEncryptionMigrateKeyFingerprintV1 } from '@happier-dev/pr
 import { decodeBase64, encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { parseAccountPasswordCredentialV1, type AccountPasswordCredentialV1 } from '@happier-dev/protocol/auth/accountPasswordCredential';
 import { pluginJsonValuesEqual } from '@happier-dev/protocol/plugins/contributions/jsonSchemaValues';
+import { readCollectionResourceRecipientCensusInTx } from '@/app/plugins/data/collections/sharingAccessService';
+import { readCollectionSharingAudienceInTx } from '@/app/plugins/data/collections/sharingStorage';
+import { ResourceRecipientKeyEnvelopesV1Schema } from '@happier-dev/protocol/teams/resourceGrantAccessV1';
 import { type PluginCollectionContentEnvelopeV1 } from '@happier-dev/protocol/plugins/data/collectionsV1';
 
 import { assertAccountChangePublicationAudienceInTx, beforeAccountChangePublication, markAccountChanged } from "@/app/changes/markAccountChanged";
 import { resolveArtifactAudienceInTx } from "@/app/artifacts/artifactAccessService";
 import { resolveDiscussionAudienceInTx } from "@/app/discussions/access";
+import { resolveTaskAudienceInTx, taskRowsWhere } from '@/app/todos/taskGrantStorageAdapter';
 import { resolveCurrentMachineRecipientAccountIdsInTx } from "@/app/machines/machineAccess";
 import { readSessionAccountCursorAudienceInTx } from "@/app/session/changeTracking/acquireSessionAccountCursorLocksInTx";
 import { getWorkflowPublicationAudienceInTx } from "@/app/workflows/workflowPublicationAudience";
@@ -365,6 +366,12 @@ async function readAccountEncryptionTransitionAudienceInTx(tx: Tx, accountId: st
     const discussions = await tx.discussion.findMany({ where: { ownerAccountId: accountId }, select: { id: true } });
     for (const discussion of discussions) {
         for (const recipient of await resolveDiscussionAudienceInTx(tx, discussion.id)) accountIds.add(recipient);
+    }
+    const tasks = await tx.userKVStore.findMany({ where: { accountId, ...taskRowsWhere, OR: [
+        { accountGrants: { some: {} } }, { teamGrants: { some: {} } }, { groupGrants: { some: {} } },
+    ] }, select: { id: true } });
+    for (const task of tasks) {
+        for (const recipient of await resolveTaskAudienceInTx(tx, task.id)) accountIds.add(recipient);
     }
     for (const recipient of await readCollectionSharingAudienceInTx(tx, { accountId, deletedAt: null })) accountIds.add(recipient);
     return [...accountIds].sort();

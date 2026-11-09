@@ -129,7 +129,7 @@ export async function applyReleasedUiV021SessionEnd(params: Readonly<{
         const didApply = session.active || turnApplied || activity.status === "applied";
         if (!didApply) return { status: "unchanged" as const };
 
-        const recipientCursors = await markSessionProjectionRecipientsChanged({ tx, sessionId: params.sessionId });
+        const recipientCursors = await markSessionProjectionRecipientsChanged({ tx, sessionId: params.sessionId, usageAccountingChanged: false });
         const currentTurnStatus = PrimaryTurnStatusV1Schema.safeParse(session.latestTurnStatus);
         const latestTurnStatus: PrimaryTurnStatusV1 | null = turn?.ok
             ? turn.latestTurnStatus

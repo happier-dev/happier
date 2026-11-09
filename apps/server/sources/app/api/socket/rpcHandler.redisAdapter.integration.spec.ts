@@ -2,19 +2,25 @@ import http from "node:http";
 
 import { createAdapter } from "@socket.io/redis-streams-adapter";
 import { RPC_ERROR_CODES } from "@happier-dev/protocol/rpc";
+import { createRpcCallError } from '@happier-dev/protocol/rpcErrors';
+import { RPC_METHODS } from "@happier-dev/protocol/rpc/methods";
+import { getMachineSocketRoom } from "../socketRooms";
 import { SOCKET_RPC_EVENTS } from "@happier-dev/protocol/socketRpc";
 import { Redis } from "ioredis";
 import { Server } from "socket.io";
 import { io as createClient, type Socket as ClientSocket } from "socket.io-client";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { startRedisAdapterRecoveryCluster } from "@/testkit/redisAdapterRecoveryCluster";
+import { startRedisAdapterRecoveryCluster, holdRedisAdapterDiscoveryRequests } from "@/testkit/redisAdapterRecoveryCluster";
 
 import { readRedisStreamsAdapterOptionsFromEnv } from "@/config/socketAdapter";
 
 import { resolveRedisAdapterValidationRedisUrl } from "../../../../scripts/resolveRedisAdapterValidationRedisUrl";
 import { registerSocketRpcHandlers } from "./rpc/registerSocketRpcHandlers";
 import { buildRpcMethodRoom } from "./rpc/rpcMethodRoom";
+import { registerSocketRoomDiscovery } from './socketRoomDiscovery';
+import { forwardRpcCall } from './rpc/forwardRpcCall';
+import { discoverRpcTargets } from './rpc/rpcTargetDiscovery';
 
 const USER_ID = "user-redis-adapter";
 const SOCKET_PATH = "/v1/updates";
@@ -80,6 +86,8 @@ async function startCluster(): Promise<StartedCluster> {
         adapter: createAdapter(redisB, readRedisStreamsAdapterOptionsFromEnv({})),
     });
 
+    registerSocketRoomDiscovery(ioA);
+    registerSocketRoomDiscovery(ioB);
     registerTestRpcHandlers(ioA);
     registerTestRpcHandlers(ioB);
 
@@ -175,6 +183,204 @@ describe("rpcHandler redis adapter integration", () => {
         }
         while (startedClusters.length > 0) {
             await startedClusters.pop()?.close();
+        }
+    });
+
+    it('publishes effective UI availability across real Redis nodes without repeating unchanged owners', async () => {
+        const cluster = await startCluster();
+        startedClusters.push(cluster);
+        await waitForCondition(async () => await cluster.ioA.sockets.adapter.serverCount() === 2);
+        const observer = await connectClient(cluster.portA);
+        const first = await connectClient(cluster.portA);
+        const second = await connectClient(cluster.portB);
+        startedClients.push(observer, first, second);
+        const method = `availability-machine:${RPC_METHODS.UI_BROWSER_RECORDING_CAPTURE_FRAME}`;
+        const machineRoom = getMachineSocketRoom(USER_ID, 'availability-machine');
+        await cluster.ioA.sockets.sockets.get(observer.id!)!.join(machineRoom);
+        const available: string[] = [];
+        const unavailable: string[] = [];
+        observer.on(SOCKET_RPC_EVENTS.REGISTERED, ({ method }: { method: string }) => available.push(method));
+        observer.on(SOCKET_RPC_EVENTS.UNREGISTERED, ({ method }: { method: string }) => unavailable.push(method));
+        const localBroadcast = vi.spyOn(cluster.ioA, 'to');
+        const remoteBroadcast = vi.spyOn(cluster.ioB, 'to');
+        const register = async (socket: ClientSocket) => {
+            const ack = waitForEvent<{ method: string }>(socket, SOCKET_RPC_EVENTS.REGISTERED);
+            socket.emit(SOCKET_RPC_EVENTS.REGISTER, { method });
+            expect(await ack).toEqual({ method });
+        };
+        try {
+            await register(first);
+            await vi.waitFor(() => expect(available).toEqual([method]));
+            localBroadcast.mockClear();
+            remoteBroadcast.mockClear();
+            await register(first);
+            await register(second);
+            await register(second);
+            const withdrawn = waitForEvent(first, SOCKET_RPC_EVENTS.UNREGISTERED);
+            first.emit(SOCKET_RPC_EVENTS.UNREGISTER, { method });
+            await withdrawn;
+            expect(localBroadcast.mock.calls.filter(([room]) => room === machineRoom)).toHaveLength(0);
+            expect(remoteBroadcast.mock.calls.filter(([room]) => room === machineRoom)).toHaveLength(0);
+            expect(available).toEqual([method]);
+            expect(unavailable).toEqual([]);
+
+            second.disconnect();
+            await vi.waitFor(() => expect(unavailable).toEqual([method]));
+            await register(first);
+            await vi.waitFor(() => expect(available).toEqual([method, method]));
+            // Finish the real withdrawal before closing its Redis transport.
+            const restoredWithdrawn = waitForEvent(first, SOCKET_RPC_EVENTS.UNREGISTERED);
+            first.emit(SOCKET_RPC_EVENTS.UNREGISTER, { method });
+            await restoredWithdrawn;
+            await vi.waitFor(() => expect(unavailable).toEqual([method, method]));
+        } finally {
+            localBroadcast.mockRestore();
+            remoteBroadcast.mockRestore();
+        }
+    });
+
+    it.each(['local', 'remote'] as const)('wakes a held single-client read once on %s registration through the real forwarding path', async placement => {
+        const cluster = await startCluster();
+        startedClusters.push(cluster);
+        await waitForCondition(async () => await cluster.ioA.sockets.adapter.serverCount() === 2);
+        const listener = await connectClient(placement === 'local' ? cluster.portA : cluster.portB);
+        startedClients.push(listener);
+        const method = 'agent.availabilityPush';
+        const room = buildRpcMethodRoom({ userId: USER_ID, method });
+        const fetch = cluster.ioA.sockets.adapter.fetchSockets.bind(cluster.ioA.sockets.adapter);
+        let censusCalls = 0;
+        let firstCensus!: () => void;
+        const first = new Promise<void>(resolve => { firstCensus = resolve; });
+        const spy = vi.spyOn(cluster.ioA.sockets.adapter, 'fetchSockets').mockImplementation(async options => {
+            if (options.rooms.has(room)) censusCalls++;
+            const result = await fetch(options);
+            if (options.rooms.has(room)) firstCensus();
+            return result;
+        });
+        const cancel = new AbortController();
+        const pending = forwardRpcCall({ io: cluster.ioA, targetUserId: USER_ID, method, callParams: { probe: 'arrival' },
+            answeringClient: { requireSingle: true },
+            callerLifetime: { signal: cancel.signal, isCurrent: async () => true },
+        });
+        try {
+            await first;
+            await new Promise<void>(resolve => setTimeout(resolve, 100));
+            expect(censusCalls).toBe(1);
+            listener.on(SOCKET_RPC_EVENTS.REQUEST, (request, respond) => respond(request.params));
+            const registered = waitForEvent(listener, SOCKET_RPC_EVENTS.REGISTERED);
+            listener.emit(SOCKET_RPC_EVENTS.REGISTER, { method });
+            await registered;
+            await expect(pending).resolves.toMatchObject({ ok: true, result: { probe: 'arrival' } });
+            expect(censusCalls).toBe(2);
+        } finally {
+            cancel.abort();
+            await pending;
+            spy.mockRestore();
+        }
+    });
+
+    it('returns a typed uniqueness timeout without dispatch when an unrelated Redis peer is silent', async () => {
+        const cluster = await startRedisAdapterRecoveryCluster({ nodeCount: 3 });
+        const [source, target, unrelated] = cluster.nodes;
+        registerTestRpcHandlers(source.io);
+        registerTestRpcHandlers(target.io);
+        const caller = await connectClient(source.port);
+        const listener = await connectClient(target.port);
+        const held = holdRedisAdapterDiscoveryRequests(unrelated!.io);
+        let executions = 0;
+        try {
+            const method = 'agent.uniqueDecision';
+            listener.on(SOCKET_RPC_EVENTS.REQUEST, (_request, respond) => {
+                executions++;
+                respond({ decided: true });
+            });
+            const registered = waitForEvent(listener, SOCKET_RPC_EVENTS.REGISTERED);
+            listener.emit(SOCKET_RPC_EVENTS.REGISTER, { method });
+            await registered;
+            const call = () => forwardRpcCall({ io: source.io, targetUserId: USER_ID, callerSocketId: caller.id,
+                method, callParams: {}, answeringClient: { requireSingle: true } });
+            const response = await call();
+            expect(response).toMatchObject({ ok: false, errorCode: RPC_ERROR_CODES.TRANSPORT_UNAVAILABLE,
+                failureCause: { phase: 'rpc.discovery.global_uniqueness', errorClass: 'Error', errorCode: 'ETIMEDOUT', httpStatus: null } });
+            if (response.ok) throw new Error('Expected the census to refuse dispatch');
+            expect(createRpcCallError(response)).toMatchObject({ failureCause: expect.objectContaining({ errorCode: 'ETIMEDOUT' }) });
+            expect(executions).toBe(0);
+            held.release();
+            expect(await call())
+                .toMatchObject({ ok: true, result: { decided: true }, answeringClientId: listener.id });
+            expect(executions).toBe(1);
+        } finally {
+            held.release();
+            caller.disconnect();
+            listener.disconnect();
+            await cluster.close();
+        }
+    });
+
+    it('waits the unchanged census window for a silent peer and removes closed peer subscriptions from membership', async () => {
+        const cluster = await startRedisAdapterRecoveryCluster({ nodeCount: 3 });
+        const [source, healthy, silent] = cluster.nodes;
+        const held = holdRedisAdapterDiscoveryRequests(silent!.io);
+        try {
+            const startedAt = Date.now();
+            const discovery = discoverRpcTargets({ io: source.io, userId: USER_ID,
+                method: 'agent.singleRead', answeringClient: { requireSingle: true }, fetchTimeoutMs: 150,
+            });
+            await held.received;
+            expect(await discovery).toMatchObject({ targets: [], failureCause: { errorCode: 'ETIMEDOUT' } });
+            const elapsedMs = Date.now() - startedAt;
+            expect(elapsedMs).toBeGreaterThanOrEqual(150);
+            expect(await source.io.sockets.adapter.serverCount()).toBe(3);
+            await silent!.io.close();
+            await waitForCondition(async () => await healthy.io.sockets.adapter.serverCount() === 2);
+            expect(await source.io.sockets.adapter.serverCount()).toBe(2);
+            // The root is not membership: adapter-owned subscriber duplicates remain
+            // live until the adapter itself closes, as they would on process exit.
+            healthy.owner.closeRedisSocketClusterClient();
+            expect(await source.io.sockets.adapter.serverCount()).toBe(2);
+            await healthy.io.close();
+            await waitForCondition(async () => await source.io.sockets.adapter.serverCount() === 1);
+            console.info('RPC_CENSUS_SILENT_PEER', JSON.stringify({ fetchWindowMs: 150, elapsedMs,
+                gracefulMembership: 2, rootOnlyDisconnectMembership: 2, closedAdapterMembership: 1 }));
+        } finally {
+            held.release();
+            await cluster.close();
+        }
+    });
+
+    it('admits one current-version RPC target before an unrelated census peer answers', async () => {
+        const cluster = await startRedisAdapterRecoveryCluster({ nodeCount: 3 });
+        const [nodeA, nodeB, unrelated] = cluster.nodes;
+        registerTestRpcHandlers(nodeA.io);
+        registerTestRpcHandlers(nodeB.io);
+        const caller = await connectClient(nodeA.port);
+        const listener = await connectClient(nodeB.port);
+        const held = holdRedisAdapterDiscoveryRequests(unrelated!.io);
+        let targetHeld: ReturnType<typeof holdRedisAdapterDiscoveryRequests> | undefined;
+        let executions = 0;
+        try {
+            const method = 'agent.currentRead';
+            listener.on(SOCKET_RPC_EVENTS.REQUEST, (_request, respond) => {
+                executions++;
+                respond({ source: 'target' });
+            });
+            const registered = waitForEvent(listener, SOCKET_RPC_EVENTS.REGISTERED);
+            listener.emit(SOCKET_RPC_EVENTS.REGISTER, { method });
+            await registered;
+            targetHeld = holdRedisAdapterDiscoveryRequests(nodeB.io);
+            const calling = emitWithAck(caller, SOCKET_RPC_EVENTS.CALL, { method, params: {} });
+            await Promise.all([held.received, targetHeld.received]);
+            targetHeld.release();
+            const response = await calling;
+            expect(held.count).toBeGreaterThan(0);
+            expect(response).toEqual({ ok: true, result: { source: 'target' } });
+            expect(executions).toBe(1);
+        } finally {
+            held.release();
+            targetHeld?.release();
+            caller.disconnect();
+            listener.disconnect();
+            await cluster.close();
         }
     });
 

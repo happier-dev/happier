@@ -1,7 +1,8 @@
-import { createHash, randomBytes as nodeRandomBytes } from "node:crypto";
+import { randomBytes as nodeRandomBytes } from "node:crypto";
 
 import { PluginWebhookEndpointEnsureResultV1Schema, PluginWebhookEndpointIdV1Schema, PluginWebhookEndpointReadResultV1Schema, PluginWebhookEndpointRetargetResultV1Schema, PluginWebhookEndpointRevokeResultV1Schema, PluginWebhookPublicUrlV1Schema, formatPluginWebhookEndpointIdV1, type PluginWebhookEndpointEnsureInputV1, type PluginWebhookEndpointEnsureResultV1, type PluginWebhookEndpointReadResultV1, type PluginWebhookEndpointRetargetResultV1, type PluginWebhookEndpointRevokeResultV1 } from '@happier-dev/protocol/plugins/webhooks/endpointV1';
-import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/canonicalJson';
+import { createPluginWebhookCheckIdDigestV1, createPluginWebhookIdentityFingerprintV1 as fingerprint } from './checkIdDigest';
+export { createPluginWebhookCheckIdDigestV1 } from './checkIdDigest';
 
 import { db, isPrismaErrorCode } from "@/storage/db";
 import { inTx, type Tx } from "@/storage/inTx";
@@ -11,6 +12,7 @@ import { createGeneratedPluginWebhookCredentialMaterialV1 } from "./credentialMa
 import { isContributionSetupCompatibleWithRoutingKindV1 } from "./routingKind";
 import { projectPluginWebhookEndpointReadinessV1 } from "./endpointReadiness";
 import { markPluginWebhookAccountChangedInTxV1 } from "./accountChange";
+import type { PluginWebhookSignedVerifierKindV1 } from "./verifiers/catalog";
 
 export class PluginWebhookEndpointStoreError extends Error {
     constructor(readonly code:
@@ -28,9 +30,15 @@ export class PluginWebhookEndpointStoreError extends Error {
 export type ResolvedPluginWebhookContributionV1 = Readonly<{
     pluginId: string;
     localId: string;
-    handlerActionLocalId: string;
-    verifierKind: "github_hmac_sha256_v1";
     routingKind: "accountEndpoint" | "providerInstallation";
+    handlerActionLocalId: string;
+    verifierKind: PluginWebhookSignedVerifierKindV1;
+}> | Readonly<{
+    pluginId: string;
+    localId: string;
+    routingKind: "accountEndpoint";
+    handlerActionLocalId: null;
+    verifierKind: "capabilityUrl_v1";
 }>;
 
 export type ResolvedPluginWebhookTargetV1 = Readonly<{
@@ -59,10 +67,6 @@ export type PluginWebhookEndpointStoreV1 = Readonly<{
     }>): Promise<PluginWebhookEndpointRetargetResultV1>;
 }>;
 
-function fingerprint(value: unknown): string {
-    return createHash("sha256").update(createCanonicalJsonSigningInput(value), "utf8").digest("hex");
-}
-
 export function formatPluginWebhookEndpointPublicUrlV1(publicBaseUrl: string, opaqueRouteId: string): string {
     const base = new URL(publicBaseUrl);
     base.pathname = `/v1/plugins/webhooks/${opaqueRouteId}`;
@@ -78,6 +82,7 @@ const ENSURE_REJOIN_SELECT_V1 = {
     enabled: true,
     revokedAt: true,
     providerConfirmedAt: true,
+    setupKind: true,
     ensureRequestFingerprint: true,
     route: { select: { opaqueRouteId: true, enabled: true, revokedAt: true } },
 } as const;
@@ -89,6 +94,7 @@ function projectEnsureRejoin(row: Readonly<{
     enabled: boolean;
     revokedAt: Date | null;
     providerConfirmedAt: Date | null;
+    setupKind?: string | null;
     ensureRequestFingerprint: string | null;
     route: Readonly<{ opaqueRouteId: string; enabled: boolean; revokedAt: Date | null }>;
 }>, requestFingerprint: string, publicBaseUrl: string): PluginWebhookEndpointEnsureResultV1 {
@@ -110,7 +116,8 @@ function projectEnsureRejoin(row: Readonly<{
             targetStatus: "current",
             providerConfirmedAt: row.providerConfirmedAt,
             // A rejoin never repeats the creating response's one-time secret.
-            oneTimeCredentialDisclosureLost: row.routingKind === "accountEndpoint",
+            oneTimeCredentialDisclosureLost: row.routingKind === "accountEndpoint" && row.setupKind !== "capabilityUrlV1",
+            receiptOnly: row.setupKind === "capabilityUrlV1",
         }),
     });
 }
@@ -133,6 +140,8 @@ async function readEnsureDeterministicConflictV1(params: Readonly<{
             pluginId: params.contribution.pluginId,
             webhookContributionId: params.contribution.localId,
             sourceInstanceId: params.input.sourceInstanceId,
+            checkId: params.input.setup.kind === "capabilityUrlV1" ? params.input.setup.checkId : "",
+            checkIdDigest: createPluginWebhookCheckIdDigestV1(params.input.setup.kind === "capabilityUrlV1" ? params.input.setup.checkId : ""),
         },
         select: { id: true },
     });
@@ -164,6 +173,7 @@ function ensureFingerprint(params: Readonly<{
         targetMaterialization: params.input.targetMaterialization,
         sourceInstanceId: params.input.sourceInstanceId,
         setupKind: params.input.setup.kind,
+        ...(params.input.setup.kind === "capabilityUrlV1" ? { checkId: params.input.setup.checkId } : {}),
         providerInstallationId: params.input.setup.kind === "githubSharedInstallationV1"
             ? params.input.setup.installationId
             : null,
@@ -189,12 +199,49 @@ export async function ensurePluginWebhookEndpointV1(params: Readonly<{
         || params.input.targetMaterialization.materializationId !== params.target.materialization.materializationId
         || params.input.targetMaterialization.pluginId !== params.target.materialization.pluginId
         || params.target.materialization.pluginId !== params.contribution.pluginId
+        || (params.input.setup.kind === "capabilityUrlV1") !== (params.contribution.verifierKind === "capabilityUrl_v1")
         || !isContributionSetupCompatibleWithRoutingKindV1({
             contributionRoutingKind: params.contribution.routingKind,
             setupKind: params.input.setup.kind,
         })
     ) {
         throw new PluginWebhookEndpointStoreError("endpoint_unavailable");
+    }
+    if (params.input.setup.kind === "capabilityUrlV1") {
+        const existingHeartbeat = await (params.tx ?? db).pluginWebhookEndpoint.findFirst({
+            where: { accountId: params.accountId, pluginId: params.contribution.pluginId,
+                webhookContributionId: params.contribution.localId, sourceInstanceId: params.input.sourceInstanceId,
+                checkId: params.input.setup.checkId, checkIdDigest: createPluginWebhookCheckIdDigestV1(params.input.setup.checkId),
+                setupKind: "capabilityUrlV1" },
+            select: { id: true, revision: true, enabled: true, revokedAt: true, releasedAt: true,
+                targetMachineId: true, targetMachineInstallationId: true, targetMaterializationId: true, targetPluginVersion: true,
+                route: { select: { opaqueRouteId: true, enabled: true, revokedAt: true, verifierKind: true } } },
+        });
+        if (existingHeartbeat) {
+            if (!existingHeartbeat.enabled || existingHeartbeat.revokedAt !== null || existingHeartbeat.releasedAt !== null
+                || !existingHeartbeat.route.enabled || existingHeartbeat.route.revokedAt !== null
+                || existingHeartbeat.route.verifierKind !== "capabilityUrl_v1") {
+                throw new PluginWebhookEndpointStoreError("endpoint_unavailable");
+            }
+            const sameTarget = existingHeartbeat.targetMachineId === params.target.materialization.machineId
+                && existingHeartbeat.targetMaterializationId === params.target.materialization.materializationId
+                && existingHeartbeat.targetMachineInstallationId === params.target.machineInstallationId
+                && existingHeartbeat.targetPluginVersion === params.target.pluginVersion;
+            const moved = sameTarget ? null : await retargetPluginWebhookEndpointV1({
+                ...(params.tx ? { tx: params.tx } : {}), accountId: params.accountId,
+                webhookEndpointId: existingHeartbeat.id, expectedRevision: existingHeartbeat.revision,
+                idempotencyKey: params.input.idempotencyKey, target: params.target,
+            });
+            if (moved && moved.kind !== "retargeted" && moved.kind !== "alreadyRetargeted") {
+                throw new PluginWebhookEndpointStoreError("endpoint_unavailable");
+            }
+            return { webhookEndpointId: existingHeartbeat.id, revision: moved?.revision ?? existingHeartbeat.revision,
+                publicUrl: formatPluginWebhookEndpointPublicUrlV1(params.publicBaseUrl, existingHeartbeat.route.opaqueRouteId),
+                readiness: projectPluginWebhookEndpointReadinessV1({ endpointEnabled: existingHeartbeat.enabled,
+                    endpointRevokedAt: existingHeartbeat.revokedAt, routeEnabled: existingHeartbeat.route.enabled,
+                    routeRevokedAt: existingHeartbeat.route.revokedAt, targetStatus: "current", providerConfirmedAt: null,
+                    oneTimeCredentialDisclosureLost: false, receiptOnly: true }) };
+        }
     }
     const requestFingerprint = ensureFingerprint(params);
     const existing = await readEnsureIdempotencyV1(params.accountId, params.input.idempotencyKey);
@@ -206,7 +253,7 @@ export async function ensurePluginWebhookEndpointV1(params: Readonly<{
         ?? ((length: number) => Uint8Array.from(nodeRandomBytes(length)));
     const endpointId = PluginWebhookEndpointIdV1Schema.parse(formatPluginWebhookEndpointIdV1(randomBytes(16)));
     const opaqueRouteId = `wh_route_${Buffer.from(randomBytes(16)).toString("base64url")}`;
-    const credential = params.contribution.routingKind === "accountEndpoint"
+    const credential = params.contribution.routingKind === "accountEndpoint" && params.contribution.verifierKind !== "capabilityUrl_v1"
         ? createGeneratedPluginWebhookCredentialMaterialV1({ randomBytes })
         : null;
     const persist = async (tx: Tx): Promise<PluginWebhookEndpointEnsureResultV1> => {
@@ -247,6 +294,8 @@ export async function ensurePluginWebhookEndpointV1(params: Readonly<{
                     webhookContributionId: params.contribution.localId,
                     handlerActionId: params.contribution.handlerActionLocalId,
                     sourceInstanceId: params.input.sourceInstanceId,
+                    checkId: params.input.setup.kind === "capabilityUrlV1" ? params.input.setup.checkId : "",
+                    checkIdDigest: createPluginWebhookCheckIdDigestV1(params.input.setup.kind === "capabilityUrlV1" ? params.input.setup.checkId : ""),
                     ensureIdempotencyKey: params.input.idempotencyKey,
                     ensureRequestFingerprint: requestFingerprint,
                     setupKind: params.input.setup.kind,
@@ -263,7 +312,10 @@ export async function ensurePluginWebhookEndpointV1(params: Readonly<{
                 select: { id: true, revision: true, enabled: true, revokedAt: true, providerConfirmedAt: true },
             });
 
-            if (credential) {
+            if (params.contribution.verifierKind === "capabilityUrl_v1") {
+                await tx.pluginWebhookRoute.update({ where: { id: route.id }, data: { accountEndpointId: endpoint.id } });
+            }
+            if (credential && params.contribution.verifierKind !== "capabilityUrl_v1") {
                 const encryptedSecret = encryptPluginWebhookCredentialSecretV1({
                     routeId: route.id,
                     verifierKind: params.contribution.verifierKind,
@@ -303,6 +355,7 @@ export async function ensurePluginWebhookEndpointV1(params: Readonly<{
                     providerConfirmedAt: endpoint.providerConfirmedAt,
                     // The creating response is the one that discloses the secret.
                     oneTimeCredentialDisclosureLost: false,
+                    receiptOnly: params.input.setup.kind === "capabilityUrlV1",
                 }),
                 ...(credential ? { oneTimeGeneratedSecret: credential.secret } : {}),
             });
@@ -344,6 +397,7 @@ export async function readPluginWebhookEndpointV1(params: Readonly<{
             webhookContributionId: true,
             sourceInstanceId: true,
             routingKind: true,
+            setupKind: true,
             enabled: true,
             revokedAt: true,
             providerConfirmedAt: true,
@@ -400,6 +454,7 @@ export async function readPluginWebhookEndpointV1(params: Readonly<{
             targetStatus,
             providerConfirmedAt: endpoint.providerConfirmedAt,
             oneTimeCredentialDisclosureLost: false,
+            receiptOnly: endpoint.setupKind === "capabilityUrlV1",
         }),
         publicUrl: formatPluginWebhookEndpointPublicUrlV1(params.publicBaseUrl, endpoint.route.opaqueRouteId),
         createdAt: endpoint.createdAt.getTime(),
@@ -425,6 +480,7 @@ function currentPluginWebhookEndpointTargetWhere(params: Readonly<{
     accountId: string;
     target: PluginWebhookEndpointTargetCurrentnessV1;
     webhookEndpointId?: string;
+    purpose?: "delivery" | "observation";
 }>) {
     return {
         ...(params.webhookEndpointId === undefined ? {} : { id: params.webhookEndpointId }),
@@ -434,10 +490,12 @@ function currentPluginWebhookEndpointTargetWhere(params: Readonly<{
         targetMachineInstallationId: params.target.machineInstallationId,
         targetMaterializationId: params.target.materializationId,
         targetPluginVersion: params.target.version,
-        enabled: true,
-        revokedAt: null,
         releasedAt: null,
-        route: { enabled: true, revokedAt: null },
+        ...(params.purpose === "observation" ? {} : {
+            enabled: true,
+            revokedAt: null,
+            route: { enabled: true, revokedAt: null },
+        }),
     };
 }
 
@@ -460,13 +518,16 @@ function projectCurrentPluginWebhookEndpointTargetV1(endpoint: Readonly<{
 
 /**
  * Reads one current generic endpoint target without disclosing endpoint
- * routing or source facts to an Automation owner.
+ * routing or source facts to an Automation owner. Observation placement
+ * survives route unavailability; delivery authority still requires an active
+ * endpoint and route by default.
  */
 export async function readCurrentPluginWebhookEndpointTargetTxV1(params: Readonly<{
     tx: Tx;
     accountId: string;
     webhookEndpointId: string;
     target: PluginWebhookEndpointTargetCurrentnessV1;
+    purpose?: "delivery" | "observation";
 }>): Promise<CurrentPluginWebhookEndpointTargetV1 | null> {
     const endpoint = await params.tx.pluginWebhookEndpoint.findFirst({
         where: currentPluginWebhookEndpointTargetWhere(params),
@@ -490,6 +551,7 @@ export async function listCurrentPluginWebhookEndpointTargetsTxV1(params: Readon
     tx: Tx;
     accountId: string;
     target: PluginWebhookEndpointTargetCurrentnessV1;
+    purpose?: "delivery" | "observation";
 }>): Promise<readonly CurrentPluginWebhookEndpointTargetV1[]> {
     const endpoints = await params.tx.pluginWebhookEndpoint.findMany({
         where: currentPluginWebhookEndpointTargetWhere(params),
@@ -883,7 +945,6 @@ export function createPluginWebhookEndpointStoreV1(options: Readonly<{
             ) {
                 if (
                     endpoint.webhookContributionId === null
-                    || endpoint.handlerActionId === null
                 ) {
                     return PluginWebhookEndpointRetargetResultV1Schema.parse({
                         kind: "incompatible",

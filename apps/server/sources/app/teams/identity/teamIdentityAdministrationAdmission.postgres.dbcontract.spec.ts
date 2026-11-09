@@ -19,6 +19,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("T
         await db.$connect();
         const version = await db.$queryRaw<Array<{ server_version: string }>>`SHOW server_version`;
         expect(version[0]?.server_version).toMatch(/^17\./);
+        console.info("TEAM_IDENTITY_ADMISSION_POSTGRES_VERSION", version[0]?.server_version);
         client = new PrismaClient({ log: [{ emit: "event", level: "query" }] });
         client.$on("query", event => statements.push(event));
         await client.$connect();
@@ -126,6 +127,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("T
                 }
                 measurements.push({ members, operations: measured });
             }
+            console.info("TEAM_IDENTITY_ADMISSION_SQL_COST", JSON.stringify(measurements));
             expect(measurements[1]!.operations).toEqual(measurements[0]!.operations);
             for (const measurement of measurements) {
                 for (const operation of measurement.operations) {

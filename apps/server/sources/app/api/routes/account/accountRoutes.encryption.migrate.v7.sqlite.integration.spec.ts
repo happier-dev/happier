@@ -1981,7 +1981,11 @@ describe("account encryption migration .7 SQLite matrix", () => {
                     body: { t: "account-change" },
                     roomTarget: `account-stored-content-v3:${account.id}`,
                 });
-                expect(wake.body).toEqual({ t: "account-change" });
+                expect(wake.body).toEqual({
+                    t: "account-change",
+                    changeKinds: expect.any(Array),
+                    entityIds: expect.any(Array),
+                });
             }
             const connectionTargets = sessionEmissions.map(
                 ({ roomTarget }) => roomTarget,

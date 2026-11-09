@@ -524,26 +524,27 @@ describe("Composed two-Account Teams journey (SQLite integration)", () => {
         state.boardItemRevision = created.json().itemRevision;
         state.boardLayoutRevision = created.json().layoutRevision;
 
-        // Item and placement commit together on the Session owner's tuple, and
-        // the item wrapper retains its authenticated creator while both
-        // encrypted payloads remain opaque to the server.
+        // Item and placement commit together on the Session owner's tuple;
+        // both encrypted payloads remain opaque to the server.
         const stored = await db.sessionSystemRecord.findMany({
-            where: { sessionId: state.sessionId }, select: { accountId: true, localId: true, content: true },
+            where: { sessionId: state.sessionId }, select: { id: true, accountId: true, kind: true, localId: true, content: true },
         });
         expect(stored).toHaveLength(2);
         expect(new Set(stored.map(row => row.accountId))).toEqual(new Set([state.aId]));
-        expect(stored.find(row => row.localId === BOARD_ITEM_ID)?.content).toEqual({
-            t: "session_surface_record_v1", creator: { kind: "user" }, content: itemContent,
-        });
+        expect(stored.find(row => row.localId === BOARD_ITEM_ID)?.content).toEqual(itemContent);
         expect(stored.find(row => row.localId === "layout")?.content).toEqual(layoutContent);
 
-        // B's wakeup is the surface hint, which carries no Board content.
+        // Each physical record retains an independent, content-free wake for both viewers.
         const woken = await db.accountChange.findMany({
-            where: { entityId: state.sessionId, kind: "session" }, select: { accountId: true, hint: true },
+            where: { entityId: { in: stored.map(record => `session-record:${record.id}`) }, kind: "account" }, select: { accountId: true, entityId: true, hint: true },
         });
-        const surfaceHints = woken.filter(row => (row.hint as { sessionSurfaces?: boolean } | null)?.sessionSurfaces === true);
-        expect(new Set(surfaceHints.map(row => row.accountId))).toEqual(new Set([state.aId, state.bId]));
-        expect(surfaceHints.map(row => row.hint)).toEqual(surfaceHints.map(() => ({ v: 1, sessionSurfaces: true })));
+        expect(woken).toHaveLength(4);
+        expect(new Set(woken.map(row => row.accountId))).toEqual(new Set([state.aId, state.bId]));
+        for (const change of woken) {
+            const record = stored.find(record => change.entityId === `session-record:${record.id}`)!;
+            expect(change.hint).toEqual({ v: 1, sessionRecords: { sessionId: state.sessionId,
+                address: { owner: 'host', namespace: 'surface', kind: record.kind, localId: record.localId } } });
+        }
     });
 
     it("step 12 — B refreshes through the System Record reads and both viewers converge on one shared Board", async () => {

@@ -1,9 +1,11 @@
 import {
+    TailscaleCommandError,
     runTailscaleFunnelStatus,
     sanitizeTailscaleEnv,
 } from "@happier-dev/cli-common/tailscale";
 
 import { parseBooleanEnv, parseIntEnv } from "@/config/env";
+import { logger } from '@/utils/logging/log';
 import { inferPublicServerUrlFromTailscaleStatus } from "./inferPublicServerUrlFromTailscaleStatus";
 
 type TailscaleFunnelStatusRunner = (params: Readonly<{
@@ -49,7 +51,10 @@ export async function inferTailscaleFunnelPublicServerUrl(
             env,
         });
         return inferPublicServerUrlFromTailscaleStatus(env, status);
-    } catch {
+    } catch (error) {
+        if (error instanceof TailscaleCommandError && error.failure) {
+            logger.warn({ ...error.failure, phase: 'tailscale.funnel.status' }, error.message);
+        }
         return null;
     }
 }

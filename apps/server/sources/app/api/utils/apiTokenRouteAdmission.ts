@@ -14,6 +14,8 @@ import type { SessionAccessAuthentication } from "@/app/session/access/sessionAc
 import { resolveSessionAccessForOperation, type EffectiveSessionAccess, type SessionCapability } from "@/app/session/access/sessionAccess";
 import { inTx } from "@/storage/inTx";
 import { readExternalActionPendingResetStartPurpose } from '@/app/auth/externalActionPendingResetStartPurpose';
+import { isExternalActionApprovalReplyPurpose } from '@/app/auth/externalActionApprovalReplyPurpose';
+import type { ExternalActionApprovalDecisionAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
 
 export const PRESENT_USER_REQUIRED_ERROR = "present_user_required" as const;
 export const SESSION_RUNTIME_PUBLIC_AUTH_FORBIDDEN_ERROR = "session_runtime_public_auth_forbidden" as const;
@@ -151,10 +153,13 @@ export function resolveApiTokenSessionActionForRoute(request: AuthenticatedRoute
 export function isExternalActionSessionRoutePurposeAllowed(
     request: AuthenticatedRouteRequest,
     effectActionId: string,
+    approvalDecisionAdmission?: ExternalActionApprovalDecisionAdmissionV1,
 ): boolean {
     const config = request.routeOptions?.config;
     if (config?.apiTokenSessionAction === undefined && config?.apiTokenSessionActionWhen === undefined) return true;
     const actionId = resolveApiTokenSessionActionForRoute(request);
+    if (actionId === 'session.message.send' && isExternalActionApprovalReplyPurpose({ actionId: effectActionId,
+        method: request.method ?? '', path: request.url ?? '', body: request.body, admission: approvalDecisionAdmission })) return true;
     if (effectActionId === 'session.pending.action.set' && actionId === 'session.message.send') {
         // The incumbent PATCH retains direct message-send credential admission.
         // Its named Action spends only that same catalog-declared operation.

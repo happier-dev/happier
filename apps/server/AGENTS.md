@@ -52,12 +52,12 @@ Prefer existing domain folders and module owners before creating new top-level f
   - inspect generated SQL for data-loss or downtime risks,
   - validate with the relevant server test/build lane.
 - Classify migration history before editing it:
-  - migrations that have not shipped in a supported stable or preview artifact may be edited or consolidated before the next supported release; shared development branches and `*-dev.*` artifacts require development-database reconciliation, not permanent product compatibility;
+  - Follow the 2026-10-31 **Migrations: no edits during development, one consolidation before 0.3 release** row in `.project/OWNER-RULINGS.md` for migration authoring, the named release check and accidental-edit reconciliation; the reconciliation procedure is in `apps/stack/AGENTS.md` **Repo-local development database reconciliation**.
   - stable/preview migration names and bytes are immutable and corrections are append-only;
   - do not keep draft add/rename/contract/drop chains or checksum/name compatibility solely because a retained development database applied an unpublished revision.
-- Reconcile retained development databases separately from product migration history. For the deterministic repo-local development stack bound to the current checkout, reconciliation is a mandatory in-place continuation of editing an applied local-only/development-exposed migration: inspect the actual schema and ledger, apply the provider-specific delta or canonical backfill, and deploy the canonical migration set without requesting separate approval or creating a backup/snapshot/clone.
+- Reconcile retained development databases separately from product migration history. Follow the 2026-10-31 **Migrations: no edits during development, one consolidation before 0.3 release** row in `.project/OWNER-RULINGS.md` for migration authoring, the named release check and accidental-edit reconciliation; the reconciliation procedure is in `apps/stack/AGENTS.md` **Repo-local development database reconciliation**.
 - The current checkout's repo-local development database is retained data, not a disposable test database. Never delete, reset, recreate, replace, truncate, clean, or discard it to resolve migration drift. Reset-style commands are forbidden for this target even when they would be faster than reconciliation.
-- Treat an edited migration and its retained-development reconciliation as one conceptual seam. The last editor owns reconciliation after the final migration edit and again before handoff: refresh against the current bytes and complete physical schema, including data backfills plus index, constraint, and foreign-key names; any later edit makes earlier checksum/ledger reconciliation evidence stale. Run the canonical deploy twice and verify current source checksums, the ledger, provider integrity, and foreign keys.
+- For accidental applied-migration edits, reconciliation ownership and current-byte/schema verification follow `apps/stack/AGENTS.md` **Repo-local development database reconciliation**.
 - If the repo-local stack has active stack-owned writers, quiesce only that stack through `hstack`, reconcile, and restore its prior running state. Do not kill by port or affect another stack. If stack/database ownership is ambiguous, stop without mutating a candidate.
 - Backups and explicit approval remain required for `main`, shared, staging, production, external, another checkout's/named QA stack, or otherwise user-owned databases. The repo-local automatic rule never broadens to those targets.
 - Custom migration SQL, backfills, `db push`, or reset-style commands are allowed only when appropriate for the task and target database.
@@ -66,6 +66,7 @@ Prefer existing domain folders and module owners before creating new top-level f
 - Do not use migrations as a workaround for unrelated schema drift. Identify and fix the owning schema/migration path.
 - Use `inTx` for database operations that must be transactional.
 - Use `afterTx` for events/side effects that must run only after a successful commit.
+- Read sets, not rows: a loop over a result that issues one query per item (access witness, host reference, membership) is an N+1; resolve the set in one query inside the same transaction. Scope predicates must be index-servable on every shipped engine: an `OR` of correlated relation arms forces a scan, so read each arm through its own index (`id IN (…)`) and check the plan shape on SQLite and PostgreSQL.
 - Do not run non-transactional side effects (file uploads, external calls, notifications, etc.) inside DB transactions.
 - For complex DB fields, use JSON deliberately and validate at the application boundary.
 

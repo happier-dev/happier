@@ -190,7 +190,7 @@ describe('run-server.sh', () => {
     const lines = await readLogLines(logPath);
     const yarnLines = lines.filter((l) => l.startsWith('PNPM '));
     expect(yarnLines[0]).toContain('PNPM --dir apps/server run migrate:deploy');
-    expect(lines.join('\n')).toContain('ENV DATABASE_URL=file:///data/server-light/happier-server-light.sqlite?socket_timeout=30&connection_limit=4');
+    expect(lines.join('\n')).toContain('ENV DATABASE_URL=file:///data/server-light/happier-server-light.sqlite?socket_timeout=30&connection_limit=1');
     expect(yarnLines[yarnLines.length - 1]).toContain('PNPM --dir apps/server run start:light');
   });
 

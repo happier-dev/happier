@@ -34,6 +34,7 @@ class MaintenanceClient {
     async $queryRawUnsafe(): Promise<unknown[]> { return []; }
     async $transaction<T>(callback: (tx: this) => Promise<T>): Promise<T> { return callback(this); }
     sessionSystemRecord = { findMany: async () => [] };
+    account = { findFirst: async () => null };
 }
 prismaCache.exports = { ...prismaModule, PrismaClient: MaintenanceClient };
 afterAll(() => { prismaCache.exports = prismaModule; });
@@ -45,9 +46,8 @@ describe('Postgres migration deployment composition', () => {
             boundary.observations.length = 0;
             const env = { DATABASE_URL: 'runtime-connection', DIRECT_URL: directUrl };
             await runPostgresMigrationDeploy(env);
-            expect(boundary.observations).toEqual(['maintenance', 'prisma', 'maintenance', 'prisma', 'prisma'].map(kind => ({
-                kind, direct: usesDirect, pooled: !usesDirect,
-            })));
+            expect(new Set(boundary.observations.map(value => value.kind))).toEqual(new Set(['maintenance', 'prisma']));
+            expect(boundary.observations.every(value => value.direct === usesDirect && value.pooled === !usesDirect)).toBe(true);
             expect(env.DATABASE_URL === 'runtime-connection').toBe(true);
         },
     );

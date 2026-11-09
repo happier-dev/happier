@@ -3,14 +3,14 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import * as privacyKit from "privacy-kit";
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from "@happier-dev/protocol";
 
-import { readArtifactForCallerInTx, readmitArtifactContentInTx } from "@/app/artifacts/artifactAccessService";
+import { readArtifactForCallerInTx } from "@/app/artifacts/artifactAccessService";
 import { readHomeConfigEnv } from "@/app/home/settings/homeSettings";
 import { readPluginAccountStorage } from "@/app/kv/pluginAccountStorage";
 import { createPluginAvailabilityOperations } from "@/app/plugins/availability/operations";
 import { buildPluginAccountStoragePhysicalKey, encodeAccountScopedKvJson } from "@/app/kv/accountScopedKv";
 import { db, getDbProviderFromEnv, initDbPostgres } from "@/storage/db";
 import { inTx, type Tx } from "@/storage/inTx";
-import { readSnapshotWithCurrentAdmission } from "@/storage/readSnapshotWithCurrentAdmission";
+import { captureReadSnapshot } from "@/storage/captureReadSnapshot";
 import { createDiscussion } from "@/app/discussions/mutations";
 import { listDiscussions } from "@/app/discussions/queries";
 import { createPresentUserSessionAccessAuthentication } from "@/app/session/access/sessionAccessAuthentication.testkit";
@@ -89,20 +89,14 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("P
                 expect(await pair(tx)).toEqual(before);
                 return before;
             };
-            const read = materialize ? { capture, materialize: async (captured: number[]) => captured } : capture;
-            expect(await readSnapshotWithCurrentAdmission(read, async (tx, captured) => {
-                if (materialize) {
-                    const [{ pid }] = await tx.$queryRaw<Array<{ pid: number }>>`SELECT pg_backend_pid() AS pid`;
-                    expect(await pair(tx)).toEqual([0, 0]);
-                    locks.push(await predicateLocks(pid));
-                    release();
-                    await writer;
-                    expect(await pair(tx)).toEqual([0, 0]);
-                }
+            const read = materialize ? { capture, materialize: async (captured: number[]) => {
+                release();
+                await writer;
                 return captured;
-            })).toEqual([0, 0]);
-            expect(await readSnapshotWithCurrentAdmission(pair, async (_tx, captured) => captured)).toEqual([1, 1]);
-            expect(locks).toEqual(materialize ? [0, 0] : [0]);
+            } } : capture;
+            expect(await captureReadSnapshot(read)).toEqual([0, 0]);
+            expect(await captureReadSnapshot(pair)).toEqual([1, 1]);
+            expect(locks).toEqual([0]);
         } finally {
             release();
             await writerOutcome;
@@ -168,7 +162,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("P
         }
     });
 
-    it("readmits in a fresh read-only snapshot and refuses an Artifact grant revoked after capture", async () => {
+    it("finishes an admitted Artifact read after revoke and refuses the next request", async () => {
         const owner = await db.account.create({ data: { publicKey: randomUUID(), encryptionMode: "plain" } });
         const recipient = await db.account.create({ data: { publicKey: randomUUID(), encryptionMode: "plain" } });
         const artifact = await db.artifact.create({ data: {
@@ -180,21 +174,25 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("P
         await db.artifactAccountGrant.create({ data: { artifactId: artifact.id, accountId: recipient.id,
             accessLevel: "view", createdByAccountId: owner.id } });
         const input = { artifactId: artifact.id, actorAccountId: recipient.id };
+        let admissions = 0;
         try {
-            const result = await readSnapshotWithCurrentAdmission({
-                capture: tx => readArtifactForCallerInTx(tx, input),
+            const result = await captureReadSnapshot({
+                capture: async tx => {
+                    admissions += 1;
+                    return readArtifactForCallerInTx(tx, input);
+                },
                 materialize: async captured => {
                     expect(captured).toMatchObject({ ok: true, artifact: { access: "view" } });
                     await db.artifactAccountGrant.deleteMany({ where: { artifactId: artifact.id, accountId: recipient.id } });
                     return captured;
                 },
-            }, async (tx, captured) => {
-                expect(await tx.$queryRaw`SELECT current_setting('transaction_read_only') AS mode`).toEqual([{ mode: "on" }]);
-                if (!captured.ok) return captured;
-                const current = await readmitArtifactContentInTx(tx, input, captured.artifact);
-                return current.ok ? captured : current;
             });
-            expect(result).toEqual({ ok: false, error: "artifact_not_found" });
+            expect(result).toMatchObject({ ok: true, artifact: { access: "view" } });
+            expect(admissions).toBe(1);
+            expect(await inTx(tx => readArtifactForCallerInTx(tx, input), { readOnly: true }))
+                .toEqual({ ok: false, error: "artifact_not_found" });
+            expect(await inTx(tx => readArtifactForCallerInTx(tx, { ...input, actorAccountId: owner.id }), { readOnly: true }))
+                .toMatchObject({ ok: true, artifact: { access: "owner" } });
         } finally {
             await db.artifact.delete({ where: { id: artifact.id } });
             await db.account.deleteMany({ where: { id: { in: [owner.id, recipient.id] } } });

@@ -3,9 +3,7 @@ import type { Prisma } from "@prisma/client";
 import {
     createSessionPersonalAttentionQueryInTx,
 } from "@/app/session/personal/queries";
-import { SESSION_PERSONAL_ATTENTION_SCAN_BATCH_SIZE } from "@/app/session/personal/attentionQuery";
-import { readSnapshotWithCurrentAdmission } from "@/storage/readSnapshotWithCurrentAdmission";
-import { readmitSessionRowsInTx } from "@/app/session/access/sessionReadAdmission";
+import { captureReadSnapshot } from "@/storage/captureReadSnapshot";
 import { resolveEffectiveSessionAccessWhere } from "@/app/session/access/sessionAccessWhere";
 import {
     requiresSessionMetadataOwnerAccountMode,
@@ -14,6 +12,7 @@ import {
 
 import {
     createV2SessionListRowPage,
+    findV2SessionListCandidatePage,
     findV2SessionListRows,
     mapV2SessionListRows,
     type SessionListReadSource,
@@ -26,8 +25,10 @@ import {
     type V2SessionCompactListRow as V2SessionListRowCompat,
 } from "./rows";
 import type { SessionPersonalDiscussionFacts } from "@/app/session/personal/discussionFacts";
+import type { SessionRuleReadStates } from "@/app/session/personal/readState";
 import {
     resolveV2SessionListInitialAttentionRowLimit,
+    resolveV2SessionListCandidateWindowLimit,
 } from "./readLimits";
 import {
     conjoinSessionListWhereInputs,
@@ -54,7 +55,11 @@ type V2SessionListInitialPageParams = Readonly<{
     readLatestFailureSequences: (
         rows: ReadonlyArray<V2SessionListRowCompat>,
     ) => Promise<ReadonlyMap<string, number>>;
+    readRuleReadStates?: (
+        rows: ReadonlyArray<V2SessionListRowCompat>,
+    ) => Promise<ReadonlyMap<string, SessionRuleReadStates>>;
     pageRows: ReadonlyArray<V2SessionListRowCompat>;
+    page?: ReturnType<typeof createV2SessionListRowPage>;
     limit: number;
     pinnedSessionIds: readonly string[];
     includeAttentionRows: boolean;
@@ -86,7 +91,7 @@ export async function createV2SessionAttentionPage(params: Readonly<{
     attentionHasNext: boolean;
 }>> {
     if (!params.source) {
-        return await readSnapshotWithCurrentAdmission(async (tx) => {
+        return await captureReadSnapshot(async (tx) => {
             const access = await resolveEffectiveSessionAccessWhere({
                 tx,
                 accountId: params.userId,
@@ -115,58 +120,31 @@ export async function createV2SessionAttentionPage(params: Readonly<{
                 rowAdmission: params.rowAdmission ?? attention.admitRows,
                 now,
             });
-        }, async (tx, captured) => ({ ...captured, rows: await readmitSessionRowsInTx(tx, {
-            accountId: params.userId, authentication: params.authentication,
-        }, captured.rows) }));
+        });
     }
     const candidateLimit = params.candidateLimit ?? resolveV2SessionListInitialAttentionRowLimit();
-    const examinationLimit = Math.max(candidateLimit, SESSION_PERSONAL_ATTENTION_SCAN_BATCH_SIZE);
+    const examinationLimit = Math.max(candidateLimit, resolveV2SessionListCandidateWindowLimit(Boolean(params.cursor)));
     const measureQuery = params.timing?.measureQuery ?? (<T>(fn: () => Promise<T>) => fn());
     const measurePage = params.timing?.measurePage ?? (<T>(fn: () => T) => fn());
     const attentionWhere = params.attentionWhere;
     const rowAdmission = params.rowAdmission;
-    // Supplemental attention is a bounded candidate scan, not an output-row
-    // limit. Read one extra candidate to keep incompleteness explicit, advance
-    // the continuation over every examined row, and only then run the canonical
-    // projector. The ordinary `needs_my_attention` corpus path separately scans
-    // through rejected candidates until its requested output page is complete.
-    const candidateRows = await measureQuery(() => findV2SessionListRows({
+    const page = await measureQuery(() => findV2SessionListCandidatePage({
         userId: params.userId,
         where: conjoinSessionListWhereInputs(params.where, attentionWhere),
         cursor: params.cursor,
         orderBy: V2_SESSION_LIST_ORDER_BY,
-        take: examinationLimit + 1,
+        limit: candidateLimit,
+        candidateLimit: examinationLimit,
+        rowAdmission,
+        onCandidatesExamined: params.timing?.recordCandidates,
         ...(params.source
             ? { source: params.source }
             : { authentication: params.authentication }),
     }));
-    const candidatePage = measurePage(() => createV2SessionListRowPage({
-        rows: candidateRows,
-        limit: examinationLimit,
-    }));
-    const admittedRows = rowAdmission
-        ? [...await rowAdmission(candidatePage.rows)]
-        : candidatePage.rows;
-    const attentionRows = admittedRows.slice(0, candidateLimit);
-
-    if (admittedRows.length > candidateLimit) {
-        const lastEmittedId = attentionRows[attentionRows.length - 1]?.id;
-        const lastEmittedIndex = candidateRows.findIndex((row) => row.id === lastEmittedId);
-        const overflowPage = measurePage(() => createV2SessionListRowPage({
-            rows: candidateRows,
-            limit: lastEmittedIndex + 1,
-        }));
-        return {
-            rows: attentionRows,
-            attentionNextCursor: overflowPage.nextCursor,
-            attentionHasNext: overflowPage.hasNext,
-        };
-    }
-
     return measurePage(() => ({
-        rows: attentionRows,
-        attentionNextCursor: candidatePage.nextCursor,
-        attentionHasNext: candidatePage.hasNext,
+        rows: [...page.rows],
+        attentionNextCursor: page.nextCursor,
+        attentionHasNext: page.hasNext,
     }));
 }
 
@@ -255,7 +233,7 @@ export async function createV2SessionListInitialPage(params: V2SessionListInitia
             }))
             : Promise.resolve([]),
     ]);
-    const page = measurePage(() => createV2SessionListRowPage({
+    const page = params.page ?? measurePage(() => createV2SessionListRowPage({
         rows: params.pageRows,
         limit: params.limit,
     }));
@@ -278,6 +256,7 @@ export async function createV2SessionListInitialPage(params: V2SessionListInitia
 
     const discussionFacts = await params.readViewerDiscussionFacts(mergedRows);
     const latestFailureSequences = await params.readLatestFailureSequences(mergedRows);
+    const ruleReadStates = await params.readRuleReadStates?.(mergedRows);
     const otherNamedCollaboratorFacts = params.readOtherNamedCollaboratorFacts
         ? await params.readOtherNamedCollaboratorFacts(mergedRows)
         : undefined;
@@ -289,6 +268,7 @@ export async function createV2SessionListInitialPage(params: V2SessionListInitia
             ownerAccountModes,
             discussionFacts,
             latestFailureSequences,
+            ruleReadStates,
             otherNamedCollaboratorFacts,
             qualifiedTeamIds: params.source?.qualifiedTeamIds,
             accessMode: params.source?.accessMode,

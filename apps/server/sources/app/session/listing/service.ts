@@ -5,12 +5,13 @@ import { SESSION_LIST_PAGE_DEFAULT_LIMIT } from '@happier-dev/protocol/sessions/
 import { SessionListQueryResponseV1Schema, SessionRuntimeManagedSubtreeListResponseV1Schema,
     type SessionRuntimeManagedSubtreeListResponseV1 } from '@happier-dev/protocol/sessions/listing/response';
 import type { Prisma } from "@prisma/client";
-import { db } from "@/storage/db";
+import { db, getDbProviderFromEnv } from "@/storage/db";
+import { resolveV2SessionListCandidateWindowLimit } from './readLimits';
 import type { Tx } from "@/storage/inTx";
-import { readSnapshotWithCurrentAdmission } from "@/storage/readSnapshotWithCurrentAdmission";
-import { readmitSessionRowsInTx } from "@/app/session/access/sessionReadAdmission";
+import { captureReadSnapshot } from "@/storage/captureReadSnapshot";
+import { readSessionObservationCursorInTx } from '@/app/session/access/readObservation';
 import { fetchSessionOrganizationPinnedSessionIds, fetchSessionTagAssignmentsForAdmittedSessionsInTx } from "@/app/session/organization/organizationQueries";
-import { buildSessionAccessWhere, createApplicableAudienceWhere, resolveEffectiveSessionAccessWhere } from "@/app/session/access/sessionAccessWhere";
+import { createApplicableAudienceWhere, resolveEffectiveSessionAccessWhere, resolveLegacySessionPageAccessWhereInTx } from "@/app/session/access/sessionAccessWhere";
 import { isServerFeatureEnabledForHome } from "@/app/features/catalog/serverFeatureGate";
 import { isSessionCollaborationEnabled } from "@/app/session/access/sessionAccess";
 import { hasSessionTranscriptPublicationLiveFacts } from "@/app/session/sessionTranscriptPublicationPolicy";
@@ -20,6 +21,7 @@ import {
 } from "@/app/session/personal/queries";
 import type { SessionPersonalDiscussionFacts } from "@/app/session/personal/discussionFacts";
 import { loadSessionLatestFailureSequencesInTx } from "@/app/session/personal/projection";
+import { loadSessionRuleReadStatesInTx } from "@/app/session/personal/readState";
 import {
     readSessionMetadataOwnerAccountModes,
     isSessionMetadataPrivacyUpgradeRequiredError,
@@ -29,6 +31,7 @@ import {
 import {
     createV2SessionListRowPage,
     findV2SessionListRows,
+    findV2SessionListCandidatePage,
     mapV2SessionListRows,
     readSessionListOtherNamedCollaboratorFacts,
     readSessionListViewerDiscussionFacts,
@@ -43,6 +46,7 @@ import { createV2SessionAttentionPage, createV2SessionListInitialPage } from "./
 import {
     conjoinSessionListWhereInputs,
     createFilteredSessionListWhere,
+    createSessionListScopeQueryBranches,
     createLegacyActiveSessionListWhere,
     createSessionListStorageWhere,
     createSessionViewerTagWhere,
@@ -50,12 +54,19 @@ import {
 import type { createV2SessionListServerTiming } from "./timing";
 import type { SessionAccessAuthentication } from "@/app/session/access/sessionAccessAuthentication";
 import { readSessionManagedSubtreeSessionIdsInTx, projectSessionRuntimeManagedSubtreeAccess } from "@/app/session/follow/sessionManagerSubtree";
-import { projectSessionManagerForRowsInTx, readmitCapturedSessionManagerReferencesInTx, type SessionManagerContribution } from "@/app/session/awareness/sessionManagerProjection";
-import { readAccountFollowRuleReceiverCountsInTx } from '@/app/session/follow/accountFollowRuleService';
+import { projectSessionManagerForRowsInTx } from "@/app/session/awareness/sessionManagerProjection";
+import { readAccountFollowRuleProjectionRowsInTx, projectAccountFollowRuleReceiverCounts } from '@/app/session/follow/accountFollowRuleService';
 import { deriveSessionCoordinatorV1 } from '@happier-dev/protocol/sessions/follow/sessionCoordinatorV1';
 import { readSessionManagerSessionIdV1 } from '@happier-dev/protocol/sessions/follow/sessionManagerV1';
 import { mapV2SessionCompactListRow } from './rows';
-import { projectSessionEffectiveAccessV1 } from '@/app/session/access/sessionAccess';
+
+/** PostgreSQL JIT-compiles the page's access predicate per statement, costing about 10× the scan itself. */
+function captureSessionListingSnapshot<T>(read: (tx: Tx) => Promise<T>): Promise<T> {
+    return captureReadSnapshot(async tx => {
+        if (getDbProviderFromEnv(process.env, "postgres") === "postgres") await tx.$executeRawUnsafe("SET LOCAL jit = off");
+        return await read(tx);
+    }, { transactionClass: "session-listing-read" });
+}
 
 export class SessionListCredentialScopeDeniedError extends Error {
     readonly code = 'credential_scope_denied';
@@ -126,17 +137,18 @@ export async function listSessionsForAccount(params: Readonly<{
             timing: params.timing,
         });
     }
-    let contributions: readonly SessionManagerContribution[] = [];
-    return await readSnapshotWithCurrentAdmission(async (tx) => await params.timing.measureAsync("snapshot", async () => {
+    return await captureSessionListingSnapshot(async (tx) => await params.timing.measureAsync("snapshot", async () => {
+        const observationCursor = await readSessionObservationCursorInTx(tx, params.userId, params.authentication);
         const now = Date.now();
         const accessResolution = {
-            where: buildSessionAccessWhere({
+            where: await resolveLegacySessionPageAccessWhereInTx(tx, {
                 accountId: params.userId,
                 capability: "readTranscript",
-                mode: "legacy_owner_or_direct",
             }),
             qualifiedTeamIds: new Set<string>(),
         };
+        const ruleRows = await readAccountFollowRuleProjectionRowsInTx(tx, { accountId: params.userId, authentication: params.authentication });
+        const ruleReceiverCounts = projectAccountFollowRuleReceiverCounts(ruleRows);
         const readSource: SessionListReadSource = {
             kind: "effective",
             reader: tx,
@@ -144,6 +156,7 @@ export async function listSessionsForAccount(params: Readonly<{
             accessMode: "legacy_owner_or_direct",
             qualifiedTeamIds: accessResolution.qualifiedTeamIds,
             discussionReader: tx,
+            ruleRows,
         };
         const where = conjoinSessionListWhereInputs(
             source.activeOnly
@@ -180,21 +193,17 @@ export async function listSessionsForAccount(params: Readonly<{
         });
         return page && {
             ...page,
+            observationCursor,
             sessions: await projectSessionManagerForRowsInTx(tx, {
                 accountId: params.userId,
                 authentication: params.authentication,
                 sessions: page.sessions,
                 accessMode: "legacy_owner_or_direct",
                 nowMs: now,
-                captureContributions: rows => { contributions = rows; },
+                ruleReceiverCounts,
             }),
         };
-    }), async (tx, captured) => await params.timing.measureAsync("readmission", async () => {
-        if (!captured) return captured;
-        const admission = { accountId: params.userId, authentication: params.authentication, accessMode: "legacy_owner_or_direct" as const };
-        const sessions = await readmitSessionRowsInTx(tx, admission, captured.sessions);
-        return { ...captured, sessions: await readmitCapturedSessionManagerReferencesInTx(tx, { ...admission, sessions, contributions }) };
-    }), { transactionClass: "session-listing-read" });
+    }));
 }
 
 /** Restricted listing uses the canonical subtree, paging and shared row projection. */
@@ -223,7 +232,7 @@ async function listSessionRuntimeManagedSubtree(params: Readonly<{
         return ids;
     };
     const viewAccess = (sessionId: string) => projectSessionRuntimeManagedSubtreeAccess({ accountId: params.userId, sessionId });
-    return await readSnapshotWithCurrentAdmission(async tx => {
+    return await captureSessionListingSnapshot(async tx => {
         const ids = await readIds(tx);
         const source: SessionListReadSource = { kind: 'effective', reader: tx,
             accessMode: 'effective_access_v1', baseWhere: conjoinSessionListWhereInputs(
@@ -251,15 +260,7 @@ async function listSessionRuntimeManagedSubtree(params: Readonly<{
         return SessionRuntimeManagedSubtreeListResponseV1Schema.parse({ sessions, nextCursor: page.nextCursor, hasNext: page.hasNext,
             attentionNextCursor: null, attentionHasNext: false,
             ...(metadataUpgradeRequiredCount ? { metadataUpgradeRequiredCount } : {}) });
-    }, async (tx, captured) => {
-        const ids = new Set(await readIds(tx));
-        const { sessionRuntimePrincipal: _principal, ...authentication } = params.authentication;
-        const sessions = await readmitSessionRowsInTx(tx, { accountId: params.userId, authentication,
-            accessMode: 'effective_access_v1' }, captured.sessions.filter(row => ids.has(row.id)));
-        return SessionRuntimeManagedSubtreeListResponseV1Schema.parse({ ...captured, sessions: sessions.map(({ share: _share, ...row }) => ({ ...row,
-            effectiveAccess: projectSessionEffectiveAccessV1(viewAccess(row.id)),
-        })) });
-    }, { transactionClass: 'session-listing-read' });
+    });
 }
 
 async function listSessionRowsForAccount(params: Readonly<{
@@ -303,8 +304,10 @@ async function listSessionRowsForAccount(params: Readonly<{
         );
         const otherNamedCollaboratorFacts = await readSessionListOtherNamedCollaboratorFacts(rows, userId, params.readSource?.discussionReader);
         const latestFailureSequences = await loadSessionLatestFailureSequencesInTx(params.readSource?.discussionReader ?? db, rows, params.observedAttentionFailureSequences);
+        const ruleReadStates = await loadSessionRuleReadStatesInTx(params.readSource?.discussionReader ?? db,
+            { accountId: userId, authentication: params.authentication, rows, ruleRows: params.readSource?.ruleRows });
         return timing.measure("page", () => ({ ...mapV2SessionListRows({
-            rows, userId, ownerAccountModes, discussionFacts, otherNamedCollaboratorFacts, latestFailureSequences,
+            rows, userId, ownerAccountModes, discussionFacts, otherNamedCollaboratorFacts, latestFailureSequences, ruleReadStates,
             qualifiedTeamIds: params.readSource?.qualifiedTeamIds,
             accessMode: params.readSource?.accessMode,
             now: params.now,
@@ -345,9 +348,11 @@ async function listSessionRowsForAccount(params: Readonly<{
         );
         const otherNamedCollaboratorFacts = await readSessionListOtherNamedCollaboratorFacts(page.rows, userId, params.readSource?.discussionReader);
         const latestFailureSequences = await loadSessionLatestFailureSequencesInTx(params.readSource?.discussionReader ?? db, page.rows, params.observedAttentionFailureSequences);
+        const ruleReadStates = await loadSessionRuleReadStatesInTx(params.readSource?.discussionReader ?? db,
+            { accountId: userId, authentication: params.authentication, rows: page.rows, ruleRows: params.readSource?.ruleRows });
         return {
             ...mapV2SessionListRows({
-                rows: page.rows, userId, ownerAccountModes, discussionFacts, otherNamedCollaboratorFacts, latestFailureSequences,
+                rows: page.rows, userId, ownerAccountModes, discussionFacts, otherNamedCollaboratorFacts, latestFailureSequences, ruleReadStates,
                 qualifiedTeamIds: params.readSource?.qualifiedTeamIds,
                 accessMode: params.readSource?.accessMode,
                 now: params.now,
@@ -378,10 +383,15 @@ async function listSessionRowsForAccount(params: Readonly<{
         if (!decoded) throw new SessionListInvalidCursorError();
         cursor = decoded;
     }
-    const rows = await timing.measureAsync("query", () => findV2SessionListRows({
-        userId, where, cursor, ...readAdmission, orderBy: V2_SESSION_LIST_ORDER_BY, take: limit + 1,
-        rowAdmission: params.rowAdmission,
-    }));
+    const page = await timing.measureAsync("query", async () => params.rowAdmission
+        ? await findV2SessionListCandidatePage({
+            userId, where, cursor, ...readAdmission, orderBy: V2_SESSION_LIST_ORDER_BY, limit,
+            candidateLimit: resolveV2SessionListCandidateWindowLimit(Boolean(params.cursor)),
+            rowAdmission: params.rowAdmission, onCandidatesExamined: timing.recordCandidates,
+        })
+        : createV2SessionListRowPage({ rows: await findV2SessionListRows({
+            userId, where, cursor, ...readAdmission, orderBy: V2_SESSION_LIST_ORDER_BY, take: limit + 1,
+        }), limit }));
     const includeAttention = params.storage === "active" && !params.cursor && params.includeAttention === true;
     const includeActive = params.storage === "active" && !params.cursor && params.includeActive === true;
     if (!params.cursor && (pinnedSessionIds.length > 0 || includeAttention || includeActive)) {
@@ -398,7 +408,10 @@ async function listSessionRowsForAccount(params: Readonly<{
             ),
             readOtherNamedCollaboratorFacts: (pageRows) => readSessionListOtherNamedCollaboratorFacts(pageRows, userId, params.readSource?.discussionReader),
             readLatestFailureSequences: (pageRows) => loadSessionLatestFailureSequencesInTx(params.readSource?.discussionReader ?? db, pageRows, params.observedAttentionFailureSequences),
-            pageRows: rows,
+            readRuleReadStates: (pageRows) => loadSessionRuleReadStatesInTx(params.readSource?.discussionReader ?? db,
+                { accountId: userId, authentication: params.authentication, rows: pageRows, ruleRows: params.readSource?.ruleRows }),
+            pageRows: page.rows,
+            page,
             limit,
             pinnedSessionIds,
             includeAttentionRows: includeAttention,
@@ -412,7 +425,6 @@ async function listSessionRowsForAccount(params: Readonly<{
             timing: timing.initialPageTiming(),
         });
     }
-    const page = createV2SessionListRowPage({ rows, limit });
     const ownerAccountModes = await readSessionListOwnerAccountModes(page.rows, metadataReader);
     const discussionFacts = await readSessionListViewerDiscussionFacts(
         page.rows,
@@ -422,9 +434,11 @@ async function listSessionRowsForAccount(params: Readonly<{
     );
     const otherNamedCollaboratorFacts = await readSessionListOtherNamedCollaboratorFacts(page.rows, userId, params.readSource?.discussionReader);
     const latestFailureSequences = await loadSessionLatestFailureSequencesInTx(params.readSource?.discussionReader ?? db, page.rows, params.observedAttentionFailureSequences);
+    const ruleReadStates = await loadSessionRuleReadStatesInTx(params.readSource?.discussionReader ?? db,
+        { accountId: userId, authentication: params.authentication, rows: page.rows, ruleRows: params.readSource?.ruleRows });
     return timing.measure("page", () => ({
         ...mapV2SessionListRows({
-            rows: page.rows, userId, ownerAccountModes, discussionFacts, otherNamedCollaboratorFacts, latestFailureSequences,
+            rows: page.rows, userId, ownerAccountModes, discussionFacts, otherNamedCollaboratorFacts, latestFailureSequences, ruleReadStates,
             qualifiedTeamIds: params.readSource?.qualifiedTeamIds,
             accessMode: params.readSource?.accessMode,
             now: params.now,
@@ -455,8 +469,7 @@ async function listFilteredSessionsForAccount(params: Readonly<{
         throw new SessionListUnavailableQueryError("audience");
     }
 
-    let contributions: readonly SessionManagerContribution[] = [];
-    return await readSnapshotWithCurrentAdmission(async (tx) => await params.timing.measureAsync("snapshot", async () => {
+    return await captureSessionListingSnapshot(async (tx) => await params.timing.measureAsync("snapshot", async () => {
         const accessResolution = await resolveEffectiveSessionAccessWhere({
             tx,
             accountId: params.userId,
@@ -511,10 +524,11 @@ async function listFilteredSessionsForAccount(params: Readonly<{
                     return rows.filter((row) => isPublishedActive(row) || admittedInactiveIds.has(row.id));
                 }
                 : undefined;
-        const ruleReceiverCounts = await readAccountFollowRuleReceiverCountsInTx(tx, {
+        const ruleRows = await readAccountFollowRuleProjectionRowsInTx(tx, {
             accountId: params.userId, authentication: params.authentication,
             collectiveAccessSnapshot: accessResolution.collectiveAccessSnapshot,
         });
+        const ruleReceiverCounts = projectAccountFollowRuleReceiverCounts(ruleRows);
         const admitCoordinators: SessionListRowAdmission = async rows => {
             const projected = await projectSessionManagerForRowsInTx(tx, {
                 accountId: params.userId, authentication: params.authentication, sessions: rows,
@@ -613,10 +627,16 @@ async function listFilteredSessionsForAccount(params: Readonly<{
             kind: "effective",
             reader: tx,
             baseWhere: conjoinSessionListWhereInputs(baseWhere, membershipWhere, subtreeWhere, params.rowRepresentabilityWhere),
+            baseWhereBranches: createSessionListScopeQueryBranches(scopeWhere).map(branch => conjoinSessionListWhereInputs(
+                createFilteredSessionListWhere({ accountId: params.userId, query, accessWhere,
+                    scopeWhere: branch, audienceWhere, attentionWhere }),
+                membershipWhere, subtreeWhere, params.rowRepresentabilityWhere,
+            )),
             accessMode: "effective_access_v1",
             qualifiedTeamIds: accessResolution.qualifiedTeamIds,
             collectiveAccessSnapshot: accessResolution.collectiveAccessSnapshot,
             discussionReader: tx,
+            ruleRows,
         };
         const page = await listSessionRowsForAccount({
             userId: params.userId,
@@ -649,7 +669,6 @@ async function listFilteredSessionsForAccount(params: Readonly<{
                 collectiveAccessSnapshot: accessResolution.collectiveAccessSnapshot,
                 nowMs: now,
                 ruleReceiverCounts,
-                captureContributions: rows => { contributions = rows; },
             });
         return SessionListQueryResponseV1Schema.parse({
             sessions: tagAssignments ? sessions.map(session => ({ ...session,
@@ -664,14 +683,5 @@ async function listFilteredSessionsForAccount(params: Readonly<{
                 ? { metadataUpgradeRequiredCount: page.metadataUpgradeRequiredCount }
                 : {}),
         });
-    }), async (tx, captured) => await params.timing.measureAsync("readmission", async () => {
-        if (!captured) return captured;
-        const admission = { accountId: params.userId, authentication: params.authentication, accessMode: "effective_access_v1" as const };
-        const sessions = await readmitSessionRowsInTx(tx, admission, captured.sessions);
-        const current = await readmitCapturedSessionManagerReferencesInTx(tx, { ...admission, sessions, contributions });
-        return SessionListQueryResponseV1Schema.parse({
-            ...captured,
-            sessions: current,
-        });
-    }), { transactionClass: "session-listing-read" });
+    }));
 }

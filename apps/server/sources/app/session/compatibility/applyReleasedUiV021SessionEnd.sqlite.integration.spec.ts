@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { Socket } from "socket.io";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
+import { readSessionUsageAccountingChangedV1 } from "@happier-dev/protocol/changes";
 import { UpdateBodySchema } from "@happier-dev/protocol";
 import { eventRouter, type ClientConnection } from "@/app/events/eventRouter";
 import { db } from "@/storage/db";
@@ -64,6 +65,8 @@ describe("released UI v0.2.1 Stop lifecycle compatibility", () => {
             authentication,
         })).resolves.toMatchObject({ ok: true, didApply: true });
 
+        const beforeStop = await db.account.findUniqueOrThrow({ where: { id: owner.id }, select: { seq: true } });
+
         const { createAuthenticatedFakeSocket } = await import("@/app/api/testkit/socketHarness");
         const socket = createAuthenticatedFakeSocket();
         const connection: ClientConnection = {
@@ -97,6 +100,11 @@ describe("released UI v0.2.1 Stop lifecycle compatibility", () => {
                 observedAt: 2_000,
             })).resolves.toEqual({ status: "unchanged" });
 
+            const stoppedChange = await db.accountChange.findFirstOrThrow({
+                where: { accountId: owner.id, kind: "session", entityId: session.id },
+                select: { kind: true, cursor: true, hint: true },
+            });
+            expect(readSessionUsageAccountingChangedV1(stoppedChange, beforeStop.seq)).toBe(false);
             await expect(db.session.findUniqueOrThrow({
                 where: { id: session.id },
                 select: {

@@ -1,3 +1,5 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
+import { acquireAccountSessionOwnerMetadataFenceInTx } from '@/app/encryption/accountSessionOwnerMetadataFence';
 import { randomUUID } from 'node:crypto';
 import { performance } from 'node:perf_hooks';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -62,9 +64,10 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('G
             const attempts: Array<{ elapsedMs: number; fenceMs?: number; sqlState?: string; blocked?: boolean }> = [];
             const publishers: Promise<unknown>[] = [];
             let committedPublications = 0;
+            const peerScope = new AsyncLocalStorage<boolean>();
             db.$transaction = new Proxy(originalTransaction, { apply(target, receiver, args: unknown[]) {
                 const callback = args[0];
-                if (typeof callback !== 'function') return Reflect.apply(target, receiver, args);
+                if (typeof callback !== 'function' || peerScope.getStore()) return Reflect.apply(target, receiver, args);
                 return Reflect.apply(target, receiver, [async (tx: Tx) => {
                     const start = performance.now();
                     const measurement: (typeof attempts)[number] = { elapsedMs: 0 };
@@ -81,13 +84,14 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('G
                             interleaved = true;
                             const locked = deferred(), release = deferred();
                             let peerPid = 0;
-                            const peer = Reflect.apply(originalTransaction, db, [async (other: Tx) => {
+                            const peer = peerScope.run(true, () => inTx(async other => {
                                 const [backend] = await other.$queryRaw<Array<{ pid: number }>>`SELECT pg_backend_pid() AS pid`;
                                 peerPid = backend.pid;
+                                await acquireAccountSessionOwnerMetadataFenceInTx(other, account.id, 'serializing');
                                 await markAccountChanged(other, { accountId: account.id, kind: 'account', entityId: 'gateway-admission-peer' });
                                 locked.resolve(); await release.promise;
-                            }, { isolationLevel: 'ReadCommitted' }]) as Promise<unknown>;
-                            await locked.promise;
+                            }, { isolationLevel: 'ReadCommitted' }));
+                            await Promise.race([locked.promise, peer.then(() => { throw new Error('Peer exited before holding its Account fence'); })]);
                             const fenceStarted = performance.now();
                             const fence = Promise.resolve(Reflect.apply(value, inner, queryArgs));
                             // Attach immediately; the real fence may fail as soon as the peer commits.
@@ -107,9 +111,9 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('G
                                             for (let publisher = 0; publisher < publisherCount; publisher++) {
                                                 publishers.push((async () => {
                                                     for (let iteration = 0; iteration < 3; iteration++) {
-                                                        await Reflect.apply(originalTransaction, db, [(other: Tx) => markAccountChanged(other, {
+                                                        await peerScope.run(true, () => inTx(other => markAccountChanged(other, {
                                                             accountId: account.id, kind: 'account', entityId: `publisher-${publisher}`,
-                                                        }), { isolationLevel: 'ReadCommitted' }]);
+                                                        }), { isolationLevel: 'ReadCommitted' }));
                                                         committedPublications++;
                                                     }
                                                 })());

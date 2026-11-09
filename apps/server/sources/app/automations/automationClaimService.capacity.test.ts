@@ -1,5 +1,5 @@
 import { beforeEach, expect, it, vi } from 'vitest';
-import { matchesDbMockWhere } from '@/app/api/testkit/dbMocks';
+import { matchesDbMockWhere, inTxPostgresControlStatementMock } from '@/app/api/testkit/dbMocks';
 
 const persistence = vi.hoisted(() => {
   const queries: Array<{ where: Record<string, unknown> }> = [];
@@ -27,6 +27,7 @@ beforeEach(() => {
   persistence.runs.length = 0;
   persistence.eligibleIds.length = 0;
   persistence.tx = {
+    ...inTxPostgresControlStatementMock,
     $queryRawUnsafe: async () => [{ id: 'account' }],
     $executeRawUnsafe: async () => 1,
     account: { findUnique: async () => ({ seq: 1, encryptionMode: 'plain', publicKey: 'ab'.repeat(32),

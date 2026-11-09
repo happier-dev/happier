@@ -14,6 +14,7 @@ import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lig
 import { createPresentUserSessionAccessAuthentication } from "@/app/session/access/sessionAccessAuthentication.testkit";
 import { deriveSessionSystemRecordAddressKeys } from "./sessionSystemRecordAddressKeys";
 import { inTx } from "@/storage/inTx";
+import { markAccountChanged } from "@/app/changes/markAccountChanged";
 import { runSessionSystemRecordBackfillOperator } from "./sessionSystemRecordBackfillOperator";
 import {
     initializeSessionSystemRecordsProtocolV1Activation,
@@ -139,14 +140,14 @@ describe("SessionSystemRecord CONTRACT on SQLite", () => {
             const publish = () => inTx(tx => readPublishedSessionSurfaceItemInTx(tx, {
                 accountId: account.id, sessionId: session.id, itemId: "visual", encryptionMode: "plain",
             }));
-            // Legacy unwrapped rows and current creation wrappers both enter the same loaded-row owner.
+            // Canonical envelopes and retained development wrappers enter the same loaded-row owner.
             for (const content of [{ t: "plain", v: stored }, { t: "session_surface_record_v1", futureDisplayField: 1,
                 content: { t: "plain", v: stored, futureDisplayField: 1 }, creator: { kind: "user", futureDisplayField: 1 } }]) {
                 await db.sessionSystemRecord.update({ where: { id: row.id }, data: { content } });
                 expect(await read()).toMatchObject({ ok: true, record: { content: { t: "plain", v: item } } });
                 const published = await publish();
                 expect(published?.content).toEqual({ t: "plain", v: item });
-                expect(published?.creator).toEqual({ kind: content.t === "plain" ? "unknown" : "user" });
+                expect(published).not.toHaveProperty("creator");
             }
             const strictRefusal = await app.inject({ method: "PUT", url, payload: { operation: "upsert_item", itemId: "visual",
                 expectedItemRevision: created.json().itemRevision, itemContent: { t: "plain", v: stored } } });
@@ -155,7 +156,7 @@ describe("SessionSystemRecord CONTRACT on SQLite", () => {
                 expectedItemRevision: created.json().itemRevision, itemContent: { t: "plain", v: { ...item, title: "Updated" } } } });
             expect(updated.statusCode, updated.body).toBe(200);
             expect((await db.sessionSystemRecord.findUniqueOrThrow({ where: { id: row.id } })).content)
-                .toEqual({ t: "session_surface_record_v1", content: { t: "plain", v: { ...item, title: "Updated" } }, creator: { kind: "user" } });
+                .toEqual({ t: "plain", v: { ...item, title: "Updated" } });
             for (const invalid of [{ ...stored, height: { mode: "fixed", size: "invalid" } },
                 { ...stored, source: { kind: "widget", instance: { v: 1, id: "other", bindings: {}, definition: { kind: "builtin", id: "usage_daily" } } } },
                 { ...stored, source: { kind: "widget", instance: { v: 1, id: "visual", definition: { kind: "builtin", id: "usage_daily" },
@@ -253,9 +254,7 @@ describe("SessionSystemRecord CONTRACT on SQLite", () => {
             expect(conflict.statusCode).toBe(409);
             const rows = await db.sessionSystemRecord.findMany({ where: { sessionId: session.id } });
             expect(rows).toHaveLength(2);
-            expect(rows.find(row => row.localId === "note")?.content).toEqual({
-                t: "session_surface_record_v1", content: itemContent, creator: { kind: "user" },
-            });
+            expect(rows.find(row => row.localId === "note")?.content).toEqual(itemContent);
             const removal = { operation: "remove_item", itemId: "note", expectedItemRevision: created.json().itemRevision,
                 layoutContent: { t: "plain", v: { v: 1, tabs: [] } }, expectedLayoutRevision: created.json().layoutRevision };
             const removed = await app.inject({ method: "PUT", url: `/v2/sessions/${session.id}/board`, payload: removal });
@@ -429,11 +428,18 @@ describe("SessionSystemRecord CONTRACT on SQLite", () => {
             const created = await app.inject({ method: "PUT", url, payload: { operation: "update_layout", expectedLayoutRevision: null,
                 layoutContent: { t: "plain", v: { v: 1, tabs: [] } } } });
             expect(created.statusCode).toBe(200);
-            expect(await db.sessionSystemRecord.findMany({ where: { sessionId: session.id }, select: { accountId: true } })).toEqual([{ accountId: account.id }]);
-            const changes = await db.accountChange.findMany({ where: { entityId: session.id, kind: "session" }, select: { accountId: true, hint: true } });
+            const stored = await db.sessionSystemRecord.findMany({ where: { sessionId: session.id }, select: { id: true, accountId: true } });
+            expect(stored).toEqual([{ id: expect.any(String), accountId: account.id }]);
+            // A later transcript write coalesces its own Session row. The record's
+            // exact invalidation must remain independently readable after that cursor.
+            await inTx(tx => markAccountChanged(tx, { accountId: account.id, kind: "session", entityId: session.id,
+                hint: { lastMessageSeq: 1, lastMessageId: "ordinary-message" } }));
+            const changes = await db.accountChange.findMany({ where: { entityId: `session-record:${stored[0].id}`, kind: "account" }, select: { accountId: true, hint: true } });
+            const hint = { v: 1, sessionRecords: { sessionId: session.id,
+                address: { owner: "host", namespace: "surface", kind: "layout.v1", localId: "layout" } } };
             expect(changes).toEqual(expect.arrayContaining([
-                { accountId: account.id, hint: { v: 1, sessionSurfaces: true } },
-                { accountId: editor.id, hint: { v: 1, sessionSurfaces: true } },
+                { accountId: account.id, hint },
+                { accountId: editor.id, hint },
             ]));
             const attempts = await Promise.all(["first", "second"].map(id => app.inject({ method: "PUT", url, payload: {
                 operation: "update_layout", expectedLayoutRevision: created.json().layoutRevision,

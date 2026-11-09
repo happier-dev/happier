@@ -1,7 +1,7 @@
 import { mkdir } from 'node:fs/promises';
 
 import { PGlite } from '@electric-sql/pglite';
-import { PGLiteSocketServer } from '@electric-sql/pglite-socket';
+import { FramedPgliteSocketServer } from '../sources/storage/pgliteFramedSocketServer.mjs';
 
 import { applyLightDefaultEnv } from '../sources/flavors/light/env';
 import { acquirePgliteDirLock } from '../sources/storage/locks/pgliteLock';
@@ -22,11 +22,11 @@ export async function openPgliteMigrationSession(
 
     const releaseLock = await acquirePgliteDirLock(dbDir, { purpose });
     let pglite: PGlite | null = null;
-    let server: PGLiteSocketServer | null = null;
+    let server: FramedPgliteSocketServer | null = null;
     try {
         pglite = new PGlite(dbDir);
         await pglite.waitReady;
-        server = new PGLiteSocketServer({ db: pglite, host: '127.0.0.1', port: 0 });
+        server = new FramedPgliteSocketServer({ db: pglite, host: '127.0.0.1', port: 0 });
         await server.start();
 
         const rawConnection = server.getServerConn();

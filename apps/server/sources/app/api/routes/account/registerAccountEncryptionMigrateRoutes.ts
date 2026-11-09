@@ -1,4 +1,7 @@
 import { InactiveAccountError } from "@/app/auth/accountStatus";
+import { AccountEncryptionMigrateSettingsHistoryInventoryPageSchema } from '@happier-dev/protocol/account/encryptionMigrate';
+import { AccountEncryptionMigrateTodosInventoryResponseSchema } from '@happier-dev/protocol/account/encryptionMigrate';
+import { readTaskAccountEncryptionInventoryInTx } from '@/app/todos/accountEncryptionMigration';
 import { DiscussionAccountEncryptionInventoryV1Schema } from '@happier-dev/protocol/discussions/accountEncryptionMigration';
 import { readDiscussionAccountEncryptionInventoryInTx, migrateDiscussionAccountEncryptionInTx,
     matchDiscussionAccountEncryptionMigrationPostStateInTx } from '@/app/discussions/accountEncryptionMigration';
@@ -30,6 +33,7 @@ import {
 import {
     matchAccountSettingsEncryptionMigrationPostStateInTx,
     migrateAccountSettingsEncryptionInTx,
+    readAccountSettingsEncryptionMigrationInventoryInTx,
 } from "@/app/accountSettings/migrateAccountSettingsEncryptionInTx";
 import { eventRouter } from "@/app/events/eventRouter";
 import { WorkflowRunAccessError } from "@/app/workflows/workflowRunAccess";
@@ -146,6 +150,7 @@ import { matchAccountFollowRulesAccountMigrationPostStateInTx, migrateAccountFol
 import { matchConfiguredAgentCatalogAccountMigrationPostStateInTx, migrateConfiguredAgentCatalogForAccountModeInTx } from '@/app/account/agents/configuredAgentRowsEncryptionMigration';
 import { matchMcpServerCatalogAccountMigrationPostStateInTx, migrateMcpServerCatalogForAccountModeInTx } from '@/app/account/mcp/serverCatalogEncryptionMigration';
 import { matchProviderConnectionsAccountMigrationPostStateInTx, migrateProviderConnectionsForAccountModeInTx } from '@/app/account/providers/providerConnectionsEncryptionMigration';
+import { migrateSavedSecretResourcesForAccountModeInTx } from '@/app/account/savedSecrets/savedSecretResourceService';
 import { matchRemoteHostCatalogAccountMigrationPostStateInTx, migrateRemoteHostCatalogForAccountModeInTx } from '@/app/account/remoteHosts/remoteHostRowsEncryptionMigration';
 import { matchNotificationChannelCatalogAccountMigrationPostStateInTx, migrateNotificationChannelCatalogForAccountModeInTx } from '@/app/account/notifications/channelRowsEncryptionMigration';
 import { matchConnectedPresentationAccountMigrationPostStateInTx, migrateConnectedPresentationForAccountModeInTx,
@@ -312,7 +317,8 @@ class AccountEncryptionMigrationDomainRejectedError extends Error {
             | "profile_rows"
             | "workspace_execution_config"
             | "project_rows"
-            | "project_trust",
+            | "project_trust"
+            | "saved_secret_resources",
         readonly status:
             | "not_empty"
             | "migration_incomplete"
@@ -524,6 +530,35 @@ async function authorizeAccountEncryptionTransitionFromHttpRequestInTx(
 }
 
 export function registerAccountEncryptionMigrateRoutes(app: Fastify): void {
+    app.get('/v1/account/encryption/migrate/todos/inventory', {
+        preHandler: [app.authenticate, requirePresentUser],
+        schema: { response: { 200: AccountEncryptionMigrateTodosInventoryResponseSchema, 403: PresentUserRequiredResponseSchema } },
+    }, async (request, reply) => reply.send(await inReadSnapshot(tx => readTaskAccountEncryptionInventoryInTx(tx, request.userId))));
+    app.get('/v1/account/encryption/migrate/settings-history/inventory', {
+        preHandler: [app.authenticate, requirePresentUser],
+        schema: {
+            querystring: z.strictObject({ beforeVersion: z.optional(z.coerce.number().check(z.int(), z.nonnegative())) }),
+            response: {
+                200: AccountEncryptionMigrateSettingsHistoryInventoryPageSchema,
+                400: AccountEncryptionMigrateBadRequestResponseSchema,
+                403: PresentUserRequiredResponseSchema,
+                500: AccountEncryptionMigrateInternalResponseSchema,
+            },
+        },
+    }, async (request, reply) => {
+        try {
+            const inventory = await inReadSnapshot(tx => readAccountSettingsEncryptionMigrationInventoryInTx({
+                tx, accountId: request.userId, beforeVersion: request.query.beforeVersion,
+            }));
+            if (inventory.status === 'ready') return reply.send(inventory.page);
+            if (inventory.status === 'migration_too_large') return reply.code(400).send({ error: 'migration_too_large' });
+            return reply.code(400).send({ error: 'invalid-params',
+                reason: AccountEncryptionMigrateInvalidParamsReasonSchema.def.entries.migration_inventory_changed });
+        } catch (error) {
+            if (error instanceof InactiveAccountError) throw error;
+            return reply.code(500).send({ error: 'internal' });
+        }
+    });
     app.get('/v1/account/encryption/migrate/discussions/inventory', {
         preHandler: [app.authenticate, requirePresentUser],
         schema: { response: { 200: DiscussionAccountEncryptionInventoryV1Schema, 403: PresentUserRequiredResponseSchema } },
@@ -918,6 +953,7 @@ export function registerAccountEncryptionMigrateRoutes(app: Fastify): void {
             workspaceExecutionConfig,
             projectRows,
             projectTrust,
+            savedSecretResources,
         } = migrationRequest;
         const workspace = migrationRequest.workspace ?? { action: "assert_empty" as const };
 
@@ -1114,6 +1150,7 @@ export function registerAccountEncryptionMigrateRoutes(app: Fastify): void {
                                 replayRequest.expectedSettingsVersion,
                             replacementContent:
                                 replayRequest.settingsContent,
+                            history: replayRequest.settingsHistory,
                         });
                     const connectedServicesPostState =
                         await matchConnectedServicesAccountEncryptionMigrationPostStateInTx({
@@ -1344,7 +1381,11 @@ export function registerAccountEncryptionMigrateRoutes(app: Fastify): void {
                     return { type: "internal-error" as const };
                 }
                 const pluginSettingsBlockTransition =
-                    pluginSettingsCensus.status === "nonempty";
+                    pluginSettingsCensus.status === "nonempty"
+                    && pluginSettingsCensus.declarativeSettings;
+                // History is transitionable Settings work, verified and rewritten
+                // by the same Settings owner below. The empty-only PATCH still
+                // uses the complete census because it carries no replacements.
                 // A plugin-owned payload that this coordinator cannot rewrite
                 // blocks the complete Account transition before domain writers.
                 if (pluginDataBlocksTransition) {
@@ -1748,6 +1789,7 @@ export function registerAccountEncryptionMigrateRoutes(app: Fastify): void {
                         toMode,
                         expectedSettingsVersion,
                         replacementContent: settingsContent,
+                        history: migrationRequest.settingsHistory,
                     });
                 if (settingsMigration.status !== "applied") {
                     // Sessions may already have been rewritten. A normal
@@ -1783,6 +1825,7 @@ export function registerAccountEncryptionMigrateRoutes(app: Fastify): void {
                         toMode,
                         directive: todos,
                         namespace: 'todo',
+                        ownerContentPublicKeyFingerprint: contentKeyBinding?.contentPublicKeyFingerprint,
                     });
                 if (todoMigration.status !== "applied") {
                     throw new AccountEncryptionMigrationDomainRejectedError(
@@ -1833,6 +1876,18 @@ export function registerAccountEncryptionMigrateRoutes(app: Fastify): void {
                         "connected_services",
                         connectedServicesMigration.status,
                     );
+                }
+
+                // Saved Secrets the Account owns with no grants (including the
+                // records holding converted Connected Account keys) reseal in
+                // this transaction, atomically with the credential reseal above.
+                const savedSecretResourcesMigration = await migrateSavedSecretResourcesForAccountModeInTx(tx, {
+                    accountId: userId, fromMode: currentMode, toMode,
+                    ownerContentPublicKeyFingerprint: contentKeyBinding?.contentPublicKeyFingerprint ?? null,
+                    directive: savedSecretResources,
+                });
+                if (savedSecretResourcesMigration.status !== "applied") {
+                    throw new AccountEncryptionMigrationDomainRejectedError("saved_secret_resources", savedSecretResourcesMigration.status);
                 }
 
                 const automationMigration =

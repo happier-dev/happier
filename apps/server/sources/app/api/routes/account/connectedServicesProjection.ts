@@ -3,6 +3,7 @@ import { type ConnectedServiceId } from '@happier-dev/protocol/connect/connected
 import { type QualifiedConnectedAccountGroupV4, type QualifiedConnectedAccountProfileV4 } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
 
 import type { Tx } from "@/storage/inTx";
+import { projectGroupPolicyForFeature } from '../connect/qualifiedConnectedAccounts/groupPolicyProjection';
 import { collectLegacyConnectedServiceVendorKeysFromRows } from "../connect/legacyConnectedServiceVendors";
 import {
     listAllQualifiedConnectedAccountsForLegacyProjectionInTx,
@@ -128,6 +129,7 @@ export async function buildAccountConnectedServicesProjection(params: Readonly<{
     tx: AccountConnectedServicesProjectionStorage;
     accountId: string;
     includeGroups: boolean;
+    env: NodeJS.ProcessEnv;
 }>): Promise<AccountConnectedServicesProjection> {
     const accountProjections =
         await listAllQualifiedConnectedAccountsForLegacyProjectionInTx(
@@ -143,12 +145,12 @@ export async function buildAccountConnectedServicesProjection(params: Readonly<{
         (projection) => projection.account,
     );
     const connectedAccountGroupsV4 =
-        await listAllQualifiedConnectedAccountGroupsInTx(
+        (await listAllQualifiedConnectedAccountGroupsInTx(
             params.tx,
             {
                 accountId: params.accountId,
             },
-        );
+        )).map(projectGroupPolicyForFeature(params.env));
     if (params.includeGroups) {
         addAuthGroupsToServices({
             groups: connectedAccountGroupsV4,

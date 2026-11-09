@@ -1,8 +1,13 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { FastifyInstance } from "fastify";
+import { V2SessionByIdResponseSchema } from '@happier-dev/protocol';
 
 import { db } from "@/storage/db";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
+import { observeSqliteRequests } from "@/testkit/observeSqliteRequests";
+import { inTx } from "@/storage/inTx";
+import { readSessionObservationCursorInTx } from "@/app/session/access/readObservation";
+import { createPresentUserSessionAccessAuthentication } from "@/app/session/access/sessionAccessAuthentication.testkit";
 import { withAuthenticatedTestApp } from "../../testkit/sqliteFastify";
 import { sessionRoutes } from "./sessionRoutes";
 
@@ -46,6 +51,60 @@ describe("v2 session list publication privacy (SQLite integration)", () => {
             run,
         );
     }
+
+    it('orders list and exact Session observations by the committed Account cursor', async () => {
+        const owner = await db.account.create({ data: {
+            publicKey: `snapshot-order-${crypto.randomUUID()}`, encryptionMode: 'plain', seq: 10,
+        } });
+        await withApp(async app => {
+            const headers = { 'x-test-user-id': owner.id, 'x-happier-account-stored-content-protocol': '4' };
+            let observationReads = 0;
+            let observingReads = true;
+            const stop = observeSqliteRequests({ before: request => {
+                if (observingReads && request.model === 'Account' && JSON.stringify(request.args).includes('"select":{"seq":true}')) {
+                    observationReads += 1;
+                }
+            } });
+            try {
+            const before = await app.inject({ method: 'GET', url: '/v2/sessions?limit=10', headers });
+            expect(before.statusCode).toBe(200);
+            expect(before.json()).toMatchObject({ sessions: [], observationCursor: 10 });
+            observingReads = false;
+            const created = await app.inject({ method: 'POST', url: '/v1/sessions', headers, payload: {
+                tag: `snapshot-created-${crypto.randomUUID()}`, encryptionMode: 'plain', metadataLayoutVersion: 1,
+                sharedMetadata: { ciphertext: SHARED_METADATA }, ownerMetadata: { t: 'plain', v: { v: 1 } },
+            } });
+            expect(created.statusCode, created.body).toBe(200);
+            const { session } = V2SessionByIdResponseSchema.parse(created.json());
+            observingReads = true;
+            const exact = await app.inject({ method: 'GET', url: `/v2/sessions/${session.id}`, headers });
+            expect(exact.statusCode).toBe(200);
+            expect(exact.json()).toMatchObject({ session: { id: session.id }, observationCursor: 11 });
+            const after = await app.inject({ method: 'GET', url: '/v2/sessions?limit=10', headers });
+            expect(after.statusCode).toBe(200);
+            expect(after.json()).toMatchObject({ sessions: [{ id: session.id }], observationCursor: 11 });
+            // One scalar capture read per request, never one per returned row or late admission.
+            expect(observationReads).toBe(3);
+            } finally { stop(); }
+        });
+    });
+
+    it.each(['runtime', 'automation'] as const)('does not disclose an Account observation cursor to %s credentials', async kind => {
+        const owner = await db.account.create({ data: {
+            publicKey: crypto.randomUUID(), encryptionMode: 'plain', seq: 42,
+        } });
+        const authentication = createPresentUserSessionAccessAuthentication();
+        await expect(inTx(tx => readSessionObservationCursorInTx(tx, owner.id, authentication))).resolves.toBe(42);
+        await expect(inTx(tx => readSessionObservationCursorInTx(tx, owner.id, {
+            ...authentication, authority: 'account_automation',
+            ...(kind === 'runtime' ? { sessionRuntimePrincipal: {
+                kind: 'ephemeral_session_runner', authority: 'session_runtime', accountId: owner.id,
+                activationId: crypto.randomUUID(), sessionId: 'restricted-session', machineId: 'restricted-machine',
+                installationId: 'restricted-installation', installationPublicKey: '11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo',
+                creatorTokenEpoch: 0,
+            } } : {}),
+        }))).resolves.toBeUndefined();
+    });
 
     it("keeps a collaborator's order, cursor pagination, and active membership at the snapshot publication ceiling", async () => {
         const now = Date.now();
@@ -188,7 +247,9 @@ describe("v2 session list publication privacy (SQLite integration)", () => {
                 for (const listed of list.json().sessions) {
                     const detail = await app.inject({ method: "GET", url: `/v2/sessions/${listed.id}`, headers: viewerHeaders });
                     expect(detail.statusCode, detail.body).toBe(200);
-                    expect(detail.json().session).toEqual(listed);
+                    // Lists are compact since 26aeda2577; every fact a row carries must match the exact read.
+                    const { documents: _documents, agentStateDocument: _agentStateDocument, metadataAudience: _metadataAudience, ...compactFacts } = listed;
+                    expect(detail.json().session).toMatchObject(compactFacts);
                 }
             }
         });
@@ -289,5 +350,59 @@ describe("v2 session list publication privacy (SQLite integration)", () => {
                 legacyUnknown.id,
             ]);
         });
+    });
+
+    it("does not let an above-ceiling private updatedAt change the retained owned 150", async () => {
+        const owner = await db.account.create({
+            data: {
+                publicKey: `pk-v2-owned-publication-ceiling-${crypto.randomUUID()}`,
+                encryptionMode: "plain",
+            },
+            select: { id: true },
+        });
+        const base = 1_700_000_000_000;
+        const sessionIds = Array.from(
+            { length: 151 },
+            (_, index) => `v2-owned-publication-${crypto.randomUUID()}-${index}`,
+        );
+        const publishedRecencyAt = (index: number) => base - (index * 1_000);
+        await db.session.createMany({
+            data: sessionIds.map((id, index) => ({
+                id,
+                tag: `v2-owned-publication-tag-${index}`,
+                accountId: owner.id,
+                encryptionMode: "plain",
+                metadata: "{}",
+                agentState: null,
+                currentStorageState: "machine_only",
+                createdAt: new Date(publishedRecencyAt(index)),
+                updatedAt: new Date(publishedRecencyAt(index)),
+            })),
+        });
+
+        await withAuthenticatedTestApp(
+            (app) => sessionRoutes(app as never),
+            async (app) => {
+                const readIds = async () => {
+                    const response = await app.inject({
+                        method: "GET",
+                        url: "/v2/sessions?limit=150",
+                        headers: { "x-test-user-id": owner.id },
+                    });
+                    expect(response.statusCode, response.body).toBe(200);
+                    return (response.json().sessions as Array<{ id: string }>).map((session) => session.id);
+                };
+
+                const beforePrivateCatchup = await readIds();
+                expect(beforePrivateCatchup).toEqual(sessionIds.slice(0, 150));
+
+                await db.session.update({
+                    where: { id: sessionIds[150]! },
+                    data: { updatedAt: new Date(base + 10_000) },
+                });
+
+                expect(await readIds()).toEqual(beforePrivateCatchup);
+            },
+        );
     });
 });

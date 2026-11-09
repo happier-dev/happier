@@ -11,7 +11,7 @@ import {
     resolveTeamCredentialBrokerPlacementFingerprint,
     type TeamCredentialBrokerPlacementResource,
 } from "./brokerPlacementResolver";
-import { resolveTeamCredentialResourceSourceInTx } from "./resourceSourceResolver";
+import { resolveTeamCredentialResourceSourceInTx, type TeamCredentialResourceSourceResolution } from "./resourceSourceResolver";
 import { readExternalBrokerOperation, type ExternalBrokerOperation } from "./externalBrokerOperation";
 
 /** The external-key question put to the canonical Pool source-eligibility reader. */
@@ -33,11 +33,12 @@ type CurrentKeyAuthority = Extract<
 type CurrentKeyAuthorityAndSource = Readonly<{
     authority: CurrentKeyAuthority;
     source: TeamCredentialSourceBindingV1;
+    authenticationFailure?: Extract<TeamCredentialResourceSourceResolution, { status: 'current' }>['authenticationFailure'];
 }>;
 
 export type ExternalBrokerPlacementResult =
     | Readonly<{ ok: true; custodianAccountId: string; brokerMachineId: string; operationId: string | null; brokerPlacementFingerprint: string }>
-    | Readonly<{ ok: false; error: "broker_unavailable" | "resource_unavailable" }>;
+    | Readonly<{ ok: false; error: "broker_unavailable" | "resource_unavailable" | 'connected_service_credential_reconnect_required' }>;
 
 function unchangedAuthority(left: CurrentKeyAuthority, right: CurrentKeyAuthority): boolean {
     return left.keyId === right.keyId
@@ -67,7 +68,8 @@ async function readCurrentAuthorityAndSourceInTx(
         custodianAccountId: authority.custodianAccountId,
         source: source.data,
     });
-    return current.status === "current" ? { authority, source: source.data } : null;
+    return current.status === "current" ? { authority, source: source.data,
+        ...(current.authenticationFailure ? { authenticationFailure: current.authenticationFailure } : {}) } : null;
 }
 
 function placementResource(authority: CurrentKeyAuthority): TeamCredentialBrokerPlacementResource {
@@ -111,6 +113,7 @@ export async function resolveTeamCredentialExternalBrokerPlacement(input: Readon
         return current;
     });
     if (!initial) return { ok: false, error: "resource_unavailable" };
+    if (initial.authenticationFailure) return { ok: false, error: initial.authenticationFailure };
     if (input.signal.aborted) return { ok: false, error: "broker_unavailable" };
     const { authority } = initial;
     const resource = placementResource(authority);
@@ -172,9 +175,13 @@ export async function resolveTeamCredentialExternalBrokerPlacement(input: Readon
         } catch {
             return { ok: false, error: "broker_unavailable" };
         }
-        const current = await inTx(async (tx) => {
+        const current = await inTx(async (tx): Promise<ExternalBrokerOperation
+            | Readonly<{ brokerMachineId: string; operationId: null }>
+            | Readonly<{ authenticationFailure: NonNullable<CurrentKeyAuthorityAndSource['authenticationFailure']> }>
+            | null> => {
             const reread = await readCurrentAuthorityAndSourceInTx(tx, input.externalApiKeyId, new Date());
             if (!reread || !unchangedAuthority(authority, reread.authority)) return null;
+            if (reread.authenticationFailure) return { authenticationFailure: reread.authenticationFailure };
             const retained = reread.authority.currentBrokerOperationJson === null
                 ? null : readExternalBrokerOperation(reread.authority.currentBrokerOperationJson);
             if (reread.authority.currentBrokerOperationJson !== null && (!retained || !operationMatches(retained))) return null;
@@ -206,6 +213,7 @@ export async function resolveTeamCredentialExternalBrokerPlacement(input: Readon
             return winningOperation && operationMatches(winningOperation) ? winningOperation : null;
         }, { isolationLevel: "Serializable" /* External broker signing composes current key authority, resource and entitlement. */ });
         if (!current) return { ok: false, error: "broker_unavailable" };
+        if ('authenticationFailure' in current) return { ok: false, error: current.authenticationFailure };
         // A concurrent winner may differ from the candidate this request probed.
         // Validate that exact winner; never dispatch the losing candidate.
         if (current.brokerMachineId !== candidateMachineId) {

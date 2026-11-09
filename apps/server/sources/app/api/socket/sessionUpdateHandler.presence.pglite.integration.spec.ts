@@ -8,7 +8,7 @@ import { openPgliteMigrationSession, type PgliteMigrationSession } from '../../.
 import { eventRouter } from '@/app/events/eventRouter';
 import { db, initDbPostgres, shutdownDbClient } from '@/storage/db';
 import { applyEnvValues, restoreEnv, snapshotEnv } from '@/testkit/env';
-import { assertLegacyKeepaliveDurableFreshness } from './sessionUpdateHandler.presence.testkit';
+import { assertKeepaliveRealtimeFreshness } from './sessionUpdateHandler.presence.testkit';
 
 describe('Retained legacy Session keepalive through the incumbent PostgreSQL wire harness', () => {
     const originalEnv = snapshotEnv();
@@ -37,6 +37,6 @@ describe('Retained legacy Session keepalive through the incumbent PostgreSQL wir
             if (root) await rm(root, { recursive: true, force: true });
         }
     });
-    it('publishes two minute-spaced durable heartbeats for owner and shared-viewer freshness',
-        assertLegacyKeepaliveDurableFreshness);
+    it('delivers two minute-spaced realtime heartbeats to owner and shared viewer with no Account cursor',
+        assertKeepaliveRealtimeFreshness);
 });

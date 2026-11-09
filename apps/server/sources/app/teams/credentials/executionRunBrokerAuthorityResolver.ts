@@ -4,6 +4,7 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import type { Fastify } from '@/app/api/types';
 import type { ProviderBrokerAdmissionFailureCodeV1 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
 import type { TeamCredentialExecutionRunCurrentnessResolver } from './providerBrokerAdmission';
+import { db } from '@/storage/db';
 
 type Failure = Readonly<{ ok: false; reasonCode: ProviderBrokerAdmissionFailureCodeV1 }>;
 
@@ -15,8 +16,14 @@ export function createExecutionRunBrokerCurrentnessResolver(input: Readonly<{
     return async request => {
         const requestNonce = input.createNonce();
         const serverIdentityId = await input.resolveServerIdentityId();
+        // The worker's custodian owns its RPC registration. The requesting
+        // Account remains the consumer principal, including on a shared worker.
+        const worker = await db.machine.findUnique({
+            where: { id: request.workerMachineId }, select: { accountId: true },
+        });
+        if (!worker) return failure('execution_run_authority_unavailable');
         const rpc = await input.app.forwardRpcForUser({
-            userId: request.requestingAccountId,
+            userId: worker.accountId,
             method: `${request.workerMachineId}:${RPC_METHODS.DAEMON_EXECUTION_RUN_BROKER_AUTHORITY_RESOLVE}`,
             params: {
                 v: 1,

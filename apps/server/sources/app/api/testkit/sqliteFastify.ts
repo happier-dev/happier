@@ -1,4 +1,5 @@
 import Fastify, { type FastifyServerOptions } from "fastify";
+import type { ServerOptions as HttpsServerOptions } from 'node:https';
 import type { ZodTypeProvider } from "fastify-type-provider-zod";
 import { API_TOKEN_FULL_GRANT_V1 } from "@happier-dev/protocol";
 import { captureAccountStoredContentCompatibilityForHttpRequest } from "@/app/clientCompatibility/accountStoredContentCompatibility";
@@ -11,12 +12,13 @@ import {
 } from "../utils/apiTokenRouteAdmission";
 
 export function createAuthenticatedTestApp(
-    options: Readonly<{ bodyLimit?: number; authentication?: 'fixture' | 'real'; trustProxy?: FastifyServerOptions['trustProxy'] }> = {},
+    options: Readonly<{ bodyLimit?: number; authentication?: 'fixture' | 'real'; trustProxy?: FastifyServerOptions['trustProxy']; https?: HttpsServerOptions }> = {},
 ) {
     // Fastify's own 1 MiB default would answer 413 for a route that relies on
     // the application transport limit, so a body-limit test must be able to
     // reproduce the production application limit explicitly.
     const app = Fastify({
+        ...(options.https === undefined ? {} : { https: options.https }),
         ...(options.bodyLimit === undefined ? {} : { bodyLimit: options.bodyLimit }),
         ...(options.trustProxy === undefined ? {} : { trustProxy: options.trustProxy }),
     });

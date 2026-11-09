@@ -184,108 +184,97 @@ export async function readSessionDetails(input: SessionDetailInput & Readonly<{ 
     const viewAccess = (sessionId: string) => projectSessionRuntimeManagedSubtreeAccess({ accountId: userId, sessionId });
     // The graph/access owner supplies the corpus, including current runtime proof.
     // This never changes the exact-detail authority of a runtime credential.
-    const readManagedIds = async (tx: Tx) => input.underSessionId === undefined ? null : new Set(
+    const readManagedIds = async (tx: Tx, sessionIds: readonly string[]) => input.underSessionId === undefined ? null : new Set(
         await readSessionManagedSubtreeSessionIdsInTx(tx, { accountId: userId, rootSessionId: input.underSessionId,
-            authentication, sessionIds: ids, ...(runtimeManagedSubtree ? { allowSessionRuntimeManagedSubtreeRead: true as const } : {}) }));
-    try {
-        await captureReadSnapshot(async tx => {
-            const observationCursor = await readSessionObservationCursorInTx(tx, userId, authentication);
-            const managedIds = await readManagedIds(tx);
-            const verifiedSessionRuntimePrincipal = authentication.sessionRuntimePrincipal !== undefined;
-            const ruleRows = verifiedSessionRuntimePrincipal || input.includePrivateRuleProjection === false ? null
-                : await readAccountFollowRuleProjectionRowsInTx(tx, { accountId: userId, authentication });
-            // Portable SQL chunks share this request's admitted snapshot and corpus.
-            for (let offset = 0; offset < ids.length; offset += SESSION_ACCESS_SESSION_BATCH_SIZE) {
-                const batch = ids.slice(offset, offset + SESSION_ACCESS_SESSION_BATCH_SIZE);
-                let captured: Map<string, SessionDetailCapture>;
-                try {
-                    captured = await (async (): Promise<Map<string, SessionDetailCapture>> => {
-                        const result = new Map<string, SessionDetailCapture>();
-                        const rows = await findV2SessionDetailRowsInTx(tx, { ...input,
-                            sessionIds: managedIds ? batch.filter(id => managedIds.has(id)) : batch });
-                        const admissions = runtimeManagedSubtree
-                            ? new Map<string, SessionAccessOperationDecision>(rows.map(row => [row.id, { status: 'allowed', access: viewAccess(row.id) }]))
-                            : await resolveSessionAccessForRowsInTx(tx, admissionInput, rows);
-                        let candidates = rows.filter(session => admissions.get(session.id)?.status === 'allowed'
-                            && (session.metadataLayoutVersion !== SESSION_METADATA_LAYOUT_VERSION_V1 || input.storedContentCompatibility.supportsCurrentProtocol));
-                        for (const id of batch) {
-                            const admission = admissions.get(id);
-                            result.set(id, { kind: 'response', response: !admission || admission.status !== 'allowed'
-                                ? sessionDetailDenial(admission?.status ?? 'unavailable')
-                                : { status: 426, body: input.storedContentCompatibility.upgradeRequired ?? buildAccountStoredContentUpgradeRequired() } });
-                        }
-                        if (!candidates.length) return result;
-                        if (input.usageProjection) {
-                            const documents = await readUsageDetailDocumentsInTx(tx, candidates.map(session => session.id));
-                            candidates = candidates.map(session => ({ ...session, ...documents.get(session.id) }));
-                        }
-                        // Runtime credentials never acquire their hosting Account's private facts.
-                        const discussionFacts = verifiedSessionRuntimePrincipal ? undefined : await readSessionListViewerDiscussionFacts(candidates, userId, tx);
-                        const latestFailureSequences = verifiedSessionRuntimePrincipal ? undefined : await loadSessionLatestFailureSequencesInTx(tx, candidates);
-                        const ruleReadStates = verifiedSessionRuntimePrincipal || input.includePrivateRuleProjection === false ? undefined
-                            : await loadSessionRuleReadStatesInTx(tx, { accountId: userId, authentication, rows: candidates, ruleRows });
-                        const otherNamed = runtimeManagedSubtree ? undefined : await readSessionListOtherNamedCollaboratorFacts(candidates, userId, tx);
-                        const ownerModes = new Map<string, ReturnType<typeof deriveSessionMetadataOwnerAccountMode>>();
-                        const mapped = candidates.flatMap(session => {
-                            try {
-                                const admission = admissions.get(session.id)!;
-                                if (admission.status !== 'allowed') return [];
-                                if (requiresSessionMetadataOwnerAccountMode({ session }) && !ownerModes.has(session.accountId)) {
-                                    ownerModes.set(session.accountId, deriveSessionMetadataOwnerAccountMode(session.account));
-                                }
-                                return [mapV2SessionListRow({ row: session, userId,
-                                    ownerAccountMode: ownerModes.get(session.accountId),
-                                    discussionFacts, latestFailureSequences, ruleReadStates,
-                                    hasOtherNamedCollaborator: otherNamed?.get(session.id), effectiveAccess: admission.access, verifiedSessionRuntimePrincipal,
-                                    ...(input.usageProjection ? { onMetadataDocumentProjection: descriptor =>
-                                        input.onUsageStateAdmission?.(session.id, descriptor.agentStateDocument === 'omitted') } : {}) })];
-                            } catch (error) { result.set(session.id, sessionDetailFailure(error)); return []; }
-                        });
-                        const projected = runtimeManagedSubtree ? mapped : await projectSessionManagerForRowsInTx(tx, { ...admissionInput, sessions: mapped,
-                            ruleReceiverCounts: projectAccountFollowRuleReceiverCounts(ruleRows), nowMs: Date.now() });
-                        const ownerIds = projected.filter(session => {
-                            const admission = admissions.get(session.id);
-                            return admission?.status === 'allowed' && admission.access.level === 'owner';
-                        }).map(session => session.id);
-                        const targets = await listQueuedExecutionRunPendingTargetsForSessions({ accountId: userId, sessionIds: ownerIds, reader: tx });
-                        const pendingRuns = new Map<string, string[]>();
-                        for (const target of targets) {
-                            const runs = pendingRuns.get(target.sessionId) ?? [];
-                            runs.push(target.runId);
-                            pendingRuns.set(target.sessionId, runs);
-                        }
-                        const bindings = await readAcceptedSessionTeamCredentialProviderModelBindingsInTx(tx, ownerIds);
-                        const activations = await loadPendingActivationPublicationsInTx(tx, ownerIds);
-                        const owners = new Set(ownerIds);
-                        for (const session of projected) {
-                            try {
-                                const binding = bindings.get(session.id);
-                                if (binding?.status === 'rejected') throw binding.reason;
-                                const payload = parseProjectedSessionByIdResponse({ session: runtimeManagedSubtree
-                                    ? SessionRuntimeManagedSubtreeSnapshotRecordV1Schema.parse(session)
-                                    : owners.has(session.id) ? { ...session,
-                                    acceptedTeamCredentialBinding: binding?.status === 'fulfilled' ? binding.value : null,
-                                    pendingActivationAuthorization: activations.get(session.id), pendingExecutionRunIds: pendingRuns.get(session.id) ?? [],
-                                } : session });
-                                result.set(session.id, { kind: 'found', session: payload.session, observationCursor });
-                            } catch (error) { result.set(session.id, sessionDetailFailure(error)); }
-                        }
-                        return result;
-                    })();
-                } catch (reason) {
-                    // A failed shared DB fact read affects this chunk, not completed or
-                    // subsequent chunks. Scalar callers still throw their own result.
-                    for (const id of batch) results.set(id, { status: 'rejected', reason });
-                    continue;
+            authentication, sessionIds, ...(runtimeManagedSubtree ? { allowSessionRuntimeManagedSubtreeRead: true as const } : {}) }));
+    for (let offset = 0; offset < ids.length; offset += SESSION_ACCESS_SESSION_BATCH_SIZE) {
+        const batch = ids.slice(offset, offset + SESSION_ACCESS_SESSION_BATCH_SIZE);
+        try {
+            const captured = await captureReadSnapshot(async (tx): Promise<Map<string, SessionDetailCapture>> => {
+                const observationCursor = await readSessionObservationCursorInTx(tx, userId, authentication);
+                const managedIds = await readManagedIds(tx, batch);
+                const verifiedSessionRuntimePrincipal = authentication.sessionRuntimePrincipal !== undefined;
+                const ruleRows = verifiedSessionRuntimePrincipal || input.includePrivateRuleProjection === false ? null
+                    : await readAccountFollowRuleProjectionRowsInTx(tx, { accountId: userId, authentication });
+                const result = new Map<string, SessionDetailCapture>();
+                const rows = await findV2SessionDetailRowsInTx(tx, { ...input,
+                    sessionIds: managedIds ? batch.filter(id => managedIds.has(id)) : batch });
+                const admissions = runtimeManagedSubtree
+                    ? new Map<string, SessionAccessOperationDecision>(rows.map(row => [row.id, { status: 'allowed', access: viewAccess(row.id) }]))
+                    : await resolveSessionAccessForRowsInTx(tx, admissionInput, rows);
+                let candidates = rows.filter(session => admissions.get(session.id)?.status === 'allowed'
+                    && (session.metadataLayoutVersion !== SESSION_METADATA_LAYOUT_VERSION_V1 || input.storedContentCompatibility.supportsCurrentProtocol));
+                for (const id of batch) {
+                    const admission = admissions.get(id);
+                    result.set(id, { kind: 'response', response: !admission || admission.status !== 'allowed'
+                        ? sessionDetailDenial(admission?.status ?? 'unavailable')
+                        : { status: 426, body: input.storedContentCompatibility.upgradeRequired ?? buildAccountStoredContentUpgradeRequired() } });
                 }
-                for (const [id, row] of captured) results.set(id, row.kind === 'error' ? { status: 'rejected', reason: row.error }
-                    : { status: 'fulfilled', value: row.kind === 'found' ? { status: 200, body: {
-                        session: row.session, ...(row.observationCursor !== undefined ? { observationCursor: row.observationCursor } : {}),
-                    } } : row.response });
-            }
-        });
-    } catch (reason) {
-        for (const id of ids) results.set(id, { status: 'rejected', reason });
+                if (!candidates.length) return result;
+                if (input.usageProjection) {
+                    const documents = await readUsageDetailDocumentsInTx(tx, candidates.map(session => session.id));
+                    candidates = candidates.map(session => ({ ...session, ...documents.get(session.id) }));
+                }
+                // Runtime credentials never acquire their hosting Account's private facts.
+                const discussionFacts = verifiedSessionRuntimePrincipal ? undefined : await readSessionListViewerDiscussionFacts(candidates, userId, tx);
+                const latestFailureSequences = verifiedSessionRuntimePrincipal ? undefined : await loadSessionLatestFailureSequencesInTx(tx, candidates);
+                const ruleReadStates = verifiedSessionRuntimePrincipal || input.includePrivateRuleProjection === false ? undefined
+                    : await loadSessionRuleReadStatesInTx(tx, { accountId: userId, authentication, rows: candidates, ruleRows });
+                const otherNamed = runtimeManagedSubtree ? undefined : await readSessionListOtherNamedCollaboratorFacts(candidates, userId, tx);
+                const ownerModes = new Map<string, ReturnType<typeof deriveSessionMetadataOwnerAccountMode>>();
+                const mapped = candidates.flatMap(session => {
+                    try {
+                        const admission = admissions.get(session.id)!;
+                        if (admission.status !== 'allowed') return [];
+                        if (requiresSessionMetadataOwnerAccountMode({ session }) && !ownerModes.has(session.accountId)) {
+                            ownerModes.set(session.accountId, deriveSessionMetadataOwnerAccountMode(session.account));
+                        }
+                        return [mapV2SessionListRow({ row: session, userId,
+                            ownerAccountMode: ownerModes.get(session.accountId),
+                            discussionFacts, latestFailureSequences, ruleReadStates,
+                            hasOtherNamedCollaborator: otherNamed?.get(session.id), effectiveAccess: admission.access, verifiedSessionRuntimePrincipal,
+                            ...(input.usageProjection ? { onMetadataDocumentProjection: descriptor =>
+                                input.onUsageStateAdmission?.(session.id, descriptor.agentStateDocument === 'omitted') } : {}) })];
+                    } catch (error) { result.set(session.id, sessionDetailFailure(error)); return []; }
+                });
+                const projected = runtimeManagedSubtree ? mapped : await projectSessionManagerForRowsInTx(tx, { ...admissionInput, sessions: mapped,
+                    ruleReceiverCounts: projectAccountFollowRuleReceiverCounts(ruleRows), nowMs: Date.now() });
+                const ownerIds = projected.filter(session => {
+                    const admission = admissions.get(session.id);
+                    return admission?.status === 'allowed' && admission.access.level === 'owner';
+                }).map(session => session.id);
+                const targets = await listQueuedExecutionRunPendingTargetsForSessions({ accountId: userId, sessionIds: ownerIds, reader: tx });
+                const pendingRuns = new Map<string, string[]>();
+                for (const target of targets) {
+                    const runs = pendingRuns.get(target.sessionId) ?? [];
+                    runs.push(target.runId);
+                    pendingRuns.set(target.sessionId, runs);
+                }
+                const bindings = await readAcceptedSessionTeamCredentialProviderModelBindingsInTx(tx, ownerIds);
+                const activations = await loadPendingActivationPublicationsInTx(tx, ownerIds);
+                const owners = new Set(ownerIds);
+                for (const session of projected) {
+                    try {
+                        const binding = bindings.get(session.id);
+                        if (binding?.status === 'rejected') throw binding.reason;
+                        const payload = parseProjectedSessionByIdResponse({ session: runtimeManagedSubtree
+                            ? SessionRuntimeManagedSubtreeSnapshotRecordV1Schema.parse(session)
+                            : owners.has(session.id) ? { ...session,
+                            acceptedTeamCredentialBinding: binding?.status === 'fulfilled' ? binding.value : null,
+                            pendingActivationAuthorization: activations.get(session.id), pendingExecutionRunIds: pendingRuns.get(session.id) ?? [],
+                        } : session });
+                        result.set(session.id, { kind: 'found', session: payload.session, observationCursor });
+                    } catch (error) { result.set(session.id, sessionDetailFailure(error)); }
+                }
+                return result;
+            });
+            for (const [id, row] of captured) results.set(id, row.kind === 'error' ? { status: 'rejected', reason: row.error }
+                : { status: 'fulfilled', value: row.kind === 'found' ? { status: 200, body: {
+                    session: row.session, ...(row.observationCursor !== undefined ? { observationCursor: row.observationCursor } : {}),
+                } } : row.response });
+        } catch (reason) {
+            for (const id of batch) results.set(id, { status: 'rejected', reason });
+        }
     }
     return results;
 }

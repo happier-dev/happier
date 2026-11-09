@@ -23,6 +23,8 @@ import { revokeMachineInTx } from "@/app/machines/machineMutations";
 import { createAuthenticatedTestApp } from "@/app/api/testkit/sqliteFastify";
 import { encodeAutomationSessionLifecycleConfiguration } from "@/app/automations/automationSessionLifecycleConfigurationCodec";
 import { updateAutomationTrigger } from "@/app/automations/automationCrudService";
+import { workflowRunAttentionSql, workflowRunAttentionWhere, workflowRunSqlIdentifier } from './workflowRunAttention';
+import { prismaRuntime } from '@/storage/prisma';
 
 const provider = process.env.HAPPIER_DB_PROVIDER ?? process.env.HAPPY_DB_PROVIDER ?? "postgres";
 
@@ -124,6 +126,38 @@ describe.skipIf(provider !== "postgres" && provider !== "postgresql")("Workflow 
         }
         return { accounts, runAudience, watcher, reviewSession, sources };
     }
+
+    it('keeps seen failures out of ORM and SQL attention across custody revisions with owner-only publication', async () => {
+        const f = await fixture();
+        const source = f.sources[0];
+        const failedAt = new Date('2026-10-23T10:00:00.000Z');
+        await db.automationRun.update({ where: { id: source.run.id }, data: { state: 'failed', finishedAt: failedAt, revision: 2 } });
+        const membership = async (accountId: string) => {
+            const orm = await db.automationRun.findMany({ where: { id: source.run.id, AND: [workflowRunAttentionWhere(accountId)] }, select: { id: true } });
+            const id = workflowRunSqlIdentifier;
+            const sql = await db.$queryRaw<Array<{ id: string }>>(prismaRuntime.sql`SELECT r.${id('id')} AS ${id('id')}
+                FROM ${id('AutomationRun')} r WHERE r.${id('id')} = ${source.run.id} AND ${workflowRunAttentionSql(accountId)}`);
+            expect(sql).toEqual(orm);
+            return orm.length === 1;
+        };
+        expect(await membership(source.owner.id)).toBe(true);
+        expect(await membership(f.accounts[2].id)).toBe(false);
+        const before = await db.account.findMany({ where: { id: { in: f.runAudience.map(account => account.id) } }, select: { id: true, seq: true } });
+        await workflowStorage.setWorkflowRunReadState({ accountId: source.owner.id, runId: source.run.id, revision: 2, failedAt: failedAt.toISOString() });
+        const after = await db.account.findMany({ where: { id: { in: before.map(account => account.id) } }, select: { id: true, seq: true } });
+        for (const account of after) expect(account.seq).toBe(before.find(row => row.id === account.id)!.seq + (account.id === source.owner.id ? 1 : 0));
+        expect(await db.automationRun.count({ where: { automationId: f.watcher.id } })).toBe(1);
+        await db.automationRun.update({ where: { id: source.run.id }, data: { revision: 3, workflowCustodyState: 'settled' } });
+        expect(await membership(source.owner.id)).toBe(false);
+        const summary = await workflowStorage.summarizeWorkflowRuns({ accountId: source.owner.id,
+            sourceArtifactIds: [source.artifact.id], recent: 1, pageByteLimit: 1_000_000 });
+        expect(summary.summaries[0]).toMatchObject({ needsYouCount: 0,
+            lastRun: { failureUnseen: false, invocationAttentionRequired: false, attentionRequired: false } });
+        await db.workflowRunInvocation.create({ data: { id: randomUUID(), runId: source.run.id,
+            sequence: 0n, memberOrdinal: 0n, lifecycle: 'waiting_for_review', contentEnvelope: '{}' } });
+        expect(await membership(source.owner.id)).toBe(true);
+        expect(await membership(f.accounts[2].id)).toBe(true);
+    });
 
     it.each(["initialize", "allocate", "publish", "review", "transition", "pause", "resume", "cancel", "recover", "withdraw", "trigger-update", "automation-cancel", "exhaustion"] as const)(
         "%s storage commits while unrelated Account cursors advance", async operation => {

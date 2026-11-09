@@ -15,7 +15,9 @@ import {
     loadSessionTranscriptPublication,
 } from "@/app/session/sessionTranscriptPublicationPolicy";
 import { createPresentUserSessionAccessAuthentication } from "@/app/session/access/sessionAccessAuthentication.testkit";
+import { registerSessionHumanPresenceAccessChangePublisher } from "@/app/session/humanPresence/sessionHumanPresenceService";
 import { createSessionMessage } from "@/app/session/sessionWriteService";
+import { buildMessageUpdatedUpdate } from "@/app/events/eventRouter";
 import { createSessionMessageFromPending } from "@/app/session/pending/pendingMessageTranscriptCommit";
 import {
     writeHistoricalSessionMessageBatch,
@@ -95,6 +97,16 @@ function hostSystemRecordUniqueWhere(params: Readonly<{
             recordAddressKey: keys.recordAddressKey,
         },
     };
+}
+
+/**
+ * Usage message counts cover Sessions with usage evidence in range (602b14fd1c).
+ * This row admits the Session so the count proves the publication ceiling, not an empty population.
+ */
+async function seedUsageEvidence(accountId: string, sessionId: string): Promise<void> {
+    await db.usageEvent.create({ data: {
+        accountId, sessionId, observedAt: new Date(), agentId: "codex", source: "runtime", scope: "turn_delta", totalTokens: 1,
+    } });
 }
 
 describe("canonical transcript sequence writer on SQLite", () => {
@@ -189,6 +201,32 @@ describe("canonical transcript sequence writer on SQLite", () => {
         });
         await db.sessionMessage.update({ where: { sessionId_localId: { sessionId: session.id, localId: input.localId } }, data: { authorAccountId: owner.id } });
         expect(await createSessionMessage(input)).toEqual({ ok: false, error: "local-id-conflict" });
+    });
+
+    it("carries the committed row revision in the durable message-update change hint", async () => {
+        const owner = await db.account.create({ data: { publicKey: randomUUID(), encryptionMode: "plain" } });
+        const session = await db.session.create({ data: {
+            accountId: owner.id, tag: randomUUID(), encryptionMode: "plain",
+            metadata: STORED_SHARED_METADATA, metadataLayoutVersion: 1,
+            ownerMetadata: STORED_PLAIN_OWNER_METADATA_ENVELOPE,
+        } });
+        const input = {
+            actorUserId: owner.id, sessionId: session.id, localId: randomUUID(),
+            inputAdmission: "authenticatedAccount" as const, authentication, messageRole: "agent" as const,
+            content: { t: "plain" as const, v: { role: "agent", content: { type: "text", text: "draft" } } },
+        };
+        expect(await createSessionMessage(input)).toMatchObject({ ok: true, didWrite: true });
+        const corrected = await createSessionMessage({ ...input,
+            content: { t: "plain" as const, v: { role: "agent", content: { type: "text", text: "final" } } } });
+        if (!corrected.ok || !corrected.didUpdate) throw new Error("expected a committed message revision");
+        const frame = buildMessageUpdatedUpdate(corrected.message, session.id, 1, "frame");
+        const change = await db.accountChange.findUniqueOrThrow({ where: {
+            accountId_kind_entityId: { accountId: owner.id, kind: "session", entityId: session.id },
+        } });
+        // The hint's revision is exactly what the live frame carries, so a current reader can skip its read.
+        expect(change.hint).toMatchObject({ updatedMessageId: corrected.message.id, updatedMessageSeq: corrected.message.seq,
+            updatedMessageUpdatedAt: frame.body.message.updatedAt });
+        expect(frame.body.message.updatedAt).toBe(corrected.message.updatedAt.getTime());
     });
 
     it("materializes a historical Account receipt after Account deletion without recreating its foreign key", async () => {
@@ -327,10 +365,12 @@ describe("canonical transcript sequence writer on SQLite", () => {
                 publicShareRoutes(app as never);
             },
             async (app) => {
-                const readV1 = async () => {
+                // GET /v1/sessions was retired by 26aeda2577. The v2 first page keeps
+                // this check: hidden recency must not pull a boundary Session into a bounded page.
+                const readFirstListPage = async () => {
                     const response = await app.inject({
                         method: "GET",
-                        url: "/v1/sessions",
+                        url: "/v2/sessions?limit=150",
                         headers: {
                             "x-test-user-id": viewer.id,
                             ...CURRENT_ACCOUNT_STORED_CONTENT_HEADERS,
@@ -374,7 +414,7 @@ describe("canonical transcript sequence writer on SQLite", () => {
                 };
 
                 const expectedBaselineIds = sessionIds.slice(0, 150);
-                const hiddenList = await readV1();
+                const hiddenList = await readFirstListPage();
                 expect(hiddenList.map((session) => session.id)).toEqual(expectedBaselineIds);
                 expect(hiddenList.find((session) => session.id === sessionIds[targetIndex])?.updatedAt)
                     .toBe(publicationAtForIndex(targetIndex));
@@ -406,7 +446,7 @@ describe("canonical transcript sequence writer on SQLite", () => {
                     kind: "error",
                     errorCode: "stale_revision",
                 });
-                expect(await readV1()).toEqual(hiddenList);
+                expect(await readFirstListPage()).toEqual(hiddenList);
                 await expect(readV2Detail()).resolves.toMatchObject({
                     updatedAt: publicationAtForIndex(targetIndex),
                 });
@@ -438,7 +478,7 @@ describe("canonical transcript sequence writer on SQLite", () => {
                 }
 
                 const publishedAt = finalized.publication.materializedThroughSourceAt;
-                const publishedList = await readV1();
+                const publishedList = await readFirstListPage();
                 expect(publishedList[0]).toMatchObject({
                     id: sessionIds[targetIndex],
                     updatedAt: publishedAt,
@@ -1008,6 +1048,7 @@ describe("canonical transcript sequence writer on SQLite", () => {
             },
             select: { id: true },
         });
+        await seedUsageEvidence(account.id, session.id);
         const follower = await db.account.create({ data: { publicKey: randomUUID() } });
         const directReader = await db.account.create({ data: { publicKey: randomUUID() } });
         await db.sessionShare.createMany({ data: [follower, directReader].map(viewer => ({
@@ -2584,6 +2625,7 @@ describe("canonical transcript sequence writer on SQLite", () => {
             },
             select: { id: true },
         });
+        await seedUsageEvidence(owner.id, session.id);
         await db.sessionMessage.create({
             data: {
                 sessionId: session.id,
@@ -2644,7 +2686,7 @@ describe("canonical transcript sequence writer on SQLite", () => {
 
                 const viewerSessions = await app.inject({
                     method: "GET",
-                    url: "/v1/sessions",
+                    url: "/v2/sessions",
                     headers: {
                         "x-test-user-id": viewer.id,
                         ...CURRENT_ACCOUNT_STORED_CONTENT_HEADERS,
@@ -2691,6 +2733,7 @@ describe("canonical transcript sequence writer on SQLite", () => {
             },
             select: { id: true },
         });
+        await seedUsageEvidence(account.id, session.id);
         const claim = {
             sessionId: session.id,
             operationId: "materialize-operation-discard",
@@ -3368,6 +3411,11 @@ describe("canonical transcript sequence writer on SQLite", () => {
             where: { id: session.id },
             data: { pendingVersion: 5, pendingCount: 3, pendingBlockedCount: 2 },
         });
+        // The takeover is a publication change: held live audiences consume it from this push.
+        const accessChanges: unknown[] = [];
+        const stopObservingAccess = registerSessionHumanPresenceAccessChangePublisher({
+            serverSideEmit: (_event, payload) => { accessChanges.push(payload); },
+        });
         await expect(execute(command)).resolves.toEqual({
             v: 1,
             kind: "takeover_admitted",
@@ -3376,6 +3424,8 @@ describe("canonical transcript sequence writer on SQLite", () => {
             revision: 9,
             attemptId: "attempt-1",
         });
+        stopObservingAccess();
+        expect(accessChanges).toEqual([{ v: 1, sessionId: session.id }]);
         await expect(execute(command)).resolves.toEqual({
             v: 1,
             kind: "takeover_admitted",
@@ -3445,7 +3495,8 @@ describe("canonical transcript sequence writer on SQLite", () => {
             metadataLayoutVersion: 1,
             metadata: sharedMetadata,
             ownerMetadata: JSON.stringify(RETIRED_EXTERNAL_LINK_OWNER_METADATA_ENVELOPE),
-            agentStateVersion: 1,
+            // An unchanged null agent state keeps its version (real-change-only tuple write, 26aeda2577).
+            agentStateVersion: 0,
             agentState: null,
             seq: 1,
             currentStorageState: "hosted",

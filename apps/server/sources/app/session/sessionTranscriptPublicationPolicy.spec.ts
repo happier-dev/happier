@@ -381,6 +381,15 @@ describe("session transcript publication policy", () => {
             "owner",
         )).toEqual({ kind: "publish", value: privateHint });
 
+        // A durable row revision at or below the ceiling publishes its committed revision.
+        const revisionHint = { updatedMessageSeq: 4, updatedMessageId: "message-4", updatedMessageUpdatedAt: 90_000 };
+        expect(projectSessionTranscriptPublicationChangeHint(revisionHint, finiteSession, "collaborator"))
+            .toEqual({ kind: "publish", value: revisionHint });
+        expect(projectSessionTranscriptPublicationChangeHint({ ...revisionHint, updatedMessageSeq: 5 }, finiteSession, "collaborator"))
+            .toEqual({ kind: "suppress" });
+        expect(projectSessionTranscriptPublicationChangeHint({ ...revisionHint, updatedMessageUpdatedAt: -1 }, finiteSession, "collaborator"))
+            .toEqual({ kind: "suppress" });
+
         const pendingProjection = {
             pendingVersion: 9,
             pendingCount: 2,

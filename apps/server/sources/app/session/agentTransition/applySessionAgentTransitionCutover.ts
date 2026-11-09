@@ -1,5 +1,6 @@
 import { SESSION_MESSAGE_NO_USER_ATTENTION_IMPACT } from '@happier-dev/protocol/sessions/messages/transcriptRawRecordV1';
 import { isSessionAgentTransitionDividerLocalId } from '@happier-dev/protocol/sessions/agentTransitionDivider';
+import type { UsageTimingBoundsV1 } from '@happier-dev/protocol/usage/usageWorkEvidence';
 
 import {
     createSessionMessage,
@@ -50,6 +51,7 @@ import {
 export type SessionAgentTransitionDividerWriteV1 = {
     localId: string;
     content: PrismaJson.SessionMessageContent;
+    usageTimingV1?: UsageTimingBoundsV1 | null;
 };
 
 export type ApplySessionAgentTransitionCutoverParams =
@@ -147,6 +149,7 @@ export async function applySessionAgentTransitionCutover(
         actorUserId: params.actorUserId,
         sessionId: params.sessionId,
         content: params.divider.content,
+        usageTimingV1: params.divider.usageTimingV1,
         localId: params.divider.localId,
         localIdConflictPolicy: "identical-or-conflict",
         messageRole: "event",

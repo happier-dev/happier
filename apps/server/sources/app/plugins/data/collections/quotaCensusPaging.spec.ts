@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { Tx } from '@/storage/inTx';
 
@@ -72,6 +72,7 @@ const deployment = Object.freeze({
 });
 
 describe('Plugin Collection quota census paging', () => {
+    afterEach(() => vi.unstubAllEnvs());
     it('does not derive its database page size from the inbound mutation batch limit', async () => {
         // `maxBatchRows` bounds how many row operations one client request may
         // carry. An operator may lower it to 1 without asking the server to
@@ -107,6 +108,9 @@ describe('Plugin Collection quota census paging', () => {
     });
 
     it('keeps the page small when the Account really does hold ceiling-sized rows', async () => {
+        // PostgreSQL activation uses its aggregate adapter; SQLite retains
+        // this bounded exact JavaScript census at the same quota owner.
+        vi.stubEnv('HAPPIER_DB_PROVIDER', 'sqlite');
         const { tx, calls } = censusTx({ rows: 400, bodyBytes: 512 * 1024 });
         await readPluginCollectionAccountActivationUsageInTx({
             tx,

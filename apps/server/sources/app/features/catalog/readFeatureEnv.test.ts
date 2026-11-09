@@ -373,7 +373,7 @@ describe('readMachineLiveStreamFeatureEnv', () => {
 });
 
 describe('readMachineTunnelFeatureEnv', () => {
-  it('defaults direct peer enabled and server-routed relay disabled with bounded caps', async () => {
+  it('defaults direct peer enabled and relay disabled without inventing tunnel or substream counts', async () => {
     const mod = await loadFeatureEnvModule();
     expect(mod.readMachineTunnelFeatureEnv).toBeTypeOf('function');
 
@@ -381,7 +381,8 @@ describe('readMachineTunnelFeatureEnv', () => {
 
     expect(res.directPeerEnabled).toBe(true);
     expect(res.serverRoutedEnabled).toBe(false);
-    expect(res.serverRoutedMaxActiveTunnelsPerSocket).toBe(8);
+    expect(res.serverRoutedMaxActiveTunnelsPerSocket).toBeUndefined();
+    expect(res.serverRoutedSubstreams.maxConcurrentSubstreams).toBeUndefined();
     expect(res.serverRoutedMaxFrameBytes).toBe(64 * 1024);
   });
 
@@ -450,7 +451,7 @@ describe('readLocalServicesFeatureEnv', () => {
       HAPPIER_FEATURE_LOCAL_SERVICES_PREVIEW__TOKEN_TTL_MS: '120000',
       HAPPIER_FEATURE_LOCAL_SERVICES_PREVIEW__HOST_ORIGIN_DOMAIN: 'preview.example.test',
       HAPPIER_FEATURE_LOCAL_SERVICES_PUBLIC_PREVIEW__ENABLED: '1',
-      HAPPIER_FEATURE_LOCAL_SERVICES_PUBLIC_PREVIEW__ALLOWED_MODES: 'authenticated,secret_link',
+      HAPPIER_FEATURE_LOCAL_SERVICES_PUBLIC_PREVIEW__ALLOWED_MODES: 'people,secret_link,authenticated',
       HAPPIER_FEATURE_LOCAL_SERVICES_PUBLIC_PREVIEW__MAX_TTL_MS: '600000',
       HAPPIER_FEATURE_LOCAL_SERVICES_PUBLIC_PREVIEW__DNS_TLS_REQUIRED: '0',
       HAPPIER_FEATURE_LOCAL_SERVICES_PUBLIC_PREVIEW__RATE_LIMIT_PROFILE_IDS: 'default,strict',
@@ -464,7 +465,7 @@ describe('readLocalServicesFeatureEnv', () => {
     expect(res.publicPreviewEnabled).toBe(true);
     expect(res.publicPolicy).toMatchObject({
       enabled: true,
-      allowedModes: ['authenticated', 'secret_link'],
+      allowedModes: ['people', 'secret_link'],
       maxTtlMs: 600_000,
       dnsTlsRequired: false,
       auditRequired: true,
@@ -519,7 +520,7 @@ describe('feature reader defaults come from FEATURE_READER_DEFAULTS', () => {
     const d = mod.FEATURE_READER_DEFAULTS;
     const empty = {} as NodeJS.ProcessEnv;
 
-    expect(mod.readAutomationsFeatureEnv(empty).enabled).toBe(d.automationsEnabled.default);
+    expect(mod.readWorkflowsFeatureEnv(empty).enabled).toBe(d.workflowsEnabled.default);
     expect(mod.readPetsFeatureEnv(empty).syncEnabled).toBe(d.petsSyncEnabled.default);
     expect(mod.readPetsFeatureEnv(empty).maxManifestBytes).toBe(d.petsSyncMaxManifestBytes.default);
     expect(mod.readBugReportsFeatureEnv(empty).contextWindowMs).toBe(d.bugReportsContextWindowMs.default);

@@ -96,6 +96,18 @@ async function flushAsyncWork(): Promise<void> {
 }
 
 describe("local service preview WebSocket adapter", () => {
+    it('returns the same bounded port-policy refusal before a WebSocket upgrade', async () => {
+        const client = createClient();
+        const result = await websocketAdapterModule.proxyLocalServicePreviewWebSocketUpgrade({ preview,
+            request: { path: '/socket', search: '', headers: client.headers, rawHeaders: client.rawHeaders, client },
+            openTunnel: async () => { throw Object.assign(new Error('destination_port_not_allowed'), { reasonCode: 'destination_port_not_allowed' }); },
+        });
+        expect(result).toEqual({ ok: false, reasonCode: 'destination_port_not_allowed' });
+        const bytes = Buffer.concat(client.write.mock.calls.map(([chunk]) => chunk)).toString();
+        expect(bytes).toContain('403 Forbidden');
+        expect(JSON.parse(bytes.split('\r\n\r\n')[1]!)).toEqual({ error: 'preview_access_denied', reasonCode: 'destination_port_not_allowed', port: 5173 });
+    });
+
     it("preserves WebSocket subprotocol and extension headers through the PMS tunnel", async () => {
         const mod = await loadWebSocketAdapterModule();
         expect(mod?.proxyLocalServicePreviewWebSocketUpgrade).toBeTypeOf("function");

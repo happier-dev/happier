@@ -5,21 +5,22 @@ import {
     encryptPluginWebhookCredentialSecretV1,
 } from "./credentialCipher";
 import { markPluginWebhookRouteAccountsChangedInTxV1 } from "./accountChange";
+import { isPluginWebhookSignedVerifierKindV1, type PluginWebhookSignedVerifierKindV1 } from "./verifiers/catalog";
 
 const PLUGIN_WEBHOOK_CREDENTIAL_OVERLAP_MS_V1 = 24 * 60 * 60 * 1_000;
 const DEFAULT_CREDENTIAL_RETIREMENT_BATCH_SIZE_V1 = 100;
 const MAX_CREDENTIAL_RETIREMENT_BATCH_SIZE_V1 = 500;
 
-function assertGitHubRoute(route: Readonly<{
+function assertSignedRoute(route: Readonly<{
     verifierKind: string;
     currentCredentialId: string | null;
     previousCredentialId: string | null;
 }> | null): asserts route is Readonly<{
-    verifierKind: "github_hmac_sha256_v1";
+    verifierKind: PluginWebhookSignedVerifierKindV1;
     currentCredentialId: string | null;
     previousCredentialId: string | null;
 }> {
-    if (!route || route.verifierKind !== "github_hmac_sha256_v1") {
+    if (!route || !isPluginWebhookSignedVerifierKindV1(route.verifierKind)) {
         throw new Error("Plugin webhook credential route is unavailable");
     }
 }
@@ -45,7 +46,7 @@ export async function createInitialPluginWebhookCredentialTxV1(tx: Tx, _params: 
                 previousCredentialId: true,
             },
         });
-        assertGitHubRoute(route);
+        assertSignedRoute(route);
         if (route.currentCredentialId !== null || route.previousCredentialId !== null) {
             throw new Error("Plugin webhook route already has credential custody");
         }
@@ -124,7 +125,7 @@ export async function rotatePluginWebhookCredentialTxV1(tx: Tx, _params: Readonl
                 currentCredential: { select: { credentialVersionId: true } },
             },
         });
-        assertGitHubRoute(route);
+        assertSignedRoute(route);
         if (!route.currentCredentialId || !route.currentCredential) {
             throw new Error("Plugin webhook route has no current credential");
         }
@@ -266,7 +267,7 @@ export async function readPluginWebhookVerificationCredentialsV1(_params: Readon
         }
         return selected;
     });
-    if (!route || route.verifierKind !== "github_hmac_sha256_v1") return [];
+    if (!route || !isPluginWebhookSignedVerifierKindV1(route.verifierKind)) return [];
 
     const credentials: Array<Readonly<{ credentialVersionId: string; secret: string }>> = [];
     const current = route.currentCredential;
@@ -382,7 +383,7 @@ export async function finishPluginWebhookCredentialRotationTxV1(tx: Tx, params: 
                 },
             },
         });
-        if (!route || route.verifierKind !== "github_hmac_sha256_v1") {
+        if (!route || !isPluginWebhookSignedVerifierKindV1(route.verifierKind)) {
             return { kind: "unavailable" };
         }
         if (route.previousCredentialId === null && route.previousCredential === null) {

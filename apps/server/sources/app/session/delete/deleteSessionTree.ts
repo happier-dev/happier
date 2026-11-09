@@ -1,7 +1,6 @@
-import { getDbProviderFromEnv } from '@/storage/prisma';
-import { publishNativeCredentialPolicyChangesInTx } from '@/app/teams/credentials/nativePolicyChanges';
-import type { Tx } from '@/storage/inTx';
+import { afterTx, type Tx } from '@/storage/inTx';
 import type { Prisma } from '@prisma/client';
+import { notifySessionHumanPresenceAccessChanged } from '../humanPresence/sessionHumanPresenceService';
 import { notifySessionTranscriptMutationAfterCommit } from '../sessionTranscriptMutationObserver';
 import { revokeMachineInTx } from '@/app/machines/machineMutations';
 import { invalidateSessionFollowDestinationsForSessionDeleteInTx } from '@/app/session/follow/sessionFollowEdgeService';
@@ -9,6 +8,8 @@ import { invalidateSessionManagerForSessionDeleteInTx } from '@/app/session/foll
 import { hasSessionFollowSessionSource } from '@/app/session/follow/sessionFollowSourceIdentity';
 import { acquireSessionAccountCursorLocksInTx } from '@/app/session/changeTracking/acquireSessionAccountCursorLocksInTx';
 import { resolveSessionGrantedAccountIdsInTx } from '@/app/session/access/sessionRecipients';
+import { getDbProviderFromEnv } from '@/storage/prisma';
+import { publishNativeCredentialPolicyChangesInTx } from '@/app/teams/credentials/nativePolicyChanges';
 
 export class SessionDeleteConditionLostError extends Error {
     constructor() {
@@ -56,13 +57,8 @@ export async function deleteSessionTree(
         await tx.$queryRawUnsafe('SELECT "id" FROM "Session" WHERE "id" = $1 FOR UPDATE', params.sessionId);
     }
     await publishNativeCredentialPolicyChangesInTx(tx, { sessionIds: [params.sessionId] });
-    const sessionWhere = params.sessionDeleteWhere
-        ? {
-            AND: [
-                { id: params.sessionId },
-                params.sessionDeleteWhere,
-            ],
-        }
+    const sessionWhere: Prisma.SessionWhereInput = params.sessionDeleteWhere
+        ? { AND: [{ id: params.sessionId }, params.sessionDeleteWhere] }
         : { id: params.sessionId };
 
     // Transcript writers allocate Session.seq before inserting their child row. Crossing the same
@@ -136,6 +132,7 @@ export async function deleteSessionTree(
         kind: 'remove-session',
         sessionId: params.sessionId,
     });
+    afterTx(tx, () => notifySessionHumanPresenceAccessChanged({ sessionId: params.sessionId }));
 
     return {
         deletedMessages: deletedMessages.count,

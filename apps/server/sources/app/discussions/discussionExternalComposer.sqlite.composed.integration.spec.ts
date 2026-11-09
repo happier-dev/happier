@@ -24,13 +24,13 @@ import { SessionInputRequestV1Schema, SessionInputAdmissionReceiptV1Schema, sett
 import { sessionUpdateHandler } from '@/app/api/socket/sessionUpdateHandler';
 import { createSessionPublisherPresence } from '@/app/presence/sessionPublisherPresence';
 import { createAuthenticatedFakeSocket, getSocketHandler } from '@/app/api/testkit/socketHarness';
-import { getOrCreateServerIdentityId } from '@/app/serverIdentity/serverIdentity';
+import { getOrCreateServerIdentityId, initializeServerIdentityCache } from '@/app/serverIdentity/serverIdentity';
 import { registerDiscussionRoutes } from '@/app/api/routes/discussions/registerDiscussionRoutes';
 import { enqueuePendingMessageByAuthenticatedMachine, materializeNextPendingMessage, settlePendingInputAdmission, resolveAcceptedPendingDelivery } from '@/app/session/pending/pendingMessageService';
 import { sessionPendingRoutes } from '@/app/api/routes/session/pendingRoutes';
 import { createActionExecutor, FeaturesResponseSchema, normalizeActionsSettingsV1 } from '@happier-dev/protocol';
 import { DiscussionPostInputV1Schema, DiscussionPostResultV1Schema } from '@happier-dev/protocol/discussions/actions';
-import { createSurfaceContextFixture } from '@happier-dev/plugin-sdk/testing';
+import { createPluginTestkit, createSurfaceContextFixture } from '@happier-dev/plugin-sdk/testing';
 import { createDiscussionActionDeps } from '../../../../cli/src/discussions/discussionActionDeps';
 import { createDiscussionFollowInputIntake } from '../../../../cli/src/agent/runtime/session/follow/discussionFollowInput';
 import { ApiSessionClient } from '../../../../cli/src/api/session/sessionClient';
@@ -51,16 +51,18 @@ import { applyRunnerMcpSessionContext } from '../../../../cli/src/mcp/runtime/ap
 import * as sessionSockets from '../../../../cli/src/api/session/sockets';
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
+import { RPC_ERROR_CODES, RpcError } from '@happier-dev/protocol/rpcErrors';
 import { featuresRoutes } from '@/app/api/routes/features/featuresRoutes';
 import { registerSessionTurnMutationRoute } from '@/app/api/routes/session/registerSessionTurnMutationRoute';
 import { registerMachineSessionMessageReplyRoutes } from '@/app/api/routes/machines/registerMachineSessionMessageReplyRoutes';
 import type { SessionTurnMutationV1 } from '@happier-dev/protocol/sessions/turns/sessionTurnMutationV1';
 import { createDiscussionParticipantQuestion } from '../../../../../packages/tests/fixtures/plugin-platform/composer-external-dogfood/src/discussionComposer.mjs';
-import { manifest as externalManifest } from '../../../../../packages/tests/fixtures/plugin-platform/composer-external-dogfood/src/index.mjs';
+import { activate as activateExternalPlugin, manifest as externalManifest } from '../../../../../packages/tests/fixtures/plugin-platform/composer-external-dogfood/src/index.mjs';
 import { discoverExecutablePluginUiArtifacts } from '../../../../../packages/plugin-sdk/src/ui/build/manifestArtifactDiscovery';
 import { renderScreen } from '../../../../ui/sources/dev/testkit';
 import { installAgentInputCommonModuleMocks } from '../../../../ui/sources/components/sessions/agentInput/agentInputTestHelpers';
 import { DiscussionComposer, type DiscussionComposerValue } from '../../../../ui/sources/components/discussions/DiscussionComposer';
+import { buildContributedComposerReferenceSelection } from '../../../../ui/sources/sync/domains/input/composerReferenceSelection';
 import { createComposerPresentationHostHandlers } from '../../../../ui/sources/components/sessions/presentation/sessionComposerPresentationTargets';
 import { createCanonicalPluginReactNativeHostApiAdapter } from '../../../../ui/sources/components/plugins/reactNative/hostApi';
 import { PluginReactNativeSurface, type PluginReactNativeSurfaceModule } from '../../../../ui/sources/components/plugins/reactNative/PluginReactNativeSurface';
@@ -74,7 +76,8 @@ function MountedComposer(props: Readonly<{ serverId: string; accountId: string; 
     const scope = React.useMemo(() => ({ serverId: props.serverId, accountId: props.accountId }), [props.serverId, props.accountId]);
     const lifetime = React.useMemo(() => ({ scope, isCurrent: () => true, onRetire: () => ({ dispose: () => {} }) }), [scope]);
     return React.createElement(DiscussionComposer, { scope, accountLifetime: lifetime, address: { serverId: props.serverId },
-        discussionId: props.discussionId, availability: 'available', disabled: false, value, onChange: setValue, onSend: props.onSend });
+        discussionId: props.discussionId, draftAddress: { kind: 'discussion', discussionId: props.discussionId },
+        availability: 'available', disabled: false, value, onChange: setValue, onSend: props.onSend });
 }
 
 const document = (text: string) => ({ v: 1 as const, parts: [{ t: 'text' as const, text }] });
@@ -89,7 +92,11 @@ describe('External Discussion composer through the public Action and native repl
     let harness: LightSqliteHarness;
     beforeAll(async () => { harness = await createLightSqliteHarness({ tempDirPrefix: 'happier-external-discussion-', initAuth: false,
         env: { HAPPIER_FEATURE_SESSIONS__ENABLED: '1', HAPPIER_FEATURE_SESSIONS_CONVERSATIONS__ENABLED: '1',
-            HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: 'optional' } }); }, 120_000);
+            HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: 'optional' } });
+        // Manual Fastify composition still needs the normal Home startup owner:
+        // fresh features reads publish its initialized canonical identity cache.
+        await initializeServerIdentityCache();
+    }, 120_000);
     afterAll(async () => { await harness?.close(); });
     async function fixture() {
         const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
@@ -164,7 +171,8 @@ describe('External Discussion composer through the public Action and native repl
         const origin = await app.listen({ host: '127.0.0.1', port: 0 });
         const serverId = await getOrCreateServerIdentityId();
         const features = { status: 'ready' as const, features: FeaturesResponseSchema.parse({
-            features: { sessions: { enabled: true, conversations: { enabled: true } }, sharing: { enabled: true, session: { enabled: true } } }, capabilities: {},
+            features: { sessions: { enabled: true, conversations: { enabled: true } }, sharing: { enabled: true, session: { enabled: true } } },
+            capabilities: { serverIdentity: { serverIdentityId: serverId } },
         }) };
         const executor = createActionExecutor(createDiscussionActionDeps({ credentials: { token: 'fixture', encryption: null },
             serverId, serverHttpBaseUrl: origin, resolveServerFeaturesSnapshot: () => features }));
@@ -203,9 +211,32 @@ describe('External Discussion composer through the public Action and native repl
         let client: ApiSessionClient | undefined;
         const runtimeLifetime = new AbortController();
         let pluginScreen: Awaited<ReturnType<typeof renderScreen>> | undefined;
+        let pluginTestkit: Awaited<ReturnType<typeof createPluginTestkit>> | undefined;
         let restoreRpcBoundary: (() => void) | undefined;
         try {
-            const scenario = createDiscussionParticipantQuestion(receiver.id);
+            const participantScenario = createDiscussionParticipantQuestion(receiver.id);
+            pluginTestkit = await createPluginTestkit({ manifest: externalManifest, module: { activate: activateExternalPlugin } });
+            const declaration = externalManifest.contributes.composerReferences.find(reference => reference.id === 'issues');
+            if (!declaration) throw new Error('The external fixture has no declared issue reference');
+            const provider = pluginTestkit.registration('composerReferences', declaration.id);
+            if (!provider) throw new Error('The external fixture did not register its declared issue reference');
+            const candidates = await provider.search('issue-42', runtimeLifetime.signal);
+            expect(candidates).toHaveLength(1);
+            const candidate = candidates[0];
+            if (!candidate) throw new Error('The actual external reference search returned no candidate');
+            // The fixture's real declaration-bound registration supplies the
+            // candidate; selection uses the same typed-reference owner as the picker.
+            const selection = buildContributedComposerReferenceSelection({
+                reference: { pluginId: externalManifest.id, localId: declaration.id }, candidate, trigger: '@',
+            });
+            const reference = { ...selection.payload, token: selection.token };
+            expect(await provider.resolve(candidate.id, runtimeLifetime.signal)).toMatchObject({
+                id: candidate.id, context: `External issue ${candidate.id}`,
+            });
+            const scenario = { ...participantScenario, draft: { text: `${participantScenario.draft.text} ${reference.token}` },
+                content: { v: 1, parts: [...participantScenario.content.parts.map((part, index, parts) =>
+                    part.t === 'text' && index === parts.length - 1 ? { ...part, text: `${part.text} ` } : part),
+                { t: 'reference', reference }] } };
             pluginScreen = await renderScreen(React.createElement(PluginReactNativeSurface, {
                 surfaceId: renderer.id, decision: { state: 'load', reason: 'compatible', diagnostics: [] }, module: nativeModule,
                 renderContext: { plugin: { id: externalManifest.id, version: externalManifest.version }, surface, hostApi: external.api,
@@ -218,9 +249,18 @@ describe('External Discussion composer through the public Action and native repl
             });
             await expect.poll(() => pluginScreen!.findByTestId('discussion-helper-apply')?.props.disabled).toBe(false);
             await pluginScreen.pressByTestIdAsync('discussion-helper-apply');
+            const selected = await external.api.readComposer(ref);
+            if (selected.status !== 'ready') throw new Error('The public mounted draft is unavailable');
+            await act(async () => {
+                expect(await external!.api.applyComposer(ref, { expectedRevision: selected.snapshot.revision, operations: [
+                    { kind: 'text.set', text: scenario.draft.text },
+                    { kind: 'reference.insert', reference: { ...reference, start: participantScenario.draft.text.length + 1,
+                        end: scenario.draft.text.length } },
+                ] })).toMatchObject({ status: 'applied' });
+            });
             const applied = await external.api.readComposer(ref);
             expect(applied).toMatchObject({ status: 'ready', snapshot: { text: scenario.draft.text,
-                references: [expect.objectContaining({ token: '@Reviewer' })] } });
+                references: [expect.objectContaining({ token: '@Reviewer' }), expect.objectContaining(reference)] } });
             await expect.poll(() => pluginScreen!.findHostByTestId('discussion-helper-snapshot')?.children.join(''))
                 .toContain(scenario.draft.text);
             expect(sent, 'The plugin can edit the draft but cannot publish it').toBeUndefined();
@@ -240,6 +280,8 @@ describe('External Discussion composer through the public Action and native repl
             expect(retry).toMatchObject({ message: { id: question.message.id } });
             expect(question.message).toMatchObject({ authorAccountId: owner.id, producerV1: null,
                 content: scenario.content, addressingV1: { throughSeq: question.message.seq, participantSessionIds: [receiver.id] } });
+            expect(await executor.execute('discussion.read', { discussionId, messageId: question.message.id }, context))
+                .toMatchObject({ ok: true, result: { messages: [{ content: scenario.content }] } });
             const discussion = { discussionId, messageId: question.message.id, throughSeq: question.message.seq, participantSessionId: receiver.id };
             const observe = () => inTx(tx => observePendingSessionFollowForDestinationInTx(tx, { principal: {
                 kind: 'destination_runtime', destinationRuntimeAccountId: owner.id, authentication }, destinationSessionId: receiver.id }));
@@ -380,8 +422,18 @@ describe('External Discussion composer through the public Action and native repl
                 observedAt: observedAt + 1, transcriptAnchors: { startSeqInclusive: original.seq, endSeqInclusive: final.message.seq,
                     userMessageSeqs: [original.seq], finalAssistantMessageSeq: final.message.seq } } satisfies SessionTurnMutationV1;
             expect(await applySessionTurnMutation({ actorUserId: owner.id, authentication, mutation: terminal })).toMatchObject({ ok: true });
+            if (answer === 'final') expect((await db.sessionMessage.findUniqueOrThrow({
+                where: { sessionId_localId: { sessionId: receiver.id, localId } },
+            })).replyProgress).toMatchObject({ disposition: 'return_pending', outcome: {
+                kind: 'answer', result: { sessionId: receiver.id, messageId: final.message.id },
+            } });
             loseNextPublicationAck = answer === 'final';
-            await recover();
+            if (answer === 'final') {
+                const lostAcknowledgement = recover();
+                await expect(lostAcknowledgement).rejects.toBeInstanceOf(RpcError);
+                await expect(lostAcknowledgement).rejects.toMatchObject({ rpcErrorCode: RPC_ERROR_CODES.OUTCOME_UNKNOWN,
+                    cause: { message: 'socket has been disconnected' } });
+            } else await recover();
             expect(loseNextPublicationAck).toBe(false);
             const posted = await db.discussionMessage.findUniqueOrThrow({ where: { discussionId_localId: { discussionId, localId: answerLocalId } } });
             expect(posted).toMatchObject({ authorAccountId: owner.id,
@@ -399,15 +451,16 @@ describe('External Discussion composer through the public Action and native repl
             expect(await db.discussionMessage.count({ where: { discussionId } })).toBe(4);
             expect(await db.sessionMessage.count({ where: { sessionId: receiver.id, localId } })).toBe(1);
             expect((await observe()).observations).toEqual([]);
-            // Terminal fallback preserves the exact native result; publication
-            // settles custody without replacing it with an output reference.
-            const outcome = answer === 'final' ? { kind: 'answer', result: { sessionId: receiver.id, messageId: final.message.id } }
-                : { kind: 'answer', publicationRef: { messageId: posted.id } };
+            // Recovery consumes the exact native result above; the canonical
+            // atomic append settles both paths to the committed publication.
+            const outcome = { kind: 'answer', publicationRef: { kind: 'discussion',
+                discussion: { serverId, discussionId }, messageId: posted.id } };
             expect((await db.sessionMessage.findUniqueOrThrow({ where: { sessionId_localId: { sessionId: receiver.id, localId } } })).replyProgress)
                 .toMatchObject({ disposition: 'returned', discussion, returnedInputLocalId: answerLocalId, outcome });
         } finally {
             restoreRpcBoundary?.();
             runtimeLifetime.abort();
+            await pluginTestkit?.dispose();
             await client?.close();
             await act(async () => { pluginScreen?.unmount(); });
             external.dispose(); composerHandlers.dispose(); await act(async () => { screen.unmount(); }); await app.close();

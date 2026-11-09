@@ -20,13 +20,7 @@ import {
     readLocalServicePublicQueryToken,
     readLocalServicePublicTokenCookie,
 } from "@/app/local/services/public/accessToken";
-import {
-    readLocalServicePublicClientKey,
-    resolveLocalServicePublicAccessIdentity,
-    type LocalServicePublicAccessPurpose,
-    type LocalServicePublicAuthenticatedUser,
-    type LocalServicePublicAccessServiceAuthorizer,
-} from "@/app/local/services/public/accessAuthorization";
+import { readLocalServicePublicClientKey } from "@/app/local/services/public/accessAuthorization";
 import type { LocalServicePublicExposureV1 } from '@happier-dev/protocol/local/services/public/v1';
 import type { LocalServicePreviewResourceV1 } from '@happier-dev/protocol/local/services/preview/v1';
 import { readLocalServiceRequestHostname, resolveLocalServiceExternalProtocol } from '@/app/local/services/preview/origin';
@@ -52,24 +46,14 @@ export type LocalServicePublicWebSocketUpgradeOptions = Readonly<{
     validateAccess: (input: Readonly<{
         exposureId: string;
         rawToken: string | null;
-        authenticated: boolean;
-        sessionAuthorized: boolean;
         clientKey: string;
     }>) => LocalServicePublicRuntimeAccessResult;
     resolveExposure?: (exposureId: string) => LocalServicePublicExposureV1 | null | undefined;
     resolveExposureByHost?: (hostname: string) => LocalServicePublicExposureV1 | null | undefined;
     trustProxy?: ApiProxyTrust;
     externalProtocol?: "http" | "https";
-    retainConnection?: (exposureId: string, close: () => void, actorAccountId?: string) => () => void;
+    retainConnection?: (exposureId: string, close: () => void) => () => void;
     resolvePreview?: (previewId: string) => LocalServicePreviewResourceV1 | null | undefined;
-    authorizeServiceAccess?: LocalServicePublicAccessServiceAuthorizer;
-    authorizeSessionAccess?: (input: Readonly<{
-        userId: string;
-        sessionId: string;
-        purpose: LocalServicePublicAccessPurpose;
-        authentication: import("@/app/session/access/sessionAccessAuthentication").SessionAccessAuthentication;
-    }>) => boolean | Promise<boolean>;
-    readOptionalAuthenticatedUser?: (request: unknown) => Promise<LocalServicePublicAuthenticatedUser | null>;
     openTunnel?: OpenLocalServicePreviewTunnel;
     /** The upgrade request being served, so the decision reads that request's Home configuration. */
     featureEnabled?: (request: object) => boolean | Promise<boolean>;
@@ -213,34 +197,11 @@ export async function handleLocalServicePublicWebSocketUpgrade(
         await sendUpgradeError(socket, 403, "Forbidden");
         return;
     }
-    const principal = bearerAuth.status === "authenticated"
-        ? {
-            userId: bearerAuth.principal.userId,
-            authentication: {
-                env: process.env,
-                authority: bearerAuth.principal.authority,
-                authenticationEvidence: bearerAuth.principal.authenticationEvidence,
-            },
-        }
-        : options.readOptionalAuthenticatedUser
-            ? await options.readOptionalAuthenticatedUser({ headers })
-            : null;
-    // S-2/S-5: the WebSocket data plane resolves the same access identity and client bucket as
-    // the HTTP data plane; a co-tenant must not reach an authenticated exposure over either.
-    const identity = await resolveLocalServicePublicAccessIdentity({
-        exposureId: route.exposureId,
-        principal,
-        resolveExposure: options.resolveExposure,
-        authorizeSessionAccess: options.authorizeSessionAccess,
-        resolvePreview: options.resolvePreview,
-        authorizeServiceAccess: options.authorizeServiceAccess,
-    });
+    // S-5: the WebSocket data plane uses the same viewer cookie and client bucket as HTTP.
     const trustProxy = options.trustProxy;
     const access = options.validateAccess({
         exposureId: route.exposureId,
         rawToken: route.rawToken,
-        authenticated: identity.authenticated,
-        sessionAuthorized: identity.sessionAuthorized,
         // Same proxy-addr implementation and trust function as Fastify's request.ip.
         // Project Node's prototype-backed headers explicitly at the external library boundary.
         clientKey: readLocalServicePublicClientKey([proxyAddr({ headers: request.headers ?? {}, socket } as IncomingMessage,
@@ -261,7 +222,7 @@ export async function handleLocalServicePublicWebSocketUpgrade(
     const releaseConnection = options.retainConnection?.(route.exposureId, () => {
         registration.abort();
         socket.destroy?.();
-    }, options.resolveExposure?.(route.exposureId)?.mode === 'authenticated' ? principal?.userId : undefined);
+    });
     if (registration.signal.aborted || socket.destroyed) {
         releaseConnection?.();
         return;

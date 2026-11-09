@@ -2,7 +2,8 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest
 import type { Socket } from "socket.io";
 import Fastify from "fastify";
 import { serializerCompiler, validatorCompiler, type ZodTypeProvider } from "fastify-type-provider-zod";
-import { MACHINE_PLAIN_DATA_KEY_MARKER, encodePlainMachineStoredContent } from "@happier-dev/protocol";
+import { MACHINE_PLAIN_DATA_KEY_MARKER, encodePlainMachineStoredContent, createPlainSessionOwnerMetadataEnvelopeV1, encodeSessionOwnerMetadataEnvelopeV1 } from "@happier-dev/protocol";
+import { SESSION_PUBLISHER_AUTHORITY_CHECK_EVENT, SessionPublisherAuthorityCheckAckSchema } from "@happier-dev/protocol/sessions/runtime/activity/transport";
 import { SessionInputMachineTargetV1Schema } from "@happier-dev/protocol/sessions/messages/sessionInputAdmission";
 
 import { db } from "@/storage/db";
@@ -12,14 +13,16 @@ import { revokeMachineInTx } from "@/app/machines/machineMutations";
 import { applyMachineReplacement } from "@/app/machines/applyMachineReplacement";
 import { eventRouter } from "@/app/events/eventRouter";
 import { deleteAccountForErasure } from "@/app/plugins/data/accountDataErase";
-import { setMachineAccessGrantInTx, removeMachineAccessGrantInTx } from "@/app/machines/machineAccess";
+import { removeMachineAccessGrantInTx } from "@/app/machines/machineAccess";
+import { setEligibleMachineAccessGrantInTx as setMachineAccessGrantInTx } from '@/testkit/machineAccessGrant.testkit';
 import { auth } from "@/app/auth/auth";
-import { createFakeSocket, getSocketHandler } from "@/app/api/testkit/socketHarness";
+import { createAuthenticatedFakeSocket, createFakeSocket, getSocketHandler } from "@/app/api/testkit/socketHarness";
+import { sessionUpdateHandler } from "@/app/api/socket/sessionUpdateHandler";
+import { updateSessionMetadataEnvelopeTuple } from "@/app/session/sessionWriteService";
 import { accessKeyHandler } from "@/app/api/socket/accessKeyHandler";
-import { resolveSessionScopedSocketBinding, canPublishFromSessionScopedSocket } from "@/app/api/socket/sessionScopedBinding";
+import { resolveSessionScopedSocketBinding } from "@/app/api/socket/sessionScopedBinding";
 import { hasCurrentSocketCredential } from "@/app/api/socket/socketCredentialCurrentness";
 import { createSessionPublisherPresence } from "@/app/presence/sessionPublisherPresence";
-import { hasCurrentPublisherTargetAdmissionCapabilityInTx } from "@/app/session/pending/hasExactCurrentPublisherAuthorityInTx";
 import { enqueuePendingMessage, materializeNextPendingMessage, settlePendingInputAdmission } from "@/app/session/pending/pendingMessageService";
 import { createPresentUserSessionAccessAuthentication } from "@/app/session/access/sessionAccessAuthentication.testkit";
 import { accessKeysRoutes } from "@/app/api/routes/accessKeys/accessKeysRoutes";
@@ -55,6 +58,8 @@ describe("session/machine AccessKey mutations (SQLite integration)", () => {
         eventRouter.clearIo();
         await harness.resetDbTables([
             () => db.accessKey.deleteMany(),
+            () => db.automationRunAssignment.deleteMany(),
+            () => db.automationRun.deleteMany(),
             () => db.accountChange.deleteMany(),
             () => db.machine.deleteMany(),
             () => db.session.deleteMany(),
@@ -92,6 +97,84 @@ describe("session/machine AccessKey mutations (SQLite integration)", () => {
             operationProtocolCapabilitiesRevision: 1,
         } });
     }
+
+    it('keeps exact admitted Workflow step binding after grant withdrawal, while ordinary Sessions need current access', async () => {
+        const custodian = await createAccount('workflow-binding-custodian');
+        const guest = await createAccount('workflow-binding-guest');
+        const machine = await createInstalledPlainMachine(custodian.id, 'workflow-binding-machine');
+        const step = await createSession(guest.id, 'workflow-step');
+        const ordinary = await createSession(guest.id, 'ordinary-session');
+        await inTx(tx => setMachineAccessGrantInTx(tx, { actorAccountId: custodian.id, machineId: machine.id,
+            principal: { kind: 'account', accountId: guest.id }, level: 'view' }));
+        const now = new Date();
+        const run = await db.automationRun.create({ data: { accountId: guest.id, originKind: 'direct', causeKind: null,
+            state: 'running', scheduledAt: now, dueAt: now, workflowCustodyState: 'pending',
+            workflowAcceptedSnapshotEnvelope: 'accepted-by-workflow-owner',
+            assignments: { create: { machineId: machine.id, admittedMachineInstallationId: machine.installationId } } } });
+        await db.session.update({ where: { id: step.id }, data: { originKind: 'run_step', originRunId: run.id } });
+        await inTx(tx => removeMachineAccessGrantInTx(tx, { actorAccountId: custodian.id, machineId: machine.id,
+            principal: { kind: 'account', accountId: guest.id } }));
+        const binding = { accountId: guest.id, machineId: machine.id, sessionId: step.id };
+        await expect(inTx(tx => readSessionMachineBindingStateInTx(tx, binding))).resolves.toBe('available');
+        await expect(inTx(tx => createSessionMachineAccessKeyInTx(tx, { ...binding, data: 'workflow-step-key' })))
+            .resolves.toMatchObject({ ok: true, created: true });
+        await expect(resolveSessionScopedSocketBinding({ userId: guest.id, sessionId: step.id, machineId: machine.id }))
+            .resolves.toMatchObject({ ok: true });
+        await expect(inTx(tx => readSessionMachineBindingStateInTx(tx, { ...binding, sessionId: ordinary.id })))
+            .resolves.toBe('missing');
+
+        const previousOwnerMetadata = createPlainSessionOwnerMetadataEnvelopeV1({ v: 1 });
+        const nativeOwnerMetadata = createPlainSessionOwnerMetadataEnvelopeV1({ v: 1,
+            nativeSession: { claudeSessionId: 'guest-native-session' } });
+        await db.session.update({ where: { id: step.id }, data: { metadataLayoutVersion: 1,
+            metadata: JSON.stringify({ v: 1 }), ownerMetadata: encodeSessionOwnerMetadataEnvelopeV1(previousOwnerMetadata),
+            agentState: '{}' } });
+        const presence = createSessionPublisherPresence();
+        const publisherSocket = createAuthenticatedFakeSocket({ id: 'guest-workflow-publisher' });
+        // Socket.IO is the only substituted boundary; publisher admission and tuple SQL stay real.
+        const socket = publisherSocket as unknown as Socket;
+        await expect(presence.registerPublisher({ socket, binding,
+            completeActivitySnapshot: { state: 'active', activeCount: 1 } }))
+            .resolves.toMatchObject({ status: 'registered' });
+        sessionUpdateHandler(guest.id, socket, { connectionType: 'session-scoped', socket,
+            userId: guest.id, sessionId: step.id }, { presence, binding });
+        const readPublisher = async () => {
+            let response: unknown;
+            await getSocketHandler(publisherSocket, SESSION_PUBLISHER_AUTHORITY_CHECK_EVENT)(
+                { sessionId: step.id }, (value: unknown) => { response = value; });
+            return SessionPublisherAuthorityCheckAckSchema.parse(response);
+        };
+        const authority = await readPublisher();
+        expect(authority.status).toBe('current');
+        if (authority.status !== 'current') throw new Error('expected guest publisher authority');
+        const nativePatch = { mode: 'owner' as const, actorUserId: guest.id, sessionId: step.id,
+            metadataLayoutVersion: 1 as const, publisherPrecondition: authority.publisherPrecondition,
+            expectedOwnerMetadata: previousOwnerMetadata, ownerMetadata: nativeOwnerMetadata,
+            sharedMetadata: { ciphertext: JSON.stringify({ v: 1 }), expectedVersion: 0 },
+            agentState: { ciphertext: '{}', expectedVersion: 0 } };
+        await expect(updateSessionMetadataEnvelopeTuple({ ...nativePatch, actorUserId: custodian.id }))
+            .resolves.toMatchObject({ ok: false, error: 'forbidden' });
+        await expect(presence.registerPublisher({ socket: {}, binding: { ...binding, accountId: custodian.id },
+            completeActivitySnapshot: { state: 'active', activeCount: 1 } }))
+            .resolves.toMatchObject({ status: 'rejected', reason: 'unauthorized' });
+        await expect(updateSessionMetadataEnvelopeTuple(nativePatch)).resolves.toMatchObject({ ok: true });
+        await expect(db.session.findUniqueOrThrow({ where: { id: step.id }, select: { ownerMetadata: true } }))
+            .resolves.toEqual({ ownerMetadata: encodeSessionOwnerMetadataEnvelopeV1(nativeOwnerMetadata) });
+
+        await db.machine.update({ where: { id: machine.id }, data: { installationId: 'replacement-installation' } });
+        await expect(inTx(tx => readSessionMachineBindingStateInTx(tx, binding))).resolves.toBe('missing');
+        await expect(readPublisher()).resolves.toMatchObject({ status: 'superseded' });
+        await expect(updateSessionMetadataEnvelopeTuple({ ...nativePatch,
+            expectedOwnerMetadata: nativeOwnerMetadata,
+            sharedMetadata: { ...nativePatch.sharedMetadata, expectedVersion: 1 },
+            agentState: { ...nativePatch.agentState, expectedVersion: 1 } }))
+            .resolves.toMatchObject({ ok: false, error: 'publisher-superseded' });
+        await db.machine.update({ where: { id: machine.id }, data: { installationId: machine.installationId } });
+        await db.automationRun.update({ where: { id: run.id }, data: { state: 'cancelled' } });
+        await expect(inTx(tx => readSessionMachineBindingStateInTx(tx, binding))).resolves.toBe('available');
+        await db.automationRun.update({ where: { id: run.id }, data: { state: 'failed', workflowCustodyState: 'settled' } });
+        await expect(inTx(tx => readSessionMachineBindingStateInTx(tx, binding))).resolves.toBe('missing');
+    });
 
     it("uses C41 readiness for installed custodians but preserves exact legacy owned tuples", async () => {
         const owner = await createAccount("pk-access-key-readiness");
@@ -179,15 +262,12 @@ describe("session/machine AccessKey mutations (SQLite integration)", () => {
         const callback = vi.fn();
         await getSocketHandler(fake, "access-key-get")({ sessionId: session.id, machineId: machine.id }, callback);
         expect(callback).toHaveBeenLastCalledWith({ ok: true, accessKey: expect.objectContaining({ data: "requester-key", dataVersion: 1 }) });
-        await expect(canPublishFromSessionScopedSocket({ socket, connection, sessionId: session.id, requireMachineBinding: true })).resolves.toBe(true);
-        await expect(canPublishFromSessionScopedSocket({ socket, connection: { ...connection, userId: custodian.id }, sessionId: session.id, requireMachineBinding: true })).resolves.toBe(false);
         const presence = createSessionPublisherPresence();
         const registration = await presence.registerPublisher({ socket, binding, completeActivitySnapshot: { state: "unknown", activeCount: 0 } });
         expect(registration).toMatchObject({ status: "registered" });
         if (registration.status !== "registered") throw new Error("Requester publisher was not admitted");
         const authority = { ...binding, committedFence: registration.committedFence };
         await expect(presence.checkCurrentPublisher({ socket })).resolves.toBe(true);
-        await expect(inTx(tx => hasCurrentPublisherTargetAdmissionCapabilityInTx(tx, authority))).resolves.toBe(true);
         const input = {
             actorUserId: requester.id, sessionId: session.id, localId: "requester-run-input",
             authentication: createPresentUserSessionAccessAuthentication(),
@@ -212,14 +292,14 @@ describe("session/machine AccessKey mutations (SQLite integration)", () => {
         } else {
             const replacement = await createInstalledPlainMachine(custodian.id, `runtime-replacement-${loss}`);
             await inTx(tx => applyMachineReplacement({ tx, accountId: custodian.id, oldMachineId: machine.id, replacementMachineId: replacement.id,
-                reason: "machine_rotation", source: "manual", actorUserId: custodian.id }));
+                reason: "machine_rotation", source: "manual", actorUserId: custodian.id, confirmActiveOldMachine: true }));
         }
         await expect(presence.checkCurrentPublisher({ socket })).resolves.toBe(false);
-        await expect(inTx(tx => hasCurrentPublisherTargetAdmissionCapabilityInTx(tx, authority))).resolves.toBe(false);
         await expect(enqueuePendingMessage({ ...input, localId: "requester-after-access-loss" }))
             .resolves.toMatchObject({ ok: false, admissionRejectionCode: "session_input_target_unavailable" });
         await expect(db.sessionPendingMessage.count({ where: { sessionId: session.id, localId: "requester-after-access-loss" } })).resolves.toBe(0);
-        await expect(canPublishFromSessionScopedSocket({ socket, connection, sessionId: session.id, requireMachineBinding: true })).resolves.toBe(false);
+        await expect(resolveSessionScopedSocketBinding({ userId: requester.id, sessionId: session.id, machineId: machine.id }))
+            .resolves.toMatchObject({ ok: false, error: "invalid-session-access-key" });
         await getSocketHandler(fake, "access-key-get")({ sessionId: session.id, machineId: machine.id }, callback);
         expect(callback).toHaveBeenLastCalledWith(expect.objectContaining({ ok: false }));
         await expect(db.accessKey.findUnique({ where: { accountId_machineId_sessionId: binding } })).resolves.toMatchObject({ data: "requester-key" });
@@ -396,7 +476,7 @@ describe("session/machine AccessKey mutations (SQLite integration)", () => {
         }) });
         await inTx((tx) => applyMachineReplacement({
             tx, accountId: custodian.id, oldMachineId: machine.id, replacementMachineId: replacement.id,
-            reason: "machine_rotation", source: "manual", actorUserId: custodian.id,
+            reason: "machine_rotation", source: "manual", actorUserId: custodian.id, confirmActiveOldMachine: true,
         }));
         await expect(readSessionMachineAccessKeyInTx(db, binding)).resolves.toMatchObject({ data: "retained-requester-key", dataVersion: 4 });
         await expect(db.session.findUnique({ where: { id: session.id } })).resolves.toMatchObject({ accountId: requester.id });

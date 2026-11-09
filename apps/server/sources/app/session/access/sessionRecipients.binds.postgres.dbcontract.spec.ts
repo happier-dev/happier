@@ -2,15 +2,25 @@ import { randomUUID } from 'node:crypto';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { PrismaClient, type Prisma } from '@prisma/client';
 import { db, getDbProviderFromEnv, initDbPostgres, shutdownDbClient } from '@/storage/db';
-import { inReadSnapshot } from '@/storage/inTx';
+import { inReadSnapshot, inTx } from '@/storage/inTx';
+import { markSessionProjectionRecipientsChanged } from '@/app/session/changeTracking/markSessionProjectionRecipientsChanged';
 import { readSessionAccountCursorAudienceInTx } from '@/app/session/changeTracking/acquireSessionAccountCursorLocksInTx';
 import { resolveCurrentSessionRecipientAccountIdsBySessionInTx } from './sessionRecipients';
 import { sourceKeyForSessionFollowSourceV1 } from '@/app/session/follow/sessionFollowSourceIdentity';
 
 describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('Session audience inventory bind bounds (PostgreSQL)', () => {
     const queries: Prisma.QueryEvent[] = [];
+    const membershipResults: Array<{ model: string; rows: number; bytes: number }> = [];
     let client: PrismaClient<Prisma.PrismaClientOptions, 'query'> | undefined;
     let originalTransaction: typeof db.$transaction;
+    let resolveQueryBarrier: (() => void) | undefined;
+    async function drainQueryEvents() {
+        const observed = new Promise<void>(resolve => { resolveQueryBarrier = resolve; });
+        try {
+            // Await both the SQL result and this client's ordered engine event.
+            await Promise.all([client!.$queryRaw`SELECT 1 AS "session_publication_cost_barrier"`, observed]);
+        } finally { resolveQueryBarrier = undefined; }
+    }
     beforeAll(async () => {
         if (!process.env.HAPPIER_TEST_POSTGRES_DATABASE_URL
             || process.env.DATABASE_URL !== process.env.HAPPIER_TEST_POSTGRES_DATABASE_URL) {
@@ -20,9 +30,31 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('S
         await db.$connect();
         originalTransaction = db.$transaction;
         client = new PrismaClient({ log: [{ emit: 'event', level: 'query' }] });
-        client.$on('query', event => queries.push(event));
+        client.$on('query', event => {
+            if (event.query.includes('"session_publication_cost_barrier"')) resolveQueryBarrier?.();
+            else queries.push(event);
+        });
         await client.$connect();
-        const traced = client;
+        const traced = client.$extends({ query: { $allModels: { async $allOperations({ model, args, query }) {
+            const result = await query(args);
+            // Observe native engine results without replacing any query or recipient logic.
+            const arrays: unknown[][] = [];
+            const visit = (value: unknown): void => {
+                if (Array.isArray(value)) {
+                    for (const entry of value) visit(entry);
+                } else if (value && typeof value === 'object') {
+                    for (const [field, entry] of Object.entries(value)) {
+                        if (field === 'memberships' && Array.isArray(entry)) arrays.push(entry);
+                        else visit(entry);
+                    }
+                }
+            };
+            if ((model === 'TeamMembership' || model === 'TeamGroupMembership') && Array.isArray(result)) arrays.push(result);
+            else visit(result);
+            if (arrays.length > 0) membershipResults.push({ model, rows: arrays.reduce((sum, rows) => sum + rows.length, 0),
+                bytes: arrays.reduce((sum, rows) => sum + Buffer.byteLength(JSON.stringify(rows)), 0) });
+            return result;
+        } } } });
         // Only the persistent transport changes; native SQL, transaction and recipient owners remain real.
         db.$transaction = new Proxy(originalTransaction, { apply(_target, _receiver, args) {
             return Reflect.apply(traced.$transaction, traced, args);
@@ -35,10 +67,50 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('S
     });
     afterEach(() => vi.unstubAllEnvs());
 
+    it('reads publication facts once per change while advancing current recipients and excluding a revoked share', async () => {
+        const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const viewer = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const session = await db.session.create({ data: { accountId: owner.id, tag: randomUUID(),
+            metadata: '{}', encryptionMode: 'plain' } });
+        const share = await db.sessionShare.create({ data: { sessionId: session.id,
+            sharedByUserId: owner.id, sharedWithUserId: viewer.id, accessLevel: 'view' } });
+        const publicationReads: number[] = [];
+        const publish = async (seq: number) => {
+            await drainQueryEvents();
+            queries.length = 0;
+            await inTx(async tx => {
+                await tx.session.update({ where: { id: session.id }, data: { seq } });
+                await markSessionProjectionRecipientsChanged({ tx, sessionId: session.id,
+                    hint: { lastMessageSeq: seq }, followSourceChanged: false });
+            });
+            await drainQueryEvents();
+            publicationReads.push(queries.filter(event => /^SELECT\b/.test(event.query.trimStart())
+                && /FROM\s+"public"\."Session"(?:\s|$)/.test(event.query)
+                && event.query.includes('"currentStorageState"')).length);
+        };
+        await publish(1);
+        const changes = () => db.accountChange.findMany({ where: { kind: 'session', entityId: session.id },
+            select: { accountId: true, cursor: true, hint: true } });
+        const first = await changes();
+        expect(first).toEqual(expect.arrayContaining([owner, viewer].map(account => ({
+            accountId: account.id, cursor: 1, hint: { lastMessageSeq: 1 },
+        }))));
+        expect(first).toHaveLength(2);
+        await db.sessionShare.delete({ where: { id: share.id } });
+        await publish(2);
+        expect(await changes()).toEqual(expect.arrayContaining([
+            { accountId: owner.id, cursor: 2, hint: { lastMessageSeq: 2 } },
+            { accountId: viewer.id, cursor: 1, hint: { lastMessageSeq: 1 } },
+        ]));
+        console.info('SESSION_PUBLICATION_FACT_READS', JSON.stringify({ changes: 2, publicationReads }));
+        expect(publicationReads).toEqual([1, 1]);
+    });
+
     function assertBindBudget(name: string) {
         const binds = queries.map(query => (JSON.parse(query.params) as unknown[]).length);
         expect(binds.length).toBeGreaterThan(0);
         expect(Math.max(...binds)).toBeLessThanOrEqual(999);
+        console.info('SESSION_AUDIENCE_SQL_BINDS', JSON.stringify({ name, statements: queries.length, maxBinds: Math.max(...binds) }));
     }
 
     async function fixture() {
@@ -59,6 +131,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('S
         expect(recipients.get(f.session.id)).toEqual([f.owner.id, f.direct.id].sort());
         expect(recipients.get(f.ids[0]!)).toEqual([]);
         assertBindBudget('recipients');
+        console.info('SESSION_RECIPIENT_BIND_SCALE', JSON.stringify({ requested: f.ids.length, entries: recipients.size }));
     });
 
     it('captures the complete cursor audience above the three-arm relation bind boundary', async () => {
@@ -89,6 +162,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('S
         expect(audience.projectionSessionIds).toEqual([...f.ids, earlyDestination.id, lateDestination.id, manager.id].sort());
         expect(audience.accountIds).toEqual([f.owner.id, f.direct.id, earlyOwner.id].sort());
         assertBindBudget('cursor');
+        console.info('SESSION_CURSOR_BIND_SCALE', JSON.stringify({ requested: f.ids.length, projection: audience.projectionSessionIds.length }));
     });
 
     it('bounds native grant joins while retaining horizons, guest membership and fresh revocation', async () => {
@@ -111,10 +185,46 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('S
             sharedWithUserId: direct!.id, accessLevel: 'view' })) });
         await db.sessionTeamGrant.createMany({ data: ids.map(sessionId => ({ sessionId, teamId: team.id, accessLevel: 'view', effectiveAt })) });
         await db.sessionGroupGrant.createMany({ data: ids.map(sessionId => ({ sessionId, teamGroupId: group.id, accessLevel: 'view', effectiveAt })) });
+        membershipResults.length = 0;
+        await inReadSnapshot(tx => resolveCurrentSessionRecipientAccountIdsBySessionInTx(tx, { sessionIds: [ids[0]!] }));
+        const singleMembershipRows = membershipResults.reduce((sum, result) => sum + result.rows, 0);
+        const singleMembershipBytes = membershipResults.reduce((sum, result) => sum + result.bytes, 0);
+        expect(singleMembershipRows).toBe(3);
+        membershipResults.length = 0;
         queries.length = 0;
         const result = await inReadSnapshot(tx => resolveCurrentSessionRecipientAccountIdsBySessionInTx(tx, { sessionIds: ids }));
         for (const id of ids) expect(result.get(id)).toEqual([owner!.id, direct!.id, member!.id, guest!.id].sort());
         assertBindBudget('native-grants');
+        const membershipRows = membershipResults.reduce((sum, result) => sum + result.rows, 0);
+        const membershipBytes = membershipResults.reduce((sum, result) => sum + result.bytes, 0);
+        console.info('SESSION_RECIPIENT_MEMBERSHIP_RESULTS', JSON.stringify({ sessions: ids.length, singleMembershipRows,
+            singleMembershipBytes, membershipRows, membershipBytes, results: membershipResults }));
+        // Shared Team/Group grants must transport each distinct membership only once.
+        expect(membershipRows).toBe(singleMembershipRows);
+        expect(membershipBytes).toBe(singleMembershipBytes);
+
+        // Later grants sharing Team/Group membership must evaluate their own horizons.
+        await db.sessionTeamGrant.update({ where: { sessionId_teamId: { sessionId: ids[0]!, teamId: team.id } },
+            data: { effectiveAt: new Date(effectiveAt.getTime() + 1) } });
+        await db.teamGroupMembership.update({ where: { teamGroupId_teamMembershipId: {
+            teamGroupId: group.id, teamMembershipId: guestMembership.id,
+        } }, data: { sessionAccessStartsAt: effectiveAt } });
+        await db.sessionGroupGrant.update({ where: { sessionId_teamGroupId: { sessionId: ids[0]!, teamGroupId: group.id } },
+            data: { effectiveAt: new Date(effectiveAt.getTime() + 1) } });
+        const variedHorizons = await inReadSnapshot(tx => resolveCurrentSessionRecipientAccountIdsBySessionInTx(tx, { sessionIds: ids.slice(0, 2) }));
+        expect(variedHorizons.get(ids[0]!)).toEqual([owner!.id, direct!.id, member!.id, guest!.id, cutoff!.id].sort());
+        expect(variedHorizons.get(ids[1]!)).toEqual([owner!.id, direct!.id, member!.id].sort());
+
+        await db.teamGroup.update({ where: { id: group.id }, data: { archivedAt: new Date() } });
+        const groupRevoked = await inReadSnapshot(tx => resolveCurrentSessionRecipientAccountIdsBySessionInTx(tx, { sessionIds: [ids[0]!] }));
+        expect(groupRevoked.get(ids[0]!)).toEqual([owner!.id, direct!.id, member!.id, cutoff!.id].sort());
+        await db.account.update({ where: { id: member!.id }, data: { status: 'suspended' } });
+        const activeOnly = await inReadSnapshot(tx => resolveCurrentSessionRecipientAccountIdsBySessionInTx(tx, { sessionIds: [ids[1]!] }));
+        expect(activeOnly.get(ids[1]!)).toEqual([owner!.id, direct!.id].sort());
+        const includingInactive = await inReadSnapshot(tx => resolveCurrentSessionRecipientAccountIdsBySessionInTx(tx, {
+            sessionIds: [ids[1]!], includeInactiveAccounts: true,
+        }));
+        expect(includingInactive.get(ids[1]!)).toEqual([owner!.id, direct!.id, member!.id].sort());
         await db.sessionShare.deleteMany({ where: { sharedByUserId: owner!.id } });
         await db.team.update({ where: { id: team.id }, data: { archivedAt: new Date() } });
         queries.length = 0;

@@ -194,8 +194,9 @@ describe("committed session mutations produce Home remote alerts", () => {
         await getSocketHandler(socket, 'message')({ sid: session.id, localId: `legacy-agent-${randomUUID()}`, messageRole: 'agent',
             message: { t: 'plain', v: { role: 'agent', content: { type: 'text', text: 'Legacy ingress answer' } } } }, legacyAck);
         expect(legacyAck).toHaveBeenCalledWith(expect.objectContaining({ ok: true, didWrite: true }));
-        const legacyAlerts = (await submittedAlerts()).filter(alert => alert.sessionId === session.id && alert.event.type === 'message');
-        expect(legacyAlerts.map(alert => alert.accountId).sort()).toEqual((declaration === 'rich_sender' ? [follower.id] : [owner.id, follower.id]).sort());
+        await vi.waitFor(() => expect(readSubmittedAlerts()
+            .filter(alert => alert.sessionId === session.id && alert.event.type === 'message')
+            .map(alert => alert.accountId).sort()).toEqual((declaration === 'rich_sender' ? [follower.id] : [owner.id, follower.id]).sort()));
         sendPushNotificationsAsyncSpy.mockClear();
         const userAck = vi.fn();
         await getSocketHandler(socket, 'transcript-observation-v1')({ v: 1, sessionId: session.id,
@@ -581,7 +582,7 @@ describe("committed session mutations produce Home remote alerts", () => {
 
         expect(await submittedAlerts()).toEqual([expect.objectContaining({
             sessionId: session.id, accountId: follower.id,
-            event: { type: requestKind === "permission" ? "permission_request" : "user_action_request", requestId: occurrence.requestId },
+            event: { type: requestKind === "permission" ? "permission_request" : "user_action_request", requestId: occurrence.requestId, turnId },
         })]);
 
         sendPushNotificationsAsyncSpy.mockClear();
@@ -683,8 +684,8 @@ describe("committed session mutations produce Home remote alerts", () => {
 
             const eventType = requestKind === "permission" ? "permission_request" : "user_action_request";
             expect(await submittedAlerts()).toEqual(expect.arrayContaining([
-                expect.objectContaining({ accountId: owner.id, sessionId: session.id, event: { type: eventType, requestId } }),
-                expect.objectContaining({ accountId: follower.id, sessionId: session.id, event: { type: eventType, requestId } }),
+                expect.objectContaining({ accountId: owner.id, sessionId: session.id, event: { type: eventType, requestId, turnId } }),
+                expect.objectContaining({ accountId: follower.id, sessionId: session.id, event: { type: eventType, requestId, turnId } }),
             ]));
             expect(submittedTokens().sort()).toEqual([ownerToken, followerToken].sort());
         },

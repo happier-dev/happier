@@ -1,6 +1,3 @@
-import type { Prisma } from '@prisma/client';
-import type { WorkflowRunSummaryV1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
-import { projectAutomationRunState } from './automationTypes';
 import { markAccountChanged } from "@/app/changes/markAccountChanged";
 import { readMachineAvailabilityStateInTx } from "@/app/machines/machineStateGuards";
 import { afterTx, type Tx } from "@/storage/inTx";
@@ -9,7 +6,11 @@ import { emitAutomationRunTransition } from "./automationChangePublisher";
 import { automationRunItemSelect } from "./automationPersistenceSelect";
 import { decodeAutomationRunCause, projectAutomationOriginRun } from "./automationRunCauseCodec";
 import { advanceAutomationScheduleCursorAfterTerminalRunTx } from "./automationRunQueueService";
+import { invalidateSessionReviewProjectionForRunInTx } from "./sessionReviewProjectionInvalidation";
 import type { AutomationRunItem, AutomationRunState } from "./automationTypes";
+import type { Prisma } from '@prisma/client';
+import type { WorkflowRunSummaryV1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
+import { projectAutomationRunState } from './automationTypes';
 
 type AutomationTerminalState = "succeeded" | "failed" | "cancelled" | "outcome_uncertain" | "skipped";
 
@@ -56,6 +57,7 @@ export async function applyAutomationRunTerminalEffectsTx(params: Readonly<{
     now: Date;
     eventPayload?: Readonly<Record<string, unknown>>;
     prepareWorkflowReplyHandoff?: boolean;
+    transitionCause?: Parameters<typeof emitAutomationRunTransition>[0]["transitionCause"];
 }>): Promise<AutomationRunItem | null> {
     const stored = await params.tx.automationRun.findFirst({
         where: { id: params.runId, accountId: params.accountId },
@@ -121,15 +123,12 @@ export async function applyAutomationRunTerminalEffectsTx(params: Readonly<{
             payload: params.eventPayload ?? null,
         },
     });
-    await params.tx.automation.update({
-        where: { id: run.automationId },
-        data: { lastRunAt: params.now },
-    });
     await advanceAutomationScheduleCursorAfterTerminalRunTx({
         tx: params.tx,
         run: run as AutomationRunItem,
         now: params.now,
     });
+    await invalidateSessionReviewProjectionForRunInTx(params.tx, run);
     const cursor = await markAccountChanged(params.tx, {
         accountId: params.accountId,
         kind: "automation",
@@ -141,27 +140,8 @@ export async function applyAutomationRunTerminalEffectsTx(params: Readonly<{
             run: run as AutomationRunItem,
             previousState: params.previousState,
             cursor: cursor.resolveCursor(),
+            ...(params.transitionCause ? { transitionCause: params.transitionCause } : {}),
         });
     });
     return run as AutomationRunItem;
-}
-
-/**
- * Applies the incumbent Automation-facing consequences of one physical Run
- * becoming successful. Workflow and one-shot recipes share this owner; direct
- * workflow Runs intentionally bypass it because they have no Automation.
- */
-export async function applyAutomationRunSucceededTx(params: Readonly<{
-    tx: Tx;
-    accountId: string;
-    runId: string;
-    previousState: AutomationRunState;
-    now: Date;
-    eventPayload?: Readonly<Record<string, unknown>>;
-    prepareWorkflowReplyHandoff?: boolean;
-}>): Promise<AutomationRunItem | null> {
-    return await applyAutomationRunTerminalEffectsTx({
-        ...params,
-        state: "succeeded",
-    });
 }

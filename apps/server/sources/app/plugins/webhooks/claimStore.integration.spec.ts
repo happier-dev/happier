@@ -668,7 +668,7 @@ describe("plugin webhook claim/lease settlement", () => {
         })).resolves.toEqual({ kind: "settled", state: "succeeded" });
     });
 
-    it("rejects a claimed endpoint after its webhook contribution is retired from the current manifest", async () => {
+    it("keeps an admitted attempt after its webhook contribution is retired from the current manifest", async () => {
         await seedDelivery();
         const claimed = await claimPluginWebhookDeliveryV1({
             accountId: "account-claim",
@@ -716,11 +716,11 @@ describe("plugin webhook claim/lease settlement", () => {
             },
             serverIdentityId: SERVER_IDENTITY_ID,
             now: new Date(NOW.getTime() + 2_000),
-        }))).resolves.toEqual({ kind: "unavailable", code: "endpoint_unavailable" });
+        }))).resolves.toMatchObject({ kind: "ready", target: TARGET });
     });
 
-    it("loses renewal and invocation authority when the Account disables the claimed plugin", async () => {
-        await seedDelivery();
+    it("finishes an admitted attempt after disable while refusing the next claim", async () => {
+        const queuedDelivery = await seedDelivery();
         const claimed = await claimPluginWebhookDeliveryV1({
             accountId: "account-claim",
             machine: MACHINE_CLAIM,
@@ -748,14 +748,17 @@ describe("plugin webhook claim/lease settlement", () => {
         });
         const lease = { leaseId: claimed.lease.leaseId, revision: started.revision };
 
-        await expect(renewPluginWebhookDeliveryV1({
+        const renewed = await renewPluginWebhookDeliveryV1({
             accountId: "account-claim",
             deliveryId: claimed.deliveryId,
             target: TARGET,
             lease,
             transition: "renew",
             now: new Date(NOW.getTime() + 2_000),
-        })).resolves.toEqual({ kind: "leaseLost" });
+        });
+        expect(renewed).toMatchObject({ kind: "renewed" });
+        if (renewed.kind !== "renewed") throw new Error("expected admitted attempt renewal");
+        const renewedLease = { leaseId: claimed.lease.leaseId, revision: renewed.revision };
         await expect(inTx(async (tx) => await validateCurrentPluginWebhookInvocationReferenceTxV1({
             tx,
             accountId: "account-claim",
@@ -764,11 +767,11 @@ describe("plugin webhook claim/lease settlement", () => {
                 deliveryId: claimed.deliveryId,
                 endpoint: claimed.endpoint,
                 target: TARGET,
-                lease,
+                lease: renewedLease,
             },
             serverIdentityId: SERVER_IDENTITY_ID,
             now: new Date(NOW.getTime() + 2_000),
-        }))).resolves.toEqual({ kind: "unavailable", code: "endpoint_unavailable" });
+        }))).resolves.toMatchObject({ kind: "ready", target: TARGET });
 
         // The Action may already have produced an effect after executionStarted.
         // Exact custody, not mutable Account intent, therefore owns settlement.
@@ -776,10 +779,20 @@ describe("plugin webhook claim/lease settlement", () => {
             accountId: "account-claim",
             deliveryId: claimed.deliveryId,
             target: TARGET,
-            lease,
+            lease: renewedLease,
             disposition: "accepted",
             now: new Date(NOW.getTime() + 3_000),
         })).resolves.toEqual({ kind: "settled", state: "succeeded" });
+        await db.pluginWebhookDelivery.create({ data: {
+            ...queuedDelivery,
+            id: "delivery-next-after-disable",
+            deliveryIdentityDigest: "c".repeat(64),
+        } });
+        await expect(claimPluginWebhookDeliveryV1({
+            accountId: "account-claim", machine: MACHINE_CLAIM,
+            now: new Date(NOW.getTime() + 4_000),
+            randomBytes: () => new Uint8Array(16).fill(6),
+        })).resolves.toMatchObject({ kind: "none" });
     });
 
     it("recovers expired claims without charging pre-execution loss and dead-letters attempt exhaustion", async () => {

@@ -195,26 +195,39 @@ export async function resolveResourceGrantAudienceInTx(tx: Tx, adapter: Resource
     return row ? resolveResourceGrantAudienceFromFacts(row) : [];
 }
 
+/** Facts for grants that are not stored in a grant table (a prospective grant, or an
+ * in-memory audience such as a Service preview share), read through the same relations. */
+export async function readResourceGrantPrincipalFactsInTx(tx: Tx, input: Readonly<{
+    ownerAccountId: string; principals: readonly PrincipalRefV1[]; actorAccountId?: string;
+}>): Promise<ResourceGrantAccessFacts> {
+    const relations = resourceGrantRelationsSelect(input.actorAccountId);
+    const accountGrants: ResourceGrantAccessFacts['accountGrants'][number][] = [];
+    const teamGrants: ResourceGrantAccessFacts['teamGrants'][number][] = [];
+    const groupGrants: ResourceGrantAccessFacts['groupGrants'][number][] = [];
+    for (const principal of input.principals) {
+        if (principal.kind === 'account') {
+            if (input.actorAccountId !== undefined && principal.accountId !== input.actorAccountId) continue;
+            const account = await tx.account.findUnique({ where: { id: principal.accountId }, select: { status: true } });
+            if (account) accountGrants.push({ accountId: principal.accountId, accessLevel: 'view', account });
+        } else if (principal.kind === 'team') {
+            const team = await tx.team.findUnique({ where: { id: principal.teamId }, select: relations.teamGrants.select.team.select });
+            if (team) teamGrants.push({ teamId: principal.teamId, accessLevel: 'view', team });
+        } else {
+            const group = await tx.teamGroup.findUnique({ where: { id: principal.groupId },
+                select: { ...relations.groupGrants.select.teamGroup.select, teamId: true } });
+            if (group?.teamId === principal.teamId) groupGrants.push({ accessLevel: 'view', teamGroup: group });
+        }
+    }
+    return { ownerAccountId: input.ownerAccountId, encryptionMode: null, accountGrants, teamGrants, groupGrants };
+}
+
 /** Read a prospective grant through the same live membership policy as a stored resource. */
 export async function readResourceGrantPrincipalAudienceInTx(tx: Tx, input: Readonly<{
     ownerAccountId: string; principal: PrincipalRefV1;
 }>): Promise<string[]> {
-    const relations = resourceGrantRelationsSelect();
-    const facts: ResourceGrantAccessFacts = { ownerAccountId: input.ownerAccountId, encryptionMode: null,
-        accountGrants: [], teamGrants: [], groupGrants: [] };
-    const principal = input.principal;
-    if (principal.kind === 'account') {
-        const account = await tx.account.findUnique({ where: { id: principal.accountId }, select: { status: true } });
-        if (account) facts.accountGrants = [{ accountId: principal.accountId, accessLevel: 'view', account }];
-    } else if (principal.kind === 'team') {
-        const team = await tx.team.findUnique({ where: { id: principal.teamId }, select: relations.teamGrants.select.team.select });
-        if (team) facts.teamGrants = [{ accessLevel: 'view', team }];
-    } else {
-        const group = await tx.teamGroup.findUnique({ where: { id: principal.groupId },
-            select: { ...relations.groupGrants.select.teamGroup.select, teamId: true } });
-        if (group?.teamId === principal.teamId) facts.groupGrants = [{ accessLevel: 'view', teamGroup: group }];
-    }
-    return resolveResourceGrantAudienceFromFacts(facts);
+    return resolveResourceGrantAudienceFromFacts(await readResourceGrantPrincipalFactsInTx(tx, {
+        ownerAccountId: input.ownerAccountId, principals: [input.principal],
+    }));
 }
 
 /** Admins manage ordinary grants; assigning admin remains an owner operation. */

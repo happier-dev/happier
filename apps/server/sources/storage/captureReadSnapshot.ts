@@ -1,5 +1,6 @@
 import { inReadSnapshot, type InTxOptions, type Tx } from "./inTx";
 
+/** Admit and capture a finite read once; materialize only those captured facts outside the snapshot. */
 export async function captureReadSnapshot<T, Capture = T>(
     read: ((tx: Tx) => Promise<T>) | Readonly<{
         capture: (tx: Tx) => Promise<Capture>;

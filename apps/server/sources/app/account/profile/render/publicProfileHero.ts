@@ -1,5 +1,5 @@
 import type { PublicProfileViewV1 } from '@happier-dev/protocol/account/publicProfilePublication';
-import { HAPPIER_PUBLIC_PROFILE_HERO_METRICS } from '@happier-dev/plugin-ui/presentation/pageMetrics';
+import { HAPPIER_PUBLIC_PROFILE_HERO_METRICS, resolveHappierPublicProfilePlanetBand } from '@happier-dev/plugin-ui/presentation/pageMetrics';
 import { createPlanetScene } from '@happier-dev/brand/planet';
 import { homePlanetGeometry, homePlanetSceneOptions } from '@happier-dev/brand/planet-placement';
 import { loadSharp } from '@/storage/blob/sharpRuntime';
@@ -35,7 +35,7 @@ export function createPublicProfileHero(view: PublicProfileViewV1): PublicProfil
     const image = (theme: 'light' | 'dark', viewport: 'wide' | 'phone', density: 1 | 2) => {
         const url = new URL(`${view.urls.page}/background`);
         url.search = new URLSearchParams({ theme, viewport, density: String(density) }).toString();
-        return { src: url.toString(), width: HAPPIER_PUBLIC_PROFILE_HERO_METRICS.rasterWidthPx[viewport] * density,
+        return { src: `${url.pathname}${url.search}`, width: HAPPIER_PUBLIC_PROFILE_HERO_METRICS.rasterWidthPx[viewport] * density,
             height: HAPPIER_PUBLIC_PROFILE_HERO_METRICS.bandHeightPx[viewport] * density };
     };
     const edition = (theme: 'light' | 'dark', viewport: 'wide' | 'phone') => ({
@@ -68,7 +68,7 @@ export async function renderPublicProfileHeroImage(view: PublicProfileViewV1, op
             horizonAt: HAPPIER_PUBLIC_PROFILE_HERO_METRICS.horizonAt })).bytes;
     } else {
         // Match AtmospherePreview's band geometry and the real canvas' device-pixel scene input.
-        const scene = createPlanetScene({ ...homePlanetSceneOptions(homePlanetGeometry(atmosphere.planet.placement, pane), pane,
+        const scene = createPlanetScene({ ...homePlanetSceneOptions(homePlanetGeometry(atmosphere.planet.placement, pane, resolveHappierPublicProfilePlanetBand(pane)), pane,
             { theme, style: atmosphere.planet.style, digits: atmosphere.planet.digits }), dpr: ratio });
         const paint = await renderPublicProfilePlanetSceneSvg(scene, pane, ratio);
         const sharp = await loadSharp();

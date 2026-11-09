@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { preparePluginAccountCollectionContractV1 } from "@happier-dev/protocol/plugins/data/collectionsV1";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { db, initDbPostgres } from "@/storage/db";
@@ -19,6 +20,11 @@ function deferred() {
 }
 
 const now = new Date("2026-10-22T12:00:00.000Z");
+const retainedContract = preparePluginAccountCollectionContractV1({
+    pluginId: "example.cleanup-contract",
+    contribution: { id: "tasks", schemaVersion: 1, serverReadable: ["id"], indexes: [], schema: { type: "object",
+        properties: { id: { type: "string" } }, required: ["id"], additionalProperties: false } },
+}).normalized;
 
 async function createRetainedStages(stageCount: number, expired = true) {
     const account = await db.account.create({ data: { encryptionMode: "plain" } });
@@ -44,7 +50,7 @@ async function createRetainedStages(stageCount: number, expired = true) {
             sourceRevision: 1,
             sourceEnvelope: { t: "plain", v: {} },
             schemaVersion: 1,
-            contractDigest: "retained-cleanup-contract",
+            contractDigest: retainedContract.contractDigest,
             sourceEncodedBytes: 0n,
         }),
     ) });

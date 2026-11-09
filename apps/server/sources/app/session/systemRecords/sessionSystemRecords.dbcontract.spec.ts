@@ -98,6 +98,94 @@ async function withAccountFenceInterleaving<T>(peer: () => Promise<void>, operat
 describe("SessionSystemRecord native CONTRACT database behavior", () => {
     const provider = resolveContractProvider();
 
+    it.each(['owner', 'collaborator', 'team collaborator'])('keeps Board upsert placement and removal usable by the %s and refuses a revoked new request', async actor => {
+        const { account, session } = await createAccountAndSession(`board-admission-${randomUUID()}`);
+        const collaborator = await db.account.create({ data: { publicKey: `board-editor-${randomUUID()}`, encryptionMode: 'plain' } });
+        const team = actor === 'team collaborator' ? await db.team.create({ data: { name: 'Board collaborators',
+            memberships: { create: { accountId: collaborator.id, role: 'member' } } } }) : null;
+        const share = team ? null : await db.sessionShare.create({ data: { sessionId: session.id, sharedByUserId: account.id,
+            sharedWithUserId: collaborator.id, accessLevel: 'edit' } });
+        if (team) await db.sessionTeamGrant.create({ data: { sessionId: session.id, teamId: team.id,
+            accessLevel: 'edit', effectiveAt: new Date() } });
+        const actorUserId = actor === 'owner' ? account.id : collaborator.id;
+        const invoke = (mutation: unknown) => mutateSessionBoard({ actorUserId, sessionId: session.id, authentication, mutation });
+        const itemContent = { t: 'plain', v: { v: 1, title: 'Admitted', frame: 'card', height: { mode: 'auto', fallback: 'regular' },
+            source: { kind: 'declarative', document: { version: 1, root: { kind: 'markdown', text: 'Owner and collaborator' } } } } };
+        const layoutContent = { t: 'plain', v: { v: 1, tabs: [{ id: 'main', title: 'Main', items: [{ itemId: 'visual', width: 'medium' }] }] } };
+        try {
+            const created = await invoke({ operation: 'upsert_item', itemId: 'visual', expectedItemRevision: null, itemContent,
+                placement: { expectedLayoutRevision: null, layoutContent } });
+            expect(created).toMatchObject({ ok: true, result: { outcome: 'created' } });
+            if (!created.ok || created.result.operation !== 'upsert_item') throw new Error('Expected created item');
+            const { itemRevision, layoutRevision } = created.result;
+            const changed = await invoke({ operation: 'upsert_item', itemId: 'visual', expectedItemRevision: itemRevision,
+                itemContent: { ...itemContent, v: { ...itemContent.v, title: 'Updated' } } });
+            if (!changed.ok || changed.result.operation !== 'upsert_item') throw new Error('Expected updated item');
+            expect(changed.result.itemRevision).not.toBe(itemRevision);
+            await expect(invoke({ operation: 'update_layout', expectedLayoutRevision: layoutRevision, layoutContent,
+                itemPlacementParticipant: { itemId: 'visual', expectedItemRevision: itemRevision } }))
+                .resolves.toMatchObject({ ok: false, result: { error: 'session_board_revision_conflict' } });
+            await expect(invoke({ operation: 'update_layout', expectedLayoutRevision: layoutRevision, layoutContent,
+                itemPlacementParticipant: { itemId: 'visual', expectedItemRevision: changed.result.itemRevision } }))
+                .resolves.toMatchObject({ ok: true });
+            await expect(invoke({ operation: 'remove_item', itemId: 'visual', expectedItemRevision: changed.result.itemRevision,
+                expectedLayoutRevision: layoutRevision, layoutContent: { t: 'plain', v: { v: 1, tabs: [] } } }))
+                .resolves.toMatchObject({ ok: true, result: { outcome: 'removed' } });
+            expect(await db.sessionSystemRecord.count({ where: { sessionId: session.id, kind: 'item.v1' } })).toBe(0);
+            if (share) await db.sessionShare.delete({ where: { id: share.id } });
+            if (team) await db.teamMembership.updateMany({ where: { teamId: team.id, accountId: collaborator.id }, data: { status: 'suspended' } });
+            await expect(mutateSessionBoard({ actorUserId: collaborator.id, sessionId: session.id, authentication,
+                mutation: { operation: 'upsert_item', itemId: 'revoked', expectedItemRevision: null, itemContent } }))
+                .resolves.toEqual({ ok: false, result: { error: 'session_board_forbidden' } });
+            if (team) await db.teamMembership.updateMany({ where: { teamId: team.id, accountId: collaborator.id }, data: { status: 'active' } });
+            else await db.sessionShare.create({ data: { sessionId: session.id, sharedByUserId: account.id,
+                sharedWithUserId: collaborator.id, accessLevel: 'edit' } });
+            await expect(mutateSessionBoard({ actorUserId: collaborator.id, sessionId: session.id, authentication,
+                mutation: { operation: 'upsert_item', itemId: 'revoked', expectedItemRevision: null, itemContent } }))
+                .resolves.toMatchObject({ ok: true, result: { outcome: 'created' } });
+        } finally {
+            await deleteAccountFixture(account.id);
+            await deleteAccountFixture(collaborator.id);
+            if (team) await db.team.delete({ where: { id: team.id } });
+        }
+    });
+
+    it('retains exact record publication independently of later transcript changes and current access', async () => {
+        const { account, session } = await createAccountAndSession(`record-publication-${randomUUID()}`);
+        const viewer = await db.account.create({ data: { publicKey: `record-viewer-${randomUUID()}`, encryptionMode: 'plain' } });
+        const share = await db.sessionShare.create({ data: { sessionId: session.id, sharedByUserId: account.id,
+            sharedWithUserId: viewer.id, accessLevel: 'view' } });
+        const write = (revision: string | null, title: string) => mutateSessionBoard({ authentication, actorUserId: account.id, sessionId: session.id,
+            mutation: { operation: 'update_layout', expectedLayoutRevision: revision,
+                layoutContent: { t: 'plain', v: { v: 1, tabs: [{ id: 'main', title, items: [] }] } } } });
+        try {
+            const created = await write(null, 'First');
+            expect(created).toMatchObject({ ok: true, result: { outcome: 'created' } });
+            if (!created.ok || created.result.operation !== 'update_layout') throw new Error('Expected layout creation');
+            const record = await db.sessionSystemRecord.findFirstOrThrow({ where: { sessionId: session.id } });
+            await inTx(tx => markAccountChanged(tx, { accountId: account.id, kind: 'session', entityId: session.id, hint: { lastMessageSeq: 1 } }));
+            const target = { v: 1, sessionRecords: { sessionId: session.id,
+                address: { owner: 'host', namespace: 'surface', kind: 'layout.v1', localId: 'layout' } } };
+            const changes = await db.accountChange.findMany({ where: { kind: 'account', entityId: `session-record:${record.id}` },
+                select: { accountId: true, hint: true, cursor: true } });
+            expect(changes).toEqual(expect.arrayContaining([
+                { accountId: account.id, hint: target, cursor: expect.any(Number) },
+                { accountId: viewer.id, hint: target, cursor: expect.any(Number) },
+            ]));
+            expect(changes).toHaveLength(2);
+            const ownerCursor = changes.find(change => change.accountId === account.id)?.cursor;
+            await write(created.result.layoutRevision, 'First');
+            expect((await db.accountChange.findFirstOrThrow({ where: { kind: 'account', entityId: `session-record:${record.id}`, accountId: account.id } })).cursor).toBe(ownerCursor);
+            await db.sessionShare.delete({ where: { id: share.id } });
+            const viewerCursor = changes.find(change => change.accountId === viewer.id)?.cursor;
+            await write(created.result.layoutRevision, 'Second');
+            expect((await db.accountChange.findFirstOrThrow({ where: { kind: 'account', entityId: `session-record:${record.id}`, accountId: viewer.id } })).cursor).toBe(viewerCursor);
+        } finally {
+            await deleteAccountFixture(account.id);
+            await deleteAccountFixture(viewer.id);
+        }
+    });
+
     it.skipIf(provider !== 'postgres')('readmits standalone plugin record storage mode after a transition wins before admission', async () => {
         const { account, session } = await createAccountAndSession(`mode-readmission-${randomUUID()}`);
         const originalTransaction = db.$transaction;
@@ -159,7 +247,8 @@ describe("SessionSystemRecord native CONTRACT database behavior", () => {
             expect(await db.sessionSystemRecord.count({ where: { sessionId: session.id } })).toBe(1);
             const changes = await db.accountChange.findMany({ where: { accountId: account.id, cursor: { gt: 0 } },
                 orderBy: { cursor: "asc" }, select: { cursor: true, entityId: true } });
-            expect(changes.map(change => change.entityId)).toEqual(["unrelated-projection", session.id]);
+            const record = await db.sessionSystemRecord.findFirstOrThrow({ where: { sessionId: session.id } });
+            expect(changes.map(change => change.entityId)).toEqual(["unrelated-projection", `session-record:${record.id}`]);
             expect(changes[1].cursor).toBeGreaterThan(changes[0].cursor);
             expect(await db.account.findUniqueOrThrow({ where: { id: account.id }, select: { seq: true } }))
                 .toEqual({ seq: changes[1].cursor });
@@ -337,6 +426,7 @@ describe("SessionSystemRecord native CONTRACT database behavior", () => {
         if (!process.env.DATABASE_URL) throw new Error("Missing DATABASE_URL for DB contract test");
         process.env.HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY = "optional";
         process.env.HAPPIER_FEATURE_SESSIONS_BOARD__ENABLED = "1";
+        process.env.HAPPIER_FEATURE_SHARING_SESSION__ENABLED = "1";
         if (provider === "mysql") await initDbMysql();
         else initDbPostgres();
         await db.$connect();

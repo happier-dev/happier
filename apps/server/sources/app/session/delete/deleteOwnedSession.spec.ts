@@ -5,6 +5,8 @@ import {
     createEmptySessionFollowEdgeTransactionModel,
     createInTxHarness,
 } from '@/app/api/testkit/txHarness';
+import { flushAccountChangesInTx } from '@/app/changes/markAccountChanged';
+import type { Tx } from '@/storage/inTx';
 
 import { deleteOwnedSession } from './deleteOwnedSession';
 
@@ -36,6 +38,7 @@ const findSession = vi.fn(async () => ({
     publishedThroughServerSeq: null,
     teamGrants: [],
     groupGrants: [],
+    teamCredentialBindings: [],
 }));
 
 vi.mock('@/utils/logging/log', () => ({ log: vi.fn() }));
@@ -51,7 +54,8 @@ const findSessionDraft = vi.fn(async () => null);
 const findSessionDrafts = vi.fn(async () => []);
 
 vi.mock('@/storage/inTx', () => {
-        const { inTx, afterTx } = createInTxHarness(() => ({
+        const { inTx: runTx, afterTx } = createInTxHarness(() => ({
+            transactionClass: 'session-delete',
             session: {
                 findFirst,
                 findUnique: findSession,
@@ -61,11 +65,25 @@ vi.mock('@/storage/inTx', () => {
             },
             account: { findMany: findAudienceAccounts, update: allocateAccountSeq },
             accountChange: { upsert: upsertAccountChange },
-            $queryRawUnsafe: createAccountCursorRawQueryTransactionModel({
-                account: { update: allocateAccountSeq },
-                accountChange: { upsert: upsertAccountChange },
-            }),
+            $executeRawUnsafe: async () => 0,
+            $queryRawUnsafe: async (query: string, ...values: unknown[]) => {
+                if (query === 'SELECT "id" FROM "Session" WHERE "id" = ANY($1::text[]) ORDER BY "id" FOR NO KEY UPDATE') {
+                    const sessionIds = values[0];
+                    if (!Array.isArray(sessionIds) || sessionIds.some(id => typeof id !== 'string')) {
+                        throw new Error('Session lock query requires Session ids');
+                    }
+                    return sessionIds.filter(id => id === 's1').map(id => ({ id }));
+                }
+                if (query === 'SELECT "id" FROM "Session" WHERE "id" = $1 FOR UPDATE') {
+                    return values[0] === 's1' ? [{ id: 's1' }] : [];
+                }
+                return createAccountCursorRawQueryTransactionModel({
+                    account: { update: allocateAccountSeq },
+                    accountChange: { upsert: upsertAccountChange },
+                })(query, ...values);
+            },
             sessionShare: { findMany: async () => [] },
+            sessionTeamCredentialBinding: { findMany: async () => [] },
             sessionTeamGrant: { findMany: async () => [] },
             sessionGroupGrant: { findMany: async () => [] },
             sessionMessage: { deleteMany: deleteMessages },
@@ -78,7 +96,13 @@ vi.mock('@/storage/inTx', () => {
             userKVStore: { findMany: findSessionDrafts, findUnique: findSessionDraft },
         }));
 
-    return { afterTx, inTx };
+    const inTx = <T>(operation: (tx: Tx) => Promise<T>) => runTx(async tx => {
+        const result = await operation(tx as Tx);
+        await flushAccountChangesInTx(tx as Tx);
+        return result;
+    });
+    return { afterTx, inTx, getTransactionContext: (tx: object, options?: { optional: true }) =>
+        options?.optional ? undefined : tx };
 });
 
 function seedDeleteTarget(metadataLayoutVersion: 0 | 1, recipientAccountIds: string[]): void {
@@ -126,8 +150,8 @@ describe('deleteOwnedSession', () => {
         expect(claimSession.mock.invocationCallOrder[0]!).toBeLessThan(
             upsertAccountChange.mock.invocationCallOrder[0]!,
         );
-        expect(upsertAccountChange.mock.invocationCallOrder[0]!).toBeLessThan(
-            deleteMessages.mock.invocationCallOrder[0]!,
+        expect(deleteMessages.mock.invocationCallOrder[0]!).toBeLessThan(
+            upsertAccountChange.mock.invocationCallOrder[0]!,
         );
         expect(deleteMessages).toHaveBeenCalledWith({ where: { sessionId: 's1' } });
         expect(deleteReports).toHaveBeenCalledWith({ where: { sessionId: 's1' } });

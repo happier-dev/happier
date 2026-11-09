@@ -33,6 +33,7 @@ import { mapProviderBrokerApplicationFailure } from './externalProviderBrokerDis
 import { writeProviderBrokerApplicationFailure } from '../../../../../../cli/src/providers/broker/providerBrokerApplicationServer';
 import { PROVIDER_BROKER_APPLICATION_ERROR_CODE_HEADER } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
 import { enableApiCompression } from '@/app/api/utils/enableApiCompression';
+import { createServiceAccountTokenIdentityFields } from '@/app/api/routes/connect/qualifiedConnectedAccounts/identity';
 
 /**
  * A Home that can actually serve this API also has the route-grant signing
@@ -78,6 +79,64 @@ describe("external Provider broker ingress network vertical (SQLite)", () => {
 
     afterAll(async () => {
         await harness?.close();
+    });
+
+    it('preserves reconnect-required source health through external ingress and admission', async () => {
+        const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const recipient = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const team = await db.team.create({ data: { name: 'External source health', memberships: { create: { accountId: owner.id, role: 'owner' } } } });
+        const member = await db.teamMembership.create({ data: { teamId: team.id, accountId: recipient.id, role: 'member' } });
+        const account = { service: { pluginId: 'example.connected-accounts', localId: 'service' }, accountId: 'external-health-source' };
+        const metadata = { v: 4, storage: 'stored_envelope_v1', credentialRevision: 'csr_aaaaaaaaaaaaaaaaaaaaaa', values: {} };
+        const credential = await db.serviceAccountToken.create({ data: { accountId: owner.id,
+            ...createServiceAccountTokenIdentityFields({ ref: account, authenticationModeId: 'api-key' }),
+            token: Buffer.from('constructed-test-token'), metadata } });
+        const broker = await db.machine.create({ data: { id: `external-health-broker-${owner.id}`, accountId: owner.id,
+            metadata: '{}', kind: 'persistent', operationProtocolCapabilities: { providerBrokerIngress: { protocolVersions: [1] } },
+            operationProtocolCapabilitiesRevision: 1 } });
+        const resource = await db.teamCredentialResource.create({ data: { teamId: team.id, custodianAccountId: owner.id,
+            displayName: 'External source', disclosureCeiling: 'brokered_only', sessionUsePolicy: 'personal_allowed', brokerMachineId: broker.id,
+            sourceBindingJson: JSON.stringify({ v: 1, kind: 'connected_account', target: { kind: 'account', account }, credentialIncarnation: credential.id }),
+            memberGrants: { create: { teamMembershipId: member.id, deliveryMode: 'brokered' } } } });
+        const key = await inTx(tx => createTeamCredentialExternalApiKeyInTx(tx, { authentication: TEST_AUTHENTICATION,
+            actorAccountId: owner.id, resourceId: resource.id, teamMembershipId: member.id, label: 'Source health', expiresAt: null }));
+        if (!key.ok) throw new Error(key.error);
+        const dispatch = vi.fn(async (_input: Parameters<ExternalProviderBrokerDispatch>[0]) => ({ ok: true as const,
+            statusCode: 200, headers: {}, body: (async function* () { yield Buffer.from('{}'); })() }));
+        const app = Fastify();
+        registerExternalProviderApiRoutes(app as never, { env: { ...process.env, ...DEPLOYED_ROUTE_GRANT_SIGNING_ENV,
+            HAPPIER_FEATURE_TEAMS__ENABLED: '1', HAPPIER_FEATURE_TEAMS_CREDENTIAL_RESOURCES__ENABLED: '1',
+            HAPPIER_FEATURE_TEAMS_CREDENTIAL_RESOURCES_EXTERNAL_API__ENABLED: '1', HAPPIER_PUBLIC_SERVER_URL: 'https://home.example.test' },
+            dispatch, readCurrentBrokerPresence: async () => ({ state: 'known', machineIds: new Set([broker.id]) }),
+            readPoolSourceEligibility: async () => ({ eligibleMachineIds: new Set([broker.id]) }) });
+        await app.ready();
+        const send = () => app.inject({ method: 'POST', url: '/api/provider-broker/v1/chat/completions',
+            headers: { authorization: `Bearer ${key.token}` }, payload: { model: 'model-1', messages: [] } });
+        try {
+            expect((await send()).statusCode).toBe(200);
+            const opened = dispatch.mock.calls[0]![0];
+            await db.serviceAccountToken.update({ where: { id: credential.id }, data: { metadata: { ...metadata,
+                health: { v: 1, status: 'needs_reauth', reconnectRequired: true } } } });
+            dispatch.mockClear();
+            const refused = await send();
+            expect(refused.statusCode, refused.body).toBe(403);
+            expect(refused.json()).toMatchObject({ error: { code: 'connected_service_credential_reconnect_required' } });
+            expect(dispatch).not.toHaveBeenCalled();
+            const admission = await inTx(tx => admitTeamCredentialExternalProviderRequestInTx(tx, {
+                authenticatedBrokerAccountId: owner.id, observedAt: new Date(), request: { v: 1,
+                    binding: { v: 1, kind: 'external_api_key', teamId: team.id, resourceId: resource.id,
+                        externalApiKeyId: key.key.keyId, assignedAccountId: recipient.id, assignedTeamMembershipId: member.id,
+                        requestId: opened.request.requestId, operationId: opened.target.operationId,
+                        brokerPlacementFingerprint: opened.target.brokerPlacementFingerprint },
+                    brokerMachineId: broker.id, expectedResourceRevision: resource.revision,
+                    application: { agentTargetKey: 'agent:happier.agent.codex/codex', implementationIdentity: { pluginId: 'happier.provider.openai', localId: 'openai' }, endpointTemplateId: 'chat', protocol: 'openai-chat' },
+                    requestFacts: { generation: true, routeKind: 'openai_chat_completions', modelId: 'model-1', reasoningEffort: null } },
+            }));
+            expect(admission).toEqual({ ok: false, reasonCode: 'connected_service_credential_reconnect_required' });
+            expect(await db.usageEvent.count({ where: { teamCredentialResourceId: resource.id } })).toBe(0);
+            await db.serviceAccountToken.update({ where: { id: credential.id }, data: { metadata } });
+            expect((await send()).statusCode).toBe(200);
+        } finally { await app.close(); }
     });
 
     it("keeps a Pool-backed key's operation on the one Machine that established it; Pool tier changes affect only future opens", async () => {
@@ -200,7 +259,6 @@ describe("external Provider broker ingress network vertical (SQLite)", () => {
         });
         await app.ready();
         const application = {
-            agentTargetKey: "agent:happier.agent.codex/codex",
             implementationIdentity: { pluginId: "happier.provider.cliproxyapi", localId: "cliproxyapi" },
             endpointTemplateId: "cliproxyapi-openai-chat",
             protocol: "openai-chat",

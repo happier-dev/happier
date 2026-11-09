@@ -1,5 +1,7 @@
 import { AutomationReplyHandoffDispatchRequestV1Schema, AutomationReplyHandoffDispatchResultV1Schema, type AutomationReplyHandoffDispatchResultV1 } from '@happier-dev/protocol/automations/event';
 import { warn } from "@/utils/logging/log";
+import { withWebLatencyProducerTrace } from "@/utils/webLatencyTrace";
+import { armDeadlineTimer } from "@happier-dev/protocol/common/deadlineTimer";
 
 import {
     claimNextAutomationReplyHandoff,
@@ -7,8 +9,7 @@ import {
     settleAutomationReplyHandoff,
 } from "./automationReplyHandoffService";
 
-/** Socket disconnect/restart retry; bounded like the daemon-side result contract. */
-/** A durable indexed scan covers rows committed by another API replica. */
+/** Existing liveness fallback for cross-API writes without push and DB-only recovery without reconnect. */
 export const DEFAULT_AUTOMATION_REPLY_HANDOFF_IDLE_POLL_MS = 10_000;
 
 export type AutomationReplyHandoffDispatcher = (
@@ -85,19 +86,6 @@ function isRetryableUnavailable(
         || code === "cancelled";
 }
 
-function ambiguousContractOutcome(
-    claim: Readonly<{ attempt: number }>,
-): Readonly<{ kind: "retry" }> | Readonly<{ kind: "blocked" }> {
-    // The first invocation may have committed custody before returning an
-    // invalid result. Rejoin that exact frozen handoff once. A second invalid
-    // result cannot become valid through unattended repetition, so it enters
-    // the existing recoverable blocked custody. The retry wake is derived by
-    // the settlement owner from the persisted attempt.
-    return claim.attempt === 1
-        ? { kind: "retry" }
-        : { kind: "blocked" };
-}
-
 async function readNextDueAt(now: Date): Promise<Date | null> {
     return await findNextAutomationReplyHandoffDueAt({ now });
 }
@@ -107,22 +95,25 @@ async function readNextDueAt(now: Date): Promise<Date | null> {
  * the Run claim and settlement remain real database transitions below it.
  */
 export async function runAutomationReplyHandoffWorkerPass(params: Readonly<{
-    now: Date;
+    now: () => Date;
     dispatch: AutomationReplyHandoffDispatcher;
+    dueThrough?: Date;
 }>): Promise<AutomationReplyHandoffWorkerPassResult> {
-    const claim = await claimNextAutomationReplyHandoff({ now: params.now });
+    const claimNow = params.now();
+    const claim = await claimNextAutomationReplyHandoff({ now: claimNow,
+        dueThrough: params.dueThrough });
     if (!claim) {
-        return { claimed: false, settled: false, nextDueAt: await readNextDueAt(params.now) };
+        return { claimed: false, settled: false, nextDueAt: await readNextDueAt(params.now()) };
     }
 
     const request = buildDispatchRequest(claim);
     if (!request) {
         const settlement = await settleAutomationReplyHandoff({
             claim,
-            now: params.now,
+            now: params.now(),
             outcome: { kind: "blocked" },
         });
-        return { claimed: true, settled: settlement.applied, nextDueAt: await readNextDueAt(params.now) };
+        return { claimed: true, settled: settlement.applied, nextDueAt: await readNextDueAt(params.now()) };
     }
 
     let rawResult: unknown;
@@ -138,31 +129,31 @@ export async function runAutomationReplyHandoffWorkerPass(params: Readonly<{
         // terminalizing an outcome whose effect truth is ambiguous.
         const settlement = await settleAutomationReplyHandoff({
             claim,
-            now: params.now,
-            outcome: ambiguousContractOutcome(claim),
+            now: params.now(),
+            outcome: { kind: "retry" },
         });
-        return { claimed: true, settled: settlement.applied, nextDueAt: await readNextDueAt(params.now) };
+        return { claimed: true, settled: settlement.applied, nextDueAt: await readNextDueAt(params.now()) };
     }
 
     const settlement = result.data.kind === "unavailable"
         ? await settleAutomationReplyHandoff({
             claim,
-            now: params.now,
+            now: params.now(),
             outcome: result.data.code === "contractInvalid"
-                ? ambiguousContractOutcome(claim)
+                ? { kind: "retry" }
                 : isRetryableUnavailable(result.data.code)
-                    // No synthesized cadence hint: the settlement owner derives
-                    // the bounded wake from the persisted attempt.
+                    // Rejoin the same custody; the settlement owner retains
+                    // its existing lease boundary without a guessed cadence.
                     ? { kind: "retry" }
                     : { kind: "blocked" },
         })
         : await settleAutomationReplyHandoff({
             claim,
-            now: params.now,
+            now: params.now(),
             outcome: result.data.settlement,
             accountCurrentness: result.data.accountCurrentness,
         });
-    return { claimed: true, settled: settlement.applied, nextDueAt: await readNextDueAt(params.now) };
+    return { claimed: true, settled: settlement.applied, nextDueAt: await readNextDueAt(params.now()) };
 }
 
 /**
@@ -171,63 +162,72 @@ export async function runAutomationReplyHandoffWorkerPass(params: Readonly<{
  */
 export function startAutomationReplyHandoffWorker(params: Readonly<{
     dispatch: AutomationReplyHandoffDispatcher;
-    idlePollMs?: number;
 }>): Readonly<{ stop: () => Promise<void> }> {
-    const idlePollMs = Number.isSafeInteger(params.idlePollMs) && params.idlePollMs! > 0
-        ? params.idlePollMs!
-        : DEFAULT_AUTOMATION_REPLY_HANDOFF_IDLE_POLL_MS;
     let stopped = false;
-    let timer: ReturnType<typeof setTimeout> | null = null;
+    let cancelTimer: (() => void) | null = null;
     let active: Promise<void> | null = null;
 
-    const schedule = async (lastPass: Readonly<{ progressed: boolean }>): Promise<void> => {
+    const schedule = async (knownNextDueAt?: Date | null): Promise<void> => {
         if (stopped) return;
         const now = new Date();
-        let nextDueAt: Date | null = null;
+        let nextDueAt: Date | null = knownNextDueAt ?? null;
         try {
-            nextDueAt = await readNextDueAt(now);
+            if (knownNextDueAt === undefined) {
+                nextDueAt = await findNextAutomationReplyHandoffDueAt({ now, futureOnly: true });
+            }
         } catch {
             warnWorkerFailure("due-scan");
-            // A future indexed scan recovers a transient database failure.
+            // The same fallback owns retry after a transient database failure.
         }
         if (stopped) return;
-        const dueDelay = nextDueAt === null
-            ? idlePollMs
-            : nextDueAt.getTime() <= now.getTime() && !lastPass.progressed
-                ? idlePollMs
-                : Math.max(0, nextDueAt.getTime() - now.getTime());
-        // A future retry belongs to that handoff, not to newly ready rows
-        // committed while this worker sleeps (including by another API).
-        const delay = Math.min(dueDelay, idlePollMs);
-        timer = setTimeout(() => {
-            timer = null;
+        const scheduledAt = Date.now();
+        const nextDeadline = nextDueAt === null
+            ? scheduledAt + DEFAULT_AUTOMATION_REPLY_HANDOFF_IDLE_POLL_MS
+            : Math.min(nextDueAt.getTime(), scheduledAt + DEFAULT_AUTOMATION_REPLY_HANDOFF_IDLE_POLL_MS);
+        cancelTimer = armDeadlineTimer(nextDeadline, () => {
+            cancelTimer = null;
             void trigger();
-        }, delay);
-        timer.unref?.();
+        }, { unref: true });
     };
 
     const trigger = async (): Promise<void> => {
         if (stopped || active) return;
-        active = (async () => {
-            let progressed = false;
+        cancelTimer?.();
+        cancelTimer = null;
+        active = withWebLatencyProducerTrace('producer.automation-reply-handoff', async () => {
+            let knownNextDueAt: Date | null | undefined;
             try {
-                const pass = await runAutomationReplyHandoffWorkerPass({
-                    now: new Date(),
-                    dispatch: params.dispatch,
-                });
-                // A claim is the worker's durable progress boundary. If no
-                // claim completed (including a thrown pass), an overdue row
-                // must not create a zero-delay retry loop.
-                progressed = pass.claimed;
+                if (!stopped) {
+                    // A traversal visits the work due when demand arrived.
+                    // Claims use the actual clock and move retry deadlines
+                    // beyond this traversal, even if a slow RPC returns after
+                    // its lease expired. No retained attempted-ID registry.
+                    const dueThrough = new Date();
+                    const nextDueAt = await readNextDueAt(dueThrough);
+                    if (nextDueAt === null || nextDueAt.getTime() > dueThrough.getTime()) {
+                        knownNextDueAt = nextDueAt;
+                        return;
+                    }
+                    while (!stopped) {
+                        const pass = await runAutomationReplyHandoffWorkerPass({
+                            now: () => new Date(), dispatch: params.dispatch,
+                            dueThrough,
+                        });
+                        if (!pass.claimed) break;
+                    }
+                }
             } catch {
                 warnWorkerFailure("pass");
                 // The durable claim remains recoverable when dispatch or DB work fails.
             } finally {
-                active = null;
-                await schedule({ progressed });
+                await schedule(knownNextDueAt);
             }
-        })();
-        await active;
+        });
+        try {
+            await active;
+        } finally {
+            active = null;
+        }
     };
 
     void trigger();
@@ -235,8 +235,8 @@ export function startAutomationReplyHandoffWorker(params: Readonly<{
         stop: async () => {
             if (stopped) return;
             stopped = true;
-            if (timer) clearTimeout(timer);
-            timer = null;
+            cancelTimer?.();
+            cancelTimer = null;
             await active;
         },
     };

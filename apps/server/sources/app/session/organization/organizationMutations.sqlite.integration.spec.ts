@@ -205,12 +205,27 @@ describe("session organization mutations on SQLite", () => {
             await expect(db.sessionPin.findUnique({ where: { id: retained.id } })).resolves.toMatchObject({
                 listPinned: true, railPinned: true, sortKey: "saved", pinnedAt: new Date(1234),
             });
+            const repeatedPinCheckpoint = await db.sessionOrganizationCheckpoint.findUnique({ where: { accountId: account.id } });
+            deliveredUpdates.length = 0;
+            const repeatedPin = await app.inject({ method: "PUT", url: pinUrl, headers,
+                payload: { surface: "rail", pinned: true, sortKey: "another-ignored-order" } });
+            expect(repeatedPin.statusCode).toBe(200);
+            expect(SetSessionPinResponseSchema.parse(repeatedPin.json())).toEqual(SetSessionPinResponseSchema.parse(pinned.json()));
+            expect(deliveredUpdates.filter(({ payload }) => UpdateContainerSchema.parse(payload).body.t === "account-change")).toHaveLength(0);
+            await expect(db.sessionOrganizationCheckpoint.findUnique({ where: { accountId: account.id } })).resolves.toEqual(repeatedPinCheckpoint);
             const clearedList = await app.inject({ method: "PUT", url: pinUrl, headers,
                 payload: { surface: "list", pinned: false } });
             expect(clearedList.statusCode).toBe(200);
             expect(SetSessionPinResponseSchema.parse(clearedList.json())).toEqual({ pin: {
                 sessionId: session.id, listPinned: false, railPinned: true, sortKey: "saved", pinnedAt: 1234,
             } });
+            const repeatedUnpinCheckpoint = await db.sessionOrganizationCheckpoint.findUnique({ where: { accountId: account.id } });
+            deliveredUpdates.length = 0;
+            const repeatedUnpin = await app.inject({ method: "PUT", url: pinUrl, headers,
+                payload: { surface: "list", pinned: false } });
+            expect(SetSessionPinResponseSchema.parse(repeatedUnpin.json())).toEqual(SetSessionPinResponseSchema.parse(clearedList.json()));
+            expect(deliveredUpdates.filter(({ payload }) => UpdateContainerSchema.parse(payload).body.t === "account-change")).toHaveLength(0);
+            await expect(db.sessionOrganizationCheckpoint.findUnique({ where: { accountId: account.id } })).resolves.toEqual(repeatedUnpinCheckpoint);
             // A retained caller omitting surface still changes only list membership.
             const legacyList = await app.inject({ method: "PUT", url: pinUrl, headers,
                 payload: { pinned: true, sortKey: "replacement" } });

@@ -3,8 +3,7 @@ import type { Prisma } from "@prisma/client";
 
 import { deriveAccountEncryptionCurrentnessFromRow } from "@/app/encryption/accountContentKeyAdmission";
 import { deriveAccountEncryptionMigrationKeyFingerprints } from "@/app/encryption/accountEncryptionTransition";
-import { transactionResult, type TransactionResult, type Tx } from "@/storage/inTx";
-import { afterAccountChangePublication } from "@/app/changes/markAccountChanged";
+import type { Tx } from "@/storage/inTx";
 
 /**
  * The one Automation-facing projection of Account currentness. Claim, start,
@@ -50,19 +49,4 @@ export async function fetchAutomationAccountCurrentnessWitnessTx(
         select: automationAccountCurrentnessSelect,
     });
     return account ? deriveAutomationAccountCurrentnessWitness(account) : null;
-}
-
-/** Capture the canonical Account witness after all publication intents have flushed. */
-export function captureAutomationAccountCurrentnessAfterPublication(
-    tx: Tx,
-    accountId: string,
-): TransactionResult<AutomationAccountCurrentnessWitnessV1 | null> {
-    let witness: AutomationAccountCurrentnessWitnessV1 | null | undefined;
-    afterAccountChangePublication(tx, async publicationTx => {
-        witness = await fetchAutomationAccountCurrentnessWitnessTx(publicationTx, accountId);
-    });
-    return transactionResult(() => {
-        if (witness === undefined) throw new Error("Automation Account witness was resolved before terminal publication");
-        return witness;
-    });
 }

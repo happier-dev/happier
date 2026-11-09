@@ -4,6 +4,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { createBuiltinRelayAccessSelection } from "@happier-dev/cli-common/relayAccess";
 
 import { auth } from "@/app/auth/auth";
 import { createPerSendAuthEmailDelivery } from "@/app/auth/email/resolveAuthEmailDelivery";
@@ -121,13 +122,18 @@ describe("home.reachability routes", () => {
             iroh: { availability: "not_available", mode: "enabled", modeFixed: false },
         });
 
-        await configureRelayAccess({ providerId: "cloudflareNamed", hostname: "tunnel.home.test", token: "tunnel-token" });
+        const credentialAccountId = "tunnel-account-private-reference";
+        await configureRelayAccess(createBuiltinRelayAccessSelection("cloudflareNamed", { hostname: "tunnel.home.test" }, [{
+            purpose: "tunnel.manage", credentialRef: { kind: "connectedAccount", account: {
+                service: { pluginId: "happier.deploy.cloudflare", localId: "cloudflare" }, accountId: credentialAccountId,
+            } },
+        }]));
         const inferred = await post(app, "/v1/home/reachability/get", owner.token, {});
         expect(inferred.json()).toMatchObject({
             publicAddress: { url: "https://tunnel.home.test", source: "inferred", inferredFrom: "relay_access" },
             hostAccess: { method: "cloudflare_tunnel", exposure: "public", shareUrl: "https://tunnel.home.test" },
         });
-        expect(inferred.body).not.toContain("tunnel-token");
+        expect(inferred.body).not.toContain(credentialAccountId);
         // Inference is read-only: nothing was written to the environment or stored as a setting.
         expect(process.env.HAPPIER_PUBLIC_SERVER_URL).toBeUndefined();
         expect(await db.homeSettings.count()).toBe(0);

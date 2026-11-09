@@ -7,6 +7,7 @@ import { acquireAccountSessionOwnerMetadataFencesInTx } from '@/app/encryption/a
 import { fetchLinkedProvidersForAccounts } from '@/app/auth/providers/linkedProviders';
 import { buildUpdateAccountUpdate, eventRouter } from '@/app/events/eventRouter';
 import { randomKeyNaked } from '@/utils/keys/randomKeyNaked';
+import { buildAccountIdentitiesChangeV1 } from '@happier-dev/protocol/changes';
 import type { PreparedIdentityConnection } from './identityProviders/types';
 import { buildLinkedIdentityManagementProjectionInTx } from './accountLinkedIdentityManagement';
 import { isAccountIdentityEligibleForGenericPresentation } from '@/app/auth/methods/registry';
@@ -85,9 +86,8 @@ async function publishIdentityChanges(tx: Tx, accountIdsInput: readonly string[]
     for (const account of accounts) {
         const { id: accountId, ...profile } = account;
         const linkedProviders = linkedProvidersByAccountId.get(accountId) ?? [];
-        const cursor = await markAccountChanged(tx, {
-            accountId, kind: 'account', entityId: 'self', hint: { linkedProviders: true },
-        });
+        // Its own coalescing row: a same-transaction or later `self` write cannot replace it.
+        const cursor = await markAccountChanged(tx, { accountId, ...buildAccountIdentitiesChangeV1() });
         afterTx(tx, () => {
             eventRouter.emitUpdate({
                 userId: accountId,

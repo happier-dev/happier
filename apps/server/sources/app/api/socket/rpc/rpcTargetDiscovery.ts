@@ -1,7 +1,9 @@
 import type { Server } from "socket.io";
 import type { SocketRpcAnsweringClientV1 } from '@happier-dev/protocol/socketRpc';
+import type { SocketRpcMachineAdmissionContextV1 } from '@happier-dev/protocol/machines/machineAccessV1';
+import { projectActionFailureCauseV1, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 
-import { classifyMachineAvailabilityState, readMachineAvailabilityState } from "@/app/machines/machineStateGuards";
+import { classifyMachineAvailabilityState } from "@/app/machines/machineStateGuards";
 import { recordSocketClusterFetchSockets } from "@/app/monitoring/metrics/index";
 import { log } from "@/utils/logging/log";
 import { db } from "@/storage/db";
@@ -49,19 +51,23 @@ export async function readMachineRpcTargetPresence(params: Readonly<{
     userId: string;
     method: string;
     fetchTimeoutMs?: number;
+    machineAdmission?: SocketRpcMachineAdmissionContextV1;
 }>): Promise<'method-absent' | 'disconnected' | 'unknown'> {
     const separator = params.method.indexOf(':');
     if (separator <= 0) return 'unknown';
     const machineId = params.method.slice(0, separator);
     try {
-        // Session and Machine RPC namespaces share the transport. Only the canonical Machine
-        // row establishes that this namespace denotes a Machine, including legacy installations.
-        const machine = await db.machine.findFirst({
-            where: { accountId: params.userId, id: machineId },
-            select: { revokedAt: true, replacedByMachineId: true },
-        });
-        if (!machine) return 'unknown';
-        if (classifyMachineAvailabilityState(machine) !== 'available') return 'disconnected';
+        // A matching request admission already proves the namespace and lifecycle.
+        // Session and unadmitted legacy routes still need their namespace resolved.
+        if (params.machineAdmission?.machineId !== machineId
+            || params.machineAdmission.custodianAccountId !== params.userId) {
+            const machine = await db.machine.findFirst({
+                where: { accountId: params.userId, id: machineId },
+                select: { revokedAt: true, replacedByMachineId: true },
+            });
+            if (!machine) return 'unknown';
+            if (classifyMachineAvailabilityState(machine) !== 'available') return 'disconnected';
+        }
         const snapshot = await readSocketRoomSnapshot({ io: params.io,
             room: getMachineSocketRoom(params.userId, machineId), timeoutMs: params.fetchTimeoutMs });
         const targets = snapshot.sockets as RpcAckResponseEmitter[];
@@ -90,36 +96,28 @@ export async function discoverRpcTargets(params: Readonly<{
     answeringClient?: SocketRpcAnsweringClientV1;
     targetGuard?: RpcForwardTargetGuard;
     correlation?: Readonly<{ requestId: string; callerSocketId?: string }>;
-}>): Promise<Readonly<{ targets: RpcAckResponseEmitter[]; methodRoomEmpty: boolean }> | null> {
+}>): Promise<Readonly<{ targets: RpcAckResponseEmitter[]; methodRoomEmpty: boolean; failureCause?: ActionFailureCauseV1 }>> {
     const room = buildRpcMethodRoom({
         userId: params.userId,
         method: params.method,
     });
     const startedAt = Date.now();
+    const requiresGlobalUniqueness = Boolean(params.answeringClient?.requireSingle && !params.answeringClient.clientId);
+    let observedTargets: RpcAckResponseEmitter[] = [];
 
-    const admitTargets = async (targets: RpcAckResponseEmitter[]) => {
-        const availableTargets: RpcAckResponseEmitter[] = [];
-        for (const target of targets) {
-            const clientType = typeof target.data?.clientType === 'string' ? target.data.clientType : '';
-            const machineId = typeof target.data?.machineId === 'string' ? target.data.machineId : '';
-            if (clientType !== 'machine-scoped' || !machineId
-                || await readMachineAvailabilityState({ accountId: params.userId, machineId }) === 'available') {
-                availableTargets.push(target);
-            }
-        }
-        return params.targetGuard ? await params.targetGuard.filterTargets(availableTargets) : availableTargets;
-    };
+    const admitTargets = async (targets: RpcAckResponseEmitter[]) =>
+        params.targetGuard ? await params.targetGuard.filterTargets(targets) : targets;
 
     try {
         // A local room member is positive routing evidence and does not depend on
         // every Redis peer answering. Single-client discovery still needs a global census.
-        if (!params.answeringClient?.requireSingle || params.answeringClient.clientId) {
+        if (!requiresGlobalUniqueness) {
             const localTargets = readLocalSocketRoom(params.io, room);
             const admitted = await admitTargets(localTargets);
             if (selectRpcTarget({ targets: admitted, excludedSocketId: params.excludedSocketId,
                 answeringClient: params.answeringClient }).type === 'target') return { targets: admitted, methodRoomEmpty: false };
         }
-        const canUsePartial = !params.answeringClient?.requireSingle || Boolean(params.answeringClient.clientId);
+        const canUsePartial = !requiresGlobalUniqueness;
         const snapshot = await readSocketRoomSnapshot({ io: params.io, room, timeoutMs: params.fetchTimeoutMs,
             ...(canUsePartial ? { acceptPartial: async sockets => selectRpcTarget({
                 targets: await admitTargets(sockets as RpcAckResponseEmitter[]),
@@ -127,6 +125,7 @@ export async function discoverRpcTargets(params: Readonly<{
             }).type === 'target' } : {}),
         });
         const targets = snapshot.sockets as RpcAckResponseEmitter[];
+        observedTargets = targets;
         const admitted = await admitTargets(targets);
         if (!snapshot.complete && (!canUsePartial || selectRpcTarget({ targets: admitted,
             excludedSocketId: params.excludedSocketId, answeringClient: params.answeringClient }).type !== 'target')) {
@@ -144,10 +143,17 @@ export async function discoverRpcTargets(params: Readonly<{
             reason: classifySocketClusterFetchFailureReason(error),
         });
         log(
-            { module: "websocket-rpc", level: "warn", room, ...params.correlation },
+            { module: "websocket-rpc", level: "warn", room, ...params.correlation,
+                requiresGlobalUniqueness, observedTargetSocketIds: observedTargets.map(target => target.id),
+                localTargetSocketIds: observedTargets.filter(target => params.io.sockets?.sockets?.has(target.id))
+                    .map(target => target.id) },
             `RPC target discovery failed for ${room}: ${error instanceof Error ? error.message : String(error)}`,
         );
         // An unsuccessful census cannot prove that a connected daemon lacks a method.
-        return null;
+        const timeout = classifySocketClusterFetchFailureReason(error) === 'timeout';
+        return { targets: [], methodRoomEmpty: false, failureCause: projectActionFailureCauseV1(
+            timeout ? Object.assign(new Error('RPC discovery timeout'), { code: 'ETIMEDOUT' }) : error,
+            requiresGlobalUniqueness ? 'rpc.discovery.global_uniqueness' : 'rpc.discovery.target',
+        ) };
     }
 }

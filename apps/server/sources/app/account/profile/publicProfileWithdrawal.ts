@@ -1,5 +1,5 @@
 import { afterTx, type Tx } from '@/storage/inTx';
-import { readStoredPublicProfileAppearance, readPublicProfileForMutationInTx } from './publicProfileStorage';
+import { readStoredPublicProfileAppearance, readPublicProfileForMutationInTx, deletePublicProfileInTx, updatePublicProfileInTx, createPublicProfileInTx } from './publicProfileStorage';
 import { retirePublicProfilePictureInTx, cleanupPublicProfilePicturesAfterCommit } from './publicProfilePicture';
 import { acquireAccountChangePublicationLocksInTx } from '@/app/changes/markAccountChanged';
 
@@ -15,16 +15,20 @@ export async function withdrawPublicProfileInTx(tx: Tx, accountId: string): Prom
         await retirePublicProfilePictureInTx(tx, accountId, appearance.atmosphere.picture.ref.id);
         afterTx(tx, () => { void cleanupPublicProfilePicturesAfterCommit(accountId); });
     }
-    if (row.removedAt) await tx.accountPublicProfile.update({ where: { accountId }, data: EMPTY_PUBLIC_PROFILE_PAYLOAD });
-    else await tx.accountPublicProfile.delete({ where: { accountId } });
+    if (row.removedAt) await updatePublicProfileInTx(tx, row, EMPTY_PUBLIC_PROFILE_PAYLOAD);
+    else await deletePublicProfileInTx(tx, row);
 }
 
 /** Provider recovery transfers restriction only, never the retired Account's disclosure. */
 export async function replacePublicProfileForProviderResetInTx(tx: Tx, oldAccountId: string, replacementAccountId: string): Promise<void> {
     await acquireAccountChangePublicationLocksInTx(tx, [oldAccountId, replacementAccountId], { includeSingleAccount: true, intent: 'exclusive' });
     const row = await tx.accountPublicProfile.findUnique({ where: { accountId: oldAccountId } });
-    if (row?.removedAt) await tx.accountPublicProfile.upsert({ where: { accountId: replacementAccountId },
-        create: { accountId: replacementAccountId, ...EMPTY_PUBLIC_PROFILE_PAYLOAD, removedAt: row.removedAt, removedByAccountId: row.removedByAccountId, removalReason: row.removalReason },
-        update: { ...EMPTY_PUBLIC_PROFILE_PAYLOAD, removedAt: row.removedAt, removedByAccountId: row.removedByAccountId, removalReason: row.removalReason } });
+    if (row?.removedAt) {
+        const replacement = await readPublicProfileForMutationInTx(tx, replacementAccountId);
+        const data = { ...EMPTY_PUBLIC_PROFILE_PAYLOAD, removedAt: row.removedAt,
+            removedByAccountId: row.removedByAccountId, removalReason: row.removalReason };
+        if (replacement) await updatePublicProfileInTx(tx, replacement, data);
+        else await createPublicProfileInTx(tx, { accountId: replacementAccountId, ...data });
+    }
     await withdrawPublicProfileInTx(tx, oldAccountId);
 }

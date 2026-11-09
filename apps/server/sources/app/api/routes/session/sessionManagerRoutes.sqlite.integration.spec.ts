@@ -28,7 +28,7 @@ describe('authenticated manager resource', () => {
     } }); }, 180_000);
     afterAll(async () => { await harness?.close(); });
 
-    it('admits 1,000 candidates within the transaction budget and rechecks a newly public destination', async () => {
+    it('admits 1,000 candidates once within the transaction budget and applies a new public destination on the next request', async () => {
         const owner = await db.account.create({ data: { publicKey: randomUUID(), encryptionMode: 'plain' } });
         const create = () => db.session.create({ data: { accountId: owner.id, tag: randomUUID(), metadata: '{}', encryptionMode: 'plain' } });
         const child = await create();
@@ -79,10 +79,15 @@ describe('authenticated manager resource', () => {
             expect(response.statusCode).toBe(200);
             expect(SessionManagerOptionsV1Schema.parse(response.json())).toEqual({
                 sessionId: child.id, currentManagerSessionId: null,
-                candidates: leads.map((lead, index) => index === 0
-                    ? { sessionId: lead.id, allowed: false, reason: 'pairwise' }
-                    : index === 1 ? { sessionId: lead.id, allowed: false, reason: 'cycle' }
+                candidates: leads.map((lead, index) => index === 1 ? { sessionId: lead.id, allowed: false, reason: 'cycle' }
                     : { sessionId: lead.id, allowed: true }),
+            });
+            expect(phases).toBe(1);
+            const next = await app.inject({ method: 'POST', url: `/v1/sessions/${child.id}/manager/options`,
+                headers: { 'x-test-user-id': owner.id }, payload: { candidateSessionIds: leads.map(lead => lead.id) } });
+            expect(next.statusCode).toBe(200);
+            expect(SessionManagerOptionsV1Schema.parse(next.json()).candidates[0]).toEqual({
+                sessionId: leads[0].id, allowed: false, reason: 'pairwise',
             });
             expect(phases).toBe(2);
             expect(await db.sessionFollowEdge.count({ where: { managerSourceSessionId: child.id } })).toBe(0);

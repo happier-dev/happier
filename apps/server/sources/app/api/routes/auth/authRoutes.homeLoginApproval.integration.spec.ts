@@ -1,7 +1,7 @@
 import Fastify from "fastify";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { serializerCompiler, validatorCompiler, ZodTypeProvider } from "fastify-type-provider-zod";
-import { HOME_LOGIN_APPROVAL_DECISION_HTTP_PATH_V1 } from "@happier-dev/protocol";
+import { HOME_LOGIN_APPROVAL_DECISION_HTTP_PATH_V1, HOME_LOGIN_APPROVALS_HTTP_PATH_V1 } from "@happier-dev/protocol";
 
 import { db } from "@/storage/db";
 import { inTx } from "@/storage/inTx";
@@ -106,6 +106,26 @@ describe("Home login approval (gate + routes) (integration)", () => {
     });
 
     describe("HomeApprovalGate policy and pending lifecycle", () => {
+        it("publishes one content-free Account wake per actual approval transition, never for unchanged evaluation or a denied decision", async () => {
+            const account = await ensurePrimaryAccount();
+            const gate = createHomeApprovalGate(APPROVAL_ENV);
+            const before = await db.account.findUniqueOrThrow({ where: { id: account.id }, select: { seq: true } });
+            const created = await gate.evaluate({ accountId: account.id, ...baseRowFacts });
+            if (created.kind !== 'approval_required') throw new Error('Expected pending approval');
+            const publication = await db.accountChange.findFirst({ where: { accountId: account.id, kind: 'account', entityId: HOME_LOGIN_APPROVALS_HTTP_PATH_V1 } });
+            expect(publication).toMatchObject({ cursor: before.seq + 1, hint: null });
+            await gate.evaluate({ accountId: account.id, ...baseRowFacts });
+            expect((await db.account.findUniqueOrThrow({ where: { id: account.id } })).seq).toBe(before.seq + 1);
+            const token = await auth.createToken(account.id, undefined, { kind: 'account', authority: 'present_user' });
+            const app = createTestApp();
+            authRoutes(app);
+            await app.ready();
+            const decide = () => app.inject({ method: 'POST', url: `/v1/auth/home-login/approvals/${created.request.approvalId}/decision`, headers: { authorization: `Bearer ${token}` }, payload: { decision: 'approve' } });
+            expect((await decide()).json()).toEqual({ status: 'approved' });
+            expect((await db.account.findUniqueOrThrow({ where: { id: account.id } })).seq).toBe(before.seq + 2);
+            expect((await decide()).json()).toEqual({ status: 'already_decided' });
+            expect((await db.account.findUniqueOrThrow({ where: { id: account.id } })).seq).toBe(before.seq + 2);
+        });
         it("allows redemption immediately when the Home-local approval policy is disabled", async () => {
             const account = await ensurePrimaryAccount();
             const gate = createHomeApprovalGate({});

@@ -29,7 +29,7 @@ export async function restoreSessionTagRejoinInTx(
     const meaningfulActivityAtDate = new Date();
     const meaningfulActivityAt = meaningfulActivityAtDate.getTime();
     const wasArchived = existing.archivedAt !== null;
-    const session = await transitionSessionArchiveStateInTx({
+    const { session } = await transitionSessionArchiveStateInTx({
         tx,
         sessionId: existing.id,
         wasArchived,

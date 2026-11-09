@@ -38,7 +38,8 @@ export async function getAutomationSettings(params: Readonly<{
  * Persists the complete bounded settings record, then reuses the existing
  * machine-scoped assignment invalidation to make every affected worker reread
  * its authoritative assignment projection. The event is a wake only; it does
- * not become a second settings owner.
+ * not become a second settings owner. Equal policy rejoins without changing
+ * the Account content clock, allocating a cursor or waking workers.
  */
 export async function updateAutomationSettings(params: Readonly<{
     accountId: string;
@@ -47,13 +48,22 @@ export async function updateAutomationSettings(params: Readonly<{
     const settings = AutomationV3SettingsSchema.parse(params.settings);
     return await inTx(async (tx) => {
         const updated = await tx.account.updateMany({
-            where: { id: params.accountId },
+            where: {
+                id: params.accountId,
+                OR: [
+                    { automationMaxActiveRunsPerMachine: { not: settings.maxActiveRunsPerMachine } },
+                    { automationRunRetention: { not: settings.runRetention } },
+                ],
+            },
             data: {
                 automationMaxActiveRunsPerMachine: settings.maxActiveRunsPerMachine,
                 automationRunRetention: settings.runRetention,
             },
         });
-        if (updated.count !== 1) return null;
+        if (updated.count !== 1) {
+            const account = await tx.account.findUnique({ where: { id: params.accountId }, select: { id: true } });
+            return account ? settings : null;
+        }
 
         const cursor = await markAccountChanged(tx, {
             accountId: params.accountId,

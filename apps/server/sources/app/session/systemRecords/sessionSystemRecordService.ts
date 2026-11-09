@@ -1169,7 +1169,7 @@ type ActorSessionSystemRecordRead = SessionSystemRecordV1Result<{
     session: ActorRecordSession;
     access: EffectiveSessionAccess;
     records: readonly Readonly<{ address: SessionSystemRecordAddress; record: SessionSystemRecordStored | null }>[];
-}>;
+}> & Readonly<{ cause?: unknown }>;
 
 /** Actor records share address admission, batched Session access and mode parsing with scalar reads. */
 export async function readActorSessionSystemRecordsV1(
@@ -1179,47 +1179,50 @@ export async function readActorSessionSystemRecordsV1(
     }>,
 ): Promise<ReadonlyMap<string, ActorSessionSystemRecordRead>> {
     const ids = [...new Set(params.sessionIds)];
-    const failed = (failure: SessionSystemRecordV1Failure) => new Map<string, ActorSessionSystemRecordRead>(ids.map(id => [id, failure]));
+    const failed = (failure: SessionSystemRecordV1Failure & Readonly<{ cause?: unknown }>) => new Map<string, ActorSessionSystemRecordRead>(ids.map(id => [id, failure]));
     if (!ids.length) return new Map();
     if (params.addresses.some(address => !SessionSystemRecordReadRequestSchema.safeParse({ address }).success) || ids.some(id => !id)) {
         return failed({ ok: false, code: 'plugin_session_record_invalid_query' });
     }
     try {
-        return await captureReadSnapshot<ReadonlyMap<string, ActorSessionSystemRecordRead>>(async tx => {
-            const targets = [];
-            for (const address of params.addresses) {
-                const admission = await admitV1RecordTarget(params, { ...address, operation: 'read' }, tx);
-                if (!admission.ok) return failed(admission);
-                const policy = address.owner === 'host' ? resolveV1HostPolicy({ ...address, operation: 'read' }) : null;
-                // This set read serves actor-owned projections; owner-scoped records retain their existing reader.
-                if (address.owner === 'host' && (!policy || policy.accountScope !== 'actor')) {
-                    return failed({ ok: false, code: 'plugin_session_record_invalid_query' });
-                }
-                const expected = persistedV1Address(params.pluginId, address);
-                if (!expected) return failed({ ok: false, code: 'plugin_session_record_invalid_query' });
-                const keys = deriveSessionSystemRecordAddressKeys(expected);
-                targets.push({ address, policy, expected, keys, key: Buffer.from(keys.recordAddressKey).toString('hex') });
+        const targets = [];
+        for (const address of params.addresses) {
+            const policy = address.owner === 'host' ? resolveV1HostPolicy({ ...address, operation: 'read' }) : null;
+            // This set read serves actor-owned projections; owner-scoped records retain their existing reader.
+            if (address.owner === 'host' && (!policy || policy.accountScope !== 'actor')) {
+                return failed({ ok: false, code: 'plugin_session_record_invalid_query' });
             }
-            const results = new Map<string, ActorSessionSystemRecordRead>();
-            for (let offset = 0; offset < ids.length; offset += SESSION_ACCESS_SESSION_BATCH_SIZE) {
-                const batch = ids.slice(offset, offset + SESSION_ACCESS_SESSION_BATCH_SIZE);
-                const sessions = await tx.session.findMany({ where: { id: { in: batch } }, select: actorRecordSessionSelect(params.actorUserId) });
-                const decisions = await resolveSessionAccessForRowsInTx(tx, { accountId: params.actorUserId,
-                    authentication: params.authentication, capability: 'readTranscript' }, sessions);
-                for (const id of batch) results.set(id, { ok: false, code: 'plugin_session_not_found' });
-                const admitted = sessions.flatMap(session => {
-                    const decision = decisions.get(session.id);
-                    if (decision?.status !== 'allowed') return [];
-                    if (targets.some(({ policy }) => policy && !satisfiesSystemRecordPolicy(decision.access, policy.requirement))) {
-                        results.set(session.id, { ok: false, code: 'plugin_session_record_forbidden' });
-                        return [];
-                    }
-                    return [{ session, access: decision.access }];
+            const admission = await admitV1RecordTarget(params, { ...address, operation: 'read' });
+            if (!admission.ok) return failed(admission);
+            const expected = persistedV1Address(params.pluginId, address);
+            if (!expected) return failed({ ok: false, code: 'plugin_session_record_invalid_query' });
+            const keys = deriveSessionSystemRecordAddressKeys(expected);
+            targets.push({ address, policy, expected, keys, key: Buffer.from(keys.recordAddressKey).toString('hex') });
+        }
+        const results = new Map<string, ActorSessionSystemRecordRead>();
+        for (let offset = 0; offset < ids.length; offset += SESSION_ACCESS_SESSION_BATCH_SIZE) {
+            const batch = ids.slice(offset, offset + SESSION_ACCESS_SESSION_BATCH_SIZE);
+            try {
+                const { admitted, records } = await captureReadSnapshot(async tx => {
+                    const sessions = await tx.session.findMany({ where: { id: { in: batch } }, select: actorRecordSessionSelect(params.actorUserId) });
+                    const decisions = await resolveSessionAccessForRowsInTx(tx, { accountId: params.actorUserId,
+                        authentication: params.authentication, capability: 'readTranscript' }, sessions);
+                    for (const id of batch) results.set(id, { ok: false, code: 'plugin_session_not_found' });
+                    const admitted = sessions.flatMap(session => {
+                        const decision = decisions.get(session.id);
+                        if (decision?.status !== 'allowed') return [];
+                        if (targets.some(({ policy }) => policy && !satisfiesSystemRecordPolicy(decision.access, policy.requirement))) {
+                            results.set(session.id, { ok: false, code: 'plugin_session_record_forbidden' });
+                            return [];
+                        }
+                        return [{ session, access: decision.access }];
+                    });
+                    const records = admitted.length && targets.length ? await tx.sessionSystemRecord.findMany({ where: {
+                        accountId: params.actorUserId, sessionId: { in: admitted.map(row => row.session.id) },
+                        recordAddressKey: { in: targets.map(target => target.keys.recordAddressKey) },
+                    }, select: SESSION_SYSTEM_RECORD_SELECT }) : [];
+                    return { admitted, records };
                 });
-                const records = admitted.length && targets.length ? await tx.sessionSystemRecord.findMany({ where: {
-                    accountId: params.actorUserId, sessionId: { in: admitted.map(row => row.session.id) },
-                    recordAddressKey: { in: targets.map(target => target.keys.recordAddressKey) },
-                }, select: SESSION_SYSTEM_RECORD_SELECT }) : [];
                 const bySession = new Map<string, Map<string, typeof records[number]>>();
                 for (const row of records) {
                     const rows = bySession.get(row.sessionId) ?? new Map<string, typeof row>();
@@ -1246,12 +1249,15 @@ export async function readActorSessionSystemRecordsV1(
                     results.set(session.id, failure ?? { ok: true,
                         session: { ...session, encryptionMode: session.encryptionMode }, access, records: projectedRecords });
                 }
+            } catch (error) {
+                reportSystemRecordFailure('v1-batch-read', error);
+                for (const id of batch) results.set(id, { ok: false, code: 'plugin_session_record_internal', cause: error });
             }
-            return results;
-        });
+        }
+        return results;
     } catch (error) {
         reportSystemRecordFailure('v1-batch-read', error);
-        return failed({ ok: false, code: 'plugin_session_record_internal' });
+        return failed({ ok: false, code: 'plugin_session_record_internal', cause: error });
     }
 }
 

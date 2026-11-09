@@ -13,6 +13,7 @@ import { createSessionRecordFixture } from "../../../../cli/src/testkit/backends
 import { readOrCreateInstallationIdentity } from "../../../../cli/src/daemon/identity/store";
 import { updateSettings } from "../../../../cli/src/persistence";
 import { configuration } from "../../../../cli/src/configuration";
+import { eventRouter } from "@/app/events/eventRouter";
 
 let harness: LightSqliteHarness;
 beforeAll(async () => {
@@ -72,8 +73,29 @@ it("retains the real CLI Workflow archive origin through the strict HTTP consume
             const occurrence = await db.automationRun.findFirstOrThrow({ where: { triggerId: trigger.id } });
             expect(decodeAutomationRunCause(occurrence)).toMatchObject({ kind: "trigger", triggerKind: "sessionLifecycle",
                 evidence: { event: "sessionArchived", sourceSessionId: session.id, originRunId: run.id } });
+            const archived = await db.session.findUniqueOrThrow({ where: { id: session.id } });
+            const accountAfterArchive = await db.account.findUniqueOrThrow({ where: { id: account.id }, select: { seq: true } });
+            const changesAfterArchive = await db.accountChange.findMany({ where: { accountId: account.id } });
+            const publications = vi.spyOn(eventRouter, "emitUpdate");
             await expect(archive()).resolves.toMatchObject({ ok: true });
             expect(await db.automationRun.count({ where: { triggerId: trigger.id } })).toBe(1);
+            expect(await db.session.findUniqueOrThrow({ where: { id: session.id } })).toEqual(archived);
+            expect(await db.account.findUniqueOrThrow({ where: { id: account.id }, select: { seq: true } })).toEqual(accountAfterArchive);
+            expect(await db.accountChange.findMany({ where: { accountId: account.id } })).toEqual(changesAfterArchive);
+            expect(publications.mock.calls).toHaveLength(0);
+            const unarchive = () => app.inject({ method: "POST", url: `/v2/sessions/${session.id}/unarchive`,
+                headers: { "x-test-user-id": account.id } });
+            expect((await unarchive()).statusCode).toBe(200);
+            expect(publications.mock.calls.length).toBeGreaterThan(0);
+            const unarchived = await db.session.findUniqueOrThrow({ where: { id: session.id } });
+            const accountAfterUnarchive = await db.account.findUniqueOrThrow({ where: { id: account.id }, select: { seq: true } });
+            publications.mockClear();
+            expect((await unarchive()).statusCode).toBe(200);
+            expect(await db.session.findUniqueOrThrow({ where: { id: session.id } })).toEqual(unarchived);
+            expect(await db.account.findUniqueOrThrow({ where: { id: account.id }, select: { seq: true } })).toEqual(accountAfterUnarchive);
+            expect(publications.mock.calls).toHaveLength(0);
+            publications.mockRestore();
         } finally { get.mockRestore(); post.mockRestore(); }
     });
 });
+

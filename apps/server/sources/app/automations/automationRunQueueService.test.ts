@@ -1,12 +1,14 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
-    MAX_NON_TERMINAL_EVENT_CONVERSATION_RUNS_PER_ACCOUNT,
     parseAutomationRunExecutionRecipeV1,
     serializeAutomationStoredDefinitionExecutionRecipeV1,
     type AutomationStoredDefinitionExecutionRecipeV1,
 } from "@happier-dev/protocol";
 
 const transaction = vi.hoisted(() => vi.fn());
+// This in-memory Prisma boundary models SQLite; PostgreSQL SQL/budgets run in the real DB-contract lane.
+beforeEach(() => vi.stubEnv("HAPPIER_DB_PROVIDER", "sqlite"));
+afterEach(() => vi.unstubAllEnvs());
 // Only Prisma is faked; Run admission, Account changes and after-commit behavior stay real.
 vi.mock("@/storage/db", () => ({ db: { $transaction: transaction } }));
 import { inTx, type ResolvedTransactionResult, type Tx } from "@/storage/inTx";
@@ -59,7 +61,6 @@ function txFixture(params: Readonly<{
     recipe?: string;
     templateVersion?: number;
     assignments?: readonly (string | Readonly<{ machineId: string; priority: number }>)[];
-    eventConversationRunCount?: number;
     triggers?: readonly Readonly<{
         id: string;
         revision: number;
@@ -91,6 +92,8 @@ function txFixture(params: Readonly<{
     const triggerUpdates: Array<Record<string, unknown>> = [];
     let accountSeq = 0;
     const tx = {
+        simpleCache: { findUnique: vi.fn(async () => null) },
+        managedMachine: { findFirst: vi.fn(async () => null) },
         homeSettings: { findUnique: vi.fn(async () => null) },
         homeGovernancePolicy: { findUnique: vi.fn(async () => null) },
         account: {
@@ -164,7 +167,7 @@ function txFixture(params: Readonly<{
                         enabled: true,
                         deletedAt: null,
                         kind: "schedule",
-                        automation: { accountId: "account" },
+                        automation: { accountId: "account", scopeSessionId: null },
                     }
                     : null;
             }),
@@ -174,7 +177,11 @@ function txFixture(params: Readonly<{
             }),
         },
         automationRun: {
-            count: vi.fn(async () => params.eventConversationRunCount ?? 0),
+            findUnique: vi.fn(async ({ where }: { where: { id: string } }) => {
+                const run = created.find(row => row.id === where.id);
+                return run ? { ...run, claimedByMachineId: null,
+                    assignments: runAssignments.filter(assignment => assignment.runId === run.id) } : null;
+            }),
             findMany: vi.fn(async ({ where }: { where: Record<string, unknown> }) => created.filter((run) => (
                 (where.accountId === undefined || run.accountId === where.accountId)
                 && (typeof where.causeTriggerKind !== "string" || run.causeTriggerKind === where.causeTriggerKind)
@@ -304,9 +311,8 @@ describe("Automation Run queue admission", () => {
         ]);
     });
 
-    it("does not apply Event and Conversation capacity to a due schedule", async () => {
+    it("admits a due schedule through the shared occurrence owner", async () => {
         const fixture = txFixture({
-            eventConversationRunCount: MAX_NON_TERMINAL_EVENT_CONVERSATION_RUNS_PER_ACCOUNT,
             triggers: [{
                 id: "schedule-at-capacity",
                 revision: 4,

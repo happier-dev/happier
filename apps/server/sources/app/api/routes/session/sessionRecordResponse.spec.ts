@@ -7,7 +7,7 @@ import { SessionReadBatchResponseV1Schema } from '@happier-dev/protocol/sessions
 
 import { enableSchemaValidation } from '../../utils/enableSchemaValidation';
 import { projectSessionMetadataForRecipient } from '@/app/session/metadata/sessionMetadataRecipientProjection';
-import { parseProjectedSessionByIdResponse, parseProjectedSessionBatchResponse, parseProjectedSessionLookupResponse } from './sessionRecordResponse';
+import { parseProjectedSessionByIdResponse, parseProjectedSessionBatchDetail, parseProjectedSessionLookupResponse } from './sessionRecordResponse';
 
 const ciphertext = 'oRoBAgMEBQYHCAkKCwwNDg8QERITFBUWFxh8aC0+8+YDECLScN6uQTItPyWVR7XbQA==';
 
@@ -29,7 +29,7 @@ describe('admitted Session record response', () => {
                 id: 'session', seq, active: false, activeAt: 1, createdAt: 1, updatedAt: 1,
                 encryptionMode: 'e2ee', share: null, dataEncryptionKey: null } });
             const body = kind === 'detail' ? detail : kind === 'batch'
-                ? parseProjectedSessionBatchResponse({ results: [{ sessionId: 'session', detail: { status: 200, body: detail } }] })
+                ? { results: [{ sessionId: 'session', detail: parseProjectedSessionBatchDetail({ status: 200, body: detail }) }] }
                 : parseProjectedSessionLookupResponse({ sessions: [detail.session] });
             return reply.serializer(JSON.stringify).send(body);
         });

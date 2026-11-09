@@ -130,12 +130,14 @@ describe("sessionRoutes Agent-transition cutover publication", () => {
             101,
             expect.any(String),
             expect.objectContaining({ metadataVersion: 5 }),
+            undefined,
         );
         expect(buildSessionMetadataRecipientUpdate).toHaveBeenCalledWith(
             "s1",
             55,
             expect.any(String),
             expect.objectContaining({ metadataVersion: 5 }),
+            undefined,
         );
         // The divider still publishes, and it is not the only thing published.
         expect(buildNewMessageUpdate).toHaveBeenCalledTimes(1);
@@ -185,6 +187,7 @@ describe("sessionRoutes Agent-transition cutover publication", () => {
             expect.any(String),
             { value: "target-view", version: 2 },
             { value: null, version: 3 },
+            undefined,
         );
         expect(buildSessionMetadataRecipientUpdate).not.toHaveBeenCalled();
         // No divider write on this call, so nothing else is emitted.
@@ -303,6 +306,7 @@ describe("sessionRoutes Agent-transition cutover publication", () => {
             expect.any(String),
             { value: "target-view", version: 2 },
             { value: null, version: 3 },
+            undefined,
         );
         // The divider never landed, so nothing announces one.
         expect(buildNewMessageUpdate).not.toHaveBeenCalled();

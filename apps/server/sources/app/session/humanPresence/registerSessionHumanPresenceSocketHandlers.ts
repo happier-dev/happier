@@ -5,6 +5,7 @@ import {
     SessionHumanPresenceTypingSetV1Schema,
     SessionHumanPresenceVisibleReplaceV1Schema,
     type SessionHumanPresenceTypingSetV1,
+    type SessionHumanPresencePendingMessageEditV1,
     type SessionHumanPresenceVisibleReplaceResultV1,
 } from "@happier-dev/protocol/sessions";
 import { log } from "@/utils/logging/log";
@@ -36,7 +37,8 @@ export function registerSessionHumanPresenceSocketHandlers(input: Readonly<{
     accountId: string;
 }>): void {
     const { socket, accountId, presence } = input;
-    if (socket.data.clientType !== "user-scoped" || socket.data.userId !== accountId) return;
+    const observer = socket.data.clientType === "session-scoped";
+    if ((!observer && socket.data.clientType !== "user-scoped") || socket.data.userId !== accountId) return;
     // Bounded transport catch for the handshake window: the hold validates the
     // strict wire shape and retains at most the latest replacement declaration in
     // socket-local memory. A superseded or discarded hold is dropped silently; the
@@ -46,6 +48,7 @@ export function registerSessionHumanPresenceSocketHandlers(input: Readonly<{
         sessionIds: readonly string[];
         locations: readonly import("@happier-dev/protocol/sessions").SessionHumanPresenceLocationV1[];
         includesLocations: boolean;
+        pendingMessageEdits?: readonly SessionHumanPresencePendingMessageEditV1[];
         reply: (result: SessionHumanPresenceVisibleReplaceResultV1) => void;
     } | null = null;
     type Intent =
@@ -54,6 +57,7 @@ export function registerSessionHumanPresenceSocketHandlers(input: Readonly<{
             sessionIds: readonly string[];
             locations: readonly import("@happier-dev/protocol/sessions").SessionHumanPresenceLocationV1[];
             includesLocations: boolean;
+            pendingMessageEdits?: readonly SessionHumanPresencePendingMessageEditV1[];
             reply: (result: SessionHumanPresenceVisibleReplaceResultV1) => void;
         }
         | { kind: "typing"; value: SessionHumanPresenceTypingSetV1 };
@@ -77,7 +81,7 @@ export function registerSessionHumanPresenceSocketHandlers(input: Readonly<{
                     try {
                         if (next.kind === "visible") {
                             const replacement = await presence.replaceVisible(
-                                socket, accountId, next.sessionIds, next.locations,
+                                socket, accountId, next.sessionIds, next.locations, next.pendingMessageEdits,
                             );
                             next.reply({
                                 v: 1,
@@ -85,6 +89,9 @@ export function registerSessionHumanPresenceSocketHandlers(input: Readonly<{
                                 admittedSessionIds: replacement.admittedSessionIds,
                                 ...(next.includesLocations
                                     ? { admittedLocations: replacement.admittedLocations }
+                                    : {}),
+                                ...(next.pendingMessageEdits !== undefined
+                                    ? { admittedPendingMessageEdits: replacement.admittedPendingMessageEdits }
                                     : {}),
                             });
                             presence.schedule(replacement.affectedLocations);
@@ -112,11 +119,25 @@ export function registerSessionHumanPresenceSocketHandlers(input: Readonly<{
             reply({ v: 1, ok: false, errorCode: unsupported ? "UNSUPPORTED_VERSION" : "INVALID_REQUEST" });
             return;
         }
+        // Session runtimes observe their exact admitted Session's edit lifetime;
+        // they never declare human visibility or edits. Legacy publishers did not
+        // participate in this protocol and retain their no-answer behavior.
+        if (observer) {
+            if (parsed.data.pendingMessageEdits === undefined) return;
+            const binding = socket.data.sessionScopedBinding;
+            if (!binding
+                || parsed.data.sessionIds.some(id => id !== binding.sessionId)
+                || (parsed.data.locations?.length ?? 0) > 0 || parsed.data.pendingMessageEdits.length > 0) {
+                if (current) reply({ v: 1, ok: false, errorCode: "INVALID_REQUEST" });
+                return;
+            }
+        }
         if (!current) {
             held = {
                 sessionIds: parsed.data.sessionIds,
                 locations: parsed.data.locations ?? [],
                 includesLocations: parsed.data.locations !== undefined,
+                pendingMessageEdits: parsed.data.pendingMessageEdits,
                 reply,
             };
             return;
@@ -126,6 +147,7 @@ export function registerSessionHumanPresenceSocketHandlers(input: Readonly<{
             sessionIds: parsed.data.sessionIds,
             locations: parsed.data.locations ?? [],
             includesLocations: parsed.data.locations !== undefined,
+            pendingMessageEdits: parsed.data.pendingMessageEdits,
             reply,
         });
     });
@@ -133,7 +155,7 @@ export function registerSessionHumanPresenceSocketHandlers(input: Readonly<{
         const parsed = SessionHumanPresenceTypingSetV1Schema.safeParse(value);
         // Typing is transient input intent: dropping pre-currentness intents is safe
         // because an actively editing client renews within the lease window.
-        if (!parsed.success || !current) return;
+        if (!parsed.success || !current || observer) return;
         enqueue({ kind: "typing", value: parsed.data });
     });
     let previousLocations: ReturnType<typeof sessionHumanPresenceLocationsFromRooms> = [];

@@ -1,6 +1,6 @@
 import { DEFAULT_LOCAL_SERVICE_PREVIEW_TOKEN_TTL_MS } from '@happier-dev/protocol/features/payload/capabilities/localServiceCapabilities';
 import { DEFAULT_MACHINE_TRANSFER_SERVER_ROUTED_MAX_BYTES, MACHINE_TRANSFER_SERVER_ROUTED_MAX_BYTES_HARD_MAX } from '@happier-dev/protocol/features/payload/capabilities/machineTransferCapabilities';
-import { DEFAULT_MACHINE_TUNNEL_SERVER_ROUTED_MAX_ACTIVE_TUNNELS_PER_SOCKET, DEFAULT_MACHINE_TUNNEL_SERVER_ROUTED_MAX_BINARY_HEADER_BYTES, DEFAULT_MACHINE_TUNNEL_SERVER_ROUTED_MAX_CONCURRENT_SUBSTREAMS, DEFAULT_MACHINE_TUNNEL_SERVER_ROUTED_MAX_FRAME_BYTES, DEFAULT_MACHINE_TUNNEL_SERVER_ROUTED_MAX_FRAMED_MESSAGE_BYTES, DEFAULT_MACHINE_TUNNEL_SERVER_ROUTED_MAX_RAW_PAYLOAD_BYTES, MACHINE_TUNNEL_SERVER_ROUTED_MAX_ACTIVE_TUNNELS_PER_SOCKET_HARD_MAX, MACHINE_TUNNEL_SERVER_ROUTED_MAX_FRAME_BYTES_HARD_MAX } from '@happier-dev/protocol/features/payload/capabilities/machineTunnelCapabilities';
+import { DEFAULT_MACHINE_TUNNEL_SERVER_ROUTED_MAX_BINARY_HEADER_BYTES, DEFAULT_MACHINE_TUNNEL_SERVER_ROUTED_MAX_FRAME_BYTES, DEFAULT_MACHINE_TUNNEL_SERVER_ROUTED_MAX_FRAMED_MESSAGE_BYTES, DEFAULT_MACHINE_TUNNEL_SERVER_ROUTED_MAX_RAW_PAYLOAD_BYTES, MACHINE_TUNNEL_SERVER_ROUTED_MAX_FRAME_BYTES_HARD_MAX } from '@happier-dev/protocol/features/payload/capabilities/machineTunnelCapabilities';
 import { PET_PACKAGE_LIMITS_V1 } from '@happier-dev/protocol/pets/constants';
 import { PLUGIN_COLLECTION_DEFAULT_DEPLOYMENT_LIMITS_V1, PLUGIN_COLLECTION_LIMITS_V1 } from '@happier-dev/protocol/plugins/data/collectionLimitsV1';
 import { type FeatureId } from '@happier-dev/protocol/features/catalog';
@@ -47,8 +47,9 @@ export const FEATURE_READER_DEFAULTS = {
     teamsEnabled: { ...ON, ...HOME },
     teamsCredentialResourcesEnabled: { ...ON, ...HOME },
     teamsCredentialResourcesExternalApiEnabled: { ...ON, ...HOME },
-    automationsEnabled: { ...ON, ...HOME },
-    workflowsEnabled: { ...ON, ...HOME },
+    workflowsEnabled: { ...ON, ...HOME, aliases: ['HAPPIER_FEATURE_AUTOMATIONS__ENABLED'] },
+    deploymentsEnabled: { ...ON, ...HOME },
+    botsEnabled: { ...ON, ...HOME },
 
     artifactRevisionRetentionCount: {
         type: 'int', default: 10, bounds: { min: 0 }, ...POLICY,
@@ -207,8 +208,7 @@ export const FEATURE_READER_DEFAULTS = {
     machinesTunnelServerRoutedEnabled: { ...OFF, ...AT_STARTUP },
     machinesTunnelServerRoutedMaxActiveTunnelsPerSocket: {
         type: 'int',
-        default: DEFAULT_MACHINE_TUNNEL_SERVER_ROUTED_MAX_ACTIVE_TUNNELS_PER_SOCKET,
-        bounds: { min: 1, max: MACHINE_TUNNEL_SERVER_ROUTED_MAX_ACTIVE_TUNNELS_PER_SOCKET_HARD_MAX },
+        bounds: { min: 1 },
         ...AT_STARTUP,
         featureId: 'machines.tunnel.serverRouted',
         description: 'Most server-routed tunnels one socket may hold open.',
@@ -259,8 +259,7 @@ export const FEATURE_READER_DEFAULTS = {
     },
     machinesTunnelServerRoutedMaxConcurrentSubstreams: {
         type: 'int',
-        default: DEFAULT_MACHINE_TUNNEL_SERVER_ROUTED_MAX_CONCURRENT_SUBSTREAMS,
-        bounds: { min: 1, max: MACHINE_TUNNEL_SERVER_ROUTED_MAX_ACTIVE_TUNNELS_PER_SOCKET_HARD_MAX },
+        bounds: { min: 1 },
         ...AT_STARTUP,
         featureId: 'machines.tunnel.serverRouted',
         description: 'Most substreams one tunnel runs at once.',

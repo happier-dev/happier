@@ -17,7 +17,7 @@ import { createAgentSessionRunnerFactoryBinding } from '../../../../cli/src/plug
 import type { TrackedSession } from '../../../../cli/src/daemon/types';
 import { resolveSessionStartFailureNotice } from '../../../../ui/sources/components/sessions/startFailure/sessionStartFailureNotice';
 import { createPresentUserSessionAccessAuthentication } from './access/sessionAccessAuthentication.testkit';
-import { applySessionTurnMutation, reassertSessionLatestTurnStatus } from './sessionWriteService';
+import { applySessionTurnMutation } from './sessionWriteService';
 import { parseStoredSessionRuntimeIssue } from './turns/parseSessionTurnState';
 import { createSessionPublisherPresence } from '@/app/presence/sessionPublisherPresence';
 
@@ -83,9 +83,6 @@ describe('owner open-attestation metadata tuple (SQLite)', () => {
         const history = await db.sessionTurn.findMany({ where: { sessionId: session.id } });
         expect(history).toHaveLength(1);
         expect(parseStoredSessionRuntimeIssue(history[0]!.lastRuntimeIssueJson)).toMatchObject({ code: issue.code });
-        expect(await reassertSessionLatestTurnStatus({ actorUserId: owner.id, sessionId: session.id,
-            latestTurnStatus: failed.latestTurnStatus, latestTurnStatusObservedAt: Number(history[0]!.updatedAt) })).toMatchObject({ ok: true, didApply: false });
-        expect((await db.session.findUniqueOrThrow({ where: { id: session.id } })).lastRuntimeIssue).toBeNull();
     });
 
     it.each(['runtime-failure', 'newer-startup'] as const)('keeps an unresolved %s when an idle open cannot supersede it', async scenario => {
@@ -155,7 +152,6 @@ describe('owner open-attestation metadata tuple (SQLite)', () => {
                     sessionId: session.id,
                     rawSession: { ...raw, ownerMetadata: fields.ownerMetadata },
                     updater: metadata => ({ ...metadata, codexSessionId: 'native-session-1' }),
-                    maxAttempts: 1,
                 })).resolves.toMatchObject({ version: 1 });
             });
             expect(observedPatch).toMatchObject({ mode: 'owner', metadataLayoutVersion: 1 });

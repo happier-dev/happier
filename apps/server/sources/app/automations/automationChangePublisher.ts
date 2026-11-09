@@ -1,8 +1,8 @@
 import { randomKeyNaked } from "@/utils/keys/randomKeyNaked";
 import { eventRouter, type UpdatePayload } from "@/app/events/eventRouter";
-import type { WorkflowRequesterScopeV1 } from '@happier-dev/protocol/updates';
 import type { AutomationRunStateChangedHostEventV1 } from '@happier-dev/protocol/plugins/events/hostReferencesV1';
 import type { ManagedWakeTargetV1 } from '@happier-dev/protocol/machines/managed/managedIntentV1';
+import type { WorkflowRequesterScopeV1 } from '@happier-dev/protocol/updates';
 
 import type {
     AutomationListItem,

@@ -76,8 +76,8 @@ describe('fresh Account verified mailbox admission', () => {
         expect(await db.accountIdentity.count({ where: { accountId: account.id } })).toBe(1);
     });
 
-    it('does not claim a released hold from a fresh provider presentation', async () => {
-        await db.releasedUsername.create({ data: { username: 'held-name', expiresAt: new Date(Date.now() + 86_400_000) } });
+    it('admits a fresh provider presentation while preserving an obsolete release record', async () => {
+        const retained = await db.releasedUsername.create({ data: { username: 'held-name', expiresAt: new Date(Date.now() + 86_400_000) } });
         const accountId = randomUUID();
         const identityConnection = await prepareIdentityLink({
             accountId, provider: 'github', providerUserId: 'held-fill', providerLogin: 'held-name',
@@ -87,7 +87,8 @@ describe('fresh Account verified mailbox admission', () => {
             insertSemantics: { kind: 'must_create', accountId }, publicKey: null, encryptionMode: 'plain',
             usernameChange: { kind: 'identity_fill', suggestion: 'held-name' }, identityConnection,
         }), { isolationLevel: 'Serializable' });
-        expect(account.username).toBeNull();
+        expect(account.username).toBe('held-name');
+        expect(await db.releasedUsername.findUniqueOrThrow({ where: { username: 'held-name' } })).toEqual(retained);
         expect(await db.accountIdentity.count({ where: { accountId } })).toBe(1);
     });
 

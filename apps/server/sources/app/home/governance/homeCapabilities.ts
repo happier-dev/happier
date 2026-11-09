@@ -273,6 +273,18 @@ function isAuthorizedRequest(input: Readonly<{
     }
 }
 
+/** Presentation of the same operator authority enforced by each profile mutation. */
+export function resolveHomePublicProfileManagementCapabilityV1(input: Readonly<{
+    actor: HomeGovernanceAccountFacts;
+    target: HomeGovernanceAccountFacts;
+}>): HomeAccountMutationCapabilityV1 {
+    return isAuthorizedRequest({
+        authority: resolveHomeGovernanceAuthority(input.actor),
+        request: { operation: "manage_public_profile", targetAccountId: input.target.accountId },
+        target: input.target,
+    }) ? MUTATION_AVAILABLE : mutationUnavailable("not_authorized");
+}
+
 /**
  * Projects the exact mutations one viewer may currently request for one row.
  *

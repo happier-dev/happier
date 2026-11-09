@@ -1,7 +1,9 @@
 import { randomUUID } from "node:crypto";
+import tweetnacl from "tweetnacl";
 
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { API_TOKEN_FULL_GRANT_V1 } from "@happier-dev/protocol/auth/apiTokenGrant";
+import { encodeBase64 } from "@happier-dev/protocol/crypto/base64";
 
 import { acquireAccountSessionOwnerMetadataFenceInTx } from "@/app/encryption/accountSessionOwnerMetadataFence";
 import { setAccountStatusInTx } from "@/app/home/governance/accountLifecycle";
@@ -40,6 +42,41 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")(
         afterAll(async () => {
             if (connected) await db.$disconnect();
             vi.unstubAllEnvs();
+        });
+
+        it("keeps child inventory and exact update readback within the authenticated Account", async () => {
+            const account = await db.account.create({
+                data: { publicKey: encodeBase64(tweetnacl.sign.keyPair().publicKey), encryptionMode: "e2ee" },
+            });
+            const foreign = await db.account.create({
+                data: { publicKey: `${PUBLIC_KEY_PREFIX}${randomUUID()}`, encryptionMode: "plain" },
+            });
+            const keyChallengeEnabled = process.env.HAPPIER_FEATURE_AUTH_LOGIN__KEY_CHALLENGE_ENABLED;
+            vi.stubEnv("HAPPIER_FEATURE_AUTH_LOGIN__KEY_CHALLENGE_ENABLED", "1");
+            try {
+                const root = await auth.createApiToken({ accountId: account.id, tokenId: randomUUID(), label: "CI root" });
+                await auth.createApiToken({ accountId: foreign.id, tokenId: randomUUID(), label: "Foreign CI" });
+                const principal = await auth.verifyPat(root.token);
+                if (!principal.ok) throw new Error("Expected verified parent API token");
+                const child = await auth.createChildApiToken({ principal, tokenId: randomUUID(), label: "CI child",
+                    expiresAt: new Date(Date.now() + 3_600_000), grant: API_TOKEN_FULL_GRANT_V1 });
+
+                expect((await auth.listApiTokens(account.id)).map(token => token.tokenId)).toEqual([root.tokenId]);
+                expect((await auth.listApiTokens(account.id, { includeChildren: true })).map(token => token.tokenId).sort())
+                    .toEqual([root.tokenId, child.tokenId].sort());
+                const updated = await auth.updateApiToken({ accountId: account.id, tokenId: child.tokenId,
+                    authenticationEvidence: [{ kind: "home_method", methodId: "key_challenge" }] });
+                expect(updated.apiToken).toMatchObject({ tokenId: child.tokenId, parentTokenId: root.tokenId,
+                    grant: child.grant, hasUnattendedTeamAccess: true });
+                expect((await auth.listApiTokens(account.id, { includeChildren: true, tokenId: child.tokenId }))
+                    .map(token => token.tokenId)).toEqual([child.tokenId]);
+                expect(await auth.listApiTokens(foreign.id, { includeChildren: true, tokenId: child.tokenId })).toEqual([]);
+                expect((await auth.verifyPat(child.token)).ok).toBe(true);
+            } finally {
+                vi.stubEnv("HAPPIER_FEATURE_AUTH_LOGIN__KEY_CHALLENGE_ENABLED", keyChallengeEnabled);
+                // Generated real keys have no prefix; clean only this test's exact Accounts.
+                await db.account.deleteMany({ where: { id: { in: [account.id, foreign.id] } } });
+            }
         });
 
         it("commits a root token while another writer advances the Account before its fence", async () => {

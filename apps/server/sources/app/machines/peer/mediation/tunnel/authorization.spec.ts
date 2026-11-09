@@ -29,6 +29,27 @@ it("mints TCP admission without application lifetime or cumulative byte budgets"
     })).toMatchObject({ valid: true });
 });
 
+it('signs an exact preview occurrence and rejects a retargeted binding', () => {
+    const signing = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(19));
+    const preview = { previewId: 'preview-A', machineId: 'machine', owner: { kind: 'user' as const, id: 'account' },
+        target: { scheme: 'http' as const, host: '127.0.0.1', port: 3000 } };
+    const result = mintPeerTcpTunnelRelayAuthorizationV2({
+        accountId: 'account', targetMachineId: 'machine', relaySocketId: 'socket', destination: { host: preview.target.host, port: preview.target.port },
+        scope: { kind: 'tcp_tunnel', tunnelId: 'tunnel', allowedPorts: [3000], preview },
+        nowMs: 1000, ttlMs: 30000, serverGateEnabled: true, serverCaps: { allowedPorts: [3000], maxFrameBytes: 65536 },
+        signingKey: { keyId: 'test-key', secretKey: signing.secretKey },
+    });
+    if (!result.ok) throw new Error(result.reasonCode);
+    expect(result.relayAuthorization.payload.preview).toEqual(preview);
+    expect(verifyPeerTcpTunnelRelayAuthorizationV2({ authorization: result.relayAuthorization, nowMs: 2000,
+        trustRoots: [{ keyId: 'test-key', publicKeyBase64Url: Buffer.from(signing.publicKey).toString('base64url') }] })).toMatchObject({ valid: true });
+    for (const change of [
+        { preview: { ...preview, machineId: 'other-machine' } },
+        { preview: { ...preview, target: { ...preview.target, port: 3001 } } },
+        { preview: { ...preview, authorityIgnoredByOldReaders: true } },
+    ]) expect(PeerTcpTunnelRelayAuthorizationPayloadV2Schema.safeParse({ ...result.relayAuthorization.payload, ...change }).success).toBe(false);
+});
+
 it('admits an owner-verified product service on its bound port while arbitrary ports still need operator approval', () => {
     const signing = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(20));
     const port = 45097;

@@ -256,7 +256,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('S
         }
     });
 
-    it('retains the pin quota when disjoint Sessions are pinned concurrently at ReadCommitted', async () => {
+    it('admits disjoint pins beyond the former quota at ReadCommitted', async () => {
         const account = await db.account.create({ data: { publicKey: randomUUID(), encryptionMode: 'plain' } });
         const ids = Array.from({ length: SESSION_ORGANIZATION_MAX_PINNED_SESSIONS + 1 }, () => randomUUID());
         try {
@@ -264,8 +264,8 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('S
             await db.sessionPin.createMany({ data: ids.slice(0, -2).map(sessionId => ({ accountId: account.id, sessionId })) });
             const write = (sessionId: string) => setSessionPin({ accountId: account.id, sessionId, request: { pinned: true }, authentication });
             const results = await interleavePair({ delegate: 'sessionPin', method: 'count', operations: [() => write(ids.at(-2)!), () => write(ids.at(-1)!)] });
-            expect(results.filter(result => 'error' in result)).toEqual([{ error: 'session-pin-limit-exceeded' }]);
-            expect(await db.sessionPin.count({ where: { accountId: account.id } })).toBe(SESSION_ORGANIZATION_MAX_PINNED_SESSIONS);
+            expect(results.filter(result => 'error' in result)).toEqual([]);
+            expect(await db.sessionPin.count({ where: { accountId: account.id } })).toBe(ids.length);
         } finally {
             await db.sessionPin.deleteMany({ where: { accountId: account.id } });
             await db.session.deleteMany({ where: { accountId: account.id } });

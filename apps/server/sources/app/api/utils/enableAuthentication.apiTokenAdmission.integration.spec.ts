@@ -55,7 +55,7 @@ describe("enableAuthentication API-token admission (integration)", () => {
         const account = await db.account.create({
             // Current Account policy, rather than the token's minted floor,
             // decides terminal invocation authority.
-            data: { publicKey: "api-token-admission", terminalPresentUserPolicy: "allowed" },
+            data: { publicKey: "api-token-admission" },
             select: { id: true },
         });
         const [signedToken, terminalToken, pat] = await Promise.all([
@@ -108,8 +108,7 @@ describe("enableAuthentication API-token admission (integration)", () => {
                 authority: "account_automation",
             });
 
-            // The Account policy can raise terminal invocation authority, never PAT
-            // authority; a caller ceiling and a later policy change can only lower it.
+            // A terminal is person-class, never a PAT; a caller ceiling can only lower it.
             const loweredTerminalResponse = await app.inject({
                 method: "GET",
                 url: "/legacy",
@@ -117,15 +116,6 @@ describe("enableAuthentication API-token admission (integration)", () => {
             });
             expect(loweredTerminalResponse.statusCode).toBe(200);
             expect(loweredTerminalResponse.json()).toEqual({ tokenKind: "terminal", authority: "account_automation" });
-
-            await db.account.update({ where: { id: account.id }, data: { terminalPresentUserPolicy: "disallowed" } });
-            const disallowedTerminalResponse = await app.inject({
-                method: "GET",
-                url: "/legacy",
-                headers: { authorization: `Bearer ${terminalToken}` },
-            });
-            expect(disallowedTerminalResponse.statusCode).toBe(200);
-            expect(disallowedTerminalResponse.json()).toEqual({ tokenKind: "terminal", authority: "account_automation" });
         } finally {
             await app.close();
         }

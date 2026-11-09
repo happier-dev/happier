@@ -31,8 +31,8 @@ describe('server source validation', () => {
                 .toContain('/packages/sdk/src/index.public.ts');
             expect(plugin?.resolveId?.('@happier-dev/channels-protocol/v1'))
                 .toContain('/packages/channels-protocol/src/v1/index.ts');
-            expect(plugin?.resolveId?.('@happier-dev/plugin-sdk/host/fs/json-owner-file-lock'))
-                .toContain('/packages/plugin-sdk/src/host/fs/json-owner-file-lock/index.public.ts');
+            expect(plugin?.resolveId?.('@happier-dev/cli-common/fs/jsonOwnerFileLock'))
+                .toContain('/packages/cli-common/src/fs/jsonOwnerFileLock.ts');
         }
     });
 

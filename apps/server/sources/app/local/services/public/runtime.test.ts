@@ -50,7 +50,7 @@ describe("local service public exposure runtime", () => {
             let closedBeforeAudit = false;
             const runtime = createLocalServicePublicRuntime({
                 publicBaseUrl: 'https://home.example.test', hostOriginBaseDomain: 'preview.example.test',
-                policy: { enabled: true, allowedModes: ['authenticated'], maxTtlMs: ttlMs,
+                policy: { enabled: true, allowedModes: ['public'], maxTtlMs: ttlMs,
                     dnsTlsRequired: false, auditRequired: true, rateLimitProfileIds: ['default'] },
                 allowTestDevAuditSink: true, checkRateLimit: () => true,
                 recordAuditEvent(event) {
@@ -60,7 +60,7 @@ describe("local service public exposure runtime", () => {
                     }
                 },
             });
-            const created = runtime.createExposure({ preview, requestedMode: 'authenticated', requestedTtlMs: ttlMs,
+            const created = runtime.createExposure({ preview, requestedMode: 'public', requestedTtlMs: ttlMs,
                 actorId: 'owner', sessionAuthorized: true, dnsTlsValid: true, rateLimitProfileId: 'default' });
             if (!created.ok) throw new Error(created.reasonCode);
             const id = created.exposure.exposureId;
@@ -106,17 +106,17 @@ describe("local service public exposure runtime", () => {
         expect(runtime.getSnapshot({ machineId: native.machineId, previewId: native.previewId }).exposures).toEqual([created.exposure]);
         expect(runtime.getSnapshot({ ...request, serviceTarget: { ...serviceTarget, managedServiceId: 'another-instance' } }).exposures).toEqual([]);
     });
-    it('retires only the revoked sessionless exposure creator and viewer while retaining another current creator', () => {
+    it('retires only the sessionless exposures of the Account that lost the Machine', () => {
         const serviceTarget = { kind: 'managed_service' as const, machineId: preview.machineId, managedServiceId: 'actual-instance', cwd: '/workspace/app',
             declaration: { workspaceRefId: 'workspace_1', selection: { kind: 'manifest' as const, name: 'web' } } };
         const native = { ...preview, sessionId: undefined, owner: { kind: 'user' as const, id: 'starter' }, serviceTarget };
         let exposureIndex = 0;
         const runtime = createLocalServicePublicRuntime({ publicBaseUrl: 'https://home.example.test', hostOriginBaseDomain: 'preview.example.test',
-            tokenSecret: 'public-secret', policy: { enabled: true, allowedModes: ['secret_link', 'authenticated'], maxTtlMs: 60_000, maxConcurrentExposures: 2,
+            tokenSecret: 'public-secret', policy: { enabled: true, allowedModes: ['secret_link', 'public'], maxTtlMs: 60_000, maxConcurrentExposures: 2,
                 dnsTlsRequired: false, auditRequired: true, rateLimitProfileIds: ['default'] }, nowMs: () => 1_000,
             generateExposureId: () => `public_${++exposureIndex}`, allowTestDevAuditSink: true,
             recordAuditEvent: () => {}, checkRateLimit: () => true, resolvePreview: () => native });
-        const create = (actorId: string, requestedMode: 'secret_link' | 'authenticated') => {
+        const create = (actorId: string, requestedMode: 'secret_link' | 'public') => {
             const result = runtime.createExposure({ preview: native, requestedMode, requestedTtlMs: 60_000, actorId,
                 sessionAuthorized: true, dnsTlsValid: true, rateLimitProfileId: 'default' });
             expect(result).toMatchObject({ ok: true, exposure: { serviceTarget } });
@@ -124,28 +124,23 @@ describe("local service public exposure runtime", () => {
             return result.exposure;
         };
         const first = create('creator_1', 'secret_link');
-        const second = create('creator_2', 'authenticated');
+        const second = create('creator_2', 'public');
         const exchanged = runtime.exchangeAccessToken({ exposureId: first.exposureId,
             rawToken: new URL(first.publicUrl).searchParams.get('publicToken') });
         if (!exchanged.ok) throw new Error(exchanged.reasonCode);
         let firstClosed = false;
-        let viewerClosed = false;
         let retainedClosed = false;
         runtime.retainConnection(first.exposureId, () => { firstClosed = true; });
-        runtime.retainConnection(second.exposureId, () => { viewerClosed = true; }, 'creator_1');
-        runtime.retainConnection(second.exposureId, () => { retainedClosed = true; }, 'creator_2');
+        runtime.retainConnection(second.exposureId, () => { retainedClosed = true; });
         runtime.retireMachineAccess({ machineId: 'another-machine', accountId: 'creator_1' });
         expect(firstClosed).toBe(false);
         runtime.retireMachineAccess({ machineId: native.machineId, accountId: 'creator_1' });
         expect(firstClosed).toBe(true);
-        expect(viewerClosed).toBe(true);
         expect(retainedClosed).toBe(false);
         expect(runtime.resolveExposure(first.exposureId)?.state).toBe('revoked');
         expect(runtime.resolveExposure(second.exposureId)?.state).toBe('active');
-        expect(runtime.validateAccess({ exposureId: first.exposureId, rawToken: exchanged.rawToken, authenticated: false,
-            sessionAuthorized: false, clientKey: 'anonymous' })).toMatchObject({ ok: false, reasonCode: 'revoked' });
-        expect(runtime.validateAccess({ exposureId: second.exposureId, rawToken: null, authenticated: true,
-            sessionAuthorized: true, clientKey: 'creator_2' })).toEqual({ ok: true, preview: native });
+        expect(runtime.validateAccess({ exposureId: first.exposureId, rawToken: exchanged.rawToken, clientKey: 'anonymous' })).toMatchObject({ ok: false, reasonCode: 'revoked' });
+        expect(runtime.validateAccess({ exposureId: second.exposureId, rawToken: null, clientKey: 'creator_2' })).toEqual({ ok: true, preview: native });
     });
     it("creates a TTL-bound secret-link exposure with an audit event and access token", async () => {
         const mod = await loadPublicRuntimeModule();
@@ -211,72 +206,100 @@ describe("local service public exposure runtime", () => {
         expect(runtime.validateAccess({
             exposureId: "public_preview_1",
             rawToken: "secret_token_1",
-            authenticated: false,
-            sessionAuthorized: true,
             clientKey: "client_a",
         })).toEqual({ ok: true, preview });
     });
 
-    it("requires authenticated public access to be authorized for the exposure session", async () => {
-        const mod = await loadPublicRuntimeModule();
-        expect(mod?.createLocalServicePublicRuntime).toBeTypeOf("function");
-        if (!mod?.createLocalServicePublicRuntime) return;
-
-        let auditIndex = 0;
-        const runtime = mod.createLocalServicePublicRuntime({
+    function createPeopleRuntime(deps: Readonly<{ members?: readonly string[]; holds?: () => boolean }> = {}) {
+        let tokenIndex = 0;
+        return createLocalServicePublicRuntime({
             publicBaseUrl: "https://preview.happier.test",
             hostOriginBaseDomain: "preview.example.test",
             tokenSecret: "public-secret",
-            policy: {
-                enabled: true,
-                allowedModes: ["authenticated"],
-                maxTtlMs: 60_000,
-                dnsTlsRequired: false,
-                auditRequired: true,
-                rateLimitProfileIds: ["default"],
-            },
+            policy: { enabled: true, allowedModes: ["people"], maxTtlMs: 60_000, dnsTlsRequired: false,
+                auditRequired: true, rateLimitProfileIds: ["default"] },
             nowMs: () => 1_000,
             generateExposureId: () => "public_preview_1",
-            generateAuditEventId: () => {
-                auditIndex += 1;
-                return `audit_${auditIndex}`;
-            },
+            generateSecretToken: () => `token_${++tokenIndex}`,
             allowTestDevAuditSink: true,
             recordAuditEvent: () => undefined,
             checkRateLimit: () => true,
+            peopleAdmission: {
+                isInAudience: async ({ viewerAccountId }) => (deps.members ?? ["viewer_b"]).includes(viewerAccountId),
+                sharerHoldsService: async () => deps.holds?.() ?? true,
+            },
         });
+    }
 
-        expect(runtime.createExposure({
-            preview,
-            requestedMode: "authenticated",
-            requestedTtlMs: 60_000,
-            actorId: "user_1",
-            sessionAuthorized: true,
-            dnsTlsValid: true,
-            rateLimitProfileId: "default",
-        })).toEqual(expect.objectContaining({ ok: true }));
+    function createPeopleExposure(runtime: ReturnType<typeof createPeopleRuntime>, sharedPreview: LocalServicePreviewResourceV1 = preview) {
+        return runtime.createExposure({ preview: sharedPreview, requestedMode: "people", requestedTtlMs: 60_000, actorId: "sharer_a",
+            sessionAuthorized: true, dnsTlsValid: true, rateLimitProfileId: "default",
+            audience: [{ kind: "account", accountId: "viewer_b" }], landingBaseUrl: "https://app.happier.test" });
+    }
 
-        expect(runtime.validateAccess({
-            exposureId: "public_preview_1",
-            rawToken: null,
-            authenticated: false,
-            sessionAuthorized: false,
-            clientKey: "client_a",
-        })).toEqual({ ok: false, reasonCode: "authentication_required" });
-        expect(runtime.validateAccess({
-            exposureId: "public_preview_1",
-            rawToken: null,
-            authenticated: true,
-            sessionAuthorized: false,
-            clientKey: "client_a",
-        })).toEqual({ ok: false, reasonCode: "session_not_authorized" });
-        expect(runtime.validateAccess({
-            exposureId: "public_preview_1",
-            rawToken: null,
-            authenticated: true,
-            sessionAuthorized: true,
-            clientKey: "client_a",
-        })).toEqual({ ok: true, preview });
+    it("links a people share to the app landing and admits only the viewer cookie its one-use admission minted", async () => {
+        const runtime = createPeopleRuntime();
+        const created = createPeopleExposure(runtime);
+        if (!created.ok) throw new Error(created.reasonCode);
+        expect(created.exposure).toMatchObject({ mode: "people", audience: [{ kind: "account", accountId: "viewer_b" }],
+            publicUrl: "https://app.happier.test/preview-link/public_preview_1" });
+        expect(runtime.resolveExposureByHost("public-preview-1.preview.example.test")?.exposureId).toBe("public_preview_1");
+        expect(runtime.resolveExposureByHost("app.happier.test")).toBeNull();
+
+        // Without an admission there is no cookie the data plane accepts.
+        expect(runtime.validateAccess({ exposureId: "public_preview_1", rawToken: null, clientKey: "b" }))
+            .toEqual({ ok: false, reasonCode: "admission_required" });
+
+        const admitted = await runtime.admitViewer({ exposureId: "public_preview_1", viewerAccountId: "viewer_b" });
+        if (!admitted.ok) throw new Error(admitted.reasonCode);
+        const admissionUrl = new URL(admitted.admissionUrl);
+        expect(admissionUrl.origin).toBe("https://public-preview-1.preview.example.test");
+        const admissionToken = admissionUrl.searchParams.get("publicToken");
+        expect(runtime.validateAccess({ exposureId: "public_preview_1", rawToken: admissionToken, clientKey: "b" }))
+            .toEqual({ ok: false, reasonCode: "admission_required" });
+
+        const exchanged = runtime.exchangeAccessToken({ exposureId: "public_preview_1", rawToken: admissionToken });
+        if (!exchanged.ok) throw new Error(exchanged.reasonCode);
+        expect(exchanged.rawToken).not.toBe(admissionToken);
+        expect(runtime.exchangeAccessToken({ exposureId: "public_preview_1", rawToken: admissionToken }))
+            .toEqual({ ok: false, reasonCode: "public_token_mismatch" });
+        expect(runtime.validateAccess({ exposureId: "public_preview_1", rawToken: exchanged.rawToken, clientKey: "b" }))
+            .toEqual({ ok: true, preview });
+
+        expect(runtime.revokeExposure("public_preview_1", { actorId: "sharer_a" })).toEqual({ ok: true });
+        expect(runtime.validateAccess({ exposureId: "public_preview_1", rawToken: exchanged.rawToken, clientKey: "b" }))
+            .toEqual({ ok: false, reasonCode: "revoked" });
+        expect(await runtime.admitViewer({ exposureId: "public_preview_1", viewerAccountId: "viewer_b" }))
+            .toEqual({ ok: false, reasonCode: "revoked" });
+    });
+
+    it("admits a Session preview on its current registration, re-proving the sharer's Machine only for a Service", async () => {
+        // A Session-bound preview has no managed Service to re-prove; its current registration is the fact.
+        const runtime = createPeopleRuntime({ holds: () => false });
+        expect(createPeopleExposure(runtime).ok).toBe(true);
+        expect(preview.serviceTarget).toBeUndefined();
+        const admitted = await runtime.admitViewer({ exposureId: "public_preview_1", viewerAccountId: "viewer_b" });
+        expect(admitted.ok).toBe(true);
+    });
+
+    it("refuses people admission outside the audience, without the sharer's Service, and for other modes", async () => {
+        let holds = true;
+        const runtime = createPeopleRuntime({ holds: () => holds });
+        const serviceTarget = { kind: 'managed_service' as const, machineId: preview.machineId, managedServiceId: 'svc', cwd: '/workspace/app',
+            declaration: { workspaceRefId: 'workspace_1', selection: { kind: 'manifest' as const, name: 'web' } } };
+        expect(createPeopleExposure(runtime, { ...preview, sessionId: undefined, owner: { kind: 'user', id: 'sharer_a' }, serviceTarget }).ok).toBe(true);
+        expect(await runtime.admitViewer({ exposureId: "public_preview_1", viewerAccountId: "outsider_c" }))
+            .toEqual({ ok: false, reasonCode: "not_in_audience" });
+        holds = false;
+        expect(await runtime.admitViewer({ exposureId: "public_preview_1", viewerAccountId: "viewer_b" }))
+            .toEqual({ ok: false, reasonCode: "service_unavailable" });
+        expect(await runtime.admitViewer({ exposureId: "missing", viewerAccountId: "viewer_b" }))
+            .toEqual({ ok: false, reasonCode: "exposure_not_found" });
+
+        const linkRuntime = createPublicModeRuntime(await loadPublicRuntimeModule());
+        expect(createPublicModeExposure(linkRuntime).ok).toBe(true);
+        expect(await linkRuntime.admitViewer({ exposureId: "public_preview_1", viewerAccountId: "viewer_b" }))
+            .toEqual({ ok: false, reasonCode: "not_people_share" });
     });
 
     it("returns a scoped public preview snapshot without leaking public tokens", async () => {
@@ -546,8 +569,6 @@ describe("local service public exposure runtime", () => {
         expect(runtime.validateAccess({
             exposureId: "public_preview_1",
             rawToken: "secret_token_1",
-            authenticated: false,
-            sessionAuthorized: true,
             clientKey: "client_a",
         })).toEqual({ ok: false, reasonCode: "audit_sink_unavailable" });
         expect(runtime.resolveExposure("public_preview_1")).toEqual(expect.objectContaining({
@@ -657,8 +678,6 @@ describe("local service public exposure runtime", () => {
         expect(runtime.validateAccess({
             exposureId: "public_preview_1",
             rawToken: "secret_token_1",
-            authenticated: false,
-            sessionAuthorized: true,
             clientKey: "client_a",
         })).toEqual({ ok: false, reasonCode: "rate_limit_checker_unavailable" });
     });
@@ -712,8 +731,6 @@ describe("local service public exposure runtime", () => {
         expect(runtime.validateAccess({
             exposureId: "public_preview_1",
             rawToken: "wrong_token",
-            authenticated: false,
-            sessionAuthorized: true,
             clientKey: "client_a",
         })).toEqual({ ok: false, reasonCode: "public_token_mismatch" });
         expect(rateLimitChecks).toBe(0);
@@ -724,8 +741,6 @@ describe("local service public exposure runtime", () => {
         expect(runtime.validateAccess({
             exposureId: "public_preview_1",
             rawToken: "secret_token_1",
-            authenticated: false,
-            sessionAuthorized: true,
             clientKey: "client_a",
         })).toEqual({ ok: false, reasonCode: "rate_limited" });
         expect(rateLimitChecks).toBe(1);
@@ -807,8 +822,6 @@ describe("local service public exposure runtime", () => {
         expect(runtime.validateAccess({
             exposureId: "public_preview_1",
             rawToken: "secret_token_1",
-            authenticated: false,
-            sessionAuthorized: true,
             clientKey: "client_a",
         })).toEqual({ ok: true, preview });
         expect(rateLimitChecks).toBe(1);
@@ -816,8 +829,6 @@ describe("local service public exposure runtime", () => {
         expect(runtime.validateAccess({
             exposureId: "public_preview_1",
             rawToken: "secret_token_1",
-            authenticated: false,
-            sessionAuthorized: true,
             clientKey: "client_b",
         })).toEqual({ ok: true, preview });
         expect(rateLimitChecks).toBe(2);
@@ -872,8 +883,6 @@ describe("local service public exposure runtime", () => {
         expect(runtime.validateAccess({
             exposureId: "public_preview_1",
             rawToken: "secret_token_1",
-            authenticated: false,
-            sessionAuthorized: true,
             clientKey: "client_a",
         })).toEqual({ ok: true, preview });
     });
@@ -974,8 +983,6 @@ describe("local service public exposure runtime", () => {
         expect(runtime.validateAccess({
             exposureId: "public_preview_1",
             rawToken: "secret_token_1",
-            authenticated: false,
-            sessionAuthorized: true,
             clientKey: "client_a",
         })).toEqual({ ok: false, reasonCode: "revoked" });
         expect(auditEvents).toEqual([
@@ -1038,15 +1045,11 @@ describe("local service public exposure runtime", () => {
         expect(runtime.validateAccess({
             exposureId: "public_preview_1",
             rawToken: "secret_token_1",
-            authenticated: false,
-            sessionAuthorized: true,
             clientKey: "client_a",
         })).toEqual({ ok: true, preview });
         expect(runtime.validateAccess({
             exposureId: "public_preview_1",
             rawToken: "wrong_token",
-            authenticated: false,
-            sessionAuthorized: true,
             clientKey: "client_a",
         })).toEqual({ ok: false, reasonCode: "public_token_mismatch" });
 
@@ -1113,8 +1116,6 @@ describe("local service public exposure runtime", () => {
         expect(runtime.validateAccess({
             exposureId: "public_preview_1",
             rawToken: "secret_token_1",
-            authenticated: false,
-            sessionAuthorized: true,
             clientKey: "client_a",
         })).toEqual({ ok: false, reasonCode: "preview_not_found" });
 
@@ -1125,8 +1126,6 @@ describe("local service public exposure runtime", () => {
         expect(runtime.validateAccess({
             exposureId: "public_preview_1",
             rawToken: "secret_token_1",
-            authenticated: false,
-            sessionAuthorized: true,
             clientKey: "client_a",
         })).toEqual({ ok: false, reasonCode: "preview_mismatch" });
 
@@ -1187,15 +1186,11 @@ describe("local service public exposure runtime", () => {
         expect(runtime.validateAccess({
             exposureId: "public_preview_1",
             rawToken: "secret_token_1",
-            authenticated: false,
-            sessionAuthorized: true,
             clientKey: "client_a",
         })).toEqual({ ok: false, reasonCode: "expired" });
         expect(runtime.validateAccess({
             exposureId: "public_preview_1",
             rawToken: "secret_token_1",
-            authenticated: false,
-            sessionAuthorized: true,
             clientKey: "client_a",
         })).toEqual({ ok: false, reasonCode: "expired" });
 
@@ -1267,22 +1262,16 @@ describe("local service public exposure runtime", () => {
         expect(runtime.validateAccess({
             exposureId: "public_preview_1",
             rawToken: "secret_token_1",
-            authenticated: false,
-            sessionAuthorized: true,
             clientKey: "client_a",
         })).toEqual({ ok: true, preview });
         expect(runtime.validateAccess({
             exposureId: "public_preview_1",
             rawToken: "secret_token_1",
-            authenticated: false,
-            sessionAuthorized: true,
             clientKey: "client_a",
         })).toEqual({ ok: false, reasonCode: "rate_limited" });
         expect(runtime.validateAccess({
             exposureId: "public_preview_1",
             rawToken: "secret_token_1",
-            authenticated: false,
-            sessionAuthorized: true,
             clientKey: "client_a",
         })).toEqual({ ok: false, reasonCode: "rate_limited" });
 
@@ -1299,8 +1288,6 @@ describe("local service public exposure runtime", () => {
         expect(runtime.validateAccess({
             exposureId: "public_preview_1",
             rawToken: "secret_token_1",
-            authenticated: false,
-            sessionAuthorized: true,
             clientKey: "client_a",
         })).toEqual({ ok: true, preview });
     });
@@ -1353,8 +1340,6 @@ describe("local service public exposure runtime", () => {
             expect(runtime.validateAccess({
                 exposureId: "public_preview_1",
                 rawToken: "secret_token_1",
-                authenticated: false,
-                sessionAuthorized: true,
                 clientKey: "client_a",
             }).ok).toBe(true);
         }
@@ -1365,7 +1350,7 @@ describe("local service public exposure runtime", () => {
         }));
     });
 
-    function createAuthenticatedModeRuntime(
+    function createPublicModeRuntime(
         mod: Awaited<ReturnType<typeof loadPublicRuntimeModule>>,
         overrides: Partial<Parameters<typeof mod.createLocalServicePublicRuntime>[0]> = {},
     ) {
@@ -1375,7 +1360,7 @@ describe("local service public exposure runtime", () => {
             tokenSecret: "public-secret",
             policy: {
                 enabled: true,
-                allowedModes: ["authenticated"],
+                allowedModes: ["public"],
                 maxTtlMs: 60_000,
                 dnsTlsRequired: false,
                 auditRequired: true,
@@ -1391,10 +1376,10 @@ describe("local service public exposure runtime", () => {
         });
     }
 
-    function createAuthenticatedExposure(runtime: ReturnType<typeof createAuthenticatedModeRuntime>) {
+    function createPublicModeExposure(runtime: ReturnType<typeof createPublicModeRuntime>) {
         return runtime.createExposure({
             preview,
-            requestedMode: "authenticated",
+            requestedMode: "public",
             requestedTtlMs: 60_000,
             actorId: "user_1",
             sessionAuthorized: true,
@@ -1407,7 +1392,7 @@ describe("local service public exposure runtime", () => {
     it("mints a public exposure on its own isolated origin and refuses without one", async () => {
         const mod = await loadPublicRuntimeModule();
 
-        const isolated = createAuthenticatedExposure(createAuthenticatedModeRuntime(mod));
+        const isolated = createPublicModeExposure(createPublicModeRuntime(mod));
         expect(isolated.ok).toBe(true);
         if (!isolated.ok) return;
         const exposureOrigin = new URL(isolated.exposure.publicUrl).origin;
@@ -1419,7 +1404,7 @@ describe("local service public exposure runtime", () => {
             { hostOriginBaseDomain: "not a domain" },
             { publicBaseUrl: "http://preview.happier.test" },
         ]) {
-            expect(createAuthenticatedExposure(createAuthenticatedModeRuntime(mod, overrides))).toEqual({
+            expect(createPublicModeExposure(createPublicModeRuntime(mod, overrides))).toEqual({
                 ok: false,
                 reasonCode: "public_origin_unavailable",
             });
@@ -1429,10 +1414,10 @@ describe("local service public exposure runtime", () => {
     // S-5
     it("requires a rate-limit checker to mint an exposure even without configured profiles", async () => {
         const mod = await loadPublicRuntimeModule();
-        const runtime = createAuthenticatedModeRuntime(mod, {
+        const runtime = createPublicModeRuntime(mod, {
             policy: {
                 enabled: true,
-                allowedModes: ["authenticated"],
+                allowedModes: ["public"],
                 maxTtlMs: 60_000,
                 dnsTlsRequired: false,
                 auditRequired: true,
@@ -1443,7 +1428,7 @@ describe("local service public exposure runtime", () => {
             checkRateLimit: undefined,
         });
 
-        expect(createAuthenticatedExposure(runtime)).toEqual({
+        expect(createPublicModeExposure(runtime)).toEqual({
             ok: false,
             reasonCode: "rate_limit_checker_unavailable",
         });
@@ -1453,23 +1438,19 @@ describe("local service public exposure runtime", () => {
     // S-5
     it("buckets the rate limiter per client so one visitor cannot exhaust the window", async () => {
         const mod = await loadPublicRuntimeModule();
-        const runtime = createAuthenticatedModeRuntime(mod, {
+        const runtime = createPublicModeRuntime(mod, {
             checkRateLimit: createLocalServicePublicRateLimitChecker({ kind: "fixed_window", maxRequests: 1, windowMs: 60_000 }),
         });
-        expect(createAuthenticatedExposure(runtime).ok).toBe(true);
+        expect(createPublicModeExposure(runtime).ok).toBe(true);
 
         expect(runtime.validateAccess({
             exposureId: "public_preview_1",
             rawToken: null,
-            authenticated: true,
-            sessionAuthorized: true,
             clientKey: "noisy_client",
         })).toEqual({ ok: true, preview });
         expect(runtime.validateAccess({
             exposureId: "public_preview_1",
             rawToken: null,
-            authenticated: true,
-            sessionAuthorized: true,
             clientKey: "noisy_client",
         })).toEqual({ ok: false, reasonCode: "rate_limited" });
 
@@ -1477,8 +1458,6 @@ describe("local service public exposure runtime", () => {
         expect(runtime.validateAccess({
             exposureId: "public_preview_1",
             rawToken: null,
-            authenticated: true,
-            sessionAuthorized: true,
             clientKey: "quiet_client",
         })).toEqual({ ok: true, preview });
     });

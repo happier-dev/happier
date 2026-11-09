@@ -5,12 +5,13 @@ import { DEFAULT_PUBLIC_PROFILE_APPEARANCE_V1, PublicProfilePublishBodyV1Schema 
 import { bindHomeDomainActionHttpRequestV1 } from '@happier-dev/protocol/actions/homeDomainActionFamily';
 import { HomeAdministrationEventV1Schema, HomePublicProfileHandleReclaimResultV1Schema } from '@happier-dev/protocol/home/governance';
 import { db } from '@/storage/db';
+import { Context } from '@/context';
 import { inTx } from '@/storage/inTx';
 import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lightSqliteHarness';
 import { withAuthenticatedTestApp } from '@/app/api/testkit/sqliteFastify';
 import { registerAccountPublicProfileRoutes } from '@/app/api/routes/account/registerAccountPublicProfileRoutes';
 import { feedRoutes } from '@/app/api/routes/feed/feedRoutes';
-import { changeUsernameInTx } from '@/app/social/usernameUpdate';
+import { changeUsernameInTx, usernameUpdate } from '@/app/social/usernameUpdate';
 import { listHomeAdministrationEventsInTx } from '@/app/home/audit/homeAdministrationEvents';
 import { publishPublicProfile } from './publicProfilePublish';
 import { publicProfileServerDependencies } from './publicProfileDependencies';
@@ -39,7 +40,7 @@ describe('Home public-profile handle reclaim', () => {
     });
 
     it('reclaims only the reviewed handle through Home authority, retaining restriction and delivering one owner notice', async () => {
-        const account = await db.account.create({ data: { publicKey: 'public-profile-reclaim', username: 'reviewed_handle' } });
+        const account = await db.account.create({ data: { publicKey: 'public-profile-reclaim', username: 'Reviewed_Handle' } });
         const owner = await db.account.create({ data: { publicKey: 'public-profile-reclaim-owner', homeRole: 'owner', username: 'operator_handle' } });
         const admin = await db.account.create({ data: { publicKey: 'public-profile-reclaim-admin', homeRole: 'admin' } });
         await publishPublicProfile(account.id, body(), publicationEnv, publicProfileServerDependencies);
@@ -49,7 +50,7 @@ describe('Home public-profile handle reclaim', () => {
         } });
 
         await withAuthenticatedTestApp(app => { registerAccountPublicProfileRoutes(app); feedRoutes(app); }, async app => {
-            const reclaim = (actor: string, targetAccountId = account.id, username = 'reviewed_handle') => {
+            const reclaim = (actor: string, targetAccountId = account.id, username = 'Reviewed_Handle') => {
                 const request = bindHomeDomainActionHttpRequestV1('home.public_profiles.handle_reclaim', { accountId: targetAccountId,
                     username, reason: 'Abusive identity', notice: 'Your username was reclaimed. Contact this Home operator to appeal.' });
                 return app.inject({ method: request.method, url: request.path, headers: { 'x-test-user-id': actor }, payload: request.body });
@@ -58,13 +59,27 @@ describe('Home public-profile handle reclaim', () => {
             expect((await reclaim(admin.id, owner.id, 'operator_handle')).statusCode).toBe(403);
             expect(await db.userFeedItem.count({ where: { userId: account.id } })).toBe(0);
 
-            const stale = await reclaim(admin.id, account.id, 'previous_handle');
+            const wrongSpelling = await reclaim(admin.id, account.id, 'reviewed_handle');
+            expect(wrongSpelling.statusCode).toBe(409);
+            expect(wrongSpelling.json()).toEqual({ error: 'username-changed' });
+            expect((await db.account.findUniqueOrThrow({ where: { id: account.id } })).username).toBe('Reviewed_Handle');
+            await usernameUpdate(Context.create(account.id), 'reviewed_new');
+            const stale = await reclaim(admin.id);
             expect(stale.statusCode).toBe(409);
-            expect((await db.account.findUniqueOrThrow({ where: { id: account.id } })).username).toBe('reviewed_handle');
-            const result = await reclaim(admin.id);
+            expect(stale.json()).toEqual({ error: 'username-changed' });
+            expect((await db.account.findUniqueOrThrow({ where: { id: account.id } })).username).toBe('reviewed_new');
+            expect(await db.userFeedItem.count({ where: { userId: account.id } })).toBe(0);
+            expect(await db.homeAdministrationEvent.count({ where: { targetId: account.id } })).toBe(0);
+            const result = await reclaim(admin.id, account.id, 'reviewed_new');
             expect(result.statusCode).toBe(200);
             expect(HomePublicProfileHandleReclaimResultV1Schema.parse(result.json())).toEqual({ username: null, reclaimed: true });
-            expect((await reclaim(admin.id)).json()).toEqual({ username: null, reclaimed: false });
+            expect((await reclaim(admin.id, account.id, 'reviewed_new')).json()).toEqual({ username: null, reclaimed: false });
+            const readback = await app.inject({ method: 'GET', url: '/v1/account/public-profile', headers: { 'x-test-user-id': account.id } });
+            expect(readback.statusCode).toBe(200);
+            expect(readback.json()).toMatchObject({ kind: 'ready', context: { handle: null }, record: {
+                state: 'draft', snapshot: null, policy: null, query: null, layout: null, appearance: null,
+                restriction: { reason: 'Independent content restriction' },
+            } });
             const notice = await app.inject({ method: 'GET', url: '/v1/feed', headers: { 'x-test-user-id': account.id } });
             expect(notice.statusCode).toBe(200);
             expect(notice.json().items).toEqual([expect.objectContaining({ repeatKey: 'public_profile_handle_reclaim',
@@ -75,7 +90,7 @@ describe('Home public-profile handle reclaim', () => {
         const retained = await db.accountPublicProfile.findUniqueOrThrow({ where: { accountId: account.id } });
         expect(retained).toMatchObject({ state: 'draft', removedAt, removedByAccountId: owner.id,
             removalReason: 'Independent content restriction', policyJson: null, snapshotJson: null, layoutJson: null, appearanceJson: null });
-        expect(await db.releasedUsername.findUnique({ where: { username: 'reviewed_handle' } })).toBeNull();
+        expect(await db.releasedUsername.findUnique({ where: { username: 'reviewed_new' } })).toBeNull();
         expect((await db.userFeedItem.findMany({ where: { userId: account.id } })).map(item => item.body)).toEqual([
             { kind: 'text', text: 'Your username was reclaimed. Contact this Home operator to appeal.' },
         ]);
@@ -85,9 +100,9 @@ describe('Home public-profile handle reclaim', () => {
         expect(audit.result.items).toHaveLength(1);
         expect(HomeAdministrationEventV1Schema.parse(audit.result.items[0])).toMatchObject({
             action: 'public_profile.handle_reclaimed', actor: { accountId: admin.id }, target: { id: account.id },
-            summary: { username: 'reviewed_handle', reason: 'Abusive identity', notice: 'Your username was reclaimed. Contact this Home operator to appeal.' },
+            summary: { username: 'reviewed_new', reason: 'Abusive identity', notice: 'Your username was reclaimed. Contact this Home operator to appeal.' },
         });
-        await inTx(tx => changeUsernameInTx(tx, account.id, { kind: 'identity_fill', suggestion: 'reviewed_handle' }), { isolationLevel: 'Serializable' });
+        await inTx(tx => changeUsernameInTx(tx, account.id, { kind: 'identity_fill', suggestion: 'reviewed_new' }), { isolationLevel: 'Serializable' });
         expect((await db.account.findUniqueOrThrow({ where: { id: account.id } })).username).toBeNull();
     });
 });

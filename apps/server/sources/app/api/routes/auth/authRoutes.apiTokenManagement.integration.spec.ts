@@ -10,6 +10,7 @@ import {
     ApiTokenGrantV1Schema,
     StoredApiTokenGrantV1Schema,
     AccountApiTokensCreateActionOutputV1Schema,
+    AccountApiTokensListActionOutputV1Schema,
     AccountApiTokenSelfV1Schema,
     SessionMessagesPageV1Schema,
     evaluateApiTokenGrantV1,
@@ -22,6 +23,7 @@ import {
     ACCOUNT_API_TOKENS_LIST_HTTP_PATH_V1,
     ACCOUNT_API_TOKENS_REVOKE_ALL_HTTP_PATH_V1,
     ACCOUNT_API_TOKENS_REVOKE_HTTP_PATH_V1,
+    ACCOUNT_API_TOKENS_UPDATE_HTTP_PATH_V1,
 } from "@happier-dev/protocol";
 
 import { auth } from "@/app/auth/auth";
@@ -32,6 +34,7 @@ import { db } from "@/storage/db";
 import { inTx } from "@/storage/inTx";
 import { acquireAccountSessionOwnerMetadataFenceInTx } from "@/app/encryption/accountSessionOwnerMetadataFence";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
+import { observeSqliteRequests } from "@/testkit/observeSqliteRequests";
 
 import { registerAccountApiTokenManagementRoutes } from "./registerAccountApiTokenManagementRoutes";
 import { registerSessionCreateOrLoadRoute } from "../session/registerSessionCreateOrLoadRoute";
@@ -349,6 +352,147 @@ describe("authRoutes (API-token management) (integration)", () => {
         } finally { await app.close(); }
     });
 
+    it("lists exact child-token summaries only on request and never crosses the authenticated Account", async () => {
+        const account = await db.account.create({ data: { publicKey: randomUUID() } });
+        const foreignAccount = await db.account.create({ data: { publicKey: randomUUID() } });
+        const signed = await auth.createToken(account.id, undefined, { kind: 'account', authority: 'present_user' });
+        const root = await auth.createApiToken({ accountId: account.id, tokenId: randomUUID(), label: 'CI root' });
+        await auth.createApiToken({ accountId: foreignAccount.id, tokenId: randomUUID(), label: 'Foreign CI' });
+        const verified = await auth.verifyToken(root.token);
+        if (!verified?.apiTokenPrincipal) throw new Error('Expected verified root API-token principal');
+        const child = await auth.createChildApiToken({ principal: verified.apiTokenPrincipal,
+            tokenId: randomUUID(), label: 'CI child', expiresAt: new Date(Date.now() + 3_600_000),
+            grant: API_TOKEN_FULL_GRANT_V1 });
+        const app = createTestApp();
+        await app.ready();
+        try {
+            const defaults = await app.inject({ method: 'POST', url: ACCOUNT_API_TOKENS_LIST_HTTP_PATH_V1,
+                headers: bearer(signed), payload: {} });
+            expect(defaults.statusCode).toBe(200);
+            expect(AccountApiTokensListActionOutputV1Schema.parse(defaults.json()).tokens.map(row => row.tokenId)).toEqual([root.tokenId]);
+            const all = await app.inject({ method: 'POST', url: ACCOUNT_API_TOKENS_LIST_HTTP_PATH_V1,
+                headers: bearer(signed), payload: { includeChildren: true } });
+            expect(all.statusCode, all.body).toBe(200);
+            const listed = AccountApiTokensListActionOutputV1Schema.parse(all.json());
+            expect(listed.tokens).toEqual(expect.arrayContaining([
+                expect.objectContaining({ tokenId: root.tokenId, parentTokenId: null, activeChildCount: 1 }),
+                expect.objectContaining({ tokenId: child.tokenId, parentTokenId: root.tokenId,
+                    grant: child.grant, activeChildCount: 0 }),
+            ]));
+            expect(listed.tokens).toHaveLength(2);
+            const foreign = await app.inject({ method: 'POST', url: ACCOUNT_API_TOKENS_LIST_HTTP_PATH_V1,
+                headers: bearer(signed), payload: { includeChildren: true, accountId: foreignAccount.id } });
+            expect(foreign.statusCode).toBe(400);
+        } finally { await app.close(); }
+    });
+
+    it("renews a child's own evidence without permitting child configuration, self approval or foreign Account updates", async () => {
+        const account = await db.account.create({ data: { publicKey: randomUUID() } });
+        const foreignAccount = await db.account.create({ data: { publicKey: randomUUID() } });
+        const evidence = [{ kind: 'home_method' as const, methodId: 'key_challenge' as const }];
+        const signed = await auth.createToken(account.id, undefined, { kind: 'account', authority: 'present_user', authenticationEvidence: evidence });
+        const foreignSigned = await auth.createToken(foreignAccount.id, undefined,
+            { kind: 'account', authority: 'present_user', authenticationEvidence: evidence });
+        const root = await auth.createApiToken({ accountId: account.id, tokenId: randomUUID(), label: 'CI root' });
+        const principal = (await auth.verifyToken(root.token))?.apiTokenPrincipal;
+        if (!principal) throw new Error('Expected verified root API-token principal');
+        const child = await auth.createChildApiToken({ principal, tokenId: randomUUID(), label: 'CI child',
+            expiresAt: new Date(Date.now() + 3_600_000), grant: API_TOKEN_FULL_GRANT_V1 });
+        const app = createTestApp();
+        await app.ready();
+        try {
+            const input = { tokenId: child.tokenId, authorizeUnattendedTeamAccess: true };
+            for (const patch of [{ label: 'Changed' }, { grant: API_TOKEN_FULL_GRANT_V1 }, { embedConfig: null }, { deployment: null }]) {
+                const mixed = await app.inject({ method: 'POST', url: ACCOUNT_API_TOKENS_UPDATE_HTTP_PATH_V1,
+                    headers: bearer(signed), payload: { ...input, ...patch } });
+                expect(mixed.statusCode).toBe(401);
+            }
+            const orphanConsent = await app.inject({ method: 'POST', url: ACCOUNT_API_TOKENS_UPDATE_HTTP_PATH_V1,
+                headers: bearer(signed), payload: { ...input, deploymentConsent: null } });
+            expect(orphanConsent.statusCode).toBe(403);
+            for (const rejected of [foreignSigned, child.token]) {
+                const response = await app.inject({ method: 'POST', url: ACCOUNT_API_TOKENS_UPDATE_HTTP_PATH_V1,
+                    headers: bearer(rejected), payload: input });
+                expect(response.statusCode).toBe(rejected === foreignSigned ? 401 : 403);
+            }
+            const renewed = await app.inject({ method: 'POST', url: ACCOUNT_API_TOKENS_UPDATE_HTTP_PATH_V1,
+                headers: bearer(signed), payload: input });
+            expect(renewed.statusCode, renewed.body).toBe(200);
+            expect(renewed.json().apiToken).toMatchObject({ tokenId: child.tokenId, parentTokenId: root.tokenId,
+                hasUnattendedTeamAccess: true, grant: child.grant, label: child.label });
+            expect((await auth.verifyToken(child.token))?.authenticationEvidence).toEqual(evidence);
+            expect((await auth.verifyToken(root.token))?.authenticationEvidence ?? []).toEqual([]);
+        } finally { await app.close(); }
+    });
+
+    it("reapproves an existing token from current person evidence and preserves its bearer and grant", async () => {
+        const account = await db.account.create({ data: { publicKey: randomUUID() } });
+        const signed = await auth.createToken(account.id, undefined, { kind: "account", authority: "present_user",
+            authenticationEvidence: [{ kind: 'home_method', methodId: 'key_challenge' }] });
+        const withoutEvidence = await auth.createToken(account.id, undefined, { kind: "account", authority: "present_user" });
+        const token = await auth.createApiToken({ accountId: account.id, tokenId: randomUUID(), label: "Deploy from CI" });
+        const principal = (await auth.verifyToken(token.token))?.apiTokenPrincipal;
+        if (!principal) throw new Error('Expected verified root API-token principal');
+        const child = await auth.createChildApiToken({ principal, tokenId: randomUUID(), label: 'Independent CI child',
+            expiresAt: new Date(Date.now() + 3_600_000), grant: API_TOKEN_FULL_GRANT_V1 });
+        await auth.createApiToken({ accountId: account.id, tokenId: randomUUID(), label: 'Unrelated token' });
+        const tokenCount = await db.accountApiToken.count({ where: { accountId: account.id } });
+        const app = createTestApp();
+        const disconnected: string[][] = [];
+        app.disconnectApiTokenSockets = tokenIds => { disconnected.push([...tokenIds]); };
+        await app.ready();
+        try {
+            let inventoryReads = 0;
+            const stopObserving = observeSqliteRequests({ before: query => {
+                if (query.model !== 'AccountApiToken' || query.action !== 'findMany') return;
+                const args = query.args;
+                const where = args && typeof args === 'object' && 'where' in args ? args.where : null;
+                if (!where || typeof where !== 'object' || !('id' in where) || where.id !== token.tokenId) inventoryReads++;
+            } });
+            try {
+                const edited = await app.inject({ method: 'POST', url: ACCOUNT_API_TOKENS_UPDATE_HTTP_PATH_V1,
+                    headers: bearer(signed), payload: { tokenId: token.tokenId, label: token.label } });
+                expect(edited.statusCode, edited.body).toBe(200);
+                expect(edited.json().apiToken.tokenId).toBe(token.tokenId);
+            } finally { stopObserving(); }
+            expect(inventoryReads).toBe(0);
+            const payload = { tokenId: token.tokenId, authorizeUnattendedTeamAccess: true };
+            const denied = await app.inject({ method: "POST", url: ACCOUNT_API_TOKENS_UPDATE_HTTP_PATH_V1,
+                headers: bearer(withoutEvidence), payload });
+            expect(denied.statusCode).toBe(409);
+            expect(denied.json()).toEqual({ error: "credential_authentication_evidence_unavailable" });
+            expect((await auth.verifyToken(token.token))?.authenticationEvidence ?? []).toEqual([]);
+            expect(disconnected).toEqual([]);
+            const updated = await app.inject({ method: "POST", url: ACCOUNT_API_TOKENS_UPDATE_HTTP_PATH_V1,
+                headers: bearer(signed), payload });
+            expect(updated.statusCode, updated.body).toBe(200);
+            expect(updated.json().apiToken).toMatchObject({ tokenId: token.tokenId,
+                grant: token.grant, hasUnattendedTeamAccess: true });
+            expect(updated.json()).not.toHaveProperty('token');
+            expect(await db.accountApiToken.count({ where: { accountId: account.id } })).toBe(tokenCount);
+            expect(disconnected).toEqual([[token.tokenId]]);
+            expect((await auth.verifyToken(token.token))?.authenticationEvidence).toEqual([
+                { kind: 'home_method', methodId: 'key_challenge' },
+            ]);
+            expect((await auth.verifyToken(child.token))?.authenticationEvidence ?? []).toEqual([]);
+            const repeated = await app.inject({ method: "POST", url: ACCOUNT_API_TOKENS_UPDATE_HTTP_PATH_V1,
+                headers: bearer(signed), payload });
+            expect(repeated.statusCode).toBe(200);
+            expect(disconnected).toEqual([[token.tokenId]]);
+            const delegated = await app.inject({ method: "POST", url: ACCOUNT_API_TOKENS_UPDATE_HTTP_PATH_V1,
+                headers: bearer(token.token), payload });
+            expect(delegated.statusCode).toBe(403);
+            const stored = await db.accountApiToken.findUniqueOrThrow({ where: { id: token.tokenId } });
+            await db.account.update({ where: { id: account.id }, data: { publicKey: null } });
+            const stale = await app.inject({ method: "POST", url: ACCOUNT_API_TOKENS_UPDATE_HTTP_PATH_V1,
+                headers: bearer(signed), payload });
+            expect(stale.statusCode).toBe(409);
+            expect(stale.json()).toEqual({ error: "credential_authentication_evidence_unavailable" });
+            expect(await db.accountApiToken.findUniqueOrThrow({ where: { id: token.tokenId } })).toEqual(stored);
+            expect(disconnected).toEqual([[token.tokenId]]);
+        } finally { await app.close(); }
+    });
+
     it("rejects explicit unattended delegation when the initiating credential has no evidence", async () => {
         const account = await db.account.create({ data: { publicKey: `pat-no-evidence-${Date.now()}` } });
         const signed = await auth.createToken(account.id, undefined, { kind: "account", authority: "present_user" });
@@ -406,6 +550,12 @@ describe("authRoutes (API-token management) (integration)", () => {
             expect(body.apiToken.tokenId).toBe(tokenId);
             expect(body.apiToken.hasEncryptionAccess).toBe(true);
             expect(body.apiToken.hasUnattendedTeamAccess).toBe(true);
+            const reapproved = await app.inject({ method: "POST", url: ACCOUNT_API_TOKENS_UPDATE_HTTP_PATH_V1,
+                headers: bearer(signed), payload: { tokenId, authorizeUnattendedTeamAccess: true } });
+            expect(reapproved.statusCode, reapproved.body).toBe(200);
+            expect(reapproved.json().apiToken).toMatchObject({ tokenId, hasEncryptionAccess: true,
+                hasUnattendedTeamAccess: true, grant: body.apiToken.grant });
+            expect(reapproved.json()).not.toHaveProperty('token');
             expect((await auth.verifyToken(body.token))?.authenticationEvidence).toEqual([
                 { kind: 'home_method', methodId: 'key_challenge' },
             ]);
@@ -526,7 +676,7 @@ describe("authRoutes (API-token management) (integration)", () => {
         expect(await auth.verifyPat(minted.token)).toEqual({ ok: false, reason: 'invalid_token' });
     });
 
-    it("creates a one-time bearer, permits terminal list only, and rejects PATs on every direct management route", async () => {
+    it("creates a one-time bearer, permits terminal list, and rejects PATs on every direct management route", async () => {
         const account = await db.account.create({
             data: { publicKey: "api-token-management-owner" },
             select: { id: true },
@@ -609,7 +759,6 @@ describe("authRoutes (API-token management) (integration)", () => {
                 expect(response.json()).toEqual({ error: "present_user_required" });
             }
 
-            await db.account.update({ where: { id: account.id }, data: { terminalPresentUserPolicy: 'disallowed' } });
             const terminalToken = await auth.createToken(account.id, { session: "api-token-management-terminal" }, { kind: "terminal", authority: "account_automation" });
             const terminalList = await app.inject({
                 method: "POST",
@@ -627,31 +776,6 @@ describe("authRoutes (API-token management) (integration)", () => {
                     lastUsedAt: expect.any(String),
                 }],
             });
-
-            const [createWithTerminal, revokeWithTerminal, revokeAllWithTerminal] = await Promise.all([
-                app.inject({
-                    method: "POST",
-                    url: ACCOUNT_API_TOKENS_CREATE_HTTP_PATH_V1,
-                    headers: bearer(terminalToken),
-                    payload: { tokenId: randomUUID(), label: "terminal replacement" },
-                }),
-                app.inject({
-                    method: "POST",
-                    url: ACCOUNT_API_TOKENS_REVOKE_HTTP_PATH_V1,
-                    headers: bearer(terminalToken),
-                    payload: { tokenId: createdBody.apiToken.tokenId },
-                }),
-                app.inject({
-                    method: "POST",
-                    url: ACCOUNT_API_TOKENS_REVOKE_ALL_HTTP_PATH_V1,
-                    headers: bearer(terminalToken),
-                    payload: {},
-                }),
-            ]);
-            for (const response of [createWithTerminal, revokeWithTerminal, revokeAllWithTerminal]) {
-                expect(response.statusCode).toBe(403);
-                expect(response.json()).toEqual({ error: "present_user_required" });
-            }
         } finally {
             await app.close();
         }

@@ -2,19 +2,25 @@ import type { RedisStreamsAdapterOptions } from "@socket.io/redis-streams-adapte
 
 import { getSocketAdapterFromEnv, isRedisStreamsEnabled, type SocketAdapter } from "./backends";
 import { parseIntEnv } from "./env";
+import {
+    REDIS_SOCKET_BLOCK_RESPONSE_GRACE_MS,
+    REDIS_SOCKET_STALL_TIMEOUT_MS,
+    REDIS_SOCKET_STALE_TIMER_GRACE_MS,
+} from "./socketClusterRedis";
 
 export const DEFAULT_REDIS_STREAMS_ADAPTER_MAX_LEN = 200_000;
 export const DEFAULT_REDIS_STREAMS_ADAPTER_READ_COUNT = 2_000;
 
 /**
- * Adapter 0.2.3 hard-coded a 100 ms ioredis `XREAD BLOCK`; 0.3.1 made it
- * configurable and defaults it to 5_000 ms — exactly the dedicated
- * socket-cluster Redis client's `socketTimeout`. Accepting that default would
- * make a healthy blocking read indistinguishable from the silent-stall the
- * client's retry policy was designed to detect. Raise this only from measured
- * Redis polling evidence plus a proven margin below the stall timeout.
+ * A healthy blocking read must return before the dedicated client's silent
+ * stall deadline, including its blocking-response and timer scheduling grace.
+ * Adapter 0.3.1 immediately consumes arriving entries, so longer idle blocks
+ * reduce empty returns without delaying broadcasts. The old 100-ms block
+ * allowed up to 600 empty returns/minute/replica; this derives at most 13.
  */
-export const REDIS_STREAMS_ADAPTER_BLOCK_TIME_MS = 100;
+export const REDIS_STREAMS_ADAPTER_BLOCK_TIME_MS = REDIS_SOCKET_STALL_TIMEOUT_MS
+    - REDIS_SOCKET_BLOCK_RESPONSE_GRACE_MS
+    - REDIS_SOCKET_STALE_TIMER_GRACE_MS;
 
 /** Unscoped deployments retain the upstream/current shared names. */
 export const REDIS_STREAMS_ADAPTER_STREAM_NAME = "socket.io";

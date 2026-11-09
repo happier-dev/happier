@@ -2,6 +2,7 @@ import type { SessionScopedSocketBinding } from "@/app/api/socket/sessionScopedB
 import type { SocketClientType } from "@/app/api/socketRooms";
 import type { SessionPublisherAuthorityProjectionV1 } from "@/app/presence/sessionPublisherPresence";
 import type { AuthTokenAuthenticationEvidenceV1 } from "@happier-dev/protocol";
+import type { SessionHumanPresencePendingMessageEditV1 } from "@happier-dev/protocol/sessions";
 
 declare module "socket.io" {
     interface SocketData {
@@ -20,6 +21,10 @@ declare module "socket.io" {
         humanPresenceTypingSessionId?: string;
         humanPresenceTypingDiscussionId?: string;
         humanPresenceTypingExpiresAt?: number;
+        /** Actual Session visibility; presence rooms also contain editors and queue observers. */
+        humanPresenceVisibleSessionIds?: readonly string[];
+        /** Admitted edits live with this socket; queue observers declare an empty array. */
+        humanPresencePendingMessageEdits?: readonly SessionHumanPresencePendingMessageEditV1[];
     }
 }
 

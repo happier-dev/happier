@@ -54,6 +54,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('B
             const selects = statements.filter(event => /^SELECT\b/i.test(event.query));
             expect(selects.length, 'Native database instrumentation must observe the selector').toBeGreaterThan(0);
             const bindings = selects.map(event => (JSON.parse(event.params) as unknown[]).length);
+            console.info('BULK_POOL_BIND_SQL', JSON.stringify({ requested: ids.length + 2, returned: snapshots.size, selects: selects.length, bindings }));
             expect.soft(selects).toHaveLength(2);
             expect.soft(Math.max(...bindings)).toBeLessThanOrEqual(999);
         } finally { pool.findMany = original; }

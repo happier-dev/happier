@@ -1,6 +1,6 @@
 /// <reference lib="dom" />
 
-import { disposePublicShareViewerContent, loadPublicShareViewerContent, renderPublicShareViewer, type PublicSessionOpenedMessage, type PublicShareViewerRenderOptions } from "./publicShareViewerClient";
+import { disposePublicShareViewerContent, loadPublicShareViewerContent, readPublicSessionTranscriptText, renderPublicShareViewer, type PublicSessionOpenedMessage, type PublicShareViewerRenderOptions } from "./publicShareViewerClient";
 
 const root = document.getElementById("public-share-viewer");
 if (root) {
@@ -25,7 +25,7 @@ if (root) {
                 const byId = new Map((beforeSeq === undefined ? [] : messages).map(message => [message.id, message]));
                 for (const message of result.messages) byId.set(message.id, message);
                 messages = [...byId.values()].sort((left, right) => left.seq - right.seq);
-                text = messages.map(message => message.text).join('\n\n');
+                text = readPublicSessionTranscriptText(messages);
             }
             current = { ...result, text, ...(result.messages ? { messages } : {}) };
             renderPublicShareViewer(root, current, result.nextBeforeSeq === null ? undefined : () => { void load(result.nextBeforeSeq!); }, renderOptions);

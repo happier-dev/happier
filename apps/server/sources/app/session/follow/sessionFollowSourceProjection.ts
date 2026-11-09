@@ -76,6 +76,20 @@ export async function readExecutionRunFollowProjectionFrontiers(input: Readonly<
     return frontiers;
 }
 
+/** Finite reads carry their admitted RPC witness; receipt lookups settle only the exact original. */
+export async function readAdmittedExecutionRunFollowProjectionInTx(tx: Tx, edge: SessionFollowProjectionEdge,
+    frontier: ExecutionRunFollowFrontierWitness | undefined): Promise<Readonly<{
+        sourceAvailability: 'available' | 'unavailable'; hasPendingUpdates: boolean | null;
+    }>> {
+    const source = sourceForSessionFollowEdgeV1(edge);
+    if (!frontier || source?.kind !== 'execution_run' || !isDeepStrictEqual(frontier.source, source))
+        return { sourceAvailability: 'unavailable', hasPendingUpdates: null };
+    const occurrence = resolveExecutionRunFollowOccurrenceV1({ ...frontier, ...source });
+    const pending = occurrence ? await hasPendingRunFollowOccurrenceInTx(tx, edge, occurrence.original)
+        : frontier.status === 'running' && frontier.attention === undefined ? false : null;
+    return { sourceAvailability: 'available', hasPendingUpdates: pending };
+}
+
 /** One content-free projection for public set/get/list and reverse inspection. */
 export async function projectOtherFollowSourceInTx(tx: Tx, edge: SessionFollowProjectionEdge,
     destinationArchived: boolean, executionRunFrontier?: ExecutionRunFollowFrontierWitness): Promise<FollowSourceRelationV1 | null> {
@@ -100,10 +114,9 @@ export async function projectOtherFollowSourceInTx(tx: Tx, edge: SessionFollowPr
             ? row.revision > edge.deliveredWorkflowRunRevision : null;
     } else if (executionRunFrontier && isDeepStrictEqual(executionRunFrontier.source, source)
         && await isExecutionRunFollowFrontierWitnessCurrentInTx(tx, executionRunFrontier)) {
-        available = true;
-        const occurrence = resolveExecutionRunFollowOccurrenceV1({ ...executionRunFrontier, ...source });
-        pending = occurrence ? await hasPendingRunFollowOccurrenceInTx(tx, edge, occurrence.original)
-            : executionRunFrontier.status === 'running' && executionRunFrontier.attention === undefined ? false : null;
+        const projection = await readAdmittedExecutionRunFollowProjectionInTx(tx, edge, executionRunFrontier);
+        available = projection.sourceAvailability === 'available';
+        pending = projection.hasPendingUpdates;
     }
     return { source, destinationSessionId: edge.destinationSessionId, policy,
         relation: 'follower', deliveryState: destinationArchived || archived ? 'paused_archived' : 'eligible',

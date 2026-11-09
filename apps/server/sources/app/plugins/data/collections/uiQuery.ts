@@ -1,5 +1,5 @@
 import { PluginAccountPluginIntentV1Schema } from '@happier-dev/protocol/plugins/availability/v1';
-import { PluginCollectionContractReadResultV1Schema, PluginCollectionGetResultV1Schema, PluginCollectionQueryResultV1Schema, PluginCollectionRowV1Schema, PluginCollectionUiQueryTransportResultV1Schema, PLUGIN_COLLECTION_INDEX_SORT_KEY_MAX_BYTES_V1, assertPluginCollectionContentEnvelopeForModeV1, comparePluginCollectionIndexSortKeysV1, encodePluginCollectionIndexTuplePrefixV1, getPluginCollectionScalarKindV1, nextPluginCollectionIndexPrefixV1, resolvePluginCollectionContractAccessV1, validatePluginCollectionUiQueryResultV1, type NormalizedPluginAccountCollectionContractV1, type PluginCollectionContractReadRequestV1, type PluginCollectionContractReadResultV1, type PluginCollectionIndexScalarV1, type PluginCollectionGetRequestV1, type PluginCollectionGetResultV1, type PluginCollectionIndexScalarValueV1, type PluginCollectionQueryRequestV1, type PluginCollectionQueryResultV1, type PluginCollectionReadErrorCodeV1, type PluginCollectionRowV1, type PluginCollectionUiQueryTransportResultV1 } from '@happier-dev/protocol/plugins/data/collectionsV1';
+import { PluginCollectionContractReadResultV1Schema, PluginCollectionGetResultV1Schema, PluginCollectionQueryResultV1Schema, PluginCollectionRowV1Schema, PluginCollectionUiQueryTransportResultV1Schema, PLUGIN_COLLECTION_INDEX_SORT_KEY_MAX_BYTES_V1, assertPluginCollectionContentEnvelopeForModeV1, comparePluginCollectionIndexSortKeysV1, encodePluginCollectionIndexTuplePrefixV1, getPluginCollectionScalarKindV1, nextPluginCollectionIndexPrefixV1, resolvePluginCollectionContractAccessV1, validatePluginCollectionUiQueryResultV1, type NormalizedPluginAccountCollectionContractV1, type PluginCollectionContractAccessReadResultV1, type PluginCollectionContractReadRequestV1, type PluginCollectionContractReadResultV1, type PluginCollectionIndexScalarV1, type PluginCollectionGetRequestV1, type PluginCollectionGetResultV1, type PluginCollectionIndexScalarValueV1, type PluginCollectionQueryRequestV1, type PluginCollectionQueryResultV1, type PluginCollectionReadErrorCodeV1, type PluginCollectionRowV1, type PluginCollectionUiQueryTransportResultV1 } from '@happier-dev/protocol/plugins/data/collectionsV1';
 import { PluginCollectionContractRefV1Schema, pluginCollectionContractKeyV1, type PluginCollectionContractRefV1 } from '@happier-dev/protocol/plugins/data/collectionContractRefV1';
 import { PluginCollectionPresenceResultV1Schema, type PluginCollectionPresenceRequestV1, type PluginCollectionPresenceResultV1 } from '@happier-dev/protocol/plugins/data/collectionPresenceV1';
 import { PluginCollectionUiQueryResultV1Schema, isCanonicalPluginCollectionIndexedInstantV1, validatePluginCollectionUiQueryParametersV1, type NormalizedPluginCollectionUiQueryDescriptorV1, type PluginCollectionUiQueryRequestV1 } from '@happier-dev/protocol/plugins/data/collectionUiQueryWireV1';
@@ -647,12 +647,14 @@ function refsMatch(
 export async function readCurrentPluginCollectionContract(input: Readonly<{
     accountId: string;
     request: PluginCollectionContractReadRequestV1;
-}>): Promise<PluginCollectionContractReadResultV1> {
+}>): Promise<PluginCollectionContractReadResultV1 | PluginCollectionContractAccessReadResultV1> {
     const ref = PluginCollectionContractRefV1Schema.parse(input.request.ref);
     const snapshot = await inTx(async (tx) => await resolveCurrentContract({
         accountId: input.accountId,
         request: { pluginId: ref.pluginId, collectionId: ref.collectionId, readerContext: ref },
     }, tx), { readOnly: true });
+    // The caller holds this digest's immutable contract: admit, but do not re-deliver it.
+    if (input.request.omitContract === true) return { access: snapshot.access };
     return PluginCollectionContractReadResultV1Schema.parse({
         access: snapshot.access,
         contract: snapshot.contract,

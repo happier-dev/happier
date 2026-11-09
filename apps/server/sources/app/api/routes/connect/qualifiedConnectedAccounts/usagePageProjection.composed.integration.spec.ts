@@ -3,6 +3,7 @@ import { Session } from 'node:inspector/promises';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { db } from '@/storage/db';
 import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lightSqliteHarness';
+import { seedSqliteUsageHistory } from '@/testkit/seedSqliteUsageHistory';
 import { withAuthenticatedTestApp } from '../../../testkit/sqliteFastify';
 import { registerQualifiedConnectedAccountCredentialRoutesV4 } from './registerQualifiedConnectedAccountCredentialRoutesV4';
 import { createUsageSnapshot } from '../providerAccountUsageTestkit';
@@ -527,7 +528,7 @@ describe('B page projection through producer, qualified HTTP/SQLite, Usage Resou
                         payloadMode: 'plain_json_v1', status: 'ok', snapshot,
                         fetchedAt, staleAfterMs: snapshot.staleAfterMs } };
             });
-            await db.providerAccountUsageHistory.createMany({ data: earlier });
+            await seedSqliteUsageHistory(db, earlier);
             let exactPages = 0;
             let projectionReads = 0;
             let projectionWrites = 0;

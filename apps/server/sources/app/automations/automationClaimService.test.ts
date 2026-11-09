@@ -54,11 +54,12 @@ describe("automationClaimService helpers", () => {
         })).toBe(true);
     });
 
-    it("builds a future lease expiry using the requested duration", () => {
+    it.each([1_000, 30_000, 3_600_000])("builds a future lease expiry using the requested duration (%i)", leaseDurationMs => {
+        const now = new Date("2026-02-12T10:00:00.000Z");
         const lease = resolveClaimLeaseExpiresAt({
-            now: new Date("2026-02-12T10:00:00.000Z"),
-            leaseDurationMs: 30_000,
+            now,
+            leaseDurationMs,
         });
-        expect(lease.toISOString()).toBe("2026-02-12T10:00:30.000Z");
+        expect(lease.getTime() - now.getTime()).toBe(leaseDurationMs);
     });
 });

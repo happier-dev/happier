@@ -3,26 +3,31 @@ import { createHash } from 'node:crypto';
 import { z } from 'zod/mini';
 import { PublicProfileReadResultV1Schema } from '@happier-dev/protocol/account/publicProfilePublication';
 import { readRequestHomeEnv } from '@/app/home/settings/requestHomeEnv';
-import { readPublicProfile, readPublicProfileRepresentation, readPublicProfileDeliveryRepresentation, type PublicProfileDelivery } from '@/app/account/profile/publicProfileRead';
+import { readPublicProfile, readPublicProfileRepresentation, readPublicProfileDeliveryRepresentation, matchesPublicProfileEtag,
+    type PublicProfileDelivery, type PublicProfileRepresentationVariant } from '@/app/account/profile/publicProfileRead';
 import type { PublicProfileServerDependencies } from '@/app/account/profile/publicProfileStorage';
 import { publicProfileServerDependencies } from '@/app/account/profile/publicProfileDependencies';
-import { renderPublicProfileHtml } from '@/app/account/profile/render/publicProfileHtml';
 import { renderPublicProfileSvg, publicProfileBadgeMessage } from '@/app/account/profile/render/publicProfileSvg';
 import { renderPublicProfileCardPng, renderPublicProfileOg } from '@/app/account/profile/render/publicProfileOg';
 import { PUBLIC_PROFILE_ASSET_LABELS } from '@/app/account/profile/render/publicProfileLabels';
 import { PUBLIC_PROFILE_PALETTES } from '@/app/account/profile/render/publicProfileEnvironment';
 import { publicProfileFontFaceForFilename, readPublicProfileFont } from '@/app/account/profile/render/publicProfileFonts';
 import { createPublicProfileHero, renderPublicProfileHeroImage } from '@/app/account/profile/render/publicProfileHero';
+import { resolvePublicProfileServiceName } from '@/app/account/profile/publicProfileContext';
+
+let publicProfileHtml: Promise<typeof import('@/app/account/profile/render/publicProfileHtml')> | undefined;
+
+/** Concurrent visitor requests share the renderer's first-demand module load. */
+export function loadPublicProfileHtml(): Promise<typeof import('@/app/account/profile/render/publicProfileHtml')> {
+    return publicProfileHtml ??= import('@/app/account/profile/render/publicProfileHtml');
+}
 
 /** Validators describe the currently admitted representation, never a stored snapshot timestamp. */
 export function publicProfileRepresentationEtag(bytes: string | Uint8Array): string {
     return `"${createHash('sha256').update(bytes).digest('hex')}"`;
 }
 
-export function matchesPublicProfileEtag(value: string | string[] | undefined, etag: string): boolean {
-    const values = Array.isArray(value) ? value : [value ?? ''];
-    return values.flatMap(value => value.split(',')).some(value => value.trim() === '*' || value.trim().replace(/^W\//, '') === etag);
-}
+export { matchesPublicProfileEtag } from '@/app/account/profile/publicProfileRead';
 
 /** Anonymous output is independent of optional UI mounting and caller credentials. */
 export function registerPublicProfileReadRoutes(app: Fastify, deps: PublicProfileServerDependencies = publicProfileServerDependencies): void {
@@ -51,15 +56,15 @@ export function registerPublicProfileReadRoutes(app: Fastify, deps: PublicProfil
                 // A metric badge has no picture layer, just like its Shields JSON counterpart.
                 const materialize = (delivery: PublicProfileDelivery) => renderPublicProfileSvg(delivery.result, { ...assetOptions, kind, theme: request.query.theme ?? 'auto',
                     metric: request.params.kind, ...(delivery.picture ? { picture: delivery.picture.bytes } : {}) });
-                const { result, representation: body } = kind === 'badge'
-                    ? await readPublicProfileRepresentation(request.params.handle, env, deps, result => materialize({ result }))
-                    : await readPublicProfileDeliveryRepresentation(request.params.handle, env, deps, materialize);
+                const condition = { ifNoneMatch: request.headers['if-none-match'], variant: { kind: 'svg', surface: kind,
+                    theme: request.query.theme ?? 'auto', ...(request.params.kind ? { metric: request.params.kind } : {}) } satisfies PublicProfileRepresentationVariant };
+                const rendered = kind === 'badge'
+                    ? await readPublicProfileRepresentation(request.params.handle, env, deps, result => materialize({ result }), condition)
+                    : await readPublicProfileDeliveryRepresentation(request.params.handle, env, deps, materialize, condition);
                 reply.header('Cache-Control', 'public, no-cache, must-revalidate').type('image/svg+xml');
-                if (result.kind === 'unavailable') return reply.send(body);
-                const etag = publicProfileRepresentationEtag(body);
-                reply.header('ETag', etag);
-                if (matchesPublicProfileEtag(request.headers['if-none-match'], etag)) return reply.code(304).send();
-                return reply.send(body);
+                if (rendered.etag) reply.header('ETag', rendered.etag);
+                if (rendered.kind === 'not_modified') return reply.code(304).send();
+                return reply.send(rendered.representation);
             } catch { return reply.header('Cache-Control', 'no-store').code(503).send({ kind: 'unavailable' }); }
         });
     }
@@ -83,17 +88,16 @@ export function registerPublicProfileReadRoutes(app: Fastify, deps: PublicProfil
         querystring: z.object({ v: z.optional(z.string()), theme: z.optional(z.enum(['auto', 'light', 'dark'])) }) } }, async (request, reply) => {
         reply.header('X-Content-Type-Options', 'nosniff').header('X-Robots-Tag', 'noindex').header('Referrer-Policy', 'no-referrer');
         try {
-            const { result, representation: body } = await readPublicProfileDeliveryRepresentation(request.params.handle, await readRequestHomeEnv(request), deps, async delivery => {
+            const rendered = await readPublicProfileDeliveryRepresentation(request.params.handle, await readRequestHomeEnv(request), deps, async delivery => {
                 const options = { ...assetOptions, ...(delivery.picture ? { picture: delivery.picture.bytes } : {}) };
                 return kind === 'og' ? renderPublicProfileOg(delivery.result, options)
                     : renderPublicProfileCardPng(delivery.result, { ...options, theme: request.query.theme ?? 'auto' });
-            });
+            }, { ifNoneMatch: request.headers['if-none-match'], variant: { kind: 'png', surface: kind,
+                ...(kind === 'card' ? { theme: request.query.theme ?? 'auto' } : {}) } });
             reply.header('Cache-Control', 'public, no-cache, must-revalidate').type('image/png');
-            if (result.kind === 'unavailable') return reply.send(body);
-            const etag = publicProfileRepresentationEtag(body);
-            reply.header('ETag', etag);
-            if (matchesPublicProfileEtag(request.headers['if-none-match'], etag)) return reply.code(304).send();
-            return reply.send(body);
+            if (rendered.etag) reply.header('ETag', rendered.etag);
+            if (rendered.kind === 'not_modified') return reply.code(304).send();
+            return reply.send(rendered.representation);
         } catch { return reply.header('Cache-Control', 'no-store').code(503).send({ kind: 'unavailable' }); }
     });
     }
@@ -102,43 +106,49 @@ export function registerPublicProfileReadRoutes(app: Fastify, deps: PublicProfil
     ]) } }, async (request, reply) => {
         reply.header('X-Content-Type-Options', 'nosniff').header('X-Robots-Tag', 'noindex').header('Referrer-Policy', 'no-referrer');
         try {
-            const { result, representation: image } = await readPublicProfileDeliveryRepresentation(request.params.handle,
+            const rendered = await readPublicProfileDeliveryRepresentation(request.params.handle,
                 await readRequestHomeEnv(request), deps, async delivery => {
                     if (delivery.result.kind !== 'published') return undefined;
                     if ('theme' in request.query) return renderPublicProfileHeroImage(delivery.result.view,
                         { palette: PUBLIC_PROFILE_PALETTES, ...(delivery.picture ? { picture: delivery.picture.bytes } : {}) },
                         { theme: request.query.theme, viewport: request.query.viewport, density: request.query.density === '2' ? 2 : 1 });
                     return delivery.picture;
-                });
+                }, { ifNoneMatch: request.headers['if-none-match'], variant: { kind: 'background',
+                    ...('theme' in request.query ? { selection: request.query } : {}) } });
+            if (rendered.kind === 'not_modified') return reply.header('Cache-Control', 'public, no-cache, must-revalidate')
+                .header('ETag', rendered.etag).type('image/png').code(304).send();
+            const { result, representation: image } = rendered;
             if (result.kind !== 'published' || !image) {
                 return reply.header('Cache-Control', 'public, no-cache, must-revalidate').code(404).send({ kind: 'unavailable' });
             }
-            const atmosphere = result.view.appearance.atmosphere;
-            const identity = atmosphere.source === 'picture' ? atmosphere.picture.ref.id : '';
-            const etag = publicProfileRepresentationEtag(Buffer.concat([Buffer.from(identity), image.bytes]));
-            reply.header('Cache-Control', 'public, no-cache, must-revalidate').header('ETag', etag).type(image.mimeType);
-            if (matchesPublicProfileEtag(request.headers['if-none-match'], etag)) return reply.code(304).send();
+            reply.header('Cache-Control', 'public, no-cache, must-revalidate').type(image.mimeType);
+            if (rendered.etag) reply.header('ETag', rendered.etag);
             return reply.send(image.bytes);
         } catch { return reply.header('Cache-Control', 'no-store').code(503).send({ kind: 'unavailable' }); }
     });
     app.get('/@:handle', { schema: { params: z.strictObject({ handle: z.string() }) } }, async (request, reply) => {
         reply.header('X-Content-Type-Options', 'nosniff').header('Referrer-Policy', 'no-referrer')
             .header('Content-Security-Policy', "default-src 'none'; style-src 'unsafe-inline'; img-src 'self' data:; font-src 'self'; base-uri 'none'; frame-ancestors 'none'");
+        let service: string | undefined;
         try {
-            const { result, representation: body } = await readPublicProfileDeliveryRepresentation(request.params.handle, await readRequestHomeEnv(request), deps, async delivery => {
-                const hero = delivery.result.kind === 'published' ? createPublicProfileHero(delivery.result.view) : undefined;
-                return renderPublicProfileHtml(delivery.result, hero);
-            });
+            const env = await readRequestHomeEnv(request);
+            service = resolvePublicProfileServiceName(env);
+            const nowMs = Date.now();
+            const rendered = await readPublicProfileRepresentation(request.params.handle, env, deps, async result => {
+                const hero = result.kind === 'published' ? createPublicProfileHero(result.view) : undefined;
+                const { renderPublicProfileHtml } = await loadPublicProfileHtml();
+                return renderPublicProfileHtml(result, hero, { service, nowMs });
+            }, { ifNoneMatch: request.headers['if-none-match'], variant: { kind: 'html', service, nowMs } });
+            const { result } = rendered;
             reply.header('X-Robots-Tag', result.kind === 'published' && result.view.indexable ? 'index, follow' : 'noindex, nofollow');
             reply.header('Cache-Control', 'public, no-cache, must-revalidate').type('text/html; charset=utf-8');
-            if (result.kind === 'unavailable') return reply.code(404).send(body);
-            const etag = publicProfileRepresentationEtag(body);
-            reply.header('ETag', etag);
-            if (matchesPublicProfileEtag(request.headers['if-none-match'], etag)) return reply.code(304).send();
-            return reply.send(body);
+            if (rendered.etag) reply.header('ETag', rendered.etag);
+            if (rendered.kind === 'not_modified') return reply.code(304).send();
+            return reply.code(result.kind === 'unavailable' ? 404 : 200).send(rendered.representation);
         } catch {
+            const { renderPublicProfileHtml } = await loadPublicProfileHtml();
             return reply.header('Cache-Control', 'no-store').header('X-Robots-Tag', 'noindex, nofollow')
-                .type('text/html; charset=utf-8').code(503).send(renderPublicProfileHtml({ kind: 'unavailable' }));
+                .type('text/html; charset=utf-8').code(503).send(renderPublicProfileHtml({ kind: 'unavailable' }, undefined, { service }));
         }
     });
     app.get('/v1/public/profiles/:handle', { schema: { params: z.strictObject({ handle: z.string() }),

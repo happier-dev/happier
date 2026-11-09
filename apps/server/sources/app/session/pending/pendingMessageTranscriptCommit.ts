@@ -21,6 +21,8 @@ import { notifySessionTranscriptMutationAfterCommit } from '../sessionTranscript
 import { createHash } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import { SessionMessageReplyProgressV1Schema } from '@happier-dev/protocol/sessions/messages/sessionMessageReplyV1';
+import { UsageTimingBoundsV1Schema, mergeUsageTimingBoundsV1 } from '@happier-dev/protocol/usage/usageWorkEvidence';
+import { getActivePrismaRuntime } from '@/storage/db';
 
 /** Pending is the sole custody owner until retirement, including when a transcript row already exists. */
 async function carryOriginalReplyProgressInTx(tx: Tx, sessionId: string, localId: string, messageId: string): Promise<void> {
@@ -96,6 +98,10 @@ export async function createSessionMessageFromPending(tx: Tx, params: {
     requestContentForEquality?: PrismaJson.SessionMessageContent;
     content: PrismaJson.SessionMessageContent;
     messageRole: SessionMessageRole | null;
+    /** Whole-content proof, retained beside Pending's protected content. */
+    usageTimingV1?: unknown;
+    /** Provider acceptance contributes a delta, never a whole-message proof. */
+    deliveryUsageTimingV1?: unknown;
     deliveryResolution?: SessionMessageDeliveryResolutionV1;
     inputAdmissionReceipt?: SessionInputAdmissionReceiptV1;
     requestEqualityEvidenceV1?: SessionInputRequestEqualityEvidenceV1;
@@ -117,6 +123,8 @@ export async function createSessionMessageFromPending(tx: Tx, params: {
     const { sessionId, localId, messageRole } = params;
     const content = normalizeSessionMessageContentForStorage(params.content);
     if (!content) return { ok: false, error: "transcript-conflict", conflict: "content" };
+    const authoredTiming = UsageTimingBoundsV1Schema.safeParse(params.usageTimingV1).data ?? null;
+    const deliveryTiming = UsageTimingBoundsV1Schema.safeParse(params.deliveryUsageTimingV1).data ?? null;
     const targetExecutionRunId = params.targetExecutionRunId ?? null;
     const inputAdmissionReceipt = params.inputAdmissionReceipt === undefined
         ? undefined
@@ -178,6 +186,7 @@ export async function createSessionMessageFromPending(tx: Tx, params: {
             targetExecutionRunId: true,
             messageRole: true,
             content: true,
+            usageTimingV1: true,
             deliveryResolution: true,
             inputAdmissionReceipt: true,
             authorAccountId: true,
@@ -265,6 +274,15 @@ export async function createSessionMessageFromPending(tx: Tx, params: {
 
         const needsRoleUpdate = compatibility.backfillsRole;
         const needsDeliveryResolutionUpdate = params.deliveryResolution !== undefined && existingDeliveryResolution === null;
+        const existingTiming = UsageTimingBoundsV1Schema.safeParse(existing.usageTimingV1).data ?? null;
+        // Once a receipt is admitted, stored timing covers both protected
+        // inputs. Repeating Pending's original-content proof cannot replace
+        // that combined proof or certify a previously unknown receipt.
+        const baseTiming = existingDeliveryResolution?.kind === 'provider_accepted' || params.usageTimingV1 === undefined
+            ? existingTiming : authoredTiming;
+        const nextTiming = needsDeliveryResolutionUpdate && params.deliveryResolution?.kind === 'provider_accepted'
+            ? mergeUsageTimingBoundsV1(baseTiming, deliveryTiming) : baseTiming;
+        const needsTimingUpdate = !isDeepStrictEqual(existingTiming, nextTiming);
         const needsAdmissionIdentityBackfill =
             inputAdmissionReceipt !== undefined && existing.inputAdmissionReceipt == null
             || effectiveRequestEqualityEvidenceV1 !== undefined && existing.requestEqualityEvidenceV1 == null;
@@ -292,12 +310,13 @@ export async function createSessionMessageFromPending(tx: Tx, params: {
         const needsAuthorProjectionBackfill =
             existing.authorAccountId == null && survivingAuthorAccountId !== null;
 
-        const row = needsRoleUpdate || needsDeliveryResolutionUpdate || needsAdmissionIdentityBackfill || needsAuthorProjectionBackfill || needsTargetExecutionRunIdBackfill
+        const row = needsRoleUpdate || needsDeliveryResolutionUpdate || needsTimingUpdate || needsAdmissionIdentityBackfill || needsAuthorProjectionBackfill || needsTargetExecutionRunIdBackfill
             ? await tx.sessionMessage.update({
                 where: { id: existing.id },
                 data: {
                     ...(needsRoleUpdate ? { messageRole } : {}),
                     ...(needsDeliveryResolutionUpdate ? { deliveryResolution: params.deliveryResolution } : {}),
+                    ...(needsTimingUpdate ? { usageTimingV1: nextTiming ?? getActivePrismaRuntime().DbNull } : {}),
                     ...(inputAdmissionReceipt !== undefined && existing.inputAdmissionReceipt == null
                         ? { inputAdmissionReceipt: inputAdmissionReceipt.data }
                         : {}),
@@ -312,7 +331,7 @@ export async function createSessionMessageFromPending(tx: Tx, params: {
             })
             : existing;
 
-        if (needsRoleUpdate || needsDeliveryResolutionUpdate || needsAdmissionIdentityBackfill || needsAuthorProjectionBackfill || needsTargetExecutionRunIdBackfill) {
+        if (needsRoleUpdate || needsDeliveryResolutionUpdate || needsTimingUpdate || needsAdmissionIdentityBackfill || needsAuthorProjectionBackfill || needsTargetExecutionRunIdBackfill) {
             notifySessionTranscriptMutationAfterCommit(tx, {
                 kind: 'upsert',
                 message: {
@@ -332,7 +351,7 @@ export async function createSessionMessageFromPending(tx: Tx, params: {
         return {
             ok: true,
             didWrite: false,
-            didUpdate: needsRoleUpdate || needsDeliveryResolutionUpdate || needsAdmissionIdentityBackfill || needsAuthorProjectionBackfill || needsTargetExecutionRunIdBackfill,
+            didUpdate: needsRoleUpdate || needsDeliveryResolutionUpdate || needsTimingUpdate || needsAdmissionIdentityBackfill || needsAuthorProjectionBackfill || needsTargetExecutionRunIdBackfill,
             message: {
                 id: row.id,
                 seq: row.seq,
@@ -356,6 +375,8 @@ export async function createSessionMessageFromPending(tx: Tx, params: {
         sessionEncryptionMode: params.sessionEncryptionMode,
         storagePolicy: params.storagePolicy,
         content,
+        usageTimingV1: params.deliveryResolution?.kind === 'provider_accepted'
+            ? mergeUsageTimingBoundsV1(authoredTiming, deliveryTiming) : authoredTiming,
         localId,
         sidechainId: params.expectedSidechainId ?? null,
         messageRole,

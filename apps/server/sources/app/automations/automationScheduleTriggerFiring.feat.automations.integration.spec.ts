@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { deriveAutomationOccurrenceKeyV1 } from '@happier-dev/protocol/automations/automationOccurrenceV1';
 
 import {
     AutomationTriggerIdSchema,
@@ -8,13 +9,14 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest
 import { db } from "@/storage/db";
 import { inTx } from "@/storage/inTx";
 import { cancelWorkflowRunTx } from "@/app/workflows/workflowRunService";
-import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
+import { createDatabaseIntegrationHarness } from "@/testkit/databaseIntegrationHarness";
 import { createAutomationWorkflowRecipeFixture } from "@/testkit/automationWorkflowRecipe";
 import { observePrismaRequests } from "@/testkit/observeSqliteRequests";
 
 import { claimAutomationRun } from "./automationClaimService";
 import { createAutomation } from "./automationCrudService";
 import { DEFAULT_AUTOMATION_SCHEDULE_IDLE_POLL_MS, runAutomationScheduleWorkerPass, startAutomationScheduleWorker } from "./automationScheduleWorker";
+import { emitAutomationScheduleWake } from "./automationScheduleWake";
 
 const MACHINE_ID = "machine-schedule-firing";
 
@@ -36,7 +38,7 @@ function intervalTrigger(everyMs: number, enabled = true) {
 }
 
 describe("Automation schedule trigger firing (integration)", () => {
-    let harness: LightSqliteHarness;
+    let harness: Awaited<ReturnType<typeof createDatabaseIntegrationHarness>>;
     let accountId: string;
     let automationId: string;
     let fastTriggerId: string;
@@ -46,9 +48,7 @@ describe("Automation schedule trigger firing (integration)", () => {
     const dueAt = new Date("2026-08-27T12:00:00.000Z");
 
     beforeAll(async () => {
-        harness = await createLightSqliteHarness({
-            tempDirPrefix: "happier-automation-schedule-firing-",
-        });
+        harness = await createDatabaseIntegrationHarness({ tempDirPrefix: "happier-automation-schedule-firing-" });
     }, 120_000);
 
     afterAll(async () => await harness.close());
@@ -62,12 +62,13 @@ describe("Automation schedule trigger firing (integration)", () => {
             () => db.automationAssignment.deleteMany(),
             () => db.automationTrigger.deleteMany(),
             () => db.automation.deleteMany(),
+            () => db.session.deleteMany(),
             () => db.machine.deleteMany(),
             () => db.account.deleteMany(),
         ]);
     });
 
-    async function seedTwoScheduleTriggers(): Promise<void> {
+    async function seedTwoScheduleTriggers(scoped = false, machineId = MACHINE_ID): Promise<void> {
         const account = await db.account.create({
             data: { id: `account-${randomUUID()}`, encryptionMode: "plain" },
             select: { id: true },
@@ -75,20 +76,23 @@ describe("Automation schedule trigger firing (integration)", () => {
         accountId = account.id;
         await db.machine.create({
             data: {
-                id: MACHINE_ID,
+                id: machineId,
                 accountId,
                 metadata: "{}",
-                installationId: `installation-${MACHINE_ID}`,
+                installationId: `installation-${machineId}`,
             },
         });
+        const source = scoped ? await db.session.create({ data: { accountId, tag: randomUUID(),
+            encryptionMode: "plain", metadata: JSON.stringify({ machineId, path: "/tmp/schedule-firing" }) } }) : null;
         const created = await createAutomation({
             accountId,
             input: {
                 automationId: randomUUID(),
                 name: "Two schedule firing",
                 enabled: true,
+                ...(source ? { scopeSessionId: source.id } : {}),
                 executionRecipe: executionRecipe(),
-                assignments: [{ machineId: MACHINE_ID, enabled: true, priority: 1 }],
+                assignments: [{ machineId, enabled: true, priority: 1 }],
                 triggers: [
                     { triggerId: AutomationTriggerIdSchema.parse(randomUUID()), trigger: intervalTrigger(60_000) },
                     { triggerId: AutomationTriggerIdSchema.parse(randomUUID()), trigger: intervalTrigger(120_000) },
@@ -128,6 +132,8 @@ describe("Automation schedule trigger firing (integration)", () => {
                 id: true,
                 triggerId: true,
                 state: true,
+                errorCode: true,
+                causeScheduledFor: true,
                 causeKind: true,
                 causeTriggerKind: true,
                 causeTriggerRevision: true,
@@ -137,6 +143,99 @@ describe("Automation schedule trigger firing (integration)", () => {
             orderBy: [{ triggerId: "asc" }, { id: "asc" }],
         });
     }
+
+    it("skips an inconsistent Account without preventing a ready sibling Account from firing", async () => {
+        await seedTwoScheduleTriggers();
+        const inconsistentAccountId = accountId;
+        const inconsistentAutomationId = automationId;
+        await db.automationTrigger.updateMany({ where: { automationId }, data: { nextRunAt: dueAt } });
+        // This persisted inconsistency is refused by the real content fence,
+        // not a mocked transition result.
+        await db.account.update({ where: { id: accountId }, data: { encryptionMode: "e2ee" } });
+        await seedTwoScheduleTriggers(false, `${MACHINE_ID}-ready`);
+        await db.automationTrigger.updateMany({ where: { automationId }, data: { nextRunAt: dueAt } });
+
+        await runAutomationScheduleWorkerPass({ now: dueAt });
+
+        await expect(db.automationRun.count({ where: { accountId: inconsistentAccountId,
+            automationId: inconsistentAutomationId } })).resolves.toBe(0);
+        await expect(readRuns()).resolves.toHaveLength(2);
+    });
+
+    it("rolls back one failed due transaction and continues admitting the next eligible trigger", async () => {
+        await seedTwoScheduleTriggers();
+        await db.automationTrigger.update({ where: { id: fastTriggerId }, data: { nextRunAt: dueAt } });
+        await db.automationTrigger.update({ where: { id: slowTriggerId }, data: { nextRunAt: new Date(dueAt.getTime() + 1) } });
+        let failedReads = 0;
+        const release = observePrismaRequests(db, { before: request => {
+            const where = (request.args as { where?: { id?: string } }).where;
+            if (request.model === "AutomationTrigger" && request.action === "findFirst" && where?.id === fastTriggerId) {
+                failedReads += 1;
+                throw new Error("Persistence boundary unavailable for this trigger");
+            }
+        } });
+        try {
+            await runAutomationScheduleWorkerPass({ now: new Date(dueAt.getTime() + 1) });
+        } finally { release(); }
+
+        expect(failedReads).toBeGreaterThan(0);
+        await expect(readRuns()).resolves.toMatchObject([{ triggerId: slowTriggerId, state: "queued" }]);
+        await expect(db.automationTrigger.findUniqueOrThrow({ where: { id: fastTriggerId }, select: { nextRunAt: true } }))
+            .resolves.toEqual({ nextRunAt: dueAt });
+    });
+
+    it("stops before another admission and resumes the remaining valid work on the next pass", async () => {
+        await seedTwoScheduleTriggers();
+        await db.automationTrigger.updateMany({ where: { automationId }, data: { nextRunAt: dueAt } });
+        let admitted = 0;
+        const release = observePrismaRequests(db, { after: (request, result) => {
+            if (request.model === "AutomationRun" && result && typeof result === "object"
+                && "id" in result && "state" in result && result.state === "queued") admitted += 1;
+        } });
+        try {
+            await runAutomationScheduleWorkerPass({ now: dueAt, shouldStop: () => admitted > 0 });
+        } finally { release(); }
+        await expect(readRuns()).resolves.toHaveLength(1);
+        await runAutomationScheduleWorkerPass({ now: dueAt });
+        await expect(readRuns()).resolves.toHaveLength(2);
+    });
+
+    it("continues past a full retained open-Run cohort without omitting later valid work", async () => {
+        await seedTwoScheduleTriggers();
+        const template = await db.automationTrigger.findUniqueOrThrow({ where: { id: fastTriggerId } });
+        const heldTriggerIds = [fastTriggerId, ...Array.from({ length: 127 }, () => randomUUID())];
+        await db.automationTrigger.createMany({ data: heldTriggerIds.slice(1).map(id => ({ ...template, id, nextRunAt: dueAt })) });
+        await db.automationTrigger.update({ where: { id: fastTriggerId }, data: { nextRunAt: dueAt } });
+        await db.automationTrigger.update({ where: { id: slowTriggerId }, data: { nextRunAt: new Date(dueAt.getTime() + 1) } });
+        // Retained admitted Runs exercise the real indexed open-work filter;
+        // none is a new claim or needs to materialize its private recipe.
+        await db.automationRun.createMany({ data: heldTriggerIds.map(triggerId => ({
+            id: randomUUID(), accountId, automationId, originKind: "automation", state: "queued",
+            triggerId, causeKind: "trigger", causeTriggerKind: "schedule", causeTriggerRevision: template.revision,
+            causeOccurredAt: dueAt, causeScheduledFor: dueAt, dueAt, scheduledAt: dueAt,
+            occurrenceKey: deriveAutomationOccurrenceKeyV1({ triggerId: AutomationTriggerIdSchema.parse(triggerId),
+                evidence: { v: 1, kind: "schedule", scheduledFor: dueAt.getTime() } }),
+        })) });
+        await runAutomationScheduleWorkerPass({ now: new Date(dueAt.getTime() + 1), shouldStop: () => true });
+        await expect(db.automationRun.count({ where: { triggerId: slowTriggerId } })).resolves.toBe(0);
+
+        const worker = startAutomationScheduleWorker();
+        try {
+            await vi.waitFor(async () => {
+                await expect(db.automationRun.count({ where: { triggerId: slowTriggerId } })).resolves.toBe(1);
+            }, { timeout: 2_000, interval: 20 });
+        } finally { await worker.stop(); }
+        await expect(readRuns()).resolves.toHaveLength(heldTriggerIds.length + 1);
+        let readsAfterStop = 0;
+        const release = observePrismaRequests(db, { before: request => {
+            if (request.model === "AutomationTrigger" && request.action.startsWith("find")) readsAfterStop += 1;
+        } });
+        try {
+            emitAutomationScheduleWake();
+            await Promise.resolve();
+            expect(readsAfterStop).toBe(0);
+        } finally { release(); }
+    });
 
     it("retains only the existing fallback scan while a future schedule remains ineligible", async () => {
         await seedTwoScheduleTriggers();
@@ -170,8 +269,7 @@ describe("Automation schedule trigger firing (integration)", () => {
         }
     });
 
-
-    it("discovers a newly due trigger without a local wake while a future schedule is sleeping", async () => {
+    it("discovers a database-only due trigger through the existing fallback scan", async () => {
         await seedTwoScheduleTriggers();
         const futureAt = new Date(Date.now() + 60_000);
         await db.automationTrigger.updateMany({
@@ -179,19 +277,19 @@ describe("Automation schedule trigger firing (integration)", () => {
             data: { nextRunAt: futureAt },
         });
         const template = await db.automationTrigger.findUniqueOrThrow({ where: { id: fastTriggerId } });
-        const idlePollMs = 100;
+        vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
         const timers = vi.spyOn(globalThis, "setTimeout");
-        const worker = startAutomationScheduleWorker({ idlePollMs });
+        const worker = startAutomationScheduleWorker();
         try {
             await vi.waitFor(() => expect(timers.mock.calls.some(([, delay]) => (
-                delay === idlePollMs || (typeof delay === "number" && delay > 10_000)
+                delay === DEFAULT_AUTOMATION_SCHEDULE_IDLE_POLL_MS
             ))).toBe(true), { interval: 20 });
-            // A database-only commit models another API replica: its process-
-            // local wake cannot reach this worker.
             const triggerId = randomUUID();
             await db.automationTrigger.create({
                 data: { ...template, id: triggerId, nextRunAt: new Date() },
             });
+            // Another API replica need not share this process' local wake Set.
+            await vi.advanceTimersByTimeAsync(DEFAULT_AUTOMATION_SCHEDULE_IDLE_POLL_MS);
             await vi.waitFor(async () => {
                 await expect(readRuns()).resolves.toMatchObject([
                     { triggerId, state: "queued", causeKind: "trigger", causeTriggerKind: "schedule" },
@@ -204,6 +302,7 @@ describe("Automation schedule trigger firing (integration)", () => {
         } finally {
             await worker.stop();
             timers.mockRestore();
+            vi.useRealTimers();
         }
     });
 
@@ -249,6 +348,37 @@ describe("Automation schedule trigger firing (integration)", () => {
         await expect(readRuns()).resolves.toHaveLength(2);
     });
 
+    it("coalesces scoped schedule firings behind an active Run and releases only the latest pending occurrence", async () => {
+        await seedTwoScheduleTriggers(true);
+        await db.automationTrigger.update({ where: { id: fastTriggerId }, data: { nextRunAt: dueAt } });
+        await db.automationTrigger.update({ where: { id: slowTriggerId }, data: { nextRunAt: new Date(dueAt.getTime() + 240_000) } });
+        await runAutomationScheduleWorkerPass({ now: dueAt });
+        const active = await claimAutomationRun({ accountId, machineId: MACHINE_ID, leaseDurationMs: 30_000,
+            claimRequest: { machineInstallationId: `installation-${MACHINE_ID}`, nonce: randomUUID(),
+                expiresAt: new Date(Date.now() + 300_000) } });
+        expect(active.run).not.toBeNull();
+        const secondDue = new Date(dueAt.getTime() + 60_000);
+        const newestDue = new Date(dueAt.getTime() + 120_000);
+        await runAutomationScheduleWorkerPass({ now: secondDue });
+        await runAutomationScheduleWorkerPass({ now: newestDue });
+        const runs = await readRuns();
+        expect(runs).toHaveLength(3);
+        expect(runs.find(run => run.id === active.run!.id)).toMatchObject({ state: "claimed", causeScheduledFor: dueAt });
+        expect(runs.find(run => run.causeScheduledFor?.getTime() === secondDue.getTime()))
+            .toMatchObject({ state: "skipped", errorCode: "superseded_by_newer_occurrence" });
+        const newest = runs.find(run => run.causeScheduledFor?.getTime() === newestDue.getTime());
+        expect(newest).toMatchObject({ state: "queued" });
+        await expect(db.automationTrigger.findUniqueOrThrow({ where: { id: fastTriggerId }, select: { nextRunAt: true } }))
+            .resolves.toEqual({ nextRunAt: new Date(newestDue.getTime() + 60_000) });
+        const claim = () => claimAutomationRun({ accountId, machineId: MACHINE_ID, leaseDurationMs: 30_000,
+            claimRequest: { machineInstallationId: `installation-${MACHINE_ID}`, nonce: randomUUID(),
+                expiresAt: new Date(Date.now() + 300_000) } });
+        expect((await claim()).run).toBeNull();
+        await inTx(tx => cancelWorkflowRunTx(tx, { accountId, runId: active.run!.id,
+            expectedRevision: active.run!.revision, accountEncryptionMode: "plain" }));
+        expect((await claim()).run?.id).toBe(newest!.id);
+    });
+
     it("keeps open-Run suppression scoped to one trigger so a terminal sibling fires again", async () => {
         await seedTwoScheduleTriggers();
         await db.automationTrigger.update({
@@ -289,8 +419,10 @@ describe("Automation schedule trigger firing (integration)", () => {
             accountId,
             runId: claim.run!.id,
             expectedRevision: claim.run!.revision,
+            accountEncryptionMode: "plain",
         }));
         expect(cancelled.run).toMatchObject({ id: claim.run!.id, state: "cancelled" });
+
 
         // At the next joint due moment the terminal trigger admits its own
         // second occurrence while the open sibling stays suppressed.
@@ -316,5 +448,6 @@ describe("Automation schedule trigger firing (integration)", () => {
         expect(otherRun.state).toBe("queued");
         expect(new Set(settledTriggerRuns.map((run) => run.occurrenceKey)).size).toBe(2);
         expect(new Set(allRuns.map((run) => run.occurrenceKey)).size).toBe(3);
+
     });
 });

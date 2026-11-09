@@ -70,6 +70,21 @@
     "skipLibCheck": true,                           /* Skip type checking of declaration files. */
     "forceConsistentCasingInFileNames": true,        /* Disallow inconsistently-cased references to the same file. */
     "paths": {
+      // The bundled React renderer consumes plugin-ui's public declarations.
+      // Its implementation belongs to plugin-ui's JSX compiler environment.
+      "@happier-dev/plugin-ui": [
+        "../../packages/plugin-ui/dist/index.d.ts"
+      ],
+      "@happier-dev/plugin-ui/presentation/pageMetrics": [
+        "../../packages/plugin-ui/dist/presentation/layout/pageMetrics.d.ts"
+      ],
+      "@happier-dev/plugin-ui/presentation/typeScale": [
+        "../../packages/plugin-ui/dist/presentation/text/typeScale.d.ts"
+      ],
+      "@happier-dev/plugin-ui/*": [
+        "../../packages/plugin-ui/dist/*/index.d.ts",
+        "../../packages/plugin-ui/dist/*.d.ts"
+      ],
       "@/*": [
         "./sources/*"
       ],

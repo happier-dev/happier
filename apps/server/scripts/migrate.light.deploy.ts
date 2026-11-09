@@ -2,7 +2,7 @@ import { mkdir } from 'node:fs/promises';
 import { applyLightDefaultEnv } from '../sources/flavors/light/env';
 import { requireLightDataDir } from './migrate.light.deployPlan';
 import { PGlite } from '@electric-sql/pglite';
-import { PGLiteSocketServer } from '@electric-sql/pglite-socket';
+import { FramedPgliteSocketServer } from '../sources/storage/pgliteFramedSocketServer.mjs';
 import { acquirePgliteDirLock } from '../sources/storage/locks/pgliteLock';
 import { applyPostgresMigrations } from './prismaMigrations';
 import { resolveServerWorkspaceRoot } from './prismaCli';
@@ -14,6 +14,7 @@ import {
 import {
     runSessionSystemRecordMigrationDeployment,
 } from '../sources/app/session/systemRecords/sessionSystemRecordMigrationDeployment';
+import { runPluginCollectionUsageMigrationDeployment } from '../sources/app/plugins/data/collections/usageTotalsBackfill';
 
 async function main() {
     const env: NodeJS.ProcessEnv = { ...process.env };
@@ -31,13 +32,13 @@ async function main() {
 
     let releaseLock: (() => Promise<void>) | undefined;
     let pglite: PGlite | undefined;
-    let server: PGLiteSocketServer | undefined;
+    let server: FramedPgliteSocketServer | undefined;
     try {
         releaseLock = await acquirePgliteDirLock(dbDir, { purpose: 'script:migrate.light.deploy' });
         pglite = new PGlite(dbDir);
         // Ensure pglite is ready before starting the socket server.
         await pglite.waitReady;
-        server = new PGLiteSocketServer({ db: pglite, host: '127.0.0.1', port: 0 });
+        server = new FramedPgliteSocketServer({ db: pglite, host: '127.0.0.1', port: 0 });
         await server.start();
 
         const url = (() => {
@@ -58,10 +59,12 @@ async function main() {
                 provider: 'pglite',
                 databaseUrl: env.DATABASE_URL,
             }),
-            deploy: async (stage) => await applyPostgresMigrations({
-                db: pglite!,
-                migrationsDir: stage.migrationsDir,
-            }),
+            deploy: async (stage) => {
+                const totals = await runPluginCollectionUsageMigrationDeployment({ ...stage, provider: 'pglite', databaseUrl: env.DATABASE_URL, env,
+                    deploy: async target => await applyPostgresMigrations({ db: pglite!, migrationsDir: target.migrationsDir }),
+                });
+                return totals.final;
+            },
             runFinalContractBackfill: async () => {
                 await runSessionSystemRecordFinalContractBackfill({
                     provider: 'pglite',

@@ -1,6 +1,7 @@
 import { z } from "zod/mini";
+import { SessionArchiveHttpBodyV1Schema } from '@happier-dev/protocol/sessions/control/contract';
 
-import { assertSessionCapabilityInTx, resolveSessionAccessForOperation } from "@/app/session/access/sessionAccess";
+import { resolveSessionAccessForOperation } from "@/app/session/access/sessionAccess";
 import { readSessionAccessAuthenticationFromRequest } from "@/app/session/access/sessionAccessAuthentication";
 import { markSessionProjectionRecipientsChanged } from "@/app/session/changeTracking/markSessionProjectionRecipientsChanged";
 import { prepareSessionAccountCursorLocks } from "@/app/session/changeTracking/acquireSessionAccountCursorLocksInTx";
@@ -26,7 +27,7 @@ export function registerSessionArchiveRoutes(app: Fastify) {
         },
         schema: {
             params: z.object({ sessionId: z.string() }),
-            body: z.nullish(z.strictObject({ originRunId: z.optional(z.string().check(z.minLength(1))) })),
+            body: SessionArchiveHttpBodyV1Schema,
             response: {
                 200: z.object({ success: z.literal(true), archivedAt: z.number() }),
                 403: z.union([z.object({ error: z.literal("Forbidden") }), z.object({ error: z.literal("team_authentication_required") })]),
@@ -68,8 +69,6 @@ export function registerSessionArchiveRoutes(app: Fastify) {
         }
 
         const res = await inTx(async (tx) => {
-            const authority = await assertSessionCapabilityInTx({ tx, accountId: userId, sessionId, capability: "archiveSession", authentication });
-            if (!authority.ok) return { ok: false as const, error: authority.reason };
             if (originRunId !== undefined && (!originPublisher || !await isAutomationOriginRunPublisherTx(tx, {
                 accountId: userId, machineId: originPublisher.machineId, runId: originRunId,
             }))) return { ok: false as const, error: "unavailable" as const };
@@ -100,9 +99,12 @@ export function registerSessionArchiveRoutes(app: Fastify) {
                 archivedAt: new Date(),
                 ...(originRunId !== undefined ? { originRunId } : {}),
             });
+            if (!updated.didWrite) {
+                return { ok: true as const, didWrite: false as const, archivedAt: updated.session.archivedAt!.getTime() };
+            }
             const runtimeActivityClear = await clearSessionRuntimeActivityProjectionInTx({ tx, sessionId });
 
-            const archivedAt = updated.archivedAt?.getTime();
+            const archivedAt = updated.session.archivedAt?.getTime();
             if (!archivedAt) {
                 return { ok: false as const, error: "not-found" as const };
             }
@@ -113,6 +115,7 @@ export function registerSessionArchiveRoutes(app: Fastify) {
             });
             return {
                 ok: true as const,
+                didWrite: true as const,
                 archivedAt,
                 projection: {
                     archivedAt,
@@ -130,8 +133,6 @@ export function registerSessionArchiveRoutes(app: Fastify) {
         });
 
         if (!res.ok) {
-            if (res.error === "authentication_required") return reply.code(403).send({ error: "team_authentication_required" });
-            if (res.error === "authentication_unavailable") return reply.code(503).send({ error: "team_authentication_unavailable" });
             if (res.error === "unavailable") return reply.code(403).send({ error: "Forbidden" });
             if (res.error === "not-found") return reply.code(404).send({ error: "Session not found" });
             if (res.error === "session-active") return reply.code(409).send({ error: "session-active" });
@@ -140,8 +141,9 @@ export function registerSessionArchiveRoutes(app: Fastify) {
 
         // The durable mutation owns the receipt. Publication may perform slow
         // reads after commit; it must neither hold nor contradict that receipt.
-        log({ module: "session-archive", sessionId, operation: "archive", phase: "committed" }, "Session archive transition committed");
         reply.send({ success: true, archivedAt: res.archivedAt });
+        if (!res.didWrite) return reply;
+        log({ module: "session-archive", sessionId, operation: "archive", phase: "committed" }, "Session archive transition committed");
         log({ module: "session-archive", sessionId, operation: "archive", phase: "publication_started" }, "Publishing Session archive transition");
         await publishSessionArchiveTransition({
             sessionId,
@@ -189,8 +191,6 @@ export function registerSessionArchiveRoutes(app: Fastify) {
         }
 
         const res = await inTx(async (tx) => {
-            const authority = await assertSessionCapabilityInTx({ tx, accountId: userId, sessionId, capability: "archiveSession", authentication });
-            if (!authority.ok) return { ok: false as const, error: authority.reason };
             const session = await tx.session.findUnique({
                 where: { id: sessionId },
                 select: {
@@ -208,12 +208,13 @@ export function registerSessionArchiveRoutes(app: Fastify) {
                 return { ok: false as const, error: "not-found" as const };
             }
 
-            await transitionSessionArchiveStateInTx({
+            const updated = await transitionSessionArchiveStateInTx({
                 tx,
                 sessionId,
                 wasArchived: session.archivedAt !== null,
                 archivedAt: null,
             });
+            if (!updated.didWrite) return { ok: true as const, didWrite: false as const };
 
             const recipientCursors = await markSessionProjectionRecipientsChanged({
                 tx,
@@ -222,6 +223,7 @@ export function registerSessionArchiveRoutes(app: Fastify) {
             });
             return {
                 ok: true as const,
+                didWrite: true as const,
                 recipientCursors,
                 badgeAttentionChanged: didSessionActivityBadgeSignalChange(session, {
                     ...session,
@@ -234,14 +236,12 @@ export function registerSessionArchiveRoutes(app: Fastify) {
         });
 
         if (!res.ok) {
-            if (res.error === "authentication_required") return reply.code(403).send({ error: "team_authentication_required" });
-            if (res.error === "authentication_unavailable") return reply.code(503).send({ error: "team_authentication_unavailable" });
-            if (res.error === "unavailable") return reply.code(403).send({ error: "Forbidden" });
             return reply.code(404).send({ error: "Session not found" });
         }
 
-        log({ module: "session-archive", sessionId, operation: "unarchive", phase: "committed" }, "Session archive transition committed");
         reply.send({ success: true, archivedAt: null });
+        if (!res.didWrite) return reply;
+        log({ module: "session-archive", sessionId, operation: "unarchive", phase: "committed" }, "Session archive transition committed");
         log({ module: "session-archive", sessionId, operation: "unarchive", phase: "publication_started" }, "Publishing Session archive transition");
         await publishSessionArchiveTransition({
             sessionId,

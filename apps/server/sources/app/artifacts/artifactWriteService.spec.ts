@@ -16,7 +16,7 @@ type ArtifactTxFixture = {
         findUnique: ReturnType<typeof vi.fn>;
         update: ReturnType<typeof vi.fn>;
     };
-    accountChange: { upsert: ReturnType<typeof vi.fn> };
+    accountChange: { findUnique: ReturnType<typeof vi.fn>; upsert: ReturnType<typeof vi.fn> };
     publicSessionShare: { findUnique: ReturnType<typeof vi.fn> };
     artifactRevision: {
         create: ReturnType<typeof vi.fn>;
@@ -48,7 +48,7 @@ function createArtifactTxFixture(): ArtifactTxFixture {
             findUnique: vi.fn(),
             update: vi.fn().mockResolvedValue({ seq: 1 }),
         },
-        accountChange: { upsert: vi.fn().mockResolvedValue({}) },
+        accountChange: { findUnique: vi.fn().mockResolvedValue(null), upsert: vi.fn().mockResolvedValue({}) },
         publicSessionShare: { findUnique: vi.fn().mockResolvedValue(null) },
         artifactRevision: { create: vi.fn().mockResolvedValue({}), findMany: vi.fn().mockResolvedValue([]), deleteMany: vi.fn().mockResolvedValue({ count: 0 }) },
         artifactBlob: { findMany: vi.fn().mockResolvedValue([]), findUnique: vi.fn().mockResolvedValue(null),
@@ -64,7 +64,8 @@ function createArtifactTxFixture(): ArtifactTxFixture {
     };
 }
 
-vi.mock("@/storage/db", () => ({
+vi.mock("@/storage/db", async importOriginal => ({
+    ...await importOriginal<typeof import('@/storage/db')>(),
     // Only the database transport is replaced; publication and inTx remain real.
     db: new Proxy({}, {
         get(_target, property) {

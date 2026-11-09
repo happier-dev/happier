@@ -1,10 +1,13 @@
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { existsSync } from 'node:fs';
+import { createRequire } from 'node:module';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { isFullRuntimeMigrationApplied, runFullRuntimeMigration } from './migrateFullRuntime';
+import { PLUGIN_COLLECTION_USAGE_EXPAND_MIGRATION, PLUGIN_COLLECTION_USAGE_BACKFILLED_MIGRATION } from '../../sources/app/plugins/data/collections/usageTotalsBackfill';
 
 const tempRoots: string[] = [];
 
@@ -41,6 +44,46 @@ async function createArtifact(): Promise<{ root: string; executablePath: string 
 afterEach(async () => Promise.all(tempRoots.splice(0).map((path) => rm(path, { recursive: true, force: true }))));
 
 describe('runFullRuntimeMigration', () => {
+    it('backfills Collection usage before recording completion through the packaged migration entry', async () => {
+        const artifact = await createArtifact();
+        for (const name of [PLUGIN_COLLECTION_USAGE_EXPAND_MIGRATION, PLUGIN_COLLECTION_USAGE_BACKFILLED_MIGRATION]) {
+            await mkdir(join(artifact.root, 'prisma', 'migrations', name));
+            await writeFile(join(artifact.root, 'prisma', 'migrations', name, 'migration.sql'), 'SELECT 1;\n');
+        }
+        const require = createRequire(import.meta.url);
+        const prismaPath = require.resolve('@prisma/client');
+        const original = require(prismaPath) as typeof import('@prisma/client');
+        const cached = require.cache[prismaPath]!;
+        const events: string[] = [];
+        let completed = false;
+        // External DB-client boundary; the real deploy, stage and backfill orchestration stays intact.
+        class MaintenanceClient {
+            async $connect() {}
+            async $disconnect() {}
+            async $queryRawUnsafe() { return completed ? [{ migration_name: PLUGIN_COLLECTION_USAGE_BACKFILLED_MIGRATION }] : []; }
+            account = { findFirst: async () => { events.push('backfill'); return null; } };
+        }
+        cached.exports = { ...original, PrismaClient: MaintenanceClient };
+        const run = () => runFullRuntimeMigration({ executablePath: artifact.executablePath,
+            env: { HAPPIER_DB_PROVIDER: 'postgres', DATABASE_URL: 'postgresql://fixture/fixture' },
+            processBoundary: { spawn(_command, args) {
+                const schemaPath = args[args.indexOf('--schema') + 1]!;
+                const completion = existsSync(join(schemaPath, '..', 'migrations', PLUGIN_COLLECTION_USAGE_BACKFILLED_MIGRATION));
+                events.push(completion ? 'complete' : 'expand');
+                completed ||= completion;
+                return { status: 0, signal: null };
+            } },
+        });
+        try {
+            await expect(run()).resolves.toBe(0);
+            expect(events.indexOf('backfill')).toBeGreaterThan(events.indexOf('expand'));
+            expect(events.indexOf('backfill')).toBeLessThan(events.indexOf('complete'));
+            events.length = 0;
+            await expect(run()).resolves.toBe(0);
+            expect(events).toEqual(['complete']);
+        } finally { cached.exports = original; }
+    });
+
     it.each([['direct-connection', true], [undefined, false], ['', false], ['  ', false]])(
         'selects optional DIRECT_URL for the Postgres migration child (case %#)', async (directUrl, usesDirect) => {
             const artifact = await createArtifact();

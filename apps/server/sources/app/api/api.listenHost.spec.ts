@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import fastify from 'fastify';
 import { AUTHORITY_CEILING_HEADER_V1 } from '@happier-dev/protocol/actions/invocationAuthority';
+import { CHANGES_AFTER_CURSOR_HTTP_HEADER } from '@happier-dev/protocol/changes';
 import {
   ACCOUNT_STORED_CONTENT_COMPATIBILITY_HTTP_HEADER,
   SESSION_SYSTEM_RECORDS_PROTOCOL_HTTP_HEADER,
@@ -75,6 +76,8 @@ describe('createApiCorsOptions', () => {
       reply.header('Server-Timing', 'happier_v2_sessions_total;dur=1.000');
       reply.header('x-happier-retry-reason', 'server_unavailable');
       reply.header('ETag', '"current-public-representation"');
+      reply.header('x-happier-account-settings-protocols', 'remote-alert-policy-v1');
+      reply.header('x-happier-account-remote-alert-policy-status', 'stale');
       return { ok: true };
     });
 
@@ -86,6 +89,7 @@ describe('createApiCorsOptions', () => {
         'access-control-request-method': 'GET',
         'access-control-request-headers': [
           'authorization',
+          CHANGES_AFTER_CURSOR_HTTP_HEADER,
           'content-type',
           ACCOUNT_STORED_CONTENT_COMPATIBILITY_HTTP_HEADER,
           'idempotency-key',
@@ -93,6 +97,7 @@ describe('createApiCorsOptions', () => {
           'x-happier-session-list-timing',
           SESSION_SYSTEM_RECORDS_PROTOCOL_HTTP_HEADER,
           AUTHORITY_CEILING_HEADER_V1,
+          'x-happier-request-purpose',
         ].join(','),
       },
     });
@@ -110,12 +115,19 @@ describe('createApiCorsOptions', () => {
       ACCOUNT_STORED_CONTENT_COMPATIBILITY_HTTP_HEADER,
     );
     expect(preflight.headers['access-control-allow-headers']).toContain('idempotency-key');
+    expect(preflight.headers['access-control-allow-headers']).toContain(CHANGES_AFTER_CURSOR_HTTP_HEADER);
+    expect(response.headers['access-control-expose-headers']).toContain(CHANGES_AFTER_CURSOR_HTTP_HEADER);
+    expect(response.headers['access-control-expose-headers']).toContain('x-happier-account-settings-protocols');
+    expect(response.headers['x-happier-account-settings-protocols']).toBe('remote-alert-policy-v1');
+    expect(response.headers['access-control-expose-headers']).toContain('x-happier-account-remote-alert-policy-status');
+    expect(response.headers['x-happier-account-remote-alert-policy-status']).toBe('stale');
     expect(preflight.headers['access-control-allow-headers']).toContain('if-none-match');
     expect(preflight.headers['access-control-allow-headers']).toContain('x-happier-session-list-timing');
     expect(preflight.headers['access-control-allow-headers']).toContain(
       SESSION_SYSTEM_RECORDS_PROTOCOL_HTTP_HEADER,
     );
     expect(preflight.headers['access-control-allow-headers']).toContain(AUTHORITY_CEILING_HEADER_V1);
+    expect(preflight.headers['access-control-allow-headers']).toContain('x-happier-request-purpose');
     expect(response.headers['server-timing']).toBe('happier_v2_sessions_total;dur=1.000');
     expect(response.headers['access-control-expose-headers']).toContain('server-timing');
     expect(response.headers['x-happier-retry-reason']).toBe('server_unavailable');

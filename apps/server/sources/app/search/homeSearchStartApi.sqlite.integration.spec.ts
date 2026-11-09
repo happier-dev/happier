@@ -434,6 +434,7 @@ describe('startApi Home search production composition', () => {
                 expect(revoked.statusCode).toBe(200);
                 expect(revoked.json()).toMatchObject({ ok: true, hits: [] });
                 const revokedRows = returnedSessionRows;
+                console.info('PERF_D4_SCOPED_HOME_SEARCH', { authorizedSessions: 1000, selectedRows, revokedRows });
                 expect({ selectedRows, revokedRows }).toEqual({ selectedRows: 1, revokedRows: 0 });
             } finally { Reflect.set(boundary, '_request', nativeRequest); }
         } finally {

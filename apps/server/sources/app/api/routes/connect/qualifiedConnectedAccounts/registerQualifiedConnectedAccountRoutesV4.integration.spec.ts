@@ -19,12 +19,16 @@ import {
 import { buildProviderAccountUsagePageProjectionV1 } from '@happier-dev/protocol/connect/providerAccountUsagePageProjection';
 import { sealProviderAccountUsagePageProjectionV1 } from '@happier-dev/protocol/connect/providerAccountUsagePageProjectionCrypto';
 import { readProviderAccountUsageHistory } from '../providerAccountUsage/recordStorage';
+import { createActionExecutor } from '@happier-dev/protocol/actions';
+import { executeConnectedServiceConfigurationActionV1, type ConnectedServiceConfigurationActionHostV1 } from '@happier-dev/protocol/connect/execute-configuration-action';
+import { QualifiedConnectedAccountGroupResponseV4Schema } from '@happier-dev/protocol/connect/qualified-connected-account-projections';
 
 import { db } from "@/storage/db";
 import { prismaRuntime } from "@/storage/prisma";
 import { createSignedAccountContentBinding } from "@/testkit/accountEncryption";
 import {
     createLightSqliteHarness,
+    createAccountTokenForTests,
     type LightSqliteHarness,
 } from "@/testkit/lightSqliteHarness";
 import {
@@ -40,6 +44,9 @@ import {
 import {
     registerQualifiedConnectedAccountCredentialRoutesV4,
 } from "./registerQualifiedConnectedAccountCredentialRoutesV4";
+import { mutateQualifiedConnectedServiceCredential } from './credentialRepository';
+import { inReadSnapshot } from '@/storage/inTx';
+import { buildAccountConnectedServicesProjection } from '../../account/connectedServicesProjection';
 
 const service = {
     pluginId: "example.connected-accounts",
@@ -87,6 +94,11 @@ describe("qualified Connected Account V4 route family (integration)", () => {
             expect(disabled.json().groups[0].policy).not.toHaveProperty("quotaLimitSelection");
             expect(disabled.json().groups[0].policy.strategy).toBe("expiry_first");
             const disabledGroup = disabled.json().groups[0];
+            const disabledProfile = await inReadSnapshot(tx => buildAccountConnectedServicesProjection({
+                tx, accountId: account.id, includeGroups: true, env: process.env,
+            }));
+            expect(disabledProfile.connectedAccountGroupsV4).toMatchObject([disabledGroup]);
+            expect(disabledProfile.connectedAccountGroupsV4[0]?.policy).toEqual(disabledGroup.policy);
             const rejectedOptIn = await app.inject({ method: "PATCH", url: "/v4/connect/qualified/group", headers, payload: {
                 service, groupId: "quota-reset",
                 expectedGeneration: disabledGroup.generation,
@@ -115,9 +127,19 @@ describe("qualified Connected Account V4 route family (integration)", () => {
             expect(restored.json().groups[0].policy.autoUseQuotaResetsWhenExhausted).toBe(true);
             expect(restored.json().groups[0].policy.quotaLimitSelection).toEqual({ mode: "selected", providerLimitIds: ["weekly"] });
             expect(restored.json().groups[0].policy.cooldownMs).toBe(45_000);
+            const restoredProfile = await inReadSnapshot(tx => buildAccountConnectedServicesProjection({
+                tx, accountId: account.id, includeGroups: true, env: process.env,
+            }));
+            expect(restoredProfile.connectedAccountGroupsV4).toMatchObject(restored.json().groups);
+            expect(restoredProfile.connectedAccountGroupsV4[0]?.policy).toEqual(restored.json().groups[0].policy);
             process.env.HAPPIER_FEATURE_CONNECTED_SERVICES_ACCOUNT_FALLBACK__ENABLED = "0";
             const fallbackDisabled = await app.inject({ method: "GET", url, headers });
             expect(fallbackDisabled.json().groups[0].policy).not.toHaveProperty("autoDisablePlanInvalidAccounts");
+            const fallbackDisabledProfile = await inReadSnapshot(tx => buildAccountConnectedServicesProjection({
+                tx, accountId: account.id, includeGroups: true, env: process.env,
+            }));
+            expect(fallbackDisabledProfile.connectedAccountGroupsV4).toMatchObject(fallbackDisabled.json().groups);
+            expect(fallbackDisabledProfile.connectedAccountGroupsV4[0]?.policy).toEqual(fallbackDisabled.json().groups[0].policy);
             const rejectedAutoDisable = await app.inject({ method: "PATCH", url: "/v4/connect/qualified/group", headers, payload: {
                 service, groupId: "quota-reset",
                 expectedGeneration: fallbackDisabled.json().groups[0].generation,
@@ -150,6 +172,26 @@ describe("qualified Connected Account V4 route family (integration)", () => {
         await db.connectedServiceAuthGroup.deleteMany().catch(() => {});
         await db.serviceAccountToken.deleteMany().catch(() => {});
         await db.account.deleteMany().catch(() => {});
+    });
+
+    it('refuses a requester guest bearer the custodian credential without disclosing its content', async () => {
+        const custodian = await db.account.create({ data: { ...createSignedAccountContentBinding(), encryptionMode: 'e2ee' } });
+        const requester = await db.account.create({ data: { ...createSignedAccountContentBinding(), encryptionMode: 'e2ee' } });
+        const written = await mutateQualifiedConnectedServiceCredential({ accountId: custodian.id, ref,
+            authenticationModeId: 'oauth', expectedCredentialRevision: null,
+            content: { t: 'encrypted', c: 'disposable-custodian-envelope' }, metadata: { displayName: 'Custodian fixture', scopes: [] } });
+        expect(written.status).toBe('written');
+        const guestBearer = await createAccountTokenForTests(requester.id, { kind: 'terminal', authority: 'account_automation' });
+        await withAuthenticatedTestApp(registerQualifiedConnectedAccountCredentialRoutesV4, async app => {
+            const response = await app.inject({ method: 'GET', url: '/v4/connect/qualified/credential?ref=' + encodeURIComponent(
+                encodeQualifiedConnectedAccountV4StructuredQueryValue(QualifiedConnectedAccountRefSchema, ref)),
+                headers: { authorization: `Bearer ${guestBearer}` } });
+            expect(response.statusCode, response.body).toBe(404);
+            expect(response.json()).toEqual({ error: 'connect_credential_not_found' });
+            expect(response.body).not.toContain('disposable-custodian-envelope');
+            expect(response.body).not.toContain('Custodian fixture');
+        }, { authentication: 'real' });
+        expect(await db.serviceAccountToken.count({ where: { accountId: custodian.id } })).toBe(1);
     });
 
     it('admits mode-protected page projections only for complete accepted coverage and preserves exact history', async () => {
@@ -218,16 +260,16 @@ describe("qualified Connected Account V4 route family (integration)", () => {
             const written = await put();
             expect(written.statusCode, written.body).toBe(200);
             expect(written.json()).toEqual({ success: true });
-            const documentUrl = route + '/document?recordId=' + encodeURIComponent(first.recordId);
+            const documentUrl = route + '?query=' + encodeURIComponent(JSON.stringify({ recordId: first.recordId, projection: demand }));
             const heldDocument = await app.inject({ method: 'GET', url: documentUrl, headers });
             expect(heldDocument.statusCode, heldDocument.body).toBe(200);
             expect(heldDocument.json().projection).toEqual(projection);
-            expect(written.headers.etag).toBe(heldDocument.headers.etag);
+            expect(written.headers.etag).toBeDefined();
+            expect(written.headers.etag).not.toBe(heldDocument.headers.etag); // PUT acknowledges a protected prefix, GET includes coverage.
             for (let index = 0; index < 5; index++) {
                 const moving = { ...demand, range: { ...range, endAtMs: range.endAtMs + index } };
-                const head = await app.inject({ method: 'HEAD', url: route + '?query=' + encodeURIComponent(JSON.stringify({
-                    recordId: first.recordId, projection: moving })), headers });
-                expect(head.statusCode).toBe(200);
+                const head = await read(moving, { ...headers, 'if-none-match': String(heldDocument.headers.etag) });
+                expect(head.statusCode).toBe(304);
                 expect(head.body).toBe('');
                 expect(head.headers['x-happier-usage-projection-complete']).toBe('true');
                 expect(head.headers['access-control-expose-headers']).toContain('x-happier-usage-projection-complete');
@@ -271,7 +313,10 @@ describe("qualified Connected Account V4 route family (integration)", () => {
             expect((await db.account.findUniqueOrThrow({ where: { id: account.id }, select: { seq: true } })).seq).toBe(beforeIdle.seq + 1);
             expect((await read(widerDemand)).json()).toEqual({ projection, complete: false });
             expect((await read()).json()).toEqual({ projection, complete: true });
-            const incompleteHead = await app.inject({ method: 'HEAD', url: route + '?query=' + encodeURIComponent(JSON.stringify({ recordId: first.recordId, projection: widerDemand })), headers });
+            const incompleteHead = await read(widerDemand, { ...headers, 'if-none-match': String(revision) });
+            expect(incompleteHead.statusCode).toBe(200);
+            expect(incompleteHead.headers.etag).not.toBe(revision);
+            expect(incompleteHead.json()).toEqual({ projection, complete: false });
             expect(incompleteHead.headers['x-happier-usage-projection-complete']).toBe('false');
             const tailRead = await app.inject({ method: 'GET', url: documentUrl, headers });
             const tailRevision = tailRead.headers.etag;
@@ -289,7 +334,8 @@ describe("qualified Connected Account V4 route family (integration)", () => {
             const changed = await app.inject({ method: 'GET', url: documentUrl, headers: { ...headers, 'if-none-match': String(tailRevision) } });
             expect(changed.statusCode, changed.body).toBe(200);
             expect(changed.json().projection.observationCount).toBe(2);
-            expect(otherTab.headers.etag).toBe(changed.headers.etag);
+            expect(otherTab.headers.etag).toBeDefined();
+            expect(otherTab.headers.etag).not.toBe(changed.headers.etag);
             // A narrower valid submission can reuse an already-stored wider
             // document. It must not bind that winner's ETag to its smaller body.
             const retainedWider = await put();
@@ -861,6 +907,124 @@ describe("qualified Connected Account V4 route family (integration)", () => {
             expect(repeated.statusCode, repeated.body).toBe(200);
             expect(repeated.json().group.state.lastSwitchReason).toBe("manual");
             expect(repeated.json().group.state.lastSwitchAt).toBe(selectedAt);
+        });
+    });
+
+    it('keeps a failed pre-write pool read definite and reorders through the real owner on explicit retry', async () => {
+        harness.resetEnv({
+            HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: 'optional',
+            HAPPIER_FEATURE_ENCRYPTION__DEFAULT_ACCOUNT_MODE: 'plain',
+            HAPPIER_FEATURE_ENCRYPTION__PLAIN_ACCOUNT_CREDENTIALS_AT_REST: 'none',
+        });
+        const account = await db.account.create({ data: { publicKey: null, encryptionMode: 'plain' }, select: { id: true } });
+        const headers = { 'x-test-user-id': account.id };
+        await withAuthenticatedTestApp(registerQualifiedConnectedAccountCredentialRoutesV4, async app => {
+            const created = await app.inject({ method: 'POST', url: '/v4/connect/qualified/groups', headers,
+                payload: { service, group: { groupId: 'move-up' } } });
+            expect(created.statusCode, created.body).toBe(200);
+            let group = QualifiedConnectedAccountGroupResponseV4Schema.parse(created.json()).group;
+            for (const [index, connectedAccountId] of ['first', 'second'].entries()) {
+                const credential = await app.inject({ method: 'POST', url: '/v4/connect/qualified/credential', headers, payload: {
+                    ref: { service, accountId: connectedAccountId }, authenticationModeId: 'api-key', expectedCredentialRevision: null,
+                    content: { t: 'plain', v: { token: 'pool-reorder-fixture' } }, metadata: { scopes: [] },
+                } });
+                expect(credential.statusCode, credential.body).toBe(200);
+                const member = await app.inject({ method: 'POST', url: '/v4/connect/qualified/group/members', headers, payload: {
+                    group: group.ref, connectedAccountId, priority: (index + 1) * 100, enabled: index !== 0,
+                    expectedGeneration: group.generation, expectedIncarnation: group.incarnation,
+                } });
+                expect(member.statusCode, member.body).toBe(200);
+                group = QualifiedConnectedAccountGroupResponseV4Schema.parse(member.json()).group;
+            }
+            const groupUrl = '/v4/connect/qualified/group?group=' + encodeURIComponent(
+                encodeQualifiedConnectedAccountV4StructuredQueryValue(QualifiedConnectedAccountGroupRefSchema, group.ref),
+            );
+            const readGroup = async () => {
+                const reply = await app.inject({ method: 'GET', url: groupUrl, headers });
+                expect(reply.statusCode, reply.body).toBe(200);
+                return QualifiedConnectedAccountGroupResponseV4Schema.parse(reply.json()).group;
+            };
+            let readUnavailable = true;
+            let writeRequests = 0;
+            let actionReads = 0;
+            // Only HTTP is substituted: the captured browser failure occurs before its first GET.
+            // Admitted requests use real routes, schemas, CAS transactions and isolated SQLite storage.
+            const host: ConnectedServiceConfigurationActionHostV1 = {
+                assertCurrent() {},
+                async request(request) {
+                    if (request.method === 'GET') {
+                        actionReads += 1;
+                        if (readUnavailable) throw new TypeError('Failed to fetch');
+                    } else writeRequests += 1;
+                    const reply = await app.inject({ method: request.method, url: request.path, headers,
+                        ...(request.body === undefined ? {} : { payload: JSON.stringify(request.body),
+                            headers: { ...headers, 'content-type': 'application/json' } }),
+                    });
+                    if (reply.statusCode !== 200) {
+                        throw Object.assign(new Error('Qualified pool request refused'), { code: reply.json().error });
+                    }
+                    return reply.json();
+                },
+                async mutatePurposeBindings() { throw new Error('reorder_must_not_change_defaults'); },
+                async resolveAgent() { throw new Error('reorder_must_not_probe'); },
+                async resetQuota() { throw new Error('reorder_must_not_refresh_quota'); },
+            };
+            // The shared tests-package fixture is outside the server compiler's rootDir.
+            // Only the HTTP host port is admitted; every unrelated host boundary fails loudly.
+            const unexpectedHostBoundary = async (): Promise<never> => {
+                throw new Error('Unexpected Action host boundary during pool reorder');
+            };
+            const executor = createActionExecutor({
+                executionRunStart: unexpectedHostBoundary,
+                executionRunList: unexpectedHostBoundary,
+                executionRunGet: unexpectedHostBoundary,
+                detachedExecutionRunSend: unexpectedHostBoundary,
+                executionRunStop: unexpectedHostBoundary,
+                executionRunAction: unexpectedHostBoundary,
+                executionRunWait: unexpectedHostBoundary,
+                sessionOpen: unexpectedHostBoundary,
+                sessionFork: unexpectedHostBoundary,
+                sessionRollback: unexpectedHostBoundary,
+                sessionSpawnNew: unexpectedHostBoundary,
+                pathsListRecent: unexpectedHostBoundary,
+                machinesList: unexpectedHostBoundary,
+                serversList: unexpectedHostBoundary,
+                reviewEnginesList: unexpectedHostBoundary,
+                agentsBackendsList: unexpectedHostBoundary,
+                agentsModelsList: unexpectedHostBoundary,
+                sessionSendMessage: unexpectedHostBoundary,
+                sessionModeSet: unexpectedHostBoundary,
+                sessionModesList: unexpectedHostBoundary,
+                sessionList: unexpectedHostBoundary,
+                sessionActivityGet: unexpectedHostBoundary,
+                sessionRecentMessagesGet: unexpectedHostBoundary,
+                resetGlobalVoiceAgent: unexpectedHostBoundary,
+                daemonMemorySearch: unexpectedHostBoundary,
+                daemonMemoryGetWindow: unexpectedHostBoundary,
+                daemonMemoryEnsureUpToDate: unexpectedHostBoundary,
+                connectedServiceAction: ({ actionId, input }) =>
+                    executeConnectedServiceConfigurationActionV1(host, actionId, input),
+            });
+            const moveUp = () => executor.execute('connectedServices.pools.reorder', { group: group.ref,
+                move: { accountId: 'second', position: { anchorId: 'first', placement: 'before' } },
+            }, { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } });
+            const failed = await moveUp();
+            expect(writeRequests).toBe(0);
+            expect(actionReads).toBe(1); // No implicit retry or polling after a failed read.
+            expect(await readGroup()).toEqual(group);
+            expect(await readGroup()).toEqual(group);
+            expect(failed).toMatchObject({ ok: false, errorCode: 'connect_group_read_failed' });
+
+            readUnavailable = false;
+            expect(await moveUp()).toEqual({ ok: true, result: { applied: true } });
+            const settled = await readGroup();
+            expect(writeRequests).toBe(2);
+            expect(actionReads).toBe(2);
+            expect(settled.generation).toBe(group.generation + 2);
+            expect(settled.runtimeStateRevision).toBe(group.runtimeStateRevision);
+            expect(settled.members.map(member => [member.connectedAccountId, member.priority, member.enabled]))
+                .toEqual([['second', 100, true], ['first', 200, false]]);
+            expect(await readGroup()).toEqual(settled);
         });
     });
 

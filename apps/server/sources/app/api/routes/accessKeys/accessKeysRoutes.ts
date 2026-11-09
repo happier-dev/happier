@@ -2,6 +2,7 @@ import { Fastify } from "../../types";
 import { z } from "zod/mini";
 import { log } from "@/utils/logging/log";
 import { inReadSnapshot, inTx } from "@/storage/inTx";
+import { SessionMachineAccessKeyParamsSchema, SessionMachineAccessKeyCreateBodySchema } from '@/app/accessKeys/sessionMachineAccessKeyRequest';
 import {
     createSessionMachineAccessKeyInTx,
     readSessionMachineAccessKeyInTx,
@@ -14,10 +15,7 @@ export function accessKeysRoutes(app: Fastify) {
     app.get('/v1/access-keys/:sessionId/:machineId', {
         preHandler: app.authenticate,
         schema: {
-            params: z.object({
-                sessionId: z.string(),
-                machineId: z.string()
-            }),
+            params: SessionMachineAccessKeyParamsSchema,
             response: {
                 200: z.object({
                     accessKey: z.nullable(z.object({
@@ -72,13 +70,8 @@ export function accessKeysRoutes(app: Fastify) {
     app.post('/v1/access-keys/:sessionId/:machineId', {
         preHandler: app.authenticate,
         schema: {
-            params: z.object({
-                sessionId: z.string(),
-                machineId: z.string()
-            }),
-            body: z.object({
-                data: z.string()
-            }),
+            params: SessionMachineAccessKeyParamsSchema,
+            body: SessionMachineAccessKeyCreateBodySchema,
             response: {
                 200: z.object({
                     success: z.boolean(),
@@ -140,10 +133,7 @@ export function accessKeysRoutes(app: Fastify) {
     app.put('/v1/access-keys/:sessionId/:machineId', {
         preHandler: app.authenticate,
         schema: {
-            params: z.object({
-                sessionId: z.string(),
-                machineId: z.string()
-            }),
+            params: SessionMachineAccessKeyParamsSchema,
             body: z.object({
                 data: z.string(),
                 expectedVersion: z.number().check(z.int(), z.minimum(0))

@@ -105,6 +105,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('H
             const remaining = await read('global-after-revoke', viewer.id, { type: 'global' });
             expect(remaining).toHaveLength(999);
             expect(remaining.some(row => row.sessionId === selected.id)).toBe(false);
+            console.info('PERF_D4_SCOPED_HOME_SEARCH_POSTGRES', JSON.stringify(observations));
         } finally { db.$transaction = originalTransaction; }
     });
 });

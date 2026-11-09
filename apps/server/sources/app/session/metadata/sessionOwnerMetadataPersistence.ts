@@ -1,4 +1,4 @@
-import { parseSessionOwnerMetadataEnvelopeV1, SESSION_METADATA_LAYOUT_VERSION_V1, type SessionOwnerMetadataEnvelopeV1, validateSessionOwnerMetadataEnvelopeForAccountModeV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
+import { parseSessionOwnerMetadataEnvelopeV1, SESSION_METADATA_LAYOUT_VERSION_V1, type SessionOwnerMetadataEnvelopeV1, validateAdmittedSessionOwnerMetadataEnvelopeForAccountModeV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 
 export type SessionOwnerMetadataAccountMode = "plain" | "e2ee";
 
@@ -21,7 +21,7 @@ export function parsePersistedSessionOwnerMetadataEnvelopeV1(params: Readonly<{
         params.ownerMetadata,
     );
     if (explicit !== null) {
-        return validateSessionOwnerMetadataEnvelopeForAccountModeV1({
+        return validateAdmittedSessionOwnerMetadataEnvelopeForAccountModeV1({
             accountMode: params.accountMode,
             envelope: explicit,
         }).ok

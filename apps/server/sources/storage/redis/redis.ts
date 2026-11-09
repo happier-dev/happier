@@ -1,6 +1,7 @@
 import { Redis } from "ioredis";
 
 import { instrumentRedisClient } from "@/app/monitoring/metrics/instrumentRedisClient";
+import { REDIS_SOCKET_STALL_TIMEOUT_MS, REDIS_SOCKET_STALE_TIMER_GRACE_MS } from "@/config/socketClusterRedis";
 import { warn } from "@/utils/logging/log";
 
 let _redis: Redis | null = null;
@@ -12,8 +13,6 @@ let _socketClusterRedisUrl: string | null = null;
 let _socketClusterAdapterRedis: Redis | null = null;
 let _socketClusterAdapterDuplicateCount = 0;
 
-const REDIS_SOCKET_STALL_TIMEOUT_MS = 5_000;
-const REDIS_SOCKET_STALE_TIMER_GRACE_MS = 50;
 const REDIS_SOCKET_ERROR_DIAGNOSTIC_INTERVAL_MS = 60_000;
 
 type RedisSocketErrorClass = "connection" | "dns" | "timeout" | "unknown";

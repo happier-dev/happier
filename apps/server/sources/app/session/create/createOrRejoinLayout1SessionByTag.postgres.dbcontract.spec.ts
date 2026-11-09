@@ -6,7 +6,9 @@ import { createPresentUserSessionAccessAuthentication } from "@/app/session/acce
 import { db, getDbProviderFromEnv, initDbPostgres } from "@/storage/db";
 import { inTx, type Tx } from "@/storage/inTx";
 import { createSignedAccountContentBinding } from "@/testkit/accountEncryption";
-import { createOrRejoinLayout1SessionByTag } from "./createOrRejoinLayout1SessionByTag";
+import { createOrRejoinLayout1SessionByTag, rejoinLayout1SessionByTagInTx } from "./createOrRejoinLayout1SessionByTag";
+import { ExternalActionExecutionAuthorizationBindingV1Schema } from "@happier-dev/protocol/actions/externalActionApi";
+import type { SessionCreationExecutionAuthorization } from "./apiTokenSessionCreationAuthorization";
 import { createFreshBoundLayout1SessionInTx } from "./createFreshBoundLayout1Session";
 import { prepareLayout1SessionCreate } from "./prepareLayout1SessionCreate";
 import { deleteSessionOrganizationFolder, deleteSessionOrganizationTag } from "@/app/session/organization/organizationMutations";
@@ -137,6 +139,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("t
             }
             else expect(result.session.primaryTeamId).toBe(team.id);
         } finally {
+            console.info("SESSION_CREATE_HOT_CURSOR", { admission, publications });
             db.$transaction = transaction;
             vi.unstubAllEnvs();
             if (machine) {

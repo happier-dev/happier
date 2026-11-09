@@ -1,5 +1,7 @@
 import { createHash } from "node:crypto";
 
+import type { PluginWebhookSignedVerifierKindV1 } from "./verifiers/catalog";
+
 function updateLengthPrefixedUtf8(hash: ReturnType<typeof createHash>, value: string): void {
     const bytes = Buffer.from(value, "utf8");
     const length = Buffer.allocUnsafe(4);
@@ -9,7 +11,7 @@ function updateLengthPrefixedUtf8(hash: ReturnType<typeof createHash>, value: st
 }
 
 export function createPluginWebhookDeliveryIdentityDigestV1(params: {
-    verifierKind: "github_hmac_sha256_v1";
+    verifierKind: PluginWebhookSignedVerifierKindV1;
     routeId: string;
     providerDeliveryId: string;
 }): string {

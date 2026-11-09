@@ -2,6 +2,7 @@ import { createHmac } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import tweetnacl from "tweetnacl";
 
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 
@@ -9,10 +10,17 @@ import {
     normalizePluginReleaseFactsV1,
     readDeclaredPackageAssetsV1,
     PluginWebhookEndpointEnsureInputV1Schema,
+    PluginWebhookEndpointCheckCorrespondenceResultV1Schema,
+    PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1,
+    type PluginWebhookEndpointCheckCorrespondenceInputV1,
 } from "@happier-dev/protocol";
 
 import { db } from "@/storage/db";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
+import { createAuthenticatedTestApp } from "@/app/api/testkit/sqliteFastify";
+import { createSignedPluginInstallationPublisherHeader } from "@/testkit/pluginInstallationPublisherTestkit";
+import { registerPluginWebhookDaemonRoutes } from "@/app/api/routes/plugins/webhooks/registerPluginWebhookDaemonRoutes";
+import { registerPluginWebhookIngressRoute } from "@/app/api/routes/plugins/webhooks/registerPluginWebhookIngressRoute";
 
 import {
     createPluginWebhookEndpointActionsV1,
@@ -240,7 +248,7 @@ describe("Account webhook endpoint with the shipped GitHub producer", () => {
         ]);
     });
 
-    it("mints a usable endpoint from the shipped GitHub manifest and admits a signed delivery for its handler", async () => {
+    it.each(["full", "light"])("admits a signed GitHub delivery through the %s-server public route without Redis", async (flavor) => {
         const accountId = await seedAccount();
 
         const ensured = await ensureGithubEndpoint(accountId, "ensure-github-account-endpoint-1");
@@ -249,12 +257,30 @@ describe("Account webhook endpoint with the shipped GitHub producer", () => {
         const secret = ensured.oneTimeGeneratedSecret;
         expect(typeof secret).toBe("string");
 
-        const ingested = await ingestPluginWebhookV1({
-            opaqueRouteId: readOpaqueRouteId(ensured.publicUrl),
-            rawBody: PUSH_BODY,
-            headers: githubHeaders(secret!, "delivery-github-1"),
+        const app = createAuthenticatedTestApp();
+        registerPluginWebhookIngressRoute(app, {
+            env: {
+                HAPPIER_FEATURE_PLUGINS__ENABLED: "1",
+                HAPPIER_FEATURE_PLUGINS_WEBHOOKS__ENABLED: "1",
+                HAPPIER_SERVER_FLAVOR: flavor,
+            },
         });
-        expect(ingested).toMatchObject({ kind: "accepted", duplicate: false });
+        try {
+            const post = (signatureSecret: string) => app.inject({
+                method: "POST",
+                url: new URL(ensured.publicUrl).pathname,
+                payload: PUSH_BODY,
+                headers: githubHeaders(signatureSecret, "delivery-github-1"),
+            });
+            const accepted = await post(secret!);
+            expect(accepted.statusCode).toBe(202);
+            expect(accepted.body).toBe("");
+            expect((await post(`${secret!}-tampered`)).statusCode).toBe(401);
+            expect(await db.pluginWebhookDelivery.count()).toBe(1);
+            expect((await post(secret!)).statusCode).toBe(202);
+        } finally {
+            await app.close();
+        }
 
         // The admitted delivery is bound to the endpoint whose handler Action is
         // the GitHub plugin's own webhook handler — the Action the daemon invokes
@@ -281,6 +307,11 @@ describe("Account webhook endpoint with the shipped GitHub producer", () => {
 
     it("keeps every readiness projection unconfirmed until a verified delivery proves the provider was configured", async () => {
         const accountId = await seedAccount();
+        const keyPair = tweetnacl.sign.keyPair();
+        await db.machine.update({ where: { id: MACHINE_ID }, data: { installationPublicKey: new Uint8Array(keyPair.publicKey) } });
+        const app = createAuthenticatedTestApp();
+        registerPluginWebhookDaemonRoutes(app, undefined, { HAPPIER_FEATURE_PLUGINS_WEBHOOKS__ENABLED: "1" });
+        try {
         const ensured = await ensureGithubEndpoint(accountId, "ensure-github-account-endpoint-readiness");
         const opaqueRouteId = readOpaqueRouteId(ensured.publicUrl);
         const readReadiness = async () => (await createPluginWebhookEndpointActionsV1().read({
@@ -291,11 +322,31 @@ describe("Account webhook endpoint with the shipped GitHub producer", () => {
             accountId,
             input: { pageSize: 50, deadLetterPageSize: 0 },
         })).endpoints.map((endpoint) => endpoint.readiness);
+        const correspondenceInput = {
+            webhookEndpointId: ensured.webhookEndpointId,
+            webhookContribution: { pluginId: MANIFEST.pluginId, localId: MANIFEST.webhookLocalId },
+            targetMaterialization: MATERIALIZATION_REF,
+            sourceInstanceId: ROUTING_SOURCE_INSTANCE_ID,
+            setup: { kind: "accountEndpointV1", credential: "serverGenerated" },
+        } as const;
+        const readCorrespondence = async (input: PluginWebhookEndpointCheckCorrespondenceInputV1 = correspondenceInput) => {
+            const path = "/v1/plugins/webhooks/endpoints/check-correspondence";
+            const body = { caller: MATERIALIZATION_REF, input };
+            const response = await app.inject({ method: "POST", url: path, payload: body, headers: {
+                "x-test-user-id": accountId,
+                [PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1]: createSignedPluginInstallationPublisherHeader({
+                    keyPair, machineId: MACHINE_ID, installationId: MACHINE_INSTALLATION_ID, path, body,
+                }),
+            } });
+            expect(response.statusCode).toBe(200);
+            return PluginWebhookEndpointCheckCorrespondenceResultV1Schema.parse(response.json());
+        };
 
         // An enabled endpoint with a live route is NOT a working delivery path.
         expect(ensured.readiness).toBe("providerConfirmationRequired");
         await expect(readReadiness()).resolves.toBe("providerConfirmationRequired");
         await expect(statusReadiness()).resolves.toEqual(["providerConfirmationRequired"]);
+        await expect(readCorrespondence()).resolves.toMatchObject({ kind: "ready", readiness: "providerConfirmationRequired" });
 
         // A request the verifier rejected is not provider confirmation.
         await expect(ingestPluginWebhookV1({
@@ -314,11 +365,23 @@ describe("Account webhook endpoint with the shipped GitHub producer", () => {
 
         await expect(readReadiness()).resolves.toBe("ready");
         await expect(statusReadiness()).resolves.toEqual(["ready"]);
+        await expect(readCorrespondence()).resolves.toMatchObject({ kind: "ready", readiness: "ready" });
+        await expect(readCorrespondence({ ...correspondenceInput, sourceInstanceId: "different-source" }))
+            .resolves.toEqual({ kind: "unavailable", code: "endpoint_unavailable" });
+        await expect(readCorrespondence({ ...correspondenceInput,
+            targetMaterialization: { ...MATERIALIZATION_REF, materializationId: "different-materialization" },
+        })).resolves.toEqual({ kind: "unavailable", code: "endpoint_unavailable" });
+        await expect(readCorrespondence({ ...correspondenceInput,
+            webhookContribution: { pluginId: MANIFEST.pluginId, localId: "different-contribution" },
+        })).resolves.toEqual({ kind: "unavailable", code: "endpoint_unavailable" });
 
         // The same idempotency key rejoins a confirmed endpoint, so the lost
         // one-time disclosure no longer blocks provider setup.
         await expect(ensureGithubEndpoint(accountId, "ensure-github-account-endpoint-readiness"))
             .resolves.toMatchObject({ readiness: "ready" });
+        await db.pluginWebhookEndpoint.update({ where: { id: ensured.webhookEndpointId }, data: { enabled: false } });
+        await expect(readCorrespondence()).resolves.toEqual({ kind: "unavailable", code: "endpoint_unavailable" });
+        } finally { await app.close(); }
     });
 
     it("returns readiness to provider confirmation across a credential rotation until the new secret delivers", async () => {

@@ -299,7 +299,9 @@ describe("pendingMessageService", () => {
             { code: "P2028", meta: { error: "Unable to start a transaction in the given time." } },
         );
         expect(actualTransactions.isTransactionAcquisitionUnavailableError(operationError)).toBe(false);
-        transactionHarness.inTx.mockRejectedValueOnce(operationError);
+        // Fail a statement after the real transaction callback entered. Rejecting
+        // $transaction before entry would correctly describe acquisition failure.
+        currentTx.$queryRawUnsafe.mockRejectedValueOnce(operationError);
 
         await expect(resolveAcceptedPendingDelivery({
             actorUserId: "u1",

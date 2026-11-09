@@ -1,11 +1,11 @@
-import { SESSION_METADATA_LAYOUT_VERSION_V1, SessionMetadataRecipientProjectionV1Schema } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
+import { SESSION_METADATA_LAYOUT_VERSION_V1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 
 import {
     buildSessionMetadataRecipientUpdate,
     buildAccountChangeWakeUpdate,
-    type ClientConnection,
     buildUpdateSessionUpdate,
     eventRouter,
+    type ClientConnection,
 } from "@/app/events/eventRouter";
 import type { SessionRecipientCursor } from "@/app/session/changeTracking/markSessionProjectionRecipientsChanged";
 import {
@@ -13,6 +13,7 @@ import {
     type SessionMetadataRecipientProjectionInput,
 } from "@/app/session/metadata/sessionMetadataRecipientProjection";
 import { randomKeyNaked } from "@/utils/keys/randomKeyNaked";
+import { parsePersistedSessionOwnerMetadataEnvelopeV1 } from './sessionOwnerMetadataPersistence';
 
 /**
  * The one publisher for a committed Session current view.
@@ -29,7 +30,9 @@ import { randomKeyNaked } from "@/utils/keys/randomKeyNaked";
  * - `envelope_tuple_v1` projects PER RECIPIENT (owner and shared participants
  *   legitimately see different envelopes) and publishes to every participant
  *   cursor;
- * - `legacy_v0` has no per-recipient envelope at all. The projector throws
+ * - `legacy_v0` accepts a full committed row or its exact changed fields, so
+ *   released partial socket writes need no extra snapshot read. It has no
+ *   per-recipient envelope. The projector throws
  *   `SessionMetadataPrivacyUpgradeRequiredError` for a non-owner, so this layout
  *   publishes ONLY to the owner and shared participants learn through their
  *   ordinary change cursor instead.
@@ -168,17 +171,24 @@ async function publishCurrentViews(params: Parameters<typeof publishSessionCurre
 
     let publications;
     try {
+        if (recipientCursors.length === 0) return { ok: true };
+        const ownerMetadata = parsePersistedSessionOwnerMetadataEnvelopeV1({
+            metadataLayoutVersion: SESSION_METADATA_LAYOUT_VERSION_V1,
+            accountMode: source.ownerAccountMode,
+            ownerMetadata: source.ownerMetadata.value,
+
+        });
+        if (ownerMetadata === null) return { ok: false };
         publications = recipientCursors.map(({ accountId, cursor }) => ({
             accountId,
             cursor,
-            projection: SessionMetadataRecipientProjectionV1Schema.parse(
-                projectSessionMetadataForRecipient({
+            projection: projectSessionMetadataForRecipient({
                     session: {
                         accountId: source.sessionOwnerId,
                         metadata: source.sharedMetadata.value,
                         metadataVersion: source.sharedMetadata.version,
                         metadataLayoutVersion: SESSION_METADATA_LAYOUT_VERSION_V1,
-                        ownerMetadata: source.ownerMetadata.value,
+                        ownerMetadata,
                         agentState: source.agentState.value,
                         agentStateVersion: source.agentState.version,
                         ...(source.projectKey !== undefined ? { projectKey: source.projectKey } : {}),
@@ -195,7 +205,6 @@ async function publishCurrentViews(params: Parameters<typeof publishSessionCurre
                             ownerAccountMode: source.ownerAccountMode,
                           },
                 }),
-            ),
         }));
     } catch {
         return { ok: false };

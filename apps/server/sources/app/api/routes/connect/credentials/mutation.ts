@@ -232,6 +232,7 @@ async function mutateConnectedServiceCredentialForModeInTx(
     if (result.status === "revision_required") return result;
     if (result.status === "provider_identity_mismatch") return result;
     if (result.status === "saved_secret_held") return { status: "unsupported_format" };
+    if (result.status === "saved_secret_reference_invalid") return { status: "unsupported_format" };
     if (result.status === "storage_mode_mismatch"
         || result.status === "authentication_mode_mismatch") {
         return { status: "storage_mode_mismatch" };

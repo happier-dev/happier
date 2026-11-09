@@ -124,7 +124,7 @@ describe("registerApiRoutes", () => {
         for (const ordinaryRoute of [
             "GET /v1/auth/ping",
             "GET /v1/machines",
-            "GET /v1/sessions",
+            "GET /v2/sessions",
             "GET /v1/artifacts",
             "POST /v1/auth/api-tokens/list",
         ]) {

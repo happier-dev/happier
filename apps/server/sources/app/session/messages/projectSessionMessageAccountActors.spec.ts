@@ -84,6 +84,23 @@ describe("projectSessionMessageAccountActors", () => {
         }]);
     });
 
+    it("preserves a readable profile while marking the resource relationship as former", async () => {
+        const { reader } = createAccountReader([ALICE]);
+        await expect(projectAuthenticatedAccountActorsById(reader, ["acc_alice"], ["former"]))
+            .resolves.toEqual([{
+                v: 1,
+                accountId: "acc_alice",
+                accessibility: "former",
+                profile: {
+                    name: "Alice Chen",
+                    firstName: "Alice Chen",
+                    lastName: null,
+                    username: "alice",
+                    avatarUrl: "https://files.test/avatars/alice.png",
+                },
+            }]);
+    });
+
     it("retains known actor evidence from retired receipt fields without accepting Account-column disagreement", async () => {
         const { reader } = createAccountReader([ALICE]);
         const receipt = {

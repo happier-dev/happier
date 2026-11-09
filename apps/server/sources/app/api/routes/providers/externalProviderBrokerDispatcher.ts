@@ -10,7 +10,7 @@ import { TeamCredentialUsageLimitDenialV1Schema, type TeamCredentialTestActionOu
 import { type TeamCredentialSourceBindingV1 } from '@happier-dev/protocol/teams/credentials/sourceBindingV1';
 import { PROVIDER_BROKER_APPLICATION_ERROR_CODE_HEADER, PROVIDER_BROKER_APPLICATION_LIMIT_METRIC_HEADER,
     PROVIDER_BROKER_APPLICATION_LIMIT_REMAINING_HEADER, PROVIDER_BROKER_APPLICATION_LIMIT_RESETS_AT_HEADER,
-    type ProviderBrokerApplicationBindingV1 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
+    type ProviderBrokerSourceApplicationBindingV1 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
 import type { ProviderBrokerRelayApplicationBindingV1 } from '@happier-dev/protocol/machines/peer/mediation/tunnel/authorizationSchemas';
 
 import { readMachineTunnelFeatureEnv } from '@/app/features/catalog/readFeatureEnv';
@@ -85,7 +85,7 @@ export type TeamCredentialResourceTestBrokerDispatch = (input: Readonly<{
     resourceId: string;
     expectedResourceRevision: number;
     brokerMachineId: string;
-    application: ProviderBrokerApplicationBindingV1;
+    application: ProviderBrokerSourceApplicationBindingV1;
     source: TeamCredentialSourceBindingV1;
     verifiedCredentialEvidence?: readonly AuthTokenAuthenticationEvidenceV1[];
     request: TeamCredentialResourceTestApplicationRequestV1;

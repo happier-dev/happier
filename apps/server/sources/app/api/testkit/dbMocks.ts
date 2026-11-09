@@ -31,11 +31,11 @@ export function matchesDbMockWhere(actual: unknown, expected: unknown): boolean 
             if (!Array.isArray(actual)) return false;
             const hasMatch = actual.some(item => matchesDbMockWhere(item, value));
             if (key === "some" ? !hasMatch : hasMatch) return false;
-        } else if (key === "lt" || key === "lte" || key === "gt") {
+        } else if (key === "lt" || key === "lte" || key === "gt" || key === "gte") {
             const left = actual instanceof Date ? actual.getTime() : actual;
             const right = value instanceof Date ? value.getTime() : value;
             if ((typeof left !== "number" && typeof left !== "bigint") || (typeof right !== "number" && typeof right !== "bigint")) return false;
-            if (key === "lt" ? !(left < right) : key === "lte" ? !(left <= right) : !(left > right)) return false;
+            if (key === "lt" ? !(left < right) : key === "lte" ? !(left <= right) : key === "gt" ? !(left > right) : !(left >= right)) return false;
         } else if (!isDbMockRecord(actual) || !matchesDbMockWhere(actual[key], value)) return false;
     }
     return true;

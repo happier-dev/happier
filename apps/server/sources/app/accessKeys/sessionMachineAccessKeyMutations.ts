@@ -77,6 +77,17 @@ export async function readSessionMachineBindingStateInTx(
         return { session, machine };
     })();
     if (facts.session?.accountId !== binding.accountId) return "missing";
+    // Finite Workflow work keeps its admitted assignment. The Run owner settles
+    // that authority; ordinary Sessions still use current Machine admission.
+    if (facts.session.originKind === 'run_step' && facts.session.originRunId
+        && facts.machine?.installationId && classifyMachineAvailabilityState(facts.machine) === 'available') {
+        const activeAssignment = await tx.automationRunAssignment.findFirst({ where: {
+            runId: facts.session.originRunId, machineId: binding.machineId,
+            admittedMachineInstallationId: facts.machine.installationId,
+            run: { accountId: binding.accountId, workflowCustodyState: 'pending' },
+        }, select: { machineId: true } });
+        if (activeAssignment) return 'available';
+    }
     return readRequesterMachineAvailabilityInTx(tx, binding, facts.machine);
 }
 
@@ -133,7 +144,11 @@ export async function readMachineAccessKeySessionBindingsInTx(
 
 export async function createSessionMachineAccessKeyInTx(
     tx: Tx,
-    params: SessionMachineAccessKeyBinding & Readonly<{ data: string }>,
+    params: SessionMachineAccessKeyBinding & Readonly<{
+        data: string;
+        /** Already-admitted finite work retains its captured Machine grant. */
+        admittedMachineInstallationId?: string;
+    }>,
 ): Promise<CreateSessionMachineAccessKeyResult> {
     const binding: SessionMachineAccessKeyBinding = {
         accountId: params.accountId,
@@ -143,7 +158,17 @@ export async function createSessionMachineAccessKeyInTx(
 
     await acquireBindingMutationAccountsInTx(tx, binding);
 
-    if (await readSessionMachineBindingStateInTx(tx, binding) !== "available") {
+    const available = params.admittedMachineInstallationId === undefined
+        ? await readSessionMachineBindingStateInTx(tx, binding) === 'available'
+        : await (async () => {
+            const [session, machine] = await Promise.all([
+                tx.session.findFirst({ where: { id: binding.sessionId, accountId: binding.accountId }, select: { id: true } }),
+                tx.machine.findUnique({ where: { id: binding.machineId }, select: { installationId: true, revokedAt: true, replacedByMachineId: true } }),
+            ]);
+            return session !== null && machine?.installationId === params.admittedMachineInstallationId
+                && classifyMachineAvailabilityState(machine) === 'available';
+        })();
+    if (!available) {
         return { ok: false, reason: "binding-not-found" };
     }
 

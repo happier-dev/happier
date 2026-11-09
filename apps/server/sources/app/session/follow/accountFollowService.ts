@@ -13,7 +13,7 @@ import {
     isSessionPersonallyTrackedInTx,
 } from "@/app/session/personal/readState";
 import { inReadSnapshot, inTx, type Tx } from "@/storage/inTx";
-import { readSnapshotWithCurrentAdmission } from "@/storage/readSnapshotWithCurrentAdmission";
+import { captureReadSnapshot } from "@/storage/captureReadSnapshot";
 import { markSessionFollowsChangedForAccountsInTx, markSessionFollowsChangedInTx } from "./changes";
 import { hasCanonicalFollowProviderInputAcceptanceInTx } from "./providerInputAcceptance";
 import { acquireAccountChangePublicationLocksInTx } from "@/app/changes/markAccountChanged";
@@ -308,7 +308,7 @@ export async function listAccountSessionFollows(input: Readonly<{ accountId: str
         : { sourceKey: sourceKeyForSessionFollowSourceV1(source) };
     const kindsWhere = selection.sourceKinds === undefined ? {} : { OR: selection.sourceKinds.map(kind => kind === 'session'
         ? { sessionId: { not: null } } : { sourceKey: { startsWith: `${kind}:` } }) };
-    return readSnapshotWithCurrentAdmission<AccountFollowResult<{ follows: AccountFollowRelationV1[]; continuation?: string }>>(async tx => {
+    return captureReadSnapshot<AccountFollowResult<{ follows: AccountFollowRelationV1[]; continuation?: string }>>(async tx => {
         if (!await activeAccount(tx, input.accountId)) return { ok: false as const, error: 'account_inactive' as const };
         const where = { accountId: input.accountId, AND: [{ OR: [{ following: true }, { notifyOnce: { not: null } }] }, sourceWhere, kindsWhere] };
         // Session-only retained rows may have a null key. Page both disjoint SQL
@@ -338,18 +338,8 @@ export async function listAccountSessionFollows(input: Readonly<{ accountId: str
                 if (projected && (projected.following || projected.once?.length || projected.onceDeliveries?.length)) follows.push(projected);
             }
         }
-        return { ok: true as const, value: { follows, ...(page.continuation ? { continuation: page.continuation } : {}) } };
-    }, async (tx, captured) => {
-        if (!captured.ok) return captured;
-        if (!await activeAccount(tx, input.accountId)) return { ok: false as const, error: 'account_inactive' as const };
-        const follows: AccountFollowRelationV1[] = [];
-        for (const row of captured.value.follows) {
-            if ('sessionId' in row) {
-                if (await readableSession(tx, { ...input, sessionId: row.sessionId })) follows.push(row);
-            } else if (row.source.kind !== 'rule' && await canReadFollowSourceInTx(tx, { ...input, source: row.source })) follows.push(row);
-        }
-        return { ok: true as const, value: { follows, ...(captured.value.continuation
-            ? { continuation: sealSessionFollowListCursor(scope, captured.value.continuation) } : {}) } };
+        return { ok: true as const, value: { follows, ...(page.continuation
+            ? { continuation: sealSessionFollowListCursor(scope, page.continuation) } : {}) } };
     });
 }
 
@@ -357,7 +347,7 @@ export async function listAccountSessionFollows(input: Readonly<{ accountId: str
 export async function getOtherAccountFollow(input: Readonly<{
     accountId: string; source: OtherAccountSource; authentication: SessionAccessAuthentication;
 }>): Promise<AccountFollowResult<Readonly<{ follow: OtherAccountFollowV1 | null }>>> {
-    return readSnapshotWithCurrentAdmission(async tx => {
+    return captureReadSnapshot(async tx => {
         if (!await activeAccount(tx, input.accountId)) return { ok: false as const, error: 'account_inactive' as const };
         if (!await canReadFollowSourceInTx(tx, input)) return { ok: false as const, error: 'source_not_found' as const };
         const row = await tx.accountSessionFollow.findUnique({ where: { accountId_sourceKey: {
@@ -366,10 +356,6 @@ export async function getOtherAccountFollow(input: Readonly<{
         if (row && !isDeepStrictEqual(sourceFromAccountFollow(row), input.source))
             throw new Error('Account Follow Run source digest collision');
         return { ok: true as const, value: { follow: row ? projectOtherAccountFollow(row) : null } };
-    }, async (tx, captured) => {
-        if (!captured.ok) return captured;
-        if (!await activeAccount(tx, input.accountId)) return { ok: false as const, error: 'account_inactive' as const };
-        return await canReadFollowSourceInTx(tx, input) ? captured : { ok: false as const, error: 'source_not_found' as const };
     });
 }
 
@@ -520,7 +506,7 @@ export async function removeOtherAccountFollow(input: Readonly<{
 
 /** Reads only the authenticated Account's personal choice after current Session read admission. */
 export async function getAccountSessionFollow(input: Readonly<{ accountId: string; sessionId: string; authentication: SessionAccessAuthentication }>): Promise<AccountFollowResult<GetSessionFollowResponse>> {
-    return await readSnapshotWithCurrentAdmission<AccountFollowResult<GetSessionFollowResponse>>(async tx => {
+    return await captureReadSnapshot<AccountFollowResult<GetSessionFollowResponse>>(async tx => {
         if (!await activeAccount(tx, input.accountId)) return { ok: false, error: "account_inactive" };
         const session = await readableSession(tx, input);
         if (!session) return { ok: false, error: "session_not_found" };
@@ -532,10 +518,6 @@ export async function getAccountSessionFollow(input: Readonly<{ accountId: strin
             capabilities: { manageFollow: true },
             voiceInitialSnapshotPending: isVoiceInitialSnapshotPending(row),
         } };
-    }, async (tx, captured) => {
-        if (!captured.ok) return captured;
-        if (!await activeAccount(tx, input.accountId)) return { ok: false, error: "account_inactive" };
-        return await readableSession(tx, input) ? captured : { ok: false, error: "session_not_found" };
     });
 }
 

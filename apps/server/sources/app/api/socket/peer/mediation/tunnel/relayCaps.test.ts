@@ -8,22 +8,20 @@ async function loadRelayCapsModule(): Promise<RelayCapsModule | null> {
 }
 
 describe('resolvePeerTcpTunnelRelayCaps', () => {
-    it('defaults server-routed relay disabled and clamps caps to bounded values', async () => {
+    it('defaults relay disabled without invented count caps while retaining frame and message bounds', async () => {
         const mod = await loadRelayCapsModule();
 
         expect(mod?.resolvePeerTcpTunnelRelayCaps({})).toEqual(expect.objectContaining({
             serverRoutedEnabled: false,
-            maxActiveTunnelsPerSocket: 8,
             maxFrameBytes: 64 * 1024,
             supportedEncodings: ['binary_frame_v2'],
             preferredEncoding: 'binary_frame_v2',
             maxBinaryHeaderBytes: 16 * 1024,
             maxRawPayloadBytes: 256 * 1024,
             maxFramedMessageBytes: 512 * 1024,
-            substreams: expect.objectContaining({
-                maxConcurrentSubstreams: 32,
-            }),
+            substreams: {},
         }));
+        expect(mod?.resolvePeerTcpTunnelRelayCaps({}).maxActiveTunnelsPerSocket).toBeUndefined();
 
         expect(mod?.resolvePeerTcpTunnelRelayCaps({
             serverRoutedEnabled: true,
@@ -37,13 +35,13 @@ describe('resolvePeerTcpTunnelRelayCaps', () => {
             },
         })).toEqual(expect.objectContaining({
             serverRoutedEnabled: true,
-            maxActiveTunnelsPerSocket: 128,
+            maxActiveTunnelsPerSocket: 999,
             maxFrameBytes: 8 * 1024 * 1024,
             maxBinaryHeaderBytes: 8 * 1024 * 1024,
             maxRawPayloadBytes: 8 * 1024 * 1024,
             maxFramedMessageBytes: 8 * 1024 * 1024,
             substreams: expect.objectContaining({
-                maxConcurrentSubstreams: 128,
+                maxConcurrentSubstreams: 999,
             }),
         }));
     });

@@ -46,6 +46,7 @@ import {
 import { registerAccountEncryptionMigrateRoutes } from "./registerAccountEncryptionMigrateRoutes";
 import { mutateSessionDraft, readSessionDraft } from "@/app/account/sessionDrafts/sessionDraftService";
 import { createPresentUserSessionAccessAuthentication } from "@/app/session/access/sessionAccessAuthentication.testkit";
+import { updateAccountEncryptionMode } from './updateAccountEncryptionMode';
 
 const authentication = createPresentUserSessionAccessAuthentication();
 
@@ -181,7 +182,7 @@ describe("Account encryption migration exact replay", () => {
         await harness?.close();
     });
 
-    it("returns capable drafts and migrates workspace rows atomically with exact read-only replay", async () => {
+    it("returns capable drafts and migrates workspace and Coach rows atomically with exact read-only replay", async () => {
         harness.resetEnv({
             HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: "optional",
             HAPPIER_FEATURE_ENCRYPTION__ALLOW_ACCOUNT_OPTOUT: "1",
@@ -219,6 +220,9 @@ describe("Account encryption migration exact replay", () => {
         for (const key of workspaceKeys) await db.userKVStore.create({ data: { accountId: account.id, key, version: 4, value: new TextEncoder().encode('source-ciphertext') } });
         const tombstoneKey = 'workspace:handoff-tabs:v1:deleted:window';
         await db.userKVStore.create({ data: { accountId: account.id, key: tombstoneKey, version: 9, value: null } });
+        const coachKey = 'workspace:usage-coach:suppressions';
+        const coachValue = privacyKit.encodeBase64(new TextEncoder().encode(JSON.stringify({ t: 'plain', v: { v: 1, suppressions: [{ kind: 'dismissed', evidenceKey: 'dismissed' }] } })));
+        await db.userKVStore.create({ data: { accountId: account.id, key: coachKey, version: 6, value: new TextEncoder().encode('source-coach-ciphertext') } });
         const currentAccount = await db.account.findUniqueOrThrow({ where: { id: account.id } });
         const request = {
             toMode: "plain", expectedAccountVersion: currentAccount.seq,
@@ -230,7 +234,8 @@ describe("Account encryption migration exact replay", () => {
             sessions: { action: "assert_empty" }, reviewComments: { action: "assert_empty" },
             sessionOrganization: { action: "assert_empty" }, pets: { action: "assert_empty" },
             sessionDrafts: { v: 2, items: [{ address, expectedRevision: 0, content }] },
-            workspace: { action: 'migrate', items: workspaceKeys.map(key => ({ key, expectedVersion: 4, value: workspaceValue })) },
+            workspace: { action: 'migrate', items: [...workspaceKeys.map(key => ({ key, expectedVersion: 4, value: workspaceValue })),
+                { key: coachKey, expectedVersion: 6, value: coachValue }] },
         } satisfies AccountEncryptionMigrateRequest;
         const app = createTestApp();
         await app.ready();
@@ -246,8 +251,15 @@ describe("Account encryption migration exact replay", () => {
             const omittedInventory = await invoke({ ...request, workspace: { action: 'assert_empty' } });
             expect(omittedInventory.statusCode, omittedInventory.body).toBe(400);
             expect(await db.account.findUnique({ where: { id: account.id } })).toMatchObject({ encryptionMode: 'e2ee', settingsVersion: 0 });
+            const { workspace: _workspace, ...olderRequest } = request;
+            for (const candidate of [olderRequest, { ...request, workspace: { action: 'migrate' as const, items: request.workspace.items.filter(item => item.key !== coachKey) } }]) {
+                const refused = await invoke(candidate);
+                expect(refused.statusCode, refused.body).toBe(400);
+                expect(await db.userKVStore.findUnique({ where: { accountId_key: { accountId: account.id, key: coachKey } } })).toMatchObject({ version: 6 });
+                expect(await db.account.findUnique({ where: { id: account.id } })).toMatchObject({ encryptionMode: 'e2ee', settingsVersion: 0 });
+            }
             expect(await db.userKVStore.findMany({ where: { accountId: account.id, key: { in: workspaceKeys } } })).toEqual(expect.arrayContaining(workspaceKeys.map(key => expect.objectContaining({ key, version: 4 }))));
-            const staleInventory = await invoke({ ...request, workspace: { action: 'migrate', items: workspaceKeys.map(key => ({ key, expectedVersion: 3, value: workspaceValue })) } });
+            const staleInventory = await invoke({ ...request, workspace: { action: 'migrate', items: request.workspace.items.map(item => ({ ...item, expectedVersion: item.expectedVersion - 1 })) } });
             expect(staleInventory.statusCode, staleInventory.body).toBe(400);
             expect(await db.account.findUnique({ where: { id: account.id } })).toMatchObject({ encryptionMode: 'e2ee', settingsVersion: 0 });
             const response = await invoke();
@@ -258,6 +270,7 @@ describe("Account encryption migration exact replay", () => {
             expect(await db.userKVStore.findMany({ where: { accountId: account.id, key: { in: workspaceKeys } }, orderBy: { key: 'asc' }, select: { version: true, value: true } }))
                 .toEqual(workspaceKeys.map(() => ({ version: 5, value: privacyKit.decodeBase64(workspaceValue) })));
             expect(await db.userKVStore.findUnique({ where: { accountId_key: { accountId: account.id, key: tombstoneKey } } })).toMatchObject({ version: 9, value: null });
+            expect(await db.userKVStore.findUnique({ where: { accountId_key: { accountId: account.id, key: coachKey } } })).toMatchObject({ version: 7, value: privacyKit.decodeBase64(coachValue) });
             const beforeReplay = await readSessionDraft({ accountId: account.id, address, epoch: "v2", authentication });
             socketEmit.mockClear();
             const replay = await invoke();
@@ -265,9 +278,21 @@ describe("Account encryption migration exact replay", () => {
             expect(replay.json()).toEqual(response.json());
             expect(await readSessionDraft({ accountId: account.id, address, epoch: "v2", authentication })).toEqual(beforeReplay);
             expect(socketEmit).not.toHaveBeenCalled();
+            await db.userKVStore.update({ where: { accountId_key: { accountId: account.id, key: coachKey } }, data: { version: 8 } });
+            const driftedReplay = await invoke();
+            expect(driftedReplay.statusCode, driftedReplay.body).toBe(400);
         } finally {
             await app.close();
         }
+    });
+
+    it('requires conversion before switching an Account with Coach suppression state directly', async () => {
+        harness.resetEnv({ HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: 'optional', HAPPIER_FEATURE_ENCRYPTION__ALLOW_ACCOUNT_OPTOUT: '1' });
+        const signing = tweetnacl.sign.keyPair();
+        const account = await db.account.create({ data: { publicKey: Buffer.from(signing.publicKey).toString('hex'), encryptionMode: 'e2ee' } });
+        await db.userKVStore.create({ data: { accountId: account.id, key: 'workspace:usage-coach:suppressions', version: 2, value: new TextEncoder().encode('source-coach-ciphertext') } });
+        expect(await updateAccountEncryptionMode({ accountId: account.id, mode: 'plain' })).toEqual({ status: 'migration_required' });
+        expect(await db.account.findUnique({ where: { id: account.id } })).toMatchObject({ encryptionMode: 'e2ee' });
     });
 
     it("rolls the migrated draft back when the Session inventory refuses the conversion", async () => {

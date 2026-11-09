@@ -71,7 +71,6 @@ describe('Team credential resource-test broker admission', () => {
             memberGrants: { create: { teamMembershipId: actorMembership.id, deliveryMode: 'brokered' } },
         } });
         const application = {
-            agentTargetKey: 'codex',
             implementationIdentity: { pluginId: 'happier.provider.cliproxyapi', localId: 'cliproxyapi' },
             endpointTemplateId: 'openai-responses',
             protocol: 'openai-responses',

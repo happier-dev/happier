@@ -5,7 +5,7 @@ import { DiscussionModelParticipantLaunchV1Schema } from '@happier-dev/protocol/
 import { deriveSessionCreationTagV1 } from '@happier-dev/protocol/sessions/creation/sessionCreationIdentityV1';
 import { markAccountChanged } from '@/app/changes/markAccountChanged';
 import { observeLazyPrismaQuery } from '@/app/changes/accountPublicationContention.testkit';
-import { inviteDiscussionParticipant, setDiscussionGrant } from '@/app/discussions/accessService';
+import { inviteDiscussionParticipant, setDiscussionGrant, validateDiscussionParticipantBirthInTx } from '@/app/discussions/accessService';
 import { setTeamMembershipStatusInTx } from '@/app/teams/memberships/membershipService';
 import { publishTeamChangedInTx } from '@/app/teams/teamChanges';
 import { createDiscussion } from '@/app/discussions/mutations';
@@ -28,7 +28,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('D
     });
     afterAll(async () => { await db.$disconnect(); });
 
-    it.each([false, true])('rechecks model birth after Team authority withdrawal (surviving direct grant=%s)', async direct => {
+    it.each([false, true])('finishes admitted model birth and checks Team withdrawal on the next request (surviving direct grant=%s)', async direct => {
         const owner = await db.account.create({ data: { publicKey: randomUUID(), encryptionMode: 'plain' } });
         const actor = await db.account.create({ data: { publicKey: randomUUID(), encryptionMode: 'plain' } });
         const machine = await db.machine.create({ data: { id: randomUUID(), accountId: actor.id, metadata: '{}' } });
@@ -87,19 +87,13 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('D
             } });
             const result = await createOrRejoinLayout1SessionByTag(prepared.prepared, authentication);
             expect(withdrawal).toBeDefined();
-            if (direct) {
-                expect(result.kind).toBe('created');
-                if (result.kind !== 'created') throw new Error('Expected retained direct authority');
-                expect(await db.discussionParticipant.findUniqueOrThrow({ where: { discussionId_participantSlotId: discussionParticipant } }))
-                    .toMatchObject({ sessionId: result.session.id });
-            } else {
-                expect(result).toMatchObject({ kind: 'rejected', rejection: { reason: 'session-origin-forbidden' } });
-                expect(await db.session.count({ where: { accountId: actor.id } })).toBe(0);
-                expect(await db.sessionFollowEdge.count({ where: { sourceDiscussionId: discussionId } })).toBe(0);
-                expect(await db.discussionParticipant.findUniqueOrThrow({ where: { discussionId_participantSlotId: discussionParticipant } }))
-                    .toMatchObject({ sessionId: null, removedAt: null });
-                expect(await db.accountChange.count({ where: { accountId: actor.id, kind: 'session' } })).toBe(0);
-            }
+            expect(result.kind).toBe('created');
+            if (result.kind !== 'created') throw new Error('Expected the admitted model birth to finish');
+            expect(await db.discussionParticipant.findUniqueOrThrow({ where: { discussionId_participantSlotId: discussionParticipant } }))
+                .toMatchObject({ sessionId: result.session.id });
+            expect((await inTx(tx => validateDiscussionParticipantBirthInTx(tx, {
+                accountId: actor.id, authentication, discussionParticipant, launch,
+            }))).ok).toBe(direct);
         } finally {
             db.$transaction = transaction;
             await withdrawal;
@@ -220,6 +214,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('D
             } finally {
                 db.$transaction = transaction;
                 await Promise.allSettled(publishers);
+                console.info('MODEL_BIRTH_PUBLICATION', { operation, publications, failedStatements });
                 await db.discussion.deleteMany({ where: { ownerAccountId: owner.id } });
                 await db.session.deleteMany({ where: { accountId: owner.id } });
                 await db.machine.delete({ where: { id: machine.id } });

@@ -31,7 +31,7 @@ describe('githubDisconnect (AccountChange integration)', () => {
             await githubDisconnect(Context.create(account.id));
             expect(await db.accountIdentity.count({ where: { accountId: account.id } })).toBe(0);
             expect((await db.account.findUniqueOrThrow({ where: { id: account.id } })).username).toBe(expected);
-            const change = await db.accountChange.findUniqueOrThrow({ where: { accountId_kind_entityId: { accountId: account.id, kind: 'account', entityId: 'self' } } });
+            const change = await db.accountChange.findUniqueOrThrow({ where: { accountId_kind_entityId: { accountId: account.id, kind: 'account', entityId: 'linked-identities' } } });
             expect(change.hint).toEqual({ linkedProviders: true });
             const updates = emit.mock.calls.filter(([value]) => value.recipientFilter?.type === 'user-scoped-only');
             expect(updates.at(-1)?.[0].payload.seq).toBe(change.cursor);

@@ -1,13 +1,18 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { db } from '@/storage/db';
-import { inTx } from '@/storage/inTx';
+import { inTx, type Tx } from '@/storage/inTx';
 import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lightSqliteHarness';
 import { resolveSessionFollowFactsInTx } from '@/app/session/personal/followFacts';
 import { createSessionListScopeWhere } from '@/app/session/personal/queries';
 import {
     setSessionAutoFollowPreferences,
     setOtherAccountFollow,
+    removeOtherAccountFollow,
+    getOtherAccountFollow,
+    listAccountSessionFollows,
+    readOtherPersonalFollowerCensusInTx,
+    readAccountRunFollowDeliveryInTx,
     getAccountSessionFollow as getAccountSessionFollowWithAuthentication,
     removeAccountSessionFollow as removeAccountSessionFollowWithAuthentication,
     setAccountSessionFollow as setAccountSessionFollowWithAuthentication,
@@ -18,11 +23,19 @@ import {
     acceptAccountSessionFollowOnceDelivery,
     removeAccountSessionFollowsOnAccessLossInTx,
 } from './accountFollowService';
-import { VOICE_TRANSCRIPT_HISTORY_SYSTEM_SESSION_TAG, ARTIFACT_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol';
+import { VOICE_TRANSCRIPT_HISTORY_SYSTEM_SESSION_TAG, ARTIFACT_PLAIN_DATA_KEY_MARKER, MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol';
+import { encodePlainMachineStoredContent } from '@happier-dev/protocol/machines/machineStoredContent';
+import { acceptAccountFollowPersonalProgress } from './accountFollowPersonalProgress';
+import type { ExecutionRunFollowFrontierWitness } from './executionRunFollowSource';
+import { resolveExecutionRunFollowOccurrenceV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowInputV1';
+import { ACCOUNT_SESSION_FOLLOW_CHANGE_ENTITY_ID } from '@happier-dev/protocol/sessions/follow/changes';
 import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { transitionSessionArchiveStateInTx } from '@/app/session/archive/transitionSessionArchiveStateInTx';
 import { changeDeliveryMute } from './sessionDeliveryMuteService';
-import { normalizeAccountFollowNotificationChoiceV1 } from '@happier-dev/protocol/sessions/follow/accountFollow';
+import { normalizeAccountFollowNotificationChoiceV1, PersistedPersonalRunFollowOnceV1Schema } from '@happier-dev/protocol/sessions/follow/accountFollow';
+import { normalizeSessionListFilterV1 } from '@happier-dev/protocol/sessions/listFilter/sessionListFilterV1';
+import { getAccountFollowRule, setAccountFollowRule } from './accountFollowRuleService';
+import { readSessionFollowRuleProgressInTx, writeSessionFollowRuleProgressInTx } from './sessionFollowRuleProgress';
 
 // The push provider is the external boundary; Follow, transactions, badge
 // candidacy, counting and coalescing execute through their real owners.
@@ -98,6 +111,7 @@ describe('Account Follow service', () => {
         env: {
             HAPPIER_FEATURE_SESSIONS_FOLLOWING__ENABLED: 'true',
             HAPPIER_FEATURE_SHARING_SESSION__ENABLED: 'true',
+            HAPPIER_SERVER_IDENTITY_ID: 'srv_follow_once',
         },
     }); }, 180_000);
     afterEach(async () => {
@@ -106,10 +120,251 @@ describe('Account Follow service', () => {
         await db.accountSessionFollow.deleteMany();
         await db.sessionShare.deleteMany();
         await db.sessionMessage.deleteMany();
+        await db.accessKey.deleteMany();
         await db.session.deleteMany();
+        await db.machine.deleteMany();
         await db.account.deleteMany();
     });
     afterAll(async () => { await harness?.close(); });
+
+    it.each(['completed', 'failed'] as const)('accepts the exact private-rule %s Turn from its terminal receipt and preserves the numeric prefix', async status => {
+        const account = await db.account.create({ data: { publicKey: randomUUID(), encryptionMode: 'plain' } });
+        const machine = await db.machine.create({ data: { id: randomUUID(), accountId: account.id,
+            installationId: randomUUID(), metadata: encodePlainMachineStoredContent({}),
+            dataEncryptionKey: Uint8Array.from(decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER)), active: true } });
+        const sourceId = randomUUID();
+        const source = await db.session.create({ data: { id: sourceId, accountId: account.id, tag: randomUUID(), encryptionMode: 'plain',
+            metadata: '{}', seq: 9, agentStateVersion: 5, publisherGeneration: 1n,
+            runtimeMachineTarget: { homeId: 'srv_follow_once', accountId: account.id, sessionId: sourceId,
+                machineId: machine.id, installationId: machine.installationId! } } });
+        await db.accessKey.create({ data: { accountId: account.id, sessionId: source.id,
+            machineId: machine.id, data: MACHINE_PLAIN_DATA_KEY_MARKER } });
+        const scope = { accountId: account.id, authentication: defaultAuthentication, ruleId: randomUUID() };
+        const created = await setAccountFollowRule({ ...scope, mutation: { receiver: { kind: 'account' }, expectedVersion: -1,
+            content: { t: 'plain', v: { v: 1, enabled: true, filter: normalizeSessionListFilterV1({ homeServerIds: ['srv_follow_once'] }), policy: { preset: 'important' } } },
+        } });
+        expect(created.ok).toBe(true);
+        if (!created.ok) throw new Error(created.error);
+        const rule = { ruleId: scope.ruleId, ruleVersion: created.value.rule.version };
+        await inTx(async tx => {
+            const progress = await readSessionFollowRuleProgressInTx(tx, { accountId: account.id, sourceSessionId: source.id, rule });
+            expect(progress).not.toBeNull();
+            expect(await writeSessionFollowRuleProgressInTx(tx, progress!, {
+                transcriptSeq: 7, readyEventSeq: 0, agentStateVersion: 2, turn: null,
+            })).toBe(true);
+        });
+        const terminalAt = BigInt(Date.now());
+        await db.sessionTurn.create({ data: { sessionId: source.id, turnId: 'silent-terminal', status,
+            startedAt: terminalAt - 1n, updatedAt: terminalAt, terminalAt } });
+        const terminalSourceMessage = { localId: randomUUID(), seq: 9 };
+        await db.sessionMessage.create({ data: { sessionId: source.id, ...terminalSourceMessage, messageRole: 'event',
+            content: { t: 'plain', v: { role: 'agent', meta: { source: 'runtime', runtimeTurnId: 'silent-terminal' },
+                content: status === 'completed' ? { type: 'event', id: terminalSourceMessage.localId,
+                    data: { type: 'ready', completedTurnId: 'silent-terminal' } }
+                    : { type: 'codex', data: { type: 'turn_failed', id: 'native-provider-turn' } } } } } });
+        await db.session.update({ where: { id: source.id }, data: { active: false,
+            latestTurnId: 'silent-terminal', latestTurnStatus: status, latestReadyEventSeq: status === 'completed' ? 9 : null } });
+        const occurrence = { sourceSessionId: source.id, expectedSourcePublisherGeneration: '1', machineId: machine.id,
+            installationId: machine.installationId!, rules: [rule], sourceTurn: { id: 'silent-terminal', status }, terminalSourceMessage };
+        const accept = (value = occurrence) => acceptAccountFollowPersonalProgress({ ...scope, occurrence: value });
+        const missingProof: Record<string, unknown> = { ...occurrence };
+        delete missingProof.terminalSourceMessage;
+        expect(await acceptAccountFollowPersonalProgress({ ...scope,
+            // @ts-expect-error Raw external request intentionally omits mandatory terminal proof.
+            occurrence: missingProof,
+        })).toEqual({ ok: false, error: 'invalid_parameters' });
+        expect(await accept({ ...occurrence, terminalSourceMessage: { ...terminalSourceMessage, seq: 8 } }))
+            .toMatchObject({ ok: true, value: { accepted: false } });
+        expect(await accept({ ...occurrence, sourceTurn: { ...occurrence.sourceTurn,
+            status: status === 'completed' ? 'failed' : 'completed' } })).toMatchObject({ ok: true, value: { accepted: false } });
+        const transaction = db.$transaction;
+        let inventories = 0;
+        const tracedTransaction = async (work: (tx: Tx) => Promise<unknown>, options?: Parameters<typeof db.$transaction>[1]) => transaction(async tx => {
+            // Count reads at the real persistent boundary; all query results and domain logic stay real.
+            const messages = vi.spyOn(tx.sessionMessage, 'findMany');
+            const pending = vi.spyOn(tx.sessionPendingMessage, 'findMany');
+            try { return await work(tx); }
+            finally { inventories += messages.mock.calls.length + pending.mock.calls.length;
+                messages.mockRestore(); pending.mockRestore(); }
+        }, options);
+        db.$transaction = tracedTransaction as typeof db.$transaction;
+        try {
+            expect(await accept()).toEqual({ ok: true, value: { accepted: true, alreadyRepresented: false } });
+            expect(inventories).toBe(0);
+        } finally { db.$transaction = transaction; }
+        expect(await accept()).toEqual({ ok: true, value: { accepted: true, alreadyRepresented: true } });
+        expect(await getAccountFollowRule(scope)).toMatchObject({ ok: true, value: { rule: { sources: [{
+            sourceSessionId: source.id, delivered: { transcriptSeq: 7, readyEventSeq: 9, agentStateVersion: 2,
+                turn: occurrence.sourceTurn },
+        }] } } });
+        expect(await db.sessionMessage.count({ where: { sessionId: source.id } })).toBe(1);
+        expect((await db.session.findUniqueOrThrow({ where: { id: source.id } })).latestReadyEventSeq).toBe(status === 'completed' ? 9 : null);
+        expect(await accept({ ...occurrence, rules: [] })).toMatchObject({ ok: true, value: { accepted: false } });
+        const nextTurn = { id: 'later-silent-terminal', status };
+        await db.sessionTurn.create({ data: { sessionId: source.id, turnId: nextTurn.id, status,
+            startedAt: terminalAt - 1n, updatedAt: terminalAt, terminalAt } });
+        const nextTerminalSourceMessage = { localId: randomUUID(), seq: 10 };
+        await db.sessionMessage.create({ data: { sessionId: source.id, ...nextTerminalSourceMessage, messageRole: 'event',
+            content: { t: 'plain', v: { role: 'agent', meta: { source: 'runtime', runtimeTurnId: nextTurn.id },
+                content: status === 'completed' ? { type: 'event', id: nextTerminalSourceMessage.localId,
+                    data: { type: 'ready', completedTurnId: nextTurn.id } }
+                    : { type: 'codex', data: { type: 'turn_failed', id: 'later-native-provider-turn' } } } } } });
+        await db.session.update({ where: { id: source.id }, data: { seq: 10, latestTurnId: nextTurn.id, latestTurnStatus: status,
+            latestReadyEventSeq: status === 'completed' ? 10 : null } });
+        expect(await accept({ ...occurrence, sourceTurn: nextTurn, terminalSourceMessage: nextTerminalSourceMessage }))
+            .toEqual({ ok: true, value: { accepted: true, alreadyRepresented: false } });
+        expect(await accept()).toEqual({ ok: true, value: { accepted: true, alreadyRepresented: true } });
+        expect(await getAccountFollowRule(scope)).toMatchObject({ ok: true, value: { rule: { sources: [{
+            sourceSessionId: source.id, delivered: { transcriptSeq: 7, readyEventSeq: 10, agentStateVersion: 2, turn: nextTurn },
+        }] } } });
+    });
+
+    it('arms an exact detached Machine Run, accepts its one-shot once and keeps it private', async () => {
+        const account = await db.account.create({ data: { publicKey: randomUUID(), encryptionMode: 'plain' } });
+        const other = await db.account.create({ data: { publicKey: randomUUID(), encryptionMode: 'plain' } });
+        const machine = await db.machine.create({ data: { id: randomUUID(), accountId: account.id,
+            installationId: randomUUID(), metadata: encodePlainMachineStoredContent({}),
+            dataEncryptionKey: Uint8Array.from(decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER)), active: true } });
+        const source = { kind: 'execution_run' as const, machineId: machine.id, runId: 'detached-run' };
+        const frontier: ExecutionRunFollowFrontierWitness = { source, status: 'succeeded', terminalEventId: 'settled-run',
+            machineCustodianAccountId: account.id,
+            target: { accountId: account.id, machineId: machine.id, installationId: machine.installationId! }, publisherGeneration: null };
+        const input = { accountId: account.id, source, authentication: defaultAuthentication, executionRunFrontier: frontier };
+        const once = [{ kind: 'run_settled' as const }];
+        expect(await setOtherAccountFollow({ ...input, once })).toMatchObject({ ok: true,
+            value: { follow: { source, following: false, persistent: false, once } } });
+        expect(await getOtherAccountFollow(input)).toMatchObject({ ok: true, value: { follow: { source, once } } });
+        expect(await getOtherAccountFollow({ ...input, accountId: other.id }))
+            .toMatchObject({ ok: false, error: 'source_not_found' });
+        expect(await listAccountSessionFollows({ accountId: account.id, authentication: defaultAuthentication }))
+            .toMatchObject({ ok: true, value: { follows: [{ source, once }] } });
+        expect(await inTx(tx => readOtherPersonalFollowerCensusInTx(tx, { accountId: other.id, source })))
+            .toEqual({ peopleCount: 1, follows: [] });
+        const current = resolveExecutionRunFollowOccurrenceV1({ ...frontier, sessionId: null, machineId: machine.id, runId: source.runId });
+        if (!current) throw new Error('Expected retained terminal Run');
+        const read = () => inTx(tx => readAccountRunFollowDeliveryInTx(tx, { ...input, ...current }));
+        expect(await read()).toMatchObject({ represented: false });
+        expect(await read()).toMatchObject({ represented: false });
+        const accept = () => acceptAccountFollowPersonalProgress({ ...input, occurrence: { original: current.original } });
+        const readFollowChange = async () => (await db.accountChange.findFirstOrThrow({ where: { accountId: account.id,
+            entityId: ACCOUNT_SESSION_FOLLOW_CHANGE_ENTITY_ID, kind: 'account' }, select: { cursor: true } })).cursor;
+        const beforeAcceptance = await readFollowChange();
+        expect(await accept()).toMatchObject({ ok: true, value: { accepted: true, alreadyRepresented: false } });
+        const persisted = await db.accountSessionFollow.findFirstOrThrow({ where: { accountId: account.id } });
+        const receipt = PersistedPersonalRunFollowOnceV1Schema.safeParse(JSON.parse(persisted.notifyOnce!));
+        // Assert a boolean before examining the admitted value, so a bad
+        // private caller context is never printed by a failed assertion.
+        expect(receipt.success).toBe(true);
+        if (receipt.success) {
+            const fulfilled = receipt.data.intents[0];
+            if (fulfilled?.state !== 'fulfilled') throw new Error('Expected fulfilled personal Run receipt');
+            expect(Object.keys(fulfilled.occurrence).sort()).toEqual(['event', 'original']);
+        }
+        expect(await readFollowChange()).toBe(beforeAcceptance + 1);
+        expect(await accept()).toMatchObject({ ok: true, value: { accepted: true, alreadyRepresented: true } });
+        expect(await readFollowChange()).toBe(beforeAcceptance + 1);
+        expect(await getOtherAccountFollow(input)).toMatchObject({ ok: true, value: { follow: { following: false, once: null } } });
+        expect(await listAccountSessionFollows({ accountId: account.id, authentication: defaultAuthentication }))
+            .toMatchObject({ ok: true, value: { follows: [{ following: false, once: null,
+                onceDeliveries: [{ original: current.original, event: current.event }] }] } });
+        expect(await inTx(tx => readOtherPersonalFollowerCensusInTx(tx, { accountId: account.id, source })))
+            .toEqual({ peopleCount: 0, follows: [] });
+        expect(await setOtherAccountFollow({ ...input, once: null })).toMatchObject({ ok: true });
+        expect(await listAccountSessionFollows({ accountId: account.id, authentication: defaultAuthentication }))
+            .toMatchObject({ ok: true, value: { follows: [] } });
+        const ongoingSource = { ...source, runId: 'persistent-run' };
+        const ongoingFrontier: ExecutionRunFollowFrontierWitness = { ...frontier, source: ongoingSource,
+            status: 'running', terminalEventId: null };
+        expect(await setOtherAccountFollow({ ...input, source: ongoingSource, policy: { preset: 'important' },
+            executionRunFrontier: ongoingFrontier })).toMatchObject({ ok: true });
+        const beforePureProgress = await readFollowChange();
+        const terminalFrontier: ExecutionRunFollowFrontierWitness = { ...ongoingFrontier,
+            status: 'succeeded', terminalEventId: 'persistent-terminal' };
+        const ongoingTerminal = resolveExecutionRunFollowOccurrenceV1({ ...terminalFrontier, sessionId: null,
+            machineId: machine.id, runId: ongoingSource.runId });
+        if (!ongoingTerminal) throw new Error('Expected persistent Run terminal original');
+        expect(await acceptAccountFollowPersonalProgress({ ...input, executionRunFrontier: terminalFrontier,
+            occurrence: { original: ongoingTerminal.original } })).toMatchObject({ value: { accepted: true, alreadyRepresented: false } });
+        expect(await readFollowChange()).toBe(beforePureProgress);
+        expect(await removeOtherAccountFollow(input)).toMatchObject({ ok: true });
+        const suppressed = await db.accountSessionFollow.findFirstOrThrow({ where: { accountId: account.id, sourceExecutionRunId: source.runId } });
+        expect(await setOtherAccountFollow({ ...input, once })).toMatchObject({ ok: true,
+            value: { follow: { following: false, persistent: true, once } } });
+        const rearmed = await db.accountSessionFollow.findFirstOrThrow({ where: { accountId: account.id, sourceExecutionRunId: source.runId } });
+        expect(rearmed.followPolicy).toBe(suppressed.followPolicy);
+        expect(rearmed.voiceDeliveredFrontier).toBe(suppressed.voiceDeliveredFrontier);
+        expect(rearmed.deliveredExecutionRunTerminalEventId).toBe(suppressed.deliveredExecutionRunTerminalEventId);
+        await db.machine.update({ where: { id: machine.id }, data: { installationId: randomUUID() } });
+        expect(await accept()).toMatchObject({ value: { accepted: false } });
+        expect(await getOtherAccountFollow(input)).toMatchObject({ ok: true, value: { follow: { once } } });
+    });
+
+    it('preserves independent Run intents and persistent Voice policy while accepting an exact settled output', async () => {
+        const account = await db.account.create({ data: { publicKey: randomUUID(), encryptionMode: 'plain' } });
+        const machine = await db.machine.create({ data: { id: randomUUID(), accountId: account.id,
+            installationId: randomUUID(), metadata: encodePlainMachineStoredContent({}),
+            dataEncryptionKey: Uint8Array.from(decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER)), active: true } });
+        const source = { kind: 'execution_run' as const, machineId: machine.id, runId: 'output-run' };
+        const outputRef = { kind: 'review_walkthrough' as const, comparisonId: 'comparison', resultId: 'result' };
+        const outputOnce = { kind: 'output_ready' as const, outputRef };
+        const secondOutputRef = { kind: 'review_walkthrough' as const, comparisonId: 'second-comparison', resultId: 'second-result' };
+        const secondOutputOnce = { kind: 'output_ready' as const, outputRef: secondOutputRef };
+        const frontier: ExecutionRunFollowFrontierWitness = { source, status: 'running', terminalEventId: null,
+            machineCustodianAccountId: account.id,
+            outputs: [{ outputRef, revision: 3, state: 'writing' }, { outputRef: secondOutputRef, revision: 7, state: 'writing' }],
+            target: { accountId: account.id, machineId: machine.id, installationId: machine.installationId! }, publisherGeneration: null };
+        const input = { accountId: account.id, source, authentication: defaultAuthentication };
+        const policy = { preset: 'quiet' as const, voice: true };
+        expect(await setOtherAccountFollow({ ...input, policy, executionRunFrontier: frontier })).toMatchObject({ ok: true });
+        const once = [{ kind: 'run_settled' as const }, { kind: 'first_needs_you' as const }, outputOnce, secondOutputOnce];
+        expect(await setOtherAccountFollow({ ...input, once, executionRunFrontier: frontier }))
+            .toMatchObject({ ok: true, value: { follow: { following: true, persistent: true, policy, once } } });
+        const before = await db.accountSessionFollow.findFirstOrThrow({ where: { accountId: account.id } });
+        expect(await setOtherAccountFollow({ ...input, once, executionRunFrontier: frontier }))
+            .toMatchObject({ ok: true, value: { changed: false } });
+        expect((await db.accountSessionFollow.findFirstOrThrow({ where: { accountId: account.id } })).notifyOnce).toBe(before.notifyOnce);
+        const remaining = [{ kind: 'first_needs_you' as const }, outputOnce, secondOutputOnce];
+        expect(await setOtherAccountFollow({ ...input, once: remaining, executionRunFrontier: frontier }))
+            .toMatchObject({ ok: true, value: { follow: { policy, once: remaining } } });
+        const outputOriginal = { source, output: { outputRef, revision: 4, state: 'partial' as const } };
+        const accept = (executionRunFrontier: ExecutionRunFollowFrontierWitness) => acceptAccountFollowPersonalProgress({ ...input,
+            executionRunFrontier, occurrence: { original: outputOriginal } });
+        expect(await accept(frontier)).toMatchObject({ value: { accepted: false } });
+        const settled: ExecutionRunFollowFrontierWitness = { ...frontier, outputs: [outputOriginal.output] };
+        expect(await accept(settled)).toMatchObject({ value: { accepted: true, alreadyRepresented: false } });
+        expect(await accept(settled)).toMatchObject({ value: { accepted: true, alreadyRepresented: true } });
+        expect(await getOtherAccountFollow(input)).toMatchObject({ ok: true, value: { follow: {
+            policy, following: true, once: [{ kind: 'first_needs_you' }, secondOutputOnce],
+        } } });
+        const active = [{ kind: 'first_needs_you' as const }, secondOutputOnce];
+        expect(await setOtherAccountFollow({ ...input, once: [...active, { kind: 'run_settled' }], executionRunFrontier: settled }))
+            .toMatchObject({ ok: true, value: { follow: { onceDeliveries: [{ original: outputOriginal }] } } });
+        expect(await setOtherAccountFollow({ ...input, once: active }))
+            .toMatchObject({ ok: true, value: { follow: { once: active, onceDeliveries: [{ original: outputOriginal }] } } });
+        expect(await setOtherAccountFollow({ ...input, clearOnceDeliveries: true }))
+            .toMatchObject({ ok: true, value: { follow: { once: active, policy } } });
+        const cleared = await getOtherAccountFollow(input);
+        expect(cleared.ok && cleared.value.follow?.onceDeliveries).toBeUndefined();
+        const secondOutput = { outputRef: secondOutputRef, revision: 7, state: 'complete' as const };
+        expect(await acceptAccountFollowPersonalProgress({ ...input, executionRunFrontier: { ...frontier, outputs: [secondOutput] },
+            occurrence: { original: { source, output: secondOutput } } })).toMatchObject({ value: { accepted: false } });
+        const secondReady = { ...secondOutput, revision: 8 };
+        expect(await acceptAccountFollowPersonalProgress({ ...input, executionRunFrontier: { ...frontier, outputs: [secondReady] },
+            occurrence: { original: { source, output: secondReady } } })).toMatchObject({ value: { accepted: true, alreadyRepresented: false } });
+        expect(await getOtherAccountFollow(input)).toMatchObject({ ok: true, value: { follow: { once: [{ kind: 'first_needs_you' }] } } });
+        expect(await setOtherAccountFollow({ ...input, once: null })).toMatchObject({ ok: true,
+            value: { follow: { following: true, persistent: true, policy, once: null } } });
+        const after = await db.accountSessionFollow.findFirstOrThrow({ where: { accountId: account.id } });
+        expect(after.followPolicy).toBe(before.followPolicy);
+        expect(after.voiceDeliveredFrontier).toBe(before.voiceDeliveredFrontier);
+        // A newly requested already-settled output catches up immediately;
+        // the source baseline must not accidentally discard its own current value.
+        expect(await setOtherAccountFollow({ ...input, once: [outputOnce], executionRunFrontier: settled })).toMatchObject({ ok: true });
+        expect(await accept(settled)).toMatchObject({ value: { accepted: true, alreadyRepresented: false } });
+        expect(await setOtherAccountFollow({ ...input, once: [{ ...outputOnce, afterRevision: 4 }], executionRunFrontier: settled }))
+            .toMatchObject({ ok: true });
+        expect(await accept(settled)).toMatchObject({ value: { accepted: false } });
+    });
 
     it('arms and cancels a one-shot without changing suppression, Voice or private read progress', async () => {
         const { session, key } = await fixture();

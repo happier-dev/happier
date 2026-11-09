@@ -1,4 +1,6 @@
 import { vi } from 'vitest'
+import { inTxPostgresControlStatementMock } from '@/app/api/testkit/dbMocks'
+import { homeConfigSnapshotPostgresQueryMock } from '@/app/home/settings/homeConfigSnapshot.testkit'
 
 export { applyEnvValues, restoreEnvValues, snapshotEnvValues, type EnvValues } from './env'
 
@@ -15,6 +17,7 @@ export function installStartServerCommonWiringMocks(): void {
   // composition derives the actual bound port from its server address.
   vi.mock('@/app/api/api', () => ({
     startApi: vi.fn(async () => ({
+      getDecorator: () => 3005,
       server: { address: () => ({ address: '127.0.0.1', family: 'IPv4', port: 3005 }) },
     })),
   }))
@@ -103,13 +106,16 @@ export function createStartServerDbMocks(options: StartServerDbMockOptions = {})
   const simpleCacheCreate = vi.fn()
   const simpleCacheUpsert = vi.fn()
   const accountCount = vi.fn()
+  const accountFindMany = vi.fn<(...args: unknown[]) => Promise<Array<{ id: string }>>>()
   // Storage boundary for startup's real, page-transactional turn conversion.
   const sessionTurnFindMany = vi.fn<(...args: unknown[]) => Promise<unknown[]>>()
   const sessionTurnUpdateMany = vi.fn<(...args: unknown[]) => Promise<{ count: number }>>()
   const transactionClient = {
+    ...inTxPostgresControlStatementMock,
+    ...homeConfigSnapshotPostgresQueryMock,
+    homeSettings: { findUnique: vi.fn(async () => null) },
+    homeGovernancePolicy: { findUnique: vi.fn(async () => null) },
     sessionTurn: { findMany: sessionTurnFindMany, updateMany: sessionTurnUpdateMany },
-    $queryRaw: vi.fn(async () => [{ statement_timeout: '0' }]),
-    $executeRawUnsafe: vi.fn(async () => 0),
   }
   const dbTransaction = async <T>(callback: (tx: typeof transactionClient) => Promise<T>) => callback(transactionClient)
   const isPrismaErrorCode = vi.fn((error: unknown, code: string) => {
@@ -137,6 +143,7 @@ export function createStartServerDbMocks(options: StartServerDbMockOptions = {})
     simpleCacheCreate.mockReset().mockImplementation(async (args: any) => ({ value: args?.data?.value }))
     simpleCacheUpsert.mockReset().mockImplementation(async (args: any) => ({ value: args?.create?.value ?? args?.update?.value }))
     accountCount.mockReset().mockResolvedValue(0)
+    accountFindMany.mockReset().mockResolvedValue([])
     sessionTurnFindMany.mockReset().mockResolvedValue([])
     sessionTurnUpdateMany.mockReset().mockResolvedValue({ count: 0 })
     isPrismaErrorCode.mockClear()
@@ -158,6 +165,7 @@ export function createStartServerDbMocks(options: StartServerDbMockOptions = {})
         },
         account: {
           count: (...args: any[]) => accountCount(...args),
+          findMany: (...args: any[]) => accountFindMany(...args),
         },
         // Startup's real presence owners seed an empty persisted census.
         machine: { findMany: vi.fn(async () => []) },
@@ -173,6 +181,7 @@ export function createStartServerDbMocks(options: StartServerDbMockOptions = {})
       initDbSqlite: (...args: any[]) => initDbSqlite(...args),
       createDbSqliteMaintenanceClient: (...args: any[]) => createDbSqliteMaintenanceClient(...args),
       applySqliteRuntimePragmas: (...args: any[]) => applySqliteRuntimePragmas(...args),
+      disconnectDbReadinessProbe: async () => {},
       shutdownDbPglite: (...args: any[]) => shutdownDbPglite(...args),
       isPrismaErrorCode: (...args: [unknown, string]) => isPrismaErrorCode(...args),
     },
@@ -181,11 +190,13 @@ export function createStartServerDbMocks(options: StartServerDbMockOptions = {})
     sessionTurnUpdateMany,
     dbDisconnect,
     dbQueryRawUnsafe,
+    readSnapshot: async <T>(read: (tx: typeof transactionClient) => Promise<T>): Promise<T> => read(transactionClient),
     getDbProviderFromEnv,
     simpleCacheFindUnique,
     simpleCacheCreate,
     simpleCacheUpsert,
     accountCount,
+    accountFindMany,
     initDbPostgres,
     initDbPglite,
     initDbMysql,
@@ -206,4 +217,10 @@ export function installStartServerDbModuleMock(
     dbMocks: ReturnType<typeof createStartServerDbMocks>,
 ): void {
     vi.doMock("@/storage/db", () => ({ ...dbMocks.module }))
+  vi.doMock('@/storage/prisma', async () => ({
+    ...await vi.importActual<typeof import('@/storage/prisma')>('@/storage/prisma'),
+    // The SQLite snapshot owns a second persistent connection. Keep its read
+    // callback real while supplying this startup fixture's empty database.
+    withSqliteReadSnapshot: dbMocks.readSnapshot,
+  }))
 }

@@ -40,8 +40,12 @@ function observeSocket(accountId: string, sessionId: string, scope: 'user-scoped
     };
 }
 
-/** Retained legacy durable-heartbeat contract required by supported older UIs. */
-export async function assertLegacyKeepaliveDurableFreshness(): Promise<void> {
+/**
+ * Released keepalive contract: an active heartbeat persists only the liveness
+ * fence and reaches every UI socket of the publication audience (owner and
+ * shared viewer) as a realtime `activity` heartbeat, with no Account cursor.
+ */
+export async function assertKeepaliveRealtimeFreshness(): Promise<void> {
     const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
     const viewer = await db.account.create({ data: { encryptionMode: 'plain' } });
     const machine = await db.machine.create({ data: { id: randomUUID(), accountId: owner.id, metadata: '{}' } });
@@ -80,10 +84,12 @@ export async function assertLegacyKeepaliveDurableFreshness(): Promise<void> {
         }, select: { cursor: true } })).cursor,
     })));
     const heartbeat = () => getSocketHandler(publisher, 'session-alive')({ sid: session.id, time: clockMs, thinking: false });
-    const waitForPresence = async (active: boolean, activeAt: number) => {
+    const waitForPresence = async (active: boolean, activeAt: number, scopes: readonly string[] = ['user-scoped', 'session-scoped']) => {
         await vi.waitFor(() => {
-            for (const observer of observers) expect(observer.presence(), `${observer.accountId}/${observer.scope}`)
-                .toEqual(expect.arrayContaining([expect.objectContaining({ active, activeAt })]));
+            for (const observer of observers.filter(candidate => scopes.includes(candidate.scope))) {
+                expect(observer.presence(), `${observer.accountId}/${observer.scope}`)
+                    .toEqual(expect.arrayContaining([expect.objectContaining({ active, activeAt })]));
+            }
         });
     };
     const clock = vi.spyOn(Date, 'now').mockImplementation(() => clockMs);
@@ -101,7 +107,7 @@ export async function assertLegacyKeepaliveDurableFreshness(): Promise<void> {
         for (const elapsed of [60_000, 120_000]) {
             clockMs = startedAt + elapsed;
             await heartbeat();
-            await waitForPresence(true, clockMs);
+            await waitForPresence(true, clockMs, ['user-scoped']);
             const row = await readSession();
             heartbeatRows.push(row);
             expect(row).toMatchObject({ active: true, lastActiveAt: new Date(clockMs),
@@ -109,11 +115,10 @@ export async function assertLegacyKeepaliveDurableFreshness(): Promise<void> {
                 runtimeActivityRevision: baseline.runtimeActivityRevision, latestTurnStatus: 'completed' });
             const previous = heartbeatRows.length > 1 ? heartbeatRows[heartbeatRows.length - 2]! : baseline;
             expect(row.updatedAt.getTime()).toBeGreaterThanOrEqual(previous.updatedAt.getTime());
-            for (const observer of observers) {
-                // The durable envelope is the retained witness older clients
-                // use to accept activeAt even while the Session stays online.
-                expect(observer.contentEnvelopes().at(-1)).toMatchObject({ createdAt: clockMs,
-                    body: { active: true, activeAt: clockMs } });
+            for (const observer of observers.filter(candidate => candidate.scope === 'user-scoped')) {
+                expect(observer.activities().at(-1), `${observer.accountId}`).toEqual(
+                    { type: 'activity', id: session.id, active: true, activeAt: clockMs,
+                        ...(observer.accountId === owner.id ? { thinking: false } : {}) });
             }
         }
         const afterCursors = await readCursors();
@@ -122,17 +127,22 @@ export async function assertLegacyKeepaliveDurableFreshness(): Promise<void> {
             sessionCursor: row.sessionCursor - baselineCursors[index]!.sessionCursor }));
         const deliveryCounts = observers.map(observer => ({ accountId: observer.accountId, scope: observer.scope,
             content: observer.contentUpdates().length, presence: observer.activities().length }));
+        console.info('SESSION_KEEPALIVE_REALTIME_COST', JSON.stringify({ heartbeats: 2,
+            updatedAtChanges: heartbeatRows.filter(row => row.updatedAt.getTime() !== baseline.updatedAt.getTime()).length,
+            cursorDeltas, deliveryCounts }));
+        // Idle liveness writes no Account cursor: no catch-up read follows it.
         expect(cursorDeltas.map(row => ({ accountSeq: row.accountSeq, sessionCursor: row.sessionCursor })))
-            .toEqual([{ accountSeq: 2, sessionCursor: 2 }, { accountSeq: 2, sessionCursor: 2 }]);
+            .toEqual([{ accountSeq: 0, sessionCursor: 0 }, { accountSeq: 0, sessionCursor: 0 }]);
         for (const observer of observers) {
-            expect(observer.contentUpdates(), `content/${observer.accountId}/${observer.scope}`).toHaveLength(2);
-            const ephemeralCount = observer.accountId === owner.id && observer.scope === 'user-scoped' ? 2 : 0;
+            expect(observer.contentUpdates(), `content/${observer.accountId}/${observer.scope}`).toHaveLength(0);
+            const ephemeralCount = observer.scope === 'user-scoped' ? 2 : 0;
             expect(observer.activities(), `presence/${observer.accountId}/${observer.scope}`).toHaveLength(ephemeralCount);
         }
-        expect(await recencyOrder()).toEqual([session.id, laterSession.id]);
+        // A heartbeat is not content: it does not reorder content recency.
+        expect(await recencyOrder()).toEqual([laterSession.id, session.id]);
 
-        // The retained durable path keeps both owner and shared viewers fresh
-        // without extending expiry or hiding genuine offline/online changes.
+        // Realtime heartbeats keep owner and shared viewers fresh without
+        // extending expiry or hiding genuine offline/online changes.
         const timeouts = resolvePresenceTimeoutConfig({});
         const latestHeartbeat = clockMs;
         clockMs = latestHeartbeat + timeouts.sessionTimeoutMs - 1;
@@ -160,13 +170,12 @@ export async function assertLegacyKeepaliveDurableFreshness(): Promise<void> {
         const semanticCursors = await readCursors();
         clockMs += 60_000;
         await heartbeat();
-        await waitForPresence(true, clockMs);
+        await waitForPresence(true, clockMs, ['user-scoped']);
         expect(await readSession()).toMatchObject({ metadata: JSON.stringify({ path: '/semantic-change' }),
             metadataVersion: 1, publisherGeneration: semantic.publisherGeneration,
             publisherGenerationLastActiveAt: new Date(clockMs), latestTurnStatus: 'completed' });
         expect((await readSession()).updatedAt.getTime()).toBeGreaterThanOrEqual(semantic.updatedAt.getTime());
-        expect(await readCursors()).toEqual(semanticCursors.map(row => ({ ...row,
-            accountSeq: row.accountSeq + 1, sessionCursor: row.sessionCursor + 1 })));
+        expect(await readCursors()).toEqual(semanticCursors);
     } finally {
         for (const observer of observers) observer.close();
         await getSocketHandler(publisher, 'disconnect')();

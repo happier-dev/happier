@@ -1,14 +1,19 @@
-import { inReadSnapshot, inTx } from "@/storage/inTx";
+import { inReadSnapshot, inTx, type Tx } from "@/storage/inTx";
+import { getDbProviderFromEnv } from "@/config/databaseProvider";
 import { z } from "zod/mini";
 import { type Fastify } from "../../types";
 import { changesRequestsCounter, changesReturnedChangesCounter } from "@/app/monitoring/metrics/index";
 import { debug, warn } from "@/utils/logging/log";
 import { resolveApiHotEndpointRateLimit } from "@/app/api/utils/apiRateLimitCatalog";
 import { readAccountStoredContentCompatibilityForHttpRequest } from "@/app/clientCompatibility/accountStoredContentCompatibility";
-import { resolveSessionHostReferenceForAuthenticationInTx } from "@/app/session/pluginCollectionHostReferenceAdapter";
+import {
+    resolveSessionHostReferenceForAuthenticationInTx,
+    resolveSessionHostReferencesForAuthenticationInTx,
+} from "@/app/session/pluginCollectionHostReferenceAdapter";
 import { readSessionAccessAuthenticationFromRequest } from "@/app/session/access/sessionAccessAuthentication";
 import { asServerProtocolZod } from "@/app/api/utils/protocolComposableZodAdapter";
 import { SessionIdSchema } from '@happier-dev/protocol/sessions/idsV1';
+import { ChangeKindSchema, CHANGES_AFTER_CURSOR_HTTP_HEADER } from '@happier-dev/protocol/changes';
 import { listQueuedExecutionRunPendingTargetsForSessions } from "@/app/session/pending/pendingMessageService";
 
 function redactIdForLogs(id: string): string {
@@ -56,7 +61,7 @@ export function changesRoutes(app: Fastify) {
         const account = await inTx(tx => tx.account.findUnique({
             where: { id: userId },
             select: { seq: true, changesFloor: true },
-        }), { readOnly: true });
+        }), { readOnly: true, singleStatementRead: true });
         if (!account) {
             changesRequestsCounter.inc({ result: 'account-not-found' });
             return reply.code(404).send({ error: 'account-not-found' });
@@ -67,16 +72,21 @@ export function changesRoutes(app: Fastify) {
 
     app.get('/v2/changes', {
         preHandler: [async (request, reply) => {
-            if (request.query?.sessionId !== undefined && request.query?.sessionAccessSessionId !== undefined) {
+            if (request.query?.sessionAccessSessionId !== undefined
+                && (request.query?.sessionId !== undefined || request.query?.kinds !== undefined)) {
                 return reply.code(400).send({ error: 'invalid_params' });
             }
         }, app.authenticate],
         schema: {
+            headers: z.looseObject({
+                [CHANGES_AFTER_CURSOR_HTTP_HEADER]: z.optional(z.coerce.number().check(z.int(), z.minimum(0))),
+            }),
             querystring: z.optional(z.object({
                 after: z.optional(z.coerce.number().check(z.int(), z.minimum(0))),
                 limit: z._default(z.coerce.number().check(z.int(), z.minimum(1), z.maximum(500)), 200),
                 sessionId: z.optional(asServerProtocolZod(SessionIdSchema)),
                 sessionAccessSessionId: z.optional(asServerProtocolZod(SessionIdSchema)),
+                kinds: z.optional(z.string()),
             })),
         },
         config: {
@@ -89,10 +99,27 @@ export function changesRoutes(app: Fastify) {
     }, async (request, reply) => {
         const userId = request.userId;
         const userIdRedacted = redactIdForLogs(userId);
-        const after = request.query?.after ?? 0;
+        const headerAfter = request.headers?.[CHANGES_AFTER_CURSOR_HTTP_HEADER];
+        if (headerAfter !== undefined && request.query?.after !== undefined && headerAfter !== request.query.after) {
+            return reply.code(400).send({ error: 'invalid_params' });
+        }
+        const after = headerAfter ?? request.query?.after ?? 0;
+        reply.header('Cache-Control', 'no-store');
+        if (headerAfter !== undefined) reply.header(CHANGES_AFTER_CURSOR_HTTP_HEADER, String(headerAfter));
         const limit = request.query?.limit ?? 200;
         const sessionId = request.query?.sessionId;
         const sessionAccessSessionId = request.query?.sessionAccessSessionId;
+        const parsedKinds = request.query?.kinds === undefined
+            ? undefined
+            : z.array(ChangeKindSchema).safeParse(request.query.kinds.split(','));
+        if (parsedKinds !== undefined && !parsedKinds.success) {
+            return reply.code(400).send({ error: 'invalid_params' });
+        }
+        const kinds = parsedKinds?.data;
+        const selectedKinds = sessionId === undefined
+            ? kinds
+            : kinds === undefined ? ['session', 'share'] : kinds.filter(kind => kind === 'session' || kind === 'share');
+        const hasSelection = selectedKinds !== undefined;
 
         const compatibility = readAccountStoredContentCompatibilityForHttpRequest(request);
         if (request.authTokenKind === "api_token" && sessionAccessSessionId !== undefined
@@ -154,156 +181,125 @@ export function changesRoutes(app: Fastify) {
             });
         }
 
-        const account = await inTx(tx => tx.account.findUnique({
-            where: { id: userId },
-            select: { seq: true, changesFloor: true },
-        }), { readOnly: true });
-        if (!account) {
+        // Each statement must see newly committed retention/access changes.
+        // READ COMMITTED preserves those fresh phases on one admitted connection;
+        // a repeatable snapshot would conceal the final changesFloor update.
+        const readPage = async (read: <T>(operation: (tx: Tx) => Promise<T>) => Promise<T>) => {
+            const account = await read(tx => tx.account.findUnique({
+                where: { id: userId },
+                select: { seq: true, changesFloor: true },
+            }));
+            if (!account) return { status: 'account-not-found' } as const;
+            if (after > account.seq) return { status: 'cursor-gone', account, reason: 'cursor-in-future' } as const;
+            if (after < account.changesFloor) return { status: 'cursor-gone', account, reason: 'cursor-behind-floor' } as const;
+
+            const rows = await read(tx => tx.accountChange.findMany({
+                where: {
+                    accountId: userId,
+                    cursor: { gt: after, ...(hasSelection ? { lte: account.seq } : {}) },
+                    ...(sessionId === undefined ? {} : { entityId: sessionId }),
+                    ...(selectedKinds === undefined ? {} : { kind: { in: selectedKinds } }),
+                },
+                orderBy: [{ cursor: 'asc' }, { kind: 'asc' }, { entityId: 'asc' }],
+                take: limit,
+                select: { cursor: true, kind: true, entityId: true, changedAt: true, hint: true },
+            }));
+            // Retention advances the floor and removes rows atomically. Keep
+            // this second, fresh read after rows, even within one transaction.
+            const currentAccount = await read(tx => tx.account.findUnique({
+                where: { id: userId },
+                select: { seq: true, changesFloor: true },
+            }));
+            if (currentAccount && after < currentAccount.changesFloor) {
+                return { status: 'cursor-gone', account: currentAccount, reason: 'cursor-behind-floor-after-rows' } as const;
+            }
+            const visibleRows = rows.filter(row => {
+                if (row.kind === 'pluginDomain') return compatibility.supportsPluginDataProtocol;
+                if (row.kind === 'machinePool') return compatibility.supportsMachinePoolChangeProtocol;
+                if (row.kind === 'savedSecretResource') return compatibility.supportsSavedSecretResourceChangeProtocol;
+                return true;
+            });
+            const pendingSessionIds = [...new Set(visibleRows.flatMap(row =>
+                row.kind === 'session' && canProjectPendingExecutionRunTargets(row.hint) ? [row.entityId] : [],
+            ))];
+            const pendingTargets = pendingSessionIds.length === 0 ? [] : await read(tx => listQueuedExecutionRunPendingTargetsForSessions({
+                accountId: userId, sessionIds: pendingSessionIds, reader: tx,
+            }));
+            const sessionChangeCursors = new Map<string, number>();
+            const sessionAccessResolutions = [];
+            if (compatibility.supportsSessionAccessWitnessProtocol) {
+                for (const row of visibleRows) {
+                    const id = row.entityId.trim();
+                    // Only the latest cursor for an exact Session needs its
+                    // canonical access fact; advisory kinds do not grant access.
+                    if (row.kind === 'session' && id.length > 0) sessionChangeCursors.set(id, row.cursor);
+                }
+                // One batched access read for the page, not one per changed Session.
+                const resolutions = sessionChangeCursors.size === 0 ? new Map()
+                    : await read(tx => resolveSessionHostReferencesForAuthenticationInTx({
+                        tx, accountId: userId, targetIds: [...sessionChangeCursors.keys()],
+                        authentication: readSessionAccessAuthenticationFromRequest(request),
+                    }));
+                for (const [id, cursor] of sessionChangeCursors) {
+                    sessionAccessResolutions.push({ sessionId: id, cursor,
+                        resolution: resolutions.get(id) ?? { status: 'unavailable' as const },
+                    });
+                }
+            }
+            return { status: 'ok', account, rows, visibleRows, pendingTargets,
+                sessionAccessResolutions: compatibility.supportsSessionAccessWitnessProtocol ? sessionAccessResolutions : undefined,
+            } as const;
+        };
+        // SQLite has no READ COMMITTED transaction: retain its separate fresh
+        // phase snapshots. The domain decisions above remain one shared path.
+        const page = getDbProviderFromEnv(process.env, 'postgres') === 'sqlite'
+            ? await readPage(operation => inReadSnapshot(operation))
+            : await inTx(tx => readPage(operation => operation(tx)), { readOnly: true, isolationLevel: 'ReadCommitted' });
+        if (page.status === 'account-not-found') {
             // Should be impossible for authenticated requests, but keep the contract explicit.
             changesRequestsCounter.inc({ result: 'account-not-found' });
             warn({ module: 'changes', userId: userIdRedacted }, 'Authenticated /v2/changes request missing account row');
             return reply.code(404).send({ error: 'account-not-found' });
         }
 
-        // Cursor safety: if a client somehow has a cursor from the future (e.g. restored from a different account),
-        // require a snapshot rebuild.
-        if (after > account.seq) {
+        if (page.status === 'cursor-gone') {
             changesRequestsCounter.inc({ result: 'cursor-gone' });
             warn(
-                { module: 'changes', userId: userIdRedacted, after, currentCursor: account.seq, changesFloor: account.changesFloor, reason: 'cursor-in-future' },
-                'Client cursor is in the future; snapshot resync required'
+                { module: 'changes', userId: userIdRedacted, after, currentCursor: page.account.seq, changesFloor: page.account.changesFloor, reason: page.reason },
+                'Client cursor requires snapshot resync'
             );
-            return reply.code(410).send({ error: 'cursor-gone', currentCursor: account.seq });
+            return reply.code(410).send({ error: 'cursor-gone', currentCursor: page.account.seq });
         }
+        const { account, rows, visibleRows, pendingTargets, sessionAccessResolutions } = page;
 
-        // Prune safety: if the server has pruned orphaned AccountChange rows (e.g. deleted sessions),
-        // clients behind the prune floor must do a snapshot rebuild to avoid missing deletion signals.
-        if (after < account.changesFloor) {
-            changesRequestsCounter.inc({ result: 'cursor-gone' });
-            warn(
-                { module: 'changes', userId: userIdRedacted, after, currentCursor: account.seq, changesFloor: account.changesFloor, reason: 'cursor-behind-floor' },
-                'Client cursor is behind changesFloor; snapshot resync required'
-            );
-            return reply.code(410).send({ error: 'cursor-gone', currentCursor: account.seq });
-        }
-
-        const rows = await inTx(tx => tx.accountChange.findMany({
-            where: {
-                accountId: userId,
-                cursor: {
-                    gt: after,
-                    ...(sessionId === undefined ? {} : { lte: account.seq }),
-                },
-                ...(sessionId === undefined ? {} : {
-                    entityId: sessionId,
-                    kind: { in: ["session", "share"] },
-                }),
-            },
-            orderBy: [
-                { cursor: 'asc' },
-                { kind: 'asc' },
-                { entityId: 'asc' },
-            ],
-            take: limit,
-            select: {
-                cursor: true,
-                kind: true,
-                entityId: true,
-                changedAt: true,
-                hint: true,
-            },
-        }), { readOnly: true });
-
-        // AccountChange retention deletes a row and advances changesFloor in
-        // one Account-fenced transaction. This second read closes the reader
-        // side of that boundary: a poll that read an older floor but fetched
-        // rows after the retention commit must reset instead of checkpointing
-        // a later exact change without its required full invalidation.
-        const currentAccount = await inTx(tx => tx.account.findUnique({
-            where: { id: userId },
-            select: { seq: true, changesFloor: true },
-        }), { readOnly: true });
-        if (currentAccount && after < currentAccount.changesFloor) {
-            changesRequestsCounter.inc({ result: 'cursor-gone' });
-            warn(
-                { module: 'changes', userId: userIdRedacted, after, currentCursor: currentAccount.seq, changesFloor: currentAccount.changesFloor, reason: 'cursor-behind-floor-after-rows' },
-                'Client cursor crossed changesFloor while /v2/changes was being read; snapshot resync required'
-            );
-            return reply.code(410).send({ error: 'cursor-gone', currentCursor: currentAccount.seq });
-        }
-
-        // An exact Session read selects only its two possible AccountChange
-        // identities. Once that bounded result is shorter than the requested
+        // A selected read only materializes the requested AccountChange kinds
+        // and/or exact Session. Once that result is shorter than the requested
         // page, the Account snapshot proves every cursor through `account.seq`
         // was examined; advance directly instead of paging unrelated activity.
-        // A full page retains its last row cursor so a smaller caller limit can
-        // fetch the other exact identity without skipping it.
-        const nextCursor = sessionId !== undefined && rows.length < limit
+        // A full page retains its last row cursor so the next page cannot skip
+        // another selected change.
+        const nextCursor = hasSelection && rows.length < limit
             ? account.seq
             : rows.length > 0 ? rows[rows.length - 1]!.cursor : after;
-        const visibleRows = rows.filter((row) => {
-            if (row.kind === 'pluginDomain') return compatibility.supportsPluginDataProtocol;
-            if (row.kind === 'machinePool') return compatibility.supportsMachinePoolChangeProtocol;
-            if (row.kind === 'savedSecretResource') return compatibility.supportsSavedSecretResourceChangeProtocol;
-            return true;
-        });
-        const pendingSessionIds = [...new Set(visibleRows.flatMap((row) =>
-            row.kind === 'session' && canProjectPendingExecutionRunTargets(row.hint)
-                ? [row.entityId]
-                : [],
-        ))];
-        const pendingTargets = await inTx(tx => listQueuedExecutionRunPendingTargetsForSessions({
-            accountId: userId,
-            sessionIds: pendingSessionIds,
-            reader: tx,
-        }), { readOnly: true });
         const pendingRunIdsBySessionId = new Map<string, string[]>();
         for (const target of pendingTargets) {
             const existing = pendingRunIdsBySessionId.get(target.sessionId);
             if (existing) existing.push(target.runId);
             else pendingRunIdsBySessionId.set(target.sessionId, [target.runId]);
         }
-        const sessionChangeCursors = new Map<string, number>();
-        if (compatibility.supportsSessionAccessWitnessProtocol) {
-            for (const row of visibleRows) {
-                if (row.kind !== 'session') continue;
-                const sessionId = row.entityId.trim();
-                if (sessionId.length === 0) continue;
-                // The feed is cursor-ordered. One page can contain several
-                // changes for an exact Session; its latest change is the one
-                // canonical access fact needed by the bounded witness.
-                sessionChangeCursors.set(sessionId, row.cursor);
-            }
-        }
-        const sessionAccessResolutions = compatibility.supportsSessionAccessWitnessProtocol
-            ? await Promise.all(
-                [...sessionChangeCursors.entries()].map(async ([sessionId, cursor]) => ({
-                    sessionId,
-                    cursor,
-                    resolution: await inTx(tx => resolveSessionHostReferenceForAuthenticationInTx({
-                        tx,
-                        accountId: userId,
-                        targetId: sessionId,
-                        authentication: readSessionAccessAuthenticationFromRequest(request),
-                    }), { readOnly: true }),
-                })),
-            )
-            : undefined;
-        const authenticationRequired = sessionAccessResolutions?.some(({ resolution }) =>
-            resolution.status === 'authentication_required');
-        if (authenticationRequired) {
-            changesRequestsCounter.inc({ result: 'authentication-required' });
-            return reply.code(503).send({ error: 'session_access_authentication_required' });
-        }
-        const authenticationUnavailable = sessionAccessResolutions?.some(({ resolution }) =>
-            resolution.status === 'authentication_unavailable');
-        if (authenticationUnavailable) {
+        // A Team authentication refusal is per Session, decided by the Session
+        // access owner for this credential: that Session's entry is unavailable
+        // (as the Session list omits it) and the rest of the Account feed stays
+        // readable. Refusing the whole page would stall every change kind for a
+        // credential that retrying cannot qualify.
+        // An unavailable accepted method (Home outage, unreadable fact) is not a
+        // refusal: access is indeterminate, and a witnessed `unavailable` would
+        // purge the Session and advance the cursor past it. Never acknowledge
+        // that page; the client's changes retry owner replays it.
+        if (sessionAccessResolutions?.some(({ resolution }) => resolution.status === 'authentication_unavailable')) {
             changesRequestsCounter.inc({ result: 'authentication-unavailable' });
             return reply.code(503).send({ error: 'session_access_authentication_unavailable' });
         }
-        // Durable purge authority requires determinate access for every Session
-        // on the page. The early returns above preserve retry custody by never
-        // acknowledging an authentication-indeterminate change page.
         const sessionAccessWitness = sessionAccessResolutions !== undefined
             ? {
                 v: 1 as const,

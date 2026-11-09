@@ -1,5 +1,6 @@
 import { ACCOUNT_API_TOKEN_ENCRYPTION_ACCESS_HTTP_PATH_V1, AccountApiTokenEncryptionAccessRequestV1Schema, AccountApiTokenEncryptionAccessResponseV1Schema, AccountApiTokenIntrospectionConnectionFailureV1Schema, AccountApiTokenIntrospectionSubjectFailureV1Schema, ACCOUNT_API_TOKENS_CREATE_HTTP_PATH_V1, ACCOUNT_API_TOKENS_LIST_HTTP_PATH_V1, ACCOUNT_API_TOKENS_REVOKE_ALL_HTTP_PATH_V1, ACCOUNT_API_TOKENS_REVOKE_HTTP_PATH_V1, AccountApiTokensCreateActionInputV1Schema, AccountApiTokensCreateActionOutputV1Schema, AccountApiTokensListActionInputV1Schema, AccountApiTokensListActionOutputV1Schema, AccountApiTokensRevokeActionInputV1Schema, AccountApiTokensRevokeActionOutputV1Schema, AccountApiTokensRevokeAllActionInputV1Schema, AccountApiTokensRevokeAllActionOutputV1Schema, AccountApiTokensServerErrorV1Schema, ACCOUNT_API_TOKENS_UPDATE_HTTP_PATH_V1, ACCOUNT_API_TOKEN_CHILDREN_CREATE_HTTP_PATH_V1, ACCOUNT_API_TOKEN_CHILDREN_REVOKE_HTTP_PATH_V1, ACCOUNT_API_TOKEN_SELF_HTTP_PATH_V1, AccountApiTokensUpdateActionInputV1Schema, AccountApiTokensUpdateActionOutputV1Schema, AccountApiTokenChildCreateRequestV1Schema, AccountApiTokenChildRevokeRequestV1Schema, AccountApiTokenSelfV1Schema } from '@happier-dev/protocol/auth/accountApiTokens';
 import { z } from "zod/mini";
+import { AccountApiTokensCreateHttpInputV1Schema, AccountApiTokensUpdateHttpInputV1Schema } from '@happier-dev/protocol/auth/accountApiTokens';
 import { db } from '@/storage/db';
 
 import {
@@ -14,6 +15,7 @@ import {
     requirePresentUser,
 } from "@/app/api/utils/requirePresentUser";
 import { resolveApiHotEndpointRateLimit } from "@/app/api/utils/apiRateLimitCatalog";
+import { eventRouter } from '@/app/events/eventRouter';
 
 import { type Fastify } from "../../types";
 
@@ -55,7 +57,7 @@ export function registerAccountApiTokenManagementRoutes(app: Fastify): void {
             preHandler: [app.authenticate, requirePresentUser],
             attachValidation: true,
             schema: {
-                body: AccountApiTokensCreateActionInputV1Schema,
+                body: AccountApiTokensCreateHttpInputV1Schema,
                 response: {
                     200: AccountApiTokensCreateActionOutputV1Schema,
                     400: AccountApiTokensServerErrorV1Schema,
@@ -85,6 +87,7 @@ export function registerAccountApiTokenManagementRoutes(app: Fastify): void {
                     expiresAt,
                     grant: request.body.grant,
                     embedConfig: request.body.embedConfig,
+                    ...(request.body.deployment !== undefined ? { deployment: request.body.deployment } : {}),
                     ...(request.body.encryption ? { encryption: request.body.encryption } : {}),
                     ...(request.body.authorizeUnattendedTeamAccess === true && request.authTokenAuthenticationEvidence
                         ? { authenticationEvidence: request.authTokenAuthenticationEvidence }
@@ -97,6 +100,9 @@ export function registerAccountApiTokenManagementRoutes(app: Fastify): void {
                 }
                 if (error instanceof ApiTokenOperationError && error.code === "account-disabled") {
                     return await reply.code(403).send({ error: "account-disabled" });
+                }
+                if (error instanceof ApiTokenOperationError && error.code === 'credential_scope_denied') {
+                    return await reply.code(403).send({ error: error.code });
                 }
                 if (error instanceof ApiTokenOperationError && (
                     error.code === "api_token_id_conflict"
@@ -171,7 +177,7 @@ export function registerAccountApiTokenManagementRoutes(app: Fastify): void {
                 return await reply.code(400).send({ error: "invalid_request" });
             }
 
-            const tokens = await auth.listApiTokens(request.userId);
+            const tokens = await auth.listApiTokens(request.userId, { includeChildren: request.body.includeChildren === true });
             return await reply.send({ tokens: tokens.map(serializeApiTokenSummary) });
         },
     );
@@ -235,18 +241,30 @@ export function registerAccountApiTokenManagementRoutes(app: Fastify): void {
     app.post(ACCOUNT_API_TOKENS_UPDATE_HTTP_PATH_V1, {
         config: { rateLimit: resolveApiHotEndpointRateLimit(process.env, "auth.apiTokens.mutate") },
         preHandler: [app.authenticate, requirePresentUser], attachValidation: true,
-        schema: { body: AccountApiTokensUpdateActionInputV1Schema, response: {
+        schema: { body: AccountApiTokensUpdateHttpInputV1Schema, response: {
             200: AccountApiTokensUpdateActionOutputV1Schema, 400: AccountApiTokensServerErrorV1Schema,
-            401: AccountApiTokenIntrospectionSubjectFailureV1Schema, 403: PresentUserRequiredResponseSchema,
+            401: AccountApiTokenIntrospectionSubjectFailureV1Schema, 403: z.union([PresentUserRequiredResponseSchema, AccountApiTokensServerErrorV1Schema]),
+            409: AccountApiTokensServerErrorV1Schema,
         } },
     }, async (request, reply) => {
         if (request.validationError) return reply.code(400).send({ error: "invalid_request" });
         try {
-            const result = await auth.updateApiToken({ accountId: request.userId, ...request.body });
-            if (result.grantChanged) app.disconnectApiTokenSockets?.([request.body.tokenId, ...result.revokedTokenIds]);
+            if (request.body.authorizeUnattendedTeamAccess === true && !request.authTokenAuthenticationEvidence?.length) {
+                return reply.code(409).send({ error: "credential_authentication_evidence_unavailable" });
+            }
+            const { authorizeUnattendedTeamAccess, ...update } = request.body;
+            const result = await auth.updateApiToken({ accountId: request.userId, ...update,
+                ...(authorizeUnattendedTeamAccess === true && request.authTokenAuthenticationEvidence
+                    ? { authenticationEvidence: request.authTokenAuthenticationEvidence } : {}),
+            });
+            if (result.grantChanged || result.authenticationEvidenceChanged) app.disconnectApiTokenSockets?.([request.body.tokenId, ...result.revokedTokenIds]);
+            if (result.embedConfigChanged && !result.grantChanged) eventRouter.emitApiTokenEmbedConfigChanged({ accountId: request.userId, tokenId: request.body.tokenId });
             return reply.send({ apiToken: serializeApiTokenSummary(result.apiToken) });
         } catch (error) {
             if (error instanceof ApiTokenOperationError && error.code === "invalid_token") return reply.code(401).send({ error: error.code });
+            if (error instanceof ApiTokenOperationError && error.code === 'credential_scope_denied') return reply.code(403).send({ error: error.code });
+            if (error instanceof ApiTokenOperationError && (error.code === "credential_authentication_evidence_unavailable"
+                || error.code === "credential_authentication_evidence_limit")) return reply.code(409).send({ error: error.code });
             throw error;
         }
     });
@@ -272,7 +290,7 @@ export function registerAccountApiTokenManagementRoutes(app: Fastify): void {
             return reply.send(serializeCreatedApiToken(created));
         } catch (error) {
             if (error instanceof InvalidApiTokenExpiryError) return reply.code(400).send({ error: "api_token_child_invalid" });
-            if (error instanceof ApiTokenOperationError) {
+            if (error instanceof ApiTokenOperationError && error.code !== 'target_unavailable') {
                 const status = error.code === "invalid_token" ? 401 : error.code === "api_token_child_invalid" ? 400
                     : error.code === "api_token_id_conflict" ? 409 : 403;
                 return reply.code(status).send({ error: error.code });
@@ -306,7 +324,8 @@ export function registerAccountApiTokenManagementRoutes(app: Fastify): void {
         config: { allowApiToken: true, allowScopedApiToken: true,
             rateLimit: resolveApiHotEndpointRateLimit(process.env, "auth.apiTokens.read") },
         preHandler: app.authenticate,
-        schema: { response: { 200: AccountApiTokenSelfV1Schema, 403: AccountApiTokensServerErrorV1Schema } },
+        schema: { response: { 200: AccountApiTokenSelfV1Schema, 403: AccountApiTokensServerErrorV1Schema,
+            401: AccountApiTokenIntrospectionSubjectFailureV1Schema, 409: AccountApiTokensServerErrorV1Schema } },
     }, async (request, reply) => {
         const principal = request.apiTokenPrincipal;
         if (request.authTokenKind !== "api_token" || !principal) return reply.code(403).send({ error: "api_token_required" });
@@ -314,6 +333,7 @@ export function registerAccountApiTokenManagementRoutes(app: Fastify): void {
         return reply.header("cache-control", "no-store").send(AccountApiTokenSelfV1Schema.parse({ accountId: principal.accountId, credentialId: principal.credentialId,
             accountEncryptionMode: account.encryptionMode,
             parentTokenId: principal.parentTokenId, grant: principal.grant,
-            expiresAt: principal.expiresAt?.toISOString() ?? null, embedConfig: principal.embedConfig }));
+            expiresAt: principal.expiresAt?.toISOString() ?? null, embedConfig: principal.embedConfig,
+        }));
     });
 }

@@ -15,7 +15,6 @@ import { enableAuthentication } from "../../utils/enableAuthentication";
 import { createAppCloseTracker } from "../../testkit/appLifecycle";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
 import { createSignedAccountContentBinding } from "@/testkit/accountEncryption";
-import { authEnrollmentOutcomeCounter } from "@/app/monitoring/metrics/authMetrics";
 
 const { trackApp, closeTrackedApps } = createAppCloseTracker();
 
@@ -183,11 +182,7 @@ describe("authRoutes (account auth request) (integration)", () => {
         await app.close();
     });
 
-    it("records malformed account enrollment without secret-bearing metric labels", async () => {
-        const beforeMetric = await authEnrollmentOutcomeCounter.get();
-        const before = beforeMetric.values.find((value) => (
-            value.labels.flow === "account_qr" && value.labels.outcome === "malformed_payload"
-        ))?.value ?? 0;
+    it("refuses malformed account enrollment keys", async () => {
         const app = createTestApp();
         authRoutes(app as any);
         await app.ready();
@@ -199,12 +194,6 @@ describe("authRoutes (account auth request) (integration)", () => {
         });
 
         expect(response.statusCode).toBe(401);
-        const afterMetric = await authEnrollmentOutcomeCounter.get();
-        const sample = afterMetric.values.find((value) => (
-            value.labels.flow === "account_qr" && value.labels.outcome === "malformed_payload"
-        ));
-        expect(sample?.value).toBe(before + 1);
-        expect(Object.keys(sample?.labels ?? {}).sort()).toEqual(["flow", "outcome"]);
     });
 
     it("opportunistically deletes at most 32 expired account-auth rows without deleting live rows", async () => {

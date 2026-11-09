@@ -71,15 +71,17 @@ describe('Follow receiver-count database work', () => {
         expect(f.statements).toEqual(['Account SELECT', 'Account SELECT', 'KV list SELECT']);
     });
 
-    it.each([1, 4, 1100])('hydrates rich retained rules in bind-bounded sets (%i rules)', async count => {
+    it.each([1, 4, 1100])('reads persisted creation facts without reconstruction queries (%i retained rules)', async count => {
         const f = fixture(count);
         const listed = await listAccountFollowRuleRowsInTx(f.tx, { accountId: 'account' });
         expect(listed.status).toBe('listed');
         if (listed.status !== 'listed') throw new Error('Expected retained rules');
         expect(listed.rows.map(row => row.envelope?.inception?.createdAt))
             .toEqual(Array.from({ length: count }, (_, index) => 1234 + index * 1000));
-        expect(f.statements).toEqual(['Account SELECT', 'KV list SELECT',
-            ...Array.from({ length: count > 997 ? 2 : 1 }, () => 'KV inception set SELECT')]);
+        expect(f.statements).toEqual(['Account SELECT', 'KV list SELECT']);
+        f.statements.length = 0;
+        expect(await listAccountFollowRuleRowsInTx(f.tx, { accountId: 'account' })).toEqual(listed);
+        expect(f.statements).toEqual(['Account SELECT', 'KV list SELECT']);
     });
 
     it('does not reacquire carried inception or hydrate tombstones', async () => {

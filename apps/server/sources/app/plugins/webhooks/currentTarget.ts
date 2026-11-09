@@ -34,7 +34,10 @@ export async function resolveCurrentPluginWebhookRoutingTargetTxV1(params: Reado
     const authorities = await resolveCurrentPluginWebhookClaimAuthoritiesTxV1({
         tx: params.tx,
         accountId: params.accountId,
-        targets: materializations,
+        targets: materializations.map((materialization) => ({
+            ...materialization,
+            machineInstallationId: machine.installationId!,
+        })),
     });
     const authority = authorities.find((candidate) => candidate.contribution.localId === params.contribution.localId);
     if (!authority) return null;

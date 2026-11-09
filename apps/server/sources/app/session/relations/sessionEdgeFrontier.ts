@@ -39,8 +39,8 @@ export function readStoredSessionFollowFrontier(row: SessionFollowDeliveredColum
     });
 }
 
-export function readCurrentSourceSessionFollowFrontier(row: SessionFollowSourceFrontierRow, includeStalled = false): SessionFollowFrontierV1 {
-    return projectSessionFollowFrontierFromSourceV1({ ...row, active: includeStalled ? row.active : undefined });
+export function readCurrentSourceSessionFollowFrontier(row: SessionFollowSourceFrontierRow): SessionFollowFrontierV1 {
+    return projectSessionFollowFrontierFromSourceV1(row);
 }
 
 /**

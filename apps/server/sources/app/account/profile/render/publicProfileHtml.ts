@@ -6,17 +6,22 @@ import { PUBLIC_PROFILE_FONT_FAMILY } from './publicProfileEnvironment';
 import { HAPPIER_PUBLIC_PROFILE_HERO_METRICS } from '@happier-dev/plugin-ui/presentation/pageMetrics';
 
 /** Trusted document shell only: the entire visible page is the portable shared component. */
-export function renderPublicProfileHtml(result: PublicProfileReadResultV1, hero?: PublicProfileBodyInput['hero']): string {
+export function renderPublicProfileHtml(result: PublicProfileReadResultV1, hero?: PublicProfileBodyInput['hero'],
+    options: Readonly<{ service?: string; nowMs?: number }> = {}): string {
     const view = result.kind === 'published' ? result.view : null;
-    const scheme = view?.appearance.theme === 'dark' ? 'dark' : 'light';
+    // A paused or unavailable page has no view to theme it; it follows the visitor's own appearance.
+    const theme = view?.appearance.theme ?? 'auto';
+    const scheme = theme === 'dark' ? 'dark' : 'light';
+    // Every page has a phone edition: its brand bar keeps only the brand, and its band and blocks recompose.
     const renderEdition = (selected: 'light' | 'dark') => {
-        const wide = renderPublicProfileBody({ result, scheme: selected, ...(hero ? { hero } : {}) });
-        if (!hero) return wide;
-        const phone = renderPublicProfileBody({ result, scheme: selected, hero, singleColumn: true });
+        const body = { result, scheme: selected, ...(hero ? { hero } : {}), ...(options.service ? { service: options.service } : {}),
+            ...(options.nowMs === undefined ? {} : { nowMs: options.nowMs }) };
+        const wide = renderPublicProfileBody(body);
+        const phone = renderPublicProfileBody({ ...body, singleColumn: true });
         return { css: phone.css, markup: `<div class="public-profile-wide">${wide.markup}</div><div class="public-profile-phone">${phone.markup}</div>` };
     };
     const rendered = renderEdition(scheme);
-    const dark = view?.appearance.theme === 'auto' ? renderEdition('dark') : null;
+    const dark = theme === 'auto' ? renderEdition('dark') : null;
     const title = view ? `${view.identity.name ?? `@${view.handle}`} · ${view.service.displayName}`
         : result.kind === 'paused' ? `${result.identity.name ?? `@${result.handle}`} · ${PUBLIC_PROFILE_STATE_LABELS.paused}` : PUBLIC_PROFILE_STATE_LABELS.unavailable;
     const description = view?.metadata.bio ?? (view ? `Public activity shared by @${view.handle}.` : title);
@@ -32,7 +37,7 @@ export function renderPublicProfileHtml(result: PublicProfileReadResultV1, hero?
     // RNW styles can contain admitted declarative values. Escape HTML's raw-text
     // delimiter at this final CSS boundary, independently of component escaping.
     const auto = dark ? `.public-profile-dark{display:none}@media(prefers-color-scheme:dark){.public-profile-light{display:none}.public-profile-dark{display:block}html,body{background:${HAPPIER_DEFAULT_SURFACE_COLORS.dark.background};color:${HAPPIER_DEFAULT_SURFACE_COLORS.dark.foreground}}}` : '';
-    const responsive = hero ? `.public-profile-phone{display:none}@media(${HAPPIER_PUBLIC_PROFILE_HERO_METRICS.singleColumnBelowWidthPx}px > width){.public-profile-wide{display:none}.public-profile-phone{display:block}}` : '';
+    const responsive = `.public-profile-phone{display:none}@media(${HAPPIER_PUBLIC_PROFILE_HERO_METRICS.singleColumnBelowWidthPx}px > width){.public-profile-wide{display:none}.public-profile-phone{display:block}}`;
     const css = `${fonts}${dark?.css ?? rendered.css}\nhtml,body{min-height:100%;background:${ink.background};color:${ink.foreground}}body{font-family:${PUBLIC_PROFILE_FONT_FAMILY},sans-serif}a{color:inherit}${auto}${responsive}`.replaceAll('<', '\\3c ');
     const body = dark ? `<div class="public-profile-light">${rendered.markup}</div><div class="public-profile-dark">${dark.markup}</div>` : rendered.markup;
     return `<!doctype html><html lang="${PUBLIC_PROFILE_LOCALE}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${html(title)}</title><meta name="description" content="${html(description)}"><meta name="robots" content="${view?.indexable ? 'index,follow' : 'noindex,nofollow'}">${head}<style>${css}</style></head><body>${body}</body></html>`;

@@ -367,21 +367,13 @@ describe("eventRouter payloads (protocol container)", () => {
         expect(JSON.stringify(ownerPayload)).not.toContain(ownerDisplay.envelope.c);
     });
 
+
     it("buildSessionMetadataRecipientUpdate rejects a partial owner projection", () => {
         expect(() => buildSessionMetadataRecipientUpdate(
-            "s1",
-            106,
-            "upd-invalid-owner",
+            "s1", 106, "upd-invalid-owner",
             // @ts-expect-error Missing Agent state is the malformed contract.
-            {
-                metadata: "shared-safe",
-                metadataVersion: 5,
-                metadataLayoutVersion: 1,
-                ownerMetadata: {
-                    t: "encrypted",
-                    c: "oRoBAgMEBQYHCAkKCwwNDg8QERITFBUWFxh8aC0+8+YDECLScN6uQTItPyWVR7XbQA==",
-                },
-            },
+            { metadata: "shared-safe", metadataVersion: 5, metadataLayoutVersion: 1,
+                ownerMetadata: { t: "encrypted", c: "oRoBAgMEBQYHCAkKCwwNDg8QERITFBUWFxh8aC0+8+YDECLScN6uQTItPyWVR7XbQA==" } },
         )).toThrow();
     });
 

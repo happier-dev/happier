@@ -5,7 +5,7 @@ import { expect, it } from 'vitest';
 
 import { getSocketRooms } from '@/app/api/socketRooms';
 import { eventRouter } from './eventRouter';
-import { buildAccountChangeWakeUpdate } from './eventPayloadBuilders';
+import { buildAccountChangeWakeUpdate, buildMachineActivityEphemeral } from './eventPayloadBuilders';
 
 it('keeps Machine and other Session wakes when current-view sockets are already covered', async () => {
     const http = createServer();
@@ -48,6 +48,50 @@ it('keeps Machine and other Session wakes when current-view sockets are already 
             recipientFilter: { type: 'account-stored-content-v3' } });
         await Promise.all(clients.map(client => client.emitWithAck('barrier')));
         expect(frames).toEqual([[wake], [wake], [wake, wake], [wake, wake]]);
+    } finally {
+        eventRouter.clearIo();
+        for (const client of clients) client.disconnect();
+        await new Promise<void>(resolve => io.close(() => resolve()));
+    }
+});
+
+it('delivers one publication once per subscribed socket even when its rooms overlap', async () => {
+    const http = createServer();
+    const io = new Server(http, { transports: ['websocket'] });
+    io.on('connection', socket => {
+        void socket.join(getSocketRooms({ userId: 'fanout-owner', clientType: 'user-scoped' }));
+        socket.on('barrier', acknowledge => acknowledge());
+    });
+    const clients: Socket[] = [];
+    try {
+        await new Promise<void>(resolve => http.listen(0, '127.0.0.1', resolve));
+        const address = http.address();
+        if (!address || typeof address === 'string') throw new Error('Missing test listener');
+        for (let index = 0; index < 2; index++) {
+            const client = connect(`http://127.0.0.1:${address.port}`, { transports: ['websocket'], forceNew: true });
+            clients.push(client);
+            await new Promise<void>((resolve, reject) => { client.once('connect', resolve); client.once('connect_error', reject); });
+        }
+        eventRouter.setIo(io);
+        const updates: unknown[][] = clients.map(() => []);
+        const activities: unknown[][] = clients.map(() => []);
+        clients.forEach((client, index) => {
+            client.on('update', payload => updates[index]!.push(payload));
+            client.on('ephemeral', payload => activities[index]!.push(payload));
+        });
+        const update = buildAccountChangeWakeUpdate(1, 'change-1', { changeKinds: ['session'], entityIds: ['session-1'] });
+        eventRouter.emitUpdate({ userId: 'fanout-owner', payload: update });
+        const activity = buildMachineActivityEphemeral('machine-1', true, 1);
+        eventRouter.emitEphemeral({ userId: 'fanout-owner', payload: activity,
+            recipientFilter: { type: 'machine-scoped-only', machineId: 'machine-1' } });
+        await Promise.all(clients.map(client => client.emitWithAck('barrier')));
+        expect(updates).toEqual([[update], [update]]);
+        expect(activities).toEqual([[activity], [activity]]);
+        // The user room and user-scoped room overlap for both clients. Socket.IO's
+        // union broadcast must still deliver only once to each subscription.
+        io.to(['user:fanout-owner', 'user-scoped:fanout-owner']).emit('update', update);
+        await Promise.all(clients.map(client => client.emitWithAck('barrier')));
+        expect(updates.map(deliveries => deliveries.length)).toEqual([2, 2]);
     } finally {
         eventRouter.clearIo();
         for (const client of clients) client.disconnect();

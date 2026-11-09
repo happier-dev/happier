@@ -21,6 +21,7 @@ import { HomePublicProfileHandleReclaimInputV1Schema, HomePublicProfileHandleRec
     HomePublicProfileModerationResultV1Schema } from '@happier-dev/protocol/home/governance';
 import { homeDomainActionTransportV1 } from '@happier-dev/protocol/actions/homeDomainActionFamily';
 import { reclaimPublicProfileHandle } from '@/app/account/profile/publicProfileHandleReclaim';
+import { AccountUsernameUpdateErrorV1Schema } from '@happier-dev/protocol/account/profile';
 
 /** Authenticated intent transports share lifecycle owners; revocation is never feature-gated away. */
 export function registerAccountPublicProfileRoutes(app: Fastify, deps: PublicProfileServerDependencies = publicProfileServerDependencies): void {
@@ -73,7 +74,7 @@ export function registerAccountPublicProfileRoutes(app: Fastify, deps: PublicPro
             response: { 200: HomePublicProfileHandleReclaimResultV1Schema,
                 403: z.strictObject({ error: z.literal('home_governance_forbidden') }),
                 404: z.strictObject({ error: z.literal('home_account_not_found') }),
-                409: z.strictObject({ error: z.literal('username-changed') }) },
+                409: AccountUsernameUpdateErrorV1Schema },
         },
     }, async (request, reply) => {
         const result = await reclaimPublicProfileHandle(request.userId, { accountId: request.params.accountId, ...request.body });

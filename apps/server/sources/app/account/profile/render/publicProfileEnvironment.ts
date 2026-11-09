@@ -26,7 +26,7 @@ export function createPublicProfileTheme(scheme: 'light' | 'dark'): HappierUiThe
             text: ink.foreground, secondaryText: ink.secondary, mutedText: ink.secondary, border: ink.border,
             divider: ink.border, focus: ink.foreground, accent: ink.link, onAccent: ink.background,
             success: ink.foreground, warning: ink.foreground, attention: ink.foreground, danger: ink.foreground,
-            info: ink.foreground, control: ink.background, controlDisabled: ink.background, overlay: ink.background },
+            info: ink.foreground, control: ink.elevated, controlDisabled: ink.background, overlay: ink.background },
         spacing: { xsmall: HAPPIER_SPACE_STEPS.s4, small: HAPPIER_SPACE_STEPS.s8, medium: HAPPIER_SPACE_STEPS.s12,
             large: HAPPIER_SPACE_STEPS.s16, xlarge: HAPPIER_SPACE_STEPS.s20 },
         radii: { small: HAPPIER_RADIUS_V1.sm, control: HAPPIER_RADIUS_V1.md, panel: HAPPIER_RADIUS_V1.xl, pill: HAPPIER_RADIUS_V1.xxl },

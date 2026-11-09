@@ -2,7 +2,6 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import {
     automationReplyHandoffIdForRunV1,
     deriveAutomationOccurrenceKeyV1,
-    MAX_AUTOMATION_SOURCE_RETRY_AFTER_MS,
 } from "@happier-dev/protocol";
 import { sealWorkflowFinalResultStoredEnvelopeV1, serializeWorkflowStoredContentEnvelopeV1 } from "@happier-dev/protocol/workflows";
 
@@ -25,7 +24,6 @@ const RUN_ID = "run-reply-handoff";
 const HANDOFF_ID = automationReplyHandoffIdForRunV1(RUN_ID);
 const OCCURRENCE_KEY = "A".repeat(43);
 const NOW = new Date("2026-08-10T12:00:00.000Z");
-const EXPECTED_AUTOMATION_REPLY_HANDOFF_RETRY_AFTER_MS = 10_000;
 
 const RESULT_ENVELOPE = JSON.stringify({
     t: "plain",
@@ -181,7 +179,10 @@ describe("Automation reply handoff service", () => {
                 occurredAt: NOW.getTime(),
             },
             attempt: 1,
-            accountCurrentness: claimedCurrentness,
+            accountCurrentness: expect.objectContaining({
+                mode: claimedCurrentness.mode,
+                contentKeyFingerprint: claimedCurrentness.contentKeyFingerprint,
+            }),
             runRevision: 1,
             resultEnvelope: RESULT_ENVELOPE,
             replyContextEnvelope: REPLY_CONTEXT_ENVELOPE,
@@ -202,44 +203,43 @@ describe("Automation reply handoff service", () => {
         });
     });
 
-    it("derives the durable retry cadence from the persisted attempt while preserving positive provider hints and terminal settlement", async () => {
+    it("reuses the persisted claim expiry without an attempt-derived retry cadence while preserving positive provider hints and terminal settlement", async () => {
         await seedReadyHandoff();
 
         const firstClaim = await claimNextAutomationReplyHandoff({ now: NOW });
         expect(firstClaim).not.toBeNull();
         if (!firstClaim) return;
+        const firstLease = await db.automationRun.findUniqueOrThrow({ where: { id: RUN_ID }, select: { replyHandoffDueAt: true } });
         await expect(settleAutomationReplyHandoff({
             claim: firstClaim,
             now: NOW,
             outcome: { kind: "retry", retryAfterMs: 0 },
         })).resolves.toEqual({ applied: true });
-        const firstRetryAt = new Date(NOW.getTime() + EXPECTED_AUTOMATION_REPLY_HANDOFF_RETRY_AFTER_MS);
+        const firstRetryAt = firstLease.replyHandoffDueAt!;
         await expect(findNextAutomationReplyHandoffDueAt({ now: NOW })).resolves.toEqual(firstRetryAt);
 
         const secondClaim = await claimNextAutomationReplyHandoff({ now: firstRetryAt });
         expect(secondClaim).not.toBeNull();
         if (!secondClaim) return;
+        const secondLease = await db.automationRun.findUniqueOrThrow({ where: { id: RUN_ID }, select: { replyHandoffDueAt: true } });
         await expect(settleAutomationReplyHandoff({
             claim: secondClaim,
             now: firstRetryAt,
             outcome: { kind: "retry", retryAfterMs: 0 },
         })).resolves.toEqual({ applied: true });
-        const secondRetryAt = new Date(
-            firstRetryAt.getTime() + 2 * EXPECTED_AUTOMATION_REPLY_HANDOFF_RETRY_AFTER_MS,
-        );
+        const secondRetryAt = secondLease.replyHandoffDueAt!;
         await expect(findNextAutomationReplyHandoffDueAt({ now: firstRetryAt })).resolves.toEqual(secondRetryAt);
 
         const thirdClaim = await claimNextAutomationReplyHandoff({ now: secondRetryAt });
         expect(thirdClaim).not.toBeNull();
         if (!thirdClaim) return;
+        const thirdLease = await db.automationRun.findUniqueOrThrow({ where: { id: RUN_ID }, select: { replyHandoffDueAt: true } });
         await expect(settleAutomationReplyHandoff({
             claim: thirdClaim,
             now: secondRetryAt,
             outcome: { kind: "retry" },
         })).resolves.toEqual({ applied: true });
-        const thirdRetryAt = new Date(
-            secondRetryAt.getTime() + 4 * EXPECTED_AUTOMATION_REPLY_HANDOFF_RETRY_AFTER_MS,
-        );
+        const thirdRetryAt = thirdLease.replyHandoffDueAt!;
         await expect(findNextAutomationReplyHandoffDueAt({ now: secondRetryAt })).resolves.toEqual(thirdRetryAt);
 
         const fourthClaim = await claimNextAutomationReplyHandoff({ now: thirdRetryAt });
@@ -274,27 +274,29 @@ describe("Automation reply handoff service", () => {
         });
     });
 
-    it("caps an attempt-derived retry delay at the Protocol 24-hour maximum", async () => {
+    it("preserves an already expired claim deadline on a high-attempt hint-less retry instead of inventing a new one", async () => {
         await seedReadyHandoff({ attempt: 40 });
 
         const claim = await claimNextAutomationReplyHandoff({ now: NOW });
         expect(claim).toMatchObject({ attempt: 41 });
         if (!claim) return;
+        const lease = await db.automationRun.findUniqueOrThrow({ where: { id: RUN_ID }, select: { replyHandoffDueAt: true } });
+        expect(lease.replyHandoffDueAt).not.toBeNull();
+        const settledAt = new Date(lease.replyHandoffDueAt!.getTime() + 1_000);
         await expect(settleAutomationReplyHandoff({
             claim,
-            now: NOW,
+            now: settledAt,
             outcome: { kind: "retry" },
         })).resolves.toEqual({ applied: true });
-        const cappedRetryAt = new Date(NOW.getTime() + MAX_AUTOMATION_SOURCE_RETRY_AFTER_MS);
         await expect(db.automationRun.findUniqueOrThrow({
             where: { id: RUN_ID },
             select: { replyHandoffState: true, replyHandoffAttempt: true, replyHandoffDueAt: true },
         })).resolves.toEqual({
             replyHandoffState: "ready",
             replyHandoffAttempt: 41,
-            replyHandoffDueAt: cappedRetryAt,
+            replyHandoffDueAt: lease.replyHandoffDueAt,
         });
-        await expect(findNextAutomationReplyHandoffDueAt({ now: NOW })).resolves.toEqual(cappedRetryAt);
+        await expect(findNextAutomationReplyHandoffDueAt({ now: settledAt })).resolves.toEqual(lease.replyHandoffDueAt);
     });
 
     it("fails closed without blocking a ready handoff or retaining an immediate wake when E2EE Account currentness is inconsistent", async () => {
@@ -662,7 +664,7 @@ describe("Automation reply handoff service", () => {
         });
     });
 
-    it("fences a stale settle and returns a retry to ready before the same handoff is re-claimed", async () => {
+    it("fences stale claim authority but permits a retry after unrelated Account sequence movement", async () => {
         await seedReadyHandoff();
         const claim = await claimNextAutomationReplyHandoff({ now: NOW });
         expect(claim).not.toBeNull();
@@ -677,6 +679,7 @@ describe("Automation reply handoff service", () => {
             },
         })).resolves.toEqual({ applied: false });
 
+        await db.account.update({ where: { id: ACCOUNT_ID }, data: { seq: { increment: 1 } } });
         await expect(settleAutomationReplyHandoff({
             claim,
             now: NOW,

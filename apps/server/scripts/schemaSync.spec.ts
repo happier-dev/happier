@@ -10,6 +10,34 @@ import { generateMySqlSchemaFromPostgres, generateSqliteSchemaFromPostgres } fro
 const serverRoot = join(import.meta.dirname, "..");
 
 describe("schemaSync", () => {
+    it('keeps derived Usage projection hashes indexable and its JSON payload unbounded across providers', () => {
+        const postgres = readFileSync(join(serverRoot, 'prisma/schema.prisma'), 'utf8');
+        const model = (schema: string) => schema.match(/model UsageAccountingProjection\s*\{([\s\S]*?)^\}/mu)?.[1] ?? '';
+        const sqlite = model(generateSqliteSchemaFromPostgres(postgres));
+        const mysql = model(generateMySqlSchemaFromPostgres(postgres));
+        expect(model(postgres)).toMatch(/^\s*payload\s+String\s+@db\.Text\s*$/mu);
+        expect(sqlite).toMatch(/^\s*payload\s+String\s*$/mu);
+        expect(sqlite).not.toContain('@db.');
+        expect(mysql).toMatch(/^\s*payload\s+String\s+@db\.LongText\s*$/mu);
+        for (const schema of [model(postgres), mysql]) {
+            for (const field of ['recordKey', 'subjectHash', 'itemKey']) {
+                expect(schema).toMatch(new RegExp(`^\\s*${field}\\s+String\\??[^\\n]*@db\\.VarChar\\(64\\)`, 'mu'));
+            }
+            expect(schema).toMatch(/^\s*kind\s+String\s+@db\.VarChar\(16\)\s*$/mu);
+        }
+    });
+    it('preserves full Unicode heartbeat ids with an indexable identity digest in every provider', () => {
+        const postgres = readFileSync(join(serverRoot, 'prisma/schema.prisma'), 'utf8');
+        const mysql = generateMySqlSchemaFromPostgres(postgres);
+        for (const schema of [postgres, generateSqliteSchemaFromPostgres(postgres), mysql]) {
+            const endpoint = schema.match(/model PluginWebhookEndpoint\s*\{([\s\S]*?)^\}/mu)?.[1] ?? '';
+            expect(endpoint).toMatch(/^\s*checkIdDigest\s+String\b[^\n]*@default\(""\)/mu);
+            expect(endpoint).toContain('@@unique([accountId, pluginId, webhookContributionId, sourceInstanceId, checkIdDigest]');
+        }
+        const endpoint = mysql.match(/model PluginWebhookEndpoint\s*\{([\s\S]*?)^\}/mu)?.[1] ?? '';
+        expect(endpoint).toMatch(/^\s*checkId\s+String\s+@db\.VarChar\(2000\)/mu);
+        expect(endpoint).toMatch(/^\s*checkIdDigest\s+String\s+@db\.Char\(64\)/mu);
+    });
     it('keeps the optional Session display envelope provider-complete without narrowing its storage', () => {
         const postgres = readFileSync(join(serverRoot, 'prisma/schema.prisma'), 'utf8');
         for (const schema of [postgres, generateSqliteSchemaFromPostgres(postgres)]) {

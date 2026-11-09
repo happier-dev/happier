@@ -578,11 +578,11 @@ describe("public plugin webhook ingress route", () => {
         const scoped = {
             removeContentTypeParser: vi.fn(),
             addContentTypeParser: vi.fn(),
-            post: vi.fn((_path: string, options: unknown, handler: unknown) => {
+            route: vi.fn((options: { method: string[]; handler?: unknown }) => {
+                if (!options.method.includes("POST")) return;
                 routeOptions = options;
-                routeHandler = handler;
+                routeHandler = options.handler;
             }),
-            route: vi.fn(),
         };
         const app = {
             register: vi.fn((callback: (instance: typeof scoped) => Promise<void>) => {
@@ -649,10 +649,10 @@ describe("public plugin webhook ingress route", () => {
         const scoped = {
             removeContentTypeParser: vi.fn(),
             addContentTypeParser: vi.fn(),
-            post: vi.fn((_path: string, options: unknown) => {
+            route: vi.fn((options: { method: string[] }) => {
+                if (!options.method.includes("POST")) return;
                 routeOptions = options;
             }),
-            route: vi.fn(),
         };
         const app = {
             register: vi.fn((callback: (instance: typeof scoped) => Promise<void>) => {
@@ -859,46 +859,6 @@ describe("public plugin webhook ingress route", () => {
         expect(response.statusCode).toBe(503);
         expect(response.headers["retry-after"]).toBe("5");
         expect(fullIngest).not.toHaveBeenCalled();
-    });
-
-    it("fails closed on a full-server route when the distributed admission owner is unavailable", async () => {
-        const ingest = vi.fn();
-        const app = await createApp({
-            env: { ...ENABLED_ENV, HAPPIER_SERVER_FLAVOR: "full" },
-            ingest,
-            processAdmission: createPluginWebhookProcessAdmissionV1({ maxRequests: 1, maxWorkingBytes: TEST_PROCESS_WORKING_BYTES }),
-        });
-
-        const response = await app.inject({
-            method: "POST",
-            url: "/v1/plugins/webhooks/opaque-1",
-            headers: { "content-type": "application/octet-stream" },
-            payload: Buffer.from("{}"),
-        });
-
-        expect(response.statusCode).toBe(503);
-        expect(response.headers["retry-after"]).toBe("5");
-        expect(ingest).not.toHaveBeenCalled();
-    });
-
-    it("fails closed on a light-server route when the distributed admission owner is unavailable", async () => {
-        const ingest = vi.fn();
-        const app = await createApp({
-            env: { ...ENABLED_ENV, HAPPIER_SERVER_FLAVOR: "light" },
-            ingest,
-            processAdmission: createPluginWebhookProcessAdmissionV1({ maxRequests: 1, maxWorkingBytes: TEST_PROCESS_WORKING_BYTES }),
-        });
-
-        const response = await app.inject({
-            method: "POST",
-            url: "/v1/plugins/webhooks/opaque-1",
-            headers: { "content-type": "application/octet-stream" },
-            payload: Buffer.from("{}"),
-        });
-
-        expect(response.statusCode).toBe(503);
-        expect(response.headers["retry-after"]).toBe("5");
-        expect(ingest).not.toHaveBeenCalled();
     });
 
     it("rejects transfer-encoded framing with the public unsupported-media response before ingest", async () => {

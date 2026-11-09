@@ -1,5 +1,7 @@
 import type { FeaturesPayloadDelta } from "./types";
 import { readConnectedServicesFeatureEnv } from "./catalog/readFeatureEnv";
+import { readServerConfig } from "@happier-dev/protocol/serverConfig/serverConfigCodec";
+import { SERVER_CONFIG } from "@happier-dev/protocol/serverConfig/registry";
 
 export function resolveConnectedServicesFeature(
     env: NodeJS.ProcessEnv,
@@ -8,6 +10,8 @@ export function resolveConnectedServicesFeature(
     const quotasEnabled = featureEnv.quotasEnabled;
     const accountGroupsEnabled = featureEnv.accountGroupsEnabled;
     const accountFallbackEnabled = featureEnv.accountFallbackEnabled;
+    const clientId = readServerConfig(env, SERVER_CONFIG.HAPPIER_CONNECTED_SERVICES_CLOUDFLARE_OAUTH_CLIENT_ID).trim();
+    const scopes = readServerConfig(env, SERVER_CONFIG.HAPPIER_CONNECTED_SERVICES_CLOUDFLARE_OAUTH_SCOPES);
 
     return {
         features: {
@@ -30,6 +34,9 @@ export function resolveConnectedServicesFeature(
                 credentialDelete: { revisionGuard: true },
                 qualifiedAccounts: { protocolVersion: 4 },
                 credentialRemovalReview: { protocolVersion: 1 },
+                ...(clientId && scopes.length ? { publicOAuthClients: [{
+                    service: { pluginId: "happier.deploy.cloudflare", localId: "cloudflare" }, clientId, scopesByMode: { oauth: scopes },
+                }] } : {}),
             },
         },
     };

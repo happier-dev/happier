@@ -23,6 +23,8 @@ import {
 } from "@/app/api/utils/requirePresentUser";
 import { isServerFeatureEnabledForRequest } from "@/app/features/catalog/serverFeatureGate";
 import { readRequestHomeEnv } from "@/app/home/settings/requestHomeEnv";
+import { ACCOUNT_SETTINGS_REMOTE_ALERT_POLICY_HTTP_HEADER, ACCOUNT_SETTINGS_REMOTE_ALERT_POLICY_HTTP_VALUE, ACCOUNT_SETTINGS_REMOTE_ALERT_POLICY_STATUS_HTTP_HEADER } from '@happier-dev/protocol/account/settings/accountSettingsApiV2';
+import { resolveAccountRemoteAlertPolicyCurrentness } from '@happier-dev/protocol/account/settings/accountRemoteAlertPolicy';
 
 export function registerAccountSettingsRoutes(app: Fastify): void {
     // Get Account Settings API
@@ -51,12 +53,13 @@ export function registerAccountSettingsRoutes(app: Fastify): void {
                 select: {
                     settings: true,
                     settingsVersion: true,
+                    remoteAlertPolicy: true,
                     publicKey: true,
                     encryptionMode: true,
                     contentPublicKey: true,
                     contentPublicKeySig: true,
                 }
-            }), { readOnly: true });
+            }), { readOnly: true, singleStatementRead: true });
 
             if (!user) {
                 return reply.code(500).send({ error: 'Failed to get account settings' });
@@ -74,6 +77,8 @@ export function registerAccountSettingsRoutes(app: Fastify): void {
                 return reply.code(400).send({ error: "plain_account_requires_settings_v2" });
             }
 
+            reply.header(ACCOUNT_SETTINGS_REMOTE_ALERT_POLICY_STATUS_HTTP_HEADER,
+                resolveAccountRemoteAlertPolicyCurrentness(user.remoteAlertPolicy, user.settingsVersion).status);
             return reply.send({
                 settings: user.settings,
                 settingsVersion: user.settingsVersion
@@ -137,6 +142,8 @@ export function registerAccountSettingsRoutes(app: Fastify): void {
                 if (error instanceof AccountSettingsPublicationConflict) return error.result;
                 throw error;
             });
+
+            if ('remoteAlertPolicyStatus' in result) reply.header(ACCOUNT_SETTINGS_REMOTE_ALERT_POLICY_STATUS_HTTP_HEADER, result.remoteAlertPolicyStatus);
 
             if (result.status === "account_not_found") {
                 return reply.code(500).send({
@@ -203,12 +210,13 @@ export function registerAccountSettingsRoutes(app: Fastify): void {
                 select: {
                     settings: true,
                     settingsVersion: true,
+                    remoteAlertPolicy: true,
                     publicKey: true,
                     encryptionMode: true,
                     contentPublicKey: true,
                     contentPublicKeySig: true,
                 },
-            }), { readOnly: true });
+            }), { readOnly: true, singleStatementRead: true });
             if (!user) return reply.code(500).send({ error: "internal" });
 
             const currentness =
@@ -218,6 +226,9 @@ export function registerAccountSettingsRoutes(app: Fastify): void {
                     error: "account_settings_storage_unavailable",
                 });
             }
+            reply.header(ACCOUNT_SETTINGS_REMOTE_ALERT_POLICY_HTTP_HEADER, ACCOUNT_SETTINGS_REMOTE_ALERT_POLICY_HTTP_VALUE);
+            reply.header(ACCOUNT_SETTINGS_REMOTE_ALERT_POLICY_STATUS_HTTP_HEADER,
+                resolveAccountRemoteAlertPolicyCurrentness(user.remoteAlertPolicy, user.settingsVersion).status);
             const mode = currentness.currentness.encryptionMode;
             if (mode === "e2ee") {
                 return reply.send({
@@ -290,6 +301,8 @@ export function registerAccountSettingsRoutes(app: Fastify): void {
                 if (error instanceof AccountSettingsPublicationConflict) return error.result;
                 throw error;
             });
+
+            if ('remoteAlertPolicyStatus' in result) reply.header(ACCOUNT_SETTINGS_REMOTE_ALERT_POLICY_STATUS_HTTP_HEADER, result.remoteAlertPolicyStatus);
 
             if (result.status === "account_not_found") return reply.code(500).send({ error: "internal" });
             if (result.status === "storage_unavailable") {

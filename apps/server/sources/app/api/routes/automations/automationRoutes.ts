@@ -7,11 +7,10 @@ import { registerAutomationConversationRoutes } from "./registerAutomationConver
 import { registerWorkflowRunStorageRoutes } from "./registerWorkflowRunStorageRoutes";
 
 export function automationRoutes(app: Fastify): void {
-    const gated = createServerFeatureGatedRouteApp(app, "automations", process.env);
-    const workflowGated = createServerFeatureGatedRouteApp(gated, "workflows", process.env);
+    const gated = createServerFeatureGatedRouteApp(app, "workflows", process.env);
 
     registerAutomationEventRoutes(gated);
     registerAutomationConversationRoutes(gated);
     registerAutomationV3Routes(gated);
-    registerWorkflowRunStorageRoutes(workflowGated);
+    registerWorkflowRunStorageRoutes(gated);
 }

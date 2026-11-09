@@ -65,7 +65,7 @@ export function validateMachineReplacement(input: MachineReplacementValidationIn
     return { ok: true };
 }
 
-/** Initial admission and terminal publication enforce the same destination rule. */
+/** Initial admission and the serialized write enforce the same destination rule. */
 export function validateMachineReplacementTarget(input: Readonly<{
     oldMachine: MachineReplacementRow; replacementMachine: MachineReplacementRow;
 }>): MachineReplacementValidationResult {

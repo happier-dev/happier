@@ -747,7 +747,7 @@ describe("registerAutomationV3Routes", () => {
         const sourceCatalogStatus = {
             observedRevision: "9",
             adoptedRevision: "7",
-            state: "reconciliationLate" as const,
+            state: "reconciling" as const,
             scanStartedAt: 1_786_257_600_000,
             nextRetryAt: 1_786_257_660_000,
         };

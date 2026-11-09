@@ -76,7 +76,7 @@ export async function readCurrentExecutionRunFollowSource(input: Readonly<{
     authentication: SessionAccessAuthentication;
 }> & (Readonly<{ sessionId: string }> | Readonly<{ machineId: string }>)): Promise<Readonly<{ ok: true; value: ExecutionRunFollowFrontierWitness }>
     | Readonly<{ ok: false; error: 'session_follow_source_unavailable';
-        code: 'target_unavailable' | 'rpc_unavailable' | 'rpc_invalid' | 'frontier_not_current';
+        code: 'target_unavailable' | 'rpc_unavailable' | 'rpc_invalid';
         targetMachineId?: string; rpcCode?: ExecutionRunFollowRpcUnavailableCode }>> {
     const source: ExecutionRunFollowFrontierWitness['source'] = 'sessionId' in input
         ? { kind: 'execution_run', sessionId: input.sessionId, runId: input.runId }
@@ -126,8 +126,6 @@ export async function readCurrentExecutionRunFollowSource(input: Readonly<{
         ...(parsed.data.outputs ? { outputs: parsed.data.outputs } : {}),
         target: captured.target, machineCustodianAccountId: captured.machineCustodianAccountId,
         publisherGeneration: captured.publisherGeneration };
-    if (!await inReadSnapshot(tx => isExecutionRunFollowFrontierWitnessCurrentInTx(tx, witness)))
-        return { ok: false, error: 'session_follow_source_unavailable', code: 'frontier_not_current', targetMachineId: captured.target.machineId };
     return { ok: true, value: witness };
 }
 

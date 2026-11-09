@@ -138,6 +138,8 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('M
                 const one = await measure([data.ids[0]!], true);
                 const many = await measure(data.ids, false);
                 expect(many.machines[0]).toEqual(one.machines[0]);
+                console.info('MACHINE_OPENING_SQL', JSON.stringify({ mode, owned, machines: data.ids.length,
+                    one: { ...one, machines: undefined }, many: { ...many, machines: undefined }, expectedBytesPerMachine: contentBytes(data.content) }));
                 expect.soft(one.machineContentSelects).toBe(1);
                 expect.soft(many.machineContentSelects).toBe(1);
                 expect.soft(many.selects).toBe(one.selects);
@@ -176,8 +178,23 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('M
             expect([...roles.get(missing)!.values()]).toEqual([null, null]);
             const roleReads = statements.filter(event => /^SELECT\b/i.test(event.query));
             const roleBindings = roleReads.map(event => (JSON.parse(event.params) as unknown[]).length);
+            console.info('MACHINE_ROLE_BIND_SQL', JSON.stringify({ machines: roles.size, selects: roleReads.length, bindings: roleBindings }));
             expect.soft(roleReads).toHaveLength(2);
             expect.soft(Math.max(...roleBindings)).toBeLessThanOrEqual(999);
+            statements.length = 0;
+            const singletonRoles = await inReadSnapshot(tx => resolveEffectiveMachineAccessForMachinesInTx(tx, {
+                machineIds: ids, accountIds: [data.recipient.id],
+            }));
+            expect([...singletonRoles.keys()]).toEqual([...roles.keys()]);
+            for (const machineId of singletonRoles.keys()) {
+                expect(singletonRoles.get(machineId)?.get(data.recipient.id)).toBe(roles.get(machineId)?.get(data.recipient.id));
+            }
+            const singletonRoleReads = statements.filter(event => /^SELECT\b/i.test(event.query));
+            const singletonRoleBindings = singletonRoleReads.map(event => (JSON.parse(event.params) as unknown[]).length);
+            console.info('MACHINE_SINGLETON_ROLE_BIND_SQL', JSON.stringify({ machines: singletonRoles.size,
+                selects: singletonRoleReads.length, bindings: singletonRoleBindings }));
+            expect.soft(singletonRoleReads).toHaveLength(2);
+            expect.soft(Math.max(...singletonRoleBindings)).toBeLessThanOrEqual(999);
             await withAuthenticatedTestApp(machinesRoutes, async app => {
                 statements.length = 0;
                 selectedContent.length = 0;
@@ -188,6 +205,9 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('M
                 expect(results.slice(0, -1).every(result => result.status === 'found' && result.machine.access?.accessState === 'ready')).toBe(true);
                 expect(results.at(-1)).toEqual({ machineId: missing, status: 'not_found' });
                 const bindings = statements.map(event => (JSON.parse(event.params) as unknown[]).length);
+                console.info('MACHINE_OPENING_BIND_SQL', JSON.stringify({ machines: data.ids.length,
+                    selects: statements.filter(event => /^SELECT\b/i.test(event.query)).length, maxBindings: Math.max(...bindings),
+                    selectedRows: selectedContent.reduce((sum, read) => sum + read.rows, 0) }));
                 expect.soft(Math.max(...bindings)).toBeLessThanOrEqual(999);
                 expect.soft(selectedContent.reduce((sum, read) => sum + read.rows, 0)).toBe(data.ids.length);
             });

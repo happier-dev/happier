@@ -1,4 +1,4 @@
-import { afterAll, afterEach, beforeAll, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, expect, it, vi } from 'vitest';
 import nacl from 'tweetnacl';
 import {
     EXTERNAL_ACTION_EFFECT_ACTION_HEADER, EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER,
@@ -26,6 +26,8 @@ import { setSessionManager } from '@/app/session/follow/sessionManagerService';
 import { createPresentUserSessionAccessAuthentication } from '@/app/session/access/sessionAccessAuthentication.testkit';
 import { getOrCreateServerIdentityId } from '@/app/serverIdentity/serverIdentity';
 import { db } from '@/storage/db';
+import { eventRouter } from '@/app/events/eventRouter';
+import * as archiveAccessPolicy from '@/app/session/access/sessionAccess';
 import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lightSqliteHarness';
 import { initializeSessionSystemRecordsProtocolV1Activation, resetSessionSystemRecordsProtocolV1ActivationForTests } from '@/app/session/systemRecords/sessionSystemRecordProtocolContract';
 
@@ -46,6 +48,61 @@ afterEach(async () => {
     await db.account.deleteMany();
 });
 
+it('publishes only real archive edges and preserves receipts and Account cursors on repeated requests', async () => {
+    const fixture = await createFixture();
+    const session = await db.session.create({ data: { accountId: fixture.account.id,
+        tag: crypto.randomUUID(), encryptionMode: 'plain', metadata: '{}', active: false } });
+    const { app } = await createApp(async () => fixture.machine.id);
+    const publications = vi.spyOn(eventRouter, 'emitUpdate');
+    const admissions = vi.spyOn(archiveAccessPolicy, 'resolveSessionAccessForOperation');
+    const phaseRechecks = vi.spyOn(archiveAccessPolicy, 'assertSessionCapabilityInTx');
+    try {
+        const token = await auth.createToken(fixture.account.id, undefined, { kind: 'account', authority: 'present_user' });
+        for (const operation of ['archive', 'unarchive'] as const) {
+            const invoke = () => app.inject({ method: 'POST', url: `/v2/sessions/${session.id}/${operation}`,
+                payload: {}, headers: { authorization: `Bearer ${token}` } });
+            publications.mockClear();
+            admissions.mockClear();
+            phaseRechecks.mockClear();
+            const changed = await invoke();
+            expect(changed.statusCode, changed.body).toBe(200);
+            expect(admissions.mock.calls).toHaveLength(1);
+            expect(phaseRechecks.mock.calls).toHaveLength(0);
+            // The route commits and returns its receipt before its asynchronous
+            // realtime publication. Observe that owned event before measuring
+            // the next request, rather than counting an earlier cursor wake.
+            await vi.waitFor(() => expect(publications.mock.calls.some(([update]) =>
+                update.payload.body.t === 'update-session'
+                && update.payload.body.id === session.id
+                && update.payload.body.archivedAt === changed.json().archivedAt,
+            )).toBe(true));
+            const row = await db.session.findUniqueOrThrow({ where: { id: session.id } });
+            expect(row.archivedAt === null).toBe(operation === 'unarchive');
+            const account = await db.account.findUniqueOrThrow({ where: { id: fixture.account.id }, select: { seq: true } });
+            const changes = await db.accountChange.findMany({ where: { accountId: fixture.account.id } });
+            publications.mockClear();
+            admissions.mockClear();
+            phaseRechecks.mockClear();
+            const unchanged = await invoke();
+            expect(unchanged.statusCode, unchanged.body).toBe(200);
+            expect(admissions.mock.calls).toHaveLength(1);
+            expect(phaseRechecks.mock.calls).toHaveLength(0);
+            expect(unchanged.json()).toEqual(changed.json());
+            expect(await db.session.findUniqueOrThrow({ where: { id: session.id } })).toEqual(row);
+            expect(await db.account.findUniqueOrThrow({ where: { id: fixture.account.id }, select: { seq: true } })).toEqual(account);
+            expect(await db.accountChange.findMany({ where: { accountId: fixture.account.id } })).toEqual(changes);
+            expect(publications.mock.calls.filter(([update]) =>
+                update.payload.body.t === 'update-session' && update.payload.body.id === session.id,
+            )).toHaveLength(0);
+        }
+    } finally {
+        publications.mockRestore();
+        admissions.mockRestore();
+        phaseRechecks.mockRestore();
+        await app.close();
+    }
+});
+
 it.each([
     ['session.open', 'manager'], ['session.stop', 'manager'],
     ['session.open', 'person'], ['session.stop', 'person'],
@@ -61,6 +118,7 @@ it.each([
     expect(await setSessionManager({ accountId: fixture.account.id, sessionId: child.id,
         managerSessionId: caller.id, expectedManagerSessionId: null, authentication })).toMatchObject({ ok: true });
     let publisher: string | null = fixture.machine.id;
+    let publisherReads = 0;
     const { app } = await createApp(async () => publisher);
     try {
         const token = await auth.createToken(fixture.account.id, undefined, { kind: 'account', authority: 'present_user' });
@@ -97,7 +155,7 @@ it.each([
             return verifyExternalActionDomainExecutionRequest({ authorizationToken: authorization.token,
                 encodedTarget: encodeExternalActionResolvedTargetV1(authorization.binding.target), effectActionId: actionId,
                 method, path, body, sessionRouteTarget: { kind: 'session', sessionId },
-                resolveCurrentSessionMachine: async () => publisher,
+                resolveCurrentSessionMachine: async () => { publisherReads += 1; return publisher; },
                 machineSignature: signExternalActionMachineRequestV1({ authorizationToken: authorization.token,
                     effectActionId: actionId, target: authorization.binding.target, installationId: fixture.machine.installationId!,
                     requestId: authorization.binding.requestId, method, path, body, privateKey: fixture.keyPair.secretKey }),
@@ -108,7 +166,24 @@ it.each([
             expect(await verify('GET', undefined)).toBeNull();
             expect(await verify('PATCH', patch)).toBeNull();
         } else {
-            expect(await verify('GET', undefined)).not.toBeNull();
+            // One signed request is one admission of each fact, on the owner's real path.
+            const principalReads = vi.spyOn(auth, 'isSignedCredentialCurrent');
+            // Prisma's model proxy does not survive vi.spyOn restoration, so the count wraps it by hand.
+            const readMachine = db.machine.findFirst;
+            let machineReads = 0;
+            db.machine.findFirst = ((args: Parameters<typeof readMachine>[0]) => {
+                machineReads += 1;
+                return readMachine(args);
+            }) as typeof db.machine.findFirst;
+            publisherReads = 0;
+            try {
+                expect(await verify('GET', undefined)).not.toBeNull();
+                expect({ principal: principalReads.mock.calls.length, machine: machineReads, publisher: publisherReads })
+                    .toEqual({ principal: 1, machine: 1, publisher: actor === 'manager' ? 1 : 0 });
+            } finally {
+                principalReads.mockRestore();
+                db.machine.findFirst = readMachine;
+            }
             expect(await verify('PATCH', patch)).not.toBeNull();
         }
         const previousMetadata = { metadataLayoutVersion: 1,
@@ -152,6 +227,12 @@ it.each([
         expect(await setSessionManager({ accountId: fixture.account.id, sessionId: child.id,
             managerSessionId: null, expectedManagerSessionId: caller.id, authentication })).toMatchObject({ ok: true });
         expect((await verify('PATCH', patch)) === null).toBe(actor === 'manager');
+        if (actor === 'person') {
+            // A revoked principal is refused at its next admission.
+            await db.account.update({ where: { id: fixture.account.id }, data: { tokenEpoch: { increment: 1 } } });
+            expect(await verify('GET', undefined)).toBeNull();
+            await db.account.update({ where: { id: fixture.account.id }, data: { tokenEpoch: { decrement: 1 } } });
+        }
         publisher = null;
         if (actor === 'manager') expect(await verify('GET', undefined)).toBeNull();
         await db.machine.update({ where: { id: fixture.machine.id }, data: { installationId: crypto.randomUUID() } });

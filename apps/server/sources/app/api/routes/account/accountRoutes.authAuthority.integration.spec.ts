@@ -53,15 +53,17 @@ describe("accountRoutes (direct-route auth authority) (integration)", () => {
     });
 
     it('requires present-user authority for SSH resource packets while retaining terminal host metadata CRUD', async () => {
-        const account = await db.account.create({ data: { publicKey: null, encryptionMode: 'plain', settingsVersion: 0,
-            terminalPresentUserPolicy: 'disallowed' } });
+        const account = await db.account.create({ data: { publicKey: null, encryptionMode: 'plain', settingsVersion: 0 } });
         const [presentToken, terminalToken] = await Promise.all([
             auth.createToken(account.id, undefined, { kind: 'account', authority: 'present_user' }),
             auth.createToken(account.id, { session: 'ssh-authority-terminal' }, { kind: 'terminal', authority: 'account_automation' }),
         ]);
         const app = createTestApp();
         await app.ready();
+        // The terminal calls stand for an agent-originated invocation: the daemon attributes
+        // them with the per-invocation automation ceiling.
         const headers = (token: string) => ({ authorization: `Bearer ${token}`, 'content-type': 'application/json',
+            ...(token === terminalToken ? { 'x-happier-authority-ceiling': 'account_automation' } : {}),
             ...currentAccountStoredContentCompatibilityHeaders });
         const route = '/v1/account/entity-rows/remote-hosts';
         const host = { id: 'ssh-authority-host', name: 'Host', ssh: { target: 'dev@example.test', authMode: 'agent' },

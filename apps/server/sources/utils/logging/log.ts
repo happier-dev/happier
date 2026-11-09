@@ -1,4 +1,5 @@
 import pino from 'pino';
+import { createHash } from 'node:crypto';
 import { readServerConfig } from '@happier-dev/protocol/serverConfig/serverConfigCodec';
 import { SERVER_CONFIG } from '@happier-dev/protocol/serverConfig/registry';
 import { mkdirSync } from 'fs';
@@ -81,6 +82,8 @@ export function createLoggingTransportTargets(env: NodeJS.ProcessEnv = process.e
         ignore: 'pid,hostname',
         messageFormat: '{levelLabel} {msg} | [{time}]',
         errorLikeObjectKeys: ['err', 'error'],
+        // Keep all request/diagnostic fields; pino-pretty still expands error stacks.
+        singleLine: true,
       },
     });
   }
@@ -137,6 +140,91 @@ export function serializeHttpRequestForLog(request: {
   };
 }
 
+/**
+ * Privacy projection for Fastify's existing completion/error response records.
+ * Never serialize the reply/request, headers, principal or response payload.
+ */
+function serializeHttpResponseForLog(reply: Pick<import('fastify').FastifyReply, 'statusCode'> & {
+  request?: import('fastify').FastifyRequest;
+}): Record<string, unknown> {
+  const request = reply.request;
+  const kind = request?.authTokenKind;
+  const authTokenKind = kind === 'account' || kind === 'account_directory'
+    || kind === 'terminal' || kind === 'api_token' || kind === 'ephemeral_session_runner'
+    ? kind : 'unknown';
+  const authority = request?.authAuthority;
+  const rawPurpose = request?.headers['x-happier-request-purpose'];
+  return {
+    statusCode: reply.statusCode,
+    accountAlias: authTokenKind !== 'unknown' && typeof request?.userId === 'string' && request.userId.length > 0
+      ? `acct_${createHash('sha256').update(request.userId).digest('hex').slice(0, 12)}`
+      : 'unknown',
+    // HTTP credential provenance does not distinguish UI, CLI, daemon or plugin.
+    clientKind: 'unknown',
+    authTokenKind,
+    authAuthority: authority === 'present_user' || authority === 'account_automation' ? authority : 'unknown',
+    // This existing CLI telemetry is caller-declared, never authorization.
+    // Only known non-content labels leave the header boundary.
+    requestPurpose: rawPurpose === undefined ? 'unknown'
+      : typeof rawPurpose === 'string' && HTTP_REQUEST_LOG_PURPOSES.has(rawPurpose) ? rawPurpose : 'unrecognized',
+    ...(request?.followSourceRoute ? { followSourceRoute: {
+      resultCode: request.followSourceRoute.resultCode,
+      ...(request.followSourceRoute.sourceKind ? { sourceKind: request.followSourceRoute.sourceKind } : {}),
+      ...(request.followSourceRoute.sourceSessionId ? { sourceSessionId: request.followSourceRoute.sourceSessionId } : {}),
+      ...(request.followSourceRoute.sourceRunId ? { sourceRunId: request.followSourceRoute.sourceRunId } : {}),
+      ...(request.followSourceRoute.sourceMachineId ? { sourceMachineId: request.followSourceRoute.sourceMachineId } : {}),
+      ...(request.followSourceRoute.sourceTargetMachineId ? { sourceTargetMachineId: request.followSourceRoute.sourceTargetMachineId } : {}),
+      ...(request.followSourceRoute.releaseReason ? { releaseReason: request.followSourceRoute.releaseReason } : {}),
+      ...(request.followSourceRoute.sourceRpcCode ? { sourceRpcCode: request.followSourceRoute.sourceRpcCode } : {}),
+      ...(request.followSourceRoute.sourceDiscussionId ? { sourceDiscussionId: request.followSourceRoute.sourceDiscussionId } : {}),
+      ...(request.followSourceRoute.sourceReadCode ? { sourceReadCode: request.followSourceRoute.sourceReadCode } : {}),
+    } } : {}),
+  };
+}
+
+// Logging allowlist for existing producers in api/session/sessionSnapshotRefreshReason.ts
+// deliverSessionEndMutation.ts, sessionFollowInactiveObservationsHttp.ts and
+// api/client/qualifiedConnectedAccountApi.ts (CLI).
+// This does not introduce a header protocol.
+const HTTP_REQUEST_LOG_PURPOSES = new Set([
+  'connected-accounts:qualification',
+  'connected-accounts:daemon-coordinator',
+  'connected-accounts:requester-coordinator',
+  'connected-accounts:requester-qualification',
+  'connected-accounts:purpose-binding',
+  'connected-accounts:startup-hydration',
+  'connected-accounts:quota-qualification',
+  'connected-accounts:usage-persistence',
+  'connected-accounts:request-auth-replacement',
+  'connected-accounts:auth-group',
+  'connected-accounts:team-reconciliation',
+  'connected-accounts:spawn',
+  'connected-accounts:persistence',
+  'session-follow:receiver-recovery',
+  'session-follow:manager-turn-admission',
+  'session-detail:socket-connect-catchup',
+  'session-detail:socket-reconnect-catchup',
+  'session-detail:metadata-wait-catchup',
+  'session-detail:primary-turn-runtime-state',
+  'session-detail:degraded-socket-repair',
+  'session-detail:explicit-drain',
+  'session-detail:startup-drain',
+  'session-detail:manual-recovery',
+  'session-detail:legacy-compat-proof',
+  'session-detail:follow-occurrence',
+  'session-detail:follow-source-hydration',
+  'session-detail:requester-binding',
+  'session-detail:memory-change',
+  'session-detail:close-end-proof',
+  'session-detail:session-query',
+  'session-detail:session-control',
+  'session-detail:session-replay',
+  'session-detail:session-action',
+  'session-detail:session-notification',
+  'session-detail:session-content',
+  'session-detail:usage-query',
+]);
+
 function createServerLogger(
   env: NodeJS.ProcessEnv,
   transportTargets: pino.TransportTargetOptions[] = [],
@@ -150,7 +238,7 @@ function createServerLogger(
         localTime: formatLocalTime(typeof object.time === 'number' ? object.time : undefined),
       }),
     },
-    serializers: { req: serializeHttpRequestForLog, error: pino.stdSerializers.err },
+    serializers: { req: serializeHttpRequestForLog, res: serializeHttpResponseForLog, error: pino.stdSerializers.err },
     timestamp: () => `,"time":${Date.now()},"localTime":"${formatLocalTime()}"`,
   });
 }

@@ -19,6 +19,7 @@ import {
 import { markPluginWebhookAccountChangedInTxV1 } from "./accountChange";
 import type { PluginWebhookStoredEnvelopeReadyV1 } from "./storedEnvelope";
 import type { PluginWebhookCommittedDeliveryWakeV1 } from "./wake";
+import type { PluginWebhookSignedVerifierKindV1 } from "./verifiers/catalog";
 
 const TERMINAL_COMPACTION_BATCH_V1 = 500;
 // Reserve the public response/error path; this never extends ingress custody.
@@ -251,7 +252,7 @@ export async function admitPluginWebhookDeliveryV1(params: Readonly<{
     endpointId: string;
     expectedEndpointRevision: number;
     routeId: string;
-    verifierKind: "github_hmac_sha256_v1";
+    verifierKind: PluginWebhookSignedVerifierKindV1;
     /** The exact credential version whose secret verified this delivery. */
     credentialVersionId: string;
     deliveryIdentityDigest: string;

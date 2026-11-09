@@ -1,14 +1,21 @@
-import { ACCOUNT_SESSION_FOLLOW_CHANGE_ENTITY_ID, buildSessionFollowChangeHintV1 } from '@happier-dev/protocol/sessions/follow/changes';
-import { enqueueAccountChangePublication, markAccountChanged, markAccountsChanged, type AccountChangePublication } from "@/app/changes/markAccountChanged";
+import { ACCOUNT_SESSION_FOLLOW_CHANGE_ENTITY_ID, buildSessionFollowChangeHintV1, buildSessionFollowReceiverChangeEntityIdV1 } from '@happier-dev/protocol/sessions/follow/changes';
+import { markAccountChanged, markAccountProjectionChanges, type AccountChangePublication } from "@/app/changes/markAccountChanged";
 import { scheduleAccountActivityBadgeRefresh } from "@/app/activity/refreshAccountActivityBadgePushes";
 import { afterTx, type Tx } from "@/storage/inTx";
+
+/** Exact Follow demand has its own cursor-relative key, using the existing feed. */
+export async function markSessionFollowReceiversChangedInTx(tx: Tx,
+    recipientsBySession: ReadonlyMap<string, readonly string[]>): Promise<AccountChangePublication[]> {
+    return markAccountProjectionChanges(tx, 'account', new Map([...recipientsBySession].map(([sessionId, recipients]) =>
+        [buildSessionFollowReceiverChangeEntityIdV1(sessionId), recipients])));
+}
 
 /**
  * Set-form Follow invalidation for the exact affected Account set.
  *
  * Reuses the existing set-oriented AccountChange owner for cursors/wakes
- * (fixed statements regardless of set size) then replaces the hint-free rows
- * with the canonical Follow hint in one update. One badge schedule for the
+ * (fixed statements regardless of set size), carrying the canonical Follow
+ * hint in that same write. One badge schedule for the
  * whole set coalesces with per-Account schedules through the existing
  * coalescing owner, so closed devices converge without per-Account fanout.
  * The current consumer reloads the complete exact-Home Follow snapshot, so the
@@ -25,15 +32,8 @@ export async function markSessionFollowsChangedForAccountsInTx(tx: Tx, accountId
         entityId: ACCOUNT_SESSION_FOLLOW_CHANGE_ENTITY_ID,
         kind: 'account',
         hint: buildSessionFollowChangeHintV1(),
-    })] : await markAccountsChanged(tx, {
-        accountIds: unique,
-        entityId: ACCOUNT_SESSION_FOLLOW_CHANGE_ENTITY_ID,
-        kind: 'account',
-    });
-    if (unique.length > 1) enqueueAccountChangePublication(tx, unique, async client => { await client.accountChange.updateMany({
-        where: { accountId: { in: unique }, kind: 'account', entityId: ACCOUNT_SESSION_FOLLOW_CHANGE_ENTITY_ID },
-        data: { hint: buildSessionFollowChangeHintV1() },
-    }); });
+    })] : await markAccountProjectionChanges(tx, 'account',
+        new Map([[ACCOUNT_SESSION_FOLLOW_CHANGE_ENTITY_ID, unique]]), buildSessionFollowChangeHintV1());
     // Connected clients reread the snapshot above. Closed devices consume the
     // existing badge transport, after the relation/read-baseline commit.
     afterTx(tx, () => scheduleAccountActivityBadgeRefresh({ badgeAttentionChanged: true, accountIds: unique }));

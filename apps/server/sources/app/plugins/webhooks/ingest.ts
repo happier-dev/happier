@@ -3,6 +3,7 @@ import { PluginWebhookDeliveryContentV1Schema } from '@happier-dev/protocol/plug
 
 import { db } from "@/storage/db";
 
+import { recordPluginWebhookHeartbeatReceiptV1 } from "./heartbeat";
 import { readPluginWebhookVerificationCredentialsV1 } from "./credentialStore";
 import { admitPluginWebhookDeliveryV1 } from "./deliveryStore";
 import { createPluginWebhookDeliveryIdentityDigestV1 } from "./deliveryIdentity";
@@ -17,12 +18,12 @@ import {
     createPluginWebhookStoredEnvelopeV1,
     type PluginWebhookStoredEnvelopeReadyV1,
 } from "./storedEnvelope";
-import { createGitHubWebhookHmacSha256V1Verifier } from "./verifiers/githubHmacSha256";
+import { readPluginWebhookSignedVerifierV1, type PluginWebhookSignedVerifierKindV1 } from "./verifiers/catalog";
 import { requiresProviderInstallationIdV1 } from "./routingKind";
 import type { PluginWebhookCommittedDeliveryWakeV1 } from "./wake";
 
-const GITHUB_DELIVERY_ID_PATTERN_V1 = /^[A-Za-z0-9._:-]{1,128}$/u;
-const GITHUB_EVENT_PATTERN_V1 = /^[A-Za-z0-9._-]{1,128}$/u;
+const PROVIDER_DELIVERY_ID_PATTERN_V1 = /^[A-Za-z0-9._:-]{1,128}$/u;
+const PROVIDER_EVENT_PATTERN_V1 = /^[A-Za-z0-9._-]{1,128}$/u;
 const CONTENT_TYPE_PATTERN_V1 = /^[!#$%&'*+.^_`|~0-9a-z-]+\/[!#$%&'*+.^_`|~0-9a-z-]+$/u;
 
 type AccountEnvelopeRowV1 = Readonly<{
@@ -51,7 +52,7 @@ export type PluginWebhookIngestDependenciesV1 = Readonly<{
         endpointId: string;
         expectedEndpointRevision: number;
         routeId: string;
-        verifierKind: "github_hmac_sha256_v1";
+        verifierKind: PluginWebhookSignedVerifierKindV1;
         credentialVersionId: string;
         deliveryIdentityDigest: string;
         stored: PluginWebhookStoredEnvelopeReadyV1;
@@ -96,7 +97,8 @@ function normalizeContentType(value: string | null): string | null {
 
 export type PluginWebhookIngestResultV1 =
     | Readonly<{ kind: "accepted"; deliveryId: string; duplicate: boolean }>
-    | Readonly<{ kind: "rejected"; statusCode: 401 | 404 | 503; code: "unauthorized" | "not_found" | "unavailable" }>;
+    | Readonly<{ kind: "receiptAccepted" }>
+    | Readonly<{ kind: "rejected"; statusCode: 401 | 404 | 405 | 503; code: "unauthorized" | "not_found" | "method_not_allowed" | "unavailable" }>;
 
 export type VerifiedPluginWebhookSignatureV1 = Readonly<{
     route: ActivePluginWebhookRouteV1;
@@ -114,11 +116,13 @@ export type PreparedPluginWebhookSignatureVerifierV1 = Readonly<{
 }>;
 
 export type PluginWebhookSignaturePreparationResultV1 =
+    | Readonly<{ kind: "recordReceiptOnly"; route: ActivePluginWebhookRouteV1 }>
     | (Readonly<{ kind: "ready" }> & PreparedPluginWebhookSignatureVerifierV1)
     | Extract<PluginWebhookIngestResultV1, { kind: "rejected" }>;
 
 export async function preparePluginWebhookSignatureVerifierV1(params: Readonly<{
     opaqueRouteId: string;
+    method?: string;
     headers: Readonly<Record<string, unknown>>;
     signal?: AbortSignal;
     now?: Date;
@@ -138,9 +142,13 @@ export async function preparePluginWebhookSignatureVerifierV1(params: Readonly<{
     if (afterRoute) return afterRoute;
     if (!route) return { kind: "rejected", statusCode: 404, code: "not_found" };
 
-    const providerDeliveryId = readSingleHeader(params.headers, "x-github-delivery");
-    const signatureHeader = readSingleHeader(params.headers, "x-hub-signature-256");
-    if (!providerDeliveryId || !GITHUB_DELIVERY_ID_PATTERN_V1.test(providerDeliveryId)) {
+    if (route.verifierKind === "capabilityUrl_v1") return { kind: "recordReceiptOnly", route };
+    if (params.method === "GET") return { kind: "rejected", statusCode: 405, code: "method_not_allowed" };
+    const signed = readPluginWebhookSignedVerifierV1(route.verifierKind);
+    if (!signed) return { kind: "rejected", statusCode: 401, code: "unauthorized" };
+    const providerDeliveryId = readSingleHeader(params.headers, signed.deliveryIdHeader);
+    const signatureHeader = readSingleHeader(params.headers, signed.signatureHeader);
+    if (!providerDeliveryId || !PROVIDER_DELIVERY_ID_PATTERN_V1.test(providerDeliveryId)) {
         return { kind: "rejected", statusCode: 401, code: "unauthorized" };
     }
     const credentials = await dependencies.readCredentials({ routeId: route.routeId, now });
@@ -148,7 +156,7 @@ export async function preparePluginWebhookSignatureVerifierV1(params: Readonly<{
     if (afterCredentials) return afterCredentials;
     const verifiers = credentials.map((credential) => ({
         credentialVersionId: credential.credentialVersionId,
-        verifier: createGitHubWebhookHmacSha256V1Verifier(credential.secret),
+        verifier: signed.createVerifier(credential.secret),
     }));
     let finalized = false;
     return {
@@ -201,6 +209,8 @@ export async function admitVerifiedPluginWebhookV1(params: Readonly<{
     const beforeRoute = unavailableIfAborted();
     if (beforeRoute) return beforeRoute;
     const route = params.verification.route;
+    const signed = readPluginWebhookSignedVerifierV1(route.verifierKind);
+    if (!signed) return { kind: "rejected", statusCode: 404, code: "not_found" };
     const providerDeliveryId = params.verification.providerDeliveryId;
     const credentialVersionId = params.verification.credentialVersionId;
 
@@ -233,17 +243,17 @@ export async function admitVerifiedPluginWebhookV1(params: Readonly<{
         const afterAccount = unavailableIfAborted();
         if (afterAccount) return afterAccount;
         if (!account) return { kind: "rejected", statusCode: 503, code: "unavailable" };
-        const eventHeader = readSingleHeader(params.headers, "x-github-event");
-        const eventType = eventHeader && GITHUB_EVENT_PATTERN_V1.test(eventHeader) ? eventHeader : undefined;
+        const eventHeader = readSingleHeader(params.headers, signed.eventHeader);
+        const eventType = eventHeader && PROVIDER_EVENT_PATTERN_V1.test(eventHeader) ? eventHeader : undefined;
         const content = PluginWebhookDeliveryContentV1Schema.parse({
             v: 1,
             receivedAtMs: now.getTime(),
             contentType: normalizeContentType(readSingleHeader(params.headers, "content-type")),
-            headers: eventType ? [{ name: "x-github-event", value: eventType }] : [],
+            headers: eventType ? [{ name: signed.eventHeader, value: eventType }] : [],
             rawBodyBytes: params.rawBody.byteLength,
             rawBodyBase64: encodeBase64(params.rawBody, "base64"),
             verified: {
-                verifier: "github_hmac_sha256_v1",
+                verifier: signed.kind,
                 providerDeliveryId,
                 ...(eventType ? { eventType } : {}),
                 credentialVersionId,
@@ -256,10 +266,10 @@ export async function admitVerifiedPluginWebhookV1(params: Readonly<{
             endpointId: endpoint.endpointId,
             expectedEndpointRevision: endpoint.revision,
             routeId: route.routeId,
-            verifierKind: route.verifierKind,
+            verifierKind: signed.kind,
             credentialVersionId,
             deliveryIdentityDigest: createPluginWebhookDeliveryIdentityDigestV1({
-                verifierKind: route.verifierKind,
+                verifierKind: signed.kind,
                 routeId: route.routeId,
                 providerDeliveryId,
             }),
@@ -306,6 +316,11 @@ export async function ingestPluginWebhookV1(params: Readonly<{
         ...(params.now ? { now: params.now } : {}),
         dependencies,
     });
+    if (prepared.kind === "recordReceiptOnly") {
+        const accepted = await recordPluginWebhookHeartbeatReceiptV1({ routeId: prepared.route.routeId,
+            ...(params.now ? { now: params.now } : {}), ...(params.deadlineAtMs === undefined ? {} : { deadlineAtMs: params.deadlineAtMs }) });
+        return accepted ? { kind: "receiptAccepted" } : { kind: "rejected", statusCode: 404, code: "not_found" };
+    }
     if (prepared.kind !== "ready") return prepared;
     prepared.verifier.update(params.rawBody);
     const verification = prepared.verifier.verify();

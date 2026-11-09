@@ -1,6 +1,12 @@
 import type { Tx } from "@/storage/inTx";
+
 import type { AutomationListItem } from "./automationTypes";
 
+/**
+ * Canonical Event source-definition catalog revision owner. Visible changes to
+ * the enabled source projection advance the Account revision so watchers
+ * re-adopt through their canonical read.
+ */
 export async function ensureAutomationEventCatalogStateTx(params: Readonly<{
     tx: Tx;
     accountId: string;
@@ -19,7 +25,6 @@ export async function ensureAutomationEventCatalogStateTx(params: Readonly<{
 }
 
 /** Apply the source and schedule effects of a locked definition's enablement change. */
-
 export async function applyAutomationEnabledTransitionTx(params: Readonly<{
     tx: Tx;
     accountId: string;

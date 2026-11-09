@@ -5,6 +5,7 @@ import * as privacyKit from "privacy-kit";
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, ArtifactPrivateRevisionMetadataV1Schema, CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION, decodePlainArtifactStoredContent, encodePlainArtifactStoredContent, sealEncryptedDataKeyEnvelopeV1, openEncryptedDataKeyEnvelopeV1, sealSessionDataKeyBundleV0, openSessionDataKeyBundleV0, computeContentPublicKeyFingerprint } from "@happier-dev/protocol";
 import tweetnacl from "tweetnacl";
 import { db } from "@/storage/db";
+import { makeShareEligibleForTest } from '@/testkit/shareEligibility.testkit';
 import { inTx } from "@/storage/inTx";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
 import { createSignedAccountContentBinding } from "@/testkit/accountEncryption";
@@ -16,7 +17,8 @@ import { auth } from "@/app/auth/auth";
 import { artifactUpdateHandler } from "@/app/api/socket/artifactUpdateHandler";
 import { createFakeSocket, getSocketHandler } from "@/app/api/testkit/socketHarness";
 import { deleteArtifact, migrateArtifactAccountEncryptionInTx, updateArtifactTx } from "./artifactWriteService";
-import { applyArtifactRecipientKeyEnvelopesInTx, readArtifactHeaderForCallerInTx } from './artifactAccessService';
+import { applyArtifactRecipientKeyEnvelopesInTx, readArtifactHeaderForCallerInTx,
+    isArtifactAudienceContainedInTx, setArtifactAccessGrantInTx } from './artifactAccessService';
 import { observePrismaReads } from '@/testkit/observePrismaReads';
 import { withSqliteReadSnapshot } from '@/storage/prisma';
 import { buildWidgetSurfaceArtifactHeaderV1, buildWidgetSurfaceArtifactIdV1, readWidgetSurfaceArtifactHeaderV1 } from '@happier-dev/protocol/widgets';
@@ -50,6 +52,66 @@ describe("Artifact document grants (real SQLite)", () => {
     }
 
     const protocolHeaders = { "x-happier-account-stored-content-protocol": String(CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION) };
+
+    it('projects each visible Artifact Team audience in the list without confusing personal shares', async () => {
+        const owner = await plainAccount();
+        const member = await plainAccount();
+        const team = await db.team.create({ data: { name: 'Release team' } });
+        await db.teamMembership.create({ data: { teamId: team.id, accountId: member.id, role: 'member' } });
+        const shared = await plainArtifact(owner.id);
+        const personal = await plainArtifact(owner.id);
+        await db.artifactTeamGrant.create({ data: { artifactId: shared.id, teamId: team.id, accessLevel: 'edit', createdByAccountId: owner.id } });
+        const hiddenTeam = await db.team.create({ data: { name: 'Another owner Team' } });
+        await db.artifactTeamGrant.create({ data: { artifactId: shared.id, teamId: hiddenTeam.id, accessLevel: 'view', createdByAccountId: owner.id } });
+        await db.artifactAccountGrant.create({ data: { artifactId: personal.id, accountId: member.id, accessLevel: 'view', createdByAccountId: owner.id } });
+        await withAuthenticatedTestApp(artifactsRoutes, async app => {
+            const response = await app.inject({ method: 'GET', url: '/v1/artifacts?limit=500',
+                headers: { 'x-test-user-id': member.id, ...protocolHeaders } });
+            expect(response.statusCode).toBe(200);
+            expect(response.json()).toEqual(expect.arrayContaining([
+                expect.objectContaining({ id: shared.id, sharedTeamIds: [team.id] }),
+                expect.objectContaining({ id: personal.id, sharedTeamIds: [] }),
+            ]));
+            const exact = await app.inject({ method: 'GET', url: `/v1/artifacts/${shared.id}`,
+                headers: { 'x-test-user-id': member.id, ...protocolHeaders } });
+            expect(exact.statusCode).toBe(200);
+            expect(exact.json()).toMatchObject({ id: shared.id, sharedTeamIds: [team.id] });
+            await db.artifactAccountGrant.create({ data: { artifactId: shared.id, accountId: member.id, accessLevel: 'view', createdByAccountId: owner.id } });
+            await db.team.update({ where: { id: team.id }, data: { archivedAt: new Date() } });
+            const archived = await app.inject({ method: 'GET', url: '/v1/artifacts?limit=500',
+                headers: { 'x-test-user-id': member.id, ...protocolHeaders } });
+            expect(archived.statusCode).toBe(200);
+            expect(archived.json()).toEqual(expect.arrayContaining([expect.objectContaining({ id: shared.id, sharedTeamIds: [] })]));
+        });
+    });
+
+    it.each(['team', 'account', 'group'] as const)('refuses a stored %s grant outside exact publication custody even when current readers overlap', async kind => {
+        const actor = await plainAccount();
+        const member = await plainAccount();
+        const current = await db.team.create({ data: { name: 'Current publication Team' } });
+        const foreign = await db.team.create({ data: { name: 'Overlapping foreign Team' } });
+        await db.teamMembership.createMany({ data: [
+            { teamId: current.id, accountId: actor.id, role: 'owner' },
+            { teamId: current.id, accountId: member.id, role: 'member' },
+            { teamId: foreign.id, accountId: actor.id, role: 'owner' },
+        ] });
+        const artifact = await plainArtifact(actor.id);
+        const principal = { kind: 'team' as const, teamId: current.id };
+        const admitted = () => inTx(tx => isArtifactAudienceContainedInTx(tx, { actorAccountId: actor.id, artifactId: artifact.id, principals: [principal] }));
+        expect(await inTx(tx => setArtifactAccessGrantInTx(tx, { actorAccountId: actor.id, artifactId: artifact.id,
+            principal, accessLevel: 'admin' }))).toMatchObject({ ok: true });
+        expect(await admitted()).toBe(true);
+        const outside: Parameters<typeof setArtifactAccessGrantInTx>[1]['principal'] = kind === 'team'
+            ? { kind: 'team', teamId: foreign.id }
+            : kind === 'account' ? { kind: 'account', accountId: member.id }
+            : { kind: 'group', teamId: foreign.id, groupId: (await db.teamGroup.create({ data: {
+                teamId: foreign.id, name: 'Empty foreign group', nameKey: 'empty-foreign-group',
+            } })).id };
+        expect(await inTx(tx => setArtifactAccessGrantInTx(tx, { actorAccountId: actor.id, artifactId: artifact.id,
+            principal: outside,
+            accessLevel: 'view' }))).toMatchObject({ ok: true });
+        expect(await admitted()).toBe(false);
+    });
 
     it('wakes the exact owned Session approval inventory after committed create, settlement and deletion, never stale writes or foreign bindings', async () => {
         const owner = await plainAccount();
@@ -571,7 +633,7 @@ describe("Artifact document grants (real SQLite)", () => {
         });
     });
 
-    it('rechecks a selected header grant after capture and never selects its body', async () => {
+    it('finishes selected headers admitted before revocation without selecting bodies', async () => {
         const owner = await plainAccount();
         const reader = await plainAccount();
         const artifact = await plainArtifact(owner.id);
@@ -594,9 +656,10 @@ describe("Artifact document grants (real SQLite)", () => {
                     if (reads === 1) { enter(); await release; }
                     return rows;
                 } });
-            const response = app.inject({ method: 'POST', url: '/v1/artifacts/read',
+            const request = { method: 'POST' as const, url: '/v1/artifacts/read',
                 headers: { 'x-test-user-id': reader.id, ...protocolHeaders },
-                payload: { artifactIds: [artifact.id], projection: 'headers' } });
+                payload: { artifactIds: [artifact.id], projection: 'headers' } };
+            const response = app.inject(request);
             try {
                 expect(await Promise.race([reached.then(() => 'capture'), response.then(() => 'response')])).toBe('capture');
                 await db.artifactAccountGrant.deleteMany({ where: { artifactId: artifact.id, accountId: reader.id } });
@@ -604,6 +667,10 @@ describe("Artifact document grants (real SQLite)", () => {
                 const result = await response;
                 expect(result.statusCode, result.body).toBe(200);
                 expect(ArtifactReadHeadersBatchResponseV1Schema.parse(result.json()).items)
+                    .toMatchObject([{ artifactId: artifact.id, ok: true, artifact: { id: artifact.id, access: 'view' } }]);
+                expect(reads).toBe(1);
+                const next = await app.inject(request);
+                expect(ArtifactReadHeadersBatchResponseV1Schema.parse(next.json()).items)
                     .toEqual([{ artifactId: artifact.id, ok: false, error: 'artifact_not_found', status: 404, retryable: false }]);
                 expect(bodyReads).toBe(0);
             } finally {
@@ -802,7 +869,7 @@ describe("Artifact document grants (real SQLite)", () => {
         });
     });
 
-    it.each(['revoked', 'classified'] as const)('readmits an empty exact page and legacy count when its last witness is %s', async transition => {
+    it.each(['revoked', 'classified'] as const)('captures an empty exact page and legacy count until the next request when its last witness is %s', async transition => {
         const owner = await plainAccount();
         const reader = await plainAccount();
         const artifact = await plainArtifact(owner.id);
@@ -822,8 +889,9 @@ describe("Artifact document grants (real SQLite)", () => {
                     if (!paused) { paused = true; enter(); await release; }
                     return count;
                 } });
-            const response = app.inject({ method: 'GET', url: '/v1/artifacts?kinds=%5B%22workflow-definition.v1%22%5D',
-                headers: { 'x-test-user-id': reader.id, ...protocolHeaders } });
+            const request = { method: 'GET' as const, url: '/v1/artifacts?kinds=%5B%22workflow-definition.v1%22%5D',
+                headers: { 'x-test-user-id': reader.id, ...protocolHeaders } };
+            const response = app.inject(request);
             try {
                 expect(await Promise.race([reached.then(() => 'barrier'), response.then(() => 'response')])).toBe('barrier');
                 if (transition === 'revoked') {
@@ -835,8 +903,12 @@ describe("Artifact document grants (real SQLite)", () => {
                 resume();
                 const result = await response;
                 expect(result.statusCode, result.body).toBe(200);
-                expect(result.json()).toMatchObject({ hasUnclassified: false, coverage: { status: 'complete', unclassifiedCount: 0 } });
-                expect(result.json().items.map((row: { id: string }) => row.id)).toEqual(transition === 'revoked' ? [] : [artifact.id]);
+                expect(result.json()).toMatchObject({ items: [], hasUnclassified: true,
+                    coverage: { status: 'partial', unclassifiedCount: 1 } });
+                const next = await app.inject(request);
+                expect(next.statusCode, next.body).toBe(200);
+                expect(next.json()).toMatchObject({ hasUnclassified: false, coverage: { status: 'complete', unclassifiedCount: 0 } });
+                expect(next.json().items.map((row: { id: string }) => row.id)).toEqual(transition === 'revoked' ? [] : [artifact.id]);
             } finally {
                 resume(); await response;
                 Object.defineProperty(delegate, 'count', { configurable: true, writable: true, value: original });
@@ -936,7 +1008,7 @@ describe("Artifact document grants (real SQLite)", () => {
                 expect(result).toMatchObject({ ok: true, artifact: { id: artifact.id, encryptionMode: 'plain', access: caller === 'owner' ? 'owner' : 'view' } });
                 if (!result.ok) throw new Error('Expected an admitted Artifact header');
                 expect(decodePlainArtifactStoredContent(privacyKit.encodeBase64(result.artifact.header))).toEqual({ kind: 'workflow-definition.v1' });
-                // A single admitted-header query is the explicit readmission contract.
+                // One row captures both the admitted header and its access.
                 expect(reads).toBe(1);
             } finally {
                 Object.defineProperty(delegate, 'findFirst', { configurable: true, writable: true, value: original });
@@ -944,7 +1016,7 @@ describe("Artifact document grants (real SQLite)", () => {
         });
     });
 
-    it('denies an Artifact body after its grant is revoked during the content snapshot', async () => {
+    it('finishes an admitted Artifact body and denies the next request after grant revocation', async () => {
         const owner = await plainAccount();
         const recipient = await plainAccount();
         const artifact = await plainArtifact(owner.id);
@@ -963,13 +1035,14 @@ describe("Artifact document grants (real SQLite)", () => {
             const reached = new Promise<void>(resolve => { enter = resolve; });
             const release = new Promise<void>(resolve => { resume = resolve; });
             let paused = false;
-            // Pause the genuine DB query after access/header admission; all policy and bytes stay real.
+            // Pause after the genuine DB row capture; all policy and bytes stay real.
             Object.defineProperty(delegate, 'findFirst', { configurable: true, writable: true,
                 value: async (...args: Parameters<typeof original>) => {
+                    const row = await original(...args);
                     if (!paused && args[0]?.select?.body === true) {
                         paused = true; enter(); await release;
                     }
-                    return await original(...args);
+                    return row;
                 } });
             const response = app.inject({ method: 'GET', url, headers });
             try {
@@ -978,7 +1051,8 @@ describe("Artifact document grants (real SQLite)", () => {
                 resume();
                 const result = await response;
                 expect((await app.inject({ method: 'GET', url, headers })).statusCode).toBe(404);
-                expect(result.statusCode).toBe(404);
+                expect(result.statusCode, result.body).toBe(200);
+                expect(decodePlainArtifactStoredContent(result.json().body)).toEqual({ value: 'original' });
             } finally {
                 resume(); await response;
                 Object.defineProperty(delegate, 'findFirst', { configurable: true, writable: true, value: original });
@@ -1111,7 +1185,9 @@ describe("Artifact document grants (real SQLite)", () => {
         } });
         await db.artifactAccountGrant.create({ data: { artifactId: artifact.id, accountId: remaining.id,
             accessLevel: "view", createdByAccountId: owner.id } });
+        await makeShareEligibleForTest(owner.id, admin.id);
         const team = await db.team.create({ data: { name: "Self-revocation team" } });
+        await db.teamMembership.create({ data: { teamId: team.id, accountId: owner.id, role: "member" } });
         const membership = await db.teamMembership.create({ data: { teamId: team.id, accountId: admin.id, role: "member" } });
         const group = await db.teamGroup.create({ data: { teamId: team.id, name: "Administrators", nameKey: crypto.randomUUID() } });
         await db.teamGroupMembership.create({ data: { teamId: team.id, teamGroupId: group.id, teamMembershipId: membership.id,
@@ -1275,6 +1351,8 @@ describe("Artifact document grants (real SQLite)", () => {
         const owner = await plainAccount();
         const admin = await plainAccount();
         const outsider = await plainAccount();
+        await makeShareEligibleForTest(owner.id, admin.id);
+        await makeShareEligibleForTest(admin.id, outsider.id);
         const artifact = await plainArtifact(owner.id);
         await withAuthenticatedTestApp(app => artifactsRoutes(app), async app => {
             const grantsUrl = `/v1/artifacts/${artifact.id}/access/grants`;
@@ -1325,6 +1403,7 @@ describe("Artifact document grants (real SQLite)", () => {
         const owner = await plainAccount();
         const member = await plainAccount();
         const team = await db.team.create({ data: { name: "Document team" } });
+        await db.teamMembership.create({ data: { teamId: team.id, accountId: owner.id, role: "member" } });
         const membership = await db.teamMembership.create({ data: { teamId: team.id, accountId: member.id, role: "member" } });
         const group = await db.teamGroup.create({ data: { teamId: team.id, name: "Editors", nameKey: crypto.randomUUID() } });
         await db.teamGroupMembership.create({ data: { teamId: team.id, teamGroupId: group.id, teamMembershipId: membership.id,

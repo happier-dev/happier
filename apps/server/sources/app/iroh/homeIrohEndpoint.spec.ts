@@ -158,6 +158,27 @@ describe('home Iroh endpoint composition', () => {
         expect(owner.readHomeIrohEndpointLifecycleState().status).not.toBe('active');
     });
 
+    it.each([
+        { marker: { HAPPIER_SOCKET_ADAPTER: 'redis-streams' }, operation: 'compose' },
+        { marker: { HAPPIER_SOCKET_REDIS_ADAPTER: '1' }, operation: 'compose' },
+        { marker: { HAPPIER_SOCKET_ADAPTER: 'redis-streams' }, operation: 'materialize' },
+    ])('refuses $operation for the cluster marker $marker', async ({ marker, operation }) => {
+        const owner = await loadOwnerModule();
+        const native = createNativeFake();
+        const env = envFor(dataDir, marker);
+        if (operation === 'compose') {
+            expect(await owner.ensureHomeIrohEndpoint({ env, apiPort: API_PORT, native })).toEqual({
+                status: 'unavailable', snapshot: null, failureReason: 'iroh_multi_instance_unsupported',
+            });
+        } else {
+            expect(await owner.materializeHomeIrohEndpointDescriptor({ env, native })).toEqual({
+                status: 'failed', failureReason: 'iroh_multi_instance_unsupported',
+            });
+        }
+        expect(native.createEndpoint).not.toHaveBeenCalled();
+        expect(native.startHomeAcceptor).not.toHaveBeenCalled();
+    });
+
     it('materializes fresh relocation endpoint facts without owning the outer descriptor revision', async () => {
         const owner = await loadOwnerModule();
         const native = createNativeFake({
@@ -350,7 +371,10 @@ describe('home Iroh endpoint composition', () => {
         expect(state.snapshot).not.toHaveProperty('revision');
     });
 
-    it('fails closed and cleans up when outer continuity detects endpoint identity drift', async () => {
+    it.each([
+        {},
+        { HAPPIER_SOCKET_ADAPTER: 'redis-streams', HAPPIER_HOME_IROH_HOLDER: '1' },
+    ])('fails closed and cleans up when outer continuity detects endpoint identity drift (%o)', async marker => {
         await writeKeyFixture(dataDir);
         await writeContinuityFixture(dataDir, continuityFixture());
         const owner = await loadOwnerModule();
@@ -369,7 +393,7 @@ describe('home Iroh endpoint composition', () => {
             })),
         });
 
-        const state = await owner.ensureHomeIrohEndpoint({ env: envFor(dataDir), apiPort: API_PORT, native });
+        const state = await owner.ensureHomeIrohEndpoint({ env: envFor(dataDir, marker), apiPort: API_PORT, native });
 
         expect(state).toEqual({ status: 'failed', snapshot: null, failureReason: 'endpoint_identity_drift' });
         expect(native.shutdownEndpoint).toHaveBeenCalledWith({ endpointHandle: keyPathFor(dataDir) });

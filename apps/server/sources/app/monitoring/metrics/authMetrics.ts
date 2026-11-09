@@ -6,15 +6,6 @@ type LoginEligibilityCacheName = "positive_result" | "inflight";
 type LoginEligibilityCacheResult = "hit" | "miss";
 type LoginEligibilityStage = "account_lookup" | "provider_checks" | "total";
 type LoginEligibilityStageResult = "ok" | "error";
-type AuthEnrollmentFlow = "account_qr" | "terminal" | "home_approval";
-type AuthEnrollmentOutcome =
-    | "success"
-    | "expired"
-    | "rejected"
-    | "wrong_target"
-    | "wrong_binding"
-    | "wrong_proof"
-    | "malformed_payload";
 
 export const authLoginEligibilityCacheCounter = getOrCreateMetric("auth_login_eligibility_cache_total", () => new Counter({
     name: "auth_login_eligibility_cache_total",
@@ -28,13 +19,6 @@ export const authLoginEligibilityStageDurationHistogram = getOrCreateMetric("aut
     help: "Login eligibility duration by internal stage",
     labelNames: ["stage", "result"] as const,
     buckets: [0.0005, 0.001, 0.005, 0.01, 0.05, 0.1, 0.25, 0.5, 1, 5],
-    registers: [register],
-}));
-
-export const authEnrollmentOutcomeCounter = getOrCreateMetric("auth_enrollment_outcomes_total", () => new Counter({
-    name: "auth_enrollment_outcomes_total",
-    help: "Enrollment outcomes by fixed flow and result",
-    labelNames: ["flow", "outcome"] as const,
     registers: [register],
 }));
 
@@ -60,14 +44,4 @@ export function observeLoginEligibilityStage(params: Readonly<{
         },
         params.durationMs / 1000,
     );
-}
-
-export function recordAuthEnrollmentOutcome(params: Readonly<{
-    flow: AuthEnrollmentFlow;
-    outcome: AuthEnrollmentOutcome;
-}>): void {
-    authEnrollmentOutcomeCounter.inc({
-        flow: params.flow,
-        outcome: params.outcome,
-    });
 }

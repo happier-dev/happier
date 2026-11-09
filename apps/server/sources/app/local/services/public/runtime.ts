@@ -6,8 +6,11 @@ import {
     LocalServicePublicExposureV1Schema,
     LocalServicePublicPolicyV1Schema,
     LocalServicePublicPreviewSnapshotV1Schema,
+    formatLocalServicePublicPreviewLandingPathV1,
     type DaemonLocalServicePublicPreviewStatusRequestV1,
     type LocalServicePublicAuditEventV1,
+    type LocalServicePublicExposureAudienceV1,
+    type LocalServicePublicPreviewAdmissionFailureReasonV1,
     type LocalServicePublicExposureModeV1,
     type LocalServicePublicExposureV1,
     type LocalServicePublicPolicyV1,
@@ -30,8 +33,7 @@ type PublicAccessFailureReason =
     | "expired"
     | "revoked"
     | "rate_limited"
-    | "authentication_required"
-    | "session_not_authorized"
+    | "admission_required"
     | "public_token_missing"
     | "public_token_mismatch"
     | "audit_sink_unavailable"
@@ -53,24 +55,28 @@ export type LocalServicePublicRuntimeCreateResult =
               | "rate_limit_checker_unavailable";
       }>;
 
+export type LocalServicePublicRuntimeAdmissionResult =
+    | Readonly<{ ok: true; admissionUrl: string; expiresAt: number }>
+    | Readonly<{ ok: false; reasonCode: LocalServicePublicPreviewAdmissionFailureReasonV1 }>;
+
+/** The one admission decision's external facts: canonical audience membership and the sharer's Service. */
+export type LocalServicePublicPeopleAdmissionDeps = Readonly<{
+    isInAudience: (input: Readonly<{ sharerAccountId: string; audience: LocalServicePublicExposureAudienceV1; viewerAccountId: string }>) => Promise<boolean>;
+    sharerHoldsService: (input: Readonly<{ sharerAccountId: string; preview: LocalServicePreviewResourceV1 }>) => Promise<boolean>;
+}>;
+
 export type LocalServicePublicRuntimeAccessResult =
     | Readonly<{ ok: true; preview: LocalServicePreviewResourceV1 }>
     | Readonly<{ ok: false; reasonCode: PublicAccessFailureReason }>;
 
 /**
- * S-2: `authenticated` alone only proves the caller holds SOME account on this server. An
- * `authenticated` exposure is bound to one session, so the caller must additionally hold access
- * to that session — `sessionAuthorized` carries that fact. It is required (never optional) so a
- * caller cannot omit it and silently reopen the co-tenant hole.
- *
- * S-5: `clientKey` identifies the requesting client for rate-limit bucketing, so one visitor
- * cannot exhaust the window for every other visitor of the same exposure.
+ * `rawToken` is the isolated viewer cookie: the secret link's token, or the viewer-bound
+ * token a `people` admission minted. S-5: `clientKey` identifies the requesting client for
+ * rate-limit bucketing, so one visitor cannot exhaust the window for every other visitor.
  */
 export type LocalServicePublicRuntimeAccessInput = Readonly<{
     exposureId: string;
     rawToken: string | null;
-    authenticated: boolean;
-    sessionAuthorized: boolean;
     clientKey: string;
 }>;
 
@@ -105,10 +111,17 @@ export type LocalServicePublicRuntime = Readonly<{
         sessionAuthorized: boolean;
         dnsTlsValid: boolean;
         rateLimitProfileId: string;
+        machineAccessSignal?: AbortSignal;
+        /** Required for `people`: who may open it, already admitted by share eligibility. */
+        audience?: LocalServicePublicExposureAudienceV1;
+        /** Required for `people`: the Happier app origin hosting its landing. */
+        landingBaseUrl?: string;
     }>): LocalServicePublicRuntimeCreateResult;
+    /** Decides a signed-in viewer once and mints a one-use admission URL. */
+    admitViewer(input: Readonly<{ exposureId: string; viewerAccountId: string }>): Promise<LocalServicePublicRuntimeAdmissionResult>;
     resolveExposure(exposureId: string): LocalServicePublicExposureV1 | null;
     resolveExposureByHost(hostname: string): LocalServicePublicExposureV1 | null;
-    retainConnection(exposureId: string, close: () => void, actorAccountId?: string): () => void;
+    retainConnection(exposureId: string, close: () => void): () => void;
     retireMachineAccess(input: Readonly<{ machineId: string; accountId: string }>): void;
     validateAccess(input: LocalServicePublicRuntimeAccessInput): LocalServicePublicRuntimeAccessResult;
     exchangeAccessToken(input: Readonly<{
@@ -143,15 +156,22 @@ export type CreateLocalServicePublicRuntimeInput = Readonly<{
     }>) => boolean;
     resolvePreview?: (previewId: string) => LocalServicePreviewResourceV1 | null | undefined;
     maxExposureAuditEventIds?: number;
+    peopleAdmission?: LocalServicePublicPeopleAdmissionDeps;
 }>;
 
 type ExposureEntry = Readonly<{
     preview: LocalServicePreviewResourceV1;
     exposure: LocalServicePublicExposureV1;
     secretTokenHash: string | null;
+    /** `people`: the exposure origin admission URLs are minted on. */
+    exposureOrigin: string;
+    /** `people`: one-use admission token hashes, consumed by the exchange. */
+    admissionTokenHashes: Set<string>;
+    /** `people`: viewer-bound cookie token hashes minted by consumed admissions. */
+    viewerTokenHashes: Set<string>;
     withdrawalAuditFailed?: boolean;
     actorId: string;
-    connections: Set<Readonly<{ close: () => void; actorAccountId?: string }>>;
+    connections: Set<Readonly<{ close: () => void }>>;
 }>;
 
 type AppendAuditEventResult =
@@ -320,7 +340,11 @@ export function createLocalServicePublicRuntime(
         sessionAuthorized: boolean;
         dnsTlsValid: boolean;
         rateLimitProfileId: string;
+        machineAccessSignal?: AbortSignal;
+        audience?: LocalServicePublicExposureAudienceV1;
+        landingBaseUrl?: string;
     }>): LocalServicePublicRuntimeCreateResult {
+        if (createInput.machineAccessSignal?.aborted) return { ok: false, reasonCode: 'session_not_authorized' };
         const publicBaseUrl = parsePublicBaseUrl(input.publicBaseUrl);
         if (!publicBaseUrl) {
             return { ok: false, reasonCode: "invalid_public_base_url" };
@@ -358,7 +382,7 @@ export function createLocalServicePublicRuntime(
 
         const secretToken = decision.mode === "secret_link" ? generateSecretToken() : null;
         const tokenSecret = nonEmptyString(input.tokenSecret);
-        if (secretToken && !tokenSecret) {
+        if ((secretToken || decision.mode === "people") && !tokenSecret) {
             return { ok: false, reasonCode: "public_token_secret_missing" };
         }
 
@@ -375,6 +399,12 @@ export function createLocalServicePublicRuntime(
             return { ok: false, reasonCode: "public_origin_unavailable" };
         }
         const issuedAt = decisionNowMs;
+        let landingUrl: string | null = null;
+        if (decision.mode === "people") {
+            const landingBase = parsePublicBaseUrl(createInput.landingBaseUrl);
+            if (!landingBase) return { ok: false, reasonCode: "public_origin_unavailable" };
+            landingUrl = new URL(formatLocalServicePublicPreviewLandingPathV1(exposureId), landingBase).toString();
+        }
         const parsed = LocalServicePublicExposureV1Schema.safeParse({
             exposureId,
             previewId: createInput.preview.previewId,
@@ -382,8 +412,10 @@ export function createLocalServicePublicRuntime(
             ...(createInput.preview.serviceTarget ? { serviceTarget: createInput.preview.serviceTarget } : {}),
             machineId: createInput.preview.machineId,
             mode: decision.mode,
+            ...(decision.mode === "people" ? { audience: createInput.audience } : {}),
             state: "active",
-            publicUrl: publicExposureUrl({
+            // A people share's link is the app landing; the preview origin admits only its cookie.
+            publicUrl: landingUrl ?? publicExposureUrl({
                 exposureOrigin: exposureOrigin.origin,
                 exposureId,
                 secretToken,
@@ -411,10 +443,13 @@ export function createLocalServicePublicRuntime(
             preview: createInput.preview,
             exposure,
             secretTokenHash: secretToken && tokenSecret ? hashToken(tokenSecret, secretToken) : null,
+            exposureOrigin: exposureOrigin.origin,
+            admissionTokenHashes: new Set(),
+            viewerTokenHashes: new Set(),
             actorId: createInput.actorId,
             connections: new Set(),
         });
-        exposureIdByHostname.set(new URL(exposure.publicUrl).hostname, exposureId);
+        exposureIdByHostname.set(new URL(exposureOrigin.origin).hostname, exposureId);
         return { ok: true, exposure };
     }
 
@@ -503,14 +538,12 @@ export function createLocalServicePublicRuntime(
             return denyAccess(entry, unavailableReason);
         }
 
-        if (entry.exposure.mode === "authenticated") {
-            if (!validateInput.authenticated) {
-                return denyAccess(entry, "authentication_required");
-            }
-            // S-2: holding an account on this server is not authorization for someone else's
-            // exposed service. The exposure is bound to a session; require access to it.
-            if (!validateInput.sessionAuthorized) {
-                return denyAccess(entry, "session_not_authorized");
+        if (entry.exposure.mode === "people") {
+            // Membership was decided once at admission; the cookie carries that decision.
+            const tokenSecret = nonEmptyString(input.tokenSecret);
+            if (!validateInput.rawToken || !tokenSecret
+                || !entry.viewerTokenHashes.has(hashToken(tokenSecret, validateInput.rawToken))) {
+                return denyAccess(entry, "admission_required");
             }
         }
 
@@ -584,16 +617,28 @@ export function createLocalServicePublicRuntime(
             return { ok: false, reasonCode: unavailableReason };
         }
 
-        if (entry.exposure.mode !== "secret_link") {
+        if (entry.exposure.mode === "public") {
             return { ok: false, reasonCode: "exchange_not_supported" };
         }
 
         const tokenSecret = nonEmptyString(input.tokenSecret);
-        if (!exchangeInput.rawToken || !tokenSecret || !entry.secretTokenHash) {
+        if (!exchangeInput.rawToken || !tokenSecret) {
             return { ok: false, reasonCode: "public_token_missing" };
         }
-        if (!hashesMatch(entry.secretTokenHash, hashToken(tokenSecret, exchangeInput.rawToken))) {
-            return { ok: false, reasonCode: "public_token_mismatch" };
+        let cookieToken = exchangeInput.rawToken;
+        if (entry.exposure.mode === "people") {
+            // One-use: the admission token is consumed and replaced by a viewer-bound cookie token.
+            const admissionHash = hashToken(tokenSecret, exchangeInput.rawToken);
+            if (!entry.admissionTokenHashes.delete(admissionHash)) {
+                return { ok: false, reasonCode: "public_token_mismatch" };
+            }
+            cookieToken = generateSecretToken();
+            entry.viewerTokenHashes.add(hashToken(tokenSecret, cookieToken));
+        } else {
+            if (!entry.secretTokenHash) return { ok: false, reasonCode: "public_token_missing" };
+            if (!hashesMatch(entry.secretTokenHash, hashToken(tokenSecret, exchangeInput.rawToken))) {
+                return { ok: false, reasonCode: "public_token_mismatch" };
+            }
         }
 
         const currentPreview = resolveCurrentPreviewForAccess(entry);
@@ -606,7 +651,61 @@ export function createLocalServicePublicRuntime(
         return {
             ok: true,
             exposureId: entry.exposure.exposureId,
-            rawToken: exchangeInput.rawToken,
+            rawToken: cookieToken,
+            expiresAt: entry.exposure.expiresAt,
+        };
+    }
+
+    /**
+     * The one `people` admission decision: signed-in viewer (the caller authenticated them),
+     * in the exposure's audience per the canonical resource-grant membership policy, and the
+     * sharer still holds the Service. No Machine admission is asked of the viewer. Later
+     * requests check only that the exposure is active and the cookie is one this minted.
+     */
+    async function admitViewer(admitInput: Readonly<{ exposureId: string; viewerAccountId: string }>): Promise<LocalServicePublicRuntimeAdmissionResult> {
+        const initial = entries.get(admitInput.exposureId);
+        if (!initial) return { ok: false, reasonCode: "exposure_not_found" };
+        const unavailable = (entry: ExposureEntry) => {
+            const expiry = expireExposureIfNeeded(entry, nowMs());
+            const current = expiry.ok ? expiry.entry : entries.get(entry.exposure.exposureId) ?? entry;
+            const reason = inaccessibleReason(current.exposure, nowMs());
+            return reason === "rate_limited" ? null : reason;
+        };
+        const before = unavailable(initial);
+        if (before) return { ok: false, reasonCode: before };
+        if (initial.exposure.mode !== "people" || !initial.exposure.audience) return { ok: false, reasonCode: "not_people_share" };
+        const deps = input.peopleAdmission;
+        const tokenSecret = nonEmptyString(input.tokenSecret);
+        if (!deps || !tokenSecret) return { ok: false, reasonCode: "service_unavailable" };
+        let inAudience = false;
+        try {
+            inAudience = await deps.isInAudience({ sharerAccountId: initial.actorId, audience: initial.exposure.audience,
+                viewerAccountId: admitInput.viewerAccountId });
+        } catch { inAudience = false; }
+        if (!inAudience) return { ok: false, reasonCode: "not_in_audience" };
+        // The share stands on the sharer's current preview: a Session preview's current registration
+        // is that fact; a declared Service also re-proves the sharer's Machine and its starter.
+        const preview = resolveCurrentPreviewForAccess(initial);
+        let holds = preview.ok && !preview.preview.serviceTarget;
+        if (preview.ok && preview.preview.serviceTarget) {
+            try { holds = await deps.sharerHoldsService({ sharerAccountId: initial.actorId, preview: preview.preview }); }
+            catch { holds = false; }
+        }
+        if (!holds) return { ok: false, reasonCode: "service_unavailable" };
+        // The awaits above may have raced a revoke or expiry.
+        const entry = entries.get(admitInput.exposureId);
+        if (!entry) return { ok: false, reasonCode: "exposure_not_found" };
+        const after = unavailable(entry);
+        if (after) return { ok: false, reasonCode: after };
+        const audit = appendAuditEventToEntry(entry, {
+            exposureId: entry.exposure.exposureId, action: "access", actorId: admitInput.viewerAccountId,
+        });
+        if (!audit.ok) return audit;
+        const admissionToken = generateSecretToken();
+        audit.entry.admissionTokenHashes.add(hashToken(tokenSecret, admissionToken));
+        return {
+            ok: true,
+            admissionUrl: publicExposureUrl({ exposureOrigin: entry.exposureOrigin, exposureId: entry.exposure.exposureId, secretToken: admissionToken }),
             expiresAt: entry.exposure.expiresAt,
         };
     }
@@ -632,14 +731,14 @@ export function createLocalServicePublicRuntime(
         return { ok: true };
     }
 
-    function retainConnection(exposureId: string, close: () => void, actorAccountId?: string): () => void {
+    function retainConnection(exposureId: string, close: () => void): () => void {
         const entry = entries.get(exposureId);
         // Admission may have raced an asynchronous authentication/tunnel boundary.
         if (!entry || !isLocalServicePublicExposureAccessible({ exposure: entry.exposure, nowMs: nowMs() })) {
             close();
             return () => {};
         }
-        const connection = { close, ...(actorAccountId ? { actorAccountId } : {}) };
+        const connection = { close };
         entry.connections.add(connection);
         scheduleConnectionExpiry(exposureId);
         return () => {
@@ -680,13 +779,7 @@ export function createLocalServicePublicRuntime(
                 retireExposure(entry, { ...entry.exposure, state: 'revoked', revokedAt: nowMs() }, {
                     exposureId: entry.exposure.exposureId, action: 'revoke', actorId: accountId,
                 });
-                continue;
             }
-            for (const connection of entry.connections) if (connection.actorAccountId === accountId) {
-                entry.connections.delete(connection);
-                connection.close();
-            }
-            if (entry.connections.size === 0) clearConnectionExpiryTimer(entry.exposure.exposureId);
         }
     }
 
@@ -748,6 +841,7 @@ export function createLocalServicePublicRuntime(
 
     return {
         createExposure,
+        admitViewer,
         resolveExposure,
         resolveExposureByHost,
         retainConnection,

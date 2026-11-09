@@ -3,6 +3,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { db, getDbProviderFromEnv, initDbPostgres } from '@/storage/db';
 import { inTx, readPostgresTransactionSqlState, type Tx } from '@/storage/inTx';
 import { createAuthenticatedTestApp } from '@/app/api/testkit/sqliteFastify';
+import { observeLazyPrismaQuery, withAccountPublicationBeforeTransactionSql } from '@/app/changes/accountPublicationContention.testkit';
 import { registerSavedSecretResourceRoutes } from '@/app/api/routes/account/registerSavedSecretResourceRoutes';
 import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import { NotificationChannelCatalogRecordV1Schema } from '@happier-dev/protocol/account/settings/notificationChannelRecordV1';
@@ -22,6 +23,172 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('S
         await db.$connect();
     });
     afterAll(async () => { await db.$disconnect(); });
+
+    describe('rotation contention', () => {
+        const originalRetries = process.env.HAPPIER_DB_TX_MAX_RETRIES;
+        beforeAll(() => { process.env.HAPPIER_DB_TX_MAX_RETRIES = '0'; });
+        afterAll(() => {
+            if (originalRetries === undefined) delete process.env.HAPPIER_DB_TX_MAX_RETRIES;
+            else process.env.HAPPIER_DB_TX_MAX_RETRIES = originalRetries;
+        });
+
+        async function createRotationFixture(shared = false) {
+            const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
+            const resourceId = randomUUID();
+            const accountGrants: string[] = [];
+            if (shared) {
+                const recipient = await db.account.create({ data: { encryptionMode: 'plain' } });
+                await db.userRelationship.create({ data: { fromUserId: owner.id, toUserId: recipient.id, status: 'friend' } });
+                accountGrants.push(recipient.id);
+            }
+            const content = { v: 1 as const, name: 'Rotation fixture', kind: 'token' as const, value: 'synthetic-original' };
+            expect(await inTx(tx => createSavedSecretResourceInTx(tx, {
+                accountId: owner.id, resourceId, displayName: content.name, kind: content.kind,
+                encryptionMode: 'plain', storedContent: { t: 'plain', v: content }, accountGrants,
+            }))).toMatchObject({ ok: true });
+            const app = createAuthenticatedTestApp();
+            registerSavedSecretResourceRoutes(app);
+            const rotate = () => app.inject({ method: 'POST', url: '/v1/account/saved-secrets/resources/update',
+                headers: { 'x-test-user-id': owner.id }, payload: {
+                    resourceId, expectedRevision: 1, displayName: content.name, kind: content.kind,
+                    storedContent: { t: 'plain', v: { ...content, value: 'synthetic-rotated' } },
+                } });
+            return { owner, resourceId, app, rotate };
+        }
+
+        it('rotates once after an unrelated Account cursor publishes following the audience census', async () => {
+            const { owner, resourceId, app, rotate } = await createRotationFixture();
+            const before = await db.account.findUniqueOrThrow({ where: { id: owner.id }, select: { seq: true } });
+            try {
+                const { result: response, advances } = await withAccountPublicationBeforeTransactionSql(owner.id,
+                    sql => sql.includes('FROM "Account"') && sql.includes('FOR NO KEY UPDATE'), rotate);
+                expect(response.statusCode, response.body).toBe(200);
+                expect(advances).toBe(1);
+                expect(await db.savedSecretResource.findUniqueOrThrow({ where: { id: resourceId }, select: { revision: true } }))
+                    .toEqual({ revision: 2 });
+                expect(await db.account.findUniqueOrThrow({ where: { id: owner.id }, select: { seq: true } }))
+                    .toEqual({ seq: before.seq + 2 });
+            } finally { await app.close(); }
+        });
+
+        it('reads the Account mode after a transition wins the content admission fence', async () => {
+            const { owner, resourceId, app, rotate } = await createRotationFixture(true);
+            const binding = createSignedAccountContentBinding(tweetnacl.box.keyPair().publicKey);
+            const transaction = db.$transaction;
+            let transitioned = false;
+            // Interpose before real content admission. A shared Plain Secret
+            // remains Plain across this genuine persisted Account mode change.
+            db.$transaction = new Proxy(transaction, { apply(target, receiver, args: unknown[]) {
+                const callback = args[0];
+                if (typeof callback !== 'function') return Reflect.apply(target, receiver, args);
+                return Reflect.apply(target, receiver, [async (tx: Tx) => callback(new Proxy(tx, { get(inner, property, innerReceiver) {
+                    if (property !== '$queryRawUnsafe') return Reflect.get(inner, property, innerReceiver);
+                    return async (query: string, ...values: unknown[]) => {
+                        if (!transitioned && query.includes('FROM "Account"') && /FOR (KEY SHARE|NO KEY UPDATE)/.test(query)) {
+                            transitioned = true;
+                            await transaction.call(db, async (peer: Tx) => {
+                                await peer.$queryRawUnsafe('SELECT "id" FROM "Account" WHERE "id" = $1 FOR UPDATE', owner.id);
+                                await peer.account.update({ where: { id: owner.id }, data: { encryptionMode: 'e2ee', ...binding } });
+                            });
+                        }
+                        return inner.$queryRawUnsafe(query, ...values);
+                    };
+                } })), ...args.slice(1)]);
+            } });
+            try {
+                const response = await rotate();
+                expect(transitioned).toBe(true);
+                expect(response.statusCode, response.body).toBe(409);
+                expect(response.json()).toMatchObject({ error: 'account_mode_mismatch' });
+                expect(await db.savedSecretResource.findUniqueOrThrow({ where: { id: resourceId }, select: { revision: true, encryptionMode: true } }))
+                    .toEqual({ revision: 1, encryptionMode: 'plain' });
+            } finally { db.$transaction = transaction; await app.close(); }
+        });
+
+        it('admits only one concurrent rotation of the same Secret revision', async () => {
+            const { owner, resourceId, app, rotate } = await createRotationFixture();
+            const before = await db.account.findUniqueOrThrow({ where: { id: owner.id }, select: { seq: true } });
+            try {
+                const responses = await Promise.all([rotate(), rotate()]);
+                expect(responses.map(response => response.statusCode).sort()).toEqual([200, 409]);
+                expect(responses.find(response => response.statusCode === 409)?.json()).toMatchObject({ error: 'resource_changed' });
+                expect(await db.savedSecretResource.findUniqueOrThrow({ where: { id: resourceId }, select: { revision: true } }))
+                    .toEqual({ revision: 2 });
+                expect(await db.account.findUniqueOrThrow({ where: { id: owner.id }, select: { seq: true } }))
+                    .toEqual({ seq: before.seq + 1 });
+            } finally { await app.close(); }
+        });
+
+        it('lets an admitted grant mutation finish before a competing rotation without a lock-order cycle', async () => {
+            const { owner, resourceId, app, rotate } = await createRotationFixture(true);
+            const transaction = db.$transaction;
+            let firstTransaction = true;
+            let grantPid = 0;
+            let rotationPid = 0;
+            let locked!: () => void;
+            let release!: () => void;
+            const parentLocked = new Promise<void>(resolve => { locked = resolve; });
+            const released = new Promise<void>(resolve => { release = resolve; });
+            // Hold the real grant CAS row lock. Observe PostgreSQL's wait graph,
+            // then let the owner publish while rotation is awaiting admission.
+            db.$transaction = new Proxy(transaction, { apply(target, receiver, args: unknown[]) {
+                const callback = args[0];
+                if (typeof callback !== 'function') return Reflect.apply(target, receiver, args);
+                const grantTransaction = firstTransaction;
+                firstTransaction = false;
+                return Reflect.apply(target, receiver, [async (tx: Tx) => {
+                    const [backend] = await tx.$queryRaw<Array<{ pid: number }>>`SELECT pg_backend_pid() AS pid`;
+                    if (grantTransaction) grantPid = backend.pid;
+                    else rotationPid = backend.pid;
+                    return callback(new Proxy(tx, { get(inner, property, innerReceiver) {
+                        if (!grantTransaction || property !== 'savedSecretResource') return Reflect.get(inner, property, innerReceiver);
+                        return new Proxy(inner.savedSecretResource, { get(delegate, method, delegateReceiver) {
+                            const query = Reflect.get(delegate, method, delegateReceiver);
+                            if (method !== 'updateMany') return query;
+                            return (...input: unknown[]) => observeLazyPrismaQuery(Reflect.apply(query, delegate, input),
+                                () => ({ started() {}, settled() {} }), undefined, async consume => {
+                                    const result = await consume();
+                                    locked(); await released;
+                                    return result;
+                                });
+                        } });
+                    } }));
+                }, ...args.slice(1)]);
+            } });
+            let grant: ReturnType<typeof inTx> | undefined;
+            let rotation: ReturnType<typeof rotate> | undefined;
+            let rotationSettled = false;
+            try {
+                grant = inTx(tx => setSavedSecretResourceGrantsInTx(tx, { accountId: owner.id, resourceId,
+                    expectedRevision: 1, accountGrants: [], teamGrants: [], groupGrants: [] }), { isolationLevel: 'Serializable' });
+                // A failed peer must release the observer instead of stranding it.
+                void grant.catch(() => { locked(); });
+                await parentLocked;
+                rotation = rotate().finally(() => { rotationSettled = true; });
+                let observedWait = false;
+                while (!observedWait && !rotationSettled) {
+                    const [waiter] = await db.$queryRaw<Array<{ waiting: boolean }>>`
+                        SELECT EXISTS(SELECT 1 FROM pg_stat_activity
+                            WHERE pid = ${rotationPid} AND ${grantPid} = ANY(pg_blocking_pids(pid))) AS waiting`;
+                    observedWait = waiter.waiting;
+                }
+                release();
+                expect(observedWait).toBe(true);
+                expect(await grant).toMatchObject({ ok: true, value: { revision: 2 } });
+                const response = await rotation;
+                expect(response.statusCode, response.body).toBe(409);
+                expect(response.json()).toMatchObject({ error: 'resource_changed' });
+                expect(await db.savedSecretResource.findUniqueOrThrow({ where: { id: resourceId }, select: { revision: true } }))
+                    .toEqual({ revision: 2 });
+                expect(await db.savedSecretAccountGrant.count({ where: { resourceId } })).toBe(0);
+            } finally {
+                release();
+                db.$transaction = transaction;
+                await Promise.allSettled([grant, rotation]);
+                await app.close();
+            }
+        });
+    });
 
     it('deletes immediately after revoking grants while Account publication competes with every attempt', async () => {
         const owner = await db.account.create({ data: { encryptionMode: 'plain' } });

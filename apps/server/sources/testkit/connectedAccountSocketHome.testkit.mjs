@@ -24,6 +24,7 @@ export async function createConnectedAccountSocketHome({ encryptionMode = 'plain
     const harness = await createLightSqliteHarness({
         tempDirPrefix: 'happier-connected-account-socket-home-', initAuth: true, initEncrypt: true,
         env: {
+            HAPPIER_SERVER_IDENTITY_ID: `srv_${randomUUID().replaceAll('-', '')}`,
             AUTH_REQUIRED_LOGIN_PROVIDERS: '',
             HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: 'optional',
             HAPPIER_FEATURE_ENCRYPTION__PLAIN_ACCOUNT_CREDENTIALS_AT_REST: 'none',

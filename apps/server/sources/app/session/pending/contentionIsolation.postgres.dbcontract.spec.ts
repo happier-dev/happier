@@ -1,3 +1,4 @@
+import { readSessionSystemRecordChangeV1 } from '@happier-dev/protocol/sessions/board/changeHint';
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
@@ -519,9 +520,11 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('A
             expect(await db.sessionSystemRecord.count({ where: { sessionId: boardSession.id } })).toBe(1);
             expect(await db.accountChange.findMany({ where: { accountId: account.id }, orderBy: { cursor: 'asc' },
                 select: { sessionId: true, cursor: true } })).toEqual([
-                { sessionId: publisherSession.id, cursor: 2 }, { sessionId: boardSession.id, cursor: 3 },
+                { sessionId: publisherSession.id, cursor: 2 }, { sessionId: null, cursor: 3 },
                 { sessionId: destination.id, cursor: 4 },
             ]);
+            const boardChange = await db.accountChange.findFirstOrThrow({ where: { accountId: account.id, cursor: 3 } });
+            expect(readSessionSystemRecordChangeV1(boardChange)).toMatchObject({ sessionId: boardSession.id });
         } finally {
             db.$transaction = originalTransaction;
             vi.unstubAllEnvs();

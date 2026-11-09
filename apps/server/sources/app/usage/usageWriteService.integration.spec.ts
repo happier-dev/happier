@@ -2,12 +2,15 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { eventRouter } from "@/app/events/eventRouter";
 import { register } from "@/app/monitoring/metrics/registry";
 import { db } from "@/storage/db";
+import { inTx } from "@/storage/inTx";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
 import { recordLegacyUsageReport, recordUsageEvent } from "./usageWriteService";
 import { UsageEventIngestRequestSchema, UsageAnalyticsQueryRequestSchema } from '@happier-dev/protocol';
 import type { UsageAnalyticsQueryRequest } from '@happier-dev/protocol';
 import { EphemeralUpdateSchema } from '@happier-dev/protocol/updates';
-import { queryUsageAnalytics } from './usageQueryService';
+import { captureUsageAnalyticsInTx, projectUsageAnalytics, queryUsageAnalytics } from './usageQueryService';
+import { createUsageEventRetentionRule } from '@/app/retention/rules/usageEventRetentionRule';
+import { readRetentionPolicyFromEnv } from '@/app/retention/config/readRetentionPolicyFromEnv';
 
 // Only process-external event delivery is stubbed; payload builders remain real.
 vi.mock("@/app/events/eventRouter", async (importOriginal) => {
@@ -130,6 +133,72 @@ describe("usageWriteService", () => {
         expect(stored.totalTokens).toBe(3);
         expect(stored.observedAt.getTime()).toBe(100);
         expect(stored.metadata).toMatchObject({ usageAccounting: { runtimeEventOrder: { runtimeIncarnationId: 'runtime-A', sequence: 2 } } });
+        const query = UsageAnalyticsQueryRequestSchema.parse({ filters: { sessionIds: [session.id] },
+            includeSeries: true, includeActivity: true, includeInsights: true, includeModelTimeline: true });
+        const maintained = await queryUsageAnalytics(account.id, query);
+        const scalar = await inTx(async tx => {
+            const captured = await captureUsageAnalyticsInTx(tx, account.id, query);
+            const rows = await tx.usageEvent.findMany({ where: { accountId: account.id }, orderBy: { observedAt: 'asc' } });
+            return projectUsageAnalytics({ ...captured, rows }, query);
+        }, { readOnly: true, isolationLevel: 'Serializable' });
+        expect(JSON.stringify(maintained)).toBe(JSON.stringify(scalar));
+    });
+
+    it('removes retained usage from the persisted accounting result when the retention rule deletes its event', async () => {
+        const account = await db.account.create({ data: { publicKey: 'usage-retention-projection' } });
+        const session = await db.session.create({ data: { accountId: account.id, tag: 'usage-retention-projection', encryptionMode: 'plain', metadata: '{}' } });
+        const event = (externalKey: string, observedAt: number, total: number) => UsageEventIngestRequestSchema.parse({
+            sessionId: session.id, externalKey, observedAt, agentId: 'codex', source: 'runtime', scope: 'turn_delta', isCumulative: false,
+            tokens: { input: total, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total },
+            cost: { reportedUsd: 0, estimatedUsd: 0, currency: 'USD' },
+        });
+        expect(await recordUsageEvent(account.id, event('old', Date.parse('2025-01-01T00:00:00.000Z'), 3))).toMatchObject({ ok: true });
+        expect(await recordUsageEvent(account.id, event('recent', Date.parse('2025-01-07T00:00:00.000Z'), 7))).toMatchObject({ ok: true });
+        const request = UsageAnalyticsQueryRequestSchema.parse({ filters: { sessionIds: [session.id] } });
+        expect((await queryUsageAnalytics(account.id, request)).totals.tokens.total).toBe(10);
+
+        const basePolicy = readRetentionPolicyFromEnv({});
+        const result = await createUsageEventRetentionRule().run({
+            policy: { ...basePolicy, enabled: true,
+                domains: { ...basePolicy.domains, usageEvents: { mode: 'delete_older_than', days: 1 } } },
+            batchSize: 10, maxDeletesPerRulePerRun: 10, dryRun: false,
+            now: new Date('2025-01-08T00:00:00.000Z'),
+        });
+        expect(result.deleted).toBe(1);
+        expect((await queryUsageAnalytics(account.id, request)).totals.tokens.total).toBe(7);
+        expect(await db.usageEvent.count({ where: { accountId: account.id } })).toBe(1);
+    });
+
+    it('retains large source diagnostics on raw writes without initializing a projection', async () => {
+        const account = await db.account.create({ data: { publicKey: 'coverage-payload-diagnostics' } });
+        const unrelated = await db.account.create({ data: { publicKey: 'coverage-payload-unrelated' } });
+        const session = await db.session.create({ data: { accountId: account.id, tag: 'coverage-payload-diagnostics', encryptionMode: 'plain', metadata: '{}' } });
+        await db.machine.create({ data: { id: 'coverage-diagnostic-machine', accountId: account.id, metadata: '{}' } });
+        const subject = { kind: 'native', machineId: 'coverage-diagnostic-machine',
+            agent: { pluginId: 'happier.agent.codex', localId: 'codex' }, sourceRootKey: 'root',
+            nativeSessionKey: 'session', linkedSessionId: session.id };
+        const diagnosticMarker = 'unrelated-coverage-diagnostic-' + 'x'.repeat(128 * 1024);
+        const initialMetadata = { accountingSubject: subject, usageAccounting: { path: 'runtime', status: 'partial',
+            historyComplete: false, asOfMs: 100, inferenceId: 'inference',
+            runtimeEventOrder: { runtimeIncarnationId: 'diagnostic-run', sequence: 2 } }, diagnosticMarker };
+        const ingest = UsageEventIngestRequestSchema.parse({
+            sessionId: session.id, turnId: 'turn', externalKey: 'large-diagnostic', observedAt: 100,
+            agentId: 'codex', modelId: 'model', machineId: 'coverage-diagnostic-machine',
+            projectKey: 'project', workspaceId: 'workspace', backendMode: 'remote',
+            source: 'runtime', scope: 'turn_delta', isCumulative: false,
+            tokens: { input: 5, output: 2, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 7 },
+            cost: { reportedUsd: 0.025, estimatedUsd: 0.02, currency: 'USD' },
+            metadata: initialMetadata,
+        });
+        expect(await db.usageAccountingProjection.count({ where: { accountId: account.id } })).toBe(0);
+        const first = await recordUsageEvent(account.id, ingest);
+        expect(first).toMatchObject({ ok: true });
+        expect(await db.usageAccountingProjection.count({ where: { accountId: account.id } })).toBe(0);
+        expect(await db.usageAccountingProjection.count({ where: { accountId: unrelated.id } })).toBe(0);
+        const raw = await db.usageEvent.findFirstOrThrow({ where: { accountId: account.id, externalKey: 'large-diagnostic' } });
+        expect(raw.totalTokens).toBe(7);
+        expect(raw.metadata).toMatchObject({ diagnosticMarker, accountingSubject: subject,
+            usageAccounting: { path: 'runtime', status: 'partial' } });
     });
 
     it('retains request-bound switched account identity through ingest and query, ignoring metadata guesses', async () => {

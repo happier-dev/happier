@@ -3,6 +3,8 @@ import { EventEmitter } from 'node:events';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { DISCUSSION_AGENT_POST_EVENT_V1, DiscussionAgentPostResponseV1Schema, DiscussionAgentApprovedReplayResponseV1Schema } from '@happier-dev/protocol/discussions/api';
 import { auth } from '@/app/auth/auth';
+import { APPROVAL_ARTIFACT_KINDS_V1 } from '@happier-dev/protocol/approvals/approvalArtifactKindV1';
+import { deriveArtifactStoredKindV1 } from '@happier-dev/protocol/artifacts/artifactKindV1';
 import { encodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
 import { decodeBase64 } from 'privacy-kit';
 import { inTx } from '@/storage/inTx';
@@ -81,9 +83,11 @@ describe('installed Machine reviewed Discussion publication (SQLite)', () => {
                 authorization: { principal: { kind: 'host' }, admittedPermissionCeiling: 'default' } } });
         if (!acceptedDelivery.ok || acceptedDelivery.snapshot.resultDelivery?.kind !== 'originating_discussion') throw new Error('Missing accepted Discussion destination');
         let lastMessageId: string | undefined;
+        let lastContent: unknown;
         const publish = createWorkflowDiscussionResultPublisher({ credentials: { token, encryption: null }, origin: acceptedDelivery.snapshot.resultDelivery,
             isCurrent: async () => true, publish: async publication => {
                 if (!('kind' in publication)) throw new Error('A non-Session result must not fabricate Session custody');
+                lastContent = publication.content;
                 const packet = { v: 1, operation: 'workflow_result', machineId: machine.id, publication: {
                     discussionId, producer: publication.producer, origin: publication.discussion,
                     request: buildDiscussionMutationRequestBodyV1({ kind: 'post', localId: deriveWorkflowDiscussionReplyLocalIdV1(publication.workflow),
@@ -172,6 +176,11 @@ describe('installed Machine reviewed Discussion publication (SQLite)', () => {
             if (!actual) throw new Error('Workflow leaf was not persisted');
             accepted = actual;
         } else await publish({ runId: run.id, invocation: accepted });
+        if (lifecycle !== 'completed') {
+            expect(lastMessageId).toBeUndefined();
+            expect(await db.discussionMessage.count({ where: { discussionId } })).toBe(1);
+            return;
+        }
         const firstId = lastMessageId;
         await publish({ runId: run.id, invocation: accepted });
         expect(lastMessageId).toBe(firstId);
@@ -179,8 +188,7 @@ describe('installed Machine reviewed Discussion publication (SQLite)', () => {
         const read = await readDiscussionMessages({ actorAccountId: owner.id, authentication, discussionId, query: {} });
         expect(read).toMatchObject({ ok: true, value: { messages: expect.arrayContaining([expect.objectContaining({
             id: firstId, producerV1: expect.objectContaining({ kind: 'workflow', invocationRecordId: invocation.id }),
-            content: { t: 'plain', v: expect.objectContaining(lifecycle === 'completed'
-                ? { kind: 'workflow_result', value: { checked: true } } : { v: 1, parts: expect.any(Array) }) },
+            content: { t: 'plain', v: lastContent },
         })]) } });
         await db.machine.update({ where: { id: machine.id }, data: { revokedAt: new Date() } });
         await expect(publish({ runId: run.id, invocation: accepted })).rejects.toThrow('workflow_discussion_publication_unavailable');
@@ -244,7 +252,7 @@ describe('installed Machine reviewed Discussion publication (SQLite)', () => {
         expect(await publish({ ...publication, replyReturn: { ...replyReturn, workflow: undefined } })).toMatchObject({ ok: false });
         expect(await publish({ ...publication, replyReturn: { ...replyReturn, requestLocalId: 'missing-original' } }))
             .toMatchObject({ ok: false, error: 'discussion_post_denied' });
-        expect(await publish(publication, randomUUID())).toMatchObject({ ok: false, error: 'discussion_post_denied' });
+        expect(await publish(publication, randomUUID())).toMatchObject({ ok: false, error: 'discussion_machine_identity_mismatch' });
         expect(await setDiscussionParticipantPolicy({ actorAccountId: owner.id, authentication, discussionId,
             request: { participant: { kind: 'session', sessionId: session.id }, answerPolicy: 'drafts_for_approval' } })).toMatchObject({ ok: true });
         expect(await publish()).toMatchObject({ ok: false, error: 'discussion_post_denied' });
@@ -304,6 +312,13 @@ describe('installed Machine reviewed Discussion publication (SQLite)', () => {
             return acknowledgements[0];
         };
         const publish = async (value: unknown = packet) => DiscussionAgentPostResponseV1Schema.parse(await publishRaw(value));
+        expect(await publish(), 'A signed installed carrier cannot invent its review Artifact').toMatchObject({ ok: false, error: 'discussion_post_denied' });
+        expect(await db.discussionMessage.count({ where: { discussionId } })).toBe(1);
+        // Opaque Artifact bytes are not opened by the server-side binding;
+        // the composed MCP/person-decide harness exercises their real producer.
+        await db.artifact.create({ data: { id: publication.draftReview.artifactId, accountId: owner.id,
+            kind: deriveArtifactStoredKindV1({ kind: APPROVAL_ARTIFACT_KINDS_V1.builtIn }), approvalSessionId: session.id,
+            header: new Uint8Array([0]), body: new Uint8Array([0]), dataEncryptionKey: new Uint8Array([0]) } });
         const first = await publish();
         if (!first.ok) throw new Error(`Reviewed Machine publication refused: ${first.error}`);
         expect(first).toMatchObject({ ok: true, value: { message: { authorAccountId: owner.id,
@@ -332,13 +347,13 @@ describe('installed Machine reviewed Discussion publication (SQLite)', () => {
             expect(await db.discussionMessage.count({ where: { discussionId } })).toBe(2);
         } finally { await db.$executeRawUnsafe('DROP TRIGGER "reviewed_post_boundary_failure"'); }
         expect(await publish({ ...packet, publication: { ...publication, sourceSession: undefined } }))
-            .toMatchObject({ ok: false, error: 'discussion_invalid_content' });
+            .toMatchObject({ ok: false, error: 'discussion_machine_publication_invalid' });
         expect(await publish({ ...packet, publication: { ...publication, sourceSession: undefined,
             replyReturn: { serverId: 'home', requestLocalId: 'not-an-admitted-original' } } }))
             .toMatchObject({ ok: false, error: 'discussion_post_denied' });
         expect(await publish(publication)).toMatchObject({ ok: false }); // No raw draft/Agent publication on a Machine socket.
         expect(await publish({ ...packet, publication: { ...publication, draftReview: undefined } })).toMatchObject({ ok: false });
-        expect(await publish({ ...packet, machineId: randomUUID() })).toMatchObject({ ok: false, error: 'discussion_post_denied' });
+        expect(await publish({ ...packet, machineId: randomUUID() })).toMatchObject({ ok: false, error: 'discussion_machine_identity_mismatch' });
         expect(await publish({ ...packet, publication: { ...publication,
             sourceSession: { ...publication.sourceSession, sourceInputId: 'not-in-that-turn' } } })).toMatchObject({ ok: false, error: 'discussion_post_denied' });
         const outsider = await db.account.create({ data: { encryptionMode: 'plain' } });
@@ -357,10 +372,10 @@ describe('installed Machine reviewed Discussion publication (SQLite)', () => {
         expect(await publish()).toMatchObject({ ok: false, error: 'discussion_post_denied' });
         socket.data![VERIFIED_MACHINE_INSTALLATION_ID_SOCKET_DATA_KEY] = installation;
         socket.data!.clientType = 'user-scoped';
-        expect(await publish()).toMatchObject({ ok: false, error: 'discussion_post_denied' });
+        expect(await publish()).toMatchObject({ ok: false, error: 'discussion_machine_identity_missing' });
         socket.data!.clientType = 'machine-scoped';
         socket.handshake.auth.token = 'not-a-current-credential';
-        expect(await publish()).toMatchObject({ ok: false, error: 'discussion_post_denied' });
+        expect(await publish()).toMatchObject({ ok: false, error: 'discussion_machine_credential_not_current' });
         socket.handshake.auth.token = token;
         await db.machine.update({ where: { id: machine.id }, data: { revokedAt: new Date() } });
         expect(await publish()).toMatchObject({ ok: false, error: 'discussion_post_denied' });

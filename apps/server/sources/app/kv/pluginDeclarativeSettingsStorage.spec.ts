@@ -65,6 +65,8 @@ function createTx(options: Readonly<{
             update: vi.fn(async () => ({ seq: ++sequence })),
         },
         userKVStore: {
+            findMany: vi.fn(async (input: { where: { key: { in: string[] } } }) =>
+                input.where.key.in.flatMap(key => rows.has(key) ? [rows.get(key)!] : [])),
             findUnique: vi.fn(async ({ where }: any) =>
                 rows.get(where.accountId_key.key) ?? null),
             create: vi.fn(async ({ data }: any) => {
@@ -159,6 +161,7 @@ describe("plugin declarative settings storage", () => {
             envelope: { t: "encrypted", c: "opaque-ciphertext" },
         })).resolves.toEqual({ status: "account-mode-mismatch" });
         expect(tx.userKVStore.findUnique).not.toHaveBeenCalled();
+        expect(tx.userKVStore.findMany).not.toHaveBeenCalled();
         expect(tx.userKVStore.create).not.toHaveBeenCalled();
         expect(tx.accountChange.upsert).not.toHaveBeenCalled();
     });
@@ -231,6 +234,7 @@ describe("plugin declarative settings storage", () => {
             envelope: { t: "encrypted", c: ciphertext },
         })).resolves.toEqual({ status: "account-mode-mismatch" });
         expect(tx.userKVStore.findUnique).not.toHaveBeenCalled();
+        expect(tx.userKVStore.findMany).not.toHaveBeenCalled();
         expect(tx.userKVStore.create).not.toHaveBeenCalled();
         expect(tx.accountChange.upsert).not.toHaveBeenCalled();
     });
@@ -259,7 +263,7 @@ describe("plugin declarative settings storage", () => {
         ];
         expect(admissionCallOrder).toHaveLength(1);
         expect(admissionCallOrder[0]).toBeLessThan(
-            tx.userKVStore.findUnique.mock.invocationCallOrder[0],
+            tx.userKVStore.findMany.mock.invocationCallOrder[0],
         );
     });
 

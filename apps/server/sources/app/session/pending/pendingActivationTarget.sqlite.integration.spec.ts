@@ -7,13 +7,21 @@ import { inTx } from '@/storage/inTx';
 import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lightSqliteHarness';
 import { createPresentUserSessionAccessAuthentication } from '@/app/session/access/sessionAccessAuthentication.testkit';
 import { createSessionMachineAccessKeyInTx } from '@/app/accessKeys/sessionMachineAccessKeyMutations';
-import { setMachineAccessGrantInTx, removeMachineAccessGrantInTx } from '@/app/machines/machineAccess';
+import { removeMachineAccessGrantInTx } from '@/app/machines/machineAccess';
+import { setEligibleMachineAccessGrantInTx as setMachineAccessGrantInTx } from '@/testkit/machineAccessGrant.testkit';
 import { createFakeSocket } from '@/app/api/testkit/socketHarness';
 import { withAuthenticatedTestApp } from '@/app/api/testkit/sqliteFastify';
 import { registerSessionListingRoutes } from '@/app/api/routes/session/registerSessionListingRoutes';
 import { eventRouter, type ClientConnection } from '@/app/events/eventRouter';
 import { createSessionPublisherPresence } from '@/app/presence/sessionPublisherPresence';
-import { enqueuePendingMessage, materializeNextPendingMessage, resolveAcceptedPendingDelivery } from './pendingMessageService';
+import { setSessionFollowSource } from '@/app/session/follow/sessionFollowEdgeService';
+import { SessionFollowInputV1Schema, deriveSessionFollowInputLocalIdV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowInputV1';
+import { buildTrustedHostSessionInputAdmissionV1, SessionInputRequestV1Schema, withSessionInputRequestV1,
+    withSessionInputAuthority, settleSessionInputRequestV1, settleSessionMessageProvenanceV1,
+    SESSION_MESSAGE_PROVENANCE_META_KEY, type SessionInputRequestV1, type SessionInputAdmissionReceiptV1,
+} from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
+import { readStoredSessionInputAdmissionReceipt } from '@/app/session/messages/sessionInputAdmission';
+import { enqueuePendingMessage, materializeNextPendingMessage, resolveAcceptedPendingDelivery, settlePendingInputAdmission } from './pendingMessageService';
 import { armPendingActivationAuthorizationInTx } from './pendingActivationAuthorization';
 import { emitPendingActivationHint, loadPendingActivationPublication } from './publishPendingMutation';
 
@@ -49,6 +57,27 @@ describe('exact requester pending activation target (real SQLite)', () => {
         const target = { homeId: process.env.HAPPIER_SERVER_IDENTITY_ID, accountId: requester.id, sessionId: session.id,
             machineId: selectedMachine.id, installationId: selectedMachine.installationId };
         return { custodian, requester, session, selectedMachine, otherMachine, input, target };
+    }
+
+    function protectedContent(options: Pick<SessionInputRequestV1, 'replyIntent' | 'followDeliveryV1'> = {}) {
+        const host = buildTrustedHostSessionInputAdmissionV1(options.followDeliveryV1 ? 'agent' : 'ui');
+        const request = SessionInputRequestV1Schema.parse({ ...host.request, ...options });
+        const meta = withSessionInputRequestV1({ [SESSION_MESSAGE_PROVENANCE_META_KEY]: host.provenance }, request);
+        const content = { t: 'plain' as const, v: { role: 'user', content: { type: 'text', text: 'admitted original' }, meta } };
+        const finalContent = (receipt: SessionInputAdmissionReceiptV1) => ({ ...content, v: { ...content.v, meta: {
+            ...withSessionInputAuthority(meta, settleSessionInputRequestV1({ request, inputAdmissionReceipt: receipt,
+                currentSessionPermissionCeiling: 'default' })),
+            [SESSION_MESSAGE_PROVENANCE_META_KEY]: settleSessionMessageProvenanceV1({ request,
+                requestedProvenance: host.provenance, inputAdmissionReceipt: receipt }),
+        } } });
+        return { content, finalContent };
+    }
+
+    async function admittedReceipt(sessionId: string, localId: string) {
+        const original = await db.sessionPendingMessage.findUniqueOrThrow({ where: { sessionId_localId: { sessionId, localId } } });
+        const receipt = readStoredSessionInputAdmissionReceipt(original.inputAdmissionReceipt);
+        if (!receipt) throw new Error('Expected the input admission owner to retain its receipt');
+        return receipt;
     }
 
     it('retains the selected second tuple and emits only a content-free exact custodian Machine hint without an Account cursor', async () => {
@@ -166,6 +195,124 @@ describe('exact requester pending activation target (real SQLite)', () => {
         expect(await resolveAcceptedPendingDelivery({ actorUserId: f.requester.id, sessionId: f.session.id,
             localId: f.input.localId, publisherAuthority: { ...binding, committedFence: otherCurrent.committedFence } }))
             .toMatchObject({ ok: false, error: 'forbidden' });
+    });
+
+    it.each(['before materialization', 'after materialization'] as const)(
+        'settles materialized input after Machine grant withdrawal without resending and refuses a fresh input (%s)', async withdrawal => {
+        const f = await fixture();
+        const protectedInput = protectedContent();
+        const input = { ...f.input, content: protectedInput.content };
+        expect(await enqueuePendingMessage(input)).toMatchObject({ ok: true });
+        const finalContent = protectedInput.finalContent(await admittedReceipt(f.session.id, input.localId));
+        const binding = { accountId: f.requester.id, sessionId: f.session.id, machineId: f.selectedMachine.id };
+        const presence = createSessionPublisherPresence();
+        const registered = await presence.registerPublisher({ socket: createFakeSocket() as unknown as Socket,
+            binding, completeActivitySnapshot: { state: 'idle', activeCount: 0 } });
+        if (registered.status !== 'registered') throw new Error('Expected the selected publisher to be admitted');
+        const publisherAuthority = { ...binding, committedFence: registered.committedFence };
+        const withdraw = async () => {
+            expect(await inTx(tx => removeMachineAccessGrantInTx(tx, { actorAccountId: f.custodian.id,
+                machineId: f.selectedMachine.id, principal: { kind: 'account', accountId: f.requester.id } })))
+                .toMatchObject({ kind: 'removed' });
+            await db.machine.update({ where: { id: f.selectedMachine.id }, data: {
+                operationProtocolCapabilities: {}, operationProtocolCapabilitiesRevision: null,
+            } });
+        };
+        if (withdrawal === 'before materialization') await withdraw();
+        expect(await materializeNextPendingMessage({ actorUserId: f.requester.id, sessionId: f.session.id,
+            deliveryState: 'provider', deliveryTiming: 'after_foreground_ready', foregroundState: 'ready', publisherAuthority }))
+            .toMatchObject({ ok: true, didMaterialize: true });
+        if (withdrawal === 'after materialization') await withdraw();
+        expect(await settlePendingInputAdmission({ actorUserId: f.requester.id, sessionId: f.session.id,
+            localId: input.localId, publisherAuthority, decision: { kind: 'admit', finalContent } }))
+            .toMatchObject({ ok: true, result: { status: 'accepted', localId: input.localId } });
+        const settle = () => resolveAcceptedPendingDelivery({ actorUserId: f.requester.id, sessionId: f.session.id,
+            localId: f.input.localId, publisherAuthority });
+        expect(await settle()).toMatchObject({ ok: true, didResolve: true });
+        expect(await settle()).toMatchObject({ ok: true, didResolve: false });
+        expect(await db.sessionMessage.count({ where: { sessionId: f.session.id, localId: f.input.localId } })).toBe(1);
+        expect(await db.sessionPendingMessage.count({ where: { sessionId: f.session.id, localId: f.input.localId } })).toBe(0);
+        expect(await enqueuePendingMessage({ ...f.input, localId: randomUUID() })).toMatchObject({ ok: false });
+    });
+
+    it('refuses settlement by a replacement installation of the admitted publisher', async () => {
+        const f = await fixture();
+        expect(await enqueuePendingMessage(f.input)).toMatchObject({ ok: true });
+        const binding = { accountId: f.requester.id, sessionId: f.session.id, machineId: f.selectedMachine.id };
+        const registered = await createSessionPublisherPresence().registerPublisher({ socket: createFakeSocket() as unknown as Socket,
+            binding, completeActivitySnapshot: { state: 'idle', activeCount: 0 } });
+        if (registered.status !== 'registered') throw new Error('Expected the selected publisher to be admitted');
+        const publisherAuthority = { ...binding, committedFence: registered.committedFence };
+        expect(await materializeNextPendingMessage({ actorUserId: f.requester.id, sessionId: f.session.id,
+            deliveryState: 'provider', deliveryTiming: 'after_foreground_ready', foregroundState: 'ready', publisherAuthority }))
+            .toMatchObject({ ok: true, didMaterialize: true });
+        await db.machine.update({ where: { id: f.selectedMachine.id }, data: { installationId: randomUUID() } });
+        expect(await resolveAcceptedPendingDelivery({ actorUserId: f.requester.id, sessionId: f.session.id,
+            localId: f.input.localId, publisherAuthority })).toMatchObject({ ok: false, error: 'forbidden' });
+        expect(await db.sessionPendingMessage.count({ where: { sessionId: f.session.id, localId: f.input.localId } })).toBe(1);
+    });
+
+    it('settles an admitted human ask after its target share is withdrawn and refuses a new ask', async () => {
+        const f = await fixture();
+        const human = await db.account.create({ data: { publicKey: randomUUID(), encryptionMode: 'plain' } });
+        const source = await db.session.create({ data: { accountId: human.id, tag: randomUUID(), metadata: '{}', encryptionMode: 'plain' } });
+        await db.sessionShare.create({ data: { sessionId: f.session.id, sharedByUserId: f.requester.id,
+            sharedWithUserId: human.id, accessLevel: 'edit' } });
+        const reply = { mode: 'return', humanOrigin: { sessionId: source.id } } as const;
+        await db.machine.update({ where: { id: f.selectedMachine.id }, data: { operationProtocolCapabilities: {
+            sessionInputAdmission: { protocolVersions: [1, 2] }, sessionMessageReply: { protocolVersions: [1] },
+        } } });
+        const protectedInput = protectedContent({ replyIntent: reply });
+        const input = { ...f.input, actorUserId: human.id, reply, content: protectedInput.content };
+        expect(await enqueuePendingMessage(input)).toMatchObject({ ok: true });
+        const finalContent = protectedInput.finalContent(await admittedReceipt(f.session.id, input.localId));
+        const binding = { accountId: f.requester.id, sessionId: f.session.id, machineId: f.selectedMachine.id };
+        const registered = await createSessionPublisherPresence().registerPublisher({ socket: createFakeSocket() as unknown as Socket,
+            binding, completeActivitySnapshot: { state: 'idle', activeCount: 0 } });
+        if (registered.status !== 'registered') throw new Error('Expected the selected publisher to be admitted');
+        const publisherAuthority = { ...binding, committedFence: registered.committedFence };
+        expect(await materializeNextPendingMessage({ actorUserId: f.requester.id, sessionId: f.session.id,
+            deliveryState: 'provider', deliveryTiming: 'after_foreground_ready', foregroundState: 'ready', publisherAuthority }))
+            .toMatchObject({ ok: true, didMaterialize: true });
+        await db.sessionShare.deleteMany({ where: { sessionId: f.session.id, sharedWithUserId: human.id } });
+        expect(await settlePendingInputAdmission({ actorUserId: f.requester.id, sessionId: f.session.id,
+            localId: input.localId, publisherAuthority,
+            decision: { kind: 'admit', finalContent, validation: { reply } } }))
+            .toMatchObject({ ok: true, result: { status: 'accepted', localId: input.localId } });
+        expect(await enqueuePendingMessage({ ...input, localId: randomUUID() })).toMatchObject({ ok: false });
+    });
+
+    it('settles a materialized Follow original after its relation is removed', async () => {
+        const f = await fixture();
+        const source = await db.session.create({ data: { accountId: f.requester.id, tag: randomUUID(), metadata: '{}', encryptionMode: 'plain' } });
+        const authentication = createPresentUserSessionAccessAuthentication();
+        expect(await setSessionFollowSource({ accountId: f.requester.id, sourceSessionId: source.id,
+            destinationSessionId: f.session.id, policy: { preset: 'important' }, authentication })).toMatchObject({ ok: true });
+        const terminalAt = BigInt(Date.now());
+        const sourceTurn = { id: randomUUID(), status: 'failed' } as const;
+        await db.sessionTurn.create({ data: { sessionId: source.id, turnId: sourceTurn.id, status: sourceTurn.status,
+            startedAt: terminalAt, updatedAt: terminalAt, terminalAt } });
+        await db.session.update({ where: { id: source.id }, data: { latestTurnId: sourceTurn.id, latestTurnStatus: sourceTurn.status } });
+        const followDeliveryV1 = SessionFollowInputV1Schema.parse({ v: 1, delivery: 'wake',
+            original: { sourceSessionId: source.id, sourceTurn }, event: { kind: 'failed_or_stopped' } });
+        const protectedInput = protectedContent({ followDeliveryV1 });
+        const input = { ...f.input, localId: deriveSessionFollowInputLocalIdV1({ destinationSessionId: f.session.id,
+            original: followDeliveryV1.original }), followDeliveryV1, followRelations: [{ relation: 'follower' as const }],
+            content: protectedInput.content };
+        expect(await enqueuePendingMessage(input)).toMatchObject({ ok: true });
+        const finalContent = protectedInput.finalContent(await admittedReceipt(f.session.id, input.localId));
+        const binding = { accountId: f.requester.id, sessionId: f.session.id, machineId: f.selectedMachine.id };
+        const registered = await createSessionPublisherPresence().registerPublisher({ socket: createFakeSocket() as unknown as Socket,
+            binding, completeActivitySnapshot: { state: 'idle', activeCount: 0 } });
+        if (registered.status !== 'registered') throw new Error('Expected the selected publisher to be admitted');
+        const publisherAuthority = { ...binding, committedFence: registered.committedFence };
+        expect(await materializeNextPendingMessage({ actorUserId: f.requester.id, sessionId: f.session.id,
+            deliveryState: 'provider', deliveryTiming: 'after_foreground_ready', foregroundState: 'ready', publisherAuthority }))
+            .toMatchObject({ ok: true, didMaterialize: true });
+        await db.sessionFollowEdge.deleteMany({ where: { destinationSessionId: f.session.id, sourceSessionId: source.id } });
+        expect(await settlePendingInputAdmission({ actorUserId: f.requester.id, sessionId: f.session.id,
+            localId: input.localId, publisherAuthority, decision: { kind: 'admit', finalContent } }))
+            .toMatchObject({ ok: true, result: { status: 'accepted', localId: input.localId } });
     });
 
     it('keeps target-less predecessor input from becoming foreign publisher authority', async () => {

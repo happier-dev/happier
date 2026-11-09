@@ -1,6 +1,11 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import type { Prisma } from "@prisma/client";
-import { buildPluginDomainAccountChangeEntityId } from "@happier-dev/protocol";
+import { buildPluginDomainAccountChangeEntityId, sealPluginCollectionPrivatePayloadV1, openPluginCollectionPrivatePayloadV1 } from "@happier-dev/protocol";
+import tweetnacl from 'tweetnacl';
+import * as privacyKit from 'privacy-kit';
+import { sealEncryptedDataKeyEnvelopeV1, openEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
+import { computeContentPublicKeyFingerprint } from '@happier-dev/protocol/machines/identity/contentPublicKeyFingerprint';
+import { createSignedAccountContentBinding } from '@/testkit/accountEncryption';
 
 import {
     materializePluginCollectionContractsFromManifestTx,
@@ -14,6 +19,8 @@ import {
 } from "./candidatePreparation";
 import { readPluginCollectionAccountActivationUsageInTx } from "./quota";
 import { mutatePluginCollection } from "./mutation";
+import { backfillPluginCollectionUsageTotalsInTx } from "./usageTotals";
+import { assertPluginCollectionUsageTotalsMatchRows } from "./usageTotals.testkit";
 import { getPluginCollection, queryPluginCollection } from "./uiQuery";
 import * as collectionContracts from "./contracts";
 import { createPluginAvailabilityOperations } from "@/app/plugins/availability/operations";
@@ -387,6 +394,7 @@ async function prepareAvailabilityPromotionFixture(input: Readonly<{
         candidate: { releaseVersion: TARGET_VERSION, artifactDigest: `sha256:${"a".repeat(64)}` },
     } as const;
     const targetTitles = input.targetTitles ?? ["Target A", "Target B"];
+    await inTx(tx => backfillPluginCollectionUsageTotalsInTx({ tx, accountId: ACCOUNT_ID }));
     await stagePluginCollectionCandidatePreparation({
         accountId: ACCOUNT_ID,
         request: {
@@ -1264,6 +1272,115 @@ describe("plugin Collection candidate preparation", () => {
         })).resolves.toEqual({ contracts: [target] });
     });
 
+    it("transfers retained usage to a compatible contract and invalidates recipients without changing stored row bytes", async () => {
+        const [source] = await materialize(SOURCE_MANIFEST);
+        const [target] = await materialize({
+            ...TARGET_MANIFEST_WITHOUT_ROW_MIGRATION,
+            contributes: { accountCollections: [{
+                ...SOURCE_MANIFEST.contributes.accountCollections[0],
+                schema: {
+                    ...SOURCE_MANIFEST.contributes.accountCollections[0].schema,
+                    properties: {
+                        ...SOURCE_MANIFEST.contributes.accountCollections[0].schema.properties,
+                        title: { type: "string", maxLength: 512 },
+                    },
+                },
+            }] },
+        });
+        if (!source || !target) throw new Error("Expected source and target contracts.");
+        await db.account.create({ data: { id: ACCOUNT_ID, publicKey: null, encryptionMode: "plain" } });
+        const sourceContract = await seedCurrentSource({ accountId: ACCOUNT_ID, source, enabled: true });
+        await seedLiveSourceRow({ accountId: ACCOUNT_ID, contract: { ...sourceContract, ...source }, rowId: "retained-live" });
+        const recipient = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const sharedRow = await db.pluginCollectionRow.findFirstOrThrow({ where: { accountId: ACCOUNT_ID, rowId: 'retained-live' } });
+        await db.pluginCollectionAccountGrant.create({ data: { rowDbId: sharedRow.id, accountId: recipient.id,
+            accessLevel: 'view', createdByAccountId: ACCOUNT_ID } });
+        await inTx(tx => backfillPluginCollectionUsageTotalsInTx({ tx, accountId: ACCOUNT_ID }));
+        const before = await db.account.findUniqueOrThrow({ where: { id: ACCOUNT_ID },
+            select: { pluginCollectionRows: true, pluginCollectionEncodedBytes: true } });
+        const currentIntent = await db.accountPluginIntent.findUniqueOrThrow({
+            where: { accountId_pluginId: { accountId: ACCOUNT_ID, pluginId: PLUGIN_ID } },
+        });
+        await inTx(tx => promotePluginCollectionCandidatePreparationInTx({
+            tx, accountId: ACCOUNT_ID, pluginId: PLUGIN_ID, currentIntent,
+            targetReleaseVersion: TARGET_VERSION, targetContracts: [target],
+        }));
+        await expect(db.pluginCollectionRow.findFirstOrThrow({ where: { accountId: ACCOUNT_ID },
+            select: { contractDigest: true, revision: true } })).resolves.toEqual({
+            contractDigest: target.contractDigest, revision: 1,
+        });
+        await expect(db.account.findUniqueOrThrow({ where: { id: ACCOUNT_ID },
+            select: { pluginCollectionRows: true, pluginCollectionEncodedBytes: true } })).resolves.toEqual(before);
+        await assertPluginCollectionUsageTotalsMatchRows(ACCOUNT_ID);
+        expect(await db.pluginCollectionAccountGrant.count({ where: { rowDbId: sharedRow.id } })).toBe(1);
+        expect(await db.accountChange.findMany({ where: { accountId: recipient.id, kind: 'pluginDomain' } })).toEqual(expect.arrayContaining([
+            expect.objectContaining({ hint: expect.objectContaining({ pluginDomain: 'dataCollection',
+                contractDigest: target.contractDigest, rowIds: ['retained-live'] }) }),
+        ]));
+    });
+
+    it("preserves shared E2EE row keys across candidate staging and promotion and refuses an Account-key target", async () => {
+        const targetManifest = { ...TARGET_MANIFEST, contributes: { accountCollections: [{
+            ...TARGET_MANIFEST.contributes.accountCollections[0],
+            schema: { ...TARGET_MANIFEST.contributes.accountCollections[0].schema, properties: {
+                ...TARGET_MANIFEST.contributes.accountCollections[0].schema.properties,
+                status: { type: 'string', enum: ['closed'] },
+            } },
+        }] } } as const;
+        const [source] = await materialize(SOURCE_MANIFEST);
+        const [target] = await materialize(targetManifest);
+        if (!source || !target) throw new Error('Expected source and target contracts');
+        const identities = [ACCOUNT_ID, OTHER_ACCOUNT_ID].map(accountId => ({ accountId, keys: tweetnacl.box.keyPair() }));
+        for (const identity of identities) await db.account.create({ data: { id: identity.accountId,
+            encryptionMode: 'e2ee', ...createSignedAccountContentBinding(identity.keys.publicKey) } });
+        const sourceContract = await seedCurrentSource({ accountId: ACCOUNT_ID, source, enabled: true });
+        await seedRelease({ accountId: ACCOUNT_ID, version: SOURCE_VERSION, manifest: SOURCE_MANIFEST, contracts: [source] });
+        await seedRelease({ accountId: ACCOUNT_ID, version: TARGET_VERSION, manifest: targetManifest, contracts: [target] });
+        const row = await seedLiveSourceRow({ accountId: ACCOUNT_ID, contract: { ...sourceContract, ...source }, rowId: 'shared-candidate' });
+        const dataKey = tweetnacl.randomBytes(32);
+        const material = { type: 'dataKey' as const, machineKey: dataKey };
+        const ciphertext = sealPluginCollectionPrivatePayloadV1({ material, payload: {}, randomBytes: tweetnacl.randomBytes });
+        const content = { t: 'encrypted' as const, c: ciphertext, k: 'collection' as const };
+        await db.pluginCollectionRow.update({ where: { id: row.id }, data: { contentEnvelope: content } });
+        await db.pluginCollectionAccountGrant.create({ data: { rowDbId: row.id, accountId: OTHER_ACCOUNT_ID,
+            accessLevel: 'view', createdByAccountId: ACCOUNT_ID } });
+        for (const identity of identities) await db.pluginCollectionKeyEnvelope.create({ data: { rowDbId: row.id,
+            recipientAccountId: identity.accountId, recipientContentPublicKeyFingerprint: computeContentPublicKeyFingerprint(identity.keys.publicKey),
+            encryptedDataKey: sealEncryptedDataKeyEnvelopeV1({ dataKey, recipientPublicKey: identity.keys.publicKey, randomBytes: tweetnacl.randomBytes }) } });
+        await inTx(tx => backfillPluginCollectionUsageTotalsInTx({ tx, accountId: ACCOUNT_ID }));
+        const before = await db.pluginCollectionKeyEnvelope.findMany({ where: { rowDbId: row.id }, orderBy: { recipientAccountId: 'asc' } });
+        const binding = { source, target, candidate: { releaseVersion: TARGET_VERSION, artifactDigest: `sha256:${'a'.repeat(64)}` } } as const;
+        const page = await pagePluginCollectionCandidatePreparationSource({ accountId: ACCOUNT_ID, request: { binding, limit: 10 } });
+        const ownerEnvelope = before.find(envelope => envelope.recipientAccountId === ACCOUNT_ID)!;
+        expect(page.rows).toEqual([expect.objectContaining({ rowId: 'shared-candidate', content,
+            encryptedDataKey: privacyKit.encodeBase64(ownerEnvelope.encryptedDataKey) })]);
+        const projection = { id: 'shared-candidate', status: 'closed', title: 'Promoted encrypted row' };
+        await expect(stagePluginCollectionCandidatePreparation({ accountId: ACCOUNT_ID, request: { binding, items: [{
+            source: { rowId: 'shared-candidate', revision: 1 }, target: { content: { t: 'encrypted', c: ciphertext }, projection },
+        }] } })).rejects.toMatchObject({ code: 'collection_candidate_preparation_content_mode_mismatch' });
+        await expect(stagePluginCollectionCandidatePreparation({ accountId: ACCOUNT_ID, request: { binding, items: [{
+            source: { rowId: 'shared-candidate', revision: 1 }, target: { content, projection },
+        }] } })).resolves.toEqual({ results: [{ status: 'staged' }] });
+        const currentIntent = await db.accountPluginIntent.findUniqueOrThrow({ where: { accountId_pluginId: { accountId: ACCOUNT_ID, pluginId: PLUGIN_ID } } });
+        await inTx(tx => promotePluginCollectionCandidatePreparationInTx({ tx, accountId: ACCOUNT_ID, pluginId: PLUGIN_ID,
+            currentIntent, targetReleaseVersion: TARGET_VERSION, targetContracts: [target] }));
+        const promoted = await db.pluginCollectionRow.findUniqueOrThrow({ where: { id: row.id } });
+        expect(promoted).toMatchObject({ revision: 2, contractDigest: target.contractDigest, contentEnvelope: content });
+        const after = await db.pluginCollectionKeyEnvelope.findMany({ where: { rowDbId: row.id }, orderBy: { recipientAccountId: 'asc' } });
+        expect(after).toEqual(before);
+        for (const identity of identities) {
+            const envelope = after.find(value => value.recipientAccountId === identity.accountId)!;
+            const opened = openEncryptedDataKeyEnvelopeV1({ envelope: envelope.encryptedDataKey, recipientSecretKeyOrSeed: identity.keys.secretKey });
+            expect(opened).toEqual(dataKey);
+            expect(openPluginCollectionPrivatePayloadV1({ material: { type: 'dataKey', machineKey: opened! }, ciphertext })).toEqual({});
+        }
+        expect(await db.pluginCollectionAccountGrant.count({ where: { rowDbId: row.id } })).toBe(1);
+        expect(await db.accountChange.findMany({ where: { accountId: OTHER_ACCOUNT_ID, kind: 'pluginDomain' } })).toEqual(expect.arrayContaining([
+            expect.objectContaining({ hint: expect.objectContaining({ rowIds: ['shared-candidate'], revision: 2 }) }),
+        ]));
+        await assertPluginCollectionUsageTotalsMatchRows(ACCOUNT_ID);
+    });
+
     it("counts the canonical source plus prospective target through the existing quota owner before staging", async () => {
         const [source] = await materialize(SOURCE_MANIFEST);
         const [target] = await materialize(TARGET_MANIFEST);
@@ -2092,8 +2209,13 @@ describe("plugin Collection candidate preparation", () => {
     it("promotes one deployment-maximal SQLite candidate batch setwise", async () => {
         const maximumBatchRows = readPluginsFeatureEnv(process.env).collectionLimits.maxBatchRows;
         const rowIds = Array.from({ length: maximumBatchRows }, (_, index) => `task-${index}`);
-        const { target, service } = await prepareAvailabilityPromotionFixture({ rowIds });
-
+        const { target, service } = await prepareAvailabilityPromotionFixture({ rowIds, targetManifest: {
+            ...TARGET_MANIFEST_WITH_INDEX,
+            contributes: { accountCollections: [{
+                ...TARGET_MANIFEST_WITH_INDEX.contributes.accountCollections[0],
+                quota: { maxRowsByIndexPrefix: [{ indexId: "by-status", prefix: ["open"], maxRows: maximumBatchRows }] },
+            }] },
+        } });
         await expect(service.setIntent({
             accountId: ACCOUNT_ID,
             input: {
@@ -2123,6 +2245,7 @@ describe("plugin Collection candidate preparation", () => {
         await expect(db.pluginCollectionCandidatePreparationStage.count({
             where: { accountId: ACCOUNT_ID },
         })).resolves.toBe(0);
+        await assertPluginCollectionUsageTotalsMatchRows(ACCOUNT_ID);
     });
 
     it("rolls back one deployment-maximal SQLite promotion when stage retirement fails late", async () => {
@@ -2167,6 +2290,7 @@ describe("plugin Collection candidate preparation", () => {
         await expect(db.pluginCollectionProjection.count({
             where: { accountId: ACCOUNT_ID, rowRevision: 2 },
         })).resolves.toBe(0);
+        await assertPluginCollectionUsageTotalsMatchRows(ACCOUNT_ID);
         await expect(db.pluginCollectionIndexState.count({
             where: { accountId: ACCOUNT_ID, contractDigest: target.contractDigest },
         })).resolves.toBe(0);

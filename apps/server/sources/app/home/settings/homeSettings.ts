@@ -21,6 +21,7 @@ import { getDbProviderFromEnv } from "@/storage/prisma";
 
 import { buildHomeConfigEnv, composeHomeConfigEnv, projectHomeSettings } from "./homeConfigOverlay";
 import { readHomeDeploymentEnv, readStartupHomeEnv, type StoredHomeSettings } from "./startupHomeEnv";
+import { refreshAuthDiagnosticsLogsFlag } from "./authDiagnosticsFlag";
 
 /**
  * The persisted Home settings (plan `2026-09-26-home-owner-console` §3.1 "Persisted Home settings").
@@ -154,14 +155,17 @@ export type HomeConfigSnapshot = Readonly<{
 
 /** Capture both rows coherently without opening secrets or constructing their full env overlay. */
 export async function readHomeConfigSnapshot(base: ServerConfigEnv = process.env): Promise<HomeConfigSnapshot> {
-    return inReadSnapshot(tx => readHomeConfigSnapshotInTx(tx, base));
+    // PostgreSQL reads both singletons in one joined statement; other engines read them separately.
+    return inReadSnapshot(tx => readHomeConfigSnapshotInTx(tx, base), {
+        singleStatementRead: getDbProviderFromEnv(process.env, "postgres") === "postgres",
+    });
 }
 
 async function readHomeConfigSnapshotInTx(tx: Tx, base: ServerConfigEnv): Promise<HomeConfigSnapshot> {
     if (getDbProviderFromEnv(process.env, "postgres") === "postgres") {
         // Neither singleton is required to exist. Seed the join so an empty Home
         // still yields its defaults, with settings and governance from one read.
-        // Keep the owning transaction's READ ONLY/isolation/statement budget.
+        // One statement is one snapshot; a composing transaction keeps its own mode and budget.
         const [row] = await tx.$queryRawUnsafe<Array<{
             revision: number | null;
             values: unknown;
@@ -472,10 +476,15 @@ export async function setHomeSettings(
             throw error;
         }
     };
-    try {
-        return await attempt();
-    } catch (error) {
-        if (!(error instanceof HomeSettingsMutationAbortError) || error.status !== "revision_conflict") throw error;
-        return await attempt();
-    }
+    const result = await (async () => {
+        try {
+            return await attempt();
+        } catch (error) {
+            if (!(error instanceof HomeSettingsMutationAbortError) || error.status !== "revision_conflict") throw error;
+            return await attempt();
+        }
+    })();
+    // This instance wrote the row, so it updates its in-process diagnostics flag now (see authDiagnosticsFlag).
+    if (result.status === "applied") await refreshAuthDiagnosticsLogsFlag();
+    return result;
 }

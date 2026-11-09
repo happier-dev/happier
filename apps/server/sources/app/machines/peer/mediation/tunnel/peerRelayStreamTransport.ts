@@ -101,7 +101,8 @@ export type PeerTcpTunnelRelayStream = Readonly<{
     stream: PeerTcpTunnelRelayByteStream;
     open(): void;
     acceptEnvelope(envelope: PeerTcpTunnelRelayEnvelope): void;
-    closeFromTunnel(): void;
+    closeFromTunnel(reasonCode?: string): void;
+    readTerminalReasonCode(): string | undefined;
 }>;
 
 function normalizeChunk(chunk: Uint8Array): Uint8Array {
@@ -124,6 +125,7 @@ export function createPeerTcpTunnelRelayStream(input: Readonly<{
 }>): PeerTcpTunnelRelayStream {
     const queue = new AsyncByteQueue();
     let closed = false;
+    let terminalError: Error | undefined;
 
     function release(): void {
         if (closed) return;
@@ -170,6 +172,7 @@ export function createPeerTcpTunnelRelayStream(input: Readonly<{
 
     return {
         stream,
+        readTerminalReasonCode: () => terminalError?.message,
         open() {
             // Parent admission is the signed V1 open, owned by the caller.
             if (input.substreamId === undefined) return;
@@ -198,14 +201,18 @@ export function createPeerTcpTunnelRelayStream(input: Readonly<{
                 payload: decoded.payload,
             });
             if (!frame) return;
-            if (frame.kind === "abort") queue.close(new Error(frame.reasonCode));
+            if (frame.kind === "abort") {
+                terminalError ??= Object.assign(new Error(frame.reasonCode), { reasonCode: frame.reasonCode });
+                queue.close(terminalError);
+            }
             void frameSession.acceptFrame(frame).catch((error) => {
                 queue.close(error instanceof Error ? error : new Error(String(error)));
                 release();
             });
         },
-        closeFromTunnel() {
-            queue.close(new Error("tunnel_closed"));
+        closeFromTunnel(reasonCode = "tunnel_closed") {
+            terminalError ??= Object.assign(new Error(reasonCode), { reasonCode });
+            queue.close(terminalError);
             // The parent transport is already gone, so close only the local
             // frame session. It owns pending credit-blocked write settlement,
             // timers, queue teardown, and the exact connection release.

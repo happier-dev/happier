@@ -1,4 +1,3 @@
-import { decodePeerApplicationEncryptedFrameV1 } from '@happier-dev/protocol/machines/peer/mediation/peerApplicationEncryptionV1';
 import { decodePeerTcpTunnelBinaryFrameV2, encodePeerTcpTunnelBinaryFrameV2, type PeerTcpTunnelBinaryFrameHeaderV2 } from '@happier-dev/protocol/machines/peer/mediation/tunnel/v2';
 import { PEER_TCP_TUNNEL_BINARY_FRAME_ENCODING_V2, type PeerTcpTunnelEncoding } from '@happier-dev/protocol/machines/peer/mediation/tunnel/encoding';
 import { PEER_TCP_TUNNEL_RELAY_SOCKET_EVENT, PeerTcpTunnelRelayEnvelopeSchema, PeerTcpTunnelRelayEnvelopeV1Schema, type PeerTcpTunnelRelayBinaryEnvelopeV2, type PeerTcpTunnelRelayEnvelope, type PeerTcpTunnelRelayEnvelopeV1, type PeerTcpTunnelRelayParticipantV1 } from '@happier-dev/protocol/machines/peer/mediation/tunnel/relay';
@@ -57,10 +56,6 @@ const authorizedTunnelKeys = new Set<TunnelKey>();
 const bytesByTunnelKey = new Map<TunnelKey, Readonly<{ in: number; out: number }>>();
 const encodingByTunnelKey = new Map<TunnelKey, PeerTcpTunnelEncoding>();
 const authorizationStateByTunnelKey = new Map<TunnelKey, AuthorizedRelayState>();
-const voiceApplicationProtectionByTunnelKey = new Map<TunnelKey, {
-    encryptedApplicationFrames: number;
-    unprotectedApplicationFrames: number;
-}>();
 const observabilityIdentityByTunnelKey = new Map<TunnelKey, {
     tunnelId: string;
     machineId?: string;
@@ -499,7 +494,6 @@ function clearTunnelState(tunnelKey: TunnelKey): void {
     tunnelLastActivityAtByKey.delete(tunnelKey);
     encodingByTunnelKey.delete(tunnelKey);
     authorizationStateByTunnelKey.delete(tunnelKey);
-    voiceApplicationProtectionByTunnelKey.delete(tunnelKey);
     observabilityIdentityByTunnelKey.delete(tunnelKey);
     userSocketIdByTunnelKey.delete(tunnelKey);
     substreamsByTunnelKey.delete(tunnelKey);
@@ -524,7 +518,8 @@ function applyBinarySubstreamCaps(input: Readonly<{
         || (input.allowDataFirst && input.header.kind === 'data' && !active.has(substreamId));
     if (admitsSubstream) {
         if (active.has(substreamId)) return 'frame_invalid';
-        if (active.size >= input.caps.substreams.maxConcurrentSubstreams) return 'relay_cap_exceeded';
+        if (input.caps.substreams.maxConcurrentSubstreams !== undefined
+            && active.size >= input.caps.substreams.maxConcurrentSubstreams) return 'relay_cap_exceeded';
         active.add(substreamId);
     } else if (!active.has(substreamId)) {
         return 'frame_invalid';
@@ -775,7 +770,6 @@ export function registerPeerTcpTunnelRelaySocketHandler(
         const bytes = bytesByTunnelKey.get(input.tunnelKey);
         const carrierEncoding = encodingByTunnelKey.get(input.tunnelKey);
         const signedFlowKind = authorizationStateByTunnelKey.get(input.tunnelKey)?.flowKind;
-        const voiceProtection = voiceApplicationProtectionByTunnelKey.get(input.tunnelKey);
         clearTunnelState(input.tunnelKey);
         emitObservability({
             ...(input.envelope ? { envelope: input.envelope } : {}),
@@ -788,13 +782,6 @@ export function registerPeerTcpTunnelRelaySocketHandler(
             metadata: {
                 ...(carrierEncoding ? { carrierEncoding } : {}),
                 ...(signedFlowKind ? { signedFlowKind } : {}),
-                ...(voiceProtection ? {
-                    encryptedApplicationFrames: voiceProtection.encryptedApplicationFrames,
-                    unprotectedApplicationFrames: voiceProtection.unprotectedApplicationFrames,
-                    allApplicationFramesEncrypted:
-                        voiceProtection.encryptedApplicationFrames > 0
-                        && voiceProtection.unprotectedApplicationFrames === 0,
-                } : {}),
                 cleanupSettled: true,
             },
         });
@@ -979,10 +966,11 @@ export function registerPeerTcpTunnelRelaySocketHandler(
                     ? 0
                     : envelope.frame.byteLength;
                 // Bound the admission buffer, including empty/control-frame headers, by existing child credit capacity.
-                const maxQueuedBytes = PEER_TCP_TUNNEL_MAX_WINDOW_BYTES * caps.substreams.maxConcurrentSubstreams;
+                const maxConcurrentSubstreams = caps.substreams.maxConcurrentSubstreams;
                 pending.queuedBytes += queuedBytes;
                 if (
-                    pending.queuedBytes > maxQueuedBytes
+                    maxConcurrentSubstreams !== undefined
+                    && pending.queuedBytes > PEER_TCP_TUNNEL_MAX_WINDOW_BYTES * maxConcurrentSubstreams
                 ) {
                     pending.cancelledReason = 'relay_cap_exceeded';
                     emitAbort({
@@ -1105,6 +1093,7 @@ export function registerPeerTcpTunnelRelaySocketHandler(
         if (
             !socketTunnelKeys.has(tunnelKey)
             && !pendingOpenByTunnelKey.has(tunnelKey)
+            && caps.maxActiveTunnelsPerSocket !== undefined
             && socketTunnelKeys.size + pendingOpenCount >= caps.maxActiveTunnelsPerSocket
         ) {
             emitObservability({ envelope, tunnelId, kind: 'cap.exceeded', reasonCode: 'relay_cap_exceeded' });
@@ -1391,33 +1380,9 @@ export function registerPeerTcpTunnelRelaySocketHandler(
                 tunnelId,
                 ...(machineId ? { machineId } : {}),
             });
-            if (authorizationState.flowKind === 'voice_media') {
-                voiceApplicationProtectionByTunnelKey.set(tunnelKey, {
-                    encryptedApplicationFrames: 0,
-                    unprotectedApplicationFrames: 0,
-                });
-            }
             if (envelope.sender.kind === 'user' && socket.id) {
                 userSocketIdByTunnelKey.set(tunnelKey, socket.id);
             }
-        }
-        if (
-            envelope.v === 2
-            && decodedBinary?.ok === true
-            && decodedBinary.header.kind === 'data'
-            && decodedBinary.header.substreamId
-            && decodedBinary.payloadBytes > 0
-            && authorizationState.flowKind === 'voice_media'
-        ) {
-            const current = voiceApplicationProtectionByTunnelKey.get(tunnelKey) ?? {
-                encryptedApplicationFrames: 0,
-                unprotectedApplicationFrames: 0,
-            };
-            const encrypted = decodePeerApplicationEncryptedFrameV1(decodedBinary.payload) !== null;
-            voiceApplicationProtectionByTunnelKey.set(tunnelKey, {
-                encryptedApplicationFrames: current.encryptedApplicationFrames + (encrypted ? 1 : 0),
-                unprotectedApplicationFrames: current.unprotectedApplicationFrames + (encrypted ? 0 : 1),
-            });
         }
         bytesByTunnelKey.set(tunnelKey, nextBytes);
         tunnelLastActivityAtByKey.set(tunnelKey, now);

@@ -85,7 +85,9 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== "postgres")("Session grant w
                                     await db.account.update({ where: { id: owner.id }, data: { status: "suspended" } });
                                 }
                                 if (contention === "publication" && !publicationPending
-                                    && values[0].includes('FROM "Account"') && values[0].endsWith("FOR NO KEY UPDATE")) {
+                                    && values[0].includes('FROM "Account"') && values[0].includes("FOR UPDATE")) {
+                                    // The exclusive entry fence is reused at publication.
+                                    const locked = await Reflect.apply(ownerQuery, queryReceiver, values);
                                     interleavings++;
                                     publicationPending = true;
                                     let ready!: (pid: number) => void;
@@ -104,6 +106,7 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== "postgres")("Session grant w
                                         `;
                                         if (blocked) break;
                                     }
+                                    return locked;
                                 }
                                 return Reflect.apply(ownerQuery, queryReceiver, values);
                             } });

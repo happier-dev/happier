@@ -4,7 +4,7 @@ import { createAuthenticatedFakeSocket } from '@/app/api/testkit/socketHarness';
 import { eventRouter } from '@/app/events/eventRouter';
 import { createSessionPublisherPresence } from '@/app/presence/sessionPublisherPresence';
 import { db, getDbProviderFromEnv, initDbPostgres, shutdownDbClient } from '@/storage/db';
-import { assertLegacyKeepaliveDurableFreshness } from './sessionUpdateHandler.presence.testkit';
+import { assertKeepaliveRealtimeFreshness } from './sessionUpdateHandler.presence.testkit';
 
 describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('Retained legacy Session keepalive durability on PostgreSQL', () => {
     beforeAll(async () => {
@@ -16,8 +16,8 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('R
         await db.$connect();
     });
     afterAll(async () => { eventRouter.clearIo(); await shutdownDbClient(); });
-    it('publishes two minute-spaced durable heartbeats for owner and shared-viewer freshness',
-        assertLegacyKeepaliveDurableFreshness);
+    it('delivers two minute-spaced realtime heartbeats to owner and shared viewer with no Account cursor',
+        assertKeepaliveRealtimeFreshness);
 
     it('retains committed content while a legacy durable heartbeat waits behind its writer', async () => {
         const account = await db.account.create({ data: { encryptionMode: 'plain' } });
@@ -65,7 +65,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('R
             const [result] = await heartbeatOutcome;
             if (result!.status === 'rejected') throw result!.reason;
             expect(result!.value).toMatchObject({ status: 'touched',
-                recipientCursors: [{ accountId: account.id, cursor: expect.any(Number) }], activeAt: observedAt });
+                recipientCursors: [], heartbeatRecipientAccountIds: [account.id], activeAt: observedAt });
             const retained = await db.session.findUniqueOrThrow({ where: { id: session.id }, select: {
                 metadata: true, metadataVersion: true, updatedAt: true, lastActiveAt: true,
             } });

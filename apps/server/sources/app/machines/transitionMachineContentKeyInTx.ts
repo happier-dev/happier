@@ -1,4 +1,5 @@
 import * as privacyKit from "privacy-kit";
+import { isDeepStrictEqual } from 'node:util';
 import {
     MachineContentKeyTransitionInputV1Schema,
     type MachineContentKeyTransitionInputV1,
@@ -16,6 +17,7 @@ import { compareAndSwapMachineContentInTx } from "./compareAndSwapMachineContent
 import { serializeMachineKeyBasis, serializeMachineRow } from "./machineSerialization";
 import { readMachineDevcontainerChildInTx } from './managed/managedRows';
 import { resolveCurrentMachineRecipientAccountIdsInTx } from "./machineAccess";
+import { classifyMachineAvailabilityState } from './machineStateGuards';
 
 /** Only the custodian may inspect raw historical content that ordinary mode-aware readers lock. */
 export async function readMachineContentKeySnapshotInTx(params: Readonly<{
@@ -26,7 +28,7 @@ export async function readMachineContentKeySnapshotInTx(params: Readonly<{
     const machine = await params.tx.machine.findUnique({ where: { id: params.machineId },
         include: { managedResource: true } });
     if (!machine || machine.accountId !== params.accountId || machine.kind !== "persistent"
-        || machine.revokedAt || machine.replacedByMachineId) return null;
+        || classifyMachineAvailabilityState(machine) !== 'available') return null;
     const account = await params.tx.account.findUnique({ where: { id: params.accountId }, select: {
         encryptionMode: true, publicKey: true, contentPublicKey: true, contentPublicKeySig: true,
     } });
@@ -48,7 +50,7 @@ export async function transitionMachineContentKeyInTx(params: Readonly<{
     await acquireMachineAccessPublicationLocksInTx(tx, input.machineId);
     const machine = await tx.machine.findUnique({ where: { id: input.machineId } });
     if (!machine || machine.accountId !== accountId) return { kind: "refused", code: "forbidden" };
-    if (machine.kind !== "persistent" || machine.revokedAt || machine.replacedByMachineId) {
+    if (machine.kind !== "persistent" || classifyMachineAvailabilityState(machine) !== 'available') {
         return { kind: "refused", code: "machine_unavailable" };
     }
     const account = await tx.account.findUnique({ where: { id: accountId }, select: {
@@ -59,9 +61,7 @@ export async function transitionMachineContentKeyInTx(params: Readonly<{
     if (currentness.status !== "ready") return { kind: "refused", code: "encryption_material_unavailable" };
     const targetMode = currentness.currentness.encryptionMode;
     const current = serializeMachineKeyBasis(machine);
-    if (current.dataEncryptionKey !== input.expected.dataEncryptionKey
-        || current.metadataVersion !== input.expected.metadataVersion
-        || current.daemonStateVersion !== input.expected.daemonStateVersion) {
+    if (!isDeepStrictEqual(current, input.expected)) {
         return { kind: "conflict", current };
     }
     if (!machineStoredContentMatchesAccountMode({
@@ -96,7 +96,7 @@ export async function transitionMachineContentKeyInTx(params: Readonly<{
     });
     if (!applied) {
         const fresh = await tx.machine.findUnique({ where: { id: machine.id } });
-        if (!fresh || fresh.accountId !== accountId || fresh.revokedAt || fresh.replacedByMachineId) {
+        if (!fresh || fresh.accountId !== accountId || classifyMachineAvailabilityState(fresh) !== 'available') {
             return { kind: "refused", code: "machine_unavailable" };
         }
         return { kind: "conflict", current: serializeMachineKeyBasis(fresh) };

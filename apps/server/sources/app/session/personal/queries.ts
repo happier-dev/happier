@@ -292,9 +292,25 @@ export async function countAccountPersonalAttentionRowsForAccountsInTx(
     return counts;
 }
 
-/** Active Follow only; an explicit suppression row is never a Following member. */
-function createActiveFollowWhere(accountId: string): Prisma.SessionWhereInput {
-    return { accountFollows: { some: { accountId, following: true, hasPersistentFollow: true } } };
+/**
+ * Scope arms are resolved through their viewer-keyed relation indexes in the
+ * caller's snapshot and returned as Session ids, the same way the Discussion arms
+ * already are. A correlated relation arm inside the scope's OR cannot be served
+ * by any Session index, so PostgreSQL scanned every Account's Sessions per list
+ * branch; ids let it combine the viewer's own index with exact id lookups.
+ * Membership is unchanged: each set is exactly that arm's relation predicate.
+ */
+async function readActiveFollowSessionIds(tx: Tx, accountId: string): Promise<string[]> {
+    // Active Follow only; an explicit suppression row is never a Following member.
+    const rows = await tx.accountSessionFollow.findMany({
+        where: { accountId, following: true, hasPersistentFollow: true, sessionId: { not: null } },
+        select: { sessionId: true },
+    });
+    return rows.flatMap(row => row.sessionId === null ? [] : [row.sessionId]);
+}
+
+function sessionIdsWhere(...sets: ReadonlyArray<readonly string[]>): Prisma.SessionWhereInput {
+    return { id: { in: [...new Set(sets.flat())] } };
 }
 
 /**
@@ -311,12 +327,21 @@ function createActiveFollowWhere(accountId: string): Prisma.SessionWhereInput {
  * participation (§4.3).
  */
 async function createSessionParticipationWhere(tx: Tx, accountId: string): Promise<readonly Prisma.SessionWhereInput[]> {
+    const [shares, authored, discussionAuthorship] = await Promise.all([
+        tx.sessionShare.findMany({ where: { sharedWithUserId: accountId }, select: { sessionId: true } }),
+        // Owned Sessions already match the ownership arm; transcript authorship
+        // only adds another Account's Session.
+        tx.sessionMessage.groupBy({
+            by: ["sessionId"],
+            where: { authorAccountId: accountId, session: { accountId: { not: accountId } } },
+        }),
+        createSessionsWithHumanDiscussionAuthorshipWhere(tx, accountId),
+    ]);
     return [
         { accountId },
         { responsibleAccountId: accountId },
-        { shares: { some: { sharedWithUserId: accountId } } },
-        { messages: { some: { authorAccountId: accountId } } },
-        await createSessionsWithHumanDiscussionAuthorshipWhere(tx, accountId),
+        sessionIdsWhere(shares.map(row => row.sessionId), authored.map(row => row.sessionId)),
+        discussionAuthorship,
     ];
 }
 
@@ -327,30 +352,35 @@ export async function createSessionListScopeWhere(params: Readonly<{
     tx?: Tx;
 }>): Promise<Prisma.SessionWhereInput> {
     const { accountId, scope } = params;
+    const tx = params.tx ?? db;
     if (scope === "all_accessible") return {};
     if (scope === "assigned_to_me") return { responsibleAccountId: accountId };
-    if (scope === "following") return createActiveFollowWhere(accountId);
-    if (scope === "involving_me") return { OR: [...await createSessionParticipationWhere(params.tx ?? db, accountId)] };
+    if (scope === "following") return sessionIdsWhere(await readActiveFollowSessionIds(tx, accountId));
+    if (scope === "involving_me") return { OR: [...await createSessionParticipationWhere(tx, accountId)] };
     // My work is any personal relevance reason: participation plus the personal
     // interest and organization facts. An explicit attention standing may add a
     // row; a negative one only removes its own contribution, and neither changes
     // tracking (L09B-I8).
+    const [participation, mentions, follows, once, pins, standings] = await Promise.all([
+        createSessionParticipationWhere(tx, accountId),
+        createSessionsWithDiscussionMentionWhere(tx, accountId),
+        readActiveFollowSessionIds(tx, accountId),
+        tx.accountSessionFollow.findMany({
+            where: { accountId, notifyOnce: { not: null }, sessionId: { not: null } }, select: { sessionId: true },
+        }),
+        tx.sessionPin.findMany({ where: { accountId }, select: { sessionId: true } }),
+        tx.sessionAttentionStanding.findMany({
+            where: { accountId, OR: [{ standing: true }, { remindAt: { not: null } }] }, select: { sessionId: true },
+        }),
+    ]);
     return { OR: [
-        ...await createSessionParticipationWhere(params.tx ?? db, accountId),
-        await createSessionsWithDiscussionMentionWhere(params.tx ?? db, accountId),
-        createActiveFollowWhere(accountId),
-        { accountFollows: { some: { accountId, notifyOnce: { not: null } } } },
-        { sessionPins: { some: { accountId } } },
-        {
-            sessionAttentionStandings: {
-                some: {
-                    accountId,
-                    OR: [
-                        { standing: true },
-                        { remindAt: { not: null } },
-                    ],
-                },
-            },
-        },
+        ...participation,
+        mentions,
+        sessionIdsWhere(
+            follows,
+            once.flatMap(row => row.sessionId === null ? [] : [row.sessionId]),
+            pins.map(row => row.sessionId),
+            standings.map(row => row.sessionId),
+        ),
     ] };
 }

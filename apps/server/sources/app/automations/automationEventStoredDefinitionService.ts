@@ -177,7 +177,6 @@ function shouldRetireCheckpoint(params: Readonly<{
         eventLocalId: string | null;
         sourceSelectorId: string | null;
         sourceContractVersion: number | null;
-        observationTransport: string | null;
         automation: Readonly<{ enabled: boolean; deletedAt: Date | null }>;
     }> | undefined;
 }>): boolean {
@@ -192,8 +191,7 @@ function shouldRetireCheckpoint(params: Readonly<{
         && trigger.eventPluginId === params.caller.pluginId
         && trigger.eventLocalId === candidate.eventRef.localId
         && trigger.sourceSelectorId === candidate.sourceSelectorId
-        && trigger.sourceContractVersion === candidate.sourceContractVersion
-        && trigger.observationTransport === "checkpointedPull";
+        && trigger.sourceContractVersion === candidate.sourceContractVersion;
     if (!identityMatches) return true;
     if (!trigger.automation.enabled || !trigger.enabled) return false;
     return false;
@@ -224,7 +222,6 @@ async function classifyCheckpointRetirementsTx(params: Readonly<{
             eventLocalId: true,
             sourceSelectorId: true,
             sourceContractVersion: true,
-            observationTransport: true,
             automation: { select: { enabled: true, deletedAt: true } },
         },
     });
@@ -328,6 +325,7 @@ export async function readAutomationEventStoredDefinitionsV1(params: Readonly<{
                 durablePushEndpoints = await listCurrentPluginWebhookEndpointTargetsTxV1({
                     tx,
                     accountId: params.accountId,
+                    purpose: "observation",
                     target: {
                         pluginId: params.caller.pluginId,
                         machineId: params.caller.machineId,
@@ -457,6 +455,8 @@ export async function readAutomationEventStoredDefinitionsV1(params: Readonly<{
             accountId: params.accountId,
             pluginId: params.caller.pluginId,
             version: callerVersion,
+            machineId: params.caller.machineId,
+            machineInstallationId: params.caller.machineInstallationId,
             definitions: pageRows.map((row) => {
                 if (row.eventLocalId === null || row.sourceContractVersion === null) {
                     fail("event_contribution_not_current");

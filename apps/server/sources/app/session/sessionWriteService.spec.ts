@@ -27,6 +27,7 @@ type SessionWriteTxMock = {
         findUnique: MockFunction;
         findMany: MockFunction;
     };
+    accountChange?: { findUnique: MockFunction };
     session: {
         findUnique: MockFunction;
         findFirst: MockFunction;
@@ -71,6 +72,7 @@ type SessionWriteTxMock = {
     };
     sessionTeamCredentialBinding: {
         findUnique: MockFunction;
+        findMany: MockFunction;
     };
     sessionFollowEdge: {
         findMany: MockFunction;
@@ -114,6 +116,8 @@ const sessionProjectionState = new WeakMap<SessionWriteTxMock, SessionProjection
  * the real access projector, query compiler and recipient owner still execute.
  */
 function withSessionProjectionQueries(tx: SessionWriteTxMock): SessionWriteTxMock {
+    // No previous coalesced publication exists unless a test supplies one.
+    tx.accountChange ??= { findUnique: vi.fn().mockResolvedValue(null) };
     tx.$queryRaw ??= vi.fn(inTxPostgresControlStatementMock.$queryRaw);
     tx.$executeRaw ??= vi.fn(inTxPostgresControlStatementMock.$executeRaw);
     tx.$executeRawUnsafe ??= vi.fn(inTxPostgresControlStatementMock.$executeRawUnsafe);
@@ -343,7 +347,6 @@ let patchSession: typeof import("./sessionWriteService").patchSession;
 let updateSessionMetadataEnvelopeTuple: typeof import("./sessionWriteService").updateSessionMetadataEnvelopeTuple;
 let applySessionReadCursorOperation: typeof import("./sessionWriteService").applySessionReadCursorOperation;
 let applySessionTurnMutation: typeof import("./sessionWriteService").applySessionTurnMutation;
-let reassertSessionLatestTurnStatus: typeof import("./sessionWriteService").reassertSessionLatestTurnStatus;
 let sessionWriteServiceExports: typeof import("./sessionWriteService");
 let updateSessionAgentState: typeof import("./sessionWriteService").updateSessionAgentState;
 let updateSessionMetadata: typeof import("./sessionWriteService").updateSessionMetadata;
@@ -394,7 +397,6 @@ describe("sessionWriteService", () => {
             updateSessionRuntimeActivityProjection,
         } = service);
         applySessionTurnMutation = service.applySessionTurnMutation;
-        reassertSessionLatestTurnStatus = service.reassertSessionLatestTurnStatus;
     }, 60_000);
 
     beforeEach(() => {
@@ -465,6 +467,8 @@ describe("sessionWriteService", () => {
             },
             sessionTeamCredentialBinding: {
                 findUnique: vi.fn().mockResolvedValue(null),
+                // These Session fixtures have no native credential policy bindings.
+                findMany: vi.fn().mockResolvedValue([]),
             },
             sessionFollowEdge: {
                 findMany: vi.fn().mockResolvedValue([]),
@@ -493,131 +497,6 @@ describe("sessionWriteService", () => {
         expect(Object.prototype.hasOwnProperty.call(sessionWriteServiceExports, "applyPrimaryTurnProjectionMutation")).toBe(false);
     });
 
-    describe("reassertSessionLatestTurnStatus", () => {
-        it("repairs the denormalized session projection only from the matching canonical turn row", async () => {
-            currentTx.session.findUnique
-                .mockResolvedValueOnce({
-                    accountId: "u1",
-                    encryptionMode: "e2ee",
-                    shares: [],
-                    seq: 10,
-                    pendingCount: 0,
-                    pendingBlockedCount: 0,
-                    lastViewedSessionSeq: null,
-                    pendingPermissionRequestCount: 0,
-                    pendingUserActionRequestCount: 0,
-                    latestTurnStatus: "in_progress",
-                    lastRuntimeIssue: null,
-                    active: true,
-                    archivedAt: null,
-                })
-                .mockResolvedValueOnce({
-                    latestTurnId: "turn-1",
-                    latestTurnStatus: "in_progress",
-                    latestTurnStatusObservedAt: BigInt(100),
-                    lastRuntimeIssue: null,
-                    seq: 10,
-                    pendingCount: 0,
-                    pendingBlockedCount: 0,
-                    lastViewedSessionSeq: null,
-                    pendingPermissionRequestCount: 0,
-                    pendingUserActionRequestCount: 0,
-                    active: true,
-                    archivedAt: null,
-                });
-            currentTx.sessionTurn.findUnique.mockResolvedValue({
-                turnId: "turn-1",
-                status: "completed",
-                updatedAt: BigInt(200),
-                lastRuntimeIssueJson: null,
-            });
-            currentTx.session.update.mockResolvedValue({});
-            currentTx.account.findMany.mockResolvedValue(["u1"].map(id => ({ id })));
-            accountCursorRows.mockResolvedValue([{ cursor: 201 }]);
-
-            const result = await reassertSessionLatestTurnStatus({
-                actorUserId: "u1",
-                sessionId: "s1",
-                latestTurnStatus: "completed",
-                latestTurnStatusObservedAt: 200,
-            });
-
-            expect(currentTx.sessionTurn.findUnique).toHaveBeenCalledWith({
-                where: { sessionId_turnId: { sessionId: "s1", turnId: "turn-1" } },
-                select: {
-                    turnId: true,
-                    status: true,
-                    updatedAt: true,
-                    lastRuntimeIssueJson: true,
-                },
-            });
-            expect(currentTx.session.update).toHaveBeenCalledWith({
-                where: { id: "s1" },
-                data: expect.objectContaining({
-                    latestTurnStatus: "completed",
-                    latestTurnStatusObservedAt: BigInt(200),
-                    thinking: false,
-                    thinkingAt: new Date(200),
-                }),
-            });
-            expect(result).toMatchObject({
-                ok: true,
-                didApply: true,
-                latestTurnId: "turn-1",
-                latestTurnStatus: "completed",
-                latestTurnStatusObservedAt: 200,
-            });
-        });
-
-        it("does not trust a client status that does not match the canonical turn row", async () => {
-            currentTx.session.findUnique
-                .mockResolvedValueOnce({
-                    accountId: "u1",
-                    encryptionMode: "e2ee",
-                    shares: [],
-                    seq: 10,
-                    pendingCount: 0,
-                    pendingBlockedCount: 0,
-                    lastViewedSessionSeq: null,
-                    pendingPermissionRequestCount: 0,
-                    pendingUserActionRequestCount: 0,
-                    latestTurnStatus: "in_progress",
-                    lastRuntimeIssue: null,
-                    active: true,
-                    archivedAt: null,
-                })
-                .mockResolvedValueOnce({
-                    latestTurnId: "turn-1",
-                    latestTurnStatus: "in_progress",
-                    latestTurnStatusObservedAt: BigInt(100),
-                    lastRuntimeIssue: null,
-                    seq: 10,
-                    pendingCount: 0,
-                    pendingBlockedCount: 0,
-                    lastViewedSessionSeq: null,
-                    pendingPermissionRequestCount: 0,
-                    pendingUserActionRequestCount: 0,
-                    active: true,
-                    archivedAt: null,
-                });
-            currentTx.sessionTurn.findUnique.mockResolvedValue({
-                turnId: "turn-1",
-                status: "in_progress",
-                updatedAt: BigInt(200),
-                lastRuntimeIssueJson: null,
-            });
-
-            const result = await reassertSessionLatestTurnStatus({
-                actorUserId: "u1",
-                sessionId: "s1",
-                latestTurnStatus: "completed",
-                latestTurnStatusObservedAt: 200,
-            });
-
-            expect(currentTx.session.update).not.toHaveBeenCalled();
-            expect(result).toMatchObject({ ok: true, didApply: false, latestTurnStatus: "in_progress" });
-        });
-    });
 
     describe("updateSessionRuntimeActivityProjection", () => {
         const owner = {
@@ -635,6 +514,7 @@ describe("sessionWriteService", () => {
             active: true,
             archivedAt: null,
             lastActiveAt: new Date(500),
+            publisherGenerationLastActiveAt: new Date(500),
         };
 
         it("server-stamps and revision-orders a strict snapshot", async () => {
@@ -680,6 +560,12 @@ describe("sessionWriteService", () => {
                 },
             });
             expect(accountCursorRows).toHaveBeenCalledTimes(2);
+            expect(accountCursorRows.mock.calls.map(([, , , , , hint]) => JSON.parse(String(hint))))
+                .toEqual(["u1", "u2"].map(() => ({ runtimeActivityRevision: 5,
+                    followSourceChanged: false, followSourceUnchangedSinceCursor: 0,
+                    usageAccountingChanged: false, usageAccountingUnchangedSinceCursor: 0,
+                    memoryInputsChanged: false, memoryInputsUnchangedSinceCursor: 0,
+                    followReceiverAvailabilityChanged: false })));
         });
 
         it("preserves revision and suppresses participant fanout for an unchanged idle snapshot", async () => {
@@ -835,6 +721,7 @@ describe("sessionWriteService", () => {
             const committedFence = new Date("2026-07-20T10:00:00.000Z");
             currentTx.session.findUnique
                 .mockResolvedValueOnce({
+                    accountId: "u1",
                     active: true,
                     archivedAt: null,
                     lastActiveAt: committedFence,
@@ -853,7 +740,7 @@ describe("sessionWriteService", () => {
                     archivedAt: null,
                 });
             currentTx.sessionMessage.findUnique.mockResolvedValue(null);
-            currentTx.session.update.mockResolvedValue({ seq: 1 });
+            currentTx.session.update.mockResolvedValue({ seq: 1, currentStorageState: "hosted" });
             currentTx.session.updateMany.mockResolvedValue({ count: 1 });
             const ingestedAt = new Date("2026-07-20T11:00:00.000Z");
             currentTx.sessionMessage.create.mockResolvedValue({
@@ -906,8 +793,46 @@ describe("sessionWriteService", () => {
             }));
         });
 
+        it("reuses the fenced publisher authority for a new trusted event instead of reading it twice", async () => {
+            storagePolicyEnv.set("HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY", "optional");
+            const committedFence = new Date("2026-07-20T10:00:00.000Z");
+            const fencedSession = { accountId: "u1", active: true, archivedAt: null, lastActiveAt: committedFence,
+                runtimeActivityRevision: BigInt(1) };
+            currentTx.session.findUnique
+                .mockResolvedValueOnce(fencedSession)
+                .mockResolvedValueOnce({ accountId: "u1", encryptionMode: "e2ee", shares: [], seq: 0, lastViewedSessionSeq: 0,
+                    pendingCount: 0, pendingPermissionRequestCount: 0, pendingUserActionRequestCount: 0, active: true, archivedAt: null })
+                .mockResolvedValue(fencedSession);
+            currentTx.sessionMessage.findUnique.mockResolvedValue(null);
+            currentTx.session.update.mockResolvedValue({ seq: 1, currentStorageState: "hosted" });
+            currentTx.session.updateMany.mockResolvedValue({ count: 1 });
+            const at = new Date("2026-07-20T11:00:00.000Z");
+            const content = { t: "encrypted", c: "event" } as const;
+            currentTx.sessionMessage.create.mockResolvedValue({ id: "m-event", seq: 1, localId: "event-1", sidechainId: null,
+                messageRole: "event", rowRevision: BigInt(0), content, sourceCreatedAt: null, sourceUpdatedAt: null,
+                transcriptObservationProvenance: { kind: "non_dependent", source: "background" }, createdAt: at, updatedAt: at });
+            accountCursorRows.mockResolvedValue([{ cursor: 2 }]);
+            hasCurrentSessionScopedMachineAccessInTx.mockClear();
+
+            const result = await createSessionMessage({ authentication, inputAdmission: "authenticatedAccount",
+                actorUserId: "u1", sessionId: "s1", localId: "event-1", ciphertext: "event", messageRole: "event",
+                publisherAuthority: { accountId: "u1", machineId: "machine-1", sessionId: "s1", committedFence },
+                trustedSourceTimestamps: { createdAt: 100, updatedAt: 200 },
+                trustedTranscriptObservationProvenance: { kind: "non_dependent", source: "background" },
+            });
+
+            expect(result).toMatchObject({ ok: true, didWrite: true });
+            // One transaction, one publisher-authority decision: the fence.
+            // Admitted work carries no second access read (6c42cf6285); the publisher CAS is the one decision.
+            expect(hasCurrentSessionScopedMachineAccessInTx).not.toHaveBeenCalled();
+            const fenceWrites = currentTx.session.updateMany.mock.calls.filter(([args]) => args.where?.lastActiveAt !== undefined);
+            expect(fenceWrites).toHaveLength(1);
+            expect(fenceWrites[0]?.[0].where).toMatchObject({ id: "s1", lastActiveAt: committedFence });
+        });
+
         it("rejects trusted chronology after the publisher fence is superseded", async () => {
             currentTx.session.findUnique.mockResolvedValue({
+                accountId: "u1",
                 active: true,
                 archivedAt: null,
                 lastActiveAt: new Date(2),
@@ -938,6 +863,7 @@ describe("sessionWriteService", () => {
             const committedFence = new Date("2026-07-20T10:00:00.000Z");
             currentTx.session.findUnique
                 .mockResolvedValueOnce({
+                    accountId: "u1",
                     active: true,
                     archivedAt: null,
                     lastActiveAt: committedFence,
@@ -957,7 +883,7 @@ describe("sessionWriteService", () => {
                 });
             currentTx.session.updateMany.mockResolvedValueOnce({ count: 0 });
             currentTx.sessionMessage.findUnique.mockResolvedValue(null);
-            currentTx.session.update.mockResolvedValue({ seq: 1 });
+            currentTx.session.update.mockResolvedValue({ seq: 1, currentStorageState: "hosted" });
             currentTx.sessionMessage.create.mockResolvedValue({
                 id: "m-raced-history",
                 seq: 1,
@@ -1000,7 +926,7 @@ describe("sessionWriteService", () => {
             const committedFence = new Date(10);
             const accessRows = () => {
                 currentTx.session.findUnique
-                    .mockResolvedValueOnce({ active: true, archivedAt: null, lastActiveAt: committedFence, runtimeActivityRevision: BigInt(1) })
+                    .mockResolvedValueOnce({ accountId: "u1", active: true, archivedAt: null, lastActiveAt: committedFence, runtimeActivityRevision: BigInt(1) })
                     .mockResolvedValueOnce({ accountId: "u1", encryptionMode: "plain", shares: [], active: true, archivedAt: null });
                 currentTx.session.updateMany.mockResolvedValueOnce({ count: 1 });
             };
@@ -1064,6 +990,7 @@ describe("sessionWriteService", () => {
             };
             currentTx.session.findUnique
                 .mockResolvedValueOnce({
+                    accountId: "u1",
                     active: true,
                     archivedAt: null,
                     lastActiveAt: committedFence,
@@ -1120,6 +1047,7 @@ describe("sessionWriteService", () => {
             };
             currentTx.session.findUnique
                 .mockResolvedValueOnce({
+                    accountId: "u1",
                     active: true,
                     archivedAt: null,
                     lastActiveAt: committedFence,
@@ -1217,6 +1145,7 @@ describe("sessionWriteService", () => {
             };
             currentTx.session.findUnique
                 .mockResolvedValueOnce({
+                    accountId: "u1",
                     active: true,
                     archivedAt: null,
                     lastActiveAt: committedFence,
@@ -1284,6 +1213,7 @@ describe("sessionWriteService", () => {
                 storagePolicyEnv.set("HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY", "optional");
                 const committedFence = new Date(10);
                 const authorityRow = {
+                    accountId: "u1",
                     active: true,
                     archivedAt: null,
                     lastActiveAt: committedFence,
@@ -1342,7 +1272,7 @@ describe("sessionWriteService", () => {
                             .mockResolvedValueOnce(authorityRow)
                             .mockResolvedValueOnce(accessRow)
                             .mockResolvedValueOnce(hostedTranscriptPublication());
-                        currentTx.session.update.mockResolvedValue({ seq: 5 });
+                        currentTx.session.update.mockResolvedValue({ seq: 5, currentStorageState: "hosted" });
                         currentTx.sessionMessage.findUnique
                             .mockResolvedValueOnce(null)
                             .mockResolvedValueOnce(row);
@@ -1534,6 +1464,7 @@ describe("sessionWriteService", () => {
             };
             currentTx.session.findUnique
                 .mockResolvedValueOnce({
+                    accountId: "u1",
                     active: true,
                     archivedAt: null,
                     lastActiveAt: committedFence,
@@ -1587,6 +1518,7 @@ describe("sessionWriteService", () => {
             };
             currentTx.session.findUnique
                 .mockResolvedValueOnce({
+                    accountId: "u1",
                     active: true,
                     archivedAt: null,
                     lastActiveAt: committedFence,
@@ -1634,7 +1566,7 @@ describe("sessionWriteService", () => {
         it("returns existing message for (sessionId, localId) without writing or marking changes", async () => {
             currentTx.session.findUnique.mockResolvedValue({ accountId: "u1" });
             currentTx.sessionShare.findUnique.mockResolvedValue(null);
-            currentTx.session.update.mockResolvedValue({ seq: 10 });
+            currentTx.session.update.mockResolvedValue({ seq: 10, currentStorageState: "hosted" });
             currentTx.sessionMessage.create.mockRejectedValue({ code: "P2002" });
 
             dbMocks.db.session.findUnique.mockResolvedValue({ accountId: "u1" });
@@ -1685,7 +1617,7 @@ describe("sessionWriteService", () => {
             });
             expect(currentTx.session.update).toHaveBeenCalledWith(expect.objectContaining({
                 where: { id: "s1", currentStorageState: "hosted" },
-                select: { seq: true, tag: true },
+                select: expect.objectContaining({ seq: true, tag: true, currentStorageState: true }),
                 data: expect.objectContaining({ seq: { increment: 1 } }),
             }));
             expect(currentTx.sessionMessage.create).toHaveBeenCalledWith(
@@ -1724,7 +1656,7 @@ describe("sessionWriteService", () => {
             currentTx.sessionShare.findUnique
                 .mockResolvedValueOnce({ accessLevel: "edit" })
                 .mockResolvedValueOnce(null);
-            currentTx.session.update.mockResolvedValue({ seq: 5 });
+            currentTx.session.update.mockResolvedValue({ seq: 5, currentStorageState: "hosted" });
             currentTx.sessionMessage.create.mockRejectedValue({
                 code: "P2002",
                 meta: { target: ["sessionId", "localId"] },
@@ -1773,7 +1705,7 @@ describe("sessionWriteService", () => {
             const movedWinner = { ...staleWinner, sidechainId: "sidechain-moved" };
 
             currentTx.session.findUnique.mockResolvedValue(session);
-            currentTx.session.update.mockResolvedValue({ seq: 5 });
+            currentTx.session.update.mockResolvedValue({ seq: 5, currentStorageState: "hosted" });
             currentTx.sessionMessage.create.mockRejectedValue({
                 code: "P2002",
                 meta: { target: ["sessionId", "localId"] },
@@ -1821,7 +1753,7 @@ describe("sessionWriteService", () => {
             };
 
             currentTx.session.findUnique.mockResolvedValue(session);
-            currentTx.session.update.mockResolvedValue({ seq: 5 });
+            currentTx.session.update.mockResolvedValue({ seq: 5, currentStorageState: "hosted" });
             currentTx.sessionMessage.create.mockRejectedValue({
                 code: "P2002",
                 meta: { target: ["sessionId", "localId"] },
@@ -1849,7 +1781,7 @@ describe("sessionWriteService", () => {
         it("rejects (sessionId, localId) reuse across sidechains", async () => {
             currentTx.session.findUnique.mockResolvedValue({ accountId: "u1" });
             currentTx.sessionShare.findUnique.mockResolvedValue(null);
-            currentTx.session.update.mockResolvedValue({ seq: 10 });
+            currentTx.session.update.mockResolvedValue({ seq: 10, currentStorageState: "hosted" });
             currentTx.sessionMessage.create.mockRejectedValue({ code: "P2002" });
 
             dbMocks.db.session.findUnique.mockResolvedValue({ accountId: "u1" });
@@ -1900,7 +1832,7 @@ describe("sessionWriteService", () => {
             };
 
             currentTx.session.findUnique.mockResolvedValue(voiceHistorySession);
-            currentTx.session.update.mockResolvedValue({ seq: 10 });
+            currentTx.session.update.mockResolvedValue({ seq: 10, currentStorageState: "hosted" });
             currentTx.sessionMessage.create.mockRejectedValue({
                 code: "P2002",
                 meta: { target: ["sessionId", "localId"] },
@@ -1974,6 +1906,7 @@ describe("sessionWriteService", () => {
                 data: {
                     content: { t: "encrypted", c: "corrected" },
                     surfaceItemReference: prismaRuntime.DbNull,
+                    usageTimingV1: prismaRuntime.DbNull,
                     sidechainId: null,
                     messageRole: "agent",
                     rowRevision: { increment: BigInt(1) },
@@ -1991,7 +1924,7 @@ describe("sessionWriteService", () => {
                 shares: [{ sharedWithUserId: "u2" }],
             });
             currentTx.sessionShare.findUnique.mockResolvedValue(null);
-            currentTx.session.update.mockResolvedValue({ seq: 10 });
+            currentTx.session.update.mockResolvedValue({ seq: 10, currentStorageState: "hosted" });
             currentTx.sessionMessage.create.mockRejectedValue({ code: "P2002" });
 
             dbMocks.db.session.findUnique.mockResolvedValue({
@@ -2023,6 +1956,7 @@ describe("sessionWriteService", () => {
 
             currentTx.sessionMessage.update.mockResolvedValue({
                 id: "m1",
+                sessionId: "s1",
                 seq: 4,
                 localId: "l1",
                 sidechainId: null,
@@ -2061,7 +1995,9 @@ describe("sessionWriteService", () => {
                 ],
             });
 
-            expect(currentTx.session.update).toHaveBeenCalledTimes(1);
+            // Sequence allocation, then the revision writer's parent touch (sessionMessageRevisionWrite.ts).
+            expect(currentTx.session.update).toHaveBeenCalledTimes(2);
+            expect(currentTx.session.update).toHaveBeenLastCalledWith({ where: { id: "s1" }, data: { updatedAt: expect.any(Date) }, select: { id: true } });
             expect(currentTx.sessionMessage.create).toHaveBeenCalledTimes(1);
             expect(currentTx.sessionMessage.update).toHaveBeenCalledWith(
                 expect.objectContaining({
@@ -2069,6 +2005,7 @@ describe("sessionWriteService", () => {
                     data: {
                         content: { t: "encrypted", c: "next" },
                         surfaceItemReference: prismaRuntime.DbNull,
+                        usageTimingV1: prismaRuntime.DbNull,
                         sidechainId: null,
                         messageRole: null,
                         rowRevision: { increment: BigInt(1) },
@@ -2098,7 +2035,7 @@ describe("sessionWriteService", () => {
                 shares: [{ sharedWithUserId: "u2" }],
             });
             currentTx.sessionShare.findUnique.mockResolvedValue(null);
-            currentTx.session.update.mockResolvedValue({ seq: 10 });
+            currentTx.session.update.mockResolvedValue({ seq: 10, currentStorageState: "hosted" });
             currentTx.sessionMessage.create.mockRejectedValue({
                 code: "P2002",
                 meta: { target: ["sessionId", "localId"] },
@@ -2164,7 +2101,7 @@ describe("sessionWriteService", () => {
                 shares: [{ sharedWithUserId: "u2" }],
             });
             currentTx.sessionShare.findUnique.mockResolvedValue(null);
-            currentTx.session.update.mockResolvedValue({ seq: 10 });
+            currentTx.session.update.mockResolvedValue({ seq: 10, currentStorageState: "hosted" });
             currentTx.sessionMessage.create.mockRejectedValue({
                 code: "P2002",
                 meta: { target: ["sessionId", "localId"] },
@@ -2249,7 +2186,7 @@ describe("sessionWriteService", () => {
             };
 
             currentTx.session.findUnique.mockResolvedValue(session);
-            currentTx.session.update.mockResolvedValue({ seq: 5 });
+            currentTx.session.update.mockResolvedValue({ seq: 5, currentStorageState: "hosted" });
             currentTx.sessionMessage.create.mockRejectedValue({
                 code: "P2002",
                 meta: { target: ["sessionId", "localId"] },
@@ -2329,7 +2266,7 @@ describe("sessionWriteService", () => {
                 }
                 return initialHostedSession;
             });
-            currentTx.session.update.mockResolvedValue({ seq: 5 });
+            currentTx.session.update.mockResolvedValue({ seq: 5, currentStorageState: "hosted" });
             currentTx.sessionMessage.create.mockRejectedValue({
                 code: "P2002",
                 meta: { target: ["sessionId", "localId"] },
@@ -2388,7 +2325,7 @@ describe("sessionWriteService", () => {
 
             currentTx.session.findUnique.mockResolvedValue(session);
             currentTx.sessionShare.findUnique.mockResolvedValue(null);
-            currentTx.session.update.mockResolvedValue({ seq: 10 });
+            currentTx.session.update.mockResolvedValue({ seq: 10, currentStorageState: "hosted" });
             dbMocks.db.session.findUnique.mockResolvedValue(session);
             dbMocks.db.sessionShare.findUnique.mockResolvedValue(null);
             dbMocks.db.sessionMessage.findUnique.mockResolvedValue(existing);
@@ -2468,7 +2405,7 @@ describe("sessionWriteService", () => {
                     active: true,
                     archivedAt: null,
                 });
-            currentTx.session.update.mockResolvedValue({ seq: 10 });
+            currentTx.session.update.mockResolvedValue({ seq: 10, currentStorageState: "hosted" });
             currentTx.sessionMessage.create.mockResolvedValue({
                 id: "m1",
                 seq: 10,
@@ -2506,9 +2443,9 @@ describe("sessionWriteService", () => {
                 accountId, kind, entityId, hint: JSON.parse(String(hint)),
             }))).toEqual(["u1", "u2"].map(accountId => ({
                 accountId, kind: "session", entityId: "s1",
-                hint: { lastMessageSeq: 10, lastMessageId: "m1" },
+                hint: { lastMessageSeq: 10, lastMessageId: "m1", followReceiverAvailabilityChanged: false },
             })));
-            expect(currentTx.session.findUnique).toHaveBeenCalledTimes(2);
+            expect(currentTx.session.findUnique).toHaveBeenCalledTimes(1);
             expect(currentTx.sessionMessage.findUnique).not.toHaveBeenCalled();
             expect(currentTx.session.updateMany).toHaveBeenCalledTimes(1);
             expect(currentTx.session.updateMany).toHaveBeenCalledWith({
@@ -2535,7 +2472,7 @@ describe("sessionWriteService", () => {
                 active: true,
                 archivedAt: null,
             });
-            currentTx.session.update.mockResolvedValue({ seq: 10 });
+            currentTx.session.update.mockResolvedValue({ seq: 10, currentStorageState: "hosted" });
             currentTx.session.updateMany.mockResolvedValue({ count: 1 });
             currentTx.sessionMessage.create.mockResolvedValue({
                 id: "m-auth",
@@ -2577,7 +2514,7 @@ describe("sessionWriteService", () => {
             });
             expect(currentTx.session.update).toHaveBeenNthCalledWith(1, {
                 where: { id: "s1", currentStorageState: "hosted" },
-                select: { seq: true, tag: true },
+                select: expect.objectContaining({ seq: true, tag: true, currentStorageState: true }),
                 data: { seq: { increment: 1 } },
             });
             expect(currentTx.session.update).toHaveBeenCalledTimes(1);
@@ -2653,7 +2590,7 @@ describe("sessionWriteService", () => {
             currentTx.session.findUnique.mockResolvedValueOnce({ accountId: 'u1', encryptionMode: mode, shares: [],
                 seq: 9, lastViewedSessionSeq: 9, pendingCount: 0, pendingPermissionRequestCount: 0,
                 pendingUserActionRequestCount: 0, latestTurnStatus: null, lastRuntimeIssue: null, active: true, archivedAt: null });
-            currentTx.session.update.mockResolvedValue({ seq: 10 });
+            currentTx.session.update.mockResolvedValue({ seq: 10, currentStorageState: "hosted" });
             currentTx.session.updateMany.mockResolvedValue({ count: 1 });
             currentTx.sessionMessage.create.mockResolvedValue({ id: 'm-idle', seq: 10, localId, sidechainId: null,
                 messageRole: 'event', content, createdAt, updatedAt: createdAt });
@@ -2687,7 +2624,7 @@ describe("sessionWriteService", () => {
                 active: true,
                 archivedAt: null,
             });
-            currentTx.session.update.mockResolvedValue({ seq: 10 });
+            currentTx.session.update.mockResolvedValue({ seq: 10, currentStorageState: "hosted" });
             currentTx.session.updateMany.mockResolvedValue({ count: 1 });
             currentTx.sessionMessage.create.mockResolvedValue({
                 id: "m-quota",
@@ -2761,7 +2698,7 @@ describe("sessionWriteService", () => {
                 active: true,
                 archivedAt: null,
             });
-            currentTx.session.update.mockResolvedValue({ seq: 10 });
+            currentTx.session.update.mockResolvedValue({ seq: 10, currentStorageState: "hosted" });
             currentTx.session.updateMany.mockResolvedValue({ count: 1 });
             currentTx.sessionMessage.create.mockResolvedValue({
                 id: "m-quota-plain",
@@ -2820,7 +2757,7 @@ describe("sessionWriteService", () => {
                 archivedAt: null,
             });
             currentTx.sessionShare.findUnique.mockResolvedValue({ accessLevel: "edit" });
-            currentTx.session.update.mockResolvedValue({ seq: 10 });
+            currentTx.session.update.mockResolvedValue({ seq: 10, currentStorageState: "hosted" });
             currentTx.session.updateMany.mockResolvedValue({ count: 1 });
             currentTx.sessionMessage.create.mockResolvedValue({
                 id: "m-quota",
@@ -2871,7 +2808,7 @@ describe("sessionWriteService", () => {
                 active: true,
                 archivedAt: null,
             });
-            currentTx.session.update.mockResolvedValue({ seq: 10 });
+            currentTx.session.update.mockResolvedValue({ seq: 10, currentStorageState: "hosted" });
             currentTx.sessionMessage.create.mockResolvedValue({
                 id: "m-auth",
                 seq: 10,
@@ -2947,7 +2884,7 @@ describe("sessionWriteService", () => {
                     archivedAt: null,
                 })
                 .mockResolvedValueOnce(hostedTranscriptPublication());
-            currentTx.session.update.mockResolvedValue({ seq: 10 });
+            currentTx.session.update.mockResolvedValue({ seq: 10, currentStorageState: "hosted" });
             currentTx.accountSessionReadState.updateMany.mockResolvedValue({ count: 0 });
             currentTx.sessionMessage.create.mockResolvedValue({
                 id: "m-auth",
@@ -2998,7 +2935,7 @@ describe("sessionWriteService", () => {
                 accountId: "u1",
                 shares: [],
             });
-            currentTx.session.update.mockResolvedValue({ seq: 10 });
+            currentTx.session.update.mockResolvedValue({ seq: 10, currentStorageState: "hosted" });
             currentTx.session.updateMany.mockResolvedValue({ count: 1 });
             currentTx.sessionMessage.create.mockResolvedValue({
                 id: "m_ready",
@@ -3033,7 +2970,7 @@ describe("sessionWriteService", () => {
             });
             expect(currentTx.session.update).toHaveBeenCalledWith({
                 where: { id: "s1", currentStorageState: "hosted" },
-                select: { seq: true, tag: true },
+                select: expect.objectContaining({ seq: true, tag: true, currentStorageState: true }),
                 data: {
                     seq: { increment: 1 },
                 },
@@ -3066,7 +3003,7 @@ describe("sessionWriteService", () => {
                 accountId: "u1",
                 shares: [],
             });
-            currentTx.session.update.mockResolvedValue({ seq: 10 });
+            currentTx.session.update.mockResolvedValue({ seq: 10, currentStorageState: "hosted" });
             currentTx.session.updateMany
                 .mockResolvedValueOnce({ count: 0 })
                 .mockResolvedValueOnce({ count: 1 });
@@ -3129,7 +3066,7 @@ describe("sessionWriteService", () => {
                 accountId: "u1",
                 shares: [],
             });
-            currentTx.session.update.mockResolvedValue({ seq: 10 });
+            currentTx.session.update.mockResolvedValue({ seq: 10, currentStorageState: "hosted" });
             currentTx.session.updateMany
                 .mockResolvedValueOnce({ count: 1 })
                 .mockResolvedValueOnce({ count: 0 });
@@ -3220,7 +3157,7 @@ describe("sessionWriteService", () => {
                     latestTurnStatus: null,
                     lastRuntimeIssue: null,
                 });
-            currentTx.session.update.mockResolvedValue({ seq: 10 });
+            currentTx.session.update.mockResolvedValue({ seq: 10, currentStorageState: "hosted" });
             currentTx.session.updateMany.mockResolvedValue({ count: 1 });
             currentTx.sessionMessage.create.mockResolvedValue({
                 id: "m_ready_plain",
@@ -3305,7 +3242,7 @@ describe("sessionWriteService", () => {
                     lastRuntimeIssue: null,
                 });
             currentTx.sessionShare.findUnique.mockResolvedValue({ accessLevel: "edit" });
-            currentTx.session.update.mockResolvedValue({ seq: 10 });
+            currentTx.session.update.mockResolvedValue({ seq: 10, currentStorageState: "hosted" });
             currentTx.session.updateMany.mockResolvedValue({ count: 1 });
             currentTx.sessionMessage.create.mockResolvedValue({
                 id: "m_collab_ready",
@@ -3383,7 +3320,7 @@ describe("sessionWriteService", () => {
                     active: true,
                     archivedAt: null,
                 });
-            currentTx.session.update.mockResolvedValue({ seq: 10 });
+            currentTx.session.update.mockResolvedValue({ seq: 10, currentStorageState: "hosted" });
             currentTx.sessionMessage.create.mockResolvedValue({
                 id: "m1",
                 seq: 10,
@@ -3439,7 +3376,7 @@ describe("sessionWriteService", () => {
                 active: true,
                 archivedAt: null,
             });
-            currentTx.session.update.mockResolvedValue({ seq: 10 });
+            currentTx.session.update.mockResolvedValue({ seq: 10, currentStorageState: "hosted" });
             currentTx.sessionMessage.create.mockResolvedValue({
                 id: "m1",
                 seq: 10,
@@ -3481,7 +3418,7 @@ describe("sessionWriteService", () => {
             const messageCreateCall = currentTx.sessionMessage.create.mock.calls[0]?.[0];
             expect(sessionUpdateCall).toEqual({
                 where: { id: "s1", currentStorageState: "hosted" },
-                select: { seq: true, tag: true },
+                select: expect.objectContaining({ seq: true, tag: true, currentStorageState: true }),
                 data: {
                     seq: { increment: 1 },
                 },
@@ -3529,7 +3466,7 @@ describe("sessionWriteService", () => {
                 active: true,
                 archivedAt: null,
             });
-            currentTx.session.update.mockResolvedValue({ seq: 10 });
+            currentTx.session.update.mockResolvedValue({ seq: 10, currentStorageState: "hosted" });
             currentTx.sessionMessage.create.mockRejectedValue({
                 code: "P2002",
                 meta: {
@@ -3605,7 +3542,7 @@ describe("sessionWriteService", () => {
             currentTx.sessionMessage.findUnique.mockResolvedValue(null);
             currentTx.session.findUnique.mockResolvedValue({ accountId: "u1", encryptionMode: "plain" });
             currentTx.sessionShare.findUnique.mockResolvedValue(null);
-            currentTx.session.update.mockResolvedValue({ seq: 1 });
+            currentTx.session.update.mockResolvedValue({ seq: 1, currentStorageState: "hosted" });
             currentTx.sessionMessage.create.mockResolvedValue({
                 id: "m1",
                 seq: 1,
@@ -3636,7 +3573,7 @@ describe("sessionWriteService", () => {
             currentTx.sessionMessage.findUnique.mockResolvedValue(null);
             currentTx.session.findUnique.mockResolvedValue({ accountId: "u1", encryptionMode: "plain" });
             currentTx.sessionShare.findUnique.mockResolvedValue(null);
-            currentTx.session.update.mockResolvedValue({ seq: 1 });
+            currentTx.session.update.mockResolvedValue({ seq: 1, currentStorageState: "hosted" });
             currentTx.sessionMessage.create.mockResolvedValue({
                 id: "m1",
                 seq: 1,
@@ -3672,7 +3609,7 @@ describe("sessionWriteService", () => {
             currentTx.sessionMessage.findUnique.mockResolvedValue(null);
             currentTx.session.findUnique.mockResolvedValue({ accountId: "u1", encryptionMode: "plain" });
             currentTx.sessionShare.findUnique.mockResolvedValue(null);
-            currentTx.session.update.mockResolvedValue({ seq: 1 });
+            currentTx.session.update.mockResolvedValue({ seq: 1, currentStorageState: "hosted" });
             currentTx.sessionMessage.create.mockResolvedValue({
                 id: "m1",
                 seq: 1,
@@ -4686,6 +4623,7 @@ describe("sessionWriteService", () => {
             });
             expect(currentTx.session.update).toHaveBeenCalledWith({
                 where: { id: "s1" },
+                select: { id: true },
                 data: {
                     latestTurnId: "turn-1",
                     latestTurnStatus: "in_progress",
@@ -4902,6 +4840,7 @@ describe("sessionWriteService", () => {
             });
             expect(currentTx.session.update).toHaveBeenCalledWith({
                 where: { id: "s1" },
+                select: { id: true },
                 data: {
                     latestTurnId: "turn-1",
                     latestTurnStatus: "in_progress",
@@ -5119,6 +5058,7 @@ describe("sessionWriteService", () => {
 
             expect(currentTx.session.update).toHaveBeenCalledWith({
                 where: { id: "s1" },
+                select: { id: true },
                 data: expect.objectContaining({
                     latestTurnId: "turn-1",
                     latestTurnStatus: "failed",
@@ -5405,6 +5345,7 @@ describe("sessionWriteService", () => {
 
             expect(currentTx.session.update).toHaveBeenCalledWith({
                 where: { id: "s1" },
+                select: { id: true },
                 data: expect.objectContaining({
                     latestTurnStatus: "completed",
                     latestTurnStatusObservedAt: BigInt(200),
@@ -5509,212 +5450,6 @@ describe("sessionWriteService", () => {
             });
         });
 
-        it("lets newer same-context begin evidence clear a failed runtime issue and merge anchors", async () => {
-            expect(typeof applySessionTurnMutation).toBe("function");
-            const retainedTranscriptAnchors = {
-                startUserMessageSeq: 3,
-                userMessageSeqs: [3, 5],
-                startSeqInclusive: 2,
-                endSeqInclusive: 8,
-                finalAssistantMessageSeq: 7,
-            } as const;
-            const beginTranscriptAnchors = {
-                userMessageSeqs: [5, 11],
-                endSeqInclusive: 12,
-                finalAssistantMessageSeq: 11,
-            } as const;
-            const mergedTranscriptAnchors = {
-                startUserMessageSeq: 3,
-                userMessageSeqs: [3, 5, 11],
-                startSeqInclusive: 2,
-                endSeqInclusive: 12,
-                finalAssistantMessageSeq: 11,
-            } as const;
-            currentTx.session.findUnique
-                .mockResolvedValueOnce({
-                    accountId: "u1",
-                    encryptionMode: "e2ee",
-                    seq: 5,
-                    pendingCount: 0,
-                    lastViewedSessionSeq: 5,
-                    pendingPermissionRequestCount: 0,
-                    pendingUserActionRequestCount: 0,
-                    latestTurnId: "turn-1",
-                    latestTurnStatus: "failed",
-                    latestTurnStatusObservedAt: BigInt(200),
-                    lastRuntimeIssue: JSON.stringify(usageLimitIssue),
-                    active: true,
-                    archivedAt: null,
-                    shares: [],
-                })
-                .mockResolvedValueOnce({
-                    latestTurnId: "turn-1",
-                    seq: 5,
-                    pendingCount: 0,
-                    lastViewedSessionSeq: 5,
-                    pendingPermissionRequestCount: 0,
-                    pendingUserActionRequestCount: 0,
-                    latestTurnStatus: "failed",
-                    latestTurnStatusObservedAt: BigInt(200),
-                    lastRuntimeIssue: JSON.stringify(usageLimitIssue),
-                    active: true,
-                    archivedAt: null,
-                });
-            currentTx.sessionShare.findUnique.mockResolvedValue(null);
-            currentTx.sessionTurnMutationReceipt.findUnique.mockResolvedValue(null);
-            currentTx.sessionTurn.findUnique.mockResolvedValue({
-                ...failedUsageLimitTurnRow,
-                transcriptAnchorsJson: JSON.stringify(retainedTranscriptAnchors),
-            });
-            currentTx.sessionTurn.update.mockResolvedValue({
-                ...failedUsageLimitTurnRow,
-                status: "in_progress",
-                startedAt: BigInt(300),
-                updatedAt: BigInt(300),
-                terminalAt: null,
-                lastRuntimeIssueJson: null,
-                lastMutationId: "mutation-recovered-begin",
-            });
-            currentTx.session.update.mockResolvedValue({});
-            currentTx.account.findMany.mockResolvedValue(["u1"].map(id => ({ id })));
-            accountCursorRows.mockResolvedValueOnce([{ cursor: 103 }]);
-
-            const res = await applySessionTurnMutation({ authentication,
-                actorUserId: "u1",
-                mutation: {
-                    ...beginMutation,
-                    mutationId: "mutation-recovered-begin",
-                    agentTurnId: "provider-turn-1",
-                    observedAt: 300,
-                    transcriptAnchors: beginTranscriptAnchors,
-                },
-            });
-
-            expect(currentTx.sessionTurn.update).toHaveBeenCalledWith({
-                where: { id: "row-turn-1" },
-                data: expect.objectContaining({
-                    status: "in_progress",
-                    startedAt: BigInt(300),
-                    updatedAt: BigInt(300),
-                    terminalAt: null,
-                    lastRuntimeIssueJson: null,
-                    transcriptAnchorsJson: JSON.stringify(mergedTranscriptAnchors),
-                    transcriptAnchorProjectionVersion: 1,
-                    transcriptAnchorMinSeq: 2,
-                    transcriptAnchorMaxSeq: 12,
-                    lastMutationId: "mutation-recovered-begin",
-                }),
-            });
-            expect(currentTx.session.update).toHaveBeenCalledWith({
-                where: { id: "s1" },
-                data: expect.objectContaining({
-                    latestTurnId: "turn-1",
-                    latestTurnStatus: "in_progress",
-                    latestTurnStatusObservedAt: BigInt(300),
-                    lastRuntimeIssue: null,
-                    thinking: true,
-                    thinkingAt: new Date(300),
-                }),
-            });
-            expect(res).toMatchObject({
-                ok: true,
-                didApply: true,
-                latestTurnId: "turn-1",
-                latestTurnStatus: "in_progress",
-                latestTurnStatusObservedAt: 300,
-                lastRuntimeIssue: null,
-            });
-        });
-
-        it("lets newer same-context completion evidence clear a failed runtime issue", async () => {
-            expect(typeof applySessionTurnMutation).toBe("function");
-            currentTx.session.findUnique
-                .mockResolvedValueOnce({
-                    accountId: "u1",
-                    encryptionMode: "e2ee",
-                    seq: 5,
-                    pendingCount: 0,
-                    lastViewedSessionSeq: 5,
-                    pendingPermissionRequestCount: 0,
-                    pendingUserActionRequestCount: 0,
-                    latestTurnId: "turn-1",
-                    latestTurnStatus: "failed",
-                    latestTurnStatusObservedAt: BigInt(200),
-                    lastRuntimeIssue: JSON.stringify(usageLimitIssue),
-                    active: true,
-                    archivedAt: null,
-                    shares: [],
-                })
-                .mockResolvedValueOnce({
-                    latestTurnId: "turn-1",
-                    seq: 5,
-                    pendingCount: 0,
-                    lastViewedSessionSeq: 5,
-                    pendingPermissionRequestCount: 0,
-                    pendingUserActionRequestCount: 0,
-                    latestTurnStatus: "failed",
-                    latestTurnStatusObservedAt: BigInt(200),
-                    lastRuntimeIssue: JSON.stringify(usageLimitIssue),
-                    active: true,
-                    archivedAt: null,
-                });
-            currentTx.sessionShare.findUnique.mockResolvedValue(null);
-            currentTx.sessionTurnMutationReceipt.findUnique.mockResolvedValue(null);
-            currentTx.sessionTurn.findUnique.mockResolvedValue(failedUsageLimitTurnRow);
-            currentTx.sessionTurn.update.mockResolvedValue({
-                ...failedUsageLimitTurnRow,
-                status: "completed",
-                updatedAt: BigInt(300),
-                terminalAt: BigInt(300),
-                lastRuntimeIssueJson: null,
-                lastMutationId: "mutation-recovered-complete",
-            });
-            currentTx.session.update.mockResolvedValue({});
-            currentTx.account.findMany.mockResolvedValue(["u1"].map(id => ({ id })));
-            accountCursorRows.mockResolvedValueOnce([{ cursor: 104 }]);
-
-            const res = await applySessionTurnMutation({ authentication,
-                actorUserId: "u1",
-                mutation: {
-                    ...beginMutation,
-                    action: "complete",
-                    mutationId: "mutation-recovered-complete",
-                    agentTurnId: "provider-turn-1",
-                    observedAt: 300,
-                },
-            });
-
-            expect(currentTx.sessionTurn.update).toHaveBeenCalledWith({
-                where: { id: "row-turn-1" },
-                data: expect.objectContaining({
-                    status: "completed",
-                    updatedAt: BigInt(300),
-                    terminalAt: BigInt(300),
-                    lastRuntimeIssueJson: null,
-                    lastMutationId: "mutation-recovered-complete",
-                }),
-            });
-            expect(currentTx.session.update).toHaveBeenCalledWith({
-                where: { id: "s1" },
-                data: expect.objectContaining({
-                    latestTurnId: "turn-1",
-                    latestTurnStatus: "completed",
-                    latestTurnStatusObservedAt: BigInt(300),
-                    lastRuntimeIssue: null,
-                    thinking: false,
-                    thinkingAt: new Date(300),
-                }),
-            });
-            expect(res).toMatchObject({
-                ok: true,
-                didApply: true,
-                latestTurnId: "turn-1",
-                latestTurnStatus: "completed",
-                latestTurnStatusObservedAt: 300,
-                lastRuntimeIssue: null,
-            });
-        });
-
         it("persists a bounded provider checkpoint with rollback eligibility without changing lifecycle status", async () => {
             expect(typeof applySessionTurnMutation).toBe("function");
             currentTx.session.findUnique
@@ -5814,7 +5549,8 @@ describe("sessionWriteService", () => {
                     lastMutationId: "mutation-rollback-eligible",
                 }),
             });
-            expect(currentTx.session.update).not.toHaveBeenCalled();
+            // Non-current annotation touches recency only (6c42cf6285); exact args prove no lifecycle field moved.
+            expect(currentTx.session.update).toHaveBeenCalledWith({ where: { id: "s1" }, select: { id: true }, data: { updatedAt: expect.any(Date) } });
             expect(res).toMatchObject({
                 ok: true,
                 didApply: true,
@@ -6552,6 +6288,7 @@ describe("sessionWriteService", () => {
 
             expect(currentTx.session.update).toHaveBeenCalledWith({
                 where: { id: "s1" },
+                select: { id: true },
                 data: {
                     latestTurnId: "turn-2",
                     latestTurnStatus: "in_progress",
@@ -6864,7 +6601,8 @@ describe("sessionWriteService", () => {
                 expect(accountCursorRows.mock.calls.map(([, accountId, kind, entityId, , hint]) => ({
                     accountId, kind, entityId, hint: typeof hint === "string" ? JSON.parse(hint) : hint,
                 }))).toContainEqual({
-                    accountId: "u1", kind: "session", entityId: "s1", hint: { lastViewedSessionSeq: expected },
+                    accountId: "u1", kind: "session", entityId: "s1",
+                    hint: { lastViewedSessionSeq: expected, followReceiverAvailabilityChanged: false },
                 });
             } else {
                 expect(tx.accountSessionReadState.updateMany).not.toHaveBeenCalled();
@@ -7074,6 +6812,7 @@ describe("sessionWriteService", () => {
                     ownerMetadata: null,
                 },
                 data: {
+                    usageTimingV1: { v: 1, metadata: null, agentState: null },
                     metadata: "inactive-model-intent",
                     metadataVersion: 6,
                 },
@@ -7188,6 +6927,7 @@ describe("sessionWriteService", () => {
                     ownerMetadata: null,
                 },
                 data: {
+                    usageTimingV1: { v: 1, metadata: null, agentState: null },
                     metadata: "inactive-model-intent",
                     metadataVersion: 6,
                 },
@@ -7249,6 +6989,7 @@ describe("sessionWriteService", () => {
                     ownerMetadata: null,
                 },
                 data: {
+                    usageTimingV1: { v: 1, metadata: null, agentState: null },
                     metadata: "ordinary-active-write",
                     metadataVersion: 6,
                 },
@@ -7469,6 +7210,7 @@ describe("sessionWriteService", () => {
                     ownerMetadata: null,
                 },
                 data: {
+                    usageTimingV1: { v: 1, metadata: null, agentState: null },
                     agentState: "after",
                     agentStateVersion: 3,
                 },
@@ -7531,13 +7273,15 @@ describe("sessionWriteService", () => {
                     v: { v: 1 as const },
                 },
             },
-        ])("rejects a $accountMode Account owner-envelope mismatch before fence or Session effects", async ({
+        ])("rejects a $accountMode Account owner-envelope mismatch after admission without Session effects", async ({
             account,
+            accountMode,
             ownerEnvelope,
         }) => {
             if (account) {
                 currentTx.account.findUnique.mockResolvedValue(account);
             }
+            currentTx.session.findUnique.mockResolvedValue({ accountId: "u1", encryptionMode: accountMode, shares: [] });
 
             const res = await updateSessionMetadataEnvelopeTuple({
                 mode: "owner",
@@ -7560,8 +7304,8 @@ describe("sessionWriteService", () => {
                 ok: false,
                 error: "invalid-params",
             });
-            expect(currentTx.$queryRawUnsafe).not.toHaveBeenCalledWith(
-                'SELECT "id" FROM "Account" WHERE "id" = $1 FOR UPDATE', expect.anything(),
+            expect(currentTx.$queryRawUnsafe).toHaveBeenCalledWith(
+                'SELECT "id" FROM "Account" WHERE "id" = $1 FOR KEY SHARE', "u1",
             );
             expect(currentTx.session.updateMany).not.toHaveBeenCalled();
             expect(accountCursorRows).not.toHaveBeenCalled();
@@ -7667,6 +7411,7 @@ describe("sessionWriteService", () => {
                     agentStateVersion: 8,
                 },
                 data: {
+                    usageTimingV1: { v: 1, metadata: null, agentState: null },
                     displayProjectionV1: null,
                     metadata: "shared-new",
                     metadataVersion: 5,
@@ -7678,9 +7423,12 @@ describe("sessionWriteService", () => {
             });
             expect(res).toEqual({
                 ok: true,
+                // Tuple publication context (6c42cf6285); empty when the row has no pending request.
+                runtimeProjection: {},
                 recipientCursors: [{ accountId: "u1", cursor: 10 }],
                 sessionOwnerId: "u1",
                 ownerAccountMode: "e2ee",
+                changed: { ownerMetadata: true, agentState: true },
                 metadataLayoutVersion: 1,
                 sharedMetadata: { version: 5, value: "shared-new" },
                 agentStateVersion: 9,
@@ -7838,6 +7586,7 @@ describe("sessionWriteService", () => {
                     agentStateVersion: 8,
                 },
                 data: {
+                    usageTimingV1: { v: 1, metadata: null, agentState: null },
                     displayProjectionV1: null,
                     metadata: "shared-new",
                     metadataVersion: 5,
@@ -7959,6 +7708,7 @@ describe("sessionWriteService", () => {
                     agentStateVersion: 8,
                 },
                 data: {
+                    usageTimingV1: { v: 1, metadata: null, agentState: null },
                     displayProjectionV1: null,
                     metadata: "shared-new",
                     metadataVersion: 5,
@@ -7970,9 +7720,12 @@ describe("sessionWriteService", () => {
             });
             expect(res).toEqual({
                 ok: true,
+                // Tuple publication context (6c42cf6285); empty when the row has no pending request.
+                runtimeProjection: {},
                 recipientCursors: [{ accountId: "u1", cursor: 10 }],
                 sessionOwnerId: "u1",
                 ownerAccountMode: "e2ee",
+                changed: { ownerMetadata: true, agentState: true },
                 metadataLayoutVersion: 1,
                 sharedMetadata: { version: 5, value: "shared-new" },
                 agentStateVersion: 9,
@@ -8222,6 +7975,7 @@ describe("sessionWriteService", () => {
                     agentStateVersion: 9,
                 },
                 data: {
+                    usageTimingV1: { v: 1, metadata: null, agentState: null },
                     displayProjectionV1: null,
                     metadata: "shared-replacement",
                     metadataVersion: 6,
@@ -8287,11 +8041,9 @@ describe("sessionWriteService", () => {
                     metadataLayoutVersion: 1,
                     metadataVersion: 5,
                     ownerMetadata: storedOwnerMetadata,
-                    AND: [(await import("@/app/session/access/sessionAccessWhere")).buildSessionAccessWhere({
-                        accountId: "u2", capability: "submitAgentInput", mode: "legacy_owner_or_direct",
-                    })],
                 },
                 data: {
+                    usageTimingV1: { v: 1, metadata: null, agentState: null },
                     displayProjectionV1: null,
                     metadata: "shared-new",
                     metadataVersion: 6,
@@ -8299,12 +8051,15 @@ describe("sessionWriteService", () => {
             });
             expect(res).toEqual({
                 ok: true,
+                // Tuple publication context (6c42cf6285); empty when the row has no pending request.
+                runtimeProjection: {},
                 recipientCursors: [
                     { accountId: "u1", cursor: 10 },
                     { accountId: "u2", cursor: 11 },
                 ],
                 sessionOwnerId: "u1",
                 ownerAccountMode: "e2ee",
+                changed: { ownerMetadata: false, agentState: false },
                 metadataLayoutVersion: 1,
                 sharedMetadata: { version: 6, value: "shared-new" },
                 agentStateVersion: 9,
@@ -8336,7 +8091,7 @@ describe("sessionWriteService", () => {
             expect(currentTx.session.updateMany).not.toHaveBeenCalled();
         });
 
-        it("fences renameSession transactionally when Admin access is downgraded before the CAS", async () => {
+        it("returns a tuple conflict for an admitted rename without re-evaluating Admin access", async () => {
             currentTx.session.findUnique
                 .mockResolvedValueOnce({
                     accountId: "u1",
@@ -8354,15 +8109,11 @@ describe("sessionWriteService", () => {
                 .mockResolvedValueOnce({
                     displayProjectionV1: null,
                     metadataLayoutVersion: 1,
-                    metadataVersion: 5,
-                    metadata: "shared-old",
+                    metadataVersion: 6,
+                    metadata: "concurrent-shared",
                     ownerMetadata: storedOwnerMetadata,
                     agentStateVersion: 9,
                     agentState: "owner-full-state",
-                })
-                .mockResolvedValueOnce({
-                    accountId: "u1",
-                    shares: [{ sharedWithUserId: "u2" }],
                 });
             currentTx.sessionShare.findUnique
                 .mockResolvedValueOnce({ accessLevel: "admin" })
@@ -8384,17 +8135,17 @@ describe("sessionWriteService", () => {
                     metadataLayoutVersion: 1,
                     metadataVersion: 5,
                     ownerMetadata: storedOwnerMetadata,
-                    AND: [(await import("@/app/session/access/sessionAccessWhere")).buildSessionAccessWhere({
-                        accountId: "u2", capability: "renameSession", mode: "legacy_owner_or_direct",
-                    })],
                 },
-                data: { displayProjectionV1: null, metadata: "shared-new", metadataVersion: 6 },
+                data: { displayProjectionV1: null, metadata: "shared-new", metadataVersion: 6, usageTimingV1: { v: 1, metadata: null, agentState: null } },
             });
-            expect(res).toEqual({ ok: false, error: "forbidden" });
+            expect(res).toMatchObject({ ok: false, error: "version-mismatch", current: {
+                metadataLayoutVersion: 1, sharedMetadata: { version: 6, value: "concurrent-shared" },
+            } });
+            expect(currentTx.sessionShare.findUnique).toHaveBeenCalledTimes(1);
             expect(accountCursorRows).not.toHaveBeenCalled();
         });
 
-        it("fences a shared-editor write when edit access is revoked after the access read", async () => {
+        it("returns a tuple conflict for an admitted shared edit without re-evaluating access", async () => {
             currentTx.session.findUnique
                 .mockResolvedValueOnce({
                     accountId: "u1",
@@ -8412,15 +8163,11 @@ describe("sessionWriteService", () => {
                 .mockResolvedValueOnce({
                     displayProjectionV1: null,
                     metadataLayoutVersion: 1,
-                    metadataVersion: 5,
-                    metadata: "shared-old",
+                    metadataVersion: 6,
+                    metadata: "concurrent-shared",
                     ownerMetadata: storedOwnerMetadata,
                     agentStateVersion: 9,
                     agentState: "owner-full-state",
-                })
-                .mockResolvedValueOnce({
-                    accountId: "u1",
-                    shares: [{ sharedWithUserId: "u2" }],
                 });
             currentTx.sessionShare.findUnique
                 .mockResolvedValueOnce({ accessLevel: "edit" })
@@ -8441,17 +8188,18 @@ describe("sessionWriteService", () => {
                     metadataLayoutVersion: 1,
                     metadataVersion: 5,
                     ownerMetadata: storedOwnerMetadata,
-                    AND: [(await import("@/app/session/access/sessionAccessWhere")).buildSessionAccessWhere({
-                        accountId: "u2", capability: "submitAgentInput", mode: "legacy_owner_or_direct",
-                    })],
                 },
                 data: {
+                    usageTimingV1: { v: 1, metadata: null, agentState: null },
                     displayProjectionV1: null,
                     metadata: "shared-new",
                     metadataVersion: 6,
                 },
             });
-            expect(res).toEqual({ ok: false, error: "forbidden" });
+            expect(res).toMatchObject({ ok: false, error: "version-mismatch", current: {
+                metadataLayoutVersion: 1, sharedMetadata: { version: 6, value: "concurrent-shared" },
+            } });
+            expect(currentTx.sessionShare.findUnique).toHaveBeenCalledTimes(1);
             expect(accountCursorRows).not.toHaveBeenCalled();
         });
 

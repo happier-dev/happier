@@ -1,4 +1,4 @@
-import { DISCUSSION_CHANGE_HINT_V1 } from '@happier-dev/protocol/discussions';
+import { DISCUSSION_CHANGE_HINT_V1, DISCUSSION_READ_STATE_CHANGE_HINT_V1 } from '@happier-dev/protocol/discussions';
 import { assertAccountChangePublicationAudienceInTx, beforeAccountChangePublication, markAccountsChanged, type AccountChangePublication } from '@/app/changes/markAccountChanged';
 import { scheduleAccountActivityBadgeRefresh } from '@/app/activity/refreshAccountActivityBadgePushes';
 import { afterTx, type Tx } from '@/storage/inTx';
@@ -25,7 +25,7 @@ export async function markDiscussionReadersChangedInTx(input: Readonly<{
 export async function markDiscussionPrivateReaderChangedInTx(input: Readonly<{
     tx: Tx; discussionId: string; accountId: string;
 }>): Promise<void> {
-    await markAccountsChanged(input.tx, { accountIds: [input.accountId], kind: 'discussion', entityId: input.discussionId, hint: DISCUSSION_CHANGE_HINT_V1 });
+    await markAccountsChanged(input.tx, { accountIds: [input.accountId], kind: 'discussion', entityId: input.discussionId, hint: DISCUSSION_READ_STATE_CHANGE_HINT_V1 });
 }
 
 /** Badge policy remains at the Account activity owner; Discussion adds no notifier. */

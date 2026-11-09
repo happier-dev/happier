@@ -1,7 +1,7 @@
 import { MachineAccessLossCustodyResponseV1Schema, MachineAccessLossRequesterCensusResponseV1Schema, type MachineAccessLossCustodyRequestV1, type MachineAdmission } from '@happier-dev/protocol/machines/machineAccessV1';
 import { MACHINE_ACCESS_LOSS_SERVER_ORIGIN } from '@happier-dev/protocol/socketRpc';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
-import { MACHINE_RPC_TIMEOUT_ERROR_CODE, RPC_ERROR_CODES, type RpcErrorCode } from '@happier-dev/protocol/rpcErrors';
+import { MACHINE_RPC_TIMEOUT_ERROR_CODE, RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 import { CLIENT_UPGRADE_REQUIRED_ERROR_CODE } from '@happier-dev/protocol/clientCompatibility/upgradeRequiredV1';
 import { eventRouter } from '@/app/events/connectionEventRouter';
 import { readMachineAccessKeySessionBindingsInTx } from '@/app/accessKeys/sessionMachineAccessKeyMutations';
@@ -15,12 +15,8 @@ type MachineCustody = Readonly<{ machineId: string;
 type CustodyLoss = MachineCustody & Readonly<{ subjectAccountId: string }>;
 type CurrentCustodyAdmission = Extract<MachineAdmission, { kind: 'admitted' }>;
 
-/** Server-private diagnostics; the strict daemon wire response remains unchanged. */
-export type MachineAccessLossCustodyIncompleteReason =
-    | `admission_refused:${Extract<MachineAdmission, { kind: 'denied' }>['code']}`
-    | 'custodian_mismatch' | 'installation_mismatch' | 'target_not_found' | 'forwarder_unavailable'
-    | `forward_failed:${RpcErrorCode | typeof MACHINE_RPC_TIMEOUT_ERROR_CODE | typeof CLIENT_UPGRADE_REQUIRED_ERROR_CODE | 'unknown'}`
-    | 'response_invalid' | 'cleanup_incomplete' | 'custody_unavailable';
+/** Content-free server diagnostics, never a second daemon protocol. */
+export type MachineAccessLossCustodyIncompleteReason = string;
 type IncompleteCustody = Readonly<{ kind: 'incomplete'; reason: MachineAccessLossCustodyIncompleteReason }>;
 export type MachineAccessLossCustodyOutcome = Readonly<{ kind: 'settled' }> | IncompleteCustody;
 
@@ -56,23 +52,7 @@ async function forwardMachineAccessCustody(input: MachineCustody, callParams: Ma
                     ? { kind: 'incomplete', reason: 'installation_mismatch' } : undefined;
                 return matched;
             },
-            runOperation: async ({ target, readLatestTarget, operation }) => {
-                if (!matches(target)) {
-                    rejection = { kind: 'incomplete', reason: sameMachine(target) ? 'installation_mismatch' : 'target_not_found' };
-                    return { status: 'unavailable' };
-                }
-                const latest = await readLatestTarget();
-                if (!latest || !matches(latest)) {
-                    rejection = { kind: 'incomplete', reason: latest && sameMachine(latest) ? 'installation_mismatch' : 'target_not_found' };
-                    return { status: 'unavailable' };
-                }
-                const admission = await readCurrent();
-                if (!admission || admission.kind === 'incomplete') {
-                    rejection = admission ?? undefined;
-                    return { status: 'unavailable' };
-                }
-                return { status: 'current', value: await operation() };
-            },
+            runOperation: async ({ operation }) => ({ status: 'current', value: await operation() }),
         },
     });
     if (!response) return { kind: 'incomplete', reason: 'forwarder_unavailable' };

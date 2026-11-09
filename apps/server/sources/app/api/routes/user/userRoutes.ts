@@ -22,7 +22,7 @@ import { decodeKeysetCursorV1, encodeKeysetCursorV1, readKeysetCursorIdV1, readK
 import { NotFoundSchema } from "../../schemas/notFoundSchema";
 import { deriveAccountRecipientEnvelopeReadinessFromRow } from "@/app/encryption/accountRecipientEnvelopeReadiness";
 import { buildAccountTextPrefixFilter } from "@/app/account/accountTextPrefixFilter";
-import { buildSessionAccessCollaborationAccountWhere } from "@/app/session/access/sessionAccessGrantEligibility";
+import { buildShareEligibleAccountWhere } from "@/app/teams/shareEligibility";
 import { readRequestHomeEnv } from "@/app/home/settings/requestHomeEnv";
 import { portableQueryChunks } from "@/storage/portableQueryChunks";
 
@@ -172,7 +172,7 @@ export async function userRoutes(app: Fastify) {
                     : { username: textPrefix }),
                 AND: [
                     ...(purpose === "collaboration"
-                        ? [buildSessionAccessCollaborationAccountWhere(request.userId)]
+                        ? [buildShareEligibleAccountWhere(request.userId)]
                         : []),
                     ...(after
                         ? after.kind === "id" ? [{ id: { gt: after.id } }] : [{ OR: [

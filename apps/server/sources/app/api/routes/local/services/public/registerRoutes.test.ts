@@ -12,9 +12,11 @@ import {
     isRestrictedAuthTokenDeniedForRoute,
     PRESENT_USER_REQUIRED_ERROR,
 } from "@/app/api/utils/apiTokenRouteAdmission";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { RegisterLocalServicePublicRoutesOptions } from "./registerRoutes";
-import { createPresentUserSessionAccessAuthentication } from "@/app/session/access/sessionAccessAuthentication.testkit";
+import { createLocalServicePreviewRuntime } from '@/app/local/services/preview/runtime';
+
+afterEach(() => vi.unstubAllEnvs());
 
 const dbAccountFindUniqueMock = vi.hoisted(() => vi.fn());
 vi.mock("@/storage/db", async () => {
@@ -31,6 +33,11 @@ vi.mock("@/storage/db", async () => {
 });
 
 type PublicRoutesModule = typeof import("./registerRoutes");
+
+function publicRouteFixture() {
+    const runtime = createLocalServicePreviewRuntime({ tokenSecret: 'public-route-test-secret', publicBaseUrl: 'https://app.happier.test', hostOriginBaseDomain: 'preview.happier.test' });
+    return { retainMachineAccess: runtime.retainMachineAccess };
+}
 
 async function loadPublicRoutesModule(): Promise<PublicRoutesModule | null> {
     return import("./registerRoutes.js").catch(() => null) as Promise<PublicRoutesModule | null>;
@@ -198,6 +205,7 @@ describe("local service public exposure routes", () => {
 
         const app = createFakeRouteApp();
         mod.registerLocalServicePublicRoutes(app as never, {
+            ...publicRouteFixture(),
             resolvePreview: vi.fn(() => preview),
             createExposure: vi.fn(() => ({ ok: true as const, exposure })),
             revokeExposure: vi.fn(() => ({ ok: true as const })),
@@ -250,6 +258,7 @@ describe("local service public exposure routes", () => {
         const resolvePreview = vi.fn(() => preview);
         const authorizeSessionAccess = allowSessionAccess();
         mod.registerLocalServicePublicRoutes(app as never, {
+            ...publicRouteFixture(),
             resolvePreview,
             createExposure,
             revokeExposure: vi.fn(() => ({ ok: true as const })),
@@ -326,6 +335,7 @@ describe("local service public exposure routes", () => {
         }));
         const authorizeSessionAccess = allowSessionAccess();
         mod.registerLocalServicePublicRoutes(app as never, {
+            ...publicRouteFixture(),
             resolvePreview,
             createExposure,
             resolveExposure,
@@ -430,6 +440,7 @@ describe("local service public exposure routes", () => {
         const app = createFakeRouteApp();
         const createExposure = vi.fn(() => ({ ok: true as const, exposure }));
         mod.registerLocalServicePublicRoutes(app as never, {
+            ...publicRouteFixture(),
             resolvePreview: vi.fn(() => preview),
             createExposure,
             revokeExposure: vi.fn(() => ({ ok: true as const })),
@@ -469,6 +480,7 @@ describe("local service public exposure routes", () => {
         const createExposure = vi.fn(() => ({ ok: true as const, exposure }));
         const authorizeSessionAccess = allowSessionAccess();
         mod.registerLocalServicePublicRoutes(app as never, {
+            ...publicRouteFixture(),
             resolvePreview: vi.fn(() => preview),
             createExposure,
             revokeExposure: vi.fn(() => ({ ok: true as const })),
@@ -509,6 +521,7 @@ describe("local service public exposure routes", () => {
         const getStatus = vi.fn(() => publicSnapshot);
         const authorizeSessionAccess = allowSessionAccess();
         mod.registerLocalServicePublicRoutes(app as never, {
+            ...publicRouteFixture(),
             resolvePreview: vi.fn(() => preview),
             createExposure: vi.fn(() => ({ ok: true as const, exposure })),
             revokeExposure: vi.fn(() => ({ ok: true as const })),
@@ -557,6 +570,7 @@ describe("local service public exposure routes", () => {
         const validateAccess = vi.fn(() => ({ ok: true as const, preview }));
         const proxyHttp = vi.fn(async () => ({ ok: true as const }));
         mod.registerLocalServicePublicRoutes(app as never, {
+            ...publicRouteFixture(),
             resolvePreview: vi.fn(() => preview),
             createExposure,
             revokeExposure: vi.fn(() => ({ ok: true as const })),
@@ -605,6 +619,7 @@ describe("local service public exposure routes", () => {
         const app = createFakeRouteApp();
         const createExposure = vi.fn(() => ({ ok: true as const, exposure }));
         mod.registerLocalServicePublicRoutes(app as never, {
+            ...publicRouteFixture(),
             resolvePreview: vi.fn(() => preview),
             createExposure,
             revokeExposure: vi.fn(() => ({ ok: true as const })),
@@ -641,6 +656,7 @@ describe("local service public exposure routes", () => {
         const app = createFakeRouteApp();
         const createExposure = vi.fn(() => ({ ok: true as const, exposure }));
         mod.registerLocalServicePublicRoutes(app as never, {
+            ...publicRouteFixture(),
             resolvePreview: vi.fn(() => preview),
             createExposure,
             revokeExposure: vi.fn(() => ({ ok: true as const })),
@@ -679,6 +695,7 @@ describe("local service public exposure routes", () => {
         const app = createFakeRouteApp();
         const revokeExposure = vi.fn(() => ({ ok: true as const }));
         mod.registerLocalServicePublicRoutes(app as never, {
+            ...publicRouteFixture(),
             resolvePreview: vi.fn(() => preview),
             resolveExposure: vi.fn(() => exposure),
             createExposure: vi.fn(() => ({ ok: true as const, exposure })),
@@ -718,6 +735,7 @@ describe("local service public exposure routes", () => {
         const revokeExposure = vi.fn(() => ({ ok: true as const }));
         const authorizeSessionAccess = allowSessionAccess();
         mod.registerLocalServicePublicRoutes(app as never, {
+            ...publicRouteFixture(),
             resolvePreview: vi.fn(() => preview),
             resolveExposure: vi.fn(() => exposure),
             createExposure: vi.fn(() => ({ ok: true as const, exposure })),
@@ -762,6 +780,7 @@ describe("local service public exposure routes", () => {
             return { ok: true };
         };
         mod.registerLocalServicePublicRoutes(app as never, {
+            ...publicRouteFixture(),
             resolvePreview: vi.fn(() => preview),
             createExposure: vi.fn(() => ({ ok: true as const, exposure })),
             revokeExposure: vi.fn(() => ({ ok: true as const })),
@@ -785,8 +804,6 @@ describe("local service public exposure routes", () => {
         expect(validateAccess).toHaveBeenCalledWith({
             exposureId: "public_preview_1",
             rawToken: "cookie_token_1",
-            authenticated: false,
-            sessionAuthorized: false,
             clientKey: "unknown",
         });
         expect(proxyInputs[0]).toEqual(expect.objectContaining({
@@ -813,6 +830,7 @@ describe("local service public exposure routes", () => {
             return { ok: true };
         };
         mod.registerLocalServicePublicRoutes(app as never, {
+            ...publicRouteFixture(),
             resolvePreview: vi.fn(() => preview),
             createExposure: vi.fn(() => ({ ok: true as const, exposure })),
             revokeExposure: vi.fn(() => ({ ok: true as const })),
@@ -844,6 +862,7 @@ describe("local service public exposure routes", () => {
 
         const app = createFakeRouteApp();
         mod.registerLocalServicePublicRoutes(app as never, {
+            ...publicRouteFixture(),
             resolvePreview: vi.fn(() => preview),
             createExposure: vi.fn(() => ({ ok: true as const, exposure })),
             revokeExposure: vi.fn(() => ({ ok: true as const })),
@@ -875,6 +894,7 @@ describe("local service public exposure routes", () => {
 
         const app = createFakeRouteApp();
         mod.registerLocalServicePublicRoutes(app as never, {
+            ...publicRouteFixture(),
             resolvePreview: vi.fn(() => preview),
             createExposure: vi.fn(() => ({ ok: true as const, exposure })),
             revokeExposure: vi.fn(() => ({ ok: true as const })),
@@ -927,6 +947,7 @@ describe("local service public exposure routes", () => {
             return { ok: true };
         };
         mod.registerLocalServicePublicRoutes(app as never, {
+            ...publicRouteFixture(),
             resolvePreview: vi.fn(() => preview),
             createExposure: vi.fn(() => ({ ok: true as const, exposure })),
             revokeExposure: vi.fn(() => ({ ok: true as const })),
@@ -973,6 +994,7 @@ describe("local service public exposure routes", () => {
             return { ok: true };
         };
         mod.registerLocalServicePublicRoutes(app as never, {
+            ...publicRouteFixture(),
             resolvePreview: vi.fn(() => preview),
             createExposure: vi.fn(() => ({ ok: true as const, exposure })),
             revokeExposure: vi.fn(() => ({ ok: true as const })),
@@ -996,8 +1018,6 @@ describe("local service public exposure routes", () => {
         expect(validateAccess).toHaveBeenCalledWith({
             exposureId: "public_preview_1",
             rawToken: "cookie_token_1",
-            authenticated: false,
-            sessionAuthorized: false,
             clientKey: "unknown",
         });
         expect(proxyInputs[0]).toEqual(expect.objectContaining({
@@ -1017,6 +1037,7 @@ describe("local service public exposure routes", () => {
         const app = createFakeRouteApp();
         const proxyHttp = vi.fn<NonNullable<RegisterLocalServicePublicRoutesOptions["proxyHttp"]>>(async () => ({ ok: true as const }));
         mod.registerLocalServicePublicRoutes(app as never, {
+            ...publicRouteFixture(),
             resolvePreview: vi.fn(() => preview),
             createExposure: vi.fn(() => ({ ok: true as const, exposure })),
             revokeExposure: vi.fn(() => ({ ok: true as const })),
@@ -1097,6 +1118,7 @@ describe("local service public exposure routes", () => {
             return { ok: true as const };
         });
         mod.registerLocalServicePublicRoutes(app as never, {
+            ...publicRouteFixture(),
             resolvePreview: vi.fn(() => preview),
             createExposure: vi.fn(() => ({ ok: true as const, exposure })),
             revokeExposure: vi.fn(() => ({ ok: true as const })),
@@ -1135,6 +1157,7 @@ describe("local service public exposure routes", () => {
             return { ok: true };
         };
         mod.registerLocalServicePublicRoutes(app as never, {
+            ...publicRouteFixture(),
             resolvePreview: vi.fn(() => preview),
             createExposure: vi.fn(() => ({ ok: true as const, exposure })),
             revokeExposure: vi.fn(() => ({ ok: true as const })),
@@ -1180,6 +1203,7 @@ describe("local service public exposure routes", () => {
             return { ok: true };
         };
         mod.registerLocalServicePublicRoutes(app as never, {
+            ...publicRouteFixture(),
             resolvePreview: vi.fn(() => preview),
             createExposure: vi.fn(() => ({ ok: true as const, exposure })),
             revokeExposure: vi.fn(() => ({ ok: true as const })),
@@ -1206,122 +1230,6 @@ describe("local service public exposure routes", () => {
             path: "/api/save",
             search: "",
         }));
-    });
-
-    it("treats a valid bearer token as authenticated without requiring the strict auth prehandler", async () => {
-        const mod = await loadPublicRoutesModule();
-        expect(mod?.registerLocalServicePublicRoutes).toBeTypeOf("function");
-        if (!mod?.registerLocalServicePublicRoutes) return;
-
-        const previousMasterSecret = process.env.HANDY_MASTER_SECRET;
-        process.env.HANDY_MASTER_SECRET = "public-preview-route-auth-secret";
-        dbAccountFindUniqueMock.mockResolvedValue({ tokenEpoch: 0, status: "active" });
-        await auth.init();
-        const token = await auth.createToken("user_1", undefined, { kind: "account", authority: "present_user" });
-        const app = createFakeRouteApp();
-        const validateAccess = vi.fn(() => ({ ok: true as const, preview }));
-        mod.registerLocalServicePublicRoutes(app as never, {
-            resolvePreview: vi.fn(() => preview),
-            createExposure: vi.fn(() => ({ ok: true as const, exposure })),
-            revokeExposure: vi.fn(() => ({ ok: true as const })),
-            validateAccess,
-            authorizeSessionAccess: allowSessionAccess(),
-            proxyHttp: vi.fn(async () => ({ ok: true as const })),
-        });
-
-        const handler = getRouteHandler(app, "GET", "/v1/local-services/public/:exposureId/*");
-        const reply = createReplyStub();
-        try {
-            await handler({
-                params: { exposureId: "public_preview_1", "*": "" },
-                query: {},
-                headers: { authorization: `Bearer ${token}` },
-                method: "GET",
-            }, reply);
-        } finally {
-            if (typeof previousMasterSecret === "string") {
-                process.env.HANDY_MASTER_SECRET = previousMasterSecret;
-            } else {
-                delete process.env.HANDY_MASTER_SECRET;
-            }
-        }
-
-        expect(validateAccess).toHaveBeenCalledWith(expect.objectContaining({
-            authenticated: true,
-        }));
-        expect(app.authenticate).not.toHaveBeenCalled();
-    });
-
-    it("does not treat an API token as authenticated on public preview HTTP or WebSocket data planes", async () => {
-        const mod = await loadPublicRoutesModule();
-        expect(mod?.registerLocalServicePublicRoutes).toBeTypeOf("function");
-        if (!mod?.registerLocalServicePublicRoutes) return;
-
-        const verifyToken = vi.spyOn(auth, "verifyTokenDisposition").mockResolvedValue({
-            status: "verified",
-            credential: {
-                userId: "user_1",
-                authTokenKind: "api_token",
-                authority: "account_automation",
-                legacy: false,
-                apiTokenPrincipal: {
-                    accountId: "user_1",
-                    principalId: "user_1",
-                    credentialId: "pat_1",
-                    authority: "account_automation",
-                    expiresAt: null,
-                    grant: API_TOKEN_FULL_GRANT_V1,
-                    parentTokenId: null,
-                    embedConfig: null,
-                },
-            },
-        });
-        const app = createUpgradeRouteApp();
-        const validateAccess = vi.fn(() => ({ ok: true as const, preview }));
-        const authorizeSessionAccess = allowSessionAccess();
-        mod.registerLocalServicePublicRoutes(app as never, {
-            resolvePreview: vi.fn(() => preview),
-            resolveExposure: vi.fn(() => exposure),
-            createExposure: vi.fn(() => ({ ok: true as const, exposure })),
-            revokeExposure: vi.fn(() => ({ ok: true as const })),
-            validateAccess,
-            authorizeSessionAccess,
-            proxyHttp: vi.fn(async () => ({ ok: true as const })),
-            proxyWebSocket: vi.fn(async () => ({ ok: true as const })),
-        });
-
-        try {
-            const handler = getRouteHandler(app, "GET", "/v1/local-services/public/:exposureId/*");
-            await handler({
-                params: { exposureId: "public_preview_1", "*": "" },
-                query: {},
-                headers: { authorization: "Bearer hap_v1_test" },
-                method: "GET",
-            }, createReplyStub());
-
-            await app.upgradeHandlers[0]?.({
-                url: "/v1/local-services/public/public_preview_1/socket",
-                headers: {
-                    host: "preview.happier.test",
-                    upgrade: "websocket",
-                    connection: "Upgrade",
-                    authorization: "Bearer hap_v1_test",
-                },
-                rawHeaders: [],
-            }, createUpgradeSocket(), new Uint8Array());
-        } finally {
-            verifyToken.mockRestore();
-        }
-
-        expect(validateAccess).toHaveBeenNthCalledWith(1, expect.objectContaining({
-            authenticated: false,
-            sessionAuthorized: false,
-        }));
-        expect(validateAccess).toHaveBeenNthCalledWith(2, expect.objectContaining({
-            authenticated: false,
-            sessionAuthorized: false,
-        }));
-        expect(authorizeSessionAccess).not.toHaveBeenCalled();
     });
 
     it.each([
@@ -1354,6 +1262,7 @@ describe("local service public exposure routes", () => {
         const validateAccess = vi.fn(() => ({ ok: true as const, preview }));
         const authorizeSessionAccess = allowSessionAccess();
         mod.registerLocalServicePublicRoutes(app as never, {
+            ...publicRouteFixture(),
             resolvePreview: vi.fn(() => preview),
             resolveExposure: vi.fn(() => exposure),
             createExposure: vi.fn(() => ({ ok: true as const, exposure })),
@@ -1394,74 +1303,6 @@ describe("local service public exposure routes", () => {
         expect(authorizeSessionAccess).not.toHaveBeenCalled();
     });
 
-    it("does not treat a signed account_directory token as authenticated on public preview HTTP or WebSocket data planes", async () => {
-        const mod = await loadPublicRoutesModule();
-        expect(mod?.registerLocalServicePublicRoutes).toBeTypeOf("function");
-        if (!mod?.registerLocalServicePublicRoutes) return;
-
-        const previousMasterSecret = process.env.HANDY_MASTER_SECRET;
-        process.env.HANDY_MASTER_SECRET = "public-preview-route-auth-secret";
-        dbAccountFindUniqueMock.mockResolvedValue({ tokenEpoch: 0, status: "active" });
-        await auth.init();
-        const directoryToken = await auth.createToken("user_directory_1", undefined, {
-            kind: "account_directory",
-            authority: "present_user",
-        });
-        const app = createUpgradeRouteApp();
-        const validateAccess = vi.fn(() => ({ ok: true as const, preview }));
-        const authorizeSessionAccess = allowSessionAccess();
-        mod.registerLocalServicePublicRoutes(app as never, {
-            resolvePreview: vi.fn(() => preview),
-            resolveExposure: vi.fn(() => exposure),
-            createExposure: vi.fn(() => ({ ok: true as const, exposure })),
-            revokeExposure: vi.fn(() => ({ ok: true as const })),
-            validateAccess,
-            authorizeSessionAccess,
-            proxyHttp: vi.fn(async () => ({ ok: true as const })),
-            proxyWebSocket: vi.fn(async () => ({ ok: true as const })),
-        });
-
-        try {
-            const handler = getRouteHandler(app, "GET", "/v1/local-services/public/:exposureId/*");
-            await handler({
-                params: { exposureId: "public_preview_1", "*": "" },
-                query: {},
-                headers: { authorization: `Bearer ${directoryToken}` },
-                method: "GET",
-            }, createReplyStub());
-
-            await app.upgradeHandlers[0]?.({
-                url: "/v1/local-services/public/public_preview_1/socket",
-                headers: {
-                    host: "preview.happier.test",
-                    upgrade: "websocket",
-                    connection: "Upgrade",
-                    authorization: `Bearer ${directoryToken}`,
-                },
-                rawHeaders: [],
-            }, createUpgradeSocket(), new Uint8Array());
-        } finally {
-            if (typeof previousMasterSecret === "string") {
-                process.env.HANDY_MASTER_SECRET = previousMasterSecret;
-            } else {
-                delete process.env.HANDY_MASTER_SECRET;
-            }
-        }
-
-        // A projected restricted credential would resolve to authenticated:true
-        // (S-2) and reach the session authorizer; the Directory bearer must
-        // degrade to the anonymous public path on both planes.
-        expect(validateAccess).toHaveBeenNthCalledWith(1, expect.objectContaining({
-            authenticated: false,
-            sessionAuthorized: false,
-        }));
-        expect(validateAccess).toHaveBeenNthCalledWith(2, expect.objectContaining({
-            authenticated: false,
-            sessionAuthorized: false,
-        }));
-        expect(authorizeSessionAccess).not.toHaveBeenCalled();
-    });
-
     it("routes exchanged-cookie public WebSocket upgrades through the shared preview adapter", async () => {
         const mod = await loadPublicRoutesModule();
         expect(mod?.registerLocalServicePublicRoutes).toBeTypeOf("function");
@@ -1471,6 +1312,7 @@ describe("local service public exposure routes", () => {
         const validateAccess = vi.fn(() => ({ ok: true as const, preview }));
         const proxyWebSocket = vi.fn(async () => ({ ok: true as const }));
         mod.registerLocalServicePublicRoutes(app as never, {
+            ...publicRouteFixture(),
             resolvePreview: vi.fn(() => preview),
             createExposure: vi.fn(() => ({ ok: true as const, exposure })),
             revokeExposure: vi.fn(() => ({ ok: true as const })),
@@ -1504,8 +1346,6 @@ describe("local service public exposure routes", () => {
         expect(validateAccess).toHaveBeenCalledWith({
             exposureId: "public_preview_1",
             rawToken: "cookie_token_1",
-            authenticated: false,
-            sessionAuthorized: false,
             clientKey: "unknown",
         });
         expect(proxyWebSocket).toHaveBeenCalledWith(expect.objectContaining({
@@ -1539,6 +1379,7 @@ describe("local service public exposure routes", () => {
         const validateAccess = vi.fn(() => ({ ok: true as const, preview }));
         const proxyWebSocket = vi.fn(async () => ({ ok: true as const }));
         mod.registerLocalServicePublicRoutes(app as never, {
+            ...publicRouteFixture(),
             resolvePreview: vi.fn(() => preview),
             createExposure: vi.fn(() => ({ ok: true as const, exposure })),
             revokeExposure: vi.fn(() => ({ ok: true as const })),
@@ -1588,6 +1429,7 @@ describe("local service public exposure routes", () => {
         });
 
         mod.registerLocalServicePublicRoutes(app as never, {
+            ...publicRouteFixture(),
             resolvePreview: vi.fn(() => preview),
             createExposure: vi.fn(() => ({ ok: true as const, exposure })),
             revokeExposure: vi.fn(() => ({ ok: true as const })),
@@ -1622,6 +1464,7 @@ describe("local service public exposure routes", () => {
         const socket = createBackpressureUpgradeSocket();
         const proxyWebSocket = vi.fn(async () => ({ ok: true as const }));
         mod.registerLocalServicePublicRoutes(app as never, {
+            ...publicRouteFixture(),
             resolvePreview: vi.fn(() => preview),
             createExposure: vi.fn(() => ({ ok: true as const, exposure })),
             revokeExposure: vi.fn(() => ({ ok: true as const })),
@@ -1666,6 +1509,7 @@ describe("local service public exposure routes", () => {
             const socket = createBackpressureUpgradeSocket();
             const proxyWebSocket = vi.fn(async () => ({ ok: true as const }));
             mod.registerLocalServicePublicRoutes(app as never, {
+                ...publicRouteFixture(),
                 resolvePreview: vi.fn(() => preview),
                 createExposure: vi.fn(() => ({ ok: true as const, exposure })),
                 revokeExposure: vi.fn(() => ({ ok: true as const })),
@@ -1726,6 +1570,7 @@ describe("local service public exposure routes", () => {
             return { ok: true };
         };
         mod.registerLocalServicePublicRoutes(app as never, {
+            ...publicRouteFixture(),
             resolvePreview: vi.fn(() => preview),
             createExposure: vi.fn(() => ({ ok: true as const, exposure })),
             revokeExposure: vi.fn(() => ({ ok: true as const })),
@@ -1774,97 +1619,4 @@ describe("local service public exposure routes", () => {
     // S-2: `authenticated` proved only that the caller held SOME account on this server. The
     // route must resolve access to the exposure's bound session and hand that fact to the runtime,
     // on BOTH data planes.
-    it("resolves session authorization for the exposure owner on the HTTP data plane", async () => {
-        const mod = await loadPublicRoutesModule();
-        expect(mod?.registerLocalServicePublicRoutes).toBeTypeOf("function");
-        if (!mod?.registerLocalServicePublicRoutes) return;
-
-        const validateAccess = vi.fn(() => ({ ok: true as const, preview }));
-        const authorizeSessionAccess = vi.fn(() => false);
-        const app = createFakeRouteApp();
-        mod.registerLocalServicePublicRoutes(app as never, {
-            resolvePreview: vi.fn(() => preview),
-            resolveExposure: vi.fn(() => exposure),
-            createExposure: vi.fn(() => ({ ok: true as const, exposure })),
-            revokeExposure: vi.fn(() => ({ ok: true as const })),
-            validateAccess,
-            authorizeSessionAccess,
-            readOptionalAuthenticatedUser: async () => ({
-                userId: "co_tenant_user",
-                authentication: createPresentUserSessionAccessAuthentication(),
-            }),
-            proxyHttp: vi.fn(async () => ({ ok: true as const })),
-        });
-
-        const handler = getRouteHandler(app, "GET", "/v1/local-services/public/:exposureId/*");
-        await handler({
-            method: "GET",
-            ip: "203.0.113.9",
-            params: { exposureId: "public_preview_1", "*": "index.html" },
-            query: {},
-            headers: { host: "preview.happier.test" },
-        }, createReplyStub());
-
-        expect(authorizeSessionAccess).toHaveBeenCalledWith({
-            authentication: expect.objectContaining({ authority: "present_user" }),
-            userId: "co_tenant_user",
-            sessionId: "session_1",
-            purpose: "public_access",
-        });
-        expect(validateAccess).toHaveBeenCalledWith(expect.objectContaining({
-            exposureId: "public_preview_1",
-            authenticated: true,
-            sessionAuthorized: false,
-            clientKey: "203.0.113.9",
-        }));
-    });
-
-    it("resolves session authorization for the exposure owner on the WebSocket data plane", async () => {
-        const mod = await loadPublicRoutesModule();
-        expect(mod?.registerLocalServicePublicRoutes).toBeTypeOf("function");
-        if (!mod?.registerLocalServicePublicRoutes) return;
-
-        const validateAccess = vi.fn(() => ({ ok: false as const, reasonCode: "session_not_authorized" as const }));
-        const authorizeSessionAccess = vi.fn(() => false);
-        const app = createUpgradeRouteApp();
-        mod.registerLocalServicePublicRoutes(app as never, {
-            resolvePreview: vi.fn(() => preview),
-            resolveExposure: vi.fn(() => exposure),
-            createExposure: vi.fn(() => ({ ok: true as const, exposure })),
-            revokeExposure: vi.fn(() => ({ ok: true as const })),
-            validateAccess,
-            authorizeSessionAccess,
-            readOptionalAuthenticatedUser: async () => ({
-                userId: "co_tenant_user",
-                authentication: createPresentUserSessionAccessAuthentication(),
-            }),
-            proxyHttp: vi.fn(async () => ({ ok: true as const })),
-            proxyWebSocket: vi.fn(async () => ({ ok: true as const })),
-        } as never);
-
-        const socket = { ...createUpgradeSocket(), remoteAddress: "203.0.113.9" };
-        await app.upgradeHandlers[0]?.({
-            url: "/v1/local-services/public/public_preview_1/socket",
-            headers: {
-                host: "preview.happier.test",
-                upgrade: "websocket",
-                connection: "Upgrade",
-            },
-            rawHeaders: [],
-        }, socket, new Uint8Array());
-
-        expect(authorizeSessionAccess).toHaveBeenCalledWith({
-            authentication: expect.objectContaining({ authority: "present_user" }),
-            userId: "co_tenant_user",
-            sessionId: "session_1",
-            purpose: "public_access",
-        });
-        expect(validateAccess).toHaveBeenCalledWith(expect.objectContaining({
-            exposureId: "public_preview_1",
-            authenticated: true,
-            sessionAuthorized: false,
-            clientKey: "203.0.113.9",
-        }));
-        expect(new TextDecoder().decode(socket.write.mock.calls[0]?.[0])).toContain("403 Forbidden");
-    });
 });

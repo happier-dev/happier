@@ -93,8 +93,18 @@ function serializeUpdateMessage(message: UpdateMessagePayloadInput, options?: Up
     };
 }
 
+/**
+ * A producer's append relayed with a full revision: the stored content `content` appends to
+ * `base`. Server-internal; the delivery projection turns it into a `delta` body for consumers that
+ * apply appends and strips it for everyone else.
+ */
+export type MessageUpdateAppend = Readonly<{
+    content: PrismaJson.SessionMessageContent;
+    base: Readonly<{ updatedAt: number; length: number }>;
+}>;
+
 type FullMessageUpdatePayload<T extends 'new-message' | 'message-updated'> = Omit<UpdatePayload, 'body'> & {
-    body: { t: T; delivery: 'full'; sid: string; id: string; message: SerializedUpdateMessage };
+    body: { t: T; delivery: 'full'; sid: string; id: string; message: SerializedUpdateMessage; append?: MessageUpdateAppend };
 };
 
 function normalizeSessionEncryptionMode(value: string | null | undefined): "e2ee" | "plain" {
@@ -200,7 +210,7 @@ export function buildMessageUpdatedUpdate(
     sessionId: string,
     updateSeq: number,
     updateId: string,
-    options?: UpdateMessagePayloadOptions,
+    options?: UpdateMessagePayloadOptions & Readonly<{ append?: MessageUpdateAppend }>,
 ): FullMessageUpdatePayload<'message-updated'> {
     return {
         id: updateId,
@@ -212,6 +222,7 @@ export function buildMessageUpdatedUpdate(
             // Compatibility: some clients use `id` for sessionId.
             id: sessionId,
             message: serializeUpdateMessage(message, options),
+            ...(options?.append ? { append: options.append } : {}),
         },
         createdAt: Date.now()
     };

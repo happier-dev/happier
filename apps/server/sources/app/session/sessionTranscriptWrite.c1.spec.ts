@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { ResolvedTransactionResult, Tx } from "@/storage/inTx";
-import { createDbTransactionMock, installDbModuleMock } from "../api/testkit/dbMocks";
+import { createDbTransactionMock, installDbModuleMock, inTxPostgresControlStatementMock } from "../api/testkit/dbMocks";
 
 const sessionUpdate = vi.fn();
 const sessionFindUnique = vi.fn();
@@ -14,6 +14,7 @@ const sessionSystemRecordFindFirst = vi.fn();
 
 function createTx(): Tx {
     return {
+        ...inTxPostgresControlStatementMock,
         $queryRawUnsafe: async () => [],
         session: { findUnique: sessionFindUnique, findMany: async () => [], update: sessionUpdate },
         sessionFollowEdge: { findMany: async () => [] },
@@ -356,7 +357,7 @@ describe("canonical session transcript writer", () => {
             }],
         };
 
-        await expect(writer.writeHistoricalSessionMessageBatchInTx(createTx(), params)).resolves.toEqual({
+        await expect(runInTransaction((tx) => writer.writeHistoricalSessionMessageBatchInTx(tx, params))).resolves.toEqual({
             ok: false,
             error: "storage-mode-conflict",
             code: "session_storage_authority_mismatch",
@@ -413,11 +414,11 @@ describe("canonical session transcript writer", () => {
 
         vi.clearAllMocks();
         sessionMessageFindMany.mockResolvedValue(first.ok ? first.messages : []);
-        const changedProvenance = await writer.writeHistoricalSessionMessageBatchInTx(createTx(), {
+        const changedProvenance = await runInTransaction((tx) => writer.writeHistoricalSessionMessageBatchInTx(tx, {
             sessionId: "session-1",
             storagePolicy: "optional",
             items: [{ ...item, transcriptObservationProvenance: { kind: "non_dependent", source: "external" } }],
-        });
+        }));
 
         expect(changedProvenance).toEqual({
             ok: false,
@@ -451,7 +452,7 @@ describe("canonical session transcript writer", () => {
             updatedAt: new Date(1_000),
         }]);
 
-        const result = await writeHistoricalSessionMessageBatchInTx!(createTx(), {
+        const result = await runInTransaction((tx) => writeHistoricalSessionMessageBatchInTx!(tx, {
             sessionId: "session-1",
             storagePolicy: "optional",
             items: [{
@@ -460,7 +461,7 @@ describe("canonical session transcript writer", () => {
                 messageRole: "user",
                 content: { t: "plain", v: { role: "user", text: "changed" } },
             }],
-        });
+        }));
 
         expect(result).toEqual({ ok: false, error: "stable-item-conflict", localId: "history:item-1" });
         expect(sessionUpdate).not.toHaveBeenCalled();

@@ -2,6 +2,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vites
 
 import type { DiscussionCreateRequestV1 } from "@happier-dev/protocol";
 import { db } from "@/storage/db";
+import { makeShareEligibleForTest } from '@/testkit/shareEligibility.testkit';
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
 import { createPresentUserSessionAccessAuthentication } from "@/app/session/access/sessionAccessAuthentication.testkit";
 
@@ -59,6 +60,7 @@ describe("Discussion grants control Account badge facts (SQLite)", () => {
         const owner = await account();
         const follower = await account();
         const browser = await account();
+        await makeShareEligibleForTest(owner.id, [follower.id, browser.id]);
         const session = await db.session.create({ data: {
             accountId: owner.id, tag: crypto.randomUUID(), encryptionMode: "plain",
             metadata: JSON.stringify({ t: "plain", v: {} }),
@@ -157,5 +159,11 @@ describe("Discussion grants control Account badge facts (SQLite)", () => {
         const settled = await settledBadgePushes();
         expect([...settled.keys()]).toEqual([follower.id]);
         expect(settled.get(follower.id)).toBe(0);
+        const change = await db.accountChange.findUniqueOrThrow({
+            where: { accountId_kind_entityId: { accountId: follower.id, kind: 'discussion', entityId: created.value.discussion.id } },
+            select: { hint: true },
+        });
+        // A private cursor never erases the pending first-message invalidation.
+        expect(change.hint).toEqual({ v: 1, discussions: true, changes: { resource: true, readState: true } });
     });
 });

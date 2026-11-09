@@ -166,7 +166,7 @@ function resolveBrowserCapabilities(config: BrowserFeatureEnv): BrowserCapabilit
             supportedMimeTypes: valuesWhenEnabled(recordingEnabled, BROWSER_RECORDING_MIME_TYPES),
             supportedAdapterKinds: valuesWhenEnabled(recordingEnabled, BROWSER_RECORDING_ADAPTER_KINDS),
             audioSupported: false,
-            cursorOverlaySupported: recordingEnabled,
+            cursorOverlaySupported: recordingEnabled && sidecarEnabled,
             actionTimelineChaptersSupported: recordingEnabled,
             supportedRetentionClasses: valuesWhenEnabled(recordingEnabled, BROWSER_RECORDING_RETENTION_CLASSES),
             disabledReasons: disabledReasons(recordingEnabled),

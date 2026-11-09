@@ -53,6 +53,22 @@ describe("createMachineSocketOwnershipRegistry", () => {
         redisHmgetMock.mockReset();
     });
 
+    it('compares the accepted pre-connect claim against the current Redis owner without pruning it', async () => {
+        const io = createIoStub();
+        setSocket(io, 'connecting-socket', false);
+        redisEvalMock.mockResolvedValue('granted');
+        redisHmgetMock.mockResolvedValue(['connecting-socket', null, null, null, null, null, null]);
+        const registry = createMachineSocketOwnershipRegistry({ io, config: { enabled: true, instanceId: 'instance-1' } });
+        const identity = { accountId: 'acct-1', machineId: 'machine-1', socketId: 'connecting-socket' };
+        try {
+            expect(await registry.claimOwner({ ...identity, owner: {} })).toEqual({ result: 'granted' });
+            expect(await registry.isOwner(identity)).toBe(true);
+            // A claim on another node supersedes this local snapshot immediately.
+            redisHmgetMock.mockResolvedValue(['replacement-socket', null, null, null, null, null, null]);
+            expect(await registry.isOwner(identity)).toBe(false);
+        } finally { await registry.releaseOwner(identity); }
+    });
+
     it("invalidates the local lease when the Redis refresh loop fails", async () => {
         vi.useFakeTimers();
         try {

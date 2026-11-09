@@ -19,7 +19,7 @@ import { evaluateAccountStoredContentCompatibility } from '@/app/clientCompatibi
 
 const boundary = vi.hoisted(() => ({ db: undefined as unknown }));
 // Only persistent storage is replaced; route, runtime currentness, graph traversal,
-// access filtering, pagination, metadata projection and final readmission are real.
+// access filtering, pagination, metadata projection and admission are real.
 vi.mock('@/storage/db', () => ({ get db() { return boundary.db; } }));
 
 const principal = VerifiedEphemeralSessionRunnerPrincipalSchema.parse({
@@ -34,6 +34,7 @@ function fixture() {
     const mocks = createDbMocks({ account: ['findUnique', 'findMany'], session: ['findUnique', 'findFirst', 'findMany'],
         ephemeralRunnerActivation: ['findFirst'], machine: ['findFirst'], accessKey: ['findUnique'],
         sessionFollowEdge: ['findMany'], teamMembership: ['findMany'], homeSettings: ['findUnique'],
+        sessionShare: ['findMany'], sessionTeamGrant: ['findMany'], sessionGroupGrant: ['findMany'],
         homeGovernancePolicy: ['findUnique'], simpleCache: ['findUnique'] });
     const account = { id: 'account', status: 'active', tokenEpoch: 0, encryptionMode: 'plain' };
     const metadata = { path: '/private-owner-workspace' };
@@ -45,7 +46,7 @@ function fixture() {
         metadata: JSON.stringify(projectSessionSharedMetadataV1({ metadata })), metadataVersion: 0, metadataLayoutVersion: 1,
         ownerMetadata: JSON.stringify(createPlainSessionOwnerMetadataEnvelopeV1(ownerMetadata.ownerMetadata)), agentState: null, agentStateVersion: 0,
         encryptionMode: 'plain', dataKeyEnvelopes: [], shares: [] as { id: string; sharedWithUserId: string; sharedWithUser: { status: string }; accessLevel: string; canApprovePermissions: boolean }[],
-        teamGrants: [], groupGrants: [], turns: [], primaryTeamId: null,
+        teamGrants: [], groupGrants: [], publicShare: null, turns: [], primaryTeamId: null,
         currentStorageState: 'hosted', acceptedThroughServerSeq: null, publishedThroughServerSeq: null,
         materializationPublicationId: null, materializedThroughSourceAt: null,
         pendingPermissionRequestCount: 0, pendingUserActionRequestCount: 0, pendingRequestObservedAt: null,
@@ -74,22 +75,31 @@ function fixture() {
     mocks.db.machine.findFirst.mockResolvedValue({ installationPublicKey: new Uint8Array(32).fill(1) });
     mocks.db.accessKey.findUnique.mockResolvedValue({ accountId: account.id });
     mocks.db.teamMembership.findMany.mockResolvedValue([]);
+    mocks.db.sessionShare.findMany.mockResolvedValue([]);
+    mocks.db.sessionTeamGrant.findMany.mockResolvedValue([]);
+    mocks.db.sessionGroupGrant.findMany.mockResolvedValue([]);
     mocks.db.homeSettings.findUnique.mockResolvedValue(null);
     mocks.db.homeGovernancePolicy.findUnique.mockResolvedValue(null);
     mocks.db.simpleCache.findUnique.mockResolvedValue({ value: 'srv_test_home' });
-    const reader = { ...mocks.db, ...inTxPostgresControlStatementMock };
-    let snapshots = 0;
-    let beforeReadmission: (() => void) | undefined;
+    const reader = { ...mocks.db, ...inTxPostgresControlStatementMock,
+        // PostgreSQL's canonical singleton join returns one empty-Home row.
+        $queryRawUnsafe: vi.fn().mockResolvedValue([{ revision: null, values: null,
+            encryptedSecrets: null, authenticationPolicy: null }]),
+    };
+    let afterCapture: (() => void) | undefined;
     boundary.db = { ...reader, $transaction: async (read: (tx: typeof reader) => Promise<unknown>) => {
-        if (++snapshots === 2) beforeReadmission?.();
-        return read(reader);
+        const result = await read(reader);
+        const effect = afterCapture;
+        afterCapture = undefined;
+        effect?.();
+        return result;
     } };
     const authentication = { env: {}, authority: 'account_automation' as const, authenticationEvidence: undefined,
         sessionRuntimePrincipal: principal };
     return { mocks, rows, edges, authentication, revoke: () => { current = false; },
         access: (sessionId: string) => resolveSessionAccessForOperation(reader as unknown as Tx,
             { accountId: account.id, sessionId, authentication, capability: 'readTranscript' }),
-        beforeReadmission: (effect: () => void) => { beforeReadmission = effect; },
+        afterCapture: (effect: () => void) => { afterCapture = effect; },
         read: (overrides = {}) => listSessionsForAccount({ userId: account.id, authentication,
             source: { kind: 'query', query: { ...query, ...overrides } }, rowRepresentabilityWhere: {},
             timing: createV2SessionListServerTiming({}) }) };
@@ -128,28 +138,32 @@ describe('restricted coordinator Under-self listing', () => {
         const f = fixture();
         for (const overrides of [{ underSessionId: 'unrelated' }, { underSessionId: undefined },
             { scope: 'following' }, { attention: 'needs_my_attention' }, { tagIds: ['private'] },
-            { folderIds: ['private'] }, { includeAttention: true }]) {
+            { folderIds: ['private'] }, { projectKeys: { include: ['private'], exclude: [] } },
+            { membership: { mode: 'manual_only' as const, tagIds: ['private'] } }, { includeAttention: true }]) {
             await expect(f.read(overrides)).rejects.toMatchObject({ code: 'credential_scope_denied' });
         }
         expect(await f.access('worker')).toMatchObject({ status: 'unavailable' });
         expect(await f.access('coordinator')).toMatchObject({ status: 'allowed' });
     });
 
-    it('re-proves graph membership and runtime currentness before returning a captured page', async () => {
+    it('retains admitted graph membership and runtime authority until the next request', async () => {
         const detached = fixture();
-        detached.beforeReadmission(() => { detached.edges.splice(0, detached.edges.length); });
+        detached.afterCapture(() => { detached.edges.splice(0, detached.edges.length); });
+        expect((await detached.read({ limit: 50 }))?.sessions.map(row => row.id).sort()).toEqual(['coordinator', 'grandchild', 'worker']);
         expect((await detached.read({ limit: 50 }))?.sessions.map(row => row.id)).toEqual(['coordinator']);
         const revoked = fixture();
-        revoked.beforeReadmission(revoked.revoke);
+        revoked.afterCapture(revoked.revoke);
+        expect((await revoked.read())?.sessions).toHaveLength(2);
         await expect(revoked.read()).rejects.toMatchObject({ code: 'credential_scope_denied' });
     });
 
-    it('removes a shared worker when its independent read grant is revoked before return', async () => {
+    it('retains an admitted shared worker and removes it on the next request after revocation', async () => {
         const f = fixture();
         const hidden = f.rows.find(row => row.id === 'hidden')!;
         hidden.shares.push({ id: 'worker-read', sharedWithUserId: principal.accountId,
             sharedWithUser: { status: 'active' }, accessLevel: 'view', canApprovePermissions: false });
-        f.beforeReadmission(() => { hidden.shares.length = 0; });
+        f.afterCapture(() => { hidden.shares.length = 0; });
+        expect((await f.read({ limit: 50 }))?.sessions.map(row => row.id).sort()).toEqual(['coordinator', 'grandchild', 'hidden', 'worker']);
         expect((await f.read({ limit: 50 }))?.sessions.map(row => row.id).sort()).toEqual(['coordinator', 'grandchild', 'worker']);
     });
 });

@@ -11,6 +11,8 @@ import {
 } from "@/app/session/listing/rows";
 import { readSessionListViewerDiscussionFacts } from "@/app/session/listing/page";
 import { loadSessionLatestFailureSequencesInTx } from "@/app/session/personal/projection";
+import { loadSessionRuleReadStatesInTx } from "@/app/session/personal/readState";
+import { readSessionAccessAuthenticationFromRequest } from "@/app/session/access/sessionAccessAuthentication";
 import {
     createSessionMetadataPrivacyUpgradeRequiredResponse,
     isSessionMetadataPrivacyUpgradeRequiredError,
@@ -19,6 +21,7 @@ import {
 import {
     enforceCurrentAccountStoredContentCompatibilityForHttpRequest,
 } from "@/app/clientCompatibility/accountStoredContentCompatibility";
+import { parseProjectedSessionLookupResponse } from './sessionRecordResponse';
 
 export function registerSessionLookupByTagsRoute(app: Fastify) {
     app.post("/v2/sessions/lookup-by-tags", {
@@ -72,15 +75,18 @@ export function registerSessionLookupByTagsRoute(app: Fastify) {
                     : undefined;
                 const discussionFacts = await readSessionListViewerDiscussionFacts(sessions, userId, tx);
                 const failureSequences = await loadSessionLatestFailureSequencesInTx(tx, sessions);
-                return reply.send({
+                const ruleReadStates = await loadSessionRuleReadStatesInTx(tx, { accountId: userId,
+                    authentication: readSessionAccessAuthenticationFromRequest(request), rows: sessions });
+                return reply.serializer(JSON.stringify).send(parseProjectedSessionLookupResponse({
                     sessions: sessions.map((session) =>
                         mapV2SessionOwnerRow(
                             session,
                             ownerAccountMode,
                             discussionFacts,
                             failureSequences,
+                            ruleReadStates,
                         )),
-                });
+                }));
             } catch (error) {
                 if (isSessionMetadataPrivacyUpgradeRequiredError(error)) {
                     return reply.code(409).send(createSessionMetadataPrivacyUpgradeRequiredResponse());

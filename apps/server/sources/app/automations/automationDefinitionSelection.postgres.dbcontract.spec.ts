@@ -8,6 +8,9 @@ import { AutomationTriggerIdSchema } from '@happier-dev/protocol/automations/aut
 import { AutomationDefinitionListResponseSchema } from "@happier-dev/protocol/automations/automationApiV3";
 import { createAuthenticatedTestApp } from "@/app/api/testkit/sqliteFastify";
 import { registerAutomationV3Routes } from "@/app/api/routes/automations/registerAutomationV3Routes";
+import { inTx } from '@/storage/inTx';
+import { readSharedWorkflowTriggerSummaries } from './automationSharedWorkflowSummaries';
+import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol';
 
 describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== "postgres")("Automation definition demand (PostgreSQL)", () => {
     const definitionIds = [randomUUID(), randomUUID()];
@@ -48,6 +51,78 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== "postgres")("Automation defi
         await db.$disconnect();
     });
 
+    it('reads only the selected Team schedule alongside unrelated Account definitions', async () => {
+        const team = await db.team.create({ data: { name: 'Schedule audience' } });
+        const artifactId = randomUUID();
+        try {
+            await db.teamMembership.create({ data: { teamId: team.id, accountId: otherAccountId, role: 'member' } });
+            const artifact = await db.artifact.create({ data: { id: artifactId, accountId,
+                header: Buffer.from(encodePlainArtifactStoredContent({ kind: 'workflow-definition.v1' }), 'base64'),
+                body: Buffer.from(encodePlainArtifactStoredContent({}), 'base64'),
+                dataEncryptionKey: Buffer.from(ARTIFACT_PLAIN_DATA_KEY_MARKER, 'base64') } });
+            await db.artifactTeamGrant.create({ data: { artifactId: artifact.id, teamId: team.id, accessLevel: 'view', createdByAccountId: accountId } });
+            const nextRunAt = new Date('2030-01-01T12:00:00Z');
+            await db.automation.create({ data: { id: randomUUID(), accountId, name: 'Private schedule', enabled: true,
+                managedTargetIndexed: true,
+                workflowDefinitionId: artifact.id, templateVersion: 1, templateCiphertext: JSON.stringify({
+                    v: 2, templateVersion: 1, workflow: { t: 'plain', v: { workspace: { directory: '/private' },
+                        executionTarget: { kind: 'session' }, visibleTeamId: team.id } }, triggerEvidence: null }),
+                triggers: { create: { id: randomUUID(), kind: 'schedule', enabled: true, scheduleKind: 'interval', everyMs: 60_000, nextRunAt } } } });
+            expect(await readSharedWorkflowTriggerSummaries({ accountId: otherAccountId,
+                workflowDefinitionIds: [artifact.id, ...definitionIds] })).toMatchObject([
+                { workflowDefinitionId: artifact.id, nextRunAt: nextRunAt.getTime(), triggers: [{ kind: 'schedule' }] },
+            ]);
+        } finally {
+            await db.artifact.deleteMany({ where: { id: artifactId } });
+            await db.team.delete({ where: { id: team.id } });
+        }
+    });
+
+    it('commits an owner context reseal and Team invalidation through the PostgreSQL publication audience', async () => {
+        const team = await db.team.create({ data: { name: 'Reseal audience' } });
+        const artifactId = randomUUID();
+        const automationId = randomUUID();
+        const machineId = randomUUID();
+        const triggerId = randomUUID();
+        const recipe = (templateVersion: number, kind: 'session' | 'detached_run') => ({ v: 2 as const, templateVersion,
+            workflow: { t: 'plain' as const, v: { workspace: { directory: '/private' }, executionTarget: { kind }, visibleTeamId: team.id } },
+            visibleTeamId: team.id, triggerEvidence: null });
+        try {
+            await db.teamMembership.create({ data: { teamId: team.id, accountId: otherAccountId, role: 'member' } });
+            await db.artifact.create({ data: { id: artifactId, accountId,
+                header: Buffer.from(encodePlainArtifactStoredContent({ kind: 'workflow-definition.v1' }), 'base64'),
+                body: Buffer.from(encodePlainArtifactStoredContent({}), 'base64'),
+                dataEncryptionKey: Buffer.from(ARTIFACT_PLAIN_DATA_KEY_MARKER, 'base64') } });
+            await db.artifactTeamGrant.create({ data: { artifactId, teamId: team.id, accessLevel: 'edit', createdByAccountId: accountId } });
+            await db.machine.create({ data: { id: machineId, accountId, metadata: '{}' } });
+            await db.automation.create({ data: { id: automationId, accountId, name: 'Retained Team schedule', enabled: true,
+                workflowDefinitionId: artifactId, templateVersion: 8, templateCiphertext: JSON.stringify(recipe(8, 'session')),
+                assignments: { create: { machineId, enabled: true } },
+                triggers: { create: { id: triggerId, revision: 4, kind: 'schedule', enabled: true, scheduleKind: 'interval',
+                    everyMs: 60_000, nextRunAt: new Date('2030-01-01T12:00:00Z') } } } });
+            const app = createAuthenticatedTestApp();
+            registerAutomationV3Routes(app);
+            await app.ready();
+            try {
+                const response = await app.inject({ method: 'PUT', url: `/v3/automations/${automationId}`,
+                    headers: { 'x-test-user-id': accountId }, payload: {
+                        expectedTemplateVersion: 8, name: 'Retained Team schedule', description: null, enabled: true,
+                        workflowDefinitionId: artifactId, executionRecipe: recipe(9, 'detached_run'), assignments: [{ machineId, enabled: true }],
+                        triggers: [{ kind: 'existing', triggerId, expectedRevision: 4 }], removedTriggers: [],
+                    } });
+                expect(response.statusCode, response.body).toBe(200);
+                expect(response.json()).toMatchObject({ templateVersion: 9, executionRecipe: recipe(9, 'detached_run'),
+                    triggers: [{ id: triggerId, revision: 4, enabled: true }] });
+                expect(await db.accountChange.count({ where: { accountId: otherAccountId, kind: 'artifact', entityId: artifactId } })).toBe(1);
+            } finally { await app.close(); }
+        } finally {
+            await db.automation.deleteMany({ where: { id: automationId } });
+            await db.artifact.deleteMany({ where: { id: artifactId } });
+            await db.machine.deleteMany({ where: { id: machineId } });
+            await db.team.delete({ where: { id: team.id } });
+        }
+    });
+
     it("pages only requested definition rows and retains Account and deletion admission", async () => {
         const selection = { accountId, workflowDefinitionIds: definitionIds };
         const rows: string[] = [];
@@ -64,6 +139,7 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== "postgres")("Automation defi
         const empty = { accountId, workflowDefinitionIds: [] };
         expect(await listAutomationDefinitionsPage(empty)).toEqual({ automations: [], nextCursor: null });
     });
+
 
     it('selects the exact managed target and only unknown fallback in one page at scale', async () => {
         const exact = await listAutomationDefinitionsPage({ accountId, managedTarget });

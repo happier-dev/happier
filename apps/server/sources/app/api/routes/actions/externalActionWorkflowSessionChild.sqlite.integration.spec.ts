@@ -119,8 +119,10 @@ it('admits the signed Session child only under its own active admitted Run and p
                 effectActionId: actionId, target, installationId: publisher.installationId,
                 requestId: envelope.requestId!, privateKey: publisher.keys.secretKey, method: 'POST', path, body }) } });
     expect((await verify()).status).toBe(200);
-    expect((await mint(origin, { ...origin, sessionLeaf: { ...origin.sessionLeaf,
-        caller: { ...origin.sessionLeaf.caller, sessionId: 'wrong-session' } } })).status).toBe(401);
+    const forgedCaller = await mint(origin, { ...origin, sessionLeaf: { ...origin.sessionLeaf,
+        caller: { ...origin.sessionLeaf.caller, sessionId: 'wrong-session' } } });
+    expect(forgedCaller.status, await forgedCaller.clone().text()).toBe(403);
+    expect(await forgedCaller.json()).toMatchObject({ error: 'credential_scope_denied' });
     expect((await mint({ ...origin, runId: 'unadmitted-run' })).status).toBe(401);
     expect((await mint(origin, origin, await server.createForeignAccount())).status).toBe(401);
     const binding = { ...admitted.binding, accountId: 'foreign-account' };

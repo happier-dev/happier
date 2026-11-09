@@ -16,6 +16,12 @@ export async function transitionSessionArchiveStateInTx(params: Readonly<{
     /** The HTTP owner has already verified this exact Run's Machine publisher. */
     originRunId?: string;
 }>) {
+    if (params.wasArchived === (params.archivedAt !== null) && params.meaningfulActivityAt === undefined) {
+        return {
+            session: await params.tx.session.findUniqueOrThrow({ where: { id: params.sessionId } }),
+            didWrite: false as const,
+        };
+    }
     await acquireSessionAccountCursorLocksInTx(params.tx, [params.sessionId], [], {
         includeLifecyclePublications: !params.wasArchived && params.archivedAt !== null,
     });
@@ -53,5 +59,5 @@ export async function transitionSessionArchiveStateInTx(params: Readonly<{
             },
         });
     }
-    return session;
+    return { session, didWrite: true as const };
 }

@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { PGlite } from '@electric-sql/pglite';
 
 const ROOT = join(import.meta.dirname, "..", "..");
 const MIGRATION_ID = "20260908120000_add_workflow_run_invocations";
@@ -58,6 +59,68 @@ function normalizeSql(sql: string): string {
 }
 
 describe("workflow Run persistence contract", () => {
+    it('adds only nullable failure identity acknowledgement while retaining existing Run data in isolated providers', async () => {
+        const migration = '20261024010000_workflow_failure_seen/migration.sql';
+        const [postgresSql, sqliteSql, mysqlSql] = await Promise.all([
+            readFile(join(ROOT, 'prisma/migrations', migration), 'utf8'),
+            readFile(join(ROOT, 'prisma/sqlite/migrations', migration), 'utf8'),
+            readFile(join(ROOT, 'prisma/mysql/migrations', migration), 'utf8'),
+        ]);
+        // MySQL has no embedded engine here. SQLite executes its unchanged portable
+        // ALTER grammar below; that does not prove native MySQL precision behavior.
+        expect(normalizeSql(mysqlSql)).toBe('ALTER TABLE "AutomationRun" ADD COLUMN "attentionSeenFailureAt" DATETIME(3) NULL;');
+        expect(normalizeSql(postgresSql)).toBe('ALTER TABLE "AutomationRun" ADD COLUMN "attentionSeenFailureAt" TIMESTAMP(3);');
+        expect(normalizeSql(sqliteSql)).toBe('ALTER TABLE "AutomationRun" ADD COLUMN "attentionSeenFailureAt" DATETIME;');
+        const { DatabaseSync } = await import('node:sqlite');
+        const sqlite = new DatabaseSync(':memory:');
+        const mysqlPortable = new DatabaseSync(':memory:');
+        const postgres = new PGlite();
+        try {
+            sqlite.exec(`CREATE TABLE "AutomationRun" ("id" TEXT PRIMARY KEY, "state" TEXT NOT NULL,
+                "revision" INTEGER NOT NULL, "finishedAt" DATETIME);
+                INSERT INTO "AutomationRun" VALUES ('failed','failed',2,100),('queued','queued',0,NULL);`);
+            const beforeSqlite = sqlite.prepare('SELECT * FROM "AutomationRun" ORDER BY "id"').all();
+            sqlite.exec(sqliteSql);
+            expect(sqlite.prepare('SELECT "id","state","revision","finishedAt" FROM "AutomationRun" ORDER BY "id"').all()).toEqual(beforeSqlite);
+            expect(sqlite.prepare('SELECT "attentionSeenFailureAt" FROM "AutomationRun"').all())
+                .toEqual([{ attentionSeenFailureAt: null }, { attentionSeenFailureAt: null }]);
+            expect(sqlite.prepare('PRAGMA table_info("AutomationRun")').all().find(column => column.name === 'attentionSeenFailureAt'))
+                .toMatchObject({ type: 'DATETIME', notnull: 0, dflt_value: null });
+            sqlite.exec(`UPDATE "AutomationRun" SET "attentionSeenFailureAt"="finishedAt" WHERE "id"='failed';
+                UPDATE "AutomationRun" SET "revision"=3 WHERE "id"='failed';`);
+            expect(sqlite.prepare('SELECT "revision","finishedAt","attentionSeenFailureAt" FROM "AutomationRun" WHERE "id"=?').get('failed'))
+                .toEqual({ revision: 3, finishedAt: 100, attentionSeenFailureAt: 100 });
+            expect(sqlite.prepare('PRAGMA integrity_check').get()).toMatchObject({ integrity_check: 'ok' });
+            mysqlPortable.exec(`CREATE TABLE "AutomationRun" ("id" TEXT PRIMARY KEY, "state" TEXT NOT NULL,
+                "revision" INTEGER NOT NULL, "finishedAt" DATETIME(3));
+                INSERT INTO "AutomationRun" VALUES ('failed','failed',2,100),('queued','queued',0,NULL);`);
+            const beforeMysqlPortable = mysqlPortable.prepare('SELECT * FROM "AutomationRun" ORDER BY "id"').all();
+            mysqlPortable.exec(mysqlSql);
+            expect(mysqlPortable.prepare('SELECT "id","state","revision","finishedAt" FROM "AutomationRun" ORDER BY "id"').all()).toEqual(beforeMysqlPortable);
+            expect(mysqlPortable.prepare('SELECT "attentionSeenFailureAt" FROM "AutomationRun"').all())
+                .toEqual([{ attentionSeenFailureAt: null }, { attentionSeenFailureAt: null }]);
+            expect(mysqlPortable.prepare('PRAGMA table_info("AutomationRun")').all().find(column => column.name === 'attentionSeenFailureAt'))
+                .toMatchObject({ type: 'DATETIME(3)', notnull: 0, dflt_value: null });
+            expect(mysqlPortable.prepare('PRAGMA integrity_check').get()).toMatchObject({ integrity_check: 'ok' });
+            await postgres.exec(`CREATE TABLE "AutomationRun" ("id" TEXT PRIMARY KEY, "state" TEXT NOT NULL,
+                "revision" INTEGER NOT NULL, "finishedAt" TIMESTAMP(3));
+                INSERT INTO "AutomationRun" VALUES ('failed','failed',2,'2026-10-23T10:00:00Z'),('queued','queued',0,NULL);`);
+            const beforePostgres = await postgres.query('SELECT * FROM "AutomationRun" ORDER BY "id"');
+            await postgres.exec(postgresSql);
+            expect((await postgres.query('SELECT "id","state","revision","finishedAt" FROM "AutomationRun" ORDER BY "id"')).rows)
+                .toEqual(beforePostgres.rows);
+            expect((await postgres.query('SELECT "attentionSeenFailureAt" FROM "AutomationRun"')).rows)
+                .toEqual([{ attentionSeenFailureAt: null }, { attentionSeenFailureAt: null }]);
+            expect((await postgres.query(`SELECT data_type,is_nullable,datetime_precision,column_default FROM information_schema.columns
+                WHERE table_name='AutomationRun' AND column_name='attentionSeenFailureAt'`)).rows)
+                .toEqual([{ data_type: 'timestamp without time zone', is_nullable: 'YES', datetime_precision: 3, column_default: null }]);
+            await postgres.exec(`UPDATE "AutomationRun" SET "attentionSeenFailureAt"="finishedAt" WHERE "id"='failed';
+                UPDATE "AutomationRun" SET "revision"=3 WHERE "id"='failed';`);
+            expect((await postgres.query(`SELECT "revision", "attentionSeenFailureAt"="finishedAt" AS "sameFailure"
+                FROM "AutomationRun" WHERE "id"='failed'`)).rows).toEqual([{ revision: 3, sameFailure: true }]);
+        } finally { sqlite.close(); mysqlPortable.close(); await postgres.close(); }
+    });
+
     it.each([
         "prisma/schema.prisma",
         "prisma/sqlite/schema.prisma",
@@ -71,6 +134,7 @@ describe("workflow Run persistence contract", () => {
         expect(schema).toContain("workflowCheckpointEnvelope String?");
         expect(schema).toContain("workflowCustodyState       WorkflowRunCustodyState?");
         expect(schema).toMatch(/^\s*originDeliveryAckRevision\s+Int\?\s*$/mu);
+        expect(schema).toMatch(/^\s*attentionSeenFailureAt\s+DateTime\?\s*$/mu);
         expect(schema).not.toContain("workflowResultDeliveryState");
         expect(schema).not.toContain("WorkflowRunResultDeliveryState");
         expect(schema).toMatch(/model AccountEncryptionTransitionAutomationStage \{[\s\S]*?automationId\s+String\?[\s\S]*?sourceRevision\s+Int\?/u);

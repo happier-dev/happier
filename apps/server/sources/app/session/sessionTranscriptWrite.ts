@@ -12,6 +12,7 @@ import { type SessionInputAdmissionReceiptV1, type SessionInputRequestEqualityEv
 import { type SessionMessageDeliveryResolutionV1 } from '@happier-dev/protocol/sessions/messages/sessionMessageDeliveryResolutionV1';
 import { type SessionTranscriptObservationProvenanceV1 } from '@happier-dev/protocol/sessions/messages/transcriptObservationV1';
 import { advanceCaughtUpViewerReadCursorsInTx, stampViewerUnreadEntryInTx } from "./personal/readState";
+import { SESSION_TRANSCRIPT_PUBLICATION_SELECT, type SessionTranscriptPublicationFields } from "./sessionTranscriptPublicationPolicy";
 import { resolveMessageAttentionImpact } from "./messageAttentionImpact";
 import { isDeepStrictEqual } from "node:util";
 
@@ -318,9 +319,10 @@ export async function writeSessionTranscriptMessageInTx(
     const storageAdmission = validateSessionTranscriptStoredContent(params);
     if (!storageAdmission.ok) return storageAdmission;
 
-    await acquireSessionAccountCursorLocksInTx(tx, [params.sessionId]);
+    // Writing a transcript row changes no Session audience.
+    await acquireSessionAccountCursorLocksInTx(tx, [params.sessionId], [], { reuseHeldAudience: true });
     const createdAt = params.createdAt ?? new Date();
-    let next: { seq: number; tag: string };
+    let next: { seq: number; tag: string; accountId: string } & SessionTranscriptPublicationFields;
     try {
         next = await tx.session.update({
             where: {
@@ -329,7 +331,7 @@ export async function writeSessionTranscriptMessageInTx(
                     ? "hosted"
                     : { in: ["machine_only", "server_partial", "snapshot_complete"] },
             },
-            select: { seq: true, tag: true },
+            select: { tag: true, ...SESSION_TRANSCRIPT_PUBLICATION_SELECT },
             data: {
                 seq: { increment: 1 },
                 ...(params.meaningfulActivityAt ? { meaningfulActivityAt: params.meaningfulActivityAt } : {}),
@@ -392,9 +394,10 @@ export async function writeSessionTranscriptMessageInTx(
                 // Voice history is the existing system-Session exception: it never creates unread.
                 previousVisibleSeq: voiceHistory ? 0 : next.seq - 1,
                 nextVisibleSeq: next.seq,
+                ownerAccountId: next.accountId,
             });
         } else {
-            await stampViewerUnreadEntryInTx(tx, { sessionId: params.sessionId, visibleSessionSeq: next.seq, at: createdAt });
+            await stampViewerUnreadEntryInTx(tx, { sessionId: params.sessionId, visibleSessionSeq: next.seq, at: createdAt, ownerAccountId: next.accountId });
         }
     }
 
@@ -411,7 +414,7 @@ export async function writeSessionTranscriptMessageInTx(
         },
     });
 
-    return { ok: true as const, message };
+    return { ok: true as const, message, publication: next };
 }
 
 /** Historical import is deliberately only a command-specific name over the canonical writer. */

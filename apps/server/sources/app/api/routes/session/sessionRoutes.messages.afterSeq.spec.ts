@@ -27,6 +27,38 @@ describe("sessionRoutes v1 messages pagination", () => {
         catchupReturnedInc.mockReset();
     });
 
+    it("returns retained message-backed terminal Follow receipts without losing transcript rows", async () => {
+        // Redacted shape of receipts written on 2026-10-23/24, before AM-SB1
+        // required a host Turn for newly admitted terminal Follow inputs.
+        const receipts = ["finished", "failed_or_stopped"].map(kind => ({
+            v: 1, issuer: "authenticatedAccount", actorAccountId: "u1", sessionRelationship: "owner",
+            admittedTarget: { homeId: "home", accountId: "u1", sessionId: "s1", machineId: "machine", installationId: "installation" },
+            followRelations: [{ relation: "manager", attachedAt: 1 }],
+            followDeliveryV1: { v: 1, delivery: "wake", original: {
+                sourceSessionId: "source", sourceMessage: { localId: "terminal", seq: 7 },
+            }, event: { kind } },
+        }));
+        sessionMessageFindMany.mockResolvedValue(receipts.map((inputAdmissionReceipt, index) => ({
+            id: `historical-${index}`, seq: index + 1, localId: `historical-${index}`, sidechainId: null,
+            messageRole: "user", content: { t: "encrypted", c: "opaque-history" }, inputAdmissionReceipt,
+            createdAt: new Date(1), updatedAt: new Date(1),
+        })));
+        const app = createAuthenticatedTestApp();
+        registerSessionMessageRoutes(app);
+        await app.ready();
+        try {
+            const response = await app.inject({ method: "GET", url: "/v1/sessions/s1/messages?afterSeq=0",
+                headers: { "x-test-user-id": "u1" } });
+            expect(response.statusCode).toBe(200);
+            const page = SessionMessagesPageV1Schema.parse(response.json());
+            expect(page.messages.map(message => message.id)).toEqual(["historical-0", "historical-1"]);
+            expect(page.messages.map(message => message.inputAdmissionReceipt)).toEqual(
+                receipts.map(({ followRelations: _privateRelations, ...receipt }) => receipt),
+            );
+            expect(page.messages.every(message => message.content.t === "encrypted")).toBe(true);
+        } finally { await app.close(); }
+    });
+
     it("acquires only the exact committed message from a long transcript through the existing page route", async () => {
         const rows = Array.from({ length: 200 }, (_, index) => ({
             id: `message-${index + 1}`, seq: index + 1, localId: null, sidechainId: null,

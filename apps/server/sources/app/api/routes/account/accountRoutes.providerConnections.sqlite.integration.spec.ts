@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { accountRoutes } from './accountRoutes';
 import { kvRoutes } from '../kv/kvRoutes';
 import { createAuthenticatedTestApp } from '../../testkit/sqliteFastify';
@@ -7,16 +7,54 @@ import { db } from '@/storage/db';
 import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lightSqliteHarness';
 import { createSignedAccountContentBinding } from '@/testkit/accountEncryption';
 import tweetnacl from 'tweetnacl';
-import { inTx } from '@/storage/inTx';
+import { inTx, TransactionDeadlineExceededError } from '@/storage/inTx';
 import { writeAccountSettingsInTx } from '@/app/accountSettings/writeAccountSettingsInTx';
 import { storePlainAccountSettingsDbValue } from '@/app/encryption/accountSettingsStorage';
 import { DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1, PROVIDER_CONNECTIONS_ACCOUNT_KV_KEY_V1,
     sealProviderConnectionsContentV1 } from '@happier-dev/protocol/providers/connections/connectionRowsV1';
 
+const fault = vi.hoisted(() => ({ error: null as unknown }));
+vi.mock('@/storage/db', async importOriginal => {
+    const actual = await importOriginal<typeof import('@/storage/db')>();
+    return { ...actual, db: new Proxy(actual.db, {
+        get(target, key) {
+            const value: unknown = Reflect.get(target, key);
+            if (key !== '$transaction' || typeof value !== 'function') return value;
+            return (...args: unknown[]) => fault.error ? Promise.reject(fault.error) : Reflect.apply(value, target, args);
+        },
+    }) };
+});
+vi.mock('@/storage/prisma', async importOriginal => {
+    const actual = await importOriginal<typeof import('@/storage/prisma')>();
+    return { ...actual, withSqliteReadSnapshot: (...args: Parameters<typeof actual.withSqliteReadSnapshot>) => {
+        if (fault.error) throw fault.error;
+        return actual.withSqliteReadSnapshot(...args);
+    } };
+});
+
 describe('Provider connection catalog Account rows (SQLite)', () => {
     let harness: LightSqliteHarness;
     beforeAll(async () => { harness = await createLightSqliteHarness({ tempDirPrefix: 'happier-provider-connections-', initEncrypt: true, initFiles: true }); }, 120_000);
     afterAll(async () => { await harness?.close(); });
+    afterEach(() => { fault.error = null; });
+
+    it.each(['GET', 'POST'] as const)('preserves a storage deadline as typed 503 through %s', async method => {
+        const account = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const app = createAuthenticatedTestApp() as Fastify;
+        accountRoutes(app);
+        // Fail only the database adapters; registration, classification and HTTP serialization stay real.
+        fault.error = new TransactionDeadlineExceededError(null, 'provider-catalog-timeout');
+        try {
+            const response = await app.inject({ method, url: '/v1/account/entity-rows/provider-connections',
+                headers: { 'x-test-user-id': account.id },
+                ...(method === 'POST' ? { payload: { expectedRevision: 'absent', sourceSettingsVersion: 0,
+                    referencedSavedSecretIds: [], savedSecretRevisions: [], content: { t: 'plain', v: DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1 } } } : {}),
+            });
+            expect(response.statusCode, response.body).toBe(503);
+            expect(response.json()).toEqual({ error: 'database_transaction_timeout', statusCode: 503 });
+            expect(await db.userKVStore.count({ where: { accountId: account.id, key: PROVIDER_CONNECTIONS_ACCOUNT_KV_KEY_V1 } })).toBe(0);
+        } finally { await app.close(); }
+    });
 
     it.each([false, true])('refuses source recreation after Provider catalog authority, including tombstones (%s)', async deleted => {
         const account = await db.account.create({ data: { encryptionMode: 'plain', settingsVersion: 3 } });
@@ -33,7 +71,7 @@ describe('Provider connection catalog Account rows (SQLite)', () => {
         expect(stale).toMatchObject({ status: 'version_mismatch', currentVersion: 3 });
         const preference = await inTx(tx => writeAccountSettingsInTx({ tx, accountId: account.id, expectedVersion: 3,
             next: { kind: 'v2', content: { t: 'plain', v: { theme: 'dark' } } } }));
-        expect(preference).toEqual({ status: 'success', version: 4 });
+        expect(preference).toEqual({ status: 'success', version: 4, remoteAlertPolicyStatus: 'disabled' });
     });
 
     it('allows unchanged cleanup residue and removal but rejects source edits without publishing or history writes', async () => {
@@ -46,7 +84,7 @@ describe('Provider connection catalog Account rows (SQLite)', () => {
             version: 0, value: new TextEncoder().encode(JSON.stringify({ t: 'plain', v: DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1 })) } });
         const unchanged = await inTx(tx => writeAccountSettingsInTx({ tx, accountId: account.id, expectedVersion: 3,
             next: { kind: 'v2', content: { t: 'plain', v: { providerSettingsV1: source, theme: 'dark' } } } }));
-        expect(unchanged).toEqual({ status: 'success', version: 4 });
+        expect(unchanged).toEqual({ status: 'success', version: 4, remoteAlertPolicyStatus: 'disabled' });
         const snapshots = await db.accountSettingsSnapshot.count({ where: { accountId: account.id } });
         const changes = await db.accountChange.count({ where: { accountId: account.id } });
         const changed = await inTx(tx => writeAccountSettingsInTx({ tx, accountId: account.id, expectedVersion: 4,
@@ -59,7 +97,7 @@ describe('Provider connection catalog Account rows (SQLite)', () => {
         expect(await db.accountChange.count({ where: { accountId: account.id } })).toBe(changes);
         const removed = await inTx(tx => writeAccountSettingsInTx({ tx, accountId: account.id, expectedVersion: 4,
             next: { kind: 'v2', content: { t: 'plain', v: { theme: 'dark' } } } }));
-        expect(removed).toEqual({ status: 'success', version: 5 });
+        expect(removed).toEqual({ status: 'success', version: 5, remoteAlertPolicyStatus: 'disabled' });
     });
 
     it('preserves scoped Provider configuration under catalog CAS without rewriting Settings or exposing public KV', async () => {

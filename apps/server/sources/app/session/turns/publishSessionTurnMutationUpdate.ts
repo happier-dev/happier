@@ -11,7 +11,6 @@ import {
 import { randomKeyNaked } from "@/utils/keys/randomKeyNaked";
 import type {
     ApplySessionTurnMutationResult,
-    ReassertSessionLatestTurnStatusResult,
 } from "@/app/session/sessionWriteService";
 
 export function resolveSessionTurnUpdateSkipSenderConnection(connection?: ClientConnection): ClientConnection | undefined {
@@ -23,9 +22,7 @@ export async function publishSessionTurnMutationUpdate(params: {
     sessionId: string;
     actorUserId: string;
     connection?: ClientConnection;
-    result:
-        | Extract<ApplySessionTurnMutationResult, { ok: true }>
-        | Extract<ReassertSessionLatestTurnStatusResult, { ok: true }>;
+    result: Extract<ApplySessionTurnMutationResult, { ok: true }>;
 }): Promise<void> {
     if (!params.result.didApply) return;
     const skipSenderConnection = resolveSessionTurnUpdateSkipSenderConnection(params.connection);

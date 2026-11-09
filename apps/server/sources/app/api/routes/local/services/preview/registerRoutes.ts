@@ -8,14 +8,14 @@ import { isDeepStrictEqual } from 'node:util';
 import { readLocalServicePreviewAdmission, observeLocalServicePreviewRetirement } from '@/app/local/services/preview/admission';
 import { readSessionAccessAuthenticationFromRequest, type SessionAccessAuthentication } from "@/app/session/access/sessionAccessAuthentication";
 import { readMachineAvailabilityState } from '@/app/machines/machineStateGuards';
-import { LocalServicePreviewAccessRequestV1Schema, LocalServicePreviewServerAccessV1Schema, LocalServicePreviewNativeRegistrationRequestV1Schema, type LocalServicePreviewNativeDirectAccessRequestV1, type LocalServicePreviewNativeDirectAccessV1 } from '@happier-dev/protocol/local/services/preview/nativeDirect';
+import { LocalServicePreviewAccessRequestV1Schema, LocalServicePreviewServerAccessV1Schema, LocalServicePreviewNativeRegistrationRequestV1Schema } from '@happier-dev/protocol/local/services/preview/nativeDirect';
 import type { MachineIrohEndpointAuthorityV1 } from '@happier-dev/protocol/machines/operationProtocolCapabilitiesV1';
 
 import type { Fastify } from "@/app/api/types";
 import { claimHttpUpgrade } from "@/app/api/utils/httpUpgradeOwnership";
 import {
-    createLocalServicePreviewPortPolicyRefusal,
     proxyLocalServicePreviewHttpRequest,
+    createLocalServicePreviewPortPolicyRefusal,
     type LocalServicePreviewHttpRequest,
     type OpenLocalServicePreviewTunnel,
     type ProxyLocalServicePreviewHttpRequestResult,
@@ -40,6 +40,7 @@ import { cooperativeProbeRefusalHeaders } from '@/app/local/services/preview/col
 import type {
     LocalServicePreviewRuntimeRegistrationInput,
     LocalServicePreviewRuntimeRegistrationResult,
+    LocalServicePreviewRuntime,
 } from "@/app/local/services/preview/runtime";
 
 type PreviewAccessValidationResult =
@@ -76,9 +77,10 @@ export type RegisterLocalServicePreviewRoutesOptions = Readonly<{
         machineId: string;
     }>) => PreviewAccessExchangeResult;
     registerPreview?: (input: LocalServicePreviewRuntimeRegistrationInput) => LocalServicePreviewRuntimeRegistrationResult;
+    retainMachineAccess: LocalServicePreviewRuntime['retainMachineAccess'];
     isPreviewPortAllowed?: (resource: LocalServicePreviewResourceV1, admittedPreview?: LocalServicePreviewDirectBindingV1) => boolean;
     resolveNativeDirectTarget?: (input: Readonly<{ accountId: string; machineId: string }>) => Promise<MachineIrohEndpointAuthorityV1 | null>;
-    mintNativeDirectAccess?: (input: Readonly<{ previewId: string; actorAccountId?: string; request: LocalServicePreviewNativeDirectAccessRequestV1; target: MachineIrohEndpointAuthorityV1 }>) => Readonly<{ ok: true; access: LocalServicePreviewNativeDirectAccessV1 } | { ok: false; reasonCode: string }>;
+    mintNativeDirectAccess?: LocalServicePreviewRuntime['mintNativeDirectAccess'];
     nativeDirectEnabled?: (request: object) => boolean | Promise<boolean>;
     openNativeRegistration?: (binding: LocalServicePreviewDirectBindingV1, grantId: string) => Readonly<{ ok: true; signal: AbortSignal; close: () => void } | { ok: false; reasonCode: string }>;
     unregisterPreview?: (previewId: string) => Readonly<{ ok: true } | { ok: false; reasonCode: string }>;
@@ -248,13 +250,15 @@ function isPreviewHttpRouteError(
     return "errorStatusCode" in target;
 }
 
-function redirectPreviewTokenExchange(reply: RouteReply, target: PreviewHttpRouteTarget, rawToken: string): void {
+function redirectPreviewTokenExchange(request: RouteRequest, reply: RouteReply, target: PreviewHttpRouteTarget, rawToken: string, externalProtocol: 'http' | 'https' | undefined): void {
     reply
         .code?.(303)
         .header?.("Set-Cookie", scopedLocalServiceViewerTokenCookie({
             name: 'happier_preview_token',
             path: target.exchangeCookiePath,
             value: rawToken,
+            request,
+            externalProtocol,
         }))
         .header?.("Location", target.exchangeRedirectLocation)
         .send?.();
@@ -406,6 +410,12 @@ function sendError(reply: RouteReply, statusCode: number, error: string, reasonC
     reply.code?.(statusCode).send?.({ error, reasonCode });
 }
 
+function sendMintRefusal(reply: RouteReply, reasonCode: string, fallback: 'registration' | 'transport'): void {
+    const unauthorized = reasonCode === 'session_not_authorized';
+    sendError(reply, unauthorized ? 403 : fallback === 'registration' ? 400 : 503,
+        unauthorized ? 'preview_access_denied' : fallback === 'registration' ? 'invalid_preview_registration' : 'preview_transport_unavailable', reasonCode);
+}
+
 /** A data-plane refusal, readable by the pane's own state probe (see `cooperativeProbeRefusalHeaders`). */
 function sendPreviewRefusal(request: RouteRequest, reply: RouteReply, statusCode: number, error: string, reasonCode: string): void {
     let response = reply.code?.(statusCode);
@@ -492,7 +502,7 @@ export async function handleLocalServicePreviewHttpRequest(
             sendPreviewRefusal(request, reply, 401, "preview_access_denied", exchanged.reasonCode);
             return undefined;
         }
-        redirectPreviewTokenExchange(reply, target, exchanged.rawToken);
+        redirectPreviewTokenExchange(request, reply, target, exchanged.rawToken, options.externalProtocol);
         return undefined;
     }
 
@@ -642,55 +652,65 @@ async function handleRegisterPreviewRequest(
         return;
     }
     const userId = readString(request.userId);
-    const serviceAdmission = parsedResource.data.serviceTarget && userId
-        ? await readLocalServicePreviewAdmission({ accountId: userId, resource: parsedResource.data }) : null;
-    if (parsedResource.data.serviceTarget
-        ? !serviceAdmission || !options.retainConnection || !options.unregisterPreview
-        : !await isPreviewLifecycleAuthorized(request, options, parsedResource.data, 'register')) {
-        sendError(reply, 403, "preview_access_denied", "session_not_authorized");
-        return;
-    }
+    const mintAccess = parsedResource.data.serviceTarget && userId ? options.retainMachineAccess({
+        machineId: parsedResource.data.machineId,
+        accountIds: [userId, parsedResource.data.owner.id],
+    }) : undefined;
+    try {
+        const serviceAdmission = parsedResource.data.serviceTarget && userId
+            ? await readLocalServicePreviewAdmission({ accountId: userId, resource: parsedResource.data }) : null;
+        if (parsedResource.data.serviceTarget
+            ? !serviceAdmission || !options.retainConnection || !options.unregisterPreview
+            : !await isPreviewLifecycleAuthorized(request, options, parsedResource.data, 'register')) {
+            sendError(reply, 403, "preview_access_denied", "session_not_authorized");
+            return;
+        }
 
-    if (!userId) {
-        sendError(reply, 403, "preview_access_denied", "session_not_authorized");
-        return;
-    }
+        if (!userId) {
+            sendError(reply, 403, "preview_access_denied", "session_not_authorized");
+            return;
+        }
 
-    const previous = options.resolvePreview(parsedResource.data.previewId);
-    const accountId = serviceAdmission && parsedResource.data.owner.kind === 'user' ? parsedResource.data.owner.id : userId;
-    const result = options.registerPreview({
-        resource: parsedResource.data,
-        accountId,
-        ...(serviceAdmission ? { viewerAccountId: userId } : {}),
-        nativeDirectSupported: options.resolveNativeDirectTarget
-            ? Boolean(await options.resolveNativeDirectTarget({ accountId: serviceAdmission?.custodianAccountId ?? userId, machineId: parsedResource.data.machineId })) : false,
-    });
-    if (!result.ok) {
-        sendError(reply, 400, "invalid_preview_registration", result.reasonCode);
-        return;
-    }
+        const previous = options.resolvePreview(parsedResource.data.previewId);
+        const accountId = serviceAdmission && parsedResource.data.owner.kind === 'user' ? parsedResource.data.owner.id : userId;
+        const result = options.registerPreview({
+            resource: parsedResource.data,
+            accountId,
+            ...(serviceAdmission ? { viewerAccountId: userId } : {}),
+            machineAccessSignal: mintAccess?.signal,
+            nativeDirectSupported: options.resolveNativeDirectTarget
+                ? Boolean(await options.resolveNativeDirectTarget({ accountId: serviceAdmission?.custodianAccountId ?? userId, machineId: parsedResource.data.machineId })) : false,
+        });
+        if (!result.ok) {
+            sendMintRefusal(reply, result.reasonCode, 'registration');
+            return;
+        }
 
-    if (serviceAdmission && (!previous || !isDeepStrictEqual(localServicePreviewDirectBindingV1(previous), localServicePreviewDirectBindingV1(result.resource)))) {
-        const lifetime = new AbortController();
-        const binding = localServicePreviewDirectBindingV1(result.resource);
-        const release = options.retainConnection?.(result.resource.previewId, () => lifetime.abort());
-        const retire = () => {
-            const current = options.resolvePreview(result.resource.previewId);
-            if (!lifetime.signal.aborted && current && isDeepStrictEqual(localServicePreviewDirectBindingV1(current), binding)) {
-                options.unregisterPreview?.(current.previewId);
-            }
-        };
-        void observeLocalServicePreviewRetirement({ admission: serviceAdmission, resource: result.resource, signal: lifetime.signal })
-            .then(retire, retire).finally(() => release?.());
-    }
+        if (serviceAdmission && (!previous || !isDeepStrictEqual(localServicePreviewDirectBindingV1(previous), localServicePreviewDirectBindingV1(result.resource)))) {
+            const lifetime = new AbortController();
+            const binding = localServicePreviewDirectBindingV1(result.resource);
+            const release = options.retainConnection?.(result.resource.previewId, () => lifetime.abort());
+            const retire = () => {
+                const current = options.resolvePreview(result.resource.previewId);
+                if (!lifetime.signal.aborted && current && isDeepStrictEqual(localServicePreviewDirectBindingV1(current), binding)) {
+                    options.unregisterPreview?.(current.previewId);
+                }
+            };
+            void observeLocalServicePreviewRetirement({ admission: serviceAdmission, resource: result.resource, signal: lifetime.signal })
+                .then(retired => { if (retired) retire(); }, () => {
+                    // An observation failure cannot manufacture an ended Service.
+                    // Access requests continue through current-Service admission.
+                }).finally(() => release?.());
+        }
 
-    reply.code?.(201).send?.({
-        resource: result.resource,
-        accessUrl: result.accessUrl,
-        expiresAt: result.expiresAt,
-        ...(result.nativeDirect ? { nativeDirect: result.nativeDirect } : {}),
-        ...(result.accessUnavailableReasonCode ? { accessUnavailableReasonCode: result.accessUnavailableReasonCode } : {}),
-    });
+        reply.code?.(201).send?.({
+            resource: result.resource,
+            accessUrl: result.accessUrl,
+            expiresAt: result.expiresAt,
+            ...(result.nativeDirect ? { nativeDirect: result.nativeDirect } : {}),
+            ...(result.accessUnavailableReasonCode ? { accessUnavailableReasonCode: result.accessUnavailableReasonCode } : {}),
+        });
+    } finally { mintAccess?.release(); }
 }
 
 async function handleUnregisterPreviewRequest(
@@ -757,40 +777,43 @@ export function registerLocalServicePreviewRoutes(
         const resource = options.resolvePreview(previewId);
         if (!resource) return sendError(reply, 404, 'preview_not_found', 'preview_not_found');
         const actorAccountId = readString(request.userId);
-        const serviceAdmission = resource.serviceTarget && actorAccountId
-            ? await readLocalServicePreviewAdmission({ accountId: actorAccountId, resource }) : null;
-        if (resource.serviceTarget ? !serviceAdmission : !await isPreviewLifecycleAuthorized(request, options, resource, 'proxy')) {
-            return sendError(reply, 403, 'preview_access_denied', 'session_not_authorized');
-        }
-        if (options.resolvePreview(previewId) !== resource) return sendError(reply, 404, 'preview_not_found', 'preview_not_found');
-        const accountId = options.resolvePreviewAccountId?.(previewId);
+        const mintAccess = resource.serviceTarget && actorAccountId ? options.retainMachineAccess({
+            machineId: resource.machineId, accountIds: [actorAccountId, resource.owner.id],
+        }) : undefined;
+        try {
+            const serviceAdmission = resource.serviceTarget && actorAccountId
+                ? await readLocalServicePreviewAdmission({ accountId: actorAccountId, resource }) : null;
+            if (resource.serviceTarget ? !serviceAdmission : !await isPreviewLifecycleAuthorized(request, options, resource, 'proxy')) {
+                return sendError(reply, 403, 'preview_access_denied', 'session_not_authorized');
+            }
+            if (options.resolvePreview(previewId) !== resource) return sendError(reply, 404, 'preview_not_found', 'preview_not_found');
+            const accountId = options.resolvePreviewAccountId?.(previewId);
             if (options.isPreviewPortAllowed?.(resource, serviceAdmission ? resource : undefined) === false) return reply.code?.(403)
                 .send?.(createLocalServicePreviewPortPolicyRefusal(resource.target.port));
-        if ('kind' in parsed.data) {
-            if (!accountId || !options.registerPreview) return sendError(reply, 503, 'preview_transport_unavailable', 'server_preview_unavailable');
-            const admission = options.registerPreview({ resource, accountId,
-                ...(serviceAdmission && actorAccountId ? { viewerAccountId: actorAccountId } : {}) });
-            if (!admission.ok) return sendError(reply, 503, 'preview_transport_unavailable', admission.reasonCode);
-            if (!admission.accessUrl || admission.expiresAt === null) return sendError(reply, 503, 'preview_transport_unavailable', 'preview_private_route_unavailable');
-            return reply.send?.(LocalServicePreviewServerAccessV1Schema.parse({
-                v: 1, kind: 'server_preview', previewId, machineId: resource.machineId,
-                accessUrl: admission.accessUrl, expiresAt: admission.expiresAt,
-            }));
-        }
-        if (!accountId || !options.resolveNativeDirectTarget || !options.mintNativeDirectAccess
-            || options.nativeDirectEnabled && !await options.nativeDirectEnabled(request)) return sendError(reply, 503, 'preview_transport_unavailable', 'native_preview_unavailable');
-        const target = await options.resolveNativeDirectTarget({ accountId: serviceAdmission?.custodianAccountId ?? accountId, machineId: resource.machineId });
-        if (!target) return sendError(reply, 503, 'preview_transport_unavailable', 'machine_iroh_endpoint_unavailable');
-        // Revoke/replacement during the asynchronous target read cannot mint old authority.
-        if (options.resolvePreview(previewId) !== resource) return sendError(reply, 404, 'preview_not_found', 'preview_not_found');
-        if (serviceAdmission && actorAccountId && !await readLocalServicePreviewAdmission({ accountId: actorAccountId, resource })) {
-            return sendError(reply, 403, 'preview_access_denied', 'session_not_authorized');
-        }
-        if (options.resolvePreview(previewId) !== resource) return sendError(reply, 404, 'preview_not_found', 'preview_not_found');
-        const result = options.mintNativeDirectAccess({ previewId, request: parsed.data, target,
-            ...(serviceAdmission && actorAccountId ? { actorAccountId } : {}) });
-        if (!result.ok) return sendError(reply, 503, 'preview_transport_unavailable', result.reasonCode);
-        reply.send?.(result.access);
+            if ('kind' in parsed.data) {
+                if (!accountId || !options.registerPreview) return sendError(reply, 503, 'preview_transport_unavailable', 'server_preview_unavailable');
+                const admission = options.registerPreview({ resource, accountId,
+                    machineAccessSignal: mintAccess?.signal,
+                    ...(serviceAdmission && actorAccountId ? { viewerAccountId: actorAccountId } : {}) });
+                if (!admission.ok) return sendMintRefusal(reply, admission.reasonCode, 'transport');
+                if (!admission.accessUrl || admission.expiresAt === null) return sendError(reply, 503, 'preview_transport_unavailable', 'preview_private_route_unavailable');
+                return reply.send?.(LocalServicePreviewServerAccessV1Schema.parse({
+                    v: 1, kind: 'server_preview', previewId, machineId: resource.machineId,
+                    accessUrl: admission.accessUrl, expiresAt: admission.expiresAt,
+                }));
+            }
+            if (!accountId || !options.resolveNativeDirectTarget || !options.mintNativeDirectAccess
+                || options.nativeDirectEnabled && !await options.nativeDirectEnabled(request)) return sendError(reply, 503, 'preview_transport_unavailable', 'native_preview_unavailable');
+            const target = await options.resolveNativeDirectTarget({ accountId: serviceAdmission?.custodianAccountId ?? accountId, machineId: resource.machineId });
+            if (!target) return sendError(reply, 503, 'preview_transport_unavailable', 'machine_iroh_endpoint_unavailable');
+            // Revoke/replacement during the asynchronous target read cannot mint old authority.
+            if (options.resolvePreview(previewId) !== resource) return sendError(reply, 404, 'preview_not_found', 'preview_not_found');
+            const result = options.mintNativeDirectAccess({ previewId, request: parsed.data, target,
+                machineAccessSignal: mintAccess?.signal,
+                ...(serviceAdmission && actorAccountId ? { actorAccountId } : {}) });
+            if (!result.ok) return sendMintRefusal(reply, result.reasonCode, 'transport');
+            reply.send?.(result.access);
+        } finally { mintAccess?.release(); }
     });
 
     app.post(`${PREVIEW_RESOURCE_ROUTE_PATH}/native-registration`, { preHandler: app.authenticate }, async (rawRequest, rawReply) => {

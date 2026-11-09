@@ -298,10 +298,12 @@ describe("storage/prisma", () => {
             else clients.push(await storage.createDbMaintenanceClient("sqlite"));
             await storage.shutdownDbClient();
             expect.soft(limitsAtLoad.length).toBeGreaterThan(0);
-            expect.soft(new Set(limitsAtLoad)).toEqual(new Set(["3"]));
+            // SQLite adds one worker per side connection: read snapshot, maintenance, readiness.
+            const expectedWorkers = provider === "sqlite" ? "6" : "3";
+            expect.soft(new Set(limitsAtLoad)).toEqual(new Set([expectedWorkers]));
             clients.push(await storage.createDbMaintenanceClient(provider, `${databaseUrl}?connection_limit=1`));
             await clients.at(-1)!.$disconnect();
-            expect(process.env.TOKIO_WORKER_THREADS).toBe("3");
+            expect(process.env.TOKIO_WORKER_THREADS).toBe(expectedWorkers);
         } finally {
             await Promise.all(clients.map(client => client.$disconnect()));
             await storage.shutdownDbClient();

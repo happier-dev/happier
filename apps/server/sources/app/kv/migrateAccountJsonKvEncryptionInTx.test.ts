@@ -7,6 +7,8 @@ import {
 } from "./migrateAccountJsonKvEncryptionInTx";
 
 describe("migrateAccountJsonKvEncryptionInTx", () => {
+    // Prisma rows include the grant census even for unmanaged private Todos.
+    const privateTaskRowMetadata = { id: 'task-index', _count: { accountGrants: 0, teamGrants: 0, groupGrants: 0, keyEnvelopes: 0 } };
     it('requires every active workspace row while ignoring tombstones and matches exact replay without writes', async () => {
         const key = 'workspace:tabs:v1';
         const value = new TextEncoder().encode(JSON.stringify({ t: 'plain', v: { v: 1, tabsById: {}, order: [], pairs: [] } }));
@@ -29,6 +31,7 @@ describe("migrateAccountJsonKvEncryptionInTx", () => {
             tx: {
                 userKVStore: {
                     findMany: vi.fn(async () => [{
+                        ...privateTaskRowMetadata,
                         key: "todo.index",
                         version: 2,
                         value: new TextEncoder().encode(
@@ -68,6 +71,7 @@ describe("migrateAccountJsonKvEncryptionInTx", () => {
             tx: {
                 userKVStore: {
                     findMany: vi.fn(async () => [{
+                        ...privateTaskRowMetadata,
                         key: "todo.index",
                         version: 2,
                         value: new TextEncoder().encode(
@@ -109,6 +113,7 @@ describe("migrateAccountJsonKvEncryptionInTx", () => {
             tx: {
                 userKVStore: {
                     findMany: vi.fn(async () => [{
+                        ...privateTaskRowMetadata,
                         key: "todo.index",
                         version: 2,
                         value: Buffer.from(plainValue, "base64"),
@@ -144,11 +149,13 @@ describe("migrateAccountJsonKvEncryptionInTx", () => {
                 userKVStore: {
                     findMany: vi.fn()
                     .mockResolvedValueOnce([{
+                        ...privateTaskRowMetadata,
                         key: "todo.index",
                         version: 2,
                         value: new TextEncoder().encode("released-ciphertext"),
                     }])
                     .mockResolvedValueOnce([{
+                        ...privateTaskRowMetadata,
                         key: "todo.index",
                         version: 3,
                         value: new TextEncoder().encode("concurrent-ciphertext"),
@@ -184,6 +191,7 @@ describe("migrateAccountJsonKvEncryptionInTx", () => {
             value: Buffer.from(valueBytes).toString("base64"),
         } as const;
         const findMany = vi.fn(async () => [{
+            ...privateTaskRowMetadata,
             key: item.key,
             version: item.expectedVersion + 1,
             value: valueBytes,
@@ -207,6 +215,7 @@ describe("migrateAccountJsonKvEncryptionInTx", () => {
         ).resolves.toEqual({ status: "matched" });
 
         findMany.mockResolvedValueOnce([{
+            ...privateTaskRowMetadata,
             key: item.key,
             version: item.expectedVersion + 2,
             value: valueBytes,

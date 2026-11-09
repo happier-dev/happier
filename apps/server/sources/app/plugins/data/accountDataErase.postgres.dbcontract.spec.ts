@@ -16,6 +16,10 @@ import { buildPluginAccountStoragePhysicalKey } from '@/app/kv/accountScopedKv';
 import { createReleaseLessDeclarationV1 } from '@/app/plugins/availability/currentDeclaration';
 import { admitManagedAcquire } from '@/app/machines/managed/managedAcquire';
 import { submitManagedAcquire } from '@/app/machines/managed/managedMutations';
+import { readManagedResourceDependenciesInTx } from '@/app/machines/managed/managedRead';
+import { createNativeSessionTeamCredentialFixture, TEST_AUTHENTICATION } from '@/app/teams/credentials/sessionBinding.testkit';
+import { writeSessionTeamCredentialBindingsInTx, stampSessionTeamCredentialNativeDeliveryInTx,
+    submitSessionTeamCredentialNativeDeliveryInTx } from '@/app/teams/credentials/sessionBinding';
 
 import { deleteAccountForErasure, erasePluginAccountData } from './accountDataErase';
 
@@ -176,7 +180,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('A
             uiArtifacts: [], enabled: true, trustState: 'trusted', observedAt: new Date() } });
         const requestId = randomUUID();
         const admitted = await admitManagedAcquire({ custodianAccountId: account.id, requesterAccountId: account.id,
-            requestEnvelopeDigest: 'erasure-admission-test', input: { requestId, continuationPresent: false, input: { selection: {
+            requestEnvelopeDigest: 'erasure-admission-test', input: { requestId, continuationPresent: false, input: { enrollmentIdentity: { kind: 'guestProcess', role: 'sandbox' }, selection: {
                 kind: 'one-off', homeId, controller, launch: { provider: { pluginId, localId: 'compute' }, schemaVersion: 1,
                     name: 'Guest', choices: { image: 'linux' } }, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
             } } } });
@@ -435,6 +439,78 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('A
             if (erasedDiscussion) await db.discussion.deleteMany({ where: { id: erasedDiscussion.id } });
             await db.session.deleteMany({ where: { id: { in: [sharedSession.id, erasedSession.id] } } });
             await db.account.deleteMany({ where: { id: { in: [erasedAccountId, ownerAccountId] } } });
+        }
+    });
+
+    it.each([
+        ['custodian', 'insertion'], ['custodian', 'submission'],
+        ['session_owner', 'insertion'], ['session_owner', 'submission'],
+    ] as const)('erases %s after a native %s race and publishes current-policy cleanup', async (subject, phase) => {
+        const previousFeature = process.env.HAPPIER_FEATURE_TEAMS_CREDENTIAL_RESOURCES__ENABLED;
+        process.env.HAPPIER_FEATURE_TEAMS_CREDENTIAL_RESOURCES__ENABLED = '1';
+        process.env.HAPPIER_SERVER_IDENTITY_ID = `srv_${'a'.repeat(32)}`;
+        const release = deferred();
+        const ready = deferred();
+        let holderPid = 0;
+        let holder: Promise<unknown> | undefined;
+        let erasure: ReturnType<typeof deleteAccountForErasure> | undefined;
+        try {
+            const f = await createNativeSessionTeamCredentialFixture();
+            if (subject === 'custodian') await db.teamMembership.update({ where: { id: f.membership.id }, data: { role: 'owner' } });
+            const accountId = subject === 'custodian' ? f.custodian.id : f.creator.id;
+            const dependencies = await inTx(tx => readManagedResourceDependenciesInTx(tx, {
+                kind: 'account', accountId,
+            }));
+            const managedResourceDispositions = dependencies.map(dependency => ({
+                managedId: dependency.managedId, expectedIntentRevision: dependency.intentRevision,
+                expectedAllocation: dependency.allocation, expectedResource: dependency.resource,
+                expectedNativeOperationRef: dependency.nativeOperationRef, expectedRecovery: dependency.recovery,
+                responsibility: 'manual' as const,
+            }));
+            const prepare = async (tx: Tx) => {
+                expect(await writeSessionTeamCredentialBindingsInTx(tx, { sessionId: f.session.id,
+                    accountId: f.creator.id, intents: [f.intent], authentication: TEST_AUTHENTICATION })).toEqual({ ok: true });
+                const prepared = await stampSessionTeamCredentialNativeDeliveryInTx(tx, { sessionId: f.session.id,
+                    accountId: f.creator.id, response: f.sourceResponse, authentication: TEST_AUTHENTICATION });
+                if (!prepared.ok) throw new Error('Expected prepared native delivery');
+                return prepared.binding.safeFacet.bindingKey;
+            };
+            const existingBindingKey = phase === 'submission' ? await inTx(prepare) : null;
+            holder = inTx(async tx => {
+                const [{ pid }] = await tx.$queryRaw<Array<{ pid: number }>>`SELECT pg_backend_pid() AS pid`;
+                holderPid = pid;
+                const bindingKey = existingBindingKey ?? await prepare(tx);
+                expect(await submitSessionTeamCredentialNativeDeliveryInTx(tx, { sessionId: f.session.id,
+                    accountId: f.creator.id, bindingKey, expectedResourceRevision: f.credential.revision,
+                    expectedSourceRevision: f.nativeSource.sourceRevision, expectedProviderTicket: f.nativeSource.providerTicket,
+                    operation: 'install', requestId: randomUUID(), authentication: TEST_AUTHENTICATION }))
+                    .toEqual({ ok: true, submitted: true });
+                ready.resolve();
+                await release.promise;
+            }, { isolationLevel: 'ReadCommitted' });
+            const holderOutcome = Promise.allSettled([holder]);
+            await Promise.race([ready.promise, holder.then(() => { throw new Error('Native acceptance missed rendezvous'); })]);
+            let finished = false;
+            erasure = deleteAccountForErasure({ accountId, managedResourceDispositions })
+                .finally(() => { finished = true; });
+            const erasureOutcome = Promise.allSettled([erasure]);
+            while (!finished) {
+                if ((await readBackendsBlockedBy(holderPid)).length > 0) break;
+            }
+            release.resolve();
+            await holderOutcome;
+            await holder;
+            await erasureOutcome;
+            await expect(erasure).resolves.toEqual({ status: 'deleted' });
+            expect(await db.account.findUnique({ where: { id: accountId }, select: { status: true } })).toBeNull();
+            expect(await db.sessionTeamCredentialBinding.findMany({ where: { sessionId: f.session.id },
+                select: { nativeManagedId: true } })).toEqual([]);
+        } finally {
+            release.resolve();
+            await Promise.allSettled([...(holder ? [holder] : []), ...(erasure ? [erasure] : [])]);
+            if (previousFeature === undefined) delete process.env.HAPPIER_FEATURE_TEAMS_CREDENTIAL_RESOURCES__ENABLED;
+            else process.env.HAPPIER_FEATURE_TEAMS_CREDENTIAL_RESOURCES__ENABLED = previousFeature;
+            process.env.HAPPIER_SERVER_IDENTITY_ID = homeId;
         }
     });
 });

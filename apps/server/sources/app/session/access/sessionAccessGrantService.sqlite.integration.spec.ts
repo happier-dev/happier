@@ -23,7 +23,7 @@ import { resolveCurrentSessionRecipientAccountIdsInTx } from "./sessionRecipient
 import { inspectSessionAccessGrants } from "./sessionAccessGrantInspection";
 import { resolveSessionAccessForOperation } from "./sessionAccess";
 import { setSessionFollowSource } from "@/app/session/follow/sessionFollowEdgeService";
-import { resolveSessionAccessGrantSubjectsInTx } from "./sessionAccessGrantEligibility";
+import { resolveShareSubjectsInTx } from "@/app/teams/shareEligibility";
 
 const TEST_AUTHENTICATION = {
     env: process.env,
@@ -122,8 +122,8 @@ describe("Session access grant service (SQLite integration)", () => {
             const instrumentedTx = Object.assign(Object.create(tx), {
                 teamMembership: Object.assign(Object.create(tx.teamMembership), { findMany: membershipReads }),
             });
-            const result = await resolveSessionAccessGrantSubjectsInTx(instrumentedTx, {
-                actorAccountId: actor.id, sessionOwnerAccountId: actor.id, hasExistingGrant: false,
+            const result = await resolveShareSubjectsInTx(instrumentedTx, {
+                actorAccountId: actor.id, resourceOwnerAccountId: actor.id, hasExistingGrant: false,
                 subjects: [{ kind: "team", teamId: team.id }, ...groups.map(group => ({ kind: "group" as const, teamId: team.id, groupId: group.id }))],
             });
             expect(result).toHaveLength(121);

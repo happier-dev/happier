@@ -8,7 +8,7 @@ import { inReadSnapshot, type Tx } from '@/storage/inTx';
 import * as storage from '@/storage/prisma';
 import { createPresentUserSessionAccessAuthentication } from '@/app/session/access/sessionAccessAuthentication.testkit';
 import { createArtifact } from '@/app/artifacts/artifactWriteService';
-import { createDiscussion } from './mutations';
+import { archiveDiscussion, createDiscussion, postDiscussionMessage, restoreDiscussion } from './mutations';
 import { listDiscussions, readDiscussionMessages } from './queries';
 import { readDiscussionAttention } from './attentionFacts';
 import { resolveDiscussionDocSourcesInTx, type DiscussionDocSource } from './docPassages';
@@ -20,7 +20,19 @@ import { executeDocReadV1 } from '@happier-dev/protocol/actions/executor/docColl
 import { DiscussionListInputV1Schema } from '@happier-dev/protocol/discussions/actions';
 import { getOrCreateServerIdentityId } from '@/app/serverIdentity/serverIdentity';
 import { createDiscussionMessageRefV1 } from '@happier-dev/protocol/discussions/messageRefs';
-import { DiscussionTitleV1Schema } from '@happier-dev/protocol/discussions/content';
+import { DiscussionTitleV1Schema, DiscussionProducerV1StoredSchema } from '@happier-dev/protocol/discussions/content';
+import { DiscussionReplyTargetV1Schema } from '@happier-dev/protocol/discussions/replyTargets';
+import { DiscussionMessageAddressingV1Schema } from '@happier-dev/protocol/discussions/participants';
+import { DocEditProposalDispositionV1Schema } from '@happier-dev/protocol/discussions/models';
+import { StrictSessionStoredMessageContentEnvelopeSchema } from '@happier-dev/protocol/sessions/messages/sessionStoredMessageContent';
+import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
+import { encodeDiscussionListCursorV1 } from './pagination';
+import { listDiscussionParticipants } from './accessService';
+import { loadDiscussionKnownAccountActorFactsInTx } from './projection';
+import { admitDiscussionQuoteSourcesInTx, discussionQuoteSourceKey, type DiscussionQuoteSource } from './quoteReadAdmission';
+import { observePrismaReads } from '@/testkit/observePrismaReads';
+import { DISCUSSION_DEFAULT_PAGE_SIZE_V1 } from '@happier-dev/protocol/discussions/api';
+import type { DiscussionResult } from './serviceTypes';
 
 const authentication = createPresentUserSessionAccessAuthentication();
 const body = { t: 'plain' as const, v: { v: 1, parts: [{ t: 'text', text: 'Message' }] } };
@@ -102,16 +114,145 @@ export function discussionReadCostContracts() {
     afterEach(async () => {
         const ids = fixtureAccountIds.splice(0);
         await db.artifact.deleteMany({ where: { accountId: { in: ids } } });
+        await db.sessionMessage.deleteMany({ where: { session: { accountId: { in: ids } } } });
+        await db.session.deleteMany({ where: { accountId: { in: ids } } });
         await db.account.deleteMany({ where: { id: { in: ids } } });
+    });
+    it('rechecks mixed source quotes in batches without multiplying reads by source or message count', async () => {
+        const owner = await account();
+        const sources: DiscussionQuoteSource[] = [];
+        for (let index = 0; index < DISCUSSION_DEFAULT_PAGE_SIZE_V1; index++) {
+            const session = await db.session.create({ data: { accountId: owner.id, tag: randomUUID(), encryptionMode: 'plain', metadata: '{}' } });
+            const message = await db.sessionMessage.create({ data: { sessionId: session.id, seq: 1, content: { t: 'plain', v: { text: 'Session quote' } } } });
+            sources.push({ kind: 'session', sessionId: session.id, messageId: message.id });
+            const artifact = await createArtifact({ actorUserId: owner.id, artifactId: randomUUID(),
+                header: decodeBase64(encodePlainArtifactStoredContent({ kind: 'markdown', title: 'Doc' })),
+                body: decodeBase64(encodePlainArtifactStoredContent({ body: 'Doc quote' })), dataEncryptionKey: decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER) });
+            if (!artifact.ok) throw new Error(artifact.error);
+            sources.push({ kind: 'doc', doc: { ref: { kind: 'doc', serverId: 'home', artifactId: artifact.artifact.id },
+                revision: { headerVersion: artifact.artifact.headerVersion, bodyVersion: artifact.artifact.bodyVersion } } });
+        }
+        const read = (selected: readonly DiscussionQuoteSource[]) => inReadSnapshot(async tx => {
+            const observed = observePrismaReads(tx, ['session', 'sessionMessage', 'artifact']);
+            const admissions = new Map<string, DiscussionResult<void>>();
+            await admitDiscussionQuoteSourcesInTx(observed.tx, { actorAccountId: owner.id, authentication, sources: selected, admissions });
+            return { admissions, reads: observed.reads };
+        });
+        const one = await read(sources.slice(0, 2));
+        const page = await read(sources);
+        const repeated = await read([...sources, ...sources, ...sources]);
+        expect(page.reads).toEqual(one.reads);
+        expect(repeated.reads).toEqual(one.reads);
+        expect([...page.admissions.values()].every(admission => admission.ok)).toBe(true);
+        const revoked = sources.find((source): source is Extract<DiscussionQuoteSource, { kind: 'session' }> => source.kind === 'session')!;
+        await db.sessionMessage.delete({ where: { id: revoked.messageId } });
+        const changed = await read(sources);
+        expect(changed.admissions.get(discussionQuoteSourceKey(revoked))).toEqual({ ok: false, error: 'discussion_content_unavailable' });
+        expect([...changed.admissions.values()].filter(admission => !admission.ok)).toHaveLength(1);
+    });
+    it.each(['messages', 'attention'] as const)('admits each stored message field once for a %s page response, retaining malformed-storage rejection', async readKind => {
+        const owner = await account();
+        const [discussionId] = await seedDiscussions(owner.id, 1);
+        const ids = Array.from({ length: 20 }, () => randomUUID());
+        await db.discussionMessage.createMany({ data: ids.map((id, index) => ({ id, discussionId,
+            seq: index + 1, localId: id, authorAccountId: owner.id, requestEqualityEvidenceV1: evidence,
+            producerV1: { v: 1, kind: 'agent', sessionId: 'agent-a' },
+            ...(index ? { replyTargetV1: { kind: 'message', messageId: ids[index - 1] } } : {}),
+            addressingV1: { throughSeq: index + 1, participantSessionIds: ['agent-a'] },
+            docEditProposalDispositionV1: { state: 'open' }, content: body,
+        })) });
+        await db.discussion.update({ where: { id: discussionId }, data: { messageSeq: ids.length } });
+        await db.discussionReadState.create({ data: { discussionId, accountId: owner.id, lastReadSeq: 0 } });
+        // Observation only: both entry points still run the real schema parser.
+        // Counts bracket the public read, after fixture writes and before response assertions.
+        const schemas = { producer: DiscussionProducerV1StoredSchema,
+            envelope: createStoredReadSchema(StrictSessionStoredMessageContentEnvelopeSchema),
+            reply: DiscussionReplyTargetV1Schema, addressing: DiscussionMessageAddressingV1Schema,
+            disposition: DocEditProposalDispositionV1Schema };
+        const observations = Object.entries(schemas).map(([field, schema]) => ({ field,
+            parse: vi.spyOn(schema, 'parse'), safeParse: vi.spyOn(schema, 'safeParse') }));
+        const input = { actorAccountId: owner.id, authentication, discussionId, limit: ids.length };
+        try {
+            const result = readKind === 'messages' ? await readDiscussionMessages(input) : await readDiscussionAttention(input);
+            expect(result.ok).toBe(true);
+            if (!result.ok) throw new Error(result.error);
+            const messages = 'messages' in result.value ? result.value.messages
+                : result.value.discussions.flatMap(entry => entry.occurrences.map(occurrence => occurrence.message));
+            expect(messages).toHaveLength(ids.length);
+            const counts = Object.fromEntries(observations.map(({ field, parse, safeParse }) =>
+                [field, parse.mock.calls.length + safeParse.mock.calls.length]));
+            console.info('DISCUSSION_ADMISSION_COST', counts);
+            // Attention also admits and projects the one Discussion title envelope.
+            expect(counts).toEqual({ producer: 20, envelope: readKind === 'attention' ? 22 : 20, reply: 19, addressing: 20, disposition: 20 });
+        } finally { for (const observation of observations) { observation.parse.mockRestore(); observation.safeParse.mockRestore(); } }
+        if (readKind === 'attention') return;
+        for (const field of ['producerV1', 'replyTargetV1', 'addressingV1', 'docEditProposalDispositionV1', 'content'] as const) {
+            const before = await db.discussionMessage.findUniqueOrThrow({ where: { id: ids[0] }, select: {
+                producerV1: true, replyTargetV1: true, addressingV1: true, docEditProposalDispositionV1: true, content: true,
+            } });
+            await db.discussionMessage.update({ where: { id: ids[0] }, data: { [field]: { malformed: true } } });
+            expect(await readDiscussionMessages({ ...input, messageId: ids[0] })).toMatchObject({ ok: false, error: 'discussion_invalid_content' });
+            await db.discussionMessage.update({ where: { id: ids[0] }, data: { [field]: before[field] ?? storage.prismaRuntime.DbNull } });
+        }
+    });
+
+    it('selects attention for one changed Discussion before materializing a 300-Discussion inventory', async () => {
+        const owner = await account(), author = await account();
+        const ids = await seedDiscussions(owner.id, 300);
+        await db.discussionMessage.createMany({ data: ids.map(discussionId => ({ discussionId, seq: 1,
+            localId: randomUUID(), authorAccountId: author.id, requestEqualityEvidenceV1: evidence,
+            content: body, createdAt: new Date(1000) })) });
+        await db.discussionReadState.createMany({ data: ids.map(discussionId => ({ discussionId, accountId: owner.id, lastReadSeq: 0 })) });
+        const input = { actorAccountId: owner.id, authentication, discussionId: ids[0]!, limit: 100 };
+        const measured = await measure(() => readDiscussionAttention(input));
+        expect(measured.result).toMatchObject({ ok: true, value: { nextCursor: null,
+            discussions: [{ discussion: { id: ids[0] }, occurrences: [{ message: { discussionId: ids[0] } }] }] } });
+        if (!measured.result.ok) throw new Error(measured.result.error);
+        expect(measured.result.value.discussions).toHaveLength(1);
+        const materialized = measured.reads.filter(read => read.model === 'discussionMessage').reduce((total, read) => total + read.rows, 0);
+        console.info('DISCUSSION_READ_COST', JSON.stringify({ finding: 'N2-PERFLIST', inventory: ids.length, materialized }));
+        expect(materialized).toBe(1);
+        const frontierInput = { ...input, afterCursor: encodeDiscussionListCursorV1({ v: 1, at: 1001, id: 'frontier' }) };
+        expect(await readDiscussionAttention(frontierInput)).toMatchObject({ ok: true, value: { discussions: [], nextCursor: null } });
+        const denied = await readDiscussionAttention({ ...input, actorAccountId: author.id });
+        expect(denied).toMatchObject({ ok: true, value: { discussions: [], nextCursor: null } });
     });
     it('D1 rejects malformed list and attention cursors before acquiring a database transaction', async () => {
         const reader = { actorAccountId: randomUUID(), authentication, cursor: 'invalid', limit: 1 };
         const attention = await measure(() => readDiscussionAttention(reader));
+        const lowerBound = await measure(() => readDiscussionAttention({ actorAccountId: reader.actorAccountId,
+            authentication, afterCursor: 'invalid', limit: 1 }));
         const list = await measure(() => listDiscussions(reader));
         expect(attention.result).toEqual({ ok: false, error: 'discussion_invalid_content' });
+        expect(lowerBound.result).toEqual(attention.result);
         expect(list.result).toEqual(attention.result);
+        console.info('DISCUSSION_READ_COST', JSON.stringify({ finding: 'D1', attentionTransactions: attention.transactions,
+            listTransactions: list.transactions }));
         expect(attention.transactions).toBe(0);
+        expect(lowerBound.transactions).toBe(0);
         expect(list.transactions).toBe(0);
+    });
+    it('pages exact Discussion attention within the inclusive loaded occurrence frontier', async () => {
+        const owner = await account(), author = await account();
+        const [discussionId] = await seedDiscussions(owner.id, 1);
+        const messageIds = ['frontier-a', 'frontier-b', 'frontier-c'].map(suffix => `${randomUUID()}-${suffix}`).sort();
+        await db.discussionMessage.createMany({ data: messageIds.map((id, index) => ({ id, discussionId, seq: index + 1,
+            localId: id, authorAccountId: author.id, requestEqualityEvidenceV1: evidence, content: body,
+            createdAt: new Date(1001) })) });
+        await db.discussionMessage.create({ data: { discussionId, seq: 4, localId: randomUUID(), authorAccountId: author.id,
+            requestEqualityEvidenceV1: evidence, content: body, createdAt: new Date(1000) } });
+        await db.discussionReadState.create({ data: { discussionId, accountId: owner.id, lastReadSeq: 0 } });
+        await db.discussion.update({ where: { id: discussionId }, data: { messageSeq: 4 } });
+        const input = { actorAccountId: owner.id, authentication, discussionId, limit: 1,
+            afterCursor: encodeDiscussionListCursorV1({ v: 1, at: 1001, id: messageIds[1]! }) };
+        const first = await readDiscussionAttention(input);
+        expect(first).toMatchObject({ ok: true, value: { discussions: [{ occurrences: [{ message: { id: messageIds[2] } }] }] } });
+        if (!first.ok || !first.value.nextCursor) throw new Error('Expected exact attention continuation');
+        const second = await readDiscussionAttention({ ...input, cursor: first.value.nextCursor });
+        expect(second).toMatchObject({ ok: true, value: { nextCursor: null,
+            discussions: [{ occurrences: [{ message: { id: messageIds[1] } }] }] } });
+        if (!second.ok) throw new Error(second.error);
+        expect(second.value.discussions[0]?.occurrences).toHaveLength(1);
     });
     it('selects one exact committed message without acquiring unrelated history and keeps local IDs private', async () => {
         const owner = await account(), another = await account();
@@ -156,6 +297,7 @@ export function discussionReadCostContracts() {
         expect(measured.result).toEqual({ ok: true, value: { discussions: [], nextCursor: null, incomplete: false } });
         const materialized = measured.reads.filter(read => read.model === 'discussion' || read.model === 'discussionReadState')
             .reduce((sum, read) => sum + read.rows, 0);
+        console.info('DISCUSSION_READ_COST', JSON.stringify({ finding: 'B-S1', count, materialized, reads: measured.reads.length }));
         expect(materialized).toBe(0);
         // The empty page and Account-wide key-unavailability fact are the only
         // two Discussion resource questions; inventory size adds no reads.
@@ -170,6 +312,7 @@ export function discussionReadCostContracts() {
         expect(encrypted.result).toEqual(measured.result);
         const encryptedRows = encrypted.reads.filter(read => read.model === 'discussion' || read.model === 'discussionReadState')
             .reduce((sum, read) => sum + read.rows, 0);
+        console.info('DISCUSSION_READ_COST', JSON.stringify({ finding: 'B-S1-e2ee', count, materialized: encryptedRows, reads: encrypted.reads.length }));
         expect(encryptedRows).toBe(0);
         expect(encrypted.reads.length).toBeLessThanOrEqual(2);
     });
@@ -178,11 +321,16 @@ export function discussionReadCostContracts() {
         const owner = await account();
         const keys = tweetnacl.box.keyPair();
         await db.account.update({ where: { id: owner.id }, data: { encryptionMode: 'e2ee', ...createSignedAccountContentBinding(keys.publicKey) } });
-        const [discussionId] = await seedDiscussions(owner.id, 1);
+        const [discussionId, readyId] = await seedDiscussions(owner.id, 2);
         await db.discussion.update({ where: { id: discussionId }, data: { encryptionMode: 'e2ee', dataEncryptionKey: new Uint8Array([1]) } });
         expect(await readDiscussionAttention({ actorAccountId: owner.id, authentication, limit: 1 }))
             .toEqual({ ok: true, value: { incomplete: true, discussions: [], nextCursor: null } });
         const envelope = sealEncryptedDataKeyEnvelopeV1({ dataKey: tweetnacl.randomBytes(32), recipientPublicKey: keys.publicKey, randomBytes: tweetnacl.randomBytes });
+        await db.discussion.update({ where: { id: readyId }, data: { encryptionMode: 'e2ee', dataEncryptionKey: envelope } });
+        expect(await readDiscussionAttention({ actorAccountId: owner.id, authentication, discussionId: readyId, limit: 1 }))
+            .toEqual({ ok: true, value: { incomplete: false, discussions: [], nextCursor: null } });
+        expect(await readDiscussionAttention({ actorAccountId: owner.id, authentication, discussionId, limit: 1 }))
+            .toEqual({ ok: true, value: { incomplete: true, discussions: [], nextCursor: null } });
         await db.discussion.update({ where: { id: discussionId }, data: { dataEncryptionKey: envelope } });
         expect(await readDiscussionAttention({ actorAccountId: owner.id, authentication, limit: 1 }))
             .toEqual({ ok: true, value: { incomplete: false, discussions: [], nextCursor: null } });
@@ -227,6 +375,7 @@ export function discussionReadCostContracts() {
         if (!whole.ok) throw new Error(whole.error);
         expect(whole.value.discussions.flatMap(entry => entry.occurrences.map(row => row.message.id))).toEqual(expected.map(index => ids[index]));
         const cursorReads = measuredWhole.reads.filter(read => read.model === 'discussionReadState').length;
+        console.info('DISCUSSION_READ_COST', JSON.stringify({ finding: 'D2', cursorReads }));
         expect(cursorReads).toBe(1);
         await db.discussionReadState.update({ where: { discussionId_accountId: { discussionId, accountId: owner.id } }, data: { lastReadSeq: 4 } });
         const after = await readDiscussionAttention({ actorAccountId: owner.id, authentication, limit: 1 });
@@ -257,6 +406,40 @@ export function discussionReadCostContracts() {
         expect(await read()).toEqual({ ok: true, value: { incomplete: false, discussions: [], nextCursor: null } });
     });
 
+    it.each([1, 1_000])('D5 projects content-disclosed Account actors with one set read at N=%i messages', async count => {
+        const owner = await account(), author = await account(), requester = await account();
+        const [discussionId] = await seedDiscussions(owner.id, 1);
+        const serverId = await getOrCreateServerIdentityId();
+        const producer = { v: 1 as const, kind: 'agent' as const, sessionId: 'agent-session',
+            actionRequestAttributionV1: { requestRef: 'request', requester: { serverId, accountId: requester.id },
+                persona: { serverId, sessionId: 'agent-session' }, origin: null } };
+        await db.discussionMessage.createMany({ data: Array.from({ length: count }, (_, index) => ({
+            discussionId, seq: index + 1, localId: randomUUID(), authorAccountId: author.id,
+            requestEqualityEvidenceV1: evidence, content: body,
+            ...(index === 0 ? { producerV1: producer } : {}),
+        })) });
+        await db.discussion.update({ where: { id: discussionId }, data: { messageSeq: count } });
+        const storedProducer = (await db.discussionMessage.findFirstOrThrow({ where: { discussionId, seq: 1 },
+            select: { producerV1: true } })).producerV1;
+        expect(storedProducer).toEqual(producer);
+        expect(DiscussionProducerV1StoredSchema.safeParse(storedProducer).success).toBe(true);
+        const known = await inReadSnapshot(tx => loadDiscussionKnownAccountActorFactsInTx(tx, [discussionId]));
+        expect(known.subjectsByDiscussion.get(discussionId)).toEqual(expect.arrayContaining([
+            expect.objectContaining({ accountId: requester.id, serverId }),
+        ]));
+        const measured = await measure(() => listDiscussionParticipants({
+            actorAccountId: owner.id, authentication, discussionId,
+        }));
+        expect(measured.result).toMatchObject({ ok: true, value: { accountActors: expect.arrayContaining([
+            expect.objectContaining({ accountId: author.id, accessibility: 'former' }),
+            expect.objectContaining({ accountId: requester.id, accessibility: 'former' }),
+        ]) } });
+        const actorSourceReads = measured.reads.filter(read => read.model === 'discussionMessage');
+        console.info('DISCUSSION_READ_COST', JSON.stringify({ finding: 'D5', count, actorSourceReads }));
+        // One finite request admits once and projects all disclosed actors in one set read.
+        expect(actorSourceReads).toEqual([{ model: 'discussionMessage', rows: 1 }]);
+    });
+
     it.each([1, 1_000, 20_000])('B-S2 selects one real Doc thread before N=%i unrelated rows leave storage', async count => {
         const owner = await account();
         const artifact = await createArtifact({ actorUserId: owner.id, artifactId: randomUUID(),
@@ -274,12 +457,25 @@ export function discussionReadCostContracts() {
                 replyTarget: { kind: 'doc_passage', doc }, mentionedAccountIds: [] },
         } });
         if (!created.ok) throw new Error(created.error);
+        const actor = { authentication, actorAccountId: owner.id, discussionId: created.value.discussion.id };
+        const rootRequest = { localId: randomUUID(), content: { t: 'plain' as const, v: { kind: 'doc_passage_comment',
+            passage: { ...doc, range: { start: 0, end: 4 }, quote: 'Text' }, content: body.v } },
+            replyTarget: { kind: 'doc_passage' as const, doc }, mentionedAccountIds: [] };
+        expect((await postDiscussionMessage({ ...actor, request: rootRequest })).ok).toBe(true);
+        expect((await postDiscussionMessage({ ...actor, request: rootRequest })).ok).toBe(true);
+        expect((await postDiscussionMessage({ ...actor, request: { ...rootRequest, localId: randomUUID() } })).ok).toBe(true);
+        expect((await postDiscussionMessage({ ...actor, request: { localId: randomUUID(), content: body,
+            replyTarget: { kind: 'message', messageId: created.value.firstMessage.id }, mentionedAccountIds: [] } })).ok).toBe(true);
         await seedDiscussions(owner.id, count, { lastMessageAt: new Date(Date.now() + 1_000) });
         const measured = await measure(() => listDiscussions({ authentication, actorAccountId: owner.id,
             anchorDocArtifactId: doc.ref.artifactId, limit: 1 }));
-        expect(measured.result).toMatchObject({ ok: true, value: { discussions: [{ id: created.value.discussion.id }], nextCursor: null } });
+        expect(measured.result).toMatchObject({ ok: true, value: { discussions: [{ id: created.value.discussion.id,
+            openCommentCount: 3 }], nextCursor: null } });
         const materialized = measured.reads.filter(read => read.model === 'discussion').reduce((sum, read) => sum + read.rows, 0);
+        console.info('DISCUSSION_READ_COST', JSON.stringify({ finding: 'B-S2', count, materialized, reads: measured.reads.length }));
         expect(materialized).toBe(2);
+        expect(await archiveDiscussion(actor)).toMatchObject({ ok: true, value: { discussion: { openCommentCount: 0 } } });
+        expect(await restoreDiscussion(actor)).toMatchObject({ ok: true, value: { discussion: { openCommentCount: 3 } } });
     });
 
     it('B-S2a keeps page-2 candidates reachable while a thousand foreign rows lie between reachable items', async () => {
@@ -304,6 +500,7 @@ export function discussionReadCostContracts() {
         const measured = await measure(() => listDiscussions({ actorAccountId: owner.id, authentication, limit: 1, cursor: page1.value.nextCursor! }));
         expect(measured.result).toMatchObject({ ok: true, value: { discussions: [{ id: second }], nextCursor: expect.any(String) } });
         const materialized = measured.reads.filter(read => read.model === 'discussion').reduce((sum, read) => sum + read.rows, 0);
+        console.info('DISCUSSION_READ_COST', JSON.stringify({ finding: 'B-S2a', count: 1_000, materialized, reads: measured.reads.length }));
         expect(materialized).toBe(4);
         if (!measured.result.ok || !measured.result.value.nextCursor) throw new Error('Missing second page');
         expect(await listDiscussions({ actorAccountId: owner.id, authentication, limit: 1, cursor: measured.result.value.nextCursor }))
@@ -356,8 +553,12 @@ export function discussionReadCostContracts() {
         if (!attention.result.ok) throw new Error(attention.result.error);
         expect(attention.result.value.discussions.flatMap(row => row.occurrences.map(item => item.message.id)).sort())
             .toEqual(roots.map(row => row.messageId).sort());
-        expect.soft(counts(list.reads)).toEqual({ artifacts: sourceCount, publications: sourceCount, actors: sourceCount === 1 ? 2 : 1 });
-        expect.soft(counts(attention.reads)).toEqual({ artifacts: sourceCount, publications: sourceCount, actors: 2 });
+        console.info('DISCUSSION_READ_COST', JSON.stringify({ finding: 'D3/D4', count, sourceCount,
+            list: counts(list.reads), attention: counts(attention.reads) }));
+        // Content admission batches every exact source; public-link state does
+        // not decide whether an authenticated reader may open its contents.
+        expect.soft(counts(list.reads)).toEqual({ artifacts: 1, publications: 0, actors: sourceCount === 1 ? 2 : 1 });
+        expect.soft(counts(attention.reads)).toEqual({ artifacts: 1, publications: 0, actors: 2 });
 
         // A later request must re-admit the source, including full mode/key validation.
         const deniedId = docs[0]!.ref.artifactId;
@@ -398,9 +599,16 @@ export function discussionReadCostContracts() {
             roots.push({ id: created.value.discussion.id, at });
         }
         const expected = roots.sort((a, b) => b.at - a.at || b.id.localeCompare(a.id)).map(row => row.id);
-        const whole = await listDiscussions({ authentication, actorAccountId: owner.id, anchorDocArtifactId: doc.ref.artifactId, limit: 100 });
-        if (!whole.ok) throw new Error(whole.error);
-        expect(whole.value.discussions.map(row => row.id)).toEqual(expected);
+        const listed = await measure(() => listDiscussions({ authentication, actorAccountId: owner.id,
+            anchorDocArtifactId: doc.ref.artifactId, limit: 100 }));
+        if (!listed.result.ok) throw new Error(listed.result.error);
+        expect(listed.result.value.discussions.map(row => row.id)).toEqual(expected);
+        expect(listed.result.value.discussions.reduce((count, row) => count + (row.firstMessage === null ? 0 : row.openCommentCount ?? 0), 0))
+            .toBe(expected.length);
+        expect(listed.transactions).toBe(1);
+        console.info('DOC_COMMENT_LIST_COST', JSON.stringify({ queries: listed.reads.length, reads: listed.reads }));
+        expect(listed.reads.filter(read => read.model === 'artifact' || read.model === 'publicSessionShare'))
+            .toEqual([{ model: 'artifact', rows: 1 }]);
         const walk: string[] = [], seenCursors = new Set<string>();
         let cursor: string | undefined;
         do {
@@ -452,6 +660,7 @@ export function discussionReadCostContracts() {
             messages: [{ id: ids[depth], replyTargetV1: { kind: 'message', messageId: ids[depth - 1] } }] })));
         expect(measured.result).toEqual({ ok: true, value: new Map([[ids[depth], null]]) });
         const reads = measured.reads.filter(read => read.model === 'ancestors');
+        console.info('DISCUSSION_READ_COST', JSON.stringify({ finding: 'B-S3', depth, reads: reads.length, rows: reads.reduce((sum, read) => sum + read.rows, 0) }));
         expect(reads).toHaveLength(1);
         expect(reads[0].rows).toBe(depth);
     });
@@ -492,6 +701,7 @@ export function discussionReadCostContracts() {
         // The summary's latest row and the selected occurrence each resolve once;
         // attention must reuse the occurrence projection's source map for decisions.
         const ancestors = measured.reads.filter(read => read.model === 'ancestors');
+        console.info('DISCUSSION_READ_COST', JSON.stringify({ finding: 'B-S3-attention', depth: 100, ancestorReads: ancestors.length }));
         expect(ancestors).toHaveLength(2);
         await db.discussionReadState.delete({ where: { discussionId_accountId: { discussionId, accountId: owner.id } } });
         expect(await readDiscussionAttention({ actorAccountId: owner.id, authentication, limit: 1 }))

@@ -226,6 +226,16 @@ async function createCurrentTranscriptPublisher(params: Readonly<{
     };
 }
 
+/**
+ * Usage message counts cover Sessions with usage evidence in range (602b14fd1c).
+ * This row admits the Session so the count proves the publication ceiling, not an empty population.
+ */
+async function seedUsageEvidence(accountId: string, sessionId: string): Promise<void> {
+    await db.usageEvent.create({ data: {
+        accountId, sessionId, observedAt: new Date(), agentId: "codex", source: "runtime", scope: "turn_delta", totalTokens: 1,
+    } });
+}
+
 describe("historical transcript writer database contract", () => {
     const provider = resolveContractProvider();
     let connected = false;
@@ -711,6 +721,7 @@ describe("historical transcript writer database contract", () => {
             },
             select: { id: true },
         });
+        await seedUsageEvidence(account.id, session.id);
         const claim = {
             sessionId: session.id,
             operationId: `operation-${randomUUID()}`,

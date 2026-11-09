@@ -48,6 +48,37 @@ function mintNativeGrant(runtime: ReturnType<typeof createLocalServicePreviewRun
 }
 
 describe("local service preview runtime", () => {
+    it.each(['viewer_1', 'starter_1'])('refuses late URL and native mints after %s loses access, without blocking a fresh admission', lostAccountId => {
+        const native = { ...resource, sessionId: undefined, owner: { kind: 'user' as const, id: 'starter_1' },
+            serviceTarget: { kind: 'managed_service' as const, managedServiceId: 'instance_1', machineId: resource.machineId, cwd: '/workspace/app',
+                declaration: { workspaceRefId: 'workspace_1', selection: { kind: 'manifest' as const, name: 'web' } } } };
+        const runtime = createLocalServicePreviewRuntime({ tokenSecret: 'test', publicBaseUrl: 'https://app.happier.test',
+            hostOriginBaseDomain: 'preview.happier.test', env: nativeGrantEnv });
+        const attempt = runtime.retainMachineAccess({ machineId: native.machineId, accountIds: ['viewer_1', 'starter_1'] });
+        const other = runtime.retainMachineAccess({ machineId: 'other-machine', accountIds: ['viewer_1', 'starter_1'] });
+        const input = { resource: native, accountId: 'starter_1', viewerAccountId: 'viewer_1' };
+        const nativeInput = { previewId: native.previewId, actorAccountId: 'viewer_1',
+            target: { endpointId: 'b'.repeat(64), revision: 1 }, request: { v: 1 as const,
+                initiator: { kind: 'account_client' as const, endpointId: 'a'.repeat(64) }, ephemeralPublicKeyBase64Url: 'c'.repeat(43) } };
+        try {
+            runtime.retireMachineAccess({ machineId: native.machineId, accountId: lostAccountId });
+            expect(other.signal.aborted).toBe(false);
+            expect(runtime.registerPreview({ ...input, machineAccessSignal: attempt.signal }))
+                .toMatchObject({ ok: false, reasonCode: 'session_not_authorized' });
+            expect(runtime.resolvePreview(native.previewId)).toBeNull();
+            const restored = runtime.retainMachineAccess({ machineId: native.machineId, accountIds: ['viewer_1', 'starter_1'] });
+            try {
+                expect(runtime.registerPreview({ ...input, machineAccessSignal: restored.signal }).ok).toBe(true);
+                expect(runtime.mintNativeDirectAccess({ ...nativeInput, machineAccessSignal: attempt.signal }))
+                    .toMatchObject({ ok: false, reasonCode: 'session_not_authorized' });
+                expect(runtime.mintNativeDirectAccess({ ...nativeInput, machineAccessSignal: restored.signal }).ok).toBe(true);
+                // Completing an attempt removes it from the sweep, rather than retaining revocation history.
+                restored.release();
+                runtime.retireMachineAccess({ machineId: native.machineId, accountId: lostAccountId });
+                expect(restored.signal.aborted).toBe(false);
+            } finally { restored.release(); }
+        } finally { attempt.release(); other.release(); }
+    });
     it('keeps native disclosure bound to each admitted viewer and retires all viewers on starter loss', () => {
         const native = { ...resource, sessionId: undefined, owner: { kind: 'user' as const, id: 'starter_1' },
             serviceTarget: { kind: 'managed_service' as const, managedServiceId: 'instance_1', machineId: resource.machineId, cwd: '/workspace/app',

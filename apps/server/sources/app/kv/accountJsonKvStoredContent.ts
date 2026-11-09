@@ -1,15 +1,16 @@
-import { StoredJsonContentEnvelopeSchema } from '@happier-dev/protocol/storage/storedJsonContentEnvelope';
-import { classifyAccountJsonKvKey } from '@happier-dev/protocol/account/accountJsonKv';
+import { StoredJsonContentEnvelopeSchema, TaskResourceStoredJsonContentEnvelopeSchema } from '@happier-dev/protocol/storage/storedJsonContentEnvelope';
+import { classifyAccountJsonKvKey, type AccountJsonKvNamespace } from '@happier-dev/protocol/account/accountJsonKv';
 
 export type AccountJsonKvStoredContentClassification =
     | Readonly<{ domain: "generic" }>
     | Readonly<{
-        domain: "todo" | "workspace";
+        domain: AccountJsonKvNamespace;
         keyKind: "index" | "item";
         representation:
             | "legacy_encrypted"
             | "malformed_marker"
             | "current_encrypted"
+            | "current_resource_encrypted"
             | "current_plain";
     }>;
 
@@ -38,11 +39,15 @@ export function isAccountJsonKvKey(key: string): boolean {
 function accountJsonKvRepresentationMatchesMode(
     representation: Extract<
         AccountJsonKvStoredContentClassification,
-        { domain: "todo" | "workspace" }
+        { domain: AccountJsonKvNamespace }
     >["representation"],
     mode: "plain" | "e2ee",
+    usage?: "task_resource",
 ): boolean {
     if (representation === "malformed_marker") return false;
+    if (representation === "current_resource_encrypted") {
+        return usage === "task_resource" && mode === "e2ee";
+    }
     return mode === "plain"
         ? representation === "current_plain"
         : representation === "legacy_encrypted"
@@ -54,6 +59,7 @@ export function assertAccountJsonKvStoredContentMatchesAccountMode(
         key: string;
         value: Uint8Array;
         accountMode: "plain" | "e2ee";
+        usage?: "task_resource";
     }>,
 ): void {
     const classification = classifyAccountJsonKvStoredContent({
@@ -65,6 +71,7 @@ export function assertAccountJsonKvStoredContentMatchesAccountMode(
         && !accountJsonKvRepresentationMatchesMode(
             classification.representation,
             params.accountMode,
+            params.usage,
         )
     ) {
         throw new AccountJsonKvStoredContentModeMismatchError();
@@ -90,6 +97,16 @@ export function classifyAccountJsonKvStoredContent(params: Readonly<{
         const decoded: unknown = JSON.parse(
             new TextDecoder().decode(params.value),
         );
+        if (decoded !== null && typeof decoded === "object" && hasOwnProperty(decoded, "k")) {
+            return {
+                domain,
+                keyKind,
+                representation: domain === "todo" && keyKind === "item"
+                    && TaskResourceStoredJsonContentEnvelopeSchema.safeParse(decoded).success
+                    ? "current_resource_encrypted"
+                    : "malformed_marker",
+            };
+        }
         const parsed = StoredJsonContentEnvelopeSchema.safeParse(decoded);
         if (parsed.success) {
             const hasRequiredPayload = decoded !== null
@@ -141,6 +158,7 @@ export function assertAccountJsonKvMutationStoredContent(params: Readonly<{
     nextValue: Uint8Array | null;
     accountMode: "plain" | "e2ee" | null;
     supportsCurrentProtocol: boolean;
+    usage?: "task_resource" | "task_resource_promotion";
 }>): void {
     const persisted = params.persistedValue === null
         ? null
@@ -183,12 +201,24 @@ export function assertAccountJsonKvMutationStoredContent(params: Readonly<{
     ) {
         throw new AccountJsonKvStoredContentUpgradeRequiredError();
     }
+    // Only the task grant transaction may change an Account-sealed task into
+    // resource-key ciphertext; ordinary mutations retain their representation.
+    if (params.usage === "task_resource_promotion") {
+        if (accountJson.domain !== "todo" || accountJson.keyKind !== "item"
+            || params.accountMode !== "e2ee"
+            || (persistedRepresentation !== "legacy_encrypted" && persistedRepresentation !== "current_encrypted")
+            || nextRepresentation !== "current_resource_encrypted") {
+            throw new AccountJsonKvStoredContentModeMismatchError();
+        }
+        return;
+    }
     if (persistedRepresentation !== null) {
         if (
             params.accountMode === null
             || !accountJsonKvRepresentationMatchesMode(
                 persistedRepresentation,
                 params.accountMode,
+                params.usage,
             )
         ) {
             throw new AccountJsonKvStoredContentModeMismatchError();
@@ -200,6 +230,7 @@ export function assertAccountJsonKvMutationStoredContent(params: Readonly<{
             || !accountJsonKvRepresentationMatchesMode(
                 nextRepresentation,
                 params.accountMode,
+                params.usage,
             )
         ) {
             throw new AccountJsonKvStoredContentModeMismatchError();

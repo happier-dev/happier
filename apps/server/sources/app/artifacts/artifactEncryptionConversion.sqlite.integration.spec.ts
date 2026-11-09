@@ -1,4 +1,3 @@
-import { readArtifactAccountEncryptionMigrationInventoryInTx } from './artifactAccountEncryptionMigrationInventory';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createHash, randomUUID } from 'node:crypto';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent, type AccountEncryptionMigrateArtifactsDirective } from '@happier-dev/protocol';
@@ -11,6 +10,7 @@ import { deleteAccountForErasure } from '@/app/plugins/data/accountDataErase';
 import { prepareArtifactBlobWrite, completeArtifactBlobCandidateCustodyInTx, readArtifactBlob, cleanupRejectedArtifactBlobUploads } from './artifactBlobService';
 import { artifactConversionBlobKey, stageArtifactBlobAccountEncryptionConversion, prepareArtifactAccountEncryptionConversionBlobs, cancelArtifactBlobAccountEncryptionConversion } from './artifactEncryptionConversionBlobService';
 import { migrateArtifactAccountEncryptionInTx, matchArtifactAccountEncryptionMigrationPostStateInTx, deleteArtifact } from './artifactWriteService';
+import { readArtifactAccountEncryptionMigrationInventoryInTx } from './artifactAccountEncryptionMigrationInventory';
 
 describe('Artifact private-byte Account conversion (real SQLite and private storage)', () => {
     let harness: LightSqliteHarness;

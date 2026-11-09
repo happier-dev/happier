@@ -1,5 +1,5 @@
 import type { Prisma } from "@prisma/client";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
     deriveSessionPermissionMediationRecordLocatorV1,
@@ -21,14 +21,16 @@ import {
     prunePermissionMediationRecord,
     readPermissionMediationRecord,
     readSessionSystemRecordV1,
+    resolveSessionBoardRecordsInTx,
     upsertSessionSystemRecordV1,
     upsertSessionSystemRecord,
     writePermissionMediationRecord,
 } from "./sessionSystemRecordService";
 
 const logError = vi.hoisted(() => vi.fn());
+const log = vi.hoisted(() => vi.fn());
 // Capture only log output; access, protocol and transaction owners remain real.
-vi.mock("@/utils/logging/log", () => ({ error: logError }));
+vi.mock("@/utils/logging/log", () => ({ error: logError, log }));
 
 const authentication = createPresentUserSessionAccessAuthentication();
 import { deriveSessionSystemRecordAddressKeys } from "./sessionSystemRecordAddressKeys";
@@ -38,12 +40,18 @@ import {
     SESSION_SYSTEM_RECORDS_CONTRACT_MIGRATION,
 } from "./sessionSystemRecordProtocolContract";
 import { encodeSessionSystemRecordRevision } from "./sessionSystemRecordRevision";
+import { mutateSessionBoard } from '@/app/session/board/service';
+import { eventRouter } from '@/app/events/eventRouter';
+import { inTx } from '@/storage/inTx';
 
 
 // Prisma is the system boundary; protocol-activation fixtures expose only its audited findMany operation.
 type ProtocolActivationDatabase = Parameters<typeof initializeSessionSystemRecordsProtocolV1Activation>[0];
 
 type TxMock = {
+    sessionShare: { findMany: ReturnType<typeof vi.fn> };
+    sessionTeamGrant: { findMany: ReturnType<typeof vi.fn> };
+    sessionGroupGrant: { findMany: ReturnType<typeof vi.fn> };
     teamMembership: { findMany: ReturnType<typeof vi.fn> };
     sessionFollowEdge: { findMany: ReturnType<typeof vi.fn> };
     session: {
@@ -66,6 +74,7 @@ type TxMock = {
 const testState = vi.hoisted(() => ({
     readAccessSession: vi.fn(),
     currentTx: null as TxMock | null,
+    publications: [] as Array<{ accountId: string; kind: string; entityId: string; hint: unknown }>,
 }));
 
 // Prisma reads are the external boundary; the canonical access projector remains real.
@@ -86,8 +95,17 @@ vi.mock("@/storage/db", async () => {
                 const reader = {
                     ...inTxPostgresControlStatementMock,
                     // Account admission locks the Account rows it is given; the fixture has no contention.
-                    $queryRawUnsafe: async (_query: string, accountIds: unknown) =>
-                        (Array.isArray(accountIds) ? accountIds : [accountIds]).map(id => ({ id })),
+                    $queryRawUnsafe: async (query: string, ...values: unknown[]) => {
+                        if (query.includes('INSERT INTO "AccountChange"')) {
+                            const [accountId, kind, entityId, , hint] = values;
+                            if (typeof accountId !== 'string' || typeof kind !== 'string' || typeof entityId !== 'string'
+                                || typeof hint !== 'string') throw new Error('Invalid publication database fixture');
+                            testState.publications.push({ accountId, kind, entityId, hint: JSON.parse(hint) });
+                            return [{ cursor: testState.publications.length }];
+                        }
+                        const accountIds = values[0];
+                        return (Array.isArray(accountIds) ? accountIds : [accountIds]).map(id => ({ id }));
+                    },
                     ...tx,
                     session: {
                         ...tx.session,
@@ -120,20 +138,6 @@ function accessSessionRow(level: "view" | "edit" | "admin" | "owner", sharedWith
         teamGrants: [],
         groupGrants: [],
     };
-}
-
-// The database boundary fixture recognizes editor constraints regardless of Boolean grouping.
-function hasCurrentEditPredicate(where: Prisma.SessionSystemRecordWhereInput): boolean {
-    const session = where.session;
-    if (!session || !("is" in session) || !session.is) return false;
-    function containsEditorConstraint(condition: Prisma.SessionWhereInput): boolean {
-        const level = condition.shares?.some?.accessLevel;
-        if (typeof level === "object" && Array.isArray(level.in)
-            && level.in.includes("edit") && !level.in.includes("view")) return true;
-        const and = condition.AND ? (Array.isArray(condition.AND) ? condition.AND : [condition.AND]) : [];
-        return [...and, ...(condition.OR ?? [])].some(containsEditorConstraint);
-    }
-    return containsEditorConstraint(session.is);
 }
 
 function workflowRunPayload(overrides: Record<string, unknown> = {}) {
@@ -237,6 +241,8 @@ describe("sessionSystemRecordService account scoping", () => {
         storagePolicyEnv.set("HAPPIER_FEATURE_SESSIONS_BOARD__ENABLED", "1");
         storagePolicyEnv.set("HAPPIER_DB_PROVIDER", "postgres");
         vi.clearAllMocks();
+        eventRouter.setIo({ to: () => ({ emit: vi.fn(), disconnectSockets: vi.fn() }) });
+        testState.publications.length = 0;
         resetSessionSystemRecordsProtocolV1ActivationForTests();
         await initializeSessionSystemRecordsProtocolV1Activation({
             $queryRawUnsafe: async () => [{
@@ -250,6 +256,9 @@ describe("sessionSystemRecordService account scoping", () => {
             accessSessionRow("edit", query.select.shares.where.sharedWithUserId.in[0]),
         );
         testState.currentTx = {
+            sessionShare: { findMany: vi.fn().mockResolvedValue([]) },
+            sessionTeamGrant: { findMany: vi.fn().mockResolvedValue([]) },
+            sessionGroupGrant: { findMany: vi.fn().mockResolvedValue([]) },
             teamMembership: { findMany: vi.fn().mockResolvedValue([]) },
             // Standalone mutations run behind Account admission; these fixtures have no Follow edges.
             sessionFollowEdge: { findMany: vi.fn().mockResolvedValue([]) },
@@ -271,11 +280,109 @@ describe("sessionSystemRecordService account scoping", () => {
         };
     });
 
+    afterEach(() => eventRouter.clearIo());
+
     const diagnosticHostParams = {
         actorUserId: "owner-account", sessionId: "s1", authentication,
         namespace: "activity", kind: "workflow_run.v1", localId: "activity:workflow_run:v1:wf_demo",
         content: { t: "encrypted", c: "private-ciphertext" },
     } as const;
+    it.each(['owner-account', 'shared-editor'])('uses no access evaluations after Board scope admission for %s', async actorUserId => {
+        const tx = testState.currentTx!;
+        tx.session.findUnique.mockResolvedValue({ accountId: 'owner-account', encryptionMode: 'plain' });
+        let stored: ReturnType<typeof activityRecord> | null = null;
+        tx.sessionSystemRecord.findFirst.mockImplementation(async () => stored);
+        tx.sessionSystemRecord.create.mockImplementation(async ({ data }) => {
+            stored = activityRecord({ ...data, id: 'board-item' });
+            return stored;
+        });
+        tx.sessionSystemRecord.updateMany.mockImplementation(async ({ data }) => {
+            if (!stored) return { count: 0 };
+            stored = { ...stored, content: data.content, version: stored.version + 1 };
+            return { count: 1 };
+        });
+        tx.sessionSystemRecord.deleteMany.mockImplementation(async () => {
+            stored = null;
+            return { count: 1 };
+        });
+        await inTx(async transaction => {
+            const scope = await resolveSessionBoardRecordsInTx(transaction, { actorUserId, sessionId: 's1', authentication, requiresLayout: false });
+            expect(scope.ok).toBe(true);
+            if (!scope.ok) throw new Error('Expected admitted Board scope');
+            testState.readAccessSession.mockClear();
+            tx.teamMembership.findMany.mockClear();
+            tx.session.findFirst.mockClear();
+            const content = { t: 'plain' as const, v: { v: 1, destination: 'transcript', title: 'First', frame: 'card',
+                height: { mode: 'auto', fallback: 'regular' }, source: { kind: 'declarative',
+                    document: { version: 1, root: { kind: 'markdown', text: 'Admitted content' } } } } };
+            expect(await scope.read('visual')).toEqual({ ok: true, record: null });
+            const created = await scope.upsert('visual', content, null);
+            if (!('ok' in created) || !created.ok) throw new Error('Expected created item');
+            const changed = await scope.upsert('visual', { ...content, v: { ...content.v, title: 'Second' } }, created.record.revision);
+            if (!('ok' in changed) || !changed.ok) throw new Error('Expected updated item');
+            expect(changed.record.revision).not.toBe(created.record.revision);
+            tx.sessionSystemRecord.updateMany.mockResolvedValueOnce({ count: 0 });
+            expect(await scope.upsert('visual', { ...content, v: { ...content.v, title: 'Third' } }, changed.record.revision))
+                .toEqual({ kind: 'refetch-conditional-upsert-conflict' });
+            tx.sessionSystemRecord.deleteMany.mockResolvedValueOnce({ count: 0 });
+            expect(await scope.remove('visual', changed.record.revision)).toEqual({ kind: 'refetch-conditional-delete-conflict' });
+            expect(await scope.remove('visual', created.record.revision)).toMatchObject({ ok: false, code: 'plugin_session_record_revision_conflict' });
+            expect(await scope.remove('visual', changed.record.revision)).toEqual({ ok: true });
+            expect(await scope.remove('visual', changed.record.revision)).toEqual({ ok: true });
+            expect(testState.readAccessSession).not.toHaveBeenCalled();
+            expect(tx.teamMembership.findMany).not.toHaveBeenCalled();
+            expect(tx.session.findFirst).not.toHaveBeenCalled();
+            for (const query of [...tx.sessionSystemRecord.findFirst.mock.calls, ...tx.sessionSystemRecord.updateMany.mock.calls,
+                ...tx.sessionSystemRecord.deleteMany.mock.calls]) {
+                expect(query[0].where).toMatchObject({ accountId: 'owner-account', sessionId: 's1', recordAddressKey: expect.anything() });
+                expect(query[0].where).not.toHaveProperty('session');
+            }
+        });
+        // Revocation is observed at the next admission, not within the admitted work.
+        testState.readAccessSession.mockResolvedValue(accessSessionRow('owner'));
+        await expect(mutateSessionBoard({ actorUserId: 'shared-editor', sessionId: 's1', authentication,
+            mutation: { operation: 'update_layout', expectedLayoutRevision: null,
+                layoutContent: { t: 'plain', v: { v: 1, tabs: [] } } } }))
+            .resolves.toMatchObject({ ok: false, result: { error: 'session_board_forbidden' } });
+    });
+    it.each(['hosted', 'snapshot_complete', 'machine_only'] as const)('publishes only changed addressed Board records to the current %s audience', async currentStorageState => {
+        const tx = testState.currentTx!;
+        const session = { ...accessSessionRow('owner'), encryptionMode: 'plain', currentStorageState,
+            seq: 2, acceptedThroughServerSeq: 2, materializationPublicationId: 'published',
+            materializedThroughSourceAt: 20_000n, publishedThroughServerSeq: 2 };
+        testState.readAccessSession.mockResolvedValue(session);
+        tx.session.findUnique.mockResolvedValue(session);
+        tx.session.findMany.mockResolvedValue([session]);
+        tx.sessionShare.findMany.mockResolvedValue([{ sessionId: 's1', sharedWithUserId: 'viewer' }]);
+        let stored: ReturnType<typeof activityRecord> | null = null;
+        tx.sessionSystemRecord.findFirst.mockImplementation(async () => stored);
+        tx.sessionSystemRecord.create.mockImplementation(async ({ data }) => {
+            stored = activityRecord({ ...data, id: 'record-layout' });
+            return stored;
+        });
+        tx.sessionSystemRecord.updateMany.mockImplementation(async ({ data }) => {
+            if (!stored) return { count: 0 };
+            stored = { ...stored, content: data.content, version: stored.version + 1 };
+            return { count: 1 };
+        });
+        const write = (revision: string | null, title: string) => mutateSessionBoard({ authentication,
+            actorUserId: 'owner-account', sessionId: 's1', mutation: { operation: 'update_layout', expectedLayoutRevision: revision,
+                layoutContent: { t: 'plain', v: { v: 1, tabs: [{ id: 'main', title, items: [] }] } } } });
+        const result = await write(null, 'First');
+        expect(log).not.toHaveBeenCalled();
+        expect(result).toMatchObject({ ok: true, result: { outcome: 'created' } });
+        if (!result.ok || result.result.operation !== 'update_layout') throw new Error('Expected created layout');
+        const audience = currentStorageState === 'machine_only' ? ['owner-account'] : ['owner-account', 'viewer'];
+        expect(testState.publications).toEqual(audience.map(accountId => ({ accountId, kind: 'account',
+            entityId: 'session-record:record-layout', hint: { v: 1, sessionRecords: { sessionId: 's1',
+                address: { owner: 'host', namespace: 'surface', kind: 'layout.v1', localId: 'layout' } } } })));
+        testState.publications.length = 0;
+        expect(await write(result.result.layoutRevision, 'First')).toMatchObject({ ok: true, result: { outcome: 'unchanged' } });
+        expect(testState.publications).toEqual([]);
+        tx.sessionShare.findMany.mockResolvedValue([]);
+        expect(await write(result.result.layoutRevision, 'Second')).toMatchObject({ ok: true, result: { outcome: 'updated' } });
+        expect(testState.publications.map(change => change.accountId)).toEqual(['owner-account']);
+    });
     it('counts only stored Board item identities with one aggregate and no record body reads', async () => {
         const tx = testState.currentTx!;
         tx.session.findUnique.mockResolvedValue({ accountId: 'owner-account', encryptionMode: 'plain' });
@@ -876,7 +983,7 @@ describe("sessionSystemRecordService account scoping", () => {
         const result = await readSessionSystemRecordV1({ authentication, actorUserId: "shared-editor", sessionId: "s1",
             address: { owner: "host", namespace: "surface", kind: "item.v1", localId: "visual" } });
         expect(result.ok && result.record?.content).toEqual({ t: "plain", v: item });
-        expect(result.ok && result.record?.creator).toEqual({ kind: "unknown" });
+        expect(result.ok && result.record).not.toHaveProperty("creator");
     });
 
     it("projects additive registered host rows on exact and list reads", async () => {
@@ -978,24 +1085,14 @@ describe("sessionSystemRecordService account scoping", () => {
         expect(currentTx.sessionSystemRecord.deleteMany).not.toHaveBeenCalled();
     });
 
-    it("fences V1 record reads and lists at the deciding query after a share is revoked", async () => {
+    it("finishes an admitted V1 record read and refuses new requests after share revocation", async () => {
         const currentTx = testState.currentTx as TxMock;
         const row = activityRecord();
-        let shareIsCurrent = true;
-        testState.readAccessSession.mockImplementation(async () => {
-            shareIsCurrent = false;
-            return accessSessionRow("edit");
-        });
+        // 10-29 natural-boundary ruling: admitted reads finish; the next request is refused.
+        testState.readAccessSession.mockResolvedValue(accessSessionRow("owner"))
+            .mockResolvedValueOnce(accessSessionRow("edit"));
         currentTx.session.findUnique.mockResolvedValue({ encryptionMode: "plain", accountId: "owner-account" });
-        currentTx.session.findFirst.mockImplementation(async () => (
-            shareIsCurrent ? { id: "s1" } : null
-        ));
-        currentTx.sessionSystemRecord.findFirst.mockImplementation(async (args: { where: Record<string, unknown> }) => (
-            args.where.session && !shareIsCurrent ? null : row
-        ));
-        currentTx.sessionSystemRecord.findMany.mockImplementation(async (args: { where: Record<string, unknown> }) => (
-            args.where.session && !shareIsCurrent ? [] : [row]
-        ));
+        currentTx.sessionSystemRecord.findFirst.mockResolvedValue(row);
         const address = {
             owner: "host" as const,
             namespace: "activity" as const,
@@ -1007,17 +1104,23 @@ describe("sessionSystemRecordService account scoping", () => {
             actorUserId: "shared-editor",
             sessionId: "s1",
             address,
-        })).resolves.toEqual({ ok: false, code: "plugin_session_record_forbidden" });
+        })).resolves.toMatchObject({ ok: true, record: { content: row.content } });
+        await expect(readSessionSystemRecordV1({ authentication,
+            actorUserId: "shared-editor",
+            sessionId: "s1",
+            address,
+        })).resolves.toEqual({ ok: false, code: "plugin_session_not_found" });
         await expect(listSessionSystemRecordsV1({ authentication,
             actorUserId: "shared-editor",
             sessionId: "s1",
             query: { owner: "host", namespace: "activity", limit: 20 },
-        })).resolves.toEqual({ ok: false, code: "plugin_session_record_forbidden" });
+        })).resolves.toEqual({ ok: false, code: "plugin_session_not_found" });
         await expect(deleteSessionSystemRecordV1({ authentication,
             actorUserId: "shared-editor",
             sessionId: "s1",
             address,
-        })).resolves.toEqual({ ok: false, code: "plugin_session_record_forbidden" });
+        })).resolves.toEqual({ ok: false, code: "plugin_session_not_found" });
+        expect(currentTx.sessionSystemRecord.findFirst).toHaveBeenCalledTimes(1);
         expect(currentTx.sessionSystemRecord.deleteMany).not.toHaveBeenCalled();
     });
 
@@ -1083,26 +1186,13 @@ describe("sessionSystemRecordService account scoping", () => {
         })).resolves.toEqual({ ok: false, error: "forbidden" });
     });
 
-    it("fences V1 activity writes and deletes at a current editor predicate after a share downgrade", async () => {
+    it("refuses V1 activity writes and deletes when access is downgraded before transaction admission", async () => {
         const currentTx = testState.currentTx as TxMock;
         const row = activityRecord();
-        let shareHasEditAccess = true;
-        testState.readAccessSession.mockImplementation(async () => {
-            shareHasEditAccess = false;
-            return accessSessionRow("edit");
-        });
+        testState.readAccessSession.mockResolvedValue(accessSessionRow("view"))
+            .mockResolvedValueOnce(accessSessionRow("edit"));
         currentTx.session.findUnique.mockResolvedValue({ encryptionMode: "plain", accountId: "owner-account" });
-        currentTx.session.findFirst.mockImplementation(async () => (
-            shareHasEditAccess ? { id: "s1" } : null
-        ));
         currentTx.sessionSystemRecord.findFirst.mockResolvedValue(row);
-
-        currentTx.sessionSystemRecord.updateMany.mockImplementation(async (args: { where: Prisma.SessionSystemRecordWhereInput }) => ({
-            count: !shareHasEditAccess && hasCurrentEditPredicate(args.where) ? 0 : 1,
-        }));
-        currentTx.sessionSystemRecord.deleteMany.mockImplementation(async (args: { where: Prisma.SessionSystemRecordWhereInput }) => ({
-            count: !shareHasEditAccess && hasCurrentEditPredicate(args.where) ? 0 : 1,
-        }));
         const address = {
             owner: "host" as const,
             namespace: "activity" as const,
@@ -1122,25 +1212,15 @@ describe("sessionSystemRecordService account scoping", () => {
             sessionId: "s1",
             address,
         })).resolves.toEqual({ ok: false, code: "plugin_session_record_forbidden" });
-
+        expect(currentTx.sessionSystemRecord.updateMany).not.toHaveBeenCalled();
+        expect(currentTx.sessionSystemRecord.deleteMany).not.toHaveBeenCalled();
     });
 
     it("rejects same-envelope V1 and legacy activity upserts after an editor is downgraded to visible", async () => {
         const currentTx = testState.currentTx as TxMock;
         const row = activityRecord();
-        let shareHasEditAccess = true;
-        testState.readAccessSession.mockImplementation(async () => {
-            shareHasEditAccess = false;
-            return accessSessionRow("edit");
-        });
+        testState.readAccessSession.mockResolvedValue(accessSessionRow("view"));
         currentTx.session.findUnique.mockResolvedValue({ encryptionMode: "plain", accountId: "owner-account" });
-        currentTx.session.findFirst.mockImplementation(async () => (
-            shareHasEditAccess ? { id: "s1" } : null
-        ));
-
-        currentTx.sessionSystemRecord.findFirst.mockImplementation(async (args: { where: Prisma.SessionSystemRecordWhereInput }) => (
-            hasCurrentEditPredicate(args.where) ? null : row
-        ));
         const address = {
             owner: "host" as const,
             namespace: "activity" as const,
@@ -1162,7 +1242,7 @@ describe("sessionSystemRecordService account scoping", () => {
             localId: address.localId,
             content: row.content,
         })).resolves.toEqual({ ok: false, error: "forbidden" });
-
+        expect(currentTx.sessionSystemRecord.findFirst).not.toHaveBeenCalled();
     });
 
     it("rejects malformed plaintext host workflow content before a V1 upsert can persist it", async () => {
@@ -2392,6 +2472,8 @@ describe("sessionSystemRecordService account scoping", () => {
         });
 
         expect(result).toMatchObject({ ok: true, didCreate: true });
+        expect(testState.publications).toEqual([{ accountId: 'shared-editor', kind: 'account', entityId: 'session-record:rec-memory',
+            hint: { v: 1, sessionRecords: { sessionId: 's1', address: { owner: 'host', namespace: 'memory', kind: 'synopsis.v1', localId: 'memory:synopsis:v1:2' } } } }]);
         const memoryKeys = deriveSessionSystemRecordAddressKeys({
             ownerKind: "host",
             pluginId: null,

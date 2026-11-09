@@ -1,7 +1,10 @@
 import type { AutomationSessionLifecycleTriggerStatus } from '@happier-dev/protocol/automations/automationTriggerProjectionV1';
+import type { AutomationRun as StoredAutomationRun } from '@prisma/client';
 
 import { db } from "@/storage/db";
 import type { Tx } from "@/storage/inTx";
+import { AutomationRunState as StoredAutomationRunState, getDbProviderFromEnv, prismaRuntime } from "@/storage/prisma";
+import { workflowRunSqlIdentifier } from "@/app/workflows/workflowRunAttention";
 
 import { portableQueryChunks as automationPortableQueryChunks } from "@/storage/portableQueryChunks";
 import { AUTOMATION_SESSION_LIFECYCLE_TERMINAL_NO_RUN_ACTIONS } from "./automationSessionLifecycleTerminalTruth";
@@ -17,6 +20,10 @@ import {
 type SessionLifecycleTrigger = AutomationTriggerItem & Readonly<{
     kind: "sessionLifecycle";
 }>;
+
+type LifecycleStatusRun = Pick<StoredAutomationRun,
+    "id" | "state" | "triggerId" | "causeSessionLifecycleEvent" | "causeSourceSessionId" | "causeSourceTurnId"
+>;
 
 function lifecycleTriggers(automations: readonly AutomationListItem[]) {
     return automations.flatMap((automation) => automation.triggers.flatMap((trigger) => (
@@ -60,6 +67,10 @@ export async function loadAutomationSessionLifecycleStatusProjections(params: Re
     const sourceSessionIds = [...new Set(candidates.map(({ stored }) => (
         stored.definition.sourceSessionId
     )))];
+    const id = workflowRunSqlIdentifier;
+    const textType = prismaRuntime.raw(getDbProviderFromEnv(process.env, "postgres") === "mysql" ? "CHAR" : "TEXT");
+    const applicableRunStates = Object.values(StoredAutomationRunState)
+        .filter((state) => projectAutomationRunState(state) !== null);
     const [sessionPages, turnPages, receiptPages, runPages] = await Promise.all([
         Promise.all(automationPortableQueryChunks({ values: sourceSessionIds, bindingsPerValue: 1 })
             .map((page) => client.session.findMany({
@@ -94,31 +105,29 @@ export async function loadAutomationSessionLifecycleStatusProjections(params: Re
             select: { id: true, sessionId: true, turnId: true, action: true },
             orderBy: [{ appliedAt: "asc" }, { id: "asc" }],
         }))),
-        Promise.all(automationPortableQueryChunks({ values: candidates, bindingsPerValue: 3 })
-            .map((page) => client.automationRun.findMany({
-                where: {
-                    causeKind: "trigger",
-                    causeTriggerKind: "sessionLifecycle",
-                    OR: page.map(({ trigger, stored }) => (
+        Promise.all(automationPortableQueryChunks({
+            values: candidates, bindingsPerValue: 3, fixedBindings: applicableRunStates.length,
+        }).map((page) => client.$queryRaw<LifecycleStatusRun[]>(prismaRuntime.sql`
+            SELECT ${id("id")}, ${id("state")}, ${id("triggerId")}, ${id("causeSessionLifecycleEvent")},
+                ${id("causeSourceSessionId")}, ${id("causeSourceTurnId")}
+            FROM (
+                SELECT r.${id("id")}, r.${id("state")}, r.${id("triggerId")}, r.${id("causeSessionLifecycleEvent")},
+                    r.${id("causeSourceSessionId")}, r.${id("causeSourceTurnId")},
+                    ROW_NUMBER() OVER (PARTITION BY r.${id("triggerId")}
+                        ORDER BY r.${id("createdAt")} DESC, r.${id("id")} DESC) AS ${id("lifecycleStatusRank")}
+                FROM ${id("AutomationRun")} r
+                WHERE r.${id("causeKind")} = 'trigger' AND r.${id("causeTriggerKind")} = 'sessionLifecycle'
+                    AND CAST(r.${id("state")} AS ${textType}) IN (${prismaRuntime.join(applicableRunStates)})
+                    AND (${prismaRuntime.join(page.map(({ trigger, stored }) => (
                         stored.definition.policy.kind === "currentTurn"
-                            ? {
-                                triggerId: trigger.id,
-                                causeSourceSessionId: stored.definition.sourceSessionId,
-                                causeSourceTurnId: stored.definition.policy.sourceTurnId,
-                            }
-                            : { triggerId: trigger.id }
-                    )),
-                },
-                select: {
-                    id: true,
-                    state: true,
-                    triggerId: true,
-                    causeSessionLifecycleEvent: true,
-                    causeSourceSessionId: true,
-                    causeSourceTurnId: true,
-                },
-                orderBy: [{ createdAt: "desc" }, { id: "desc" }],
-            }))),
+                            ? prismaRuntime.sql`(r.${id("triggerId")} = ${trigger.id}
+                                AND r.${id("causeSourceSessionId")} = ${stored.definition.sourceSessionId}
+                                AND r.${id("causeSourceTurnId")} = ${stored.definition.policy.sourceTurnId})`
+                            : prismaRuntime.sql`r.${id("triggerId")} = ${trigger.id}`
+                    )), " OR ")})
+            ) ranked
+            WHERE ranked.${id("lifecycleStatusRank")} = 1
+        `))),
     ]);
 
     const existingSessions = new Set(sessionPages.flat().map((session) => session.id));
@@ -135,7 +144,6 @@ export async function loadAutomationSessionLifecycleStatusProjections(params: Re
         if (
             state !== null
             && run.triggerId !== null
-            && !latestRunByTrigger.has(run.triggerId)
         ) {
             latestRunByTrigger.set(run.triggerId, { ...run, state });
         }

@@ -32,7 +32,7 @@ describe("API-token HTTP origin admission", () => {
         await harness.close();
     });
 
-    async function createToken(origins: string[]) {
+    async function createToken(origins: string[], approve = false) {
         const account = await db.account.create({
             data: { publicKey: crypto.randomUUID() },
             select: { id: true },
@@ -45,7 +45,7 @@ describe("API-token HTTP origin admission", () => {
                 v: 1 as const,
                 actions: null,
                 targets: null,
-                approve: false,
+                approve,
                 origins,
                 models: null,
                 permissionModes: null,
@@ -82,6 +82,23 @@ describe("API-token HTTP origin admission", () => {
         } finally {
             await app.close();
         }
+    });
+
+    it("keeps an approve token's export POST subject to the configured Happier origin before Action admission", async () => {
+        const exportOrigin = 'http://happier-agent-qa-embed.localhost:3017';
+        harness.resetEnv({ HAPPIER_WEBAPP_URL: 'http://happier-agent-qa-embed.localhost:19364',
+            HAPPIER_PUBLIC_SERVER_URL: exportOrigin });
+        const token = await createToken(['http://127.0.0.1:5199'], true);
+        const app = createApp();
+        try {
+            const inject = () => app.inject({ method: 'POST', url: '/api-token-enabled',
+                headers: { authorization: `Bearer ${token.token}`, origin: exportOrigin }, payload: {} });
+            const refused = await inject();
+            expect(refused.statusCode).toBe(403);
+            expect(refused.json()).toEqual({ error: 'credential_origin_denied' });
+            harness.resetEnv({ HAPPIER_WEBAPP_URL: exportOrigin, HAPPIER_PUBLIC_SERVER_URL: exportOrigin });
+            expect((await inject()).statusCode).toBe(200);
+        } finally { await app.close(); }
     });
 
     it.each([

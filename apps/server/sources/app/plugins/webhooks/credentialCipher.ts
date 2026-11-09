@@ -1,8 +1,10 @@
 import { decryptString, encryptString } from "@/modules/encrypt";
 
+import type { PluginWebhookSignedVerifierKindV1 } from "./verifiers/catalog";
+
 export type PluginWebhookCredentialIdentityV1 = Readonly<{
     routeId: string;
-    verifierKind: "github_hmac_sha256_v1";
+    verifierKind: PluginWebhookSignedVerifierKindV1;
     credentialVersionId: string;
 }>;
 

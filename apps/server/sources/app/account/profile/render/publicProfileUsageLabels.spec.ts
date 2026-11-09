@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { PublicProfileViewV1Schema } from '@happier-dev/protocol/account/publicProfilePublication';
+import { formatUsageCalendarRange } from '@happier-dev/protocol/usage/usageFormatting';
+import { publicProfilePageLabels, PUBLIC_PROFILE_ASSET_LABELS, PUBLIC_PROFILE_LOCALE } from './publicProfileLabels';
 import { publicProfileUsageLabels } from './publicProfileUsageLabels';
 
 const view = PublicProfileViewV1Schema.parse({
@@ -15,6 +17,22 @@ const view = PublicProfileViewV1Schema.parse({
 });
 
 describe('anonymous Usage chart labels', () => {
+    it('says the range and how long ago it synced, in the owner preview words', () => {
+        const range = formatUsageCalendarRange(view.snapshot.period.startMs, view.snapshot.period.endMs,
+            view.snapshot.period.timeZoneOffsetMinutes, PUBLIC_PROFILE_LOCALE);
+        expect(PUBLIC_PROFILE_ASSET_LABELS.period(view.snapshot.period)).toBe(range);
+        const at = view.snapshot.computedAtMs;
+        expect(publicProfilePageLabels(view, at + 30_000).periodDetail).toBe(`${range} · synced just now`);
+        expect(publicProfilePageLabels(view, at + 2 * 3_600_000 + 5_000).periodDetail).toBe(`${range} · synced 2 hours ago`);
+        expect(publicProfilePageLabels(view, at + 3 * 86_400_000).periodDetail).toBe(`${range} · synced 3 days ago`);
+    });
+
+    it('writes the Totals token figure as the owner preview does, compact', () => {
+        const labels = publicProfileUsageLabels(view);
+        expect(labels.original?.formatMetric('tokens', 1_148_055_254)).toBe('1.1B');
+        expect(labels.original?.formatMetric('activeDays', 26)).toBe('26');
+    });
+
     it('labels shared ordinal intensity as levels rather than manufacturing amounts', () => {
         const labels = publicProfileUsageLabels(view);
         expect(labels.weekTide?.peak(0, 23, 4)).toContain(labels.weekTide?.values.levelNames[4]);

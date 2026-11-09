@@ -21,6 +21,82 @@ const RELEASED_SECRETBOX_TODO_BYTES = Buffer.from(
 );
 
 describe("classifyAccountJsonKvStoredContent", () => {
+    it('applies Account-mode envelope admission to Coach dismissals', () => {
+        const key = 'workspace:usage-coach:suppressions';
+        for (const mode of ['plain', 'e2ee'] as const) {
+            const plain = encodeEnvelope({ t: 'plain', v: { v: 1, suppressions: [] } });
+            const encrypted = encodeEnvelope({ t: 'encrypted', c: 'ciphertext' });
+            expect(() => assertAccountJsonKvStoredContentMatchesAccountMode({ key, value: mode === 'plain' ? plain : encrypted, accountMode: mode })).not.toThrow();
+            expect(() => assertAccountJsonKvStoredContentMatchesAccountMode({ key, value: mode === 'plain' ? encrypted : plain, accountMode: mode })).toThrow(AccountJsonKvStoredContentModeMismatchError);
+        }
+    });
+    it("keeps task resource ciphertext distinct from Account ciphertext and refuses raw reads and writes", () => {
+        const value = encodeEnvelope({ t: "encrypted", k: "task", c: "task-ciphertext" });
+        expect(classifyAccountJsonKvStoredContent({ key: "todo.task-1", value })).toEqual({
+            domain: "todo", keyKind: "item", representation: "current_resource_encrypted",
+        });
+        expect(() => assertAccountJsonKvStoredContentMatchesAccountMode({
+            key: "todo.task-1", value, accountMode: "e2ee",
+        })).toThrow(AccountJsonKvStoredContentModeMismatchError);
+        for (const persistedValue of [null, value]) {
+            for (const nextValue of [value, encodeEnvelope({ t: "encrypted", c: "account-ciphertext" }), null]) {
+                if (persistedValue === null && nextValue !== value) continue;
+                expect(() => assertAccountJsonKvMutationStoredContent({
+                    key: "todo.task-1", persistedValue, nextValue, accountMode: "e2ee", supportsCurrentProtocol: true,
+                })).toThrow(AccountJsonKvStoredContentModeMismatchError);
+            }
+        }
+        expect(() => assertAccountJsonKvMutationStoredContent({
+            key: "todo.task-1", persistedValue: value, nextValue: null,
+            accountMode: "e2ee", supportsCurrentProtocol: false,
+        })).toThrow(AccountJsonKvStoredContentUpgradeRequiredError);
+    });
+
+    it.each(["todo.index", "workspace:one"])("does not admit a task marker at %s", (key) => {
+        expect(classifyAccountJsonKvStoredContent({
+            key, value: encodeEnvelope({ t: "encrypted", k: "task", c: "ciphertext" }),
+        })).toMatchObject({ representation: "malformed_marker" });
+    });
+
+    it("admits task ciphertext only to the task owner codec under the persisted E2EE mode", () => {
+        const value = encodeEnvelope({ t: "encrypted", k: "task", c: "task-ciphertext" });
+        expect(() => assertAccountJsonKvStoredContentMatchesAccountMode({
+            key: "todo.task-1", value, accountMode: "e2ee", usage: "task_resource",
+        })).not.toThrow();
+        expect(() => assertAccountJsonKvStoredContentMatchesAccountMode({
+            key: "todo.task-1", value, accountMode: "plain", usage: "task_resource",
+        })).toThrow(AccountJsonKvStoredContentModeMismatchError);
+        expect(() => assertAccountJsonKvMutationStoredContent({
+            key: "todo.task-1", persistedValue: value, nextValue: value,
+            accountMode: "e2ee", supportsCurrentProtocol: true, usage: "task_resource",
+        })).not.toThrow();
+        expect(() => assertAccountJsonKvMutationStoredContent({
+            key: "todo.task-1", persistedValue: value, nextValue: encodeEnvelope({ t: "encrypted", c: "account" }),
+            accountMode: "e2ee", supportsCurrentProtocol: true, usage: "task_resource",
+        })).toThrow(AccountJsonKvStoredContentModeMismatchError);
+    });
+
+    it("admits only an E2EE task promotion from Account ciphertext into the task key codec", () => {
+        const resource = encodeEnvelope({ t: "encrypted", k: "task", c: "resource" });
+        const encrypted = encodeEnvelope({ t: "encrypted", c: "account" });
+        for (const persistedValue of [RELEASED_SECRETBOX_TODO_BYTES, encrypted]) {
+            expect(() => assertAccountJsonKvMutationStoredContent({
+                key: "todo.task-1", persistedValue, nextValue: resource,
+                accountMode: "e2ee", supportsCurrentProtocol: true, usage: "task_resource_promotion",
+            })).not.toThrow();
+        }
+        for (const persistedValue of [null, resource, encodeEnvelope({ t: "plain", v: {} })]) {
+            expect(() => assertAccountJsonKvMutationStoredContent({
+                key: "todo.task-1", persistedValue, nextValue: resource,
+                accountMode: "e2ee", supportsCurrentProtocol: true, usage: "task_resource_promotion",
+            })).toThrow(AccountJsonKvStoredContentModeMismatchError);
+        }
+        expect(() => assertAccountJsonKvMutationStoredContent({
+            key: "todo.task-1", persistedValue: encrypted, nextValue: resource,
+            accountMode: "plain", supportsCurrentProtocol: true, usage: "task_resource_promotion",
+        })).toThrow(AccountJsonKvStoredContentModeMismatchError);
+    });
+
     it("classifies canonical Todo keys without inspecting unrelated KV content", () => {
         const marker = encodeEnvelope({ t: "plain", v: { undoneOrder: [], completedOrder: [] } });
 
@@ -81,6 +157,18 @@ describe("classifyAccountJsonKvStoredContent", () => {
         {
             name: "incomplete plain marker",
             value: { t: "plain" },
+        },
+        {
+            name: "empty task ciphertext",
+            value: { t: "encrypted", k: "task", c: "" },
+        },
+        {
+            name: "task marker with unknown fields",
+            value: { t: "encrypted", k: "task", c: "ciphertext", extra: true },
+        },
+        {
+            name: "unknown key purpose",
+            value: { t: "encrypted", k: "future", c: "ciphertext" },
         },
     ])("classifies a $name as malformed marker content and refuses it for E2EE", ({ value }) => {
         const bytes = encodeEnvelope(value);

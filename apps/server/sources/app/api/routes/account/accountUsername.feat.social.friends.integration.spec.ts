@@ -71,10 +71,11 @@ describe("Account username update (integration)", () => {
             const released = await app.inject({ method: "POST", url: "/v1/account/username/release", headers, payload: {} });
             expect(released.statusCode).toBe(200);
             expect(released.json()).toMatchObject({ username: null, released: true });
-            expect((await claim("profile-changed")).statusCode).toBe(409);
+            expect(released.json().reservedUntilMs).toBeNull();
+            expect(await db.releasedUsername.findUnique({ where: { username: "profile-changed" } })).toBeNull();
             expect(await db.account.findUniqueOrThrow({ where: { id: owner.id } })).toMatchObject({ username: null, usernameAutoFillEnabled: false });
             expect(await db.accountIdentity.count({ where: { accountId: owner.id } })).toBe(0);
-            expect(await db.releasedUsername.findUnique({ where: { username: "profile-changed" } })).not.toBeNull();
+            expect((await claim("profile-changed")).statusCode).toBe(200);
         });
     });
 
@@ -117,24 +118,21 @@ describe("Account username update (integration)", () => {
         });
     });
 
-    it("releases once and denies reclaim by every Account during the thirty-day hold", async () => {
+    it("releases once without a hold and lets another Account immediately claim the handle", async () => {
         applyAccountUsernameFriendsEnv(harness);
         await withAuthenticatedTestApp(accountRoutes, async (app) => {
             const owner = await db.account.create({ data: { publicKey: "pk-username-release", username: "release_me" } });
             const other = await db.account.create({ data: { publicKey: "pk-username-release-other" } });
             const release = () => app.inject({ method: "POST", url: "/v1/account/username/release", headers: { "x-test-user-id": owner.id }, payload: {} });
-            const before = Date.now();
             const response = await release();
             expect(response.statusCode).toBe(200);
             const result = response.json();
-            expect(result).toMatchObject({ username: null, released: true });
-            expect(result.reservedUntilMs).toBeGreaterThanOrEqual(before + 30 * 24 * 60 * 60 * 1000);
+            expect(result).toEqual({ username: null, released: true, reservedUntilMs: null });
             expect((await release()).json()).toEqual({ username: null, released: false, reservedUntilMs: null });
-            for (const accountId of [owner.id, other.id]) {
-                const claim = await app.inject({ method: "POST", url: "/v1/account/username", headers: { "x-test-user-id": accountId }, payload: { username: "release_me" } });
-                expect(claim.statusCode).toBe(409);
-                expect(claim.json()).toEqual({ error: "username-taken" });
-            }
+            const claim = await app.inject({ method: "POST", url: "/v1/account/username", headers: { "x-test-user-id": other.id }, payload: { username: "release_me" } });
+            expect(claim.statusCode).toBe(200);
+            expect(claim.json()).toEqual({ username: "release_me" });
+            expect(await db.releasedUsername.findUnique({ where: { username: "release_me" } })).toBeNull();
             expect((await db.account.findUniqueOrThrow({ where: { id: owner.id } })).username).toBeNull();
         });
     });
@@ -165,21 +163,17 @@ describe("Account username update (integration)", () => {
         });
     });
 
-    it("admits an expired hold exactly at its boundary and never holds a rename", async () => {
+    it("preserves retained release records without treating them as a current hold and never holds a rename", async () => {
         applyAccountUsernameFriendsEnv(harness);
         await withAuthenticatedTestApp(accountRoutes, async app => {
             const owner = await db.account.create({ data: { publicKey: "pk-username-expiry", username: "before_rename" } });
             const expiresAt = Date.now() + 30 * 24 * 60 * 60 * 1000;
             await db.releasedUsername.create({ data: { username: "expired_name", expiresAt: new Date(expiresAt) } });
-            const now = vi.spyOn(Date, "now").mockReturnValue(expiresAt - 1);
             const claim = () => app.inject({ method: "POST", url: "/v1/account/username", headers: { "x-test-user-id": owner.id }, payload: { username: "expired_name" } });
-            try {
-                expect((await claim()).statusCode).toBe(409);
-                now.mockReturnValue(expiresAt);
-                expect((await claim()).statusCode).toBe(200);
-                expect(await db.releasedUsername.findUnique({ where: { username: "before_rename" } })).toBeNull();
-                expect(await db.account.findUniqueOrThrow({ where: { id: owner.id } })).toMatchObject({ username: "expired_name", usernameAutoFillEnabled: false });
-            } finally { now.mockRestore(); }
+            expect((await claim()).statusCode).toBe(200);
+            expect((await db.releasedUsername.findUniqueOrThrow({ where: { username: "expired_name" } })).expiresAt.getTime()).toBe(expiresAt);
+            expect(await db.releasedUsername.findUnique({ where: { username: "before_rename" } })).toBeNull();
+            expect(await db.account.findUniqueOrThrow({ where: { id: owner.id } })).toMatchObject({ username: "expired_name", usernameAutoFillEnabled: false });
         });
     });
 

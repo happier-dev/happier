@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createEnvReset } from "./testkit/env";
 import type { Fastify as AppFastify } from "./types";
 import { startSocket } from "./socket";
+import { REDIS_STREAMS_ADAPTER_BLOCK_TIME_MS } from "@/config/socketAdapter";
 
 const {
     closeRedisSocketClusterClient,
@@ -49,7 +50,7 @@ const FIXED_ADAPTER_OPTIONS = {
     streamCount: 1,
     channelPrefix: "socket.io",
     useShardedPubSub: false,
-    blockTimeInMs: 100,
+    blockTimeInMs: REDIS_STREAMS_ADAPTER_BLOCK_TIME_MS,
     onlyPlaintext: false,
 } as const;
 

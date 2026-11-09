@@ -3,6 +3,7 @@ import { resolveCurrentSessionRecipientAccountIdsBySessionInTx } from '@/app/ses
 import { markSessionAccountsChanged, type AccountChangePublication } from '@/app/changes/markAccountChanged';
 import { eventRouter } from '@/app/events/eventRouter';
 import { randomKeyNaked } from '@/utils/keys/randomKeyNaked';
+import { markSessionFollowReceiversChangedInTx } from '@/app/session/follow/changes';
 
 /** Content-free relation changes use the same AccountChange and committed socket hint. */
 export function scheduleSessionRelationBroadcastAfterTx(tx: Tx, sessionId: string, accountIds: readonly string[]): void {
@@ -23,6 +24,7 @@ export async function invalidateSessionRelationProjectionsInTx(
     const recipientsBySession = resolvedRecipients
         ?? await resolveCurrentSessionRecipientAccountIdsBySessionInTx(tx, { sessionIds: uniqueSessionIds });
     const publications = await markSessionAccountsChanged(tx, recipientsBySession);
+    await markSessionFollowReceiversChangedInTx(tx, recipientsBySession);
     for (const [sessionId, accountIds] of recipientsBySession) {
         scheduleSessionRelationBroadcastAfterTx(tx, sessionId, accountIds);
     }

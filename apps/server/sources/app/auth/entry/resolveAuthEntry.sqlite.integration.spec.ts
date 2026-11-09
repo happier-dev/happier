@@ -157,7 +157,6 @@ describe('resolveAuthEntry', () => {
     it('discloses membership only to an eligible ordinary Account bearer through the real public route', async () => {
         const team = await db.team.create({ data: { name: 'Private membership' } });
         const account = await member(team.id);
-        await db.account.update({ where: { id: account.id }, data: { terminalPresentUserPolicy: 'disallowed' } });
         const ordinary = await auth.createToken(account.id, undefined, { kind: 'account', authority: 'present_user' });
         const restricted = [
             await auth.createToken(account.id, undefined, { kind: 'account_directory', authority: 'present_user' }),

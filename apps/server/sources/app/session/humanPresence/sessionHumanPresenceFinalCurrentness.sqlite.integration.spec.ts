@@ -121,8 +121,8 @@ describe("human presence final socket-currentness gate", () => {
             // or projected during that hold.
             const firstAck = vi.fn();
             const secondAck = vi.fn();
-            socket.dispatch(visibleEvent, { v: 1, sessionIds: [sessionA.id] }, firstAck);
-            socket.dispatch(visibleEvent, { v: 1, sessionIds: [sessionB.id] }, secondAck);
+            socket.dispatch(visibleEvent, { v: 1, sessionIds: [sessionA.id], pendingMessageEdits: [{ sessionId: sessionA.id, holdId: "superseded" }] }, firstAck);
+            socket.dispatch(visibleEvent, { v: 1, sessionIds: [sessionB.id], pendingMessageEdits: [{ sessionId: sessionB.id, holdId: "current" }] }, secondAck);
             socket.dispatch(typingEvent, { v: 1, sessionId: sessionB.id, typing: true });
             await new Promise(resolve => setTimeout(resolve, 50));
             expect(firstAck).not.toHaveBeenCalled();
@@ -130,12 +130,14 @@ describe("human presence final socket-currentness gate", () => {
             expect([...socket.rooms].filter(room => room.startsWith(presenceRoomPrefix))).toEqual([]);
             expect(emissions).toEqual([]);
             expect(socket.data.humanPresenceTypingSessionId).toBeUndefined();
+            expect(socket.data.humanPresencePendingMessageEdits).toBeUndefined();
 
             // Final currentness succeeded: only the latest held declaration is
             // processed through the ordinary admitted path, exactly once.
             releaseSessionHumanPresenceHoldAfterFinalCurrentness(socket as unknown as Socket);
             await expect.poll(() => secondAck).toHaveBeenCalledTimes(1);
-            expect(secondAck).toHaveBeenCalledWith({ v: 1, ok: true, admittedSessionIds: [sessionB.id] });
+            expect(secondAck).toHaveBeenCalledWith({ v: 1, ok: true, admittedSessionIds: [sessionB.id],
+                admittedPendingMessageEdits: [{ sessionId: sessionB.id, holdId: "current" }] });
             expect(firstAck).not.toHaveBeenCalled();
             expect(socket.rooms.has(presenceRoomPrefix + sessionB.id)).toBe(true);
             expect(socket.rooms.has(presenceRoomPrefix + sessionA.id)).toBe(false);

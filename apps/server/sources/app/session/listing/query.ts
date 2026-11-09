@@ -31,6 +31,20 @@ export function conjoinSessionListWhereInputs(
     return { AND: clauses };
 }
 
+/** Execute the scope owner's union through independently indexable keysets. */
+export function createSessionListScopeQueryBranches(scope: Prisma.SessionWhereInput): Prisma.SessionWhereInput[] {
+    const { OR, ...rest } = scope;
+    if (!OR) return [scope];
+    const owned = OR.find(arm => Object.keys(arm).length === 1 && typeof arm.accountId === 'string');
+    if (!owned || typeof owned.accountId !== 'string') return [scope];
+    // Factor the compiled ownership equality, not the personal scope policy.
+    // The other arm keeps P03's BitmapOr over responsibility and exact ids.
+    // Excluding owned rows makes these two sources disjoint before their limit.
+    return [conjoinSessionListWhereInputs(rest, owned), conjoinSessionListWhereInputs(rest, {
+        accountId: { not: owned.accountId }, OR: OR.filter(arm => arm !== owned),
+    })];
+}
+
 /** Legacy GET visibility stays owner/direct; broad audience and personal scopes are separate contracts. */
 export function createLegacySessionListWhere(params: Readonly<{
     userId: string;

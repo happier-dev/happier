@@ -1,10 +1,21 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { PrismaClient, type Prisma } from '@prisma/client';
+import { decodeBase64 } from 'privacy-kit';
+import { encodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
+import { parseMachinePublishedMetadataV1 } from '@happier-dev/protocol/machines/machinePublishedContentV1';
 
 import { db, getDbProviderFromEnv, initDbPostgres } from '@/storage/db';
 import { inTx } from '@/storage/inTx';
-import { resolveEffectiveMachineAccessForMachinesInTx, resolveEffectiveMachineRoleInTx } from './machineAccess';
+import {
+    listMachineAccessGrantsInTx,
+    readAccessibleMachineOpeningsInTx,
+    resolveCurrentMachineRecipientAccountIdsInTx,
+    resolveEffectiveMachineAccessForMachinesInTx,
+    resolveEffectiveMachineRoleInTx,
+    resolveMachineAccessInTx,
+    resolveMachineAdmissionInTx,
+} from './machineAccess';
 
 describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('Machine bulk permission SQL (PostgreSQL)', () => {
     const statements: Prisma.QueryEvent[] = [];
@@ -21,6 +32,141 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('M
         await client.$connect();
     });
     afterAll(async () => { await client?.$disconnect(); await db.$disconnect(); });
+
+    it('projects only the admitted actor memberships as granted Team and Group populations grow', async () => {
+        const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const actor = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const outsider = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const machine = await db.machine.create({ data: {
+            id: randomUUID(), accountId: owner.id, installationId: randomUUID(),
+            metadata: encodePlainMachineStoredContent(parseMachinePublishedMetadataV1({ host: 'actor-projection', platform: 'linux',
+                happyCliVersion: 'test', homeDir: '/home/test', happyHomeDir: '/home/test/.happier' })),
+            daemonState: encodePlainMachineStoredContent({ status: 'running' }),
+            dataEncryptionKey: decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER),
+        } });
+        const team = await db.team.create({ data: { name: 'Actor projection team' } });
+        const group = await db.teamGroup.create({ data: { teamId: team.id, name: 'Actor projection group', nameKey: randomUUID() } });
+        const membership = await db.teamMembership.create({ data: { teamId: team.id, accountId: actor.id, role: 'member' } });
+        await db.teamGroupMembership.create({ data: { teamId: team.id, teamGroupId: group.id, teamMembershipId: membership.id, nativeContribution: true } });
+        await db.machineAccountGrant.create({ data: { machineId: machine.id, accountId: actor.id, accessLevel: 'view', createdByAccountId: owner.id } });
+        await db.machineTeamGrant.create({ data: { machineId: machine.id, teamId: team.id, accessLevel: 'view', createdByAccountId: owner.id } });
+        await db.machineGroupGrant.create({ data: { machineId: machine.id, teamGroupId: group.id, accessLevel: 'admin', createdByAccountId: owner.id } });
+
+        const others: string[] = [];
+        const growAudience = async (count: number) => {
+            const added = Array.from({ length: count }, () => ({ accountId: randomUUID(), membershipId: randomUUID() }));
+            await db.account.createMany({ data: added.map(person => ({ id: person.accountId, encryptionMode: 'plain' })) });
+            await db.teamMembership.createMany({ data: added.map(person => ({ id: person.membershipId, teamId: team.id, accountId: person.accountId, role: 'member' })) });
+            await db.teamGroupMembership.createMany({ data: added.map(person => ({ teamId: team.id, teamGroupId: group.id, teamMembershipId: person.membershipId, nativeContribution: true })) });
+            await db.machineAccountGrant.createMany({ data: added.map(person => ({ machineId: machine.id, accountId: person.accountId, accessLevel: 'view', createdByAccountId: owner.id })) });
+            others.push(...added.map(person => person.accountId));
+        };
+        await growAudience(2);
+
+        const projected: { directGrants: number; teamMemberships: number; groupMemberships: number }[] = [];
+        const record = (value: unknown): Record<string, unknown> | null =>
+            typeof value === 'object' && value !== null ? value as Record<string, unknown> : null;
+        const array = (value: unknown): unknown[] => Array.isArray(value) ? value : [];
+        // Pass through the real Prisma/PostgreSQL boundary and count hydrated
+        // relation rows before policy can filter them; never replace Tx logic.
+        const traced = client.$extends({ query: { machine: { async $allOperations({ args, query }) {
+            const result = await query(args);
+            for (const value of Array.isArray(result) ? result : [result]) {
+                const row = record(value);
+                if (!row || !('accountGrants' in row)) continue;
+                projected.push({
+                    directGrants: array(row.accountGrants).length,
+                    teamMemberships: array(row.teamGrants).reduce<number>((sum, grant) =>
+                        sum + array(record(record(grant)?.team)?.memberships).length, 0),
+                    groupMemberships: array(row.groupGrants).reduce<number>((sum, grant) =>
+                        sum + array(record(record(grant)?.teamGroup)?.memberships).length, 0),
+                });
+            }
+            return result;
+        } } } });
+        const originalTransaction = db.$transaction;
+        db.$transaction = new Proxy(originalTransaction, { apply(_target, _receiver, args) {
+            return Reflect.apply(traced.$transaction, traced, args);
+        } });
+        try {
+            const measure = async (actorAccountId: string) => {
+                const input = { actorAccountId, machineId: machine.id };
+                const reads = [
+                    { name: 'admission', read: async () => {
+                        const admission = await inTx(tx => resolveMachineAdmissionInTx(tx, input));
+                        expect(admission, admission.kind === 'denied' ? admission.code : undefined)
+                            .toMatchObject({ kind: 'admitted', role: 'manage' });
+                    } },
+                    { name: 'opening', read: async () => {
+                        expect((await inTx(tx => readAccessibleMachineOpeningsInTx(tx, { actorAccountId, machineIds: [machine.id] }))).get(machine.id))
+                            .toMatchObject({ access: { role: 'manage', accessState: 'ready' } });
+                    } },
+                    { name: 'role', read: async () => {
+                        expect(await inTx(tx => resolveEffectiveMachineRoleInTx(tx, input))).toBe('manage');
+                    } },
+                    { name: 'access', read: async () => {
+                        expect(await inTx(tx => resolveMachineAccessInTx(tx, input))).toMatchObject({ role: 'manage', accessState: 'ready' });
+                    } },
+                    { name: 'bulk-singleton', read: async () => {
+                        expect((await inTx(tx => resolveEffectiveMachineAccessForMachinesInTx(tx, { machineIds: [machine.id], accountIds: [actorAccountId] })))
+                            .get(machine.id)?.get(actorAccountId)).toBe('manage');
+                    } },
+                ];
+                const costs = [];
+                for (const read of reads) {
+                    projected.length = 0;
+                    statements.length = 0;
+                    await read.read();
+                    const rows = projected.reduce((sum, row) => ({ directGrants: sum.directGrants + row.directGrants,
+                        teamMemberships: sum.teamMemberships + row.teamMemberships, groupMemberships: sum.groupMemberships + row.groupMemberships }),
+                    { directGrants: 0, teamMemberships: 0, groupMemberships: 0 });
+                    costs.push({ reader: read.name, rows, bindings: statements.filter(event => /^SELECT\b/i.test(event.query))
+                        .map(event => (JSON.parse(event.params) as unknown[]).length) });
+                    expect.soft(rows, read.name).toEqual({ directGrants: 1, teamMemberships: 1, groupMemberships: 1 });
+                }
+                return costs;
+            };
+            const small = await measure(actor.id);
+            await growAudience(32);
+            const large = await measure(actor.id);
+            console.info('MACHINE_ACTOR_PROJECTION_SQL', JSON.stringify({ otherRecipients: others.length, small, large }));
+            expect.soft(large.map(cost => cost.rows)).toEqual(small.map(cost => cost.rows));
+
+            // These are genuine full-audience consumers, not actor admission.
+            expect(await inTx(tx => resolveCurrentMachineRecipientAccountIdsInTx(tx, machine.id)))
+                .toEqual([owner.id, actor.id, ...others].sort());
+            const grants = await inTx(tx => listMachineAccessGrantsInTx(tx, { actorAccountId: owner.id, machineId: machine.id }));
+            if ('kind' in grants) throw new Error(grants.code);
+            expect(grants.grants.find(grant => grant.principal.kind === 'group')?.audience.map(person => person.accountId).sort())
+                .toEqual([actor.id, ...others].sort());
+
+            projected.length = 0;
+            expect(await inTx(tx => resolveMachineAdmissionInTx(tx, { actorAccountId: owner.id, machineId: machine.id })))
+                .toMatchObject({ kind: 'admitted', role: 'manage' });
+            expect(projected).toEqual([]);
+            expect(await inTx(tx => resolveMachineAdmissionInTx(tx, { actorAccountId: outsider.id, machineId: machine.id })))
+                .toEqual({ kind: 'denied', code: 'access_denied' });
+            await db.teamGroup.update({ where: { id: group.id }, data: { archivedAt: new Date() } });
+            expect(await inTx(tx => resolveMachineAdmissionInTx(tx, { actorAccountId: actor.id, machineId: machine.id })))
+                .toMatchObject({ kind: 'admitted', role: 'use' });
+            await db.teamMembership.update({ where: { id: membership.id }, data: { status: 'suspended' } });
+            expect(await inTx(tx => resolveMachineAdmissionInTx(tx, { actorAccountId: actor.id, machineId: machine.id })))
+                .toMatchObject({ kind: 'admitted', role: 'use' });
+            await db.machineAccountGrant.delete({ where: { machineId_accountId: { machineId: machine.id, accountId: actor.id } } });
+            expect(await inTx(tx => resolveMachineAdmissionInTx(tx, { actorAccountId: actor.id, machineId: machine.id })))
+                .toEqual({ kind: 'denied', code: 'access_denied' });
+            await db.teamMembership.update({ where: { id: membership.id }, data: { status: 'active' } });
+            expect(await inTx(tx => resolveMachineAdmissionInTx(tx, { actorAccountId: actor.id, machineId: machine.id })))
+                .toMatchObject({ kind: 'admitted', role: 'use' });
+            await db.team.update({ where: { id: team.id }, data: { archivedAt: new Date() } });
+            expect(await inTx(tx => resolveMachineAdmissionInTx(tx, { actorAccountId: actor.id, machineId: machine.id })))
+                .toEqual({ kind: 'denied', code: 'access_denied' });
+            await db.team.update({ where: { id: team.id }, data: { archivedAt: null } });
+            await db.account.update({ where: { id: actor.id }, data: { status: 'suspended' } });
+            expect(await inTx(tx => resolveMachineAdmissionInTx(tx, { actorAccountId: actor.id, machineId: machine.id })))
+                .toEqual({ kind: 'denied', code: 'access_denied' });
+        } finally { db.$transaction = originalTransaction; }
+    });
 
     it('set-reads only permission facts and preserves singular roles across current and withdrawn grants', async () => {
         const people = await Promise.all(Array.from({ length: 9 }, () => db.account.create({ data: { encryptionMode: 'plain' } })));
@@ -84,6 +230,9 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('M
             expect(many.roles.get(machines[2]!.id)?.get(owner!.id)).toBe('manage');
             const contentColumns = ['metadata', 'metadataVersion', 'daemonState', 'daemonStateVersion', 'dataEncryptionKey'];
             const selectedContentColumns = contentColumns.filter(column => many.selects.some(event => event.query.includes(`"${column}"`)));
+            console.info('MACHINE_BULK_ROLE_SQL', JSON.stringify({ distinctMachines: new Set(machineIds).size,
+                one: { selects: one.selects.length, machineReads: one.machineReads.length },
+                many: { selects: many.selects.length, machineReads: many.machineReads.length }, selectedContentColumns }));
             expect.soft(many.machineReads).toHaveLength(1);
             expect.soft(many.selects.length).toBe(one.selects.length);
             expect.soft(selectedContentColumns).toEqual([]);

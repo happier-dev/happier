@@ -7,10 +7,11 @@ import {
     isPluginWebhookRoutingKindV1,
     type PluginWebhookRoutingKindV1,
 } from "./routingKind";
+import { isPluginWebhookSignedVerifierKindV1, type PluginWebhookSignedVerifierKindV1 } from "./verifiers/catalog";
 
 export type ActivePluginWebhookRouteV1 = Readonly<{
     routeId: string;
-    verifierKind: "github_hmac_sha256_v1";
+    verifierKind: PluginWebhookSignedVerifierKindV1 | "capabilityUrl_v1";
     routingKind: PluginWebhookRoutingKindV1;
     policyVersion: 1;
 }>;
@@ -67,7 +68,7 @@ export async function findActivePluginWebhookRouteV1(opaqueRouteId: string): Pro
         !route
         || !route.enabled
         || route.revokedAt !== null
-        || route.verifierKind !== "github_hmac_sha256_v1"
+        || (!isPluginWebhookSignedVerifierKindV1(route.verifierKind) && route.verifierKind !== "capabilityUrl_v1")
         || !isPluginWebhookRoutingKindV1(route.routingKind)
         || route.policyVersion !== 1
     ) {
@@ -155,7 +156,7 @@ async function readEndpointForRouteV1(routeId: string, routingKind: PluginWebhoo
         !route
         || !route.enabled
         || route.revokedAt !== null
-        || route.verifierKind !== "github_hmac_sha256_v1"
+        || (!isPluginWebhookSignedVerifierKindV1(route.verifierKind) && route.verifierKind !== "capabilityUrl_v1")
         || route.routingKind !== routingKind
     ) {
         return null;

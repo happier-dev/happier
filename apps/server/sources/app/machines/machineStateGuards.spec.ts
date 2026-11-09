@@ -25,10 +25,15 @@ describe("readAvailableMachineIrohEndpointAuthority", () => {
         vi.resetModules();
     });
 
-    it("retains endpoint and required ingress authority while dropping stored extras", async () => {
+    it.each([
+        {},
+        { sessionFollow: { contextV1: false } },
+        { sessionInputAdmission: { protocolVersions: [1, 2, 3, 99] } },
+    ])("retains valid endpoint and required ingress authority despite sibling %j and stored extras", async (siblings) => {
         mocks.db.machine.findFirst.mockResolvedValue({
             ...currentMachine,
             operationProtocolCapabilities: {
+                ...siblings,
                 irohMachineEndpoint: {
                     ...currentMachine.operationProtocolCapabilities.irohMachineEndpoint,
                     future: true,
@@ -48,7 +53,7 @@ describe("readAvailableMachineIrohEndpointAuthority", () => {
     it.each([
         { operationProtocolCapabilities: { irohMachineEndpoint: currentMachine.operationProtocolCapabilities.irohMachineEndpoint } },
         { operationProtocolCapabilities: { ...currentMachine.operationProtocolCapabilities, providerBrokerIngress: { protocolVersions: [2] } } },
-        { operationProtocolCapabilities: { ...currentMachine.operationProtocolCapabilities, sessionFollow: { contextV1: false } } },
+        { operationProtocolCapabilities: { ...currentMachine.operationProtocolCapabilities, irohMachineEndpoint: { protocolVersions: [1], endpointId: "invalid" } } },
         { operationProtocolCapabilitiesRevision: null },
         { revokedAt: new Date(1) },
         { replacedByMachineId: "machine-2" },

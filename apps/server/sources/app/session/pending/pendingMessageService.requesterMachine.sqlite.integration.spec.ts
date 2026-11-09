@@ -17,10 +17,11 @@ import { VERIFIED_MACHINE_INSTALLATION_ID_SOCKET_DATA_KEY } from '@/app/api/sock
 import { createAuthenticatedFakeSocket, createSocketRoomDiscoveryHarness, getSocketHandler } from '@/app/api/testkit/socketHarness';
 import { withAuthenticatedTestApp } from '@/app/api/testkit/sqliteFastify';
 import { sessionPendingRoutes } from '@/app/api/routes/session/pendingRoutes';
-import { setMachineAccessGrantInTx, removeMachineAccessGrantInTx, resolveMachineAdmissionInTx } from '@/app/machines/machineAccess';
+import { removeMachineAccessGrantInTx, resolveMachineAdmissionInTx } from '@/app/machines/machineAccess';
+import { setEligibleMachineAccessGrantInTx as setMachineAccessGrantInTx } from '@/testkit/machineAccessGrant.testkit';
 import { getOrCreateServerIdentityId } from '@/app/serverIdentity/serverIdentity';
 import { db } from '@/storage/db';
-import { inTx } from '@/storage/inTx';
+import { inTx, type Tx } from '@/storage/inTx';
 import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lightSqliteHarness';
 import { buildSessionFollowRulePhysicalKeyV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowRuleV1';
 import { normalizeSessionListFilterV1 } from '@happier-dev/protocol/sessions/listFilter/sessionListFilterV1';
@@ -42,6 +43,33 @@ import { serializePendingMaterializedMessage } from './serializePendingMateriali
 import { readStoredSessionInputAdmissionReceipt } from '@/app/session/messages/sessionInputAdmission';
 import { enqueuePendingMessageByAuthenticatedMachine, resolveAcceptedPendingDelivery, settlePendingInputAdmission } from './pendingMessageService';
 import { materializeNextPendingMessage } from './materializeNextPendingMessage';
+
+async function countReceiverMuteReads<T>(read: () => Promise<T>) {
+    const transaction = db.$transaction;
+    let reads = 0;
+    // Instrument the real database transport; every query and internal admission still runs.
+    db.$transaction = new Proxy(transaction, { apply(target, receiver: unknown, args: unknown[]) {
+        const [callback, options] = args;
+        if (typeof callback !== 'function') return Reflect.apply(target, receiver, args);
+        return Reflect.apply(target, receiver, [(tx: Tx) => Reflect.apply(callback, undefined, [new Proxy(tx, {
+            get(target, property, receiver) {
+                const model = Reflect.get(target, property, receiver);
+                if (property !== 'session') return model;
+                return new Proxy(model, {
+                    get(delegate, operation) {
+                        const query = Reflect.get(delegate, operation);
+                        if (operation !== 'findUnique') return query;
+                        return (input: { select?: Record<string, unknown> }) => {
+                            if (input.select && Object.keys(input.select).join() === 'deliveryMutes') reads++;
+                            return Reflect.apply(query, delegate, [input]);
+                        };
+                    },
+                });
+            },
+        })]), options]);
+    } });
+    try { return { result: await read(), reads }; } finally { db.$transaction = transaction; }
+}
 
 describe('requester Session input through the custodian Machine socket', () => {
     let harness: LightSqliteHarness;
@@ -110,6 +138,8 @@ describe('requester Session input through the custodian Machine socket', () => {
                             { ...host.request, followDeliveryV1: delivery }) } } } });
             expect(enqueue.statusCode, enqueue.body).toBe(200);
             const publisherAuthority = { accountId: owner.id, sessionId: destination.id, machineId: machine.id, committedFence: new Date(1) };
+            await db.sessionTurn.create({ data: { sessionId: destination.id, turnId: 'receiver-turn',
+                status: 'in_progress', startedAt: 1n, updatedAt: 1n } });
             const accept = async (inputId: string) => {
                 expect(await materializeNextPendingMessage({ actorUserId: owner.id, sessionId: destination.id, publisherAuthority,
                     deliveryState: 'provider', deliveryTiming: 'after_foreground_ready', foregroundState: 'ready' }))
@@ -143,7 +173,9 @@ describe('requester Session input through the custodian Machine socket', () => {
                 destinationSessionId: destination.id, request: SessionFollowSourceProjectionRequestV1Schema.parse({
                     v: 1, sourceSessionId: source.id, localInputId: inputId,
                     afterTranscriptSeq: 0, observedTranscriptSeq: 0, limit: 1 }) }));
-            expect(await project()).toMatchObject({ source: { id: source.id }, messages: [{ seq: 2, content: finalContent }] });
+            const hydration = await countReceiverMuteReads(() => project());
+            expect(hydration.result).toMatchObject({ source: { id: source.id }, messages: [{ seq: 2, content: finalContent }] });
+            expect(hydration.reads).toBe(1);
             expect(await removeAccountFollowRule({ accountId: owner.id, authentication, ruleId, receiver, expectedVersion: 0 }))
                 .toMatchObject({ ok: true });
             const projected = await project();
@@ -208,6 +240,8 @@ describe('requester Session input through the custodian Machine socket', () => {
             if (scenario === 'changed_turn') await db.session.update({ where: { id: source.id }, data: { latestTurnId: 'other-turn' } });
             if (scenario === 'stale_attachment') await db.sessionFollowEdge.update({ where: { managerSourceSessionId: source.id },
                 data: { attachedAt: new Date(manager.attachedAt.getTime() + 1) } });
+            await db.sessionTurn.create({ data: { sessionId: destination.id, turnId: 'receiver-turn',
+                status: 'in_progress', startedAt: 1n, updatedAt: 1n } });
             const accepted = await resolveAcceptedPendingDelivery({ actorUserId: owner.id, sessionId: destination.id, publisherAuthority,
                 localId, acceptedTurn: { kind: 'followUp', turnId: 'receiver-turn' },
                 acceptedDelivery: { t: 'plain', v: { v: 1, acceptedAtMs: 1, delivery: { kind: 'followUp', turnId: 'receiver-turn' } } } });
@@ -290,6 +324,11 @@ describe('requester Session input through the custodian Machine socket', () => {
             mutation: { ...mutation, expectedVersion: -1 } })).toMatchObject({ ok: true });
         expect(await setAccountFollowRule({ accountId: owner.id, authentication, ruleId: 'private-rule-0',
             mutation: { ...mutation, expectedVersion: 0 } })).toMatchObject({ ok: true });
+        expect(await setAccountFollowRule({ accountId: owner.id, authentication, ruleId: 'private-rule-1', mutation: {
+            receiver, expectedVersion: -1, content: sealSessionFollowRuleContentV1({ mode, receiver, ruleId: 'private-rule-1',
+                material: mode === 'plain' ? null : material,
+                definition: { v: 1, enabled: true, filter: normalizeSessionListFilterV1(), policy: { preset: 'important' } } }),
+        } })).toMatchObject({ ok: true });
         await db.sessionMessage.create({ data: { sessionId: source.id, localId: 'source-original', seq: 7, messageRole: 'agent',
             content: { t: 'plain', v: { role: 'agent', content: [] } } } });
         await db.session.update({ where: { id: source.id }, data: { seq: 7 } });
@@ -320,11 +359,13 @@ describe('requester Session input through the custodian Machine socket', () => {
                 sessionId: destination.id, localId } } });
             expect(initialPending.inputAdmissionReceipt).toMatchObject({ followRelations: relations,
                 followDeliveryV1: quiet });
-            const sources = SessionFollowSourceOccurrenceWitnessesV1Schema.parse([{ evaluation: 'receiver', selectedDelivery: 'wake',
-                ...original, destinationSessionId: destination.id, rule: { ruleId: 'private-rule-0', ruleVersion: 1 } }]);
-            const late = await app.inject({ method: 'POST', url: `/v2/sessions/${destination.id}/pending`,
-                headers: { authorization: `Bearer ${token}` }, payload: { ...payload(important), followSources: sources } });
+            const sources = SessionFollowSourceOccurrenceWitnessesV1Schema.parse([0, 1].map(index => ({ evaluation: 'receiver', selectedDelivery: 'wake',
+                ...original, destinationSessionId: destination.id, rule: { ruleId: `private-rule-${index}`, ruleVersion: index === 0 ? 1 : 0 } })));
+            const measured = await countReceiverMuteReads(async () => await app.inject({ method: 'POST', url: `/v2/sessions/${destination.id}/pending`,
+                headers: { authorization: `Bearer ${token}` }, payload: { ...payload(important), followSources: sources } }));
+            const late = measured.result;
             expect(late.statusCode, late.body).toBe(200);
+            expect(measured.reads).toBe(1);
             expect(await db.sessionPendingMessage.count({ where: { sessionId: destination.id } })).toBe(1);
             const pending = await db.sessionPendingMessage.findUniqueOrThrow({ where: { sessionId_localId: { sessionId: destination.id, localId } } });
             expect(pending.inputAdmissionReceipt).toMatchObject({ issuer: 'authenticatedAccount', followRelations: relations,
@@ -399,6 +440,8 @@ describe('requester Session input through the custodian Machine socket', () => {
                 expect(changedRetry.statusCode, changedRetry.body).toBe(400);
                 expect(changedRetry.json()).toMatchObject({ code: 'session_input_idempotency_conflict' });
             }
+            await db.sessionTurn.create({ data: { sessionId: destination.id, turnId: 'accepted-original',
+                status: 'in_progress', startedAt: 1n, updatedAt: 1n } });
             expect(await resolveAcceptedPendingDelivery({ actorUserId: owner.id, sessionId: destination.id, publisherAuthority,
                 localId, acceptedTurn: { kind: 'followUp', turnId: 'accepted-original' },
                 // As with the encrypted input above, Home preserves this
@@ -409,6 +452,22 @@ describe('requester Session input through the custodian Machine socket', () => {
             expect((await enqueueLate({ ...payload(important), followSources: sources })).statusCode).toBe(200);
             expect(await db.sessionPendingMessage.count({ where: { sessionId: destination.id } })).toBe(0);
             expect(await db.sessionMessage.count({ where: { sessionId: destination.id } })).toBe(1);
+            const nextTurn = { id: 'next-muted-turn', status: 'failed' as const };
+            await db.sessionTurn.create({ data: { sessionId: source.id, turnId: nextTurn.id, status: nextTurn.status,
+                startedAt: terminalAt, updatedAt: terminalAt, terminalAt } });
+            const nextDelivery = SessionFollowInputV1Schema.parse({ ...important, original: { sourceSessionId: source.id, sourceTurn: nextTurn } });
+            const nextLocalId = deriveSessionFollowInputLocalIdV1({ destinationSessionId: destination.id, original: nextDelivery.original });
+            await db.session.update({ where: { id: destination.id }, data: { deliveryMutes: JSON.stringify([
+                { kind: 'source', source: { kind: 'session', sessionId: source.id } },
+            ]) } });
+            const muted = await countReceiverMuteReads(async () => await enqueueLate({ ...payload(nextDelivery), localId: nextLocalId,
+                followSources: sources.map(witness => ({ ...witness, sourceTurn: nextTurn })) }));
+            expect(muted.result.statusCode).toBe(400);
+            expect(muted.result.json()).toMatchObject({ code: 'session_input_muted' });
+            expect(muted.reads).toBe(1);
+            expect(await db.sessionPendingMessage.findUniqueOrThrow({ where: { sessionId_localId: {
+                sessionId: destination.id, localId: nextLocalId,
+            } } })).toMatchObject({ status: 'discarded', discardedReason: 'session_input_muted' });
         }, { authentication: 'real' });
     });
 
@@ -522,6 +581,8 @@ describe('requester Session input through the custodian Machine socket', () => {
             localInputId: 'valid-follow', userMessageSeq: null, requireProviderAccepted: true }))).toBe(false);
         expect(await inTx(tx => acknowledgeAdmittedSessionFollowInputInTx(tx, { principal, request: ack })))
             .toEqual({ ok: false, rejection: 'provider_acceptance_unverified' });
+        await db.sessionTurn.create({ data: { sessionId: destination.id, turnId: 'accepted-follow',
+            status: 'in_progress', startedAt: 1n, updatedAt: 1n } });
         expect(await resolveAcceptedPendingDelivery({ actorUserId: owner.id, sessionId: destination.id, publisherAuthority,
             localId: 'valid-follow', acceptedTurn: { kind: 'followUp', turnId: 'accepted-follow' },
             acceptedDelivery: { t: 'plain', v: { v: 1, acceptedAtMs: 1, delivery: { kind: 'followUp', turnId: 'accepted-follow' } } } }))
@@ -707,6 +768,8 @@ describe('requester Session input through the custodian Machine socket', () => {
             publisherAuthority, deliveryState: 'provider', deliveryTiming: 'after_foreground_ready', foregroundState: 'ready' })).toMatchObject({ ok: true, didMaterialize: true });
         expect((await db.sessionMessage.findUnique({ where: { sessionId_localId: { sessionId: destination.id,
             localId: input.localId } }, select: { acceptedFollowOriginalKey: true } }))?.acceptedFollowOriginalKey ?? null).toBeNull();
+        await db.sessionTurn.create({ data: { sessionId: destination.id, turnId: 'accepted-turn',
+            status: 'in_progress', startedAt: 1n, updatedAt: 1n } });
         expect(await resolveAcceptedPendingDelivery({ actorUserId: owner.id, sessionId: destination.id, localId: input.localId,
             publisherAuthority, acceptedTurn: { kind: 'followUp', turnId: 'accepted-turn' },
             acceptedDelivery: { t: 'plain', v: { v: 1, acceptedAtMs: 1, delivery: { kind: 'followUp', turnId: 'accepted-turn' } } } })).toMatchObject({ ok: true, didResolve: true });

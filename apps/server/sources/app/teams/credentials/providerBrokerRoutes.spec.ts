@@ -115,7 +115,6 @@ describe('Team credential Provider broker HTTP routes', () => {
                     brokerMachineId: 'broker-1',
                     expectedResourceRevision: 1,
                     application: {
-                        agentTargetKey: 'agent:happier.agent.codex/codex',
                         implementationIdentity: { pluginId: 'provider.plugin', localId: 'provider' },
                         endpointTemplateId: 'provider-responses',
                         protocol: 'openai-responses',

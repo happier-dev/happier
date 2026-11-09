@@ -277,3 +277,112 @@ describe("plugin webhook durable ingress owner", () => {
         })).resolves.toEqual({ kind: "rejected", statusCode: 503, code: "unavailable" });
     });
 });
+
+describe("plugin webhook durable ingress owner — Sentry verifier", () => {
+    const SENTRY_BODY = Uint8Array.from(Buffer.from('{"action":"assigned","data":{"issue":{"id":"1170820242"}}}', "utf8"));
+    const sentrySignature = (body = SENTRY_BODY, secret = "sentry-secret") => createHmac("sha256", secret).update(body).digest("hex");
+
+    function sentryDependencies(): PluginWebhookIngestDependenciesV1 {
+        return {
+            findRoute: vi.fn(async () => ({
+                routeId: "route-sentry",
+                verifierKind: "sentry_hmac_sha256_v1" as const,
+                routingKind: "accountEndpoint" as const,
+                policyVersion: 1 as const,
+            })),
+            readCredentials: vi.fn(async () => [{ credentialVersionId: "credential-sentry", secret: "sentry-secret" }]),
+            parseInstallationId: vi.fn(() => null),
+            resolveEndpoint: vi.fn(async () => ({
+                endpointId: "wh_ep_AAECAwQFBgcICQoLDA0ODw",
+                revision: 1,
+                accountId: "account-1",
+                pluginId: "acme.sentry",
+                webhookContributionId: "sentry-events",
+                handlerActionId: "handle-sentry-webhook",
+                sourceInstanceId: "source-1",
+                routingKind: "accountEndpoint" as const,
+                providerInstallationId: null,
+                targetMaterialization: {
+                    machineId: "machine-1",
+                    materializationId: "materialization-1",
+                    pluginId: "acme.sentry",
+                },
+                targetMachineInstallationId: "installation-1",
+                targetPluginVersion: "1.0.0",
+            })),
+            readAccount: vi.fn(async () => ({
+                publicKey: null,
+                encryptionMode: "plain",
+                contentPublicKey: null,
+                contentPublicKeySig: null,
+            })),
+            admitDelivery: vi.fn(async () => ({ kind: "admitted" as const, deliveryId: "delivery-sentry" })),
+        };
+    }
+
+    const sentryHeaders = (overrides: Record<string, unknown> = {}) => ({
+        "sentry-hook-signature": sentrySignature(),
+        "request-id": "6f1d4c4e-2a7b-4a51-9f3e-7f4a0a5b9c11",
+        "sentry-hook-resource": "issue",
+        "sentry-hook-timestamp": "1761856800",
+        "content-type": "application/json",
+        ...overrides,
+    });
+
+    it("admits a Sentry-signed body as one verified delivery carrying the hook resource", async () => {
+        const deps = sentryDependencies();
+        await expect(ingestPluginWebhookV1({
+            opaqueRouteId: "opaque-sentry",
+            rawBody: SENTRY_BODY,
+            headers: sentryHeaders(),
+            now: new Date("2026-10-30T00:00:00.000Z"),
+            dependencies: deps,
+        })).resolves.toEqual({ kind: "accepted", deliveryId: "delivery-sentry", duplicate: false });
+        expect(deps.parseInstallationId).not.toHaveBeenCalled();
+        expect(deps.admitDelivery).toHaveBeenCalledTimes(1);
+        expect(deps.admitDelivery).toHaveBeenCalledWith(expect.objectContaining({
+            routeId: "route-sentry",
+            verifierKind: "sentry_hmac_sha256_v1",
+            credentialVersionId: "credential-sentry",
+        }));
+        const stored = vi.mocked(deps.admitDelivery).mock.calls[0]?.[0]?.stored;
+        expect(JSON.parse(new TextDecoder().decode(stored!.canonicalEnvelopeBytes))).toEqual({
+            t: "plain",
+            v: {
+                v: 1,
+                receivedAtMs: Date.parse("2026-10-30T00:00:00.000Z"),
+                contentType: "application/json",
+                headers: [{ name: "sentry-hook-resource", value: "issue" }],
+                rawBodyBytes: SENTRY_BODY.byteLength,
+                rawBodyBase64: Buffer.from(SENTRY_BODY).toString("base64"),
+                verified: {
+                    verifier: "sentry_hmac_sha256_v1",
+                    providerDeliveryId: "6f1d4c4e-2a7b-4a51-9f3e-7f4a0a5b9c11",
+                    eventType: "issue",
+                    credentialVersionId: "credential-sentry",
+                },
+            },
+        });
+    });
+
+    it("refuses tampered bodies, wrong secrets, and missing signature or Request-ID before any Account custody", async () => {
+        const tampered = SENTRY_BODY.slice();
+        tampered[3] ^= 1;
+        const cases: Array<{ rawBody: Uint8Array; headers: Record<string, unknown> }> = [
+            { rawBody: tampered, headers: sentryHeaders() },
+            { rawBody: SENTRY_BODY, headers: sentryHeaders({ "sentry-hook-signature": sentrySignature(SENTRY_BODY, "wrong-secret") }) },
+            { rawBody: SENTRY_BODY, headers: sentryHeaders({ "sentry-hook-signature": undefined }) },
+            { rawBody: SENTRY_BODY, headers: sentryHeaders({ "request-id": undefined }) },
+            // A GitHub-shaped signature header never satisfies a Sentry route.
+            { rawBody: SENTRY_BODY, headers: { ...sentryHeaders({ "sentry-hook-signature": undefined }), "x-hub-signature-256": `sha256=${sentrySignature()}`, "x-github-delivery": "delivery-1" } },
+        ];
+        for (const ingress of cases) {
+            const deps = sentryDependencies();
+            await expect(ingestPluginWebhookV1({ opaqueRouteId: "opaque-sentry", ...ingress, dependencies: deps }))
+                .resolves.toEqual({ kind: "rejected", statusCode: 401, code: "unauthorized" });
+            expect(deps.resolveEndpoint).not.toHaveBeenCalled();
+            expect(deps.readAccount).not.toHaveBeenCalled();
+            expect(deps.admitDelivery).not.toHaveBeenCalled();
+        }
+    });
+});

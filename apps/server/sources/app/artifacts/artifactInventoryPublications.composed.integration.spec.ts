@@ -38,21 +38,32 @@ describe('Artifact inventory publications through SQLite, HTTP and UI Sync', () 
             dataEncryptionKey: privacyKit.decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER), headerVersion: 1, bodyVersion: 1 } });
         await db.artifactAccountGrant.create({ data: { artifactId: artifact.id, accountId: viewer.id,
             accessLevel: 'view', createdByAccountId: owner.id } });
+        // The app boot prepares device persistence before restoring Sync. This
+        // composed transport fixture starts below that boot entry point.
+        const { prepareWarmCacheStorage } = await import('../../../../ui/sources/sync/domains/state/warmCachePersistence');
+        await prepareWarmCacheStorage();
         await withAuthenticatedTestApp(artifactsRoutes, async app => {
             let cursor = 0;
             let cold = false;
             let exactAudience: 'unknown' | 'omitted' | null = null;
             let listReads = 0;
             let bodyReads = 0;
+            let headerSetReads = 0;
             const home = await serveSessionActionHome({ homes: [{ key: 'artifact', serverUrl: 'https://artifact-publications.test',
                 accountId: viewer.id, currentAccount: true }], route: async request => {
                 // Expired device cursors exercise the actual cold-list fallback, not a cache bypass.
                 if (request.path === '/v2/cursor') return Response.json({ cursor, changesFloor: 0 });
                 if (request.path === '/v2/changes' && cold) return Response.json({ currentCursor: cursor }, { status: 410 });
+                if (request.path === '/v2/changes') return Response.json({ changes: [
+                    { kind: 'artifact', entityId: artifact.id, cursor, changedAt: 1 },
+                ], nextCursor: cursor });
                 if (!request.path.startsWith('/v1/artifacts')) return undefined;
                 if (request.method !== 'GET' && request.method !== 'POST') throw new Error('Unexpected Artifact request method');
                 if (request.path === '/v1/artifacts') listReads++;
-                if (request.path === '/v1/artifacts/read') bodyReads++;
+                if (request.path === '/v1/artifacts/read') {
+                    if (request.body && typeof request.body === 'object' && Reflect.get(request.body, 'projection') === 'headers') headerSetReads++;
+                    else bodyReads++;
+                }
                 // Only HTTP and credential verification are substituted. Fastify serialization,
                 // admission, the real database, UI codecs, Sync and the store all remain real.
                 const response = await app.inject({ method: request.method, url: request.url.pathname + request.url.search,
@@ -79,6 +90,10 @@ describe('Artifact inventory publications through SQLite, HTTP and UI Sync', () 
             try {
                 const { sync } = await import('../../../../ui/sources/sync/sync');
                 const { storage } = await import('../../../../ui/sources/sync/domains/state/storage');
+                const { TokenStorage } = await import('../../../../ui/sources/auth/storage/tokenStorage');
+                const { fetchArtifactReadBatch } = await import('../../../../ui/sources/sync/api/artifacts/apiArtifacts');
+                const credentials = await TokenStorage.getCredentialsForServerUrl('https://artifact-publications.test');
+                if (!credentials) throw new Error('Expected the composed Home credential');
                 await waitForHomeGovernance(() => {
                     expect(storage.getState().artifactsLoaded).toBe(true);
                     expect(storage.getState().artifacts[artifact.id]?.body).toBe(JSON.stringify(approval));
@@ -99,9 +114,17 @@ describe('Artifact inventory publications through SQLite, HTTP and UI Sync', () 
                 const firstBodies = bodyReads;
                 for (let index = 0; index < 3; index++) await refresh();
                 expect(listReads - firstLists).toBe(3);
-                expect(bodyReads - firstBodies).toBe(3);
+                expect(bodyReads - firstBodies).toBe(0);
                 expect({ publications, changedFields }).toEqual({ publications: 0, changedFields: [] });
                 expect(Object.hasOwn(storage.getState().artifacts[artifact.id], 'provenance')).toBe(true);
+
+                const beforeWarm = { listReads, bodyReads, headerSetReads, publications };
+                cold = false;
+                cursor++;
+                await sync.fetchArtifactsList();
+                expect({ listReads, bodyReads, headerSetReads, publications }).toEqual({ ...beforeWarm,
+                    headerSetReads: beforeWarm.headerSetReads + 1 });
+                expect(storage.getState().artifacts[artifact.id]?.body).toBe(JSON.stringify(approval));
 
                 const publication = await db.publicSessionShare.create({ data: { artifactId: artifact.id,
                     createdByUserId: owner.id, keyDerivation: 'fragment_v1', tokenHash: createHash('sha256').update(randomUUID()).digest() } });
@@ -116,8 +139,11 @@ describe('Artifact inventory publications through SQLite, HTTP and UI Sync', () 
                 for (const audience of ['unknown', 'omitted'] as const) {
                     exactAudience = audience;
                     const beforeUnknown = publications;
-                    // The closed batch contract refuses a malformed/absent exposure witness.
-                    await expect(refresh()).rejects.toMatchObject({ name: 'HappyError', canTryAgain: false });
+                    // Header refresh does not demand retained bodies. A real full
+                    // batch demand still rejects a malformed exposure witness.
+                    await refresh();
+                    await expect(fetchArtifactReadBatch(credentials, [artifact.id], { fresh: true }))
+                        .rejects.toMatchObject({ name: 'HappyError', canTryAgain: false });
                     expect(publications).toBe(beforeUnknown);
                     // The predecessor-capable opaque exact reader retains readable content,
                     // but missing/unfamiliar exposure never becomes an authoritative `none`.

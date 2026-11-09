@@ -41,7 +41,8 @@ export async function admitTeamCredentialResourceTestRequestInTx(
     const parsed = TeamCredentialResourceTestAdmissionV1Schema.safeParse(input.request);
     if (!parsed.success || parsed.data.binding.kind !== 'resource_test') return failure('invalid_request');
     const { binding, brokerMachineId, relayAuthorization, requestFacts } = parsed.data;
-    await acquireAccountChangePublicationLocksInTx(tx, [input.authenticatedBrokerAccountId, binding.actorAccountId], { includeSingleAccount: true });
+    await acquireAccountChangePublicationLocksInTx(tx, [input.authenticatedBrokerAccountId, binding.actorAccountId],
+        { includeSingleAccount: true, intent: 'serializing' });
     const relay = verifyPeerTcpTunnelRelayAuthorizationV2({
         authorization: relayAuthorization,
         nowMs: input.observedAt.getTime(),
@@ -110,6 +111,7 @@ export async function admitTeamCredentialResourceTestRequestInTx(
         source: source.data,
     });
     if (current.status !== 'current') return failure('resource_unavailable');
+    if (current.authenticationFailure) return failure(current.authenticationFailure);
 
     const usage = await admitTeamCredentialUsageInTx(tx, {
         storageAccountId: binding.actorAccountId,

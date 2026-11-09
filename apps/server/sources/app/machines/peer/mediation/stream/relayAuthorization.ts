@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import tweetnacl from "tweetnacl";
-import { MACHINE_LIVE_STREAM_RELAY_AUTHORIZATION_AUDIENCE_V1, MachineLiveStreamCapsV1Schema, createMachineLiveStreamRelayAuthorizationSigningInputV1, type MachineLiveStreamCapsV1, type MachineLiveStreamRelayAuthorizationPayloadV1, type MachineLiveStreamRelayAuthorizationV1 } from '@happier-dev/protocol/machines/peer/mediation/stream/v1';
+import { MACHINE_LIVE_STREAM_RELAY_AUTHORIZATION_AUDIENCE_V1, MachineLiveStreamCapsV1Schema, MachineLiveStreamRelayAuthorizationPayloadV1Schema, createMachineLiveStreamRelayAuthorizationSigningInputV1, type MachineLiveStreamCapsV1, type MachineLiveStreamSourceAdmissionBindingV1, type MachineLiveStreamRelayAuthorizationV1 } from '@happier-dev/protocol/machines/peer/mediation/stream/v1';
 import { PEER_MEDIATION_RECEIPTS } from '@happier-dev/protocol/machines/peer/mediation/receipts';
 import { type MachineLiveStreamCodecIdV1 } from '@happier-dev/protocol/machines/peer/mediation/stream/codecsV1';
 
@@ -42,6 +42,12 @@ export type MintMachineLiveStreamRelayAuthorizationV1Input = Readonly<{
      * legacy machine→machine path.
      */
     viewerSocketId?: string;
+    /** Present only after the installed source owner and current Machine admission agree. */
+    personalViewer?: Readonly<{
+        viewerAccountId: string;
+        sourceMachineInstallationId: string;
+        personalSourceAdmission: MachineLiveStreamSourceAdmissionBindingV1;
+    }>;
     signingKey: Readonly<{
         keyId: string;
         secretKey: Uint8Array;
@@ -78,8 +84,9 @@ export function mintMachineLiveStreamRelayAuthorizationV1(
         };
     }
 
-    const payload: MachineLiveStreamRelayAuthorizationPayloadV1 = {
-        v: 1,
+    const payload = MachineLiveStreamRelayAuthorizationPayloadV1Schema.parse({
+        v: input.personalViewer ? 2 : 1,
+        ...(input.personalViewer ?? {}),
         grantId: `relay_grant_${randomUUID()}`,
         accountId: input.accountId,
         sourceMachineId: input.sourceMachineId,
@@ -100,7 +107,7 @@ export function mintMachineLiveStreamRelayAuthorizationV1(
         iat: input.nowMs,
         exp: input.nowMs + input.ttlMs,
         aud: MACHINE_LIVE_STREAM_RELAY_AUTHORIZATION_AUDIENCE_V1,
-    };
+    });
     const signature = tweetnacl.sign.detached(
         Buffer.from(createMachineLiveStreamRelayAuthorizationSigningInputV1(payload), "utf8"),
         input.signingKey.secretKey,

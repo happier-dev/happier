@@ -37,6 +37,18 @@ function resolveTransactionResult<T>(value: T): ResolvedTransactionResult<T> {
 }
 export type InTxOptions = Readonly<{
     readOnly?: boolean;
+    /**
+     * With `readOnly`: the callback issues exactly one read statement, which is
+     * atomic on its own. PostgreSQL and MySQL run it on the primary client with
+     * no transaction, because the frame (BEGIN, isolation, READ ONLY, SHOW, SET
+     * LOCAL, COMMIT) costs more CPU than the read. SQLite keeps its read
+     * snapshot so the read stays off the writer queue. A callback that issues
+     * two statements, or needs afterTx, must not set this. Combining it with
+     * `prepare` or a deadline/timeout option is refused: none of them can apply.
+     * The read carries only an operator's `statement_timeout`, as any direct
+     * `db.*` read does; a cancellation projects as the transaction path's does.
+     */
+    singleStatementRead?: boolean;
     isolationLevel?: "Serializable" | "RepeatableRead" | "ReadCommitted";
     timeoutMs?: number;
     maxWaitMs?: number;
@@ -47,7 +59,7 @@ export type InTxOptions = Readonly<{
 }>;
 
 /** A coherent read view, without certifying a serial ordering with writers. */
-export async function inReadSnapshot<T>(read: (tx: Tx) => Promise<T>, options?: Pick<InTxOptions, "transactionClass">): Promise<T> {
+export async function inReadSnapshot<T>(read: (tx: Tx) => Promise<T>, options?: Pick<InTxOptions, "transactionClass" | "singleStatementRead">): Promise<T> {
     // A snapshot captures caller-owned data; only write transaction results
     // participate in terminal publication projection.
     const captured = await inTx(async tx => ({ value: await read(tx) }), {
@@ -75,6 +87,7 @@ export type TransactionReplayReason = "session-account-audience-changed"
     | "transaction-account-audience-changed"
     | "directory-source-currentness-changed"
     | "usage-runtime-order-changed"
+    | "public-profile-changed"
     | "plugin-intent-changed";
 
 /** Abort the current transaction when its fenced audience no longer matches its reads. */
@@ -157,6 +170,12 @@ function readContentFreeDriverErrorMessage(error: unknown): string | undefined {
         'canceling statement due to lock timeout',
         'canceling statement due to statement timeout',
     ].find(summary => message.toLowerCase().includes(summary));
+}
+
+/** A query-cancel/lock SQLSTATE alone does not identify a deadline (for example, user cancellation or NOWAIT). */
+function isDriverDeadlineCancellation(sqlState: string | undefined, driverErrorMessage: string | undefined): boolean {
+    return (sqlState === "57014" && driverErrorMessage === "canceling statement due to statement timeout")
+        || (sqlState === "55P03" && driverErrorMessage === "canceling statement due to lock timeout");
 }
 
 export function isRetryableTransactionError(params: Readonly<{ provider: string; err: unknown }>): boolean {
@@ -265,6 +284,10 @@ async function applyPostgresStatementBudget(tx: Tx, timeoutMs: number, startedAt
 export async function inTx<T>(fn: (tx: Tx) => Promise<T>, options?: InTxOptions): Promise<ResolvedTransactionResult<T>> {
     const startedAtMs = Date.now();
     const provider = getDbProviderFromEnv(process.env, "postgres");
+    if (options?.singleStatementRead && (options.prepare || options.deadlineAtMs !== undefined
+        || options.timeoutMs !== undefined || options.maxWaitMs !== undefined)) {
+        throw new Error("singleStatementRead cannot combine with prepare or a deadline/timeout option");
+    }
     if (provider === "sqlite" && options?.readOnly) {
         if (options.prepare) {
             const fence = await prepareTransactionAttempt(options.prepare, options.deadlineAtMs, options.transactionClass);
@@ -274,6 +297,20 @@ export async function inTx<T>(fn: (tx: Tx) => Promise<T>, options?: InTxOptions)
             }, { deadlineAtMs: options.deadlineAtMs });
         }
         return await withSqliteReadSnapshot(async tx => resolveTransactionResult(await fn(tx)), { deadlineAtMs: options.deadlineAtMs });
+    }
+    if (options?.readOnly && options.singleStatementRead) {
+        try {
+            return resolveTransactionResult(await fn(db));
+        } catch (e) {
+            const sqlState = readPostgresTransactionSqlState(e);
+            if (sqlState !== "57014" && sqlState !== "55P03") throw e;
+            const expired = isDriverDeadlineCancellation(sqlState, readContentFreeDriverErrorMessage(e));
+            log({ module: "storage-tx", level: "warn", event: "single-statement-read", provider, sqlState,
+                transactionClass: options.transactionClass ?? "unspecified",
+                outcome: expired ? "deadline-exceeded" : "cancelled" }, "Single-statement database read was cancelled");
+            if (expired) throw new TransactionDeadlineExceededError(e, options.transactionClass, "rolled_back");
+            throw new TransactionConflictExhaustedError(e);
+        }
     }
     const transactionConfig = readDatabaseTransactionConfigFromEnv(process.env, provider);
     const configuredMaxWaitMs = options?.maxWaitMs ?? transactionConfig.maxWaitMs;
@@ -460,11 +497,8 @@ export async function inTx<T>(fn: (tx: Tx) => Promise<T>, options?: InTxOptions)
                 if (ambiguousAttemptFailure) throw ambiguousAttemptFailure.error;
                 if (confirmedRollback || acquisitionTimeout) {
                     const driverErrorMessage = sqlState ? readContentFreeDriverErrorMessage(e) : undefined;
-                    // A query-cancel/lock SQLSTATE alone does not identify a
-                    // deadline (for example, user cancellation or NOWAIT).
                     const expired = isExpiredTransactionError(e) || e instanceof TransactionAttemptDeadlineExceededError
-                        || (sqlState === "57014" && driverErrorMessage === "canceling statement due to statement timeout")
-                        || (sqlState === "55P03" && driverErrorMessage === "canceling statement due to lock timeout");
+                        || isDriverDeadlineCancellation(sqlState, driverErrorMessage);
                     const meta = typeof e === "object" && e !== null && "meta" in e ? e.meta : undefined;
                     const failedStatementRelation = typeof meta === "object" && meta !== null
                         && "modelName" in meta && typeof meta.modelName === "string" ? meta.modelName : undefined;

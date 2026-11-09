@@ -15,6 +15,10 @@ import {
     SESSION_HUMAN_PRESENCE_ACCESS_CHANGED_SERVER_EVENT,
 } from "./sessionHumanPresenceService";
 import { sessionHumanPresenceRoom } from "./sessionHumanPresenceRooms";
+import {
+    registerSessionHumanPresenceSocketHandlers,
+    releaseSessionHumanPresenceHoldAfterFinalCurrentness,
+} from "./registerSessionHumanPresenceSocketHandlers";
 
 const SOCKET_PATH = "/v1/updates";
 
@@ -55,6 +59,59 @@ describe("human presence access transitions across Redis-adapter API nodes", () 
     afterAll(async () => {
         await harness?.close();
     });
+
+    it("projects remote admitted edit data and publishes editor disconnect to an observer on another node", async () => {
+        const owner = await db.account.create({ data: { publicKey: crypto.randomUUID(), encryptionMode: "plain" } });
+        const session = await db.session.create({ data: {
+            accountId: owner.id, tag: crypto.randomUUID(), encryptionMode: "plain", metadata: "{}",
+        } });
+        const cluster = await startRedisAdapterRecoveryCluster();
+        const clients: ClientSocket[] = [];
+        const services = cluster.nodes.map(node => createSessionHumanPresenceService({ io: node.io }));
+        cluster.nodes.forEach((node, index) => node.io.on("connection", socket => {
+            // Authentication is the genuine transport boundary in this cluster
+            // fixture; admission and database access below are the real owners.
+            socket.data.userId = owner.id;
+            socket.data.authAuthority = "present_user";
+            socket.data.clientType = index === 0 ? "session-scoped" : "user-scoped";
+            if (index === 0) socket.data.sessionScopedBinding = { sessionId: session.id, machineId: null, proof: "owner-session" };
+            registerSessionHumanPresenceSocketHandlers({ presence: services[index], socket, accountId: owner.id });
+            releaseSessionHumanPresenceHoldAfterFinalCurrentness(socket);
+        }));
+        const connect = async (index: number) => {
+            const client = createClient(`http://127.0.0.1:${cluster.nodes[index].port}`, {
+                path: SOCKET_PATH, transports: ["websocket"], reconnection: false, autoConnect: false,
+            });
+            clients.push(client);
+            await new Promise<void>((resolve, reject) => {
+                client.once("connect", resolve); client.once("connect_error", reject); client.connect();
+            });
+            return client;
+        };
+        try {
+            const observer = await connect(0);
+            const snapshots: Array<{ viewers: unknown[]; pendingMessageEditHoldIds: string[] }> = [];
+            observer.on(SESSION_HUMAN_PRESENCE_SNAPSHOT_EVENT, value => snapshots.push(value));
+            expect(await observer.timeout(5_000).emitWithAck("session-human-presence:visible-replace", {
+                v: 1, sessionIds: [session.id], pendingMessageEdits: [],
+            })).toMatchObject({ ok: true, admittedSessionIds: [session.id], admittedPendingMessageEdits: [] });
+            await waitFor(() => snapshots.at(-1)?.pendingMessageEditHoldIds.length === 0, "initial empty edit observation");
+            const editor = await connect(1);
+            const hold = { sessionId: session.id, holdId: "remote-edit" };
+            expect(await editor.timeout(5_000).emitWithAck("session-human-presence:visible-replace", {
+                v: 1, sessionIds: [], pendingMessageEdits: [hold],
+            })).toMatchObject({ ok: true, admittedPendingMessageEdits: [hold] });
+            await waitFor(() => snapshots.at(-1)?.pendingMessageEditHoldIds.includes(hold.holdId) === true, "remote admitted edit");
+            expect(snapshots.at(-1)?.viewers).toEqual([]);
+            editor.close();
+            await waitFor(() => snapshots.at(-1)?.pendingMessageEditHoldIds.length === 0, "remote editor disconnect");
+            expect(snapshots.at(-1)?.viewers).toEqual([]);
+        } finally {
+            clients.forEach(client => client.close());
+            services.forEach(service => service.close());
+            await cluster.close();
+        }
+    }, 60_000);
 
     it("rechecks remote socket credentials before Account dedupe after a transition on another node", async () => {
         const [owner, member] = await Promise.all([

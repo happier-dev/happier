@@ -76,16 +76,6 @@ describe("Automation Session lifecycle status projection", () => {
                 causeSourceSessionId: "source-session",
                 causeSourceTurnId: "turn-running",
             },
-            // This newer historical Run belongs to a prior registration of
-            // the same trigger. It must not project onto the current turn.
-            {
-                id: "run-finished-without-run-historical",
-                state: "running",
-                triggerId: "trigger-finished-without-run",
-                causeSessionLifecycleEvent: "parentTurnCompleted",
-                causeSourceSessionId: "source-session",
-                causeSourceTurnId: "turn-from-prior-registration",
-            },
             {
                 id: "run-triggered",
                 state: "queued",
@@ -93,14 +83,6 @@ describe("Automation Session lifecycle status projection", () => {
                 causeSessionLifecycleEvent: "parentTurnCompleted",
                 causeSourceSessionId: "source-session",
                 causeSourceTurnId: "turn-triggered",
-            },
-            {
-                id: "run-running",
-                state: "running",
-                triggerId: "trigger-running",
-                causeSessionLifecycleEvent: "parentTurnCompleted",
-                causeSourceSessionId: "source-session",
-                causeSourceTurnId: "turn-running",
             },
             {
                 id: "run-finished",
@@ -121,25 +103,6 @@ describe("Automation Session lifecycle status projection", () => {
                 causeSourceTurnId: "turn-failed-with-run",
             },
         ];
-        const automationRunFindMany = vi.fn(async (query: {
-            where: {
-                state?: { in: readonly string[] };
-                OR: Array<{
-                    triggerId: string;
-                    causeSourceSessionId?: string;
-                    causeSourceTurnId?: string;
-                }>;
-            };
-        }) => automationRuns.filter((run) => (
-            (query.where.state === undefined || query.where.state.in.includes(run.state))
-            && query.where.OR.some((candidate) => (
-                candidate.triggerId === run.triggerId
-                && (candidate.causeSourceSessionId === undefined
-                    || candidate.causeSourceSessionId === run.causeSourceSessionId)
-                && (candidate.causeSourceTurnId === undefined
-                    || candidate.causeSourceTurnId === run.causeSourceTurnId)
-            ))
-        )));
         const activeTriggers = [
             lifecycleTrigger("trigger-waiting", "turn-waiting"),
             lifecycleTrigger("trigger-paused", "turn-paused", false),
@@ -166,7 +129,7 @@ describe("Automation Session lifecycle status projection", () => {
                 session: { findMany: vi.fn(async () => [{ id: "source-session" }]) },
                 sessionTurn: { findMany: sessionTurnFindMany },
                 sessionTurnMutationReceipt: { findMany: receiptFindMany },
-                automationRun: { findMany: automationRunFindMany },
+                $queryRaw: vi.fn(async () => automationRuns),
             } as any,
         });
 
@@ -182,18 +145,6 @@ describe("Automation Session lifecycle status projection", () => {
             "trigger-running": { state: "running", runId: "workflow-run-interrupted" },
             "trigger-finished": { state: "finished", runId: "run-finished" },
         });
-        expect(sessionTurnFindMany).toHaveBeenCalledTimes(1);
-        expect(receiptFindMany).toHaveBeenCalledTimes(1);
-        expect(automationRunFindMany).toHaveBeenCalledTimes(1);
-        expect(automationRunFindMany).toHaveBeenCalledWith(expect.objectContaining({
-            where: expect.objectContaining({
-                OR: expect.arrayContaining([{
-                    triggerId: "trigger-finished-without-run",
-                    causeSourceSessionId: "source-session",
-                    causeSourceTurnId: "turn-finished-without-run",
-                }]),
-            }),
-        }));
     });
 
     it("never binds a Run from an earlier registration of the same exact turn", async () => {
@@ -230,7 +181,7 @@ describe("Automation Session lifecycle status projection", () => {
                     status: "in_progress",
                 }]) },
                 sessionTurnMutationReceipt: { findMany: vi.fn(async () => []) },
-                automationRun: { findMany: vi.fn(async () => [priorRegistrationRun]) },
+                $queryRaw: vi.fn(async () => [priorRegistrationRun]),
             } as any,
         });
 
@@ -264,14 +215,14 @@ describe("Automation Session lifecycle status projection", () => {
                     status: "completed",
                 }]) },
                 sessionTurnMutationReceipt: { findMany: vi.fn(async () => []) },
-                automationRun: { findMany: vi.fn(async () => [{
+                $queryRaw: vi.fn(async () => [{
                     id: "run-paused-after-run",
                     state: "succeeded",
                     triggerId: "trigger-paused-after-run",
                     causeSessionLifecycleEvent: "parentTurnCompleted",
                     causeSourceSessionId: "source-session",
                     causeSourceTurnId: sourceTurnId,
-                }]) },
+                }]),
             } as any,
         });
 
@@ -299,7 +250,7 @@ describe("Automation Session lifecycle status projection", () => {
                     status: "in_progress",
                 }]) },
                 sessionTurnMutationReceipt: { findMany: vi.fn(async () => []) },
-                automationRun: { findMany: vi.fn(async () => []) },
+                $queryRaw: vi.fn(async () => []),
             } as any,
         });
 

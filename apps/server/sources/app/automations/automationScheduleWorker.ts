@@ -3,37 +3,33 @@ import { db } from "@/storage/db";
 import { acquireAccountEncryptionTransitionFenceInTx } from "@/app/encryption/accountEncryptionTransition";
 import { acquireWorkflowPublicationLocksInTx } from "@/app/workflows/acquireWorkflowPublicationLocksInTx";
 import { warn } from "@/utils/logging/log";
+import { withWebLatencyProducerTrace } from "@/utils/webLatencyTrace";
+import { armDeadlineTimer } from "@happier-dev/protocol/common/deadlineTimer";
 
 import { rejoinAutomationOccurrenceInsertRace } from "./automationOccurrencePersistence";
 import { admitDueAutomationScheduleTriggerTx } from "./automationRunQueueService";
 import { AUTOMATION_RUN_TERMINAL_STATES } from "./automationTypes";
 import { subscribeAutomationScheduleWake } from "./automationScheduleWake";
 
-/** Durable indexed restart recovery for missed process-local wake hints. */
+/** Existing liveness fallback for cross-API writes without push and DB-only recovery without reconnect. */
 export const DEFAULT_AUTOMATION_SCHEDULE_IDLE_POLL_MS = 10_000;
-/** Node clamps larger timeout delays to 1ms, so long cron horizons need a bounded wake. */
-export const MAX_AUTOMATION_SCHEDULE_TIMER_DELAY_MS = 2_147_483_647;
 /** Private query-memory budget; it does not cap due work in one pass. */
 const AUTOMATION_SCHEDULE_SCAN_PAGE_SIZE = 128;
 
 async function findNextScheduleTrigger() {
-    return await db.automationTrigger.findFirst({
-        where: {
-            kind: "schedule",
-            enabled: true,
-            deletedAt: null,
-            nextRunAt: { not: null },
-            automation: { enabled: true, deletedAt: null },
-        },
-        orderBy: [{ nextRunAt: "asc" }, { id: "asc" }],
-        select: { id: true, revision: true, nextRunAt: true, automation: { select: { accountId: true } } },
-    });
+    let scanCursor: AutomationScheduleScanCursor | null = null;
+    do {
+        const page = await findEligibleDueScheduleTriggerPage({ scanCursor });
+        if (page.eligible[0]) return page.eligible[0];
+        scanCursor = page.continuationCursor;
+    } while (scanCursor !== null);
+    return null;
 }
 
 export type AutomationScheduleScanCursor = Readonly<{ nextRunAt: Date; id: string }>;
 
 async function findDueScheduleTriggers(
-    now: Date,
+    now: Date | undefined,
     cursor: AutomationScheduleScanCursor | null,
 ) {
     return await db.automationTrigger.findMany({
@@ -41,7 +37,7 @@ async function findDueScheduleTriggers(
             kind: "schedule",
             enabled: true,
             deletedAt: null,
-            nextRunAt: { lte: now },
+            nextRunAt: now ? { lte: now } : { not: null },
             automation: { enabled: true, deletedAt: null },
             ...(cursor === null
                 ? {}
@@ -66,7 +62,7 @@ async function findDueScheduleTriggers(
  * the process-local worker can yield before continuing.
  */
 async function findEligibleDueScheduleTriggerPage(params: Readonly<{
-    now: Date;
+    now?: Date;
     scanCursor?: AutomationScheduleScanCursor | null;
     shouldStop?: () => boolean;
 }>) {
@@ -84,6 +80,8 @@ async function findEligibleDueScheduleTriggerPage(params: Readonly<{
             causeKind: "trigger",
             causeTriggerKind: "schedule",
             state: { notIn: [...AUTOMATION_RUN_TERMINAL_STATES] },
+            // Scoped firings belong to the canonical latest-pending coalescer.
+            automation: { scopeSessionId: null },
         },
         select: { triggerId: true },
         distinct: ["triggerId"],
@@ -150,14 +148,9 @@ export async function runAutomationScheduleWorkerPass(params: Readonly<{
     };
 }
 
-export function startAutomationScheduleWorker(params: Readonly<{
-    idlePollMs?: number;
-}> = {}): Readonly<{ stop: () => Promise<void> }> {
-    const idlePollMs = Number.isSafeInteger(params.idlePollMs) && params.idlePollMs! > 0
-        ? params.idlePollMs!
-        : DEFAULT_AUTOMATION_SCHEDULE_IDLE_POLL_MS;
+export function startAutomationScheduleWorker(): Readonly<{ stop: () => Promise<void> }> {
     let stopped = false;
-    let timer: ReturnType<typeof setTimeout> | null = null;
+    let cancelTimer: (() => void) | null = null;
     let active: Promise<void> | null = null;
     let scanCursor: AutomationScheduleScanCursor | null = null;
 
@@ -169,35 +162,28 @@ export function startAutomationScheduleWorker(params: Readonly<{
         if (stopped) return;
         if (lastPass.continuationCursor !== null) {
             scanCursor = lastPass.continuationCursor;
-            timer = setTimeout(() => {
-                timer = null;
+            cancelTimer = armDeadlineTimer(Date.now(), () => {
+                cancelTimer = null;
                 void trigger();
-            }, 0);
-            timer.unref?.();
+            }, { unref: true });
             return;
         }
         scanCursor = null;
         const nextDueAt = lastPass.nextDueAt;
         if (stopped) return;
         const now = Date.now();
-        const unboundedDelay = nextDueAt === null
-            ? idlePollMs
-            : nextDueAt.getTime() <= now && !lastPass.progressed
-                ? idlePollMs
-                : Math.max(0, nextDueAt.getTime() - now);
-        // Local wakes accelerate edits; durable polling still discovers an
-        // earlier cursor committed by another API while this worker sleeps.
-        const delay = Math.min(unboundedDelay, idlePollMs, MAX_AUTOMATION_SCHEDULE_TIMER_DELAY_MS);
-        timer = setTimeout(() => {
-            timer = null;
+        const nextDeadline = nextDueAt === null || (nextDueAt.getTime() <= now && !lastPass.progressed)
+            ? now + DEFAULT_AUTOMATION_SCHEDULE_IDLE_POLL_MS
+            : Math.min(nextDueAt.getTime(), now + DEFAULT_AUTOMATION_SCHEDULE_IDLE_POLL_MS);
+        cancelTimer = armDeadlineTimer(nextDeadline, () => {
+            cancelTimer = null;
             void trigger();
-        }, delay);
-        timer.unref?.();
+        }, { unref: true });
     };
 
     const trigger = async (): Promise<void> => {
         if (stopped || active) return;
-        active = (async () => {
+        active = withWebLatencyProducerTrace('producer.automation-schedule', async () => {
             let pass = { progressed: false, nextDueAt: null as Date | null,
                 continuationCursor: null as AutomationScheduleScanCursor | null };
             try {
@@ -209,17 +195,20 @@ export function startAutomationScheduleWorker(params: Readonly<{
             } catch {
                 warn({ module: "automation-schedule-worker" }, "Automation schedule worker pass failed");
             } finally {
-                active = null;
                 await schedule(pass);
             }
-        })();
-        await active;
+        });
+        try {
+            await active;
+        } finally {
+            active = null;
+        }
     };
 
     const unsubscribeWake = subscribeAutomationScheduleWake(() => {
         if (stopped || active) return;
-        if (timer) clearTimeout(timer);
-        timer = null;
+        cancelTimer?.();
+        cancelTimer = null;
         scanCursor = null;
         void trigger();
     });
@@ -230,8 +219,8 @@ export function startAutomationScheduleWorker(params: Readonly<{
             if (stopped) return;
             stopped = true;
             unsubscribeWake();
-            if (timer) clearTimeout(timer);
-            timer = null;
+            cancelTimer?.();
+            cancelTimer = null;
             await active;
         },
     };

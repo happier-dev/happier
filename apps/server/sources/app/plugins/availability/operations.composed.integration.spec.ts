@@ -551,6 +551,15 @@ describe("plugin Availability operations", () => {
             packageAssets: [expect.objectContaining({ artifactId: fixture.packageArtifactId })],
         });
         expect(listed.intentReads.find(entry => entry.pluginId === removedPluginId)?.response.intent).toBeNull();
+        const withoutDeclarations = await service.listIntentIds({ accountId: ACCOUNT_ID,
+            input: { knownPluginIds: [machineOnlyPluginId, removedPluginId], omitDeclarations: true } });
+        expect(withoutDeclarations.intentReads.map(entry => entry.pluginId)).toEqual(listed.intentReads.map(entry => entry.pluginId));
+        for (const entry of withoutDeclarations.intentReads) {
+            expect(entry.response).not.toHaveProperty('currentDeclaration');
+            expect(entry.response).not.toHaveProperty('machineDeclarations');
+            const { currentDeclaration: _full, machineDeclarations: _machines, ...kept } = listed.intentReads.find(other => other.pluginId === entry.pluginId)!.response;
+            expect(entry.response).toEqual(kept);
+        }
         // Exercise Fastify's real route and its default operations owner, not
         // the operation stub used by the separate route admission unit tests.
         await withAuthenticatedTestApp(registerPluginAvailabilityRoutes, async app => {

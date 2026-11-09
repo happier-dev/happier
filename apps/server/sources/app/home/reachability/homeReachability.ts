@@ -1,7 +1,7 @@
 import { SERVER_CONFIG } from '@happier-dev/protocol/serverConfig/registry';
 import { readServerConfig, type ServerConfigEnv } from '@happier-dev/protocol/serverConfig/serverConfigCodec';
-import { type HomeHostAccessMethodV1, type HomeIrohModeV1, type HomeReachabilityV1 } from '@happier-dev/protocol/home/governance';
-import type { RelayAccessConfiguredPublicAccess } from "@happier-dev/cli-common/relayAccess";
+import { type HomeIrohModeV1, type HomeReachabilityV1 } from '@happier-dev/protocol/home/governance';
+import { getRelayAccessProviderDescriptor } from "@happier-dev/cli-common/relayAccess";
 
 import { readHomeConnectionDescriptor } from "@/app/features/homeConnectionDescriptorPublication";
 import { publishHomeGovernanceChangedInTx } from "@/app/home/governance/governanceChanges";
@@ -39,14 +39,6 @@ import { inTx } from "@/storage/inTx";
  * lifecycle, and the descriptor publisher alone publishes what devices dial.
  */
 
-const RELAY_ACCESS_METHODS: Readonly<Record<RelayAccessConfiguredPublicAccess["providerId"], HomeHostAccessMethodV1>> = {
-    localOnly: "local_only",
-    lan: "lan",
-    tailscaleServe: "tailscale_serve",
-    tailscaleFunnel: "tailscale_funnel",
-    cloudflareNamed: "cloudflare_tunnel",
-};
-
 const IROH_MODE_KEY = SERVER_CONFIG.HAPPIER_HOME_IROH_MODE.key;
 
 function projectPublicAddress(env: ServerConfigEnv, access: InferredPublicServerAccess | null): HomeReachabilityV1["publicAddress"] {
@@ -81,11 +73,13 @@ export function projectHomeReachability(params: Readonly<{
     irohAvailable: boolean;
 }>): HomeReachabilityV1 {
     const relayAccess = params.access?.relayAccess ?? null;
+    // Observed native status is a projection of the static pre-plugin Home catalog.
+    const method = relayAccess ? getRelayAccessProviderDescriptor({ kind: 'builtin', id: relayAccess.providerId }).definition.homeAccessMethod : undefined;
     return {
         publicAddress: projectPublicAddress(params.env, params.access),
         webApp: projectWebApp(params.env),
-        hostAccess: relayAccess
-            ? { method: RELAY_ACCESS_METHODS[relayAccess.providerId], exposure: relayAccess.exposure, shareUrl: relayAccess.shareUrl }
+        hostAccess: relayAccess && method
+            ? { method, exposure: relayAccess.exposure, shareUrl: relayAccess.shareUrl }
             : null,
         iroh: {
             availability: params.irohAvailable ? "available" : "not_available",

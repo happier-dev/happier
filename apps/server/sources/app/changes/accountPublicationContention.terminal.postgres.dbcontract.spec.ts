@@ -22,10 +22,13 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('T
         if (!process.env.DATABASE_URL || process.env.DATABASE_URL !== process.env.HAPPIER_TEST_POSTGRES_DATABASE_URL) {
             throw new Error('Use the disposable PostgreSQL DB-contract harness');
         }
+        // Two overlapping writers plus the reserved HTTP/SQL observer slot.
+        // Do not let the driver's host-core default open 100 test connections.
+        vi.stubEnv('HAPPIER_DB_CONNECTION_LIMIT', '3');
         initDbPostgres();
         await db.$connect();
     });
-    afterAll(async () => { await db.$disconnect(); });
+    afterAll(async () => { await db.$disconnect(); vi.unstubAllEnvs(); });
 
     it.each(['content', 'serializing', 'exclusive'] as const)('uses only the necessary Account lock statements after %s admission', async intent => {
         const account = await db.account.create({ data: { encryptionMode: 'plain' } });
@@ -55,6 +58,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('T
             expect(publication.resolveCursor()).toBe(1);
             expect((await db.account.findUniqueOrThrow({ where: { id: account.id } })).seq).toBe(1);
             const expectedLocks = intent === 'content' ? 2 : 1;
+            console.info('PERFACCT_LOCK_COUNT', JSON.stringify({ intent, statements: locks.length, expected: expectedLocks }));
             expect(locks).toHaveLength(expectedLocks);
         } finally {
             db.$transaction = original;
@@ -126,7 +130,11 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('T
                     .toEqual(Array.from({ length: expectedSeq }, (_, cursor) => cursor + 1));
                 const emission = emissions.find(value => value.room === `account-stored-content-v3:${accountId}`)!;
                 expect(emission.eventName).toBe('update');
-                expect(emission.payload).toEqual(expect.objectContaining({ seq: expectedSeq, body: { t: 'account-change' } }));
+                expect(emission.payload).toEqual(expect.objectContaining({ seq: expectedSeq,
+                    body: { t: 'account-change', changeKinds: ['account', 'session'],
+                        entityIds: index === 0 ? ['settings', 'profile', ...sessions.map(session => session.id).sort()]
+                            : ['profile', sessions[0].id] },
+                }));
                 const committed = await emission.committed;
                 expect(committed.seq).toBe(expectedSeq);
                 expect(committed.changes.map(change => change.cursor)).toEqual(Array.from({ length: expectedSeq }, (_, cursor) => cursor + 1));
@@ -170,7 +178,10 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('T
                 expect(next).toHaveLength(1);
                 const committed = await next[0].committed;
                 expect(committed.seq).toBe(accountId === accounts[0].id ? 6 : 4);
-                expect(next[0].payload).toEqual(expect.objectContaining({ seq: committed.seq, body: { t: 'account-change' } }));
+                expect(next[0].payload).toEqual(expect.objectContaining({ seq: committed.seq,
+                    body: { t: 'account-change', changeKinds: ['account'],
+                        entityIds: ['next-transaction', 'next-transaction-tail'] },
+                }));
                 expect(committed.changes.filter(change => change.entityId.startsWith('next-transaction'))).toHaveLength(2);
             }
         } finally {

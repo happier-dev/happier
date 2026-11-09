@@ -57,6 +57,7 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== "postgres")("Runner broker a
             const read = () => client.$transaction(tx => readRunnerBrokerReadinessProjectionInTx(tx, { activationId: activation.id, selection }), { isolationLevel: "RepeatableRead" });
             machineSelects = 0;
             expect(await read()).toMatchObject({ target: { endpointId }, readiness: { kind: "available" } });
+            console.info("RUNNER_BROKER_MACHINE_READ_COST", { machineSelects });
             expect(machineSelects).toBe(1);
 
             await client.machine.update({ where: { id: machine.id }, data: { revokedAt: new Date() } });

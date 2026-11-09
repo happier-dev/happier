@@ -19,7 +19,7 @@ import { isTeamPrincipalRoleV1 } from '@happier-dev/protocol/teams';
 import type { Prisma } from '@prisma/client';
 import type { Tx } from '@/storage/inTx';
 import { prismaRuntime } from '@/storage/prisma';
-import { defaultRepeatKeyExpiresAt, fetchRepeatKey, saveRepeatKey } from '@/storage/queue/repeatKey';
+import { defaultRepeatKeyExpiresAt, fetchRepeatKey, lockPostgresRepeatKeyInTx, saveRepeatKey } from '@/storage/queue/repeatKey';
 import { readTransactionDatabaseTime } from '@/storage/transactionDatabaseTime';
 import { portableQueryChunks } from '@/storage/portableQueryChunks';
 import { markAccountsChanged } from '@/app/changes/markAccountChanged';
@@ -328,9 +328,10 @@ export async function createProjectSourceInTx(tx: Tx, actorAccountId: string, in
     if (!parsed.success) return invalid();
     const audience = parsed.data.audience ?? [];
     const owner = parsed.data.owner ?? { kind: 'account' as const, accountId: actorAccountId };
+    const requestKey = `projects.sources.create:${actorAccountId}:${parsed.data.requestKey}`;
+    await lockPostgresRepeatKeyInTx(tx, requestKey);
     const actor = await tx.account.findUnique({ where: { id: actorAccountId }, select: { status: true } });
     if (actor?.status !== 'active') return denied();
-    const requestKey = `projects.sources.create:${actorAccountId}:${parsed.data.requestKey}`;
     const digestInput: unknown[] = [parsed.data.serverId, parsed.data.name,
         parsed.data.repository ?? null, parsed.data.defaultRef ?? null, parsed.data.subdir ?? null, audience];
     if (owner.kind !== 'account' || owner.accountId !== actorAccountId) digestInput.push(owner);

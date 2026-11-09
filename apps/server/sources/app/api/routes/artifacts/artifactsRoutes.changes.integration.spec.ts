@@ -13,6 +13,8 @@ import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lig
 import { withAuthenticatedTestApp } from "../../testkit/sqliteFastify";
 import { artifactsRoutes } from "./artifactsRoutes";
 import { withSqliteReadSnapshot } from '@/storage/prisma';
+import { ARTIFACT_UPLOAD_CONTENT_TYPE_V1, ARTIFACT_UPLOAD_PATH_V1, encodeArtifactUploadFrameV1 } from '@happier-dev/transfers';
+import { registerArtifactUploadRoutes } from './registerArtifactUploadRoutes';
 
 const { emitUpdate, randomKeyNaked } =
     vi.hoisted(() => ({
@@ -502,6 +504,26 @@ describe("artifactsRoutes (AccountChange integration)", () => {
         );
     });
 
+    it.each(['plain', 'e2ee'] as const)('refuses a mismatched binary upload at initialization for a %s Account before mutation', async mode => {
+        const account = mode === 'e2ee' ? await seedAccount() : await db.account.create({
+            data: { publicKey: null, encryptionMode: 'plain' }, select: { id: true },
+        });
+        const artifactId = '77777777-7777-4777-8777-777777777777';
+        const frame = encodeArtifactUploadFrameV1({ kind: 'create', artifactId,
+            blobId: '88888888-8888-4888-8888-888888888888', header: '', body: '', dataEncryptionKey: '' },
+        mode === 'plain' ? { t: 'encrypted', c: 'AQ==' } : { t: 'plain', v: 'AQ==' });
+        await withAuthenticatedTestApp(app => registerArtifactUploadRoutes(app), async app => {
+            const response = await app.inject({ method: 'POST', url: ARTIFACT_UPLOAD_PATH_V1,
+                headers: { 'x-test-user-id': account.id, 'content-type': ARTIFACT_UPLOAD_CONTENT_TYPE_V1 },
+                payload: Buffer.from(frame) });
+            expect(response.statusCode).toBe(400);
+            expect(response.json()).toEqual({ error: 'artifact_account_mode_mismatch' });
+        });
+        await expect(db.artifact.findUnique({ where: { id: artifactId } })).resolves.toBeNull();
+        expect(await db.accountChange.count({ where: { accountId: account.id } })).toBe(0);
+        expect(emitUpdate).not.toHaveBeenCalled();
+    });
+
     it("rejects an encrypted Artifact for a plain account before mutation", async () => {
         const account = await db.account.create({
             data: { publicKey: null, encryptionMode: "plain" },
@@ -792,8 +814,9 @@ describe("artifactsRoutes (AccountChange integration)", () => {
             for (let invocation = 0; invocation < 2; invocation += 1) {
                 const created = await app.inject({ method: "POST", url: "/v1/artifacts", headers, payload });
                 expect(created.statusCode).toBe(200);
-                expect(created.json()).toMatchObject({ id, header, body, ownerAccountId: account.id,
-                    access: "owner", encryptionMode: "plain" });
+                expect.soft(created.json(), invocation === 0 ? 'fresh create acknowledgement' : 'same-ID create acknowledgement')
+                    .toMatchObject({ id, header, body, ownerAccountId: account.id,
+                        access: "owner", encryptionMode: "plain", publicAudience: "none" });
             }
             const list = await app.inject({ method: "GET", url: "/v1/artifacts", headers });
             expect(list.statusCode).toBe(200);

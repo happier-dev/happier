@@ -6,6 +6,7 @@ import { db } from '@/storage/db';
 import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lightSqliteHarness';
 import { serializeMachineHostFacts, serializeMachineRow } from '@/app/machines/machineSerialization';
 import { buildNewMachineUpdate } from '@/app/events/eventPayloadBuilders';
+import { withdrawMachineConnectionCapabilitiesForSocketClaim } from './machineOperationCapabilities';
 
 describe('Home-owned Machine presence publication (real SQLite)', () => {
     let harness: LightSqliteHarness;
@@ -29,7 +30,7 @@ describe('Home-owned Machine presence publication (real SQLite)', () => {
         }
     });
 
-    it('publishes Home-owned presence for legacy daemons', async () => {
+    it('publishes Home-owned presence for legacy daemons and replacement publishers', async () => {
         const owner = await db.account.create({ data: {} });
         const machine = await db.machine.create({ data: { id: randomUUID(), accountId: owner.id,
             installationId: 'presence-installation', metadata: 'metadata', active: true, lastActiveAt: new Date(100_000) } });
@@ -41,5 +42,10 @@ describe('Home-owned Machine presence publication (real SQLite)', () => {
         const admitted = await read();
         expect(isMachineOnlineV1({ ...admitted, active: true }, 1_000_000)).toBe(true);
         expect(isMachineOnlineV1({ ...admitted, active: false }, 100_001)).toBe(false);
+        await withdrawMachineConnectionCapabilitiesForSocketClaim({ accountId: owner.id, machineId: machine.id,
+            installationId: machine.installationId, isCurrent: async () => true });
+        const replacement = await read();
+        expect(isMachineOnlineV1({ ...replacement, active: false }, 160_000)).toBe(false);
+        expect(isMachineOnlineV1({ ...replacement, active: true }, 160_001)).toBe(true);
     });
 });

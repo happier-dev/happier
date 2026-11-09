@@ -51,14 +51,13 @@ export async function readAdmittedExternalActionMachineInTx(
         account: { select: { encryptionMode: true } },
     } });
     const mode = machine && resolveEffectiveAccountEncryptionModeFromAccountRow(machine.account);
-    const role = machine?.accountId === binding.accountId ? 'manage' : 'use';
     if (!machine || machine.installationId !== installationId || classifyMachineAvailabilityState(machine) !== 'available'
         || !mode || mode.status !== 'ready' || !resourceContentMatchesMode(machine, mode.mode)
         || machineId === binding.machineId && machine.accountId !== binding.custodianAccountId
         || retained && (retained.machineId !== machineId || retained.installationId !== installationId
             || retained.actorAccountId !== binding.accountId || retained.custodianAccountId !== machine.accountId
-            || retained.encryptionMode !== mode.mode || retained.role !== role)) return null;
+            || retained.encryptionMode !== mode.mode)) return null;
     return { kind: 'admitted', actorAccountId: binding.accountId, custodianAccountId: machine.accountId,
         machineId, installationId, encryptionMode: mode.mode,
-        role };
+        role: retained?.role ?? (machine.accountId === binding.accountId ? 'manage' : 'use') };
 }

@@ -163,6 +163,7 @@ describe("qualified Connected Account inventory", () => {
                 tx,
                 accountId: owner.id,
                 includeGroups: true,
+                env: process.env,
             })
         ));
         expect(projection.connectedAccountGroupsV4).toHaveLength(inventorySize);

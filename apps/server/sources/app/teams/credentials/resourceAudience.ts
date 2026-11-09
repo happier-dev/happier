@@ -6,7 +6,8 @@ import { acquireTeamMembershipAccountAdmissionInTx } from "../memberships/member
 import { AccountStatus } from "@/storage/enums.generated";
 import { acquireTeamMutationLockInTx, resolveTeamActorContextInTx, type TeamOperationAuthenticationContext } from "../actorContext";
 import { resolveTeamCredentialCapabilities } from "../capabilities";
-import { resolveTeamMembershipContextInTx } from "../memberships/effectiveMembership";
+import { resolveTeamMembershipContextsInTx } from "../memberships/effectiveMembership";
+import { portableQueryChunks } from "@/storage/portableQueryChunks";
 import { publishTeamChangedInTx } from "../teamChanges";
 import { recordTeamCredentialActivityInTx, type TeamCredentialActivityActor } from "./resourceActivity";
 import { readTeamCredentialBrokerPlacement, validateTeamCredentialBrokerPlacementForSaveInTx } from "./brokerPlacementResolver";
@@ -57,15 +58,17 @@ export async function validateTeamCredentialAudienceDraftInTx(
         select: { id: true },
     });
     if (groups.length !== audience.groupGrants.length) return { ok: false, error: 'invalid_audience' };
-    for (const grant of audience.memberGrants) {
-        const membership = await tx.teamMembership.findUnique({ where: { id: grant.teamMembershipId }, select: { accountId: true } });
-        if (!membership) return { ok: false, error: 'invalid_audience' };
-        const current = await resolveTeamMembershipContextInTx(tx, {
-            teamId: input.teamId,
-            teamMembershipId: grant.teamMembershipId,
-            expectedAccountId: membership.accountId,
+    for (const membershipIds of portableQueryChunks({
+        values: audience.memberGrants.map(grant => grant.teamMembershipId), bindingsPerValue: 1,
+        // Team equality plus Prisma's OFFSET bind; relation reads use the same bounded set.
+        fixedBindings: 2,
+    })) {
+        const memberships = await resolveTeamMembershipContextsInTx(tx, {
+            where: { teamId: input.teamId, id: { in: [...membershipIds] } },
         });
-        if (!current.ok || !current.membership.effective) return { ok: false, error: 'invalid_audience' };
+        if (memberships.length !== membershipIds.length || memberships.some(membership => !membership.effective)) {
+            return { ok: false, error: 'invalid_audience' };
+        }
     }
     return { ok: true };
 }

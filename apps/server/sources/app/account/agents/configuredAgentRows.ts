@@ -3,7 +3,7 @@ import {
     AcpCatalogRowMutationV1Schema, AcpCatalogRowMutationResponseV1Schema, AcpCatalogRowReadResponseV1Schema,
     assertAcpCatalogContentForModeV1, openAcpCatalogContentV1, isFreshAcpCatalogSourceV1,
     listAcpCatalogSavedSecretRefsV1, listAcpCatalogEnvelopeSavedSecretDiagnosticsV1,
-    type StoredAcpCatalogContentV1, type AcpCatalogRowMutationV1,
+    type StoredAcpCatalogContentV1, type AcpCatalogContentV1, type AcpCatalogRowMutationV1,
 } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
 import { prepareAcpCatalogTransferV2 } from '@happier-dev/protocol/acp/catalog/transferAcpCatalogV2';
 import type { AccountSettingsCleanupV1 } from '@happier-dev/protocol/account/settings/accountSettingsStoredContentEnvelope';
@@ -21,7 +21,7 @@ import { mutateReservedAccountScopedKvRowInTx, readReservedAccountScopedKvRowInT
     type ReservedAccountScopedKvRowDomain } from '@/app/kv/reservedAccountScopedKvRow';
 
 /** Reads retain the original inventory; only current, complete records are new writes. */
-export const configuredAgentCatalogRowDomain: ReservedAccountScopedKvRowDomain<StoredAcpCatalogContentV1> = {
+export const configuredAgentCatalogRowDomain: ReservedAccountScopedKvRowDomain<StoredAcpCatalogContentV1, AcpCatalogContentV1> = {
     label: 'Configured ACP catalog',
     parseStoredEnvelope(value) {
         const parsed = StoredAcpCatalogContentV1Schema.safeParse(value);

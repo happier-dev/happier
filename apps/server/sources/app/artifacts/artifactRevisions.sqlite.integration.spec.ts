@@ -13,7 +13,9 @@ import { createSignedAccountContentBinding } from "@/testkit/accountEncryption";
 import { withAuthenticatedTestApp } from "@/app/api/testkit/sqliteFastify";
 import { artifactsRoutes } from "@/app/api/routes/artifacts/artifactsRoutes";
 import { readArtifactRecipientCensusInTx } from "./artifactAccessService";
-import { createArtifact } from './artifactWriteService';
+import { createArtifact, updateArtifact } from './artifactWriteService';
+import { eventRouter } from '@/app/events/connectionEventRouter';
+import { UpdateContainerSchema } from '@happier-dev/protocol/updates';
 import { storePlainArtifactDbBytes } from './artifactStoredContent';
 import { deleteAccountForErasure } from "@/app/plugins/data/accountDataErase";
 
@@ -35,7 +37,26 @@ describe("Artifact revisions and storage budgets (real SQLite)", () => {
         "x-happier-account-stored-content-protocol": String(CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION) });
     const body = (value: string) => encodePlainArtifactStoredContent({ body: value });
 
-    it.each(['revoked', 'owner', 'grantee'] as const)('readmits blob bytes after private-file IO (%s)', async caller => {
+    it('publishes both Artifact kinds when an admitted header edit changes its list membership', async () => {
+        const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const artifactId = crypto.randomUUID();
+        const bytes = (value: unknown) => privacyKit.decodeBase64(encodePlainArtifactStoredContent(value));
+        expect(await createArtifact({ actorUserId: owner.id, artifactId,
+            header: bytes({ kind: 'prompt_doc.v2', title: 'Document' }), body: bytes({ body: 'Content' }),
+            dataEncryptionKey: privacyKit.decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER) })).toMatchObject({ ok: true });
+        const emit = vi.fn();
+        eventRouter.setIo({ to: () => ({ emit, disconnectSockets: vi.fn() }) });
+        try {
+            expect(await updateArtifact({ actorUserId: owner.id, artifactId,
+                header: { bytes: bytes({ kind: 'bot_template.v1', title: 'Template' }), expectedVersion: 1 } })).toMatchObject({ ok: true });
+            const wakes = emit.mock.calls.map(([, wire]) => UpdateContainerSchema.parse(wire).body)
+                .filter(wake => wake.t === 'account-change');
+            expect(wakes).toHaveLength(1);
+            expect(wakes[0]).toMatchObject({ artifactKinds: ['v1:prompt:prompt_doc.v2', 'v1:other:bot_template.v1'] });
+        } finally { eventRouter.clearIo(); }
+    });
+
+    it.each(['revoked', 'owner', 'grantee'] as const)('finishes admitted blob bytes after private-file IO (%s)', async caller => {
         const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
         const grantee = await db.account.create({ data: { encryptionMode: 'plain' } });
         const id = crypto.randomUUID();
@@ -75,11 +96,9 @@ describe("Artifact revisions and storage budgets (real SQLite)", () => {
                 const result = await response;
                 if (caller === 'revoked') {
                     expect((await app.inject({ method: 'GET', url, headers: callerHeaders })).statusCode).toBe(404);
-                    expect(result.statusCode).toBe(404);
-                } else {
-                    expect(result.statusCode, result.body).toBe(200);
-                    expect(result.json()).toEqual({ blobId, content: { t: 'plain', v: privacyKit.encodeBase64(bytes) } });
                 }
+                expect(result.statusCode, result.body).toBe(200);
+                expect(result.json()).toEqual({ blobId, content: { t: 'plain', v: privacyKit.encodeBase64(bytes) } });
             } finally {
                 resume();
                 await response;

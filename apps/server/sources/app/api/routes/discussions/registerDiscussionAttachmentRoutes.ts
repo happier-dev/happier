@@ -15,8 +15,8 @@ import { resolveDiscussionContextInTx } from '@/app/discussions/access';
 import { createDiscussion, postDiscussionMessage, createDiscussionInTx, postPreparedDiscussionMessageInTx,
     prepareDiscussionCreationMutationAccounts, prepareDiscussionPostMutationAccounts } from '@/app/discussions/mutations';
 import { reconcileDiscussionCreationIdentityRace } from '@/app/discussions/createIdentityReconciliation';
-import { hasCurrentSessionActionRpcSourceBinding, hasCurrentSessionActionRpcSourceBindingInTx } from '@/app/api/socket/sessionScopedBinding';
-import { isSessionInputSourceCurrentInTx } from '@/app/session/messages/sessionMessageReply';
+import { hasCurrentSessionActionRpcSourceBinding } from '@/app/api/socket/sessionScopedBinding';
+import { admitInstalledDiscussionPublisherInTx } from '@/app/discussions/installedPublisherAdmission';
 import { getOrCreateServerIdentityId } from '@/app/serverIdentity/serverIdentity';
 import { readDiscussionAttachment, prepareDiscussionAttachmentWrite, discardDiscussionAttachmentCandidate,
     cleanupRejectedDiscussionAttachmentUploads, type PreparedDiscussionAttachmentWrite } from '@/app/discussions/attachmentService';
@@ -47,31 +47,29 @@ class DiscussionUploadRefusal extends Error {
 /** The installed host attests the admitted publication, never caller-authored provenance. */
 async function isCurrentAgentUploadInTx(tx: Tx, input: Readonly<{
     accountId: string; homeId: string; metadata: DiscussionAttachmentUploadRequestV1;
-    publication: DiscussionAgentPublisherPublicationV1; lockAuthority?: true;
+    publication: DiscussionAgentPublisherPublicationV1;
 }>): Promise<boolean> {
     const { metadata } = input;
     if (metadata.operation === 'encryption-conversion' || !metadata.agent) return false;
     const agent = metadata.agent;
     const publication = input.publication;
-    if (!await hasCurrentSessionActionRpcSourceBindingInTx(tx, { accountId: input.accountId,
-        machineId: agent.machineId, installationId: agent.installationId, sourceSessionId: publication.sessionId,
-        ...(input.lockAuthority ? { lockAuthority: true } : {}) })) return false;
+    const admitted = await admitInstalledDiscussionPublisherInTx(tx, { accountId: input.accountId,
+        machineId: agent.machineId, installationId: agent.installationId,
+        source: { sessionId: publication.sessionId, sourceSession: publication.sourceSession } });
+    if (!admitted.ok) return false;
     const machine = await tx.machine.findUnique({ where: { id: agent.machineId }, select: {
         installationId: true, installationPublicKey: true,
     } });
     if (!machine || machine.installationId !== agent.installationId || !machine.installationPublicKey
         || !verifyDiscussionAttachmentAgentUploadV1({ homeId: input.homeId, accountId: input.accountId,
             metadata, publicKey: machine.installationPublicKey, signature: agent.signature })) return false;
-    const session = await tx.session.findUnique({ where: { id: publication.sessionId }, select: { archivedAt: true } });
-    return Boolean(session && !session.archivedAt && (!publication.sourceSession
-        || publication.sourceSession.sourceSessionId === publication.sessionId
-            && await isSessionInputSourceCurrentInTx(tx, input.accountId, publication.sourceSession)));
+    return true;
 }
 
-/** Prepared bytes enter the same publisher transaction and retry reconciliation as socket posts. */
+/** Admitted bytes enter the same publisher transaction and retry reconciliation as socket posts. */
 async function publishAgentUpload(input: Readonly<{
-    accountId: string; homeId: string; authentication: SessionAccessAuthentication;
-    metadata: DiscussionAttachmentUploadRequestV1; publication: DiscussionAgentPublisherPublicationV1;
+    accountId: string; authentication: SessionAccessAuthentication;
+    publication: DiscussionAgentPublisherPublicationV1;
     preparedAttachments: readonly PreparedDiscussionAttachmentWrite[];
 }>) {
     const publication = input.publication;
@@ -83,24 +81,18 @@ async function publishAgentUpload(input: Readonly<{
             ...(publication.toolCallId ? { toolCallId: publication.toolCallId } : {}) } };
     if ('operation' in publication) {
         const creation = { ...actor, request: publication.request };
-        return reconcileDiscussionCreationIdentityRace(() => inTx(async tx => {
-            if (!await isCurrentAgentUploadInTx(tx, { ...input, lockAuthority: true }))
-                throw new DiscussionUploadRefusal('discussion_post_denied');
-            return createDiscussionInTx(tx, creation);
-        }, { prepare: () => prepareDiscussionCreationMutationAccounts(creation) }));
+        return reconcileDiscussionCreationIdentityRace(() => inTx(tx => createDiscussionInTx(tx, creation),
+            { prepare: () => prepareDiscussionCreationMutationAccounts(creation) }));
     }
     const append = { ...actor, discussionId: publication.discussionId, request: publication.request,
         ...(publication.draftReview ? { draftReview: publication.draftReview } : {}),
         ...(publication.terminalReturn ? { terminalReturn: publication.terminalReturn } : {}),
         ...(publication.replyReturn ? { replyReturn: publication.replyReturn } : {}) };
-    return inTx(async tx => {
-        if (!await isCurrentAgentUploadInTx(tx, { ...input, lockAuthority: true }))
-            throw new DiscussionUploadRefusal('discussion_post_denied');
-        return postPreparedDiscussionMessageInTx(tx, append);
-    }, { prepare: () => prepareDiscussionPostMutationAccounts(append) });
+    return inTx(tx => postPreparedDiscussionMessageInTx(tx, append),
+        { prepare: () => prepareDiscussionPostMutationAccounts(append) });
 }
 
-/** Initial byte admission narrows custody; the ordinary message writer re-admits at commit. */
+/** Byte admission binds custody and mode; the ordinary message writer owns append validity. */
 async function admitUpload(accountId: string, authentication: SessionAccessAuthentication, metadata: DiscussionAttachmentUploadRequestV1) {
     return inReadSnapshot(async tx => {
         if (metadata.operation === 'create') {
@@ -181,7 +173,6 @@ export function registerDiscussionAttachmentRoutes(app: Fastify,
                 if (!(request.body instanceof Readable)) throw new DiscussionUploadRefusal('discussion_invalid_content');
                 let ownerAccountId = request.userId;
                 let destination: DiscussionAttachmentUploadRequestV1 | undefined;
-                let agentHomeId: string | undefined;
                 let agentPublication: DiscussionAgentPublisherPublicationV1 | null = null;
                 const metadata = await readBinaryUploadFrameV1(request.body, {
                     metadataMaxBytes: SERVER_HTTP_REQUEST_MAX_BODY_UTF8_BYTES_V1,
@@ -192,10 +183,10 @@ export function registerDiscussionAttachmentRoutes(app: Fastify,
                             // Like the trusted socket publisher, this installed-host
                             // carrier attests upstream Action approval and provenance.
                             // Raw credentials cannot supply that publisher authority.
-                            if (request.authTokenKind !== 'account' || request.externalActionExecutionAuthorized)
+                            if ((request.authTokenKind !== 'account' && request.authTokenKind !== 'terminal')
+                                || request.externalActionExecutionAuthorized)
                                 throw new DiscussionUploadRefusal('discussion_post_denied');
                             const homeId = await getOrCreateServerIdentityId();
-                            agentHomeId = homeId;
                             const publication = readDiscussionAttachmentAgentPublicationV1(value);
                             if (!publication) throw new DiscussionUploadRefusal('discussion_post_denied');
                             agentPublication = publication;
@@ -264,9 +255,9 @@ export function registerDiscussionAttachmentRoutes(app: Fastify,
                 if (canceled) throw new DiscussionUploadRefusal('discussion_invalid_content');
                 if (metadata.operation === 'encryption-conversion') response = { statusCode: 200, body: conversionResult };
                 else {
-                    const result = metadata.agent && agentHomeId && agentPublication
-                        ? await publishAgentUpload({ accountId: request.userId, homeId: agentHomeId, authentication,
-                            metadata, publication: agentPublication, preparedAttachments: prepared })
+                    const result = metadata.agent && agentPublication
+                        ? await publishAgentUpload({ accountId: request.userId, authentication,
+                            publication: agentPublication, preparedAttachments: prepared })
                         : metadata.operation === 'create'
                         ? await createDiscussion({ actorAccountId: request.userId, authentication, request: metadata.input, preparedAttachments: prepared })
                         : await (() => {

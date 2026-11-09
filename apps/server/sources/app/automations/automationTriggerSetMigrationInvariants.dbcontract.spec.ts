@@ -1036,6 +1036,36 @@ describe(
             }
         });
 
+        it("keeps Machine-local catalog reporters distinct without changing existing status facts", async () => {
+            const fixture = await createMigrationInvariantFixture();
+            try {
+                const shared = {
+                    accountId: fixture.accountId, eventPluginId: EVENT_PLUGIN_ID,
+                    reporterMachineInstallationId: "installation",
+                    reporterMaterializationId: `daemon-selected:${EVENT_PLUGIN_ID}`,
+                    reporterSourceCustody: { kind: "bundled_first_party" },
+                    scopeKey: "checkpointedPull", observedRevision: 7n, adoptedRevision: 6n,
+                    state: "reconciling" as const, reportedAt: new Date(), revision: 3,
+                };
+                await db.automationEventSourceCatalogStatus.create({
+                    data: { ...shared, reporterMachineId: fixture.machineId },
+                });
+                await db.automationEventSourceCatalogStatus.create({
+                    data: { ...shared, reporterMachineId: `${fixture.machineId}-other` },
+                });
+                const rows = await db.automationEventSourceCatalogStatus.findMany({
+                    where: { accountId: fixture.accountId }, orderBy: { reporterMachineId: "asc" },
+                });
+                expect(rows).toHaveLength(2);
+                for (const row of rows) expect(row).toMatchObject(shared);
+                await expect(db.automationEventSourceCatalogStatus.create({
+                    data: { ...shared, reporterMachineId: fixture.machineId },
+                })).rejects.toMatchObject({ code: "P2002" });
+            } finally {
+                await fixture.cleanup();
+            }
+        });
+
         it("keeps case-variant author plugin identities distinct in SQL equality", async () => {
             const fixture = await createMigrationInvariantFixture();
             try {

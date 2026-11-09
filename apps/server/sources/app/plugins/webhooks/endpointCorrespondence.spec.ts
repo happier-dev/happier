@@ -75,7 +75,8 @@ describe("plugin webhook endpoint correspondence", () => {
             serverIdentityId: "server-1",
             accountId: "account-1",
             input: accountEndpointInput,
-        })).resolves.toEqual({ kind: "ready", webhookEndpointId: endpointId, revision: 2 });
+        })).resolves.toEqual({ kind: "ready", webhookEndpointId: endpointId, revision: 2, readiness: "ready",
+            contribution, targetMaterialization: target, sourceInstanceId: "source-1" });
         expect(mocks.endpointFindFirst).toHaveBeenCalledWith(expect.objectContaining({
             where: expect.objectContaining({
                 id: endpointId,
@@ -164,7 +165,8 @@ describe("plugin webhook endpoint correspondence", () => {
             serverIdentityId: "server-1",
             accountId: "account-1",
             input: accountEndpointInput,
-        })).resolves.toEqual({ kind: "ready", webhookEndpointId: endpointId, revision: 2 });
+        })).resolves.toEqual({ kind: "ready", webhookEndpointId: endpointId, revision: 2, readiness: "providerConfirmationRequired",
+            contribution, targetMaterialization: target, sourceInstanceId: "source-1" });
     });
 
     it("derives attachment from the one binding-availability projection, not a query predicate", async () => {

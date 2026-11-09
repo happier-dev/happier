@@ -1,5 +1,4 @@
 import { decodeBase64 } from "privacy-kit";
-import { isDeepStrictEqual } from "node:util";
 import { classifySessionDataKeyEnvelopeItemV1, decodeSessionDataKeyEnvelopeCursorV1, encodeSessionDataKeyEnvelopeCursorV1, PatchSessionDataKeyEnvelopesV1Schema, type SessionDataKeyEnvelopeErrorCodeV1, type SessionDataKeyEnvelopeItemV1, type SessionDataKeyEnvelopePageQueryV1, type SessionDataKeyEnvelopePageV1, type SessionDataKeyEnvelopeStateV1 } from '@happier-dev/protocol/sessions/encryption/sessionDataKeyEnvelopes';
 import { parseEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
 
@@ -16,7 +15,7 @@ import {
     resolveStructuralSessionAccessForAccountsInTx,
 } from "@/app/session/access/sessionAccess";
 import { inTx, type Tx } from "@/storage/inTx";
-import { readSnapshotWithCurrentAdmission } from "@/storage/readSnapshotWithCurrentAdmission";
+import { captureReadSnapshot } from "@/storage/captureReadSnapshot";
 import type { SessionAccessAuthentication } from "@/app/session/access/sessionAccessAuthentication";
 import { acquireSessionAccountCursorLocksInTx } from "@/app/session/changeTracking/acquireSessionAccountCursorLocksInTx";
 
@@ -195,7 +194,7 @@ export async function readSessionDataKeyEnvelopePage(input: Readonly<{
         return { ok: false, error: "invalid_cursor" };
     }
 
-    return await readSnapshotWithCurrentAdmission<SessionDataKeyEnvelopePageResult>(async tx => {
+    return await captureReadSnapshot<SessionDataKeyEnvelopePageResult>(async tx => {
         const authorization = await authorizeCollection(tx, input);
         if (!authorization.ok) return { ok: false, error: authorization.error };
         // A plain Session settles before any recipient key material is read.
@@ -242,26 +241,6 @@ export async function readSessionDataKeyEnvelopePage(input: Readonly<{
         }
 
         return { ok: true, page: { status: "required", summary, items, nextCursor } };
-    }, async (tx, captured) => {
-        if (!captured.ok) return captured;
-        const current = await authorizeCollection(tx, input);
-        if (!current.ok) return current;
-        if ((current.encryptionMode === "plain") !== (captured.page.status === "not_required")) {
-            return { ok: false, error: "session_data_key_unavailable" };
-        }
-        if (captured.page.status === "not_required") return captured;
-        const accountIds = captured.page.items.map(item => item.recipientAccountId);
-        const access = await resolveStructuralSessionAccessForAccountsInTx(tx, { sessionId: input.sessionId, accountIds });
-        const [accounts, envelopes] = await Promise.all([
-            tx.account.findMany({ where: { id: { in: accountIds } }, select: RECIPIENT_READINESS_SELECT }),
-            tx.sessionDataKeyEnvelope.findMany({ where: { sessionId: input.sessionId, recipientAccountId: { in: accountIds } },
-                select: { recipientAccountId: true, encryptedDataKey: true } }),
-        ]);
-        const stored = new Map(envelopes.map(row => [row.recipientAccountId, toBytes(row.encryptedDataKey)]));
-        const items = new Map(accounts.map(account => [account.id, projectAudienceItem(account, stored.get(account.id) ?? null)]));
-        if (captured.page.items.some(item => access.get(item.recipientAccountId)?.capabilities.readTranscript !== true
-            || !isDeepStrictEqual(items.get(item.recipientAccountId), item))) return { ok: false, error: "session_data_key_unavailable" };
-        return captured;
     });
 }
 

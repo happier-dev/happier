@@ -3,7 +3,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { db, initDbPostgres } from '@/storage/db';
 import { getDbProviderFromEnv } from '@/storage/prisma';
 import { createPresentUserSessionAccessAuthentication } from '@/app/session/access/sessionAccessAuthentication.testkit';
-import { applySessionTurnMutation, reassertSessionLatestTurnStatus } from '@/app/session/sessionWriteService';
+import { applySessionTurnMutation } from '@/app/session/sessionWriteService';
 
 describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('confirmed Session open issue projection (PostgreSQL)', () => {
     beforeAll(async () => {
@@ -34,8 +34,6 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('c
             expect(history).toHaveLength(1);
             expect(history[0]).toMatchObject({ status: 'failed', updatedAt: 101n });
             expect(JSON.parse(history[0]!.lastRuntimeIssueJson!)).toMatchObject(issue);
-            expect(await reassertSessionLatestTurnStatus({ actorUserId: owner.id, sessionId: session.id,
-                latestTurnStatus: 'failed', latestTurnStatusObservedAt: 101 })).toMatchObject({ ok: true, didApply: false, lastRuntimeIssue: null });
             expect((await db.session.findUniqueOrThrow({ where: { id: session.id } })).lastRuntimeIssue).toBeNull();
         } finally {
             await db.session.deleteMany({ where: { accountId: owner.id } });

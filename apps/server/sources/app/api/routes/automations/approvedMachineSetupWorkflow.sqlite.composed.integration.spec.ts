@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import tweetnacl from 'tweetnacl';
 import { afterAll, beforeAll, expect, it } from 'vitest';
 import {
@@ -18,6 +18,11 @@ import { installAxiosFastifyAdapter } from '../../../../../../cli/src/testkit/ht
 import { createCombinedMachineSetupActionDeps } from '../../../../../../cli/src/machines/setup/composeMachineSetup';
 import { createWorkflowRunStorageClient } from '../../../../../../cli/src/daemon/workflows/workflowRunStorageClient';
 import { signPluginInstallationPublisherHeader } from '../../../../../../cli/src/plugins/installations/publisherProof';
+import { createSignedAccountContentBinding } from '@/testkit/accountEncryption';
+import { createAccountScopedCryptoMaterialSnapshotV1 } from '@happier-dev/protocol/crypto/accountScopedCipher';
+import { deriveAccountEncryptionMigrationKeyFingerprints } from '@/app/encryption/accountEncryptionTransition';
+import { resolveWorkflowRunDataKeyV1 } from '@happier-dev/protocol/workflows/workflowRunDataKeyV1';
+import { openWorkflowAcceptedSnapshotStoredEnvelopeV1, parseWorkflowStoredContentEnvelopeV1 } from '@happier-dev/protocol/workflows/workflowStoredContentV1';
 import { createUnavailableActionTransportDeps } from '../../../../../../cli/src/testkit/actionTransportDeps';
 import { RpcHandlerManager } from '../../../../../../cli/src/api/rpc/RpcHandlerManager';
 import { authorizeMachineRpcRequest, verifyMachineRpcAdmissionCurrent } from '../../../../../../cli/src/api/machine/machineRpcAuthorization';
@@ -96,6 +101,189 @@ it('refuses a Use grantee Workflow Software Apply step at daemon ingress for mis
             await db.machineAccountGrant.update({ where: { machineId_accountId: { machineId: machine.id, accountId: actor.id } },
                 data: { accessLevel: 'admin' } });
             expect(await verify({ context: { ...context, role: 'manage' }, method })).toBe(true);
+        } finally { restore(); }
+    }, { authentication: 'real' });
+});
+
+it('starts an encrypted Wait through the recording HTTP transport in two storage round trips and rejoins the same sealed Run', async () => {
+    const machineKey = randomBytes(32);
+    const material = createAccountScopedCryptoMaterialSnapshotV1({ accountEncryptionMode: 'e2ee',
+        material: { type: 'dataKey', machineKey }, dataKeyPublicKey: tweetnacl.box.keyPair.fromSecretKey(machineKey).publicKey });
+    const account = await db.account.create({ data: { encryptionMode: 'e2ee',
+        ...createSignedAccountContentBinding(tweetnacl.box.keyPair.fromSecretKey(machineKey).publicKey) } });
+    const keys = tweetnacl.sign.keyPair();
+    const identity = { version: 1 as const, installationId: randomUUID(), createdAt: Date.now(),
+        publicKey: encodeBase64(keys.publicKey, 'base64url'), privateKey: encodeBase64(keys.secretKey, 'base64url') };
+    const machine = await db.machine.create({ data: { id: randomUUID(), accountId: account.id, active: true,
+        installationId: identity.installationId, installationPublicKey: new Uint8Array(keys.publicKey), metadata: '{}' } });
+    const token = await auth.createToken(account.id, undefined, { kind: 'account', authority: 'present_user' });
+    const encryption = { kind: 'available' as const, material, witness: { mode: 'e2ee' as const, version: account.seq,
+        contentKeyFingerprint: deriveAccountEncryptionMigrationKeyFingerprints(account).contentKeyFingerprint! } };
+    const requests: string[] = [];
+    const preparedGets: unknown[] = [];
+    const refusals: Array<{ operation: string; status: number; error: string }> = [];
+    let encryptionReads = 0;
+    let beforeAdmit: (() => Promise<void>) | undefined;
+    await withAuthenticatedTestApp(app => {
+        app.addHook('preHandler', async request => {
+            if (request.url === '/v3/automations/runs/workflow-storage') {
+                const body = request.body as { operation: string; prepareAdmission?: unknown };
+                requests.push(body.operation);
+                if (body.operation === 'get' && body.prepareAdmission !== undefined) preparedGets.push(body.prepareAdmission);
+                if (body.operation === 'admit') await beforeAdmit?.();
+            }
+        });
+        app.addHook('onSend', async (request, reply, payload) => {
+            if (request.url === '/v3/automations/runs/workflow-storage' && reply.statusCode >= 400 && typeof payload === 'string') {
+                const body = request.body as { operation: string };
+                const response = JSON.parse(payload) as { error: string };
+                refusals.push({ operation: body.operation, status: reply.statusCode, error: response.error });
+            }
+            return payload;
+        });
+        registerWorkflowRunStorageRoutes(app);
+    }, async app => {
+        const restore = installAxiosFastifyAdapter({ app, origin: 'http://wait-home.test' });
+        try {
+            const storage = createWorkflowRunStorageClient({ token, serverHttpBaseUrl: 'http://wait-home.test', machineId: machine.id,
+                createPublisherHeader: request => signPluginInstallationPublisherHeader({ ...request, identity, machineId: machine.id }) });
+            const ownerDeps: Parameters<typeof createWorkflowAccountRunActionOwner>[0] = { storage, resolveAccountId: async () => account.id,
+                definitions: { get: async ({ definitionId }) => ({ definitionId, revision: { headerVersion: 1, bodyVersion: 1 },
+                    definition: start.input.source.definition, metadata: { title: 'Private Wait' } }) },
+                resolveEncryption: async () => { encryptionReads++; return encryption; }, normalizeAbsolutePath: directory => directory, randomBytes,
+                prepareWorkspace: async ({ projectTarget }) => ({ ok: true, workspaceTarget: { project: {
+                    ...projectTarget, checkoutRootPath: projectTarget.directory,
+                } } }),
+                resolveMaterializationContext: async () => ({ effects: { resolveTargetAvailability: async () => true } }),
+            };
+            const owner = createWorkflowAccountRunActionOwner(ownerDeps);
+            const runId = randomUUID();
+            const start = { actionId: 'workflow.run.start' as const, input: { runId, source: { kind: 'inline' as const,
+                definition: { version: 1 as const, blocks: [{ kind: 'wait' as const, id: 'review',
+                    document: { text: 'Review this private result', references: [], attachments: [] } }] } } },
+                context: { surface: 'ui' as const, authority: 'present_user' as const, callerPermissionMode: 'default' as const,
+                    externalActionTarget: { kind: 'machine' as const, machineId: machine.id,
+                        project: { machineId: machine.id, directory: '/repo' } } } };
+            await expect(owner.execute(start)).resolves.toMatchObject({ admission: 'created', run: { id: runId, state: 'queued' } });
+            expect(requests).toEqual(['get', 'admit']);
+            expect(preparedGets).toEqual([{ sourceArtifactId: null }]);
+            expect(encryptionReads).toBe(1);
+            const stored = await storage.execute({ operation: 'get', runId,
+                prepareAdmission: { sourceArtifactId: randomUUID(), visibleTeamId: randomUUID() } });
+            const snapshot = stored as { acceptedEnvelope: string; keyCensus: Parameters<typeof resolveWorkflowRunDataKeyV1>[0]['census'] };
+            const openedKey = resolveWorkflowRunDataKeyV1({ encryption, census: snapshot.keyCensus });
+            expect(openedKey.kind).toBe('available');
+            if (openedKey.kind !== 'available' || openedKey.encryption.runCrypto.mode !== 'e2ee') throw new Error('encrypted_run_key_unavailable');
+            expect(snapshot.acceptedEnvelope).not.toContain('Review this private result');
+            expect(openWorkflowAcceptedSnapshotStoredEnvelopeV1({ mode: 'e2ee', runDataKey: openedKey.encryption.runCrypto.runDataKey,
+                binding: { v: 1, purpose: 'accepted_snapshot', accountId: account.id, runId },
+                envelope: parseWorkflowStoredContentEnvelopeV1(snapshot.acceptedEnvelope) }))
+                .toMatchObject({ kind: 'available', content: { materializedLeaves: [{ kind: 'wait', blockId: 'review' }] } });
+            requests.length = 0;
+            await expect(owner.execute(start)).resolves.toMatchObject({ admission: 'existing', run: { id: runId } });
+            expect(requests).toEqual(['get']);
+            expect((await db.automationRun.findUniqueOrThrow({ where: { id: runId } })).workflowAcceptedSnapshotEnvelope)
+                .toBe(snapshot.acceptedEnvelope);
+
+            const missingRunId = randomUUID();
+            await expect(storage.execute({ operation: 'get', runId: missingRunId }))
+                .rejects.toMatchObject({ response: { status: 404 } });
+            const foreign = await db.account.create({ data: { encryptionMode: 'e2ee', ...createSignedAccountContentBinding() } });
+            const foreignToken = await auth.createToken(foreign.id, undefined, { kind: 'account', authority: 'present_user' });
+            const foreignStorage = createWorkflowRunStorageClient({ token: foreignToken, serverHttpBaseUrl: 'http://wait-home.test' });
+            // Preparation cannot turn another person's existing private id into
+            // a missing Run, even when the caller supplies a different audience.
+            await expect(foreignStorage.execute({ operation: 'get', runId, prepareAdmission: {} }))
+                .rejects.toMatchObject({ response: { status: 404 } });
+            const deniedSourceRunId = randomUUID();
+            requests.length = 0;
+            await expect(owner.execute({ ...start, input: { ...start.input, runId: deniedSourceRunId,
+                source: { ...start.input.source, sourceArtifactId: randomUUID() } } }))
+                .rejects.toMatchObject({ code: 'run_not_found' });
+            expect(requests).toEqual(['get']);
+            const deniedTeamRunId = randomUUID();
+            requests.length = 0;
+            await expect(owner.execute({ ...start, input: { ...start.input, runId: deniedTeamRunId,
+                source: { ...start.input.source, visibleTeamId: randomUUID() } } }))
+                .rejects.toBeDefined();
+            expect(requests).toEqual(['get']);
+            expect(refusals.at(-1)).toEqual({ operation: 'get', status: 422, error: 'visible_team_not_granted' });
+
+            const source = await db.artifact.create({ data: { id: randomUUID(), accountId: foreign.id,
+                header: randomBytes(32), body: randomBytes(32), dataEncryptionKey: randomBytes(32) } });
+            await db.artifactAccountGrant.create({ data: { artifactId: source.id, accountId: account.id,
+                accessLevel: 'view', createdByAccountId: foreign.id } });
+            const changedSourceRunId = randomUUID();
+            requests.length = 0;
+            beforeAdmit = async () => { await db.artifactAccountGrant.deleteMany({ where: { artifactId: source.id, accountId: account.id } }); };
+            await expect(owner.execute({ ...start, input: { ...start.input, runId: changedSourceRunId,
+                source: { ...start.input.source, sourceArtifactId: source.id } } })).rejects.toBeDefined();
+            expect(requests).toEqual(['get', 'admit']);
+            expect(refusals.at(-1)).toEqual({ operation: 'admit', status: 404, error: 'run_not_found' });
+
+            const team = await db.team.create({ data: { name: 'Prepared Run audience' } });
+            await db.teamMembership.create({ data: { teamId: team.id, accountId: account.id, role: 'owner' } });
+            const teamSource = await db.artifact.create({ data: { id: randomUUID(), accountId: account.id,
+                header: randomBytes(32), body: randomBytes(32), dataEncryptionKey: randomBytes(32) } });
+            await db.artifactTeamGrant.create({ data: { artifactId: teamSource.id, teamId: team.id,
+                accessLevel: 'view', createdByAccountId: account.id } });
+            const changedTeamRunId = randomUUID();
+            requests.length = 0;
+            beforeAdmit = async () => { await db.artifactTeamGrant.deleteMany({ where: { artifactId: teamSource.id, teamId: team.id } }); };
+            await expect(owner.execute({ ...start, input: { ...start.input, runId: changedTeamRunId,
+                source: { ...start.input.source, sourceArtifactId: teamSource.id, visibleTeamId: team.id } } })).rejects.toBeDefined();
+            expect(requests).toEqual(['get', 'admit']);
+            expect(refusals.at(-1)).toEqual({ operation: 'admit', status: 422, error: 'visible_team_not_granted' });
+
+            const changedModeRunId = randomUUID();
+            requests.length = 0;
+            beforeAdmit = async () => { await db.account.update({ where: { id: account.id }, data: { encryptionMode: 'plain' } }); };
+            await expect(owner.execute({ ...start, input: { ...start.input, runId: changedModeRunId } }))
+                .rejects.toBeDefined();
+            expect(requests).toEqual(['get', 'admit', 'get']);
+            expect(refusals).toContainEqual({ operation: 'admit', status: 409, error: 'currentness_conflict' });
+            expect(await db.automationRun.count({ where: { id: { in: [deniedSourceRunId, deniedTeamRunId,
+                changedSourceRunId, changedTeamRunId, changedModeRunId] } } })).toBe(0);
+
+            beforeAdmit = undefined;
+            requests.length = 0;
+            preparedGets.length = 0;
+            let plainWitnessReads = 0;
+            const plainOwner = createWorkflowAccountRunActionOwner({ ...ownerDeps,
+                resolveEncryption: async () => {
+                    plainWitnessReads++;
+                    if (plainWitnessReads > 1) throw new Error('fresh_start_must_reuse_its_mode_witness');
+                    return { kind: 'available', witness: { mode: 'plain', version: account.seq, contentKeyFingerprint: null } };
+                },
+                randomBytes: () => { throw new Error('plain_start_must_not_allocate_keys'); },
+            });
+            const plainRunId = randomUUID();
+            const plainStart = { ...start, input: { ...start.input, runId: plainRunId } };
+            await expect(plainOwner.execute(plainStart)).resolves.toMatchObject({ admission: 'created', run: { id: plainRunId } });
+            expect(requests).toEqual(['get', 'admit']);
+            expect(preparedGets).toEqual([]);
+            expect(plainWitnessReads).toBe(1);
+            const plainSnapshot = await db.automationRun.findUniqueOrThrow({ where: { id: plainRunId } });
+            expect(parseWorkflowStoredContentEnvelopeV1(plainSnapshot.workflowAcceptedSnapshotEnvelope)).toMatchObject({ t: 'plain' });
+            requests.length = 0;
+            const rejoinOwner = createWorkflowAccountRunActionOwner({ ...ownerDeps,
+                resolveEncryption: async () => ({ kind: 'available', witness: { mode: 'plain', version: account.seq, contentKeyFingerprint: null } }),
+            });
+            await expect(rejoinOwner.execute(plainStart)).resolves.toMatchObject({ admission: 'existing', run: { id: plainRunId } });
+            expect(requests).toEqual(['get']);
+            expect(preparedGets).toEqual([]);
+            expect((await db.automationRun.findUniqueOrThrow({ where: { id: plainRunId } })).workflowAcceptedSnapshotEnvelope)
+                .toBe(plainSnapshot.workflowAcceptedSnapshotEnvelope);
+
+            requests.length = 0;
+            const unavailableRunId = randomUUID();
+            const unavailableOwner = createWorkflowAccountRunActionOwner({ ...ownerDeps,
+                resolveEncryption: async () => { throw new Error('account_mode_unavailable'); },
+            });
+            await expect(unavailableOwner.execute({ ...start, input: { ...start.input, runId: unavailableRunId } }))
+                .rejects.toThrow('account_mode_unavailable');
+            expect(requests).toEqual([]);
+            expect(await db.automationRun.findUnique({ where: { id: unavailableRunId } })).toBeNull();
         } finally { restore(); }
     }, { authentication: 'real' });
 });

@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createHash } from "node:crypto";
 import { copyFile, cp, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
@@ -9,6 +9,19 @@ import { PGlite } from "@electric-sql/pglite";
 
 import { runSqliteMigrationDeploy } from "./migrate.sqlite.deploy";
 import { applyPostgresMigrations, applySqliteMigrations } from "./prismaMigrations";
+import { createDbMaintenanceClient } from '../sources/storage/db';
+import { materializePluginCollectionContractsFromManifestTx } from '../sources/app/plugins/data/collections/contracts';
+import { measurePluginCollectionStoredRowEncodedBytes } from '../sources/app/plugins/data/collections/storedRowUsage';
+import { PLUGIN_COLLECTION_USAGE_EXPAND_MIGRATION, PLUGIN_COLLECTION_USAGE_BACKFILLED_MIGRATION, runPluginCollectionUsageBackfill } from './pluginCollectionUsageBackfill';
+import { runCommand } from './runCommand';
+import { applySqliteMigrationsIfNeeded } from '../sources/flavors/light/sqliteMigrations';
+
+// Native boundary adapter: exercise the Bun runtime entry with a real SQLite engine under Node.
+vi.mock('bun:sqlite', async () => {
+    const { createRequire } = await import('node:module');
+    const { DatabaseSync } = createRequire(import.meta.url)('node:sqlite') as { DatabaseSync: new(path: string) => NodeSqliteDatabase };
+    return { Database: class extends DatabaseSync { query(sql: string) { return this.prepare(sql); } } };
+});
 
 type NodeSqliteDatabase = Readonly<{
     exec: (sql: string) => void;
@@ -83,8 +96,91 @@ describe("migrate.sqlite.deploy.ts", () => {
     });
 
     afterEach(async () => {
+        vi.unstubAllGlobals();
+        vi.unstubAllEnvs();
         await rm(tmpDir, { recursive: true, force: true });
     });
+
+    it.each(['script', 'runtime'] as const)('backfills retained Collection rows through %s deployment and permits explicit repair', async entry => {
+        vi.stubEnv('HAPPIER_DB_PROVIDER', 'sqlite');
+        const sourceMigrationsDir = fileURLToPath(new URL('../prisma/sqlite/migrations/', import.meta.url));
+        const names = (await readdir(sourceMigrationsDir, { withFileTypes: true })).filter(entry => entry.isDirectory())
+            .map(entry => entry.name).sort();
+        const previous = names[names.indexOf(PLUGIN_COLLECTION_USAGE_EXPAND_MIGRATION) - 1]!;
+        await copyRealSqliteMigrationsThrough({ sourceDir: sourceMigrationsDir, destinationDir: migrationsDir, throughMigration: previous });
+        const databasePath = join(tmpDir, 'usage.sqlite');
+        const databaseUrl = `file:${databasePath}?connection_limit=1`;
+        const env = { HAPPY_SERVER_LIGHT_DATA_DIR: lightDataDir, HAPPIER_SERVER_LIGHT_DATA_DIR: lightDataDir, DATABASE_URL: databaseUrl };
+        await runSqliteMigrationDeploy({ env, serverRoot, runSchemaSync: async () => {} });
+        // The current generated client cannot select its new Account fields before EXPAND.
+        const legacy = new DatabaseSync(databasePath);
+        legacy.prepare('INSERT INTO "Account" ("id", "updatedAt") VALUES (?, CURRENT_TIMESTAMP)').run('retained');
+        legacy.prepare('INSERT INTO "Account" ("id", "updatedAt") VALUES (?, CURRENT_TIMESTAMP)').run('empty');
+        legacy.close();
+        const client = await createDbMaintenanceClient('sqlite', databaseUrl);
+        const contentEnvelope = { t: 'plain', v: { body: 'héllo 🌍', amount: 0.00001 } };
+        const projections = [{ fieldId: 'id', typedEncodedValue: JSON.stringify('live') }];
+        let contractId = '';
+        try {
+            const refs = await client.$transaction(tx => materializePluginCollectionContractsFromManifestTx({ tx, manifest: {
+                schemaVersion: 2, id: 'example.backfill', version: '1.0.0', displayName: 'Backfill',
+                engines: { happier: '^1.0.0' }, runtime: { apiVersion: 1 },
+                contributes: { accountCollections: [{ id: 'rows', schemaVersion: 1, rowIdField: 'id', serverReadable: ['id'], indexes: [],
+                    schema: { type: 'object', properties: { id: { type: 'string' }, body: { type: 'string' }, amount: { type: 'number' } }, required: ['id', 'body', 'amount'], additionalProperties: false },
+                }] },
+            } }));
+            const contract = await client.pluginCollectionContract.findFirstOrThrow({ where: { pluginId: 'example.backfill' } });
+            contractId = contract.id;
+            const row = await client.pluginCollectionRow.create({ data: { accountId: 'retained', pluginId: 'example.backfill', collectionId: 'rows', rowId: 'live',
+                revision: 1, schemaVersion: 1, contractId, contractDigest: refs[0]!.contractDigest, contentEnvelope } });
+            await client.pluginCollectionProjection.create({ data: { ...projections[0]!, rowDbId: row.id, accountId: 'retained', pluginId: 'example.backfill', collectionId: 'rows', rowId: 'live', rowRevision: 1 } });
+            await client.pluginCollectionRow.create({ data: { accountId: 'retained', pluginId: 'example.backfill', collectionId: 'rows', rowId: 'deleted',
+                revision: 1, schemaVersion: 1, contractId, contractDigest: refs[0]!.contractDigest, contentEnvelope, deletedAt: new Date() } });
+        } finally { await client.$disconnect(); }
+        for (const name of [PLUGIN_COLLECTION_USAGE_EXPAND_MIGRATION, PLUGIN_COLLECTION_USAGE_BACKFILLED_MIGRATION]) {
+            await cp(join(sourceMigrationsDir, name), join(migrationsDir, name), { recursive: true });
+        }
+        const deploy = async () => {
+            if (entry === 'script') return runSqliteMigrationDeploy({ env, serverRoot, runSchemaSync: async () => {} });
+            vi.stubGlobal('Bun', {});
+            return applySqliteMigrationsIfNeeded({ env: { ...env, HAPPIER_SQLITE_AUTO_MIGRATE: '1', HAPPIER_SQLITE_MIGRATIONS_DIR: migrationsDir,
+                HAPPIER_UPDATER_FORWARD_RECOVERY_CAPABILITY: 'personal-home-update-record-v1' }, dataDir: lightDataDir });
+        };
+        const deployed = await deploy();
+        expect(deployed.applied).toEqual([PLUGIN_COLLECTION_USAGE_EXPAND_MIGRATION, PLUGIN_COLLECTION_USAGE_BACKFILLED_MIGRATION]);
+        const verify = await createDbMaintenanceClient('sqlite', databaseUrl);
+        try {
+            const bytes = BigInt(measurePluginCollectionStoredRowEncodedBytes({ rowId: 'live', contentEnvelope, projections }));
+            expect(await verify.account.findUniqueOrThrow({ where: { id: 'retained' }, select: { pluginCollectionRows: true, pluginCollectionEncodedBytes: true } }))
+                .toEqual({ pluginCollectionRows: 1n, pluginCollectionEncodedBytes: bytes });
+            expect(await verify.pluginCollectionUsage.findMany({ select: { rows: true, encodedBytes: true } })).toEqual([{ rows: 1n, encodedBytes: bytes }]);
+            expect(await verify.pluginCollectionContractUsage.findMany({ select: { contractId: true, rows: true } })).toEqual([{ contractId, rows: 1n }]);
+            expect(await verify.account.findUniqueOrThrow({ where: { id: 'empty' }, select: { pluginCollectionRows: true, pluginCollectionEncodedBytes: true } }))
+                .toEqual({ pluginCollectionRows: 0n, pluginCollectionEncodedBytes: 0n });
+            await expect(deploy()).resolves.toEqual({ applied: [] });
+            await verify.pluginCollectionRow.update({ where: { accountId_pluginId_collectionId_rowId: { accountId: 'retained', pluginId: 'example.backfill', collectionId: 'rows', rowId: 'live' } }, data: { contentEnvelope: { t: 'plain', v: { body: 'old writer changed this' } } } });
+            // A process interrupted after EXPAND/backfill has no completion ledger row.
+            await verify.$executeRawUnsafe('DELETE FROM _prisma_migrations WHERE migration_name = ?', PLUGIN_COLLECTION_USAGE_BACKFILLED_MIGRATION);
+            await expect(deploy())
+                .resolves.toEqual({ applied: [PLUGIN_COLLECTION_USAGE_BACKFILLED_MIGRATION] });
+            const repaired = await verify.account.findUniqueOrThrow({ where: { id: 'retained' }, select: { pluginCollectionRows: true, pluginCollectionEncodedBytes: true } });
+            expect(repaired.pluginCollectionRows).toBe(1n);
+            expect(repaired.pluginCollectionEncodedBytes).not.toBe(bytes);
+            await runPluginCollectionUsageBackfill({ provider: 'sqlite', databaseUrl });
+            expect(await verify.account.findUniqueOrThrow({ where: { id: 'retained' }, select: { pluginCollectionRows: true, pluginCollectionEncodedBytes: true } })).toEqual(repaired);
+            const commandEnvelope = { t: 'plain', v: { body: 'another old writer changed this before the command' } };
+            await verify.pluginCollectionRow.update({ where: { accountId_pluginId_collectionId_rowId: {
+                accountId: 'retained', pluginId: 'example.backfill', collectionId: 'rows', rowId: 'live',
+            } }, data: { contentEnvelope: commandEnvelope } });
+            await runCommand(process.execPath, ['./scripts/runTsx.mjs', '--tsconfig', './tsconfig.json', './scripts/pluginCollectionUsageBackfill.ts'],
+                { ...process.env, HAPPIER_DB_PROVIDER: 'sqlite', DATABASE_URL: databaseUrl },
+                { cwd: fileURLToPath(new URL('../', import.meta.url)) });
+            expect(await verify.account.findUniqueOrThrow({ where: { id: 'retained' }, select: { pluginCollectionRows: true, pluginCollectionEncodedBytes: true } }))
+                .toEqual({ pluginCollectionRows: 1n, pluginCollectionEncodedBytes: BigInt(measurePluginCollectionStoredRowEncodedBytes({
+                    rowId: 'live', contentEnvelope: commandEnvelope, projections,
+                })) });
+        } finally { await verify.$disconnect(); }
+    }, 120_000);
 
     it("applies through the real Node adapter with the URL busy timeout", async () => {
         const migrationName = "20260101000000_first";
@@ -115,7 +211,7 @@ describe("migrate.sqlite.deploy.ts", () => {
 
         const databasePath = join(lightDataDir, "happier-server-light.sqlite");
         expect(env.DATABASE_URL).toBe(
-            `file:${databasePath}?socket_timeout=30&connection_limit=4`,
+            `file:${databasePath}?socket_timeout=30&connection_limit=1`,
         );
         const db = new DatabaseSync(databasePath);
         try {

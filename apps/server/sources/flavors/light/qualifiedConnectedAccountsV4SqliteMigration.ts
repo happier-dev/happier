@@ -6,6 +6,25 @@ import {
 } from "@/app/api/routes/connect/qualifiedConnectedAccounts/identity";
 
 import type { SqliteMigrationExecutor } from "./sqliteMigrations";
+import { createPluginWebhookCheckIdDigestV1 } from '@/app/plugins/webhooks/checkIdDigest';
+
+export const pluginWebhookCheckIdentityMigrationName = '20261101151500_plugin_webhook_check_identity';
+export const pluginWebhookCheckIdentityPreparationDirective = 'SELECT happier_prepare_plugin_webhook_check_identity();';
+
+async function preparePluginWebhookCheckIdentity(executor: SqliteMigrationExecutor): Promise<void> {
+    if (!executor.queryRows || !executor.run) {
+        throw new Error('[sqlite-migrations] webhook check identity requires canonical query/run support');
+    }
+    await executor.exec('ALTER TABLE "PluginWebhookEndpoint" ADD COLUMN "checkIdDigest" TEXT;');
+    const rows = await executor.queryRows('SELECT "id", "checkId" FROM "PluginWebhookEndpoint"');
+    for (const row of rows) {
+        if (typeof row.id !== 'string' || typeof row.checkId !== 'string') {
+            throw new Error('[sqlite-migrations] webhook endpoint has invalid check identity');
+        }
+        await executor.run('UPDATE "PluginWebhookEndpoint" SET "checkIdDigest" = ? WHERE "id" = ?',
+            [createPluginWebhookCheckIdDigestV1(row.checkId), row.id]);
+    }
+}
 
 export const qualifiedConnectedAccountsV4MigrationName =
     "20260725100000_activate_qualified_connected_accounts_v4";
@@ -388,6 +407,16 @@ export async function prepareSqliteMigration(
     executor: SqliteMigrationExecutor,
 ): Promise<string> {
     const trimmed = sql.trimStart();
+    if (migrationName === pluginWebhookCheckIdentityMigrationName) {
+        if (!trimmed.startsWith(pluginWebhookCheckIdentityPreparationDirective)) {
+            throw new Error(`[sqlite-migrations] ${migrationName} is missing its required preparation directive`);
+        }
+        await preparePluginWebhookCheckIdentity(executor);
+        return trimmed.slice(pluginWebhookCheckIdentityPreparationDirective.length).trimStart();
+    }
+    if (sql.includes(pluginWebhookCheckIdentityPreparationDirective)) {
+        throw new Error(`[sqlite-migrations] webhook check identity preparation directive is not allowed in ${migrationName}`);
+    }
     const hasDirective = trimmed.startsWith(
         qualifiedConnectedAccountsV4PreparationDirective,
     );

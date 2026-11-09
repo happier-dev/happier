@@ -4,7 +4,6 @@ import { PROVIDER_BROKER_ROUTE_AUDIENCE_V1, ProviderBrokerOpenRequestV1Schema, P
 import { DIRECT_ROUTE_GRANT_TTL_MS } from '@happier-dev/protocol/machines/peer/mediation/directRouteGrantCachePolicyV1';
 import { IrohEndpointDescriptorV1Schema } from '@happier-dev/protocol/connectivity/iroh/endpointDescriptorV1';
 import { type MachineIrohEndpointAuthorityV1 } from '@happier-dev/protocol/machines/operationProtocolCapabilitiesV1';
-import { type AuthTokenAuthenticationEvidenceV1 } from '@happier-dev/protocol/auth/authToken';
 import { TeamCredentialRequestPolicyV1Schema } from '@happier-dev/protocol/teams/credentials/resourceV1';
 import { type TeamCredentialSourceBindingV1 } from '@happier-dev/protocol/teams/credentials/sourceBindingV1';
 import { readTeamCredentialSourceBinding } from './sourceBindingRead';
@@ -13,6 +12,7 @@ import { type TeamCredentialUsageLimitDenialV1 } from '@happier-dev/protocol/tea
 import type { VerifiedEphemeralSessionRunnerPrincipal } from '@happier-dev/protocol/ephemeralRunner/principal';
 
 import { auth } from '@/app/auth/auth';
+import { readActiveBrokerJobRowsInTx } from './activeBrokerJobRead';
 import { logger } from '@/utils/logging/log';
 import { classifyMachineDaemonPresence, type MachineDaemonPresenceInventory } from '@/app/machines/machineDaemonPresence';
 import type { SessionAccessAuthentication } from '@/app/session/access/sessionAccessAuthentication';
@@ -22,14 +22,12 @@ import { readSessionAccountCursorAudienceInTx } from '@/app/session/changeTracki
 import { resolveTeamCredentialBrokerMachineForOpenInTx } from './brokerMachineEligibility';
 import { readTeamCredentialBrokerPresenceDemand, resolveTeamCredentialBrokerPlacementInTx, resolveTeamCredentialBrokerPlacementFingerprint, type TeamCredentialBrokerPlacementResolution } from './brokerPlacementResolver';
 import { resolveTeamCredentialEntitlementInTx } from './resourceAccess';
-import { resolveTeamCredentialSourceMemberCurrentnessInTx } from './resourceSourceResolver';
 import { admitTeamCredentialOperationBindingInTx, type TeamCredentialOperationConsumer } from './sessionBinding';
 import { admitTeamCredentialUsageInTx } from './teamCredentialUsageAdmission';
 import { signProviderBrokerRouteGrantV1 } from '@/app/machines/peer/mediation/signProviderBrokerRouteGrantV1';
 import { projectTeamCredentialProviderModels } from './providerModelProjection';
 import type { MachinePoolCandidateSnapshot } from '@/app/machines/pools/machinePoolService';
 import { verifyRunnerBrokerOpenSelectionInTx } from '@/app/ephemeralRunner/runnerBrokerOpenSelection';
-import { readRunnerActivationAuthentication } from '@/app/ephemeralRunner/activationAuthentication';
 import { readRunnerCreatorCurrentnessInTx } from '@/app/ephemeralRunner/activationCurrentness';
 import { acquireProviderBrokerConsumerAdmissionInTx, admitProviderBrokerConsumerInTx, admitProviderBrokerTopology, readProviderBrokerInitiatorEndpointInTx } from '@/app/providers/brokerConsumerAdmission';
 
@@ -79,13 +77,19 @@ export const PROVIDER_BROKER_ROUTE_GRANT_TTL_MS =
 type BrokerRefusalReason = Extract<TeamCredentialBrokerPlacementResolution, { error: 'broker_unavailable' }>['refusalReason']
     | 'binding_broker_unavailable' | 'broker_endpoint_changed' | 'preparation_endpoint_changed'
     | 'initiator_endpoint_missing' | 'initiator_offline' | 'initiator_presence_unknown'
-    | 'placement_endpoint_missing' | 'presence_read_failed' | 'eligibility_read_failed' | 'eligibility_aborted';
+    | 'placement_endpoint_missing' | 'presence_read_failed' | 'eligibility_read_failed' | 'eligibility_aborted'
+    | 'broker_custodian_mismatch' | 'binding_resource_mismatch' | 'binding_delivery_mismatch'
+    | 'binding_broker_entitlement_missing' | 'runner_selection_missing' | 'resource_lookup_missing'
+    | 'execution_run_resource_entitlement_unavailable' | 'execution_run_broker_entitlement_missing'
+    | 'consumer_machine_access_missing';
 
 type Failure = Readonly<{
     ok: false;
     reasonCode: ProviderBrokerAdmissionFailureCodeV1 | 'token_limit_unavailable';
     usageLimit?: TeamCredentialUsageLimitDenialV1;
-    refusalReason?: BrokerRefusalReason;
+    refusalReason?: BrokerRefusalReason
+        | Exclude<SessionTeamCredentialBindingRejectionV1, 'broker_unavailable'>
+        | 'binding_missing';
 }>;
 
 type PublicFailure = Omit<Failure, 'refusalReason'>;
@@ -198,6 +202,27 @@ function brokerUnavailable(refusalReason: BrokerRefusalReason): Failure {
     return { ok: false, reasonCode: 'broker_unavailable', refusalReason };
 }
 
+function closedFailure(reasonCode: Failure['reasonCode'], refusalReason: BrokerRefusalReason): Failure {
+    return { ok: false, reasonCode, refusalReason };
+}
+
+function consumerAdmissionFailure(reasonCode: ProviderBrokerAdmissionFailureCodeV1): Failure {
+    return reasonCode === 'resource_forbidden'
+        ? closedFailure(reasonCode, 'consumer_machine_access_missing')
+        : failure(reasonCode);
+}
+
+function bindingFailure(
+    reasonCode: Failure['reasonCode'],
+    refusalReason: SessionTeamCredentialBindingRejectionV1 | 'binding_missing',
+): Failure {
+    return {
+        ok: false,
+        reasonCode,
+        refusalReason: refusalReason === 'broker_unavailable' ? 'binding_broker_unavailable' : refusalReason,
+    };
+}
+
 /** Emit only the settled refusal, outside replayable transactions, and keep diagnostics off the wire. */
 function reportBrokerAdmissionFailure(operation: 'open' | 'catalog' | 'request', result: Failure): PublicFailure {
     const { refusalReason, ...response } = result;
@@ -250,6 +275,8 @@ function brokerFailureForBindingRejection(
     reason: SessionTeamCredentialBindingRejectionV1 | 'binding_missing',
 ): Failure['reasonCode'] {
     switch (reason) {
+        case 'connected_service_credential_reconnect_required':
+            return reason;
         case 'resource_changed':
             return 'resource_changed';
         case 'broker_unavailable':
@@ -286,7 +313,9 @@ async function authorizeCurrentBrokerOperationInTx(
         : input.executionRun?.parentSessionId ?? null;
     const consumer = brokerOperationConsumer(grant.consumer, input.executionRun ?? null, grant.resourceId);
     if ('ok' in consumer) return consumer;
-    if (grant.target.custodianAccountId !== input.authenticatedBrokerAccountId) return failure('resource_forbidden');
+    if (grant.target.custodianAccountId !== input.authenticatedBrokerAccountId) {
+        return closedFailure('resource_forbidden', 'broker_custodian_mismatch');
+    }
     const initiatorEndpoint = await readProviderBrokerInitiatorEndpointInTx(tx, {
         accountId: grant.initiator.accountId,
         machineId: grant.initiator.machineId,
@@ -300,21 +329,17 @@ async function authorizeCurrentBrokerOperationInTx(
         consumer: grant.consumer, executionRun: input.executionRun ?? null,
     });
     if (!consumerAdmission.ok) {
-        return failure(consumerAdmission.reasonCode);
+        return consumerAdmissionFailure(consumerAdmission.reasonCode);
     }
     const session = consumerAdmission.session;
-    // The Team qualification of this request is always re-evaluated now, for
-    // the exact credential this operation rests on. A Runner presents its
-    // activation's persisted credential evidence. Every other initiator reaches
-    // this leg through the custodian's broker Machine, so it presents the
-    // provenance of the credential that opened the operation — the evidence
-    // the Home verified and carried in the signed authority. That provenance is
-    // an immutable fact, not a signed decision: the canonical qualifier checks
-    // it against the Team's current policy and the evidence's current
-    // identity/connection state, so a restriction or revocation ends the next
-    // request on an existing stream (`04-private-iroh-broker-transport.md` §5.6).
-    let authenticationEvidence: readonly AuthTokenAuthenticationEvidenceV1[] | undefined =
-        grant.verifiedCredentialEvidence?.evidence;
+    // This is the custodian's retained check of an already-admitted operation
+    // (the catalog authorization run on Team wakes and stream close). Member,
+    // grant, resource, Session and Machine revocation still withdraw the route
+    // here, and a revoked credential ends it through the token epoch below.
+    // The Team sign-in policy was qualified when the operation was admitted
+    // and is not re-evaluated here: tightening it applies to new opens, grant
+    // refreshes and turns (owner 10-29 next-boundary rule; ORCH 2026-10-30
+    // 22:00Z). Model requests use only the active-job lookup below.
     if (initiatorEndpoint.machineKind === 'ephemeral_session_runner') {
         if (sessionId === null) return failure('operation_not_current');
         const activation = await tx.ephemeralRunnerActivation.findFirst({
@@ -331,7 +356,6 @@ async function authorizeCurrentBrokerOperationInTx(
             creatorCurrentness.status !== 'ready'
             || creatorCurrentness.creatorTokenEpoch !== activation.creatorTokenEpoch
         ) return failure('operation_not_current');
-        authenticationEvidence = readRunnerActivationAuthentication(activation, process.env).authenticationEvidence;
     }
     // One admission, at the Session-binding owner, for every consumer. It
     // decides the resource, entitlement, Team qualification, the session-use
@@ -351,18 +375,23 @@ async function authorizeCurrentBrokerOperationInTx(
         deliveryMode: 'brokered',
         expectedBrokerMachineId: grant.target.machineId,
         brokerSelection: 'established',
+        qualifiedAtAdmission: true,
         authentication: {
             env: process.env,
             authority: 'account_automation',
-            authenticationEvidence,
+            authenticationEvidence: grant.verifiedCredentialEvidence?.evidence,
         },
     });
-    if (!admitted.ok) return failure(brokerFailureForBindingRejection(admitted.reason));
+    if (!admitted.ok) return bindingFailure(brokerFailureForBindingRejection(admitted.reason), admitted.reason);
     if (!await auth.isSignedCredentialCurrent(tx, grant.initiator.accountId, grant.initiatorTokenEpoch)) {
         return failure('operation_not_current');
     }
-    if (admitted.binding.resourceId !== grant.resourceId
-        || admitted.binding.deliveryMode !== 'brokered') return failure('resource_forbidden');
+    if (admitted.binding.resourceId !== grant.resourceId) {
+        return closedFailure('resource_forbidden', 'binding_resource_mismatch');
+    }
+    if (admitted.binding.deliveryMode !== 'brokered') {
+        return closedFailure('resource_forbidden', 'binding_delivery_mismatch');
+    }
     if (admitted.brokerPlacementFingerprint !== grant.brokerPlacementFingerprint) {
         return failure('resource_changed');
     }
@@ -383,7 +412,9 @@ async function authorizeCurrentBrokerOperationInTx(
     if (admitted.binding.resourceRevision !== input.expectedResourceRevision) {
         return failure('resource_changed');
     }
-    if (!admitted.entitlement.mayBroker) return failure('resource_forbidden');
+    if (!admitted.entitlement.mayBroker) {
+        return closedFailure('resource_forbidden', 'binding_broker_entitlement_missing');
+    }
     // Presence and the Machine's own endpoint authority are this route's own
     // requirement — the private tunnel cannot be dialled without them — so they
     // stay here rather than in the durable admission owner.
@@ -666,7 +697,7 @@ async function authorizeTeamCredentialProviderBrokerOpenDurableInTx(
         accountId: input.actorAccountId, initiatorMachineId: request.initiatorMachineId,
         consumer: request.consumer, executionRun,
     });
-    if (!consumerAdmission.ok) return consumerAdmission;
+    if (!consumerAdmission.ok) return consumerAdmissionFailure(consumerAdmission.reasonCode);
     // This operation's broker Machine, when it already has one: a refresh
     // renews the target its original open selected, and a Runner renews the
     // one its reviewed activation froze. Both are resolved before admission so
@@ -683,7 +714,9 @@ async function authorizeTeamCredentialProviderBrokerOpenDurableInTx(
             request,
         })
         : null;
-    if (input.runnerPrincipal && !runnerSelection) return failure('resource_forbidden');
+    if (input.runnerPrincipal && !runnerSelection) {
+        return closedFailure('resource_forbidden', 'runner_selection_missing');
+    }
     const pinnedRefreshMachineId = refreshAuthority?.payload.target.machineId ?? null;
     if (runnerSelection !== null && pinnedRefreshMachineId !== null
         && pinnedRefreshMachineId !== runnerSelection.brokerMachineId) return failure('invalid_request');
@@ -694,6 +727,10 @@ async function authorizeTeamCredentialProviderBrokerOpenDurableInTx(
             expectedBrokerMachineId: establishedBrokerMachineId,
             brokerSelection: 'established' as const,
         };
+    // A grant refresh (the signed route's expiry) is a new admission: it is the
+    // operation's next secret acquisition, a natural boundary, so the binding
+    // owner re-qualifies the caller's credential against the current Team
+    // sign-in policy here, unlike the retained check of an admitted route.
     // A genuinely fresh open pins the exact revision its owner accepted: that
     // is the selection CAS. An established claim renews against the resource as
     // it is now, so a harmless policy edit can neither strand it nor force the
@@ -720,13 +757,22 @@ async function authorizeTeamCredentialProviderBrokerOpenDurableInTx(
         // `providerBrokerRoutes.spec.ts` pins. A refresh already presents a
         // Home-signed authority naming that exact resource and Machine, so it
         // discloses nothing new and reports the precise reason the rest of this
-        // route reports, through the one mapping owner.
-        return failure(refreshAuthority !== null
-            ? brokerFailureForBindingRejection(admitted.reason)
-            : admitted.reason === 'resource_changed' ? 'resource_changed' : 'resource_forbidden');
+        // route reports, through the one mapping owner. Authentication failure
+        // is also precise: the binding owner observes it only after entitlement
+        // and Team qualification have admitted this caller's exact source.
+        return bindingFailure(
+            refreshAuthority !== null || admitted.reason === 'connected_service_credential_reconnect_required'
+                ? brokerFailureForBindingRejection(admitted.reason)
+                : admitted.reason === 'resource_changed' ? 'resource_changed' : 'resource_forbidden',
+            admitted.reason,
+        );
     }
-    if (admitted.binding.resourceId !== request.resourceId
-        || admitted.binding.deliveryMode !== 'brokered') return failure('resource_forbidden');
+    if (admitted.binding.resourceId !== request.resourceId) {
+        return closedFailure('resource_forbidden', 'binding_resource_mismatch');
+    }
+    if (admitted.binding.deliveryMode !== 'brokered') {
+        return closedFailure('resource_forbidden', 'binding_delivery_mismatch');
+    }
     if (refreshAuthority !== null
         && admitted.brokerPlacementFingerprint !== refreshAuthority.payload.brokerPlacementFingerprint) {
         return failure('resource_changed');
@@ -734,7 +780,9 @@ async function authorizeTeamCredentialProviderBrokerOpenDurableInTx(
     if (pinsRequestedRevision && admitted.binding.resourceRevision !== request.expectedResourceRevision) {
         return failure('resource_changed');
     }
-    if (!admitted.entitlement.mayBroker) return failure('resource_forbidden');
+    if (!admitted.entitlement.mayBroker) {
+        return closedFailure('resource_forbidden', 'binding_broker_entitlement_missing');
+    }
 
     const resource = await tx.teamCredentialResource.findUnique({
         where: { id: request.resourceId },
@@ -748,7 +796,7 @@ async function authorizeTeamCredentialProviderBrokerOpenDurableInTx(
             requestPolicyJson: true,
         },
     });
-    if (!resource) return failure('resource_forbidden');
+    if (!resource) return closedFailure('resource_forbidden', 'resource_lookup_missing');
     if (resource.custodianAccountId !== resourceIdentity?.custodianAccountId) {
         throw new TransactionReplayRequiredError('transaction-account-audience-changed');
     }
@@ -938,8 +986,10 @@ function finalizePreparedBrokerOpen(
                 ? { executionRunOccurrenceId: prepared.executionRunOccurrenceId! }
                 : {}),
             application: selection.application,
-            // Provenance of the exact credential that opened this operation,
-            // re-qualified against current policy on every later request.
+            // Provenance of the exact credential that opened this operation.
+            // It is qualified here, at admission; the retained check and model
+            // requests do not re-qualify it (sign-in policy changes apply to
+            // new opens, grant refreshes and turns).
             ...(input.authentication.authenticationEvidence
                 && input.authentication.authenticationEvidence.length > 0
                 ? {
@@ -986,7 +1036,12 @@ async function preauthorizeTeamCredentialProviderBrokerOpen(
             resourceId: request.resourceId,
             accountId: input.actorAccountId,
         }));
-        if (!entitlement.ok || !entitlement.mayBroker) return failure('resource_forbidden');
+        if (!entitlement.ok) {
+            return closedFailure('resource_forbidden', 'execution_run_resource_entitlement_unavailable');
+        }
+        if (!entitlement.mayBroker) {
+            return closedFailure('resource_forbidden', 'execution_run_broker_entitlement_missing');
+        }
         // A renewal adopts the current resource; only a fresh open pins the
         // revision its owner accepted.
         if (request.refreshAuthority === undefined
@@ -1161,16 +1216,16 @@ export async function openRunnerTeamCredentialProviderBroker(
 }
 
 /**
- * The one Home-side per-request admission owner. The target daemon account is
- * authenticated out of band; the signed requester identity is then rechecked
- * against current Session, resource, source and exact-Machine facts in this
- * transaction before the immutable request-count event is written.
+ * The one Home-side per-request admission owner. The broker job was admitted
+ * once, by its signed open (and, for generation, by the Session turn the
+ * Session-binding owner admitted at turn begin). Each model request therefore
+ * reads only whether that admitted job is still active, then writes the
+ * immutable request-count event (usage accounting and limits stay per request).
  */
 type TeamCredentialProviderBrokerRequestAdmissionInput = Readonly<{
     authenticatedBrokerAccountId: string;
     request: ProviderBrokerRequestAdmissionV1;
     observedAt: Date;
-    readCurrentBrokerPresence: () => Promise<MachineDaemonPresenceInventory>;
     verifyAuthority: (authority: SignedProviderBrokerRouteGrantV1) => boolean;
     resolveExecutionRunCurrentness?: TeamCredentialExecutionRunCurrentnessResolver;
 }>;
@@ -1200,35 +1255,143 @@ async function admitTeamCredentialProviderBrokerRequestUnreported(
         if (!current.ok) return current;
         executionRun = current;
     }
-    let brokerPresence: MachineDaemonPresenceInventory;
-    try {
-        brokerPresence = await input.readCurrentBrokerPresence();
-    } catch {
-        return brokerUnavailable('presence_read_failed');
-    }
     return await inTx(tx => admitTeamCredentialProviderBrokerRequestInTx(
         tx,
-        { ...input, brokerPresence },
+        input,
         parsed.data,
         executionRun,
     ), { isolationLevel: "Serializable" /* Usage limits are summed before a distinct request fact is admitted. */ });
 }
 
+type ActiveBrokerJob = Readonly<{
+    ok: true;
+    sessionId: string | null;
+    storageAccountId: string;
+    turnId: string | null;
+    source: TeamCredentialSourceBindingV1;
+}>;
+
+/**
+ * "This admitted broker job is still active" (owner rulings 10-29/10-30).
+ * Requester permission — Team entitlement, qualification, Session-use policy,
+ * Machine access, placement eligibility — was decided once when the job was
+ * admitted and is not re-evaluated per model request. Revoking it withdraws the
+ * custodian's route through the Team-change wake (the custodian's retained
+ * revalidation uses `authorizeTeamCredentialProviderModelCatalog`), and the next
+ * open or Session turn is refused at its admission.
+ *
+ * That wake-driven retained revalidation must stay. Generation requests are
+ * also bounded by the next turn, whose begin witness re-checks entitlement,
+ * but non-generation requests (a Session's token counting, a Run's
+ * non-generation work) need no turn: for them the pushed Team wake is the only
+ * cut-off, the ruling's exception for open-ended access. The turn argument
+ * alone never justifies deleting the wake. This lookup reads only the
+ * facts that end the job itself: the caller's signed credential, the job's
+ * resource row, and its Session with the admitted in-progress turn (one read)
+ * or the Run owner's occurrence. The custodian's source and member are not
+ * re-read per request: a replaced or removed source wakes the custodian, whose
+ * retained check withdraws the route, and the next acquisition (open/refresh)
+ * re-admits against the current source. The broker's own source owner also
+ * pins the member it forwards under (`daemonProviderBrokerRuntime.ts`), so the
+ * usage fact's `sourceCredentialId` stays that exact member.
+ */
+async function readActiveBrokerJobInTx(
+    tx: Tx,
+    input: Readonly<{
+        grant: SignedProviderBrokerRouteGrantV1['payload'];
+        expectedResourceRevision: number;
+        generation: boolean;
+        executionRun: CurrentExecutionRun | null;
+    }>,
+): Promise<ActiveBrokerJob | Failure> {
+    const { grant } = input;
+    let sessionId: string | null;
+    if (grant.consumer.kind === 'execution_run') {
+        // The Run owner's own currentness, resolved before this transaction.
+        const run = input.executionRun;
+        if (run === null) return failure('execution_run_authority_unavailable');
+        if (!grant.executionRunOccurrenceId || run.occurrenceId !== grant.executionRunOccurrenceId) return failure('operation_not_current');
+        // Generation needs an active turn; admitted non-generation work
+        // (token counting) is still accounted against the Run below.
+        if (input.generation && run.runtimeState !== 'active_turn') return failure('operation_not_current');
+        const consumer = brokerOperationConsumer(grant.consumer, run, grant.resourceId);
+        if ('ok' in consumer) return consumer;
+        sessionId = run.parentSessionId;
+    } else {
+        sessionId = grant.consumer.sessionId;
+    }
+    const row = await readActiveBrokerJobRowsInTx(tx, {
+        accountId: grant.initiator.accountId, resourceId: grant.resourceId, sessionId,
+    });
+    if (!auth.isSignedCredentialAccountCurrent(row && { tokenEpoch: Number(row.tokenEpoch), status: row.status }, grant.initiatorTokenEpoch)) {
+        return failure('operation_not_current');
+    }
+    const resource = row?.resourceId ? {
+        id: row.resourceId, teamId: row.teamId, custodianAccountId: row.custodianAccountId,
+        enabled: Number(row.enabled) === 1, revision: Number(row.revision),
+        sourceBindingJson: row.sourceBindingJson, brokerMachineId: row.brokerMachineId, brokerPoolId: row.brokerPoolId,
+    } : null;
+    if (!resource) return bindingFailure('resource_unavailable', 'resource_missing');
+    if (!resource.enabled) return bindingFailure('resource_forbidden', 'disabled');
+    if (resource.teamId !== grant.teamId || resource.custodianAccountId !== grant.target.custodianAccountId) {
+        return failure('resource_unavailable');
+    }
+    // A resource that names no broker any more (its Machine or Pool was
+    // removed) has no route for this job, whatever revision is presented.
+    const placementFingerprint = resolveTeamCredentialBrokerPlacementFingerprint(resource);
+    if (placementFingerprint === null) return bindingFailure('broker_unavailable', 'broker_unavailable');
+    if (placementFingerprint !== grant.brokerPlacementFingerprint) return failure('resource_changed');
+    // The model is a request fact the broker's one request-policy owner
+    // evaluated against `expectedResourceRevision`; the job serves the
+    // resource as it is now (`04-private-iroh-broker-transport.md:270,272`).
+    if (resource.revision !== input.expectedResourceRevision) return failure('resource_changed');
+    const sourceBinding = readTeamCredentialSourceBinding(resource.sourceBindingJson);
+    if (!sourceBinding.success) return bindingFailure('resource_unavailable', 'resource_corrupt');
+    const session = row?.sessionAccountId ? {
+        accountId: row.sessionAccountId, active: Number(row.sessionActive) === 1,
+        archivedAt: Number(row.sessionArchived) === 1 ? true : null,
+        latestTurnId: row.latestTurnId, latestTurnStatus: row.latestTurnStatus,
+    } : null;
+    if (sessionId !== null && (!session || session.accountId !== grant.initiator.accountId
+        || !session.active || session.archivedAt !== null)) {
+        return failure('session_not_active');
+    }
+    let turnId: string | null = null;
+    if (grant.consumer.kind === 'execution_run') {
+        turnId = input.generation ? input.executionRun?.activeTurnId ?? null : null;
+    } else if (input.generation) {
+        // Generation runs only inside the Session's in-progress turn whose
+        // witness — admitted at turn begin by the Session-binding owner —
+        // names this requester and resource.
+        if (!session?.latestTurnId || session.latestTurnStatus !== 'in_progress') return failure('session_not_active');
+        const latestTurnId = session.latestTurnId;
+        const turn = row?.turnId === latestTurnId ? row : null;
+        if (!turn
+            || turn.usageActorAccountId !== grant.initiator.accountId
+            || turn.teamCredentialResourceId !== grant.resourceId
+            || turn.credentialDeliveryMode !== 'brokered') return failure('operation_not_current');
+        turnId = session.latestTurnId;
+    }
+    return {
+        ok: true,
+        sessionId,
+        storageAccountId: session?.accountId ?? grant.initiator.accountId,
+        turnId,
+        source: sourceBinding.data,
+    };
+}
+
 async function admitTeamCredentialProviderBrokerRequestInTx(
     tx: Tx,
-    input: TeamCredentialProviderBrokerRequestAdmissionInput & Readonly<{
-        brokerPresence: MachineDaemonPresenceInventory;
-    }>,
+    input: TeamCredentialProviderBrokerRequestAdmissionInput,
     request: ProviderBrokerRequestAdmissionV1,
     executionRun: CurrentExecutionRun | null,
 ): Promise<TeamCredentialProviderBrokerRequestAdmissionResult> {
     const { authority, expectedResourceRevision, requestFacts } = request;
     const grant = authority.payload;
-    const admissionSessionId = grant.consumer.kind === 'session' ? grant.consumer.sessionId : executionRun?.parentSessionId;
-    const admissionAudience = await readSessionAccountCursorAudienceInTx(tx, admissionSessionId ? [admissionSessionId] : [],
-        [grant.initiator.accountId, grant.target.custodianAccountId]);
-    await acquireAccountChangePublicationLocksInTx(tx, admissionAudience.accountIds, { includeSingleAccount: true });
-    if (grant.target.custodianAccountId !== input.authenticatedBrokerAccountId) return failure('resource_forbidden');
+    if (grant.target.custodianAccountId !== input.authenticatedBrokerAccountId) {
+        return closedFailure('resource_forbidden', 'broker_custodian_mismatch');
+    }
     const routeMatchesApplication = (
         requestFacts.routeKind === 'openai_responses' && grant.application.protocol === 'openai-responses'
     ) || (
@@ -1239,113 +1402,30 @@ async function admitTeamCredentialProviderBrokerRequestInTx(
     // The model is a current request fact, not signed identity: one open serves
     // every model the resource allows now. The broker's one request-policy
     // owner evaluated it against the policy at `expectedResourceRevision`,
-    // which this admission requires to be the current revision
+    // which the active-job lookup requires to be the current revision
     // (`04-private-iroh-broker-transport.md:270`; `PLAN.md:438` "Home does not
     // become another model/effort/cap evaluator").
     if (!routeMatchesApplication) return failure('invalid_request');
-    if (grant.consumer.kind === 'execution_run') {
-        if (executionRun === null) return failure('execution_run_authority_unavailable');
-        if (!grant.executionRunOccurrenceId || executionRun.occurrenceId !== grant.executionRunOccurrenceId) return failure('operation_not_current');
-        // Generation needs an active turn; admitted non-generation work
-        // (token counting) is still accounted against the Run below.
-        if (requestFacts.generation && executionRun.runtimeState !== 'active_turn') return failure('operation_not_current');
-        const authorized = await authorizeCurrentBrokerOperationInTx(tx, {
-            authenticatedBrokerAccountId: input.authenticatedBrokerAccountId,
-            grant,
-            expectedResourceRevision,
-            brokerPresence: input.brokerPresence,
-            executionRun,
-        });
-        if (!authorized.ok) return authorized;
-        const sourceMemberCurrentness = await resolveTeamCredentialSourceMemberCurrentnessInTx(tx, {
-            deliveryMode: 'brokered',
-            custodianAccountId: grant.target.custodianAccountId,
-            source: authorized.source,
-            sourceMemberKey: request.sourceMemberKey,
-        });
-        if (sourceMemberCurrentness.status !== 'current') return failure('resource_changed');
-        const usage = await admitTeamCredentialUsageInTx(tx, {
-            storageAccountId: authorized.storageAccountId,
-            sessionId: executionRun.parentSessionId,
-            turnId: requestFacts.generation ? executionRun.activeTurnId ?? null : null,
-            observedAt: input.observedAt,
-            requestId: request.requestId,
-            modelId: requestFacts.modelId,
-            usageRoute: executionRun.parentSessionId === null
-                ? 'agent_runtime_detached_execution_run'
-                : 'agent_runtime_attached_execution_run',
-            authority: {
-                kind: 'teamCredentialAdmission',
-                requestingAccountId: grant.initiator.accountId,
-                resourceId: grant.resourceId,
-                externalApiKeyId: null,
-                sourceCredentialId: request.sourceMemberKey,
-                workerMachineId: grant.initiator.machineId,
-                brokerMachineId: grant.target.machineId,
-                deliveryMode: 'brokered',
-                executionRunId: grant.consumer.executionRunId,
-            },
-        });
-        if (!usage.ok) return failure(
-            usage.reasonCode,
-            usage.reasonCode === 'team_credential_usage_limit' ? usage.usageLimit : undefined,
-        );
-        if (!usage.created) return failure('duplicate_request');
-        return {
-            ok: true,
-            resourceId: grant.resourceId,
-            brokerMachineId: grant.target.machineId,
-            source: authorized.source,
-            operation: { kind: 'execution_run', executionRunId: grant.consumer.executionRunId },
-            usageEventId: usage.usageEventId,
-        };
-    }
-    const authorized = await authorizeCurrentBrokerOperationInTx(tx, {
-        authenticatedBrokerAccountId: input.authenticatedBrokerAccountId,
+    const job = await readActiveBrokerJobInTx(tx, {
         grant,
         expectedResourceRevision,
-        brokerPresence: input.brokerPresence,
+        generation: requestFacts.generation,
+        executionRun,
     });
-    if (!authorized.ok) return authorized;
-    const sourceMemberCurrentness = await resolveTeamCredentialSourceMemberCurrentnessInTx(tx, {
-        deliveryMode: 'brokered',
-        custodianAccountId: grant.target.custodianAccountId,
-        source: authorized.source,
-        sourceMemberKey: request.sourceMemberKey,
-    });
-    if (sourceMemberCurrentness.status !== 'current') return failure('resource_changed');
-    const { sessionId, session, source } = authorized;
-    if (sessionId === null || session === null) return failure('operation_not_current');
-
-    // Generation is admitted only inside the Session's in-progress turn whose
-    // witness names this requester and resource. Admitted non-generation work
-    // (token counting) needs no turn but is accounted the same way.
-    let turnId: string | null = null;
-    if (requestFacts.generation) {
-        if (!session.latestTurnId || session.latestTurnStatus !== 'in_progress') return failure('session_not_active');
-        const turn = await tx.sessionTurn.findUnique({
-            where: { sessionId_turnId: { sessionId, turnId: session.latestTurnId } },
-            select: {
-                status: true,
-                usageActorAccountId: true,
-                teamCredentialResourceId: true,
-                credentialDeliveryMode: true,
-            },
-        });
-        if (!turn || turn.status !== 'in_progress'
-            || turn.usageActorAccountId !== grant.initiator.accountId
-            || turn.teamCredentialResourceId !== grant.resourceId
-            || turn.credentialDeliveryMode !== 'brokered') return failure('operation_not_current');
-        turnId = session.latestTurnId;
-    }
+    if (!job.ok) return job;
+    const executionRunId = grant.consumer.kind === 'execution_run' ? grant.consumer.executionRunId : null;
     const usage = await admitTeamCredentialUsageInTx(tx, {
-        storageAccountId: session.accountId,
-        sessionId,
-        turnId,
+        storageAccountId: job.storageAccountId,
+        sessionId: job.sessionId,
+        turnId: job.turnId,
         observedAt: input.observedAt,
         requestId: request.requestId,
         modelId: requestFacts.modelId,
-        usageRoute: 'agent_runtime_session_turn',
+        usageRoute: executionRunId === null
+            ? 'agent_runtime_session_turn'
+            : job.sessionId === null
+                ? 'agent_runtime_detached_execution_run'
+                : 'agent_runtime_attached_execution_run',
         authority: {
             kind: 'teamCredentialAdmission',
             requestingAccountId: grant.initiator.accountId,
@@ -1355,7 +1435,7 @@ async function admitTeamCredentialProviderBrokerRequestInTx(
             workerMachineId: grant.initiator.machineId,
             brokerMachineId: grant.target.machineId,
             deliveryMode: 'brokered',
-            executionRunId: null,
+            executionRunId,
         },
     });
     if (!usage.ok) return failure(
@@ -1363,13 +1443,14 @@ async function admitTeamCredentialProviderBrokerRequestInTx(
         usage.reasonCode === 'team_credential_usage_limit' ? usage.usageLimit : undefined,
     );
     if (!usage.created) return failure('duplicate_request');
-
     return {
         ok: true,
         resourceId: grant.resourceId,
         brokerMachineId: grant.target.machineId,
-        source,
-        operation: { kind: 'session', sessionId },
+        source: job.source,
+        operation: grant.consumer.kind === 'session'
+            ? { kind: 'session', sessionId: grant.consumer.sessionId }
+            : { kind: 'execution_run', executionRunId: grant.consumer.executionRunId },
         usageEventId: usage.usageEventId,
     };
 }

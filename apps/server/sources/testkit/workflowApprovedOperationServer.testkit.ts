@@ -159,7 +159,7 @@ export async function startWorkflowApprovedOperationServer(input: Readonly<{
         // and each registered daemon's production RPC admission remain real.
         const machinePresence = app.machineDaemonPresence;
         if (!(machinePresence instanceof Server)) throw new Error('machine_daemon_presence_unavailable');
-        if (input.installedMachine) registerExternalActionRoutes(app);
+        if (input.installedMachine && !input.forwardRpc) registerExternalActionRoutes(app);
         else registerExternalActionRoutes(app, { dispatch: createExternalActionDaemonDispatcher({ io: machinePresence,
             forwardRpc: input.forwardRpc ?? (async request => {
                 const packet = ExternalActionDaemonDispatchRequestSchema.parse(request.callParams);

@@ -12,7 +12,8 @@ import { readHomeConfigFlag, composeHomeConfigEnv, readHomeConfigEnvOrigin } fro
  * environment (deployment env plus the restart values this process started with) with the Home's
  * `apply: 'live'` settings filled in for every key the deployment leaves unset. The Home settings
  * row is read at most once per request, lazily, and only by requests that ask; nothing is cached
- * across requests, so every replica sees a change on its next request.
+ * across requests, so every replica sees a change on its next request. The one exception is the
+ * per-request authentication diagnostics flag (`authDiagnosticsFlag.ts`).
  *
  * A plain helper rather than a Fastify decorator, so the route modules registered by tests on bare
  * Fastify instances reach the same owner without extra composition.
@@ -44,7 +45,14 @@ export async function readRequestHomeFlag<E extends ServerConfigEntry & { type: 
 ): Promise<ServerConfigReadValue<E>> {
     const capture = captureRequestHomeConfig(request);
     if (capture.overlay) return readServerConfig(await capture.overlay, entry);
-    const snapshot = await capture.snapshot;
+    return readHomeConfigSnapshotFlag(await capture.snapshot, entry);
+}
+
+/** One plain boolean from a captured snapshot, through the same precedence/alias owner, without opening secrets. */
+export function readHomeConfigSnapshotFlag<E extends ServerConfigEntry & { type: 'boolean'; sensitivity: 'plain' }>(
+    snapshot: HomeConfigSnapshot,
+    entry: E,
+): ServerConfigReadValue<E> {
     const values = Object.prototype.hasOwnProperty.call(snapshot.policyValues, entry.key)
         ? snapshot.policyValues : snapshot.record.values;
     return readHomeConfigFlag(snapshot.base, { [entry.key]: values[entry.key] }, entry);

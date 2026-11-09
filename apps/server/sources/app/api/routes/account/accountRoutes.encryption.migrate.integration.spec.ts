@@ -17,6 +17,7 @@ import {
 } from "@/app/encryption/accountEncryptionTransition";
 import { registerAccountEncryptionMigrateRoutes } from "./registerAccountEncryptionMigrateRoutes";
 import { registerAccountSettingsRoutes } from "./registerAccountSettingsRoutes";
+import { registerAccountSettingsHistoryRoutes } from "./registerAccountSettingsHistoryRoutes";
 import {
     createProviderAccountUsageRecordKey,
     createUsageSnapshot,
@@ -81,7 +82,8 @@ import {
     REVIEW_COMMENT_CANONICAL_SENSITIVE_LAYOUT_MARKER_JSON,
     createReviewCommentAccountEncryptionMigrationPersistenceInTx,
 } from "@/app/reviews/comments/accountEncryptionMigrationPersistence";
-import { createSignedAccountContentBinding } from "@/testkit/accountEncryption";
+import { createSignedAccountContentBinding, exerciseSettingsHistoryEncryptionMigrationContract,
+    exerciseSettingsHistoryMigrationPagingContract, exerciseNullOnlySettingsHistoryLegacyTransitionContract } from "@/testkit/accountEncryption";
 import { createNativePasswordFirstKeyStepUp } from "@/app/auth/password/nativePasswordFirstKeyStepUp";
 import { hashPasswordMaterial } from "@/app/auth/password/passwordMaterialVerifier";
 
@@ -1028,6 +1030,32 @@ describe("registerAccountEncryptionMigrateRoutes (integration)", () => {
 
     afterAll(async () => {
         await harness.close();
+    });
+
+    it("refuses a legacy mode switch with null-only retained Settings history (ENCHIST null-only)", async () => {
+        harness.resetEnv({ HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: "optional",
+            HAPPIER_FEATURE_ENCRYPTION__ALLOW_ACCOUNT_OPTOUT: "1" });
+        await exerciseNullOnlySettingsHistoryLegacyTransitionContract();
+    });
+
+    it("reseals all retained Settings history without losing versions or timestamps (ENCHIST)", async () => {
+        harness.resetEnv({
+            HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: "optional",
+            HAPPIER_FEATURE_ENCRYPTION__ALLOW_ACCOUNT_OPTOUT: "1",
+            HAPPIER_FEATURE_ENCRYPTION__PLAIN_ACCOUNT_SETTINGS_AT_REST: "none",
+            HAPPIER_ACCOUNT_SETTINGS_HISTORY_LIMIT: "250",
+        });
+        const app = createTestApp();
+        registerAccountEncryptionMigrateRoutes(app);
+        registerAccountSettingsRoutes(app);
+        registerAccountSettingsHistoryRoutes(app);
+        await app.ready();
+        try {
+            const transport = { request: (accountId: string, input: Readonly<{ method: "GET" | "POST"; url: string; payload?: object }>) =>
+                app.inject({ ...input, headers: { "x-test-user-id": accountId } }) };
+            await exerciseSettingsHistoryEncryptionMigrationContract(transport);
+            await exerciseSettingsHistoryMigrationPagingContract(transport);
+        } finally { await app.close(); }
     });
 
     it("reads the complete current Automation inventory without a client-version declaration", async () => {
@@ -4830,7 +4858,8 @@ describe("registerAccountEncryptionMigrateRoutes (integration)", () => {
         },
         {
             name: "Account Settings History",
-            expectedError: "migration_too_large",
+            expectedError: "invalid-params",
+            expectedReason: "migration_inventory_changed",
             populate: async (accountId: string) => {
                 await db.accountSettingsSnapshot.create({
                     data: {
@@ -4981,10 +5010,10 @@ describe("registerAccountEncryptionMigrateRoutes (integration)", () => {
                 });
             },
         },
-    ])("refuses an assert-empty transition when $name is populated", async ({
-        expectedError,
-        populate,
-    }) => {
+    ])("refuses an assert-empty transition when $name is populated", async (fixture) => {
+        const { expectedError, populate } = fixture;
+        const expectedBody = "expectedReason" in fixture
+            ? { error: expectedError, reason: fixture.expectedReason } : { error: expectedError };
         harness.resetEnv({
             HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: "optional",
             HAPPIER_FEATURE_ENCRYPTION__ALLOW_ACCOUNT_OPTOUT: "1",
@@ -5040,7 +5069,7 @@ describe("registerAccountEncryptionMigrateRoutes (integration)", () => {
             });
 
             expect(response.statusCode, response.body).toBe(400);
-            expect(response.json()).toEqual({ error: expectedError });
+            expect(response.json()).toEqual(expectedBody);
             await expect(db.account.findUniqueOrThrow({
                 where: { id: account.id },
                 select: {

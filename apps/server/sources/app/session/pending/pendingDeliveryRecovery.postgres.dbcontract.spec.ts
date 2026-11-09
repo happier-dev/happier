@@ -40,6 +40,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('P
             ]);
             expect(result.pending.every(row => !('replyProgress' in row))).toBe(true);
         } finally {
+            await db.session.deleteMany({ where: { accountId: account.id } });
             await db.account.delete({ where: { id: account.id } });
         }
     });

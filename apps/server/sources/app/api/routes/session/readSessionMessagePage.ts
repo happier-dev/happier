@@ -9,6 +9,7 @@ import { parseSessionMessageSidechainId } from "@/app/session/parseSessionMessag
 import { buildSessionMessagePublicationWhere, buildShareableSessionMessagePublicationWhere, isExternalShareableSessionTurnVisible, isSessionTranscriptPublicationBlocked, loadSessionTranscriptPublication, resolveExternalShareableTranscriptBlockedFromSeq, resolveExternalShareableTranscriptTurnSettlementBlockedFromSeq } from "@/app/session/sessionTranscriptPublicationPolicy";
 import { parseStoredSessionTurns } from "@/app/session/turns/parseSessionTurnState";
 import { isSessionTurnTranscriptAnchorProjectionCurrent } from "@/app/session/turns/sessionTurnTranscriptAnchorProjection";
+import { ensureSessionTurnTranscriptAnchorProjection } from "@/app/session/turns/sessionTurnTranscriptAnchorProjectionBackfill";
 import { resolveSessionTurnProjectionSeqs, type SessionTurnProjectionSeqs } from "./resolveSessionTurnProjectionSeqs";
 import { resolveSessionAccessForOperation } from '@/app/session/access/sessionAccess';
 import { captureReadSnapshot } from '@/storage/captureReadSnapshot';
@@ -80,8 +81,17 @@ export async function readSessionMessagePage(input: Readonly<{
     if (afterSeq !== undefined) {
         where.seq = { gt: afterSeq };
     }
+    // Admit once before writing the requested Session's predecessor projections.
+    // Conversion pages must not run inside the finite transcript read snapshot.
+    const admittedAccessDecision = turnProjection || externalShareableProjection
+        ? await captureReadSnapshot(tx => resolveSessionAccessForOperation(tx, { accountId: userId,
+            sessionId, authentication, capability: 'readTranscript' }))
+        : undefined;
+    if (admittedAccessDecision?.status === 'allowed') {
+        await ensureSessionTurnTranscriptAnchorProjection(sessionId);
+    }
     const { messages: resultMessages, hasMore, publicationBlocked, externalShareableSnapshot, accessDecision: snapshotAccessDecision, turnProjectionNextBeforeSeq, pageAccountActors, } = await captureReadSnapshot(async (tx) => {
-        const accessDecision = await resolveSessionAccessForOperation(tx, { accountId: userId,
+        const accessDecision = admittedAccessDecision ?? await resolveSessionAccessForOperation(tx, { accountId: userId,
             sessionId, authentication, capability: 'readTranscript' });
         if (accessDecision.status !== 'allowed')
             return { messages: [], hasMore: false,

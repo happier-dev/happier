@@ -1,6 +1,12 @@
 import { isDeepStrictEqual } from "node:util";
 
 import type { AccountSettingsStoredContentEnvelope } from '@happier-dev/protocol/account/settings/accountSettingsStoredContentEnvelope';
+import {
+    ACCOUNT_ENCRYPTION_MIGRATE_REQUEST_MAX_UTF8_BYTES,
+    ACCOUNT_ENCRYPTION_MIGRATE_TRANSITION_COLLECTION_PAGE_MAX_ITEMS,
+    type AccountEncryptionMigrateSettingsHistoryDirective,
+    type AccountEncryptionMigrateSettingsHistoryInventoryPage,
+} from '@happier-dev/protocol/account/encryptionMigrate';
 
 import { resolveEffectiveAccountEncryptionModeFromAccountRow } from "@/app/encryption/accountEncryptionMode";
 import {
@@ -8,6 +14,57 @@ import {
     storePlainAccountSettingsDbValue,
 } from "@/app/encryption/accountSettingsStorage";
 import type { Tx } from "@/storage/inTx";
+import { accountSettingsSnapshotToContent } from './accountSettingsHistoryContent';
+
+/** Paged source envelopes for the existing client Settings re-seal path. Never opens E2EE content. */
+export async function readAccountSettingsEncryptionMigrationInventoryInTx(params: Readonly<{
+    tx: Tx;
+    accountId: string;
+    beforeVersion?: number;
+}>): Promise<
+    | Readonly<{ status: 'ready'; page: AccountEncryptionMigrateSettingsHistoryInventoryPage }>
+    | Readonly<{ status: 'inventory_changed' | 'migration_too_large' }>
+> {
+    const account = await params.tx.account.findUnique({
+        where: { id: params.accountId },
+        select: { encryptionMode: true },
+    });
+    if (!account || (account.encryptionMode !== 'plain' && account.encryptionMode !== 'e2ee')) {
+        return { status: 'inventory_changed' };
+    }
+    const rows = await params.tx.accountSettingsSnapshot.findMany({
+        where: { accountId: params.accountId,
+            ...(params.beforeVersion === undefined ? {} : { version: { lt: params.beforeVersion } }),
+        },
+        orderBy: { version: 'desc' },
+        take: ACCOUNT_ENCRYPTION_MIGRATE_TRANSITION_COLLECTION_PAGE_MAX_ITEMS + 1,
+        select: { accountId: true, version: true, createdAt: true, encryptionMode: true, settingsDbValue: true },
+    });
+    const items: AccountEncryptionMigrateSettingsHistoryInventoryPage['items'] = [];
+    // Reuse the containing migration's real transport budget, including page framing.
+    let bytes = Buffer.byteLength(JSON.stringify({ items: [], nextBeforeVersion: Number.MAX_SAFE_INTEGER }), 'utf8');
+    for (const row of rows) {
+        if (items.length === ACCOUNT_ENCRYPTION_MIGRATE_TRANSITION_COLLECTION_PAGE_MAX_ITEMS) break;
+        if (row.encryptionMode !== account.encryptionMode || row.settingsDbValue === '') {
+            return { status: 'inventory_changed' };
+        }
+        let content: AccountSettingsStoredContentEnvelope | null;
+        try { content = accountSettingsSnapshotToContent(row); }
+        catch { return { status: 'inventory_changed' }; }
+        const item: AccountEncryptionMigrateSettingsHistoryInventoryPage['items'][number] = { version: row.version, createdAt: row.createdAt.toISOString(),
+            encryptionMode: account.encryptionMode, content };
+        const itemBytes = Buffer.byteLength(JSON.stringify(item), 'utf8') + (items.length ? 1 : 0);
+        if (bytes + itemBytes > ACCOUNT_ENCRYPTION_MIGRATE_REQUEST_MAX_UTF8_BYTES) {
+            if (items.length === 0) return { status: 'migration_too_large' };
+            break;
+        }
+        items.push(item);
+        bytes += itemBytes;
+    }
+    return { status: 'ready', page: { items,
+        nextBeforeVersion: items.length < rows.length ? items[items.length - 1].version : null,
+    } };
+}
 
 export type AccountSettingsEncryptionMigrationResult =
     | Readonly<{ status: "applied"; settingsVersion: number }>
@@ -33,6 +90,7 @@ export async function matchAccountSettingsEncryptionMigrationPostStateInTx(
         expectedSettingsVersion: number;
         replacementContent:
             AccountSettingsStoredContentEnvelope | null;
+        history?: AccountEncryptionMigrateSettingsHistoryDirective;
     }>,
 ): Promise<AccountSettingsEncryptionMigrationPostStateResult> {
     const current = await params.tx.account.findUnique({
@@ -49,6 +107,16 @@ export async function matchAccountSettingsEncryptionMigrationPostStateInTx(
     ) {
         return { status: "mismatch" };
     }
+
+    const snapshots = await params.tx.accountSettingsSnapshot.findMany({ where: { accountId: params.accountId } });
+    const replacements = new Map(params.history?.items.map(item => [item.version, item]));
+    if (snapshots.length !== replacements.size || snapshots.some(snapshot => {
+        const replacement = replacements.get(snapshot.version);
+        if (!replacement || snapshot.encryptionMode !== params.toMode || snapshot.settingsDbValue === ''
+            || snapshot.contentKind !== (replacement.content?.t ?? 'empty')) return true;
+        try { return !isDeepStrictEqual(accountSettingsSnapshotToContent(snapshot), replacement.content); }
+        catch { return true; }
+    })) return { status: 'mismatch' };
 
     if (params.toMode === "e2ee") {
         const expected =
@@ -96,6 +164,7 @@ export async function migrateAccountSettingsEncryptionInTx(params: Readonly<{
     toMode: "plain" | "e2ee";
     expectedSettingsVersion: number;
     replacementContent: AccountSettingsStoredContentEnvelope | null;
+    history?: AccountEncryptionMigrateSettingsHistoryDirective;
 }>): Promise<AccountSettingsEncryptionMigrationResult> {
     const current = await params.tx.account.findUnique({
         where: { id: params.accountId },
@@ -136,6 +205,25 @@ export async function migrateAccountSettingsEncryptionInTx(params: Readonly<{
         return { status: "inventory_changed" };
     }
 
+    const snapshots = await params.tx.accountSettingsSnapshot.findMany({ where: { accountId: params.accountId } });
+    const replacements = new Map(params.history?.items.map(item => [item.version, item]));
+    if (snapshots.length !== replacements.size
+        || replacements.size !== (params.history?.items.length ?? 0)) return { status: 'inventory_changed' };
+    for (const snapshot of snapshots) {
+        const replacement = replacements.get(snapshot.version);
+        if (!replacement || snapshot.encryptionMode !== params.fromMode || snapshot.settingsDbValue === '') {
+            return { status: 'inventory_changed' };
+        }
+        let content: AccountSettingsStoredContentEnvelope | null;
+        try { content = accountSettingsSnapshotToContent(snapshot); }
+        catch { return { status: 'inventory_changed' }; }
+        if (!isDeepStrictEqual(content, replacement.expectedContent)
+            || (content === null) !== (replacement.content === null)
+            || (replacement.content !== null && replacement.content.t !== (params.toMode === 'plain' ? 'plain' : 'encrypted'))) {
+            return { status: 'inventory_changed' };
+        }
+    }
+
     const nextSettings =
         params.toMode === "plain"
             ? storePlainAccountSettingsDbValue({
@@ -159,6 +247,21 @@ export async function migrateAccountSettingsEncryptionInTx(params: Readonly<{
         },
     });
     if (updated.count !== 1) return { status: "inventory_changed" };
+
+    for (const snapshot of snapshots) {
+        const replacement = replacements.get(snapshot.version)!;
+        const settingsDbValue = params.toMode === 'plain'
+            ? storePlainAccountSettingsDbValue({ accountId: params.accountId, content: replacement.content })
+            : replacement.content?.t === 'encrypted' ? replacement.content.c : null;
+        const rewritten = await params.tx.accountSettingsSnapshot.updateMany({
+            where: { id: snapshot.id, accountId: params.accountId, version: snapshot.version,
+                encryptionMode: snapshot.encryptionMode, settingsDbValue: snapshot.settingsDbValue },
+            data: { settingsDbValue, encryptionMode: params.toMode,
+                contentKind: replacement.content?.t ?? 'empty' },
+        });
+        // The caller aborts the containing Account transaction for any refusal.
+        if (rewritten.count !== 1) return { status: 'inventory_changed' };
+    }
 
     return { status: "applied", settingsVersion: nextVersion };
 }

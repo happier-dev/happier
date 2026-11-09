@@ -1,7 +1,8 @@
-import type { DaemonLocalServicePublicPreviewCreateRequestV1, DaemonLocalServicePublicPreviewRevokeRequestV1, DaemonLocalServicePublicPreviewStatusRequestV1, LocalServicePublicExposureModeV1, LocalServicePublicExposureV1, LocalServicePublicPreviewSnapshotV1 } from '@happier-dev/protocol/local/services/public/v1';
+import type { DaemonLocalServicePublicPreviewCreateRequestV1, DaemonLocalServicePublicPreviewRevokeRequestV1, DaemonLocalServicePublicPreviewStatusRequestV1, LocalServicePublicExposureAudienceV1, LocalServicePublicExposureModeV1, LocalServicePublicExposureV1, LocalServicePublicPreviewSnapshotV1 } from '@happier-dev/protocol/local/services/public/v1';
 import type { LocalServicePreviewResourceV1 } from '@happier-dev/protocol/local/services/preview/v1';
+import type { LocalServicePreviewRuntime } from '@/app/local/services/preview/runtime';
 import { isDeepStrictEqual } from 'node:util';
-import { DaemonLocalServicePublicPreviewCreateRequestV1Schema, DaemonLocalServicePublicPreviewRevokeRequestV1Schema, DaemonLocalServicePublicPreviewStatusRequestV1Schema, DaemonLocalServicePublicPreviewStatusResponseV1Schema, isLocalServicePublicPreviewCreateConfirmed, resolveLocalServicePublicPreviewCreateFailureV1 } from '@happier-dev/protocol/local/services/public/v1';
+import { DaemonLocalServicePublicPreviewCreateRequestV1Schema, DaemonLocalServicePublicPreviewRevokeRequestV1Schema, DaemonLocalServicePublicPreviewStatusRequestV1Schema, DaemonLocalServicePublicPreviewStatusResponseV1Schema, isLocalServicePublicPreviewCreateConfirmed, LocalServicePublicPreviewAdmissionResponseV1Schema, resolveLocalServicePublicPreviewCreateFailureV1 } from '@happier-dev/protocol/local/services/public/v1';
 import { readSessionAccessAuthenticationFromRequest, type SessionAccessAuthentication } from "@/app/session/access/sessionAccessAuthentication";
 
 import {
@@ -22,13 +23,7 @@ import { scopedLocalServiceViewerTokenCookie } from '@/app/local/services/viewer
 import { readLocalServicePublicStatus } from './status';
 import { LOCAL_SERVICE_APPLICATION_HTTP_METHODS } from '../hostRoutes';
 import { readLocalServiceRequestHostname, resolveLocalServiceExternalProtocol } from '@/app/local/services/preview/origin';
-import {
-    readLocalServicePublicClientKey,
-    resolveLocalServicePublicAccessIdentity,
-    type LocalServicePublicAccessPurpose,
-    type LocalServicePublicAuthenticatedUser,
-    type LocalServicePublicAccessServiceAuthorizer,
-} from "@/app/local/services/public/accessAuthorization";
+import { readLocalServicePublicClientKey } from "@/app/local/services/public/accessAuthorization";
 import {
     createPublicExposureObservabilityEmitter,
     handleLocalServicePublicWebSocketUpgrade,
@@ -36,6 +31,7 @@ import {
 } from "@/app/local/services/public/websocket";
 import type {
     LocalServicePublicRuntimeAccessResult,
+    LocalServicePublicRuntimeAdmissionResult,
     LocalServicePublicRuntimeCreateResult,
     LocalServicePublicRuntimeExchangeResult,
 } from "@/app/local/services/public/runtime";
@@ -47,14 +43,19 @@ import {
 } from "@/app/local/services/public/accessToken";
 
 export type RegisterLocalServicePublicRoutesOptions = Readonly<{
+    retainMachineAccess: LocalServicePreviewRuntime['retainMachineAccess'];
     resolvePreview: (previewId: string) => LocalServicePreviewResourceV1 | null | undefined;
     resolveExposure?: (exposureId: string) => LocalServicePublicExposureV1 | null | undefined;
     resolveExposureByHost?: (hostname: string) => LocalServicePublicExposureV1 | null | undefined;
-    authorizeServiceAccess?: LocalServicePublicAccessServiceAuthorizer;
+    authorizeServiceAccess?: (input: Readonly<{
+        userId: string;
+        preview: LocalServicePreviewResourceV1;
+        authentication: SessionAccessAuthentication;
+    }>) => boolean | Promise<boolean>;
     authorizeSessionAccess?: (input: Readonly<{
         userId: string;
         sessionId: string;
-        purpose: "public_exposure" | "public_revoke" | "public_status" | LocalServicePublicAccessPurpose;
+        purpose: "public_exposure" | "public_revoke" | "public_status";
         authentication: SessionAccessAuthentication;
     }>) => boolean | Promise<boolean>;
     getStatus?: (request: DaemonLocalServicePublicPreviewStatusRequestV1) => LocalServicePublicPreviewSnapshotV1;
@@ -66,7 +67,15 @@ export type RegisterLocalServicePublicRoutesOptions = Readonly<{
         sessionAuthorized: boolean;
         dnsTlsValid: boolean;
         rateLimitProfileId: string;
+        machineAccessSignal?: AbortSignal;
+        audience?: LocalServicePublicExposureAudienceV1;
+        landingBaseUrl?: string;
     }>) => LocalServicePublicRuntimeCreateResult;
+    /** Share eligibility for a `people` audience, decided by the canonical resource-grant owner. */
+    validateAudience?: (input: Readonly<{ actorAccountId: string; ownerAccountId: string; audience: LocalServicePublicExposureAudienceV1 }>) => Promise<boolean>;
+    /** The Happier app origin serving the `people` landing, for the request's Home. */
+    resolveLandingBaseUrl?: (request: object) => Promise<string | null>;
+    admitViewer?: (input: Readonly<{ exposureId: string; viewerAccountId: string }>) => Promise<LocalServicePublicRuntimeAdmissionResult>;
     revokeExposure: (exposureId: string, input: Readonly<{ actorId: string }>) => Readonly<{
         ok: true;
     } | {
@@ -76,8 +85,6 @@ export type RegisterLocalServicePublicRoutesOptions = Readonly<{
     validateAccess: (input: Readonly<{
         exposureId: string;
         rawToken: string | null;
-        authenticated: boolean;
-        sessionAuthorized: boolean;
         clientKey: string;
     }>) => LocalServicePublicRuntimeAccessResult;
     exchangeAccessToken?: (input: Readonly<{
@@ -85,7 +92,6 @@ export type RegisterLocalServicePublicRoutesOptions = Readonly<{
         rawToken: string | null;
     }>) => LocalServicePublicRuntimeExchangeResult;
     dnsTlsValid?: boolean;
-    readOptionalAuthenticatedUser?: (request: unknown) => Promise<LocalServicePublicAuthenticatedUser | null>;
     openTunnel?: OpenLocalServicePreviewTunnel;
     /** The request is the one being served, so the decision reads that request's Home configuration. */
     featureEnabled?: (request: object) => boolean | Promise<boolean>;
@@ -119,6 +125,8 @@ const PUBLIC_CONTROL_ROUTE_PATH = "/v1/local-services/public";
 const PUBLIC_STATUS_ROUTE_PATH = "/v1/local-services/public/status";
 const PUBLIC_RESOURCE_ROUTE_PATH = "/v1/local-services/public/:exposureId";
 const PUBLIC_PROXY_ROUTE_PATH = "/v1/local-services/public/:exposureId/*";
+// Outside the exposure's path namespace so it never shadows an application path.
+const PUBLIC_ADMISSION_ROUTE_PATH = "/v1/local-services/public-admission/:exposureId";
 const PUBLIC_RESPONSE_REFERRER_POLICY_HEADER = "Referrer-Policy";
 const PUBLIC_RESPONSE_REFERRER_POLICY_VALUE = "no-referrer";
 const textEncoder = new TextEncoder();
@@ -310,6 +318,7 @@ function publicRedirectLocation(input: Readonly<{
 }
 
 function redirectPublicTokenExchange(
+    request: RouteRequest,
     reply: RouteReply,
     input: Readonly<{
         exposureId: string;
@@ -319,6 +328,7 @@ function redirectPublicTokenExchange(
         hostExposure?: LocalServicePublicExposureV1 | null;
         hostPath?: boolean;
     }>,
+    externalProtocol: 'http' | 'https' | undefined,
 ): void {
     applyPublicResponsePrivacyHeaders(reply);
     reply
@@ -327,6 +337,8 @@ function redirectPublicTokenExchange(
             name: LOCAL_SERVICE_PUBLIC_TOKEN_COOKIE_NAME,
             path: localServicePublicTokenCookiePath(input.exposureId, input.hostExposure),
             value: input.rawToken,
+            request,
+            externalProtocol,
         }))
         .header?.("Location", input.hostPath ? `${input.path}${input.search}` : publicRedirectLocation(input))
         .send?.();
@@ -449,33 +461,52 @@ async function handleCreateExposure(
         sendError(reply, 403, "public_preview_denied", "preview_binding_mismatch");
         return;
     }
-    if (!await isPreviewAuthorized(request, options, preview, 'public_exposure')) {
-        sendError(reply, 403, "public_preview_denied", "session_not_authorized");
-        return;
-    }
+    const actorId = readString(request.userId);
+    const mintAccess = preview.serviceTarget && actorId ? options.retainMachineAccess({
+        machineId: preview.machineId, accountIds: [actorId, preview.owner.id],
+    }) : undefined;
+    try {
+        if (!await isPreviewAuthorized(request, options, preview, 'public_exposure')) {
+            sendError(reply, 403, "public_preview_denied", "session_not_authorized");
+            return;
+        }
 
-    const currentPreview = options.resolvePreview(createRequest.previewId);
-    if (!currentPreview || !previewMatchesCreateRequest(currentPreview, createRequest)) {
-        sendError(reply, 403, 'public_preview_denied', 'preview_binding_mismatch');
-        return;
-    }
+        const audience = createRequest.mode === 'people' ? createRequest.audience : undefined;
+        if (audience && !(actorId && options.validateAudience
+            && await options.validateAudience({ actorAccountId: actorId, ownerAccountId: actorId, audience }).catch(() => false))) {
+            const failure = resolveLocalServicePublicPreviewCreateFailureV1('audience_not_eligible');
+            sendError(reply, failure.statusCode, failure.error, failure.reasonCode);
+            return;
+        }
+        const landingBaseUrl = createRequest.mode === 'people'
+            ? await options.resolveLandingBaseUrl?.(request).catch(() => null) ?? undefined : undefined;
 
-    const result = options.createExposure({
-        preview: currentPreview,
-        requestedMode: createRequest.mode,
-        requestedTtlMs: createRequest.ttlMs,
-        actorId: readString(request.userId) ?? "unknown",
-        sessionAuthorized: true,
-        dnsTlsValid: options.dnsTlsValid === true,
-        rateLimitProfileId: createRequest.rateLimitProfileId ?? "default",
-    });
-    if (!result.ok) {
-        const failure = resolveLocalServicePublicPreviewCreateFailureV1(result.reasonCode);
-        sendError(reply, failure.statusCode, failure.error, failure.reasonCode);
-        return;
-    }
+        const currentPreview = options.resolvePreview(createRequest.previewId);
+        if (!currentPreview || !previewMatchesCreateRequest(currentPreview, createRequest)) {
+            sendError(reply, 403, 'public_preview_denied', 'preview_binding_mismatch');
+            return;
+        }
 
-    reply.code?.(201).send?.({ exposure: result.exposure });
+        const result = options.createExposure({
+            preview: currentPreview,
+            requestedMode: createRequest.mode,
+            requestedTtlMs: createRequest.ttlMs,
+            actorId: actorId ?? "unknown",
+            sessionAuthorized: true,
+            dnsTlsValid: options.dnsTlsValid === true,
+            rateLimitProfileId: createRequest.rateLimitProfileId ?? "default",
+            machineAccessSignal: mintAccess?.signal,
+            ...(audience ? { audience } : {}),
+            ...(landingBaseUrl ? { landingBaseUrl } : {}),
+        });
+        if (!result.ok) {
+            const failure = resolveLocalServicePublicPreviewCreateFailureV1(result.reasonCode);
+            sendError(reply, failure.statusCode, failure.error, failure.reasonCode);
+            return;
+        }
+
+        reply.code?.(201).send?.({ exposure: result.exposure });
+    } finally { mintAccess?.release(); }
 }
 
 async function handleRevokeExposure(
@@ -528,6 +559,37 @@ async function handleRevokeExposure(
     reply.send?.({ ok: true });
 }
 
+/** A signed-in viewer asks for a one-use admission URL; the runtime decides once. */
+async function handleAdmitViewer(
+    request: RouteRequest,
+    reply: RouteReply,
+    options: RegisterLocalServicePublicRoutesOptions,
+): Promise<void> {
+    if (!await isPublicPreviewFeatureEnabled(options, request)) {
+        sendFeatureDisabled(reply);
+        return;
+    }
+    const exposureId = readExposureId(request);
+    const viewerAccountId = readString(request.userId);
+    if (!exposureId || !viewerAccountId) {
+        sendError(reply, 400, "invalid_public_preview_request", "missing_exposure_id");
+        return;
+    }
+    const result = await options.admitViewer?.({ exposureId, viewerAccountId })
+        ?? { ok: false as const, reasonCode: "service_unavailable" as const };
+    applyPublicResponsePrivacyHeaders(reply);
+    reply.header?.("Cache-Control", "no-store");
+    if (!result.ok) {
+        const statusCode = result.reasonCode === "exposure_not_found" ? 404
+            : result.reasonCode === "service_unavailable" || result.reasonCode === "audit_sink_unavailable" ? 503 : 403;
+        reply.code?.(statusCode).send?.({ error: "public_preview_admission_denied", reasonCode: result.reasonCode });
+        return;
+    }
+    reply.send?.(LocalServicePublicPreviewAdmissionResponseV1Schema.parse({
+        protocolVersion: 1, admissionUrl: result.admissionUrl, expiresAt: result.expiresAt,
+    }));
+}
+
 export async function handleLocalServicePublicHttpRequest(
     requestInput: unknown,
     replyInput: unknown,
@@ -557,18 +619,6 @@ export async function handleLocalServicePublicHttpRequest(
         sendError(reply, 403, "public_preview_access_denied", SESSION_RUNTIME_PUBLIC_AUTH_FORBIDDEN_ERROR);
         return undefined;
     }
-    const principal = bearerAuth.status === "authenticated"
-        ? {
-            userId: bearerAuth.principal.userId,
-            authentication: {
-                env: process.env,
-                authority: bearerAuth.principal.authority,
-                authenticationEvidence: bearerAuth.principal.authenticationEvidence,
-            },
-        }
-        : options.readOptionalAuthenticatedUser
-            ? await options.readOptionalAuthenticatedUser(request)
-            : null;
     const queryToken = readLocalServicePublicQueryToken(request.query);
     if (queryToken) {
         const exchanged = options.exchangeAccessToken?.({
@@ -579,32 +629,22 @@ export async function handleLocalServicePublicHttpRequest(
             sendError(reply, 403, "public_preview_access_denied", exchanged.reasonCode);
             return undefined;
         }
-        redirectPublicTokenExchange(reply, {
+        redirectPublicTokenExchange(request, reply, {
             exposureId,
             path: readWildcardPath(request),
             search: serializeQuery(request.query),
             rawToken: exchanged.rawToken,
             hostExposure,
             hostPath: !pathExposureId,
-        });
+        }, options.externalProtocol);
         return undefined;
     }
 
-    // S-2: an authenticated exposure is bound to one session; holding any account on this server
-    // is not authorization to reach it. S-5: bucket the rate limiter per client, not per exposure.
-    const identity = await resolveLocalServicePublicAccessIdentity({
-        exposureId,
-        principal,
-        resolveExposure: options.resolveExposure,
-        authorizeSessionAccess: options.authorizeSessionAccess,
-        resolvePreview: options.resolvePreview,
-        authorizeServiceAccess: options.authorizeServiceAccess,
-    });
+    // The isolated cookie carries the secret link or the people admission. S-5: bucket the
+    // rate limiter per client, not per exposure.
     const access = options.validateAccess({
         exposureId,
         rawToken: readLocalServicePublicTokenCookie(request.headers),
-        authenticated: identity.authenticated,
-        sessionAuthorized: identity.sessionAuthorized,
         clientKey: readLocalServicePublicClientKey([request.ip, request.socket?.remoteAddress]),
     });
     if (!access.ok) {
@@ -618,7 +658,7 @@ export async function handleLocalServicePublicHttpRequest(
     const releaseConnection = options.retainConnection?.(exposureId, () => {
         registration.abort();
         reply.raw?.destroy?.();
-    }, options.resolveExposure?.(exposureId)?.mode === 'authenticated' ? principal?.userId : undefined);
+    });
     if (registration.signal.aborted) { releaseConnection?.(); return undefined; }
     const downstream = createDownstreamAbortSignal(reply);
     const signal = downstream ? AbortSignal.any([registration.signal, downstream]) : registration.signal;
@@ -660,6 +700,10 @@ export function registerLocalServicePublicRoutes(
         },
     }, async (request, reply) => {
         await handleCreateExposure(request as RouteRequest, reply as RouteReply, options);
+    });
+
+    controlApp.post(PUBLIC_ADMISSION_ROUTE_PATH, { preHandler: app.authenticate }, async (request, reply) => {
+        await handleAdmitViewer(request as RouteRequest, reply as RouteReply, options);
     });
 
     controlApp.post(PUBLIC_STATUS_ROUTE_PATH, {

@@ -7,6 +7,7 @@ import { ARTIFACT_PLAIN_DATA_KEY_MARKER, CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL
 import { API_TOKEN_FULL_GRANT_V1, ApiTokenGrantV1Schema } from '@happier-dev/protocol/auth/apiTokenGrant';
 import { SessionMessageRefV1Schema } from '@happier-dev/protocol/sessions/messages/sessionMessageRefV1';
 import { db } from '@/storage/db';
+import { makeShareEligibleForTest } from '@/testkit/shareEligibility.testkit';
 import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lightSqliteHarness';
 import { withAuthenticatedTestApp } from '@/app/api/testkit/sqliteFastify';
 import { artifactsRoutes } from '@/app/api/routes/artifacts/artifactsRoutes';
@@ -125,6 +126,7 @@ describe('Memory decision source disclosure at the Artifact HTTP boundary', () =
     it('saves exact Discussion sources and denies wrong, revoked and broader-audience sources without writes', async () => {
         const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
         const reader = await db.account.create({ data: { encryptionMode: 'plain' } });
+        await makeShareEligibleForTest(owner.id, reader.id);
         const authentication = createPresentUserSessionAccessAuthentication();
         const docOwner = await db.account.create({ data: { encryptionMode: 'plain' } });
         const sourceDoc = await inTx(tx => createArtifactTx(tx, { actorUserId: docOwner.id, artifactId: randomUUID(),

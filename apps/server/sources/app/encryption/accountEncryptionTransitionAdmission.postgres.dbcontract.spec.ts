@@ -30,7 +30,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("A
         else process.env.HAPPIER_DB_TX_MAX_RETRIES = previousRetries;
     });
 
-    it.each(["Artifact", "Discussion", "Machine", "Workflow"] as const)("excludes a %s recipient's admitted writer before transition domain work", async kind => {
+    it.each(["Artifact", "Discussion", "Machine", "Workflow", "Task"] as const)("excludes a %s recipient's admitted writer before transition domain work", async kind => {
         const [owner, recipient] = await Promise.all([0, 1].map(() => db.account.create({ data: { encryptionMode: "plain" } })));
         const targetBinding = kind === "Discussion" ? createSignedAccountContentBinding() : null;
         if (kind === "Artifact") {
@@ -47,6 +47,11 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("A
         } else if (kind === "Machine") {
             const machine = await db.machine.create({ data: { id: randomUUID(), accountId: owner.id, metadata: "{}" } });
             await db.machineAccountGrant.create({ data: { machineId: machine.id, accountId: recipient.id,
+                accessLevel: "view", createdByAccountId: owner.id } });
+        } else if (kind === "Task") {
+            const task = await db.userKVStore.create({ data: { accountId: owner.id, key: `todo.${randomUUID()}`,
+                value: new TextEncoder().encode(JSON.stringify({ t: "plain", v: { title: "Shared task" } })) } });
+            await db.taskAccountGrant.create({ data: { taskId: task.id, accountId: recipient.id,
                 accessLevel: "view", createdByAccountId: owner.id } });
         } else {
             const run = await db.automationRun.create({ data: { accountId: owner.id, originKind: "direct", causeKind: null,

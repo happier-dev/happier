@@ -34,7 +34,7 @@ export function isEndpointSetupCompatibleWithRoutingKindV1(params: Readonly<{
     providerInstallationId: string | null;
 }>): boolean {
     if (params.routingKind === "accountEndpoint") {
-        return params.setupKind === "accountEndpointV1" && params.providerInstallationId === null;
+        return (params.setupKind === "accountEndpointV1" || params.setupKind === "capabilityUrlV1") && params.providerInstallationId === null;
     }
     return params.setupKind === "githubSharedInstallationV1" && params.providerInstallationId !== null;
 }
@@ -49,7 +49,7 @@ export function isContributionSetupCompatibleWithRoutingKindV1(params: Readonly<
     contributionRoutingKind: PluginWebhookRoutingKindV1;
     setupKind: string;
 }>): boolean {
-    if (params.setupKind === "accountEndpointV1") return params.contributionRoutingKind === "accountEndpoint";
+    if (params.setupKind === "accountEndpointV1" || params.setupKind === "capabilityUrlV1") return params.contributionRoutingKind === "accountEndpoint";
     if (params.setupKind === "githubSharedInstallationV1") {
         return params.contributionRoutingKind === "providerInstallation";
     }

@@ -3,11 +3,12 @@ import { createHash } from 'node:crypto';
 import { QualifiedProviderAccountUsageHistoryRequestV4Schema, QualifiedProviderAccountUsageHistoryResponseV4Schema } from '@happier-dev/protocol/connect/providerAccountUsageHistory';
 import { ProviderAccountUsagePageProjectionReadV1Schema, ProviderAccountUsagePageProjectionWriteV1Schema } from '@happier-dev/protocol/connect/providerAccountUsagePageProjection';
 import { projectProviderAccountUsageRecordV4 } from '../providerAccountUsage/recordStorage';
-import { QualifiedConnectedAccountCredentialDeleteResponseV4Schema, QualifiedConnectedAccountConfigurationPatchV4Schema, QualifiedConnectedAccountCredentialErrorV4Schema, QualifiedConnectedAccountCredentialHealthPatchV4Schema, QualifiedConnectedAccountCredentialDeleteV4Schema, QualifiedConnectedAccountCredentialMutationSuccessV4Schema, QualifiedConnectedAccountCredentialMutationV4Schema, QualifiedConnectedAccountRefreshLeaseV4Schema, QualifiedConnectedAccountRefreshLeaseResponseV4Schema, QualifiedConnectedAccountQuotaQueryV4Schema, QualifiedConnectedAccountQuotaResponseV4Schema, QualifiedConnectedAccountSuccessV4Schema, QualifiedConnectedServiceUsageSourceResolutionV4Schema, QualifiedProviderAccountUsageWriteV4Schema, QualifiedProviderAccountUsageWriteSuccessV4Schema, QualifiedProviderAccountUsageRecordQueryV4Schema, QualifiedProviderAccountUsageReadErrorV4Schema, type QualifiedConnectedAccountGroupV4 } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
+import { QualifiedConnectedAccountCredentialDeleteResponseV4Schema, QualifiedConnectedAccountConfigurationPatchV4Schema, QualifiedConnectedAccountCredentialErrorV4Schema, QualifiedConnectedAccountCredentialHealthPatchV4Schema, QualifiedConnectedAccountCredentialDeleteV4Schema, QualifiedConnectedAccountCredentialMutationSuccessV4Schema, QualifiedConnectedAccountCredentialMutationV4Schema, QualifiedConnectedAccountRefreshLeaseV4Schema, QualifiedConnectedAccountRefreshLeaseResponseV4Schema, QualifiedConnectedAccountQuotaQueryV4Schema, QualifiedConnectedAccountQuotaResponseV4Schema, QualifiedConnectedAccountSuccessV4Schema, QualifiedConnectedServiceUsageSourceResolutionV4Schema, QualifiedProviderAccountUsageWriteV4Schema, QualifiedProviderAccountUsageWriteSuccessV4Schema, QualifiedProviderAccountUsageRecordQueryV4Schema, QualifiedProviderAccountUsageReadErrorV4Schema } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
 import { ManagedResourceDispositionV1Schema } from '@happier-dev/protocol/machines/managed/managedDependencyV1';
 import { QualifiedConnectedAccountConfigurationSnapshotV4Schema, QualifiedConnectedAccountConfigurationTargetV4Schema, QualifiedConnectedAccountCredentialSnapshotV4Schema, QualifiedConnectedAccountListResponseV4Schema, QualifiedConnectedAccountGroupCreateV4Schema, QualifiedConnectedAccountGroupPatchV4Schema, QualifiedConnectedAccountGroupRuntimeStatePatchV4Schema, QualifiedConnectedAccountGroupMemberMutationV4Schema, QualifiedConnectedAccountGroupMemberDeleteV4Schema, QualifiedConnectedAccountGroupActiveAccountV4Schema, QualifiedConnectedAccountGroupIncarnationV4Schema, QualifiedConnectedAccountGroupRefSchema, QualifiedConnectedAccountGroupListResponseV4Schema, QualifiedConnectedAccountGroupResponseV4Schema, QualifiedConnectedServiceUsageSourceV4Schema, QualifiedProviderAccountUsageRecordResponseV4Schema, QualifiedConnectedAccountServiceRefSchema } from '@happier-dev/protocol/connect/qualified-connected-account-projections';
 import { QualifiedConnectedAccountRefSchema } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
 import { parseQualifiedConnectedAccountV4StructuredQueryValue } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4QueryCodec';
+import { QualifiedConnectedAccountServiceListV4Schema, QualifiedConnectedAccountMultiServiceListResponseV4Schema } from '@happier-dev/protocol/connect/qualified-connected-account-projections';
 
 import type { Fastify } from "../../../types";
 import { isServerFeatureEnabledForRequest } from "@/app/features/catalog/serverFeatureGate";
@@ -52,10 +53,15 @@ import {
     ProviderAccountUsagePayloadInvariantError,
 } from "../providerAccountUsage/types";
 import { readRequestHomeEnv } from "@/app/home/settings/requestHomeEnv";
+import { projectGroupPolicyForFeature } from './groupPolicyProjection';
 
 const StructuredServiceQuerySchema = z.strictObject({
     service: z.union([z.string(), z.array(z.string())]),
 });
+const StructuredAccountListQuerySchema = z.union([
+    StructuredServiceQuerySchema,
+    z.strictObject({ services: z.union([z.string(), z.array(z.string())]) }),
+]);
 const StructuredRefQuerySchema = z.strictObject({
     ref: z.union([z.string(), z.array(z.string())]),
 });
@@ -137,45 +143,37 @@ function parseOptionalQualifiedGroupIncarnation(
         : QualifiedConnectedAccountGroupIncarnationV4Schema.parse(value);
 }
 
-/** `requestHomeEnv` is the request's Home-effective configuration, so a Home feature switch applies. */
-function projectGroupPolicyForFeature(
-    group: QualifiedConnectedAccountGroupV4,
-    requestHomeEnv: NodeJS.ProcessEnv,
-): QualifiedConnectedAccountGroupV4 {
-    const autoQuotaResetEnabled = isServerFeatureEnabledForRequest("connectedServices.autoQuotaReset", requestHomeEnv);
-    const autoDisablePlanInvalidEnabled = isServerFeatureEnabledForRequest("connectedServices.autoDisablePlanInvalid", requestHomeEnv);
-    const poolQuotaLimitSelectionEnabled = isServerFeatureEnabledForRequest("connectedServices.poolQuotaLimitSelection", requestHomeEnv);
-    let policy = group.policy;
-    if (!autoQuotaResetEnabled) {
-        const { autoUseQuotaResetsWhenExhausted: _quotaReset, ...projected } = policy;
-        policy = projected;
-    }
-    if (!autoDisablePlanInvalidEnabled) {
-        const { autoDisablePlanInvalidAccounts: _autoDisable, ...projected } = policy;
-        policy = projected;
-    }
-    if (!poolQuotaLimitSelectionEnabled) {
-        const { quotaLimitSelection: _quotaLimitSelection, ...projected } = policy;
-        policy = projected;
-    }
-    return { ...group, policy };
-}
-
 export function registerQualifiedConnectedAccountCredentialRoutesV4(
     app: Fastify,
 ): void {
     app.get("/v4/connect/qualified/accounts", {
         preHandler: app.authenticate,
         schema: {
-            querystring: StructuredServiceQuerySchema,
+            querystring: StructuredAccountListQuerySchema,
             response: {
-                200: QualifiedConnectedAccountListResponseV4Schema,
+                200: z.union([QualifiedConnectedAccountListResponseV4Schema, QualifiedConnectedAccountMultiServiceListResponseV4Schema]),
                 400: z.strictObject({
                     error: z.literal("invalid-params"),
                 }),
             },
         },
     }, async (request, reply) => {
+        if ("services" in request.query) {
+            let services;
+            try {
+                services = parseQualifiedConnectedAccountV4StructuredQueryValue(
+                    QualifiedConnectedAccountServiceListV4Schema,
+                    request.query.services,
+                );
+            } catch {
+                return reply.code(400).send({ error: "invalid-params" });
+            }
+            const accounts = await listQualifiedConnectedAccounts({
+                accountId: request.userId,
+                services,
+            });
+            return reply.send({ services, accounts });
+        }
         let service;
         try {
             service =
@@ -231,6 +229,9 @@ export function registerQualifiedConnectedAccountCredentialRoutesV4(
         }
         if (result.status === "saved_secret_held") {
             return reply.code(409).send({ error: "connect_credential_saved_secret_held" });
+        }
+        if (result.status === "saved_secret_reference_invalid") {
+            return reply.code(409).send({ error: "connect_credential_saved_secret_reference_invalid" });
         }
         if (result.status === "superseded") {
             return reply.code(409).send({
@@ -680,7 +681,7 @@ export function registerQualifiedConnectedAccountCredentialRoutesV4(
             groups: (await listQualifiedConnectedAccountGroups({
                 accountId: request.userId,
                 service,
-            })).map((group) => projectGroupPolicyForFeature(group, requestHomeEnv)),
+            })).map(projectGroupPolicyForFeature(requestHomeEnv)),
         });
     });
 
@@ -731,7 +732,7 @@ export function registerQualifiedConnectedAccountCredentialRoutesV4(
                         : null,
             });
         }
-        return reply.send({ group: projectGroupPolicyForFeature(result.group, requestHomeEnv) });
+        return reply.send({ group: projectGroupPolicyForFeature(requestHomeEnv)(result.group) });
     });
 
     app.get("/v4/connect/qualified/group", {
@@ -779,7 +780,7 @@ export function registerQualifiedConnectedAccountCredentialRoutesV4(
                 runtimeStateRevision: stored.runtimeStateRevision,
             });
         }
-        return reply.send({ group: projectGroupPolicyForFeature(stored, await readRequestHomeEnv(request)) });
+        return reply.send({ group: projectGroupPolicyForFeature(await readRequestHomeEnv(request))(stored) });
     });
 
     app.patch("/v4/connect/qualified/group", {
@@ -849,7 +850,7 @@ export function registerQualifiedConnectedAccountCredentialRoutesV4(
                         : null,
             });
         }
-        return reply.send({ group: projectGroupPolicyForFeature(result.group, requestHomeEnv) });
+        return reply.send({ group: projectGroupPolicyForFeature(requestHomeEnv)(result.group) });
     });
 
     app.delete("/v4/connect/qualified/group", {
@@ -971,7 +972,7 @@ export function registerQualifiedConnectedAccountCredentialRoutesV4(
                         : null,
             });
         }
-        return reply.send({ group: projectGroupPolicyForFeature(result.group, await readRequestHomeEnv(request)) });
+        return reply.send({ group: projectGroupPolicyForFeature(await readRequestHomeEnv(request))(result.group) });
     });
 
     app.post("/v4/connect/qualified/group/members", {
@@ -1032,7 +1033,7 @@ export function registerQualifiedConnectedAccountCredentialRoutesV4(
                         : null,
             });
         }
-        return reply.send({ group: projectGroupPolicyForFeature(result.group, await readRequestHomeEnv(request)) });
+        return reply.send({ group: projectGroupPolicyForFeature(await readRequestHomeEnv(request))(result.group) });
     });
 
     app.patch("/v4/connect/qualified/group/member", {
@@ -1083,7 +1084,7 @@ export function registerQualifiedConnectedAccountCredentialRoutesV4(
                         : null,
             });
         }
-        return reply.send({ group: projectGroupPolicyForFeature(result.group, await readRequestHomeEnv(request)) });
+        return reply.send({ group: projectGroupPolicyForFeature(await readRequestHomeEnv(request))(result.group) });
     });
 
     app.delete("/v4/connect/qualified/group/member", {
@@ -1144,7 +1145,7 @@ export function registerQualifiedConnectedAccountCredentialRoutesV4(
                         : null,
             });
         }
-        return reply.send({ group: projectGroupPolicyForFeature(result.group, await readRequestHomeEnv(request)) });
+        return reply.send({ group: projectGroupPolicyForFeature(await readRequestHomeEnv(request))(result.group) });
     });
 
     app.post("/v4/connect/qualified/group/active-account", {
@@ -1211,7 +1212,7 @@ export function registerQualifiedConnectedAccountCredentialRoutesV4(
                         : null,
             });
         }
-        return reply.send({ group: projectGroupPolicyForFeature(result.group, await readRequestHomeEnv(request)) });
+        return reply.send({ group: projectGroupPolicyForFeature(await readRequestHomeEnv(request))(result.group) });
     });
 
     app.get(

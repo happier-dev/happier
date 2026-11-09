@@ -33,18 +33,18 @@ describe('Action route authority', () => {
         });
     });
 
-    it.each(['account', 'terminal'] as const)('retains the present-user floor for %s decisions and input-dependent disclosures', async kind => {
+    it.each(['account', 'terminal'] as const)('admits the person-class %s credential whatever its per-invocation ceiling', async kind => {
+        // The host Action executor's approval policy gates agent-attributed calls, not this route.
         for (const [actionId, body] of [
             ['approval.request.decide', {}],
             ['session.open', { approvedNewDirectoryCreation: true }],
             ['session.public_link.create', {}],
         ] as const) {
-            expect(await invoke(actionId, kind, 'account_automation', body)).toEqual({
-                status: 403, body: { error: 'present_user_required' },
-            });
-            expect(await invoke(actionId, kind, 'present_user', body)).toEqual({
-                status: 200, body: { admitted: true },
-            });
+            for (const authority of ['account_automation', 'present_user'] as const) {
+                expect(await invoke(actionId, kind, authority, body)).toEqual({
+                    status: 200, body: { admitted: true },
+                });
+            }
         }
     });
 

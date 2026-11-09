@@ -1,4 +1,4 @@
-import { readPublishedSessionVisualMessages, type PublishedSessionVisualProjection } from '@happier-dev/session-core';
+import { readPublishedSessionVisualMessages, type PublishedSessionVisualProjection } from '@happier-dev/session-core/transcript';
 import type { PublicSessionOpenedMessage } from './publicShareViewerClient';
 
 /** The same transcript normalizer/reducer and exact acknowledgement parser as authenticated replay. */

@@ -10,6 +10,7 @@ import {
 import { failPluginWebhookDeliveryV1 } from "@/app/plugins/webhooks/claimStore";
 import { readPluginWebhookAccountStatusV1 } from "@/app/plugins/webhooks/statusStore";
 import { db, initDbMysql, initDbPostgres } from "@/storage/db";
+import { createPluginWebhookEndpointActionsV1 } from "./endpointActions";
 
 const PROVIDER = String(process.env.HAPPIER_DB_PROVIDER ?? process.env.HAPPY_DB_PROVIDER ?? "postgres")
     .trim()
@@ -266,6 +267,27 @@ describe("plugin webhook unresolved Automation native database contract", () => 
                     automationAdmissionUnresolved: AUTOMATION_ADMISSION_UNRESOLVED,
                 }],
             });
+
+            // The same native fixture exercises routing selection through the
+            // real Machine, Availability, declaration and endpoint owners.
+            await db.pluginWebhookEndpoint.update({ where: { id: endpoint.id },
+                data: { targetMachineId: "retired-machine", targetMaterializationId: "retired-materialization" } });
+            const actions = createPluginWebhookEndpointActionsV1();
+            const input = {
+                webhookEndpointId: endpoint.id,
+                webhookContribution: { pluginId: TARGET.materialization.pluginId, localId: "github-events" },
+                sourceInstanceId: `source-webhook-native-${suffix}`,
+                setup: { kind: "accountEndpointV1", credential: "serverGenerated" },
+                desiredTargetRouting: { serverIdentityId: SERVER_IDENTITY_ID, machineId: TARGET.materialization.machineId },
+                targetIntentEpoch: 1,
+            } as const;
+            await expect(actions.convergeTarget({ accountId, callerPluginId: TARGET.materialization.pluginId, input }))
+                .resolves.toMatchObject({ kind: "converged", revision: 2, targetMaterialization: TARGET.materialization });
+            await expect(actions.convergeTarget({ accountId, callerPluginId: TARGET.materialization.pluginId, input }))
+                .resolves.toMatchObject({ kind: "converged", revision: 2, targetMaterialization: TARGET.materialization });
+            await db.machine.update({ where: { id: TARGET.materialization.machineId }, data: { revokedAt: NOW } });
+            await expect(actions.convergeTarget({ accountId, callerPluginId: TARGET.materialization.pluginId, input }))
+                .resolves.toEqual({ kind: "unavailable", code: "endpoint_unavailable" });
         } finally {
             await db.accountChange.deleteMany({ where: { accountId } }).catch(() => undefined);
             await db.pluginWebhookDelivery.deleteMany({ where: { accountId } }).catch(() => undefined);

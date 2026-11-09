@@ -3,7 +3,6 @@ import { inTx } from "@/storage/inTx";
 
 import {
     deriveSessionTurnTranscriptAnchorProjection,
-    isSessionTurnTranscriptAnchorProjectionCurrent,
 } from "./sessionTurnTranscriptAnchorProjection";
 
 export const SESSION_TURN_TRANSCRIPT_ANCHOR_PROJECTION_BACKFILL_PAGE_MAX = 500;
@@ -28,17 +27,18 @@ function resolvePageLimit(value: number | undefined): number {
     );
 }
 
-function hasCurrentProjection(row: SessionTurnTranscriptAnchorProjectionRow): boolean {
-    return isSessionTurnTranscriptAnchorProjectionCurrent(row);
-}
-
 async function readProjectionRows(params: Readonly<{
     db: BackfillClient;
+    sessionId: string;
     afterId?: string;
     limit: number;
 }>): Promise<readonly SessionTurnTranscriptAnchorProjectionRow[]> {
     return await params.db.sessionTurn.findMany({
-        where: params.afterId === undefined ? undefined : { id: { gt: params.afterId } },
+        where: {
+            sessionId: params.sessionId,
+            transcriptAnchorProjectionVersion: 0,
+            ...(params.afterId === undefined ? {} : { id: { gt: params.afterId } }),
+        },
         orderBy: { id: "asc" },
         take: params.limit,
         select: {
@@ -58,19 +58,20 @@ async function readProjectionRows(params: Readonly<{
  */
 export async function backfillSessionTurnTranscriptAnchorProjectionPage(params: Readonly<{
     db: BackfillClient;
+    sessionId: string;
     afterId?: string;
     limit?: number;
 }>): Promise<Readonly<{ processed: number; updated: number; nextAfterId: string | null }>> {
     const limit = resolvePageLimit(params.limit);
     const rows = await readProjectionRows({
         db: params.db,
+        sessionId: params.sessionId,
         ...(params.afterId === undefined ? {} : { afterId: params.afterId }),
         limit,
     });
     let updated = 0;
 
     for (const row of rows) {
-        if (hasCurrentProjection(row)) continue;
         const projection = deriveSessionTurnTranscriptAnchorProjection(row.transcriptAnchorsJson);
         const result = await params.db.sessionTurn.updateMany({
             where: {
@@ -93,16 +94,16 @@ export async function backfillSessionTurnTranscriptAnchorProjectionPage(params: 
 }
 
 /**
- * Run before API admission on fresh installs and forward upgrades. Each page
- * uses the converter's existing bounded transaction; a restart rescans safely
- * because current projections are skipped and updates retain their snapshot
- * predicate. Current turn writers publish JSON and v1 scalars together.
+ * Prepare only an admitted Session, outside the transcript read snapshot. Each
+ * page commits independently using the converter's existing transaction bound.
+ * Current writers publish JSON and v1 scalars together, so the indexed v0 range
+ * contains only predecessor rows; interrupted requests resume on their next read.
  */
-export async function initializeSessionTurnTranscriptAnchorProjection(signal?: AbortSignal): Promise<void> {
+export async function ensureSessionTurnTranscriptAnchorProjection(sessionId: string, signal?: AbortSignal): Promise<void> {
     let afterId: string | undefined;
     while (true) {
         signal?.throwIfAborted();
-        const page = await inTx(tx => backfillSessionTurnTranscriptAnchorProjectionPage({ db: tx, afterId }));
+        const page = await inTx(tx => backfillSessionTurnTranscriptAnchorProjectionPage({ db: tx, sessionId, afterId }));
         signal?.throwIfAborted();
         if (page.nextAfterId === null) return;
         afterId = page.nextAfterId;

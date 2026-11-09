@@ -1559,6 +1559,7 @@ async function createSessionMessageAttempt(
                 sessionId,
                 hint: { lastMessageSeq: created.seq, lastMessageId: created.id },
                 recipientAccountIds: access.recipientAccountIds,
+                publication: persisted.publication,
             });
             observeCreateSessionMessageStage({
                 stage: "change_tracking",

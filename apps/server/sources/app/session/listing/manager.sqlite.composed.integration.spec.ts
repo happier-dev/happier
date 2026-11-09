@@ -126,11 +126,21 @@ describe("Manager listing (SQLite)", () => {
         } })).ok).toBe(true);
         expect((await list(owner.id, lead.id))?.sessions[0]).toMatchObject({ receivedRuleCount: 1 });
         expect((await list(viewer.id, lead.id))?.sessions[0]).not.toHaveProperty('receivedRuleCount');
-        await expect(listSessionsForAccount({ userId: viewer.id, authentication,
+        // Unavailable private membership on one shared row must not hide an
+        // independently proven own-Account coordinator in the same list.
+        const ownLead = await db.session.create({ data: { accountId: viewer.id, tag: randomUUID(),
+            metadata: '{"v":1}', encryptionMode: 'plain', metadataLayoutVersion: 1,
+            ownerMetadata: '{"t":"plain","v":{"v":1}}' } });
+        expect((await setAccountFollowRule({ accountId: viewer.id, authentication, ruleId: 'own-rule', mutation: {
+            receiver: { kind: 'session', sessionId: ownLead.id }, expectedVersion: -1,
+            content: { t: 'plain', v: { v: 1, enabled: true, filter: normalizeSessionListFilterV1(), policy: { preset: 'important' } } },
+        } })).ok).toBe(true);
+        const filtered = await listSessionsForAccount({ userId: viewer.id, authentication,
             source: { kind: 'query', query: { v: 1, storage: 'active', includeInactive: true, scope: 'all_accessible',
-                attention: 'any', audiences: [], tagIds: [], coordinator: 'coordinator', underSessionId: lead.id } },
+                attention: 'any', audiences: [], tagIds: [], coordinator: 'coordinator' } },
             rowRepresentabilityWhere: {}, timing: createV2SessionListServerTiming({}),
-        })).rejects.toMatchObject({ reason: 'coordinator' });
+        });
+        expect(filtered?.sessions.map(row => row.id)).toEqual([ownLead.id]);
     });
 
     it('retains an admitted manager-only coordinator until the next request after its child grant is revoked', async () => {
@@ -176,7 +186,7 @@ describe("Manager listing (SQLite)", () => {
         }
     });
 
-    it('refreshes captured list capabilities after an Admin grant becomes View', async () => {
+    it('retains admitted Admin list capabilities and observes View on the next request', async () => {
         const { owner: viewer } = await fixture();
         const { owner, lead } = await fixture();
         const share = await db.sessionShare.create({ data: { sessionId: lead.id, sharedByUserId: owner.id,
@@ -205,19 +215,22 @@ describe("Manager listing (SQLite)", () => {
             const current = (await list(viewer.id, lead.id))?.sessions[0];
             expect(current?.effectiveAccess).toMatchObject({ level: 'view', capabilities: { manageAccess: false } });
             expect(current?.share).toEqual({ accessLevel: 'view', canApprovePermissions: false });
-            expect(captured?.sessions[0]?.effectiveAccess).toMatchObject({ level: 'view', capabilities: { manageAccess: false } });
-            expect(captured?.sessions[0]?.share).toEqual({ accessLevel: 'view', canApprovePermissions: false });
+            expect(captured?.sessions[0]?.effectiveAccess).toMatchObject({ level: 'admin', capabilities: { manageAccess: true } });
+            expect(captured?.sessions[0]?.share).toEqual({ accessLevel: 'admin', canApprovePermissions: true });
         } finally {
             resume(); await response;
             Object.defineProperty(delegate, 'findMany', { configurable: true, writable: true, value: original });
         }
     });
 
-    it('redacts a revoked report contribution while preserving the readable lead captured detail', async () => {
+    it('retains an admitted report contribution and removes it on the next lead detail request', async () => {
         const { owner, lead } = await fixture();
         const foreign = await fixture();
         await db.sessionShare.create({ data: { sessionId: foreign.lead.id, sharedByUserId: foreign.owner.id,
-            sharedWithUserId: owner.id, accessLevel: 'view' } });
+            sharedWithUserId: owner.id, accessLevel: 'edit', canApprovePermissions: true } });
+        await db.accountSessionFollow.create({ data: { accountId: owner.id, sessionId: foreign.lead.id,
+            sourceKey: sourceKeyForSessionFollowSourceV1({ kind: 'session', sessionId: foreign.lead.id }),
+            following: true, followPolicy: JSON.stringify({ preset: 'important' }) } });
         await db.session.update({ where: { id: foreign.lead.id }, data: { active: true,
             pendingPermissionRequestCount: 1, pendingRequestObservedAt: new Date() } });
         await db.sessionFollowEdge.create({ data: managerEdgeData(foreign.lead.id, lead.id) });
@@ -254,7 +267,7 @@ describe("Manager listing (SQLite)", () => {
                 expect(current.statusCode, current.body).toBe(200);
                 expect(current.json().session).toMatchObject({ id: lead.id, managedSessions: { total: 0, needsYou: 0 } });
                 expect(captured.statusCode, captured.body).toBe(200);
-                expect(captured.json().session).toMatchObject({ id: lead.id, managedSessions: { total: 0, needsYou: 0 } });
+                expect(captured.json().session).toMatchObject({ id: lead.id, managedSessions: { total: 1, needsYou: 1 } });
             } finally {
                 resume(); await response;
                 Object.defineProperty(delegate, 'findMany', { configurable: true, writable: true, value: original });

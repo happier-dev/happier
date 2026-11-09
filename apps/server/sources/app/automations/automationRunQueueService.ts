@@ -1,4 +1,3 @@
-import { markSharedWorkflowTriggerSummaryChangedInTx } from './automationSharedWorkflowSummaries';
 import { AutomationTriggerIdSchema } from '@happier-dev/protocol/automations/automationTriggerIdentity';
 import { deriveAutomationOccurrenceKeyV1 } from '@happier-dev/protocol/automations/automationOccurrenceV1';
 
@@ -11,6 +10,7 @@ import type { AutomationRunItem, AutomationScheduleKind } from "./automationType
 import { AUTOMATION_RUN_TERMINAL_STATES, isTerminalAutomationRunState } from "./automationTypes";
 import { emitAutomationScheduleWake } from "./automationScheduleWake";
 import { catchUpAutomationRunLifecycleSourcesTx } from "./automationRunLifecycleAdmission";
+import { markSharedWorkflowTriggerSummaryChangedInTx } from "./automationSharedWorkflowSummaries";
 
 function isCanonicalScheduleKind(value: string | null): value is AutomationScheduleKind {
     return value === "cron" || value === "interval";
@@ -106,7 +106,7 @@ export async function admitDueAutomationScheduleTriggerTx(params: Readonly<{
         select: {
             id: true, automationId: true, revision: true, scheduleKind: true,
             scheduleExpr: true, everyMs: true, timezone: true, nextRunAt: true,
-            automation: { select: { accountId: true } },
+            automation: { select: { accountId: true, scopeSessionId: true } },
         },
     });
     if (!trigger || trigger.scheduleKind === null || trigger.nextRunAt === null) return null;
@@ -117,7 +117,8 @@ export async function admitDueAutomationScheduleTriggerTx(params: Readonly<{
         triggerId,
         evidence: { v: 1, kind: "schedule", scheduledFor },
     });
-    const open = await params.tx.automationRun.findFirst({
+    const scoped = trigger.automation.scopeSessionId !== null;
+    const open = scoped ? null : await params.tx.automationRun.findFirst({
         where: {
             triggerId: trigger.id,
             causeTriggerKind: "schedule",
@@ -138,8 +139,8 @@ export async function admitDueAutomationScheduleTriggerTx(params: Readonly<{
         },
     });
     if (result.kind === "ineligible") return null;
-    if (isTerminalAutomationRunState(result.run.state)) {
-        await advanceAutomationScheduleCursorAfterTerminalRunTx({
+    if (scoped || isTerminalAutomationRunState(result.run.state)) {
+        await advanceAutomationScheduleCursorTx({
             tx: params.tx,
             run: result.run,
             now: params.now,
@@ -154,9 +155,18 @@ export async function advanceAutomationScheduleCursorAfterTerminalRunTx(params: 
     run: AutomationRunItem;
     now: Date;
 }>): Promise<void> {
+    if (!isTerminalAutomationRunState(params.run.state)) return;
+    await advanceAutomationScheduleCursorTx(params);
+}
+
+/** Scoped admission and unscoped terminal settlement share the exact cursor CAS. */
+async function advanceAutomationScheduleCursorTx(params: Readonly<{
+    tx: Tx;
+    run: AutomationRunItem;
+    now: Date;
+}>): Promise<void> {
     if (
-        !isTerminalAutomationRunState(params.run.state)
-        || params.run.triggerId === null
+        params.run.triggerId === null
         || params.run.causeTriggerKind !== "schedule"
         || params.run.causeTriggerRevision === null
         || params.run.causeScheduledFor === null

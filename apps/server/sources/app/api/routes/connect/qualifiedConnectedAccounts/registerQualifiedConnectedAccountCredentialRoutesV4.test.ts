@@ -1,4 +1,3 @@
-import { sealQualifiedConnectedAccountContentEnvelope } from '@happier-dev/protocol/connect/qualifiedConnectedAccountContentEnvelope';
 import Fastify, { type FastifyRequest } from "fastify";
 import {
     buildConnectedServiceCredentialRecord,
@@ -27,6 +26,9 @@ import { createSignedAccountContentBinding } from "@/testkit/accountEncryption";
 import { mutateQualifiedConnectedServiceCredential, readQualifiedConnectedServiceCredential } from "./credentialRepository";
 import { createConnectedServiceCredentialRevision } from "../credentials/credentialRevision";
 import { resolveLegacyServiceAccountTokenIdentityFields } from "./identity";
+import { createConnectedAccountCredentialSettlement } from '../../../../../../../../packages/cli-common/src/connectedAccounts/credentialSettlement';
+import { openQualifiedConnectedAccountContentEnvelope, sealQualifiedConnectedAccountContentEnvelope } from '@happier-dev/protocol/connect/qualifiedConnectedAccountContentEnvelope';
+import { QualifiedConnectedAccountCredentialMutationSuccessV4Schema } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
 
 const service = {
     pluginId: "example.connected-accounts",
@@ -124,6 +126,56 @@ describe("qualified Connected Account V4 credential routes", () => {
         accountId = ownerId;
         expect((await app.inject({ method: 'DELETE', url: deleteUrl })).json()).toEqual({ success: true });
         expect((await readQualifiedConnectedServiceCredential({ accountId: ownerId, ref })).status).toBe('not_found');
+    });
+
+    it('replaces stored device material including refresh token and sign-in provenance on reconnect', async () => {
+        const oldProvenance = { authenticatedAt: 1_000, machine: { serverId: 'home-a', machineId: 'machine-a' } };
+        const freshProvenance = { ...oldProvenance, authenticatedAt: 6_000 };
+        const oldMaterial = { v: 1, values: { accessToken: 'synthetic-old-access', refreshToken: 'synthetic-old-refresh', idToken: 'synthetic-old-id' } };
+        const freshMaterial = { accessToken: 'synthetic-fresh-access', refreshToken: 'synthetic-fresh-refresh', idToken: 'synthetic-fresh-id' };
+        const created = await mutateQualifiedConnectedServiceCredential({ accountId, ref, authenticationModeId: 'device',
+            expectedCredentialRevision: null, content: { t: 'plain', v: oldMaterial },
+            metadata: { scopes: [], authenticationProvenance: oldProvenance } });
+        if (created.status !== 'written') throw new Error('Expected old device credential');
+        const app = createTestApp();
+        apps.push(app);
+        registerQualifiedConnectedAccountCredentialRoutesV4(app);
+        await app.ready();
+        const readStored = () => readQualifiedConnectedServiceCredential({ accountId, ref });
+        const settlement = createConnectedAccountCredentialSettlement({
+            now: () => 6_000, resolveAccountMode: async () => 'plain',
+            seal: (kind, accountMode, payload) => sealQualifiedConnectedAccountContentEnvelope({ kind, accountMode, payload,
+                randomBytes: length => new Uint8Array(length) }),
+            open: (kind, accountMode, envelope) => openQualifiedConnectedAccountContentEnvelope({ kind, accountMode, envelope }),
+            parseConfigurationContent: value => value,
+            // Real HTTP route and retained test database consume the settlement owner's mutation.
+            mutateCredential: async mutation => {
+                const response = await app.inject({ method: 'POST', url: '/v4/connect/qualified/credential', payload: mutation });
+                expect(response.statusCode).toBe(200);
+                return QualifiedConnectedAccountCredentialMutationSuccessV4Schema.parse(response.json());
+            },
+            mutateCredentialHealth: async patch => {
+                const response = await app.inject({ method: 'PATCH', url: '/v4/connect/qualified/credential/health', payload: patch });
+                expect(response.statusCode).toBe(200);
+            },
+            readCredential: async () => {
+                const stored = await readStored();
+                return stored.status === 'resolved' ? { ref, ...stored.credential } : null;
+            },
+            readConfiguration: async () => null, readHttpStatus: () => null, readFailureCode: () => null,
+        });
+        expect(await settlement.settle({ intent: 'reconnect', service, accountId: ref.accountId, authenticationModeId: 'device',
+            expectedCredentialRevision: created.credentialRevision, expectedCredentialConfigurationRevision: null,
+            expectedConfigurationRevision: 'unconfigured',
+            sourceCustody: { kind: 'managed', immutableGenerationId: 'synthetic-artifact', installSource: 'archive' },
+            stagedCredentials: freshMaterial, scopes: [], authenticationProvenance: freshProvenance,
+        })).toEqual({ status: 'connected', account: ref });
+        const stored = await readStored();
+        expect(stored.status).toBe('resolved');
+        if (stored.status !== 'resolved') throw new Error('Expected reconnected device credential');
+        expect(stored.credential.credentialRevision).not.toBe(created.credentialRevision);
+        expect(stored.credential.content).toEqual({ t: 'plain', v: { v: 1, values: freshMaterial } });
+        expect(stored.credential.metadata.authenticationProvenance).toEqual(freshProvenance);
     });
 
     it("registers the complete atomic V4 route family before capability advertisement", async () => {

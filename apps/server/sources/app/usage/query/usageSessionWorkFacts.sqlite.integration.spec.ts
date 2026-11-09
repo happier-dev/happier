@@ -21,6 +21,7 @@ import { registerAccountUsageRoutes } from '@/app/api/routes/account/registerAcc
 import { registerSessionSystemRecordRoutes } from '@/app/api/routes/session/registerSessionSystemRecordRoutes';
 import { SESSION_ACCESS_SESSION_BATCH_SIZE } from '@/app/session/access/sessionAccess';
 import { upsertSessionSystemRecordV1 } from '@/app/session/systemRecords/sessionSystemRecordService';
+import { TransactionDeadlineExceededError } from '@/storage/transactionErrors';
 
 const persistedAddress = (kind: UsageSessionFactKindV1) => {
     const address = getUsageSessionFactRecordAddress(kind);
@@ -46,6 +47,39 @@ describe('Usage compact work-facts evidence', () => {
         return db.sessionSystemRecord.create({ data: { accountId, sessionId, ...address,
             kind: getUsageSessionFactRecordAddress(kind).kind, ...deriveSessionSystemRecordAddressKeys(address), content, version: 1 } });
     };
+
+    it('retains database failures only for the covered fact batch and recovers on another read', async () => {
+        const owner = await account();
+        const subjects = Array.from({ length: SESSION_ACCESS_SESSION_BATCH_SIZE + 1 }, () => ({ id: randomUUID(),
+            accountId: owner.id, tag: randomUUID(), encryptionMode: 'e2ee', metadata: 'opaque' }));
+        await db.session.createMany({ data: subjects });
+        let recordReads = 0;
+        let fail = true;
+        const stop = observeSqliteRequests({ before(request) {
+            if (request.model === 'SessionSystemRecord' && request.action === 'findMany') {
+                recordReads++;
+                if (fail && recordReads === 2) throw new TransactionDeadlineExceededError(undefined);
+            }
+        } });
+        try {
+            await withAuthenticatedTestApp(registerAccountUsageRoutes, async app => {
+                const read = () => app.inject({ method: 'POST', url: '/v2/usage/session-evidence',
+                    headers: { 'x-test-user-id': owner.id, ...currentAccountStoredContentCompatibilityHeaders },
+                    payload: { nowMs: 400, readWorkFacts: true, requests: [{ sessionIds: subjects.map(row => row.id),
+                        query: normalizeUsageQuery({ period: { startMs: 0, endMs: 400 }, includeWorkEvidence: false }) }] } });
+                const partial = await read();
+                expect(partial.statusCode).toBe(200);
+                const rows = partial.json().results;
+                expect(rows.slice(0, SESSION_ACCESS_SESSION_BATCH_SIZE).every((row: { workFacts?: unknown }) => row.workFacts)).toBe(true);
+                expect(rows.at(-1)).toMatchObject({ sessionId: subjects.at(-1)!.id,
+                    detail: { status: 503, body: { error: 'database_transaction_timeout' } } });
+                fail = false;
+                const recovered = await read();
+                expect(recovered.statusCode).toBe(200);
+                expect(recovered.json().results.every((row: { workFacts?: unknown }) => row.workFacts)).toBe(true);
+            });
+        } finally { stop(); }
+    });
 
     it('preserves released unscoped legacy pages while the actor reads scoped v1 work facts', async () => {
         // 0.2 commit 1321319: sessionSystemRecords/{sessionSystemRecordNamespace,

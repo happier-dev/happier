@@ -1,9 +1,9 @@
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { UpdateContainerSchema } from '@happier-dev/protocol/updates';
 import { CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION, buildAccountStoredContentCompatibilitySocketAuthV1 } from '@happier-dev/protocol/clientCompatibility/accountStoredContentCompatibilityV1';
 import { createFakeSocket } from '@/app/api/testkit/socketHarness';
 import { evaluateAccountStoredContentSocketCompatibility, writeAccountStoredContentCompatibilityForSocket } from '@/app/clientCompatibility/accountStoredContentCompatibility';
 import type { ClientConnection } from '@/app/events/eventPayloadTypes';
-import { UpdateContainerSchema } from '@happier-dev/protocol/updates';
-import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { inTxPostgresControlStatementMock, installDbModuleMock } from "../api/testkit/dbMocks";
 
@@ -50,6 +50,12 @@ async function runMarkAccountsChanged(
 }
 
 describe("markAccountChanged", () => {
+    const originalDbProvider = process.env.HAPPIER_DB_PROVIDER;
+    afterEach(() => {
+        process.env.HAPPIER_DB_PROVIDER = originalDbProvider;
+        eventRouter.clearIo();
+    });
+
     it.each(['covered-only', 'covered-first', 'uncovered-first'] as const)(
         'retains a viewer wake when any coalesced publication is uncovered (%s)', async order => {
             process.env.HAPPIER_DB_PROVIDER = 'postgres';
@@ -85,11 +91,50 @@ describe("markAccountChanged", () => {
             } finally { for (const { connection } of sockets) eventRouter.removeConnection('a1', connection); }
         });
 
+    it.each([
+        ['sqlite', 'read-first'], ['sqlite', 'resource-first'],
+        ['postgres', 'read-first'], ['postgres', 'resource-first'],
+    ] as const)('unions Discussion read-state and resource hints through point and batch publication (%s, %s)', async (provider, order) => {
+        process.env.HAPPIER_DB_PROVIDER = provider;
+        let hint: unknown;
+        let seq = 0;
+        const tx = {
+            ...(provider === 'postgres' ? { $queryRawUnsafe: vi.fn(async (query: string, ...values: unknown[]) => {
+                if (!query.includes('INSERT INTO "AccountChange"')) return [];
+                hint = JSON.parse(String(values[4]));
+                return [{ cursor: ++seq }];
+            }) } : {}),
+            account: { update: vi.fn(async () => ({ seq: ++seq })) },
+            accountChange: {
+                findUnique: vi.fn(async () => hint === undefined ? null : { hint }),
+                upsert: vi.fn(async (input: { update: { hint: unknown } }) => { hint = input.update.hint; return {}; }),
+            },
+        };
+        const readState = { v: 1, discussions: true, changes: { readState: true } };
+        const resource = { v: 1, discussions: true, changes: { resource: true } };
+        const first = order === 'read-first' ? readState : resource;
+        const second = order === 'read-first' ? resource : readState;
+        await runMarkAccountChanged(tx, { accountId: 'a1', kind: 'discussion', entityId: 'd1', hint: first });
+        expect(hint).toEqual(first);
+        await runMarkAccountsChanged(tx, { accountIds: ['a1'], kind: 'discussion', entityId: 'd1', hint: second });
+        expect(hint).toEqual({ v: 1, discussions: true, changes: { readState: true, resource: true } });
+        await runMarkAccountChanged(tx, { accountId: 'a1', kind: 'discussion', entityId: 'd1', hint: readState });
+        expect(hint).toEqual({ v: 1, discussions: true, changes: { readState: true, resource: true } });
+    });
 
-    const originalDbProvider = process.env.HAPPIER_DB_PROVIDER;
-    afterEach(() => {
-        process.env.HAPPIER_DB_PROVIDER = originalDbProvider;
-        eventRouter.clearIo();
+    it.each([null, { v: 1, discussions: true }, { v: 1, discussions: true, changes: { future: true } }])('never narrows an unknown retained Discussion change to read-state only (%j)', async retained => {
+        process.env.HAPPIER_DB_PROVIDER = 'sqlite';
+        let hint: unknown = retained;
+        const tx = {
+            account: { update: vi.fn(async () => ({ seq: 2 })) },
+            accountChange: {
+                findUnique: vi.fn(async () => ({ hint })),
+                upsert: vi.fn(async (input: { update: { hint: unknown } }) => { hint = input.update.hint; return {}; }),
+            },
+        };
+        await runMarkAccountChanged(tx, { accountId: 'a1', kind: 'discussion', entityId: 'd1',
+            hint: { v: 1, discussions: true, changes: { readState: true } } });
+        expect(hint).toEqual({ v: 1, discussions: true, changes: { readState: true, resource: true } });
     });
 
     it.each([{ settingsVersion: 7 }, { username: true }])('replaces retained legacy connected service hints on ordinary self writes (%j)', async next => {
@@ -264,6 +309,7 @@ describe("markAccountChanged", () => {
                 update: vi.fn().mockResolvedValue({ seq: 7 }),
             },
             accountChange: {
+                findUnique: vi.fn().mockResolvedValue(null),
                 upsert: vi.fn().mockResolvedValue({}),
             },
         };
@@ -295,13 +341,13 @@ describe("markAccountChanged", () => {
                 sessionId: "s1",
                 cursor: 7,
                 changedAt: expect.any(Date),
-                hint: { lastMessageSeq: 123 },
+                hint: { lastMessageSeq: 123, followReceiverAvailabilityChanged: false },
             },
             update: {
                 sessionId: "s1",
                 cursor: 7,
                 changedAt: expect.any(Date),
-                hint: { lastMessageSeq: 123 },
+                hint: { lastMessageSeq: 123, followReceiverAvailabilityChanged: false },
             },
         });
     });
@@ -348,7 +394,7 @@ describe("markAccountChanged", () => {
                     entityId: "pluginDomain/example.tasks/data-collection/tasks",
                 },
             },
-            select: { hint: true },
+            select: { hint: true, cursor: true },
         });
         expect(tx.accountChange.upsert).toHaveBeenCalledWith(expect.objectContaining({
             create: expect.objectContaining({
@@ -477,6 +523,7 @@ describe("markAccountChanged", () => {
                 findMany: vi.fn(async () => [{ id: "a1", seq: 11 }, { id: "a2", seq: 24 }]),
             },
             accountChange: {
+                findUnique: vi.fn(async () => null),
                 findMany: vi.fn(async () => []),
                 deleteMany: vi.fn(async () => ({ count: 0 })),
                 createMany: vi.fn(async ({ data }: { data: typeof changes }) => { changes.push(...data); }),
@@ -493,13 +540,15 @@ describe("markAccountChanged", () => {
 
         expect(cursors).toEqual([{ accountId: "a1", cursor: 11 }, { accountId: "a2", cursor: 24 }]);
         expect(changes).toEqual([
-            expect.objectContaining({ accountId: "a1", sessionId: "session-1", hint: { sharedMetadataVersion: 3 }, cursor: 11 }),
-            expect.objectContaining({ accountId: "a2", sessionId: "session-1", hint: { sharedMetadataVersion: 5 }, cursor: 24 }),
+            expect.objectContaining({ accountId: "a1", sessionId: "session-1", hint: { sharedMetadataVersion: 3, followReceiverAvailabilityChanged: false }, cursor: 11 }),
+            expect.objectContaining({ accountId: "a2", sessionId: "session-1", hint: { sharedMetadataVersion: 5, followReceiverAvailabilityChanged: false }, cursor: 24 }),
         ]);
     });
 
     it("publishes one Account projection change to a recipient set with bounded database operations", async () => {
         process.env.HAPPIER_DB_PROVIDER = "sqlite";
+        const emit = vi.fn();
+        eventRouter.setIo({ to: () => ({ emit, disconnectSockets: vi.fn() }) });
         const tx: any = {
             $executeRawUnsafe: vi.fn().mockResolvedValue(2),
             account: {
@@ -532,6 +581,10 @@ describe("markAccountChanged", () => {
                 expect.objectContaining({ accountId: "a1", kind: "account", entityId: "teams", cursor: 11 }),
                 expect.objectContaining({ accountId: "a2", kind: "account", entityId: "teams", cursor: 24 }),
             ],
+        });
+        expect(emit).toHaveBeenCalledTimes(2);
+        for (const [, payload] of emit.mock.calls) expect(UpdateContainerSchema.parse(payload).body).toEqual({
+            t: "account-change", changeKinds: ["account"], entityIds: ["teams"],
         });
     });
 

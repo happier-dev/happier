@@ -34,6 +34,8 @@ export async function publishSessionReadyProjectionUpdate(params: Readonly<{
         return markSessionProjectionRecipientsChanged({
             tx,
             sessionId: params.sessionId,
+            usageAccountingChanged: false,
+            memoryInputsChanged: false,
             hint: {
                 latestReadyEventSeq: readyProjection.latestReadyEventSeq,
                 latestReadyEventAt: readyProjection.latestReadyEventAt,

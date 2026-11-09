@@ -59,6 +59,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('T
                 && query.includes('"IdentityProviderInstance"') && query.includes('"ownerTeamId" IS NULL'));
             measurements.push(inventoryReads.length);
         }
+        console.info('TEAM_QUALIFICATION_PROVIDER_INVENTORY_READS', JSON.stringify(measurements));
         expect(measurements).toEqual([1, 1]);
     });
 });

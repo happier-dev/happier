@@ -51,7 +51,7 @@ describe("githubConnect (AccountChange integration)", () => {
                 accountId_kind_entityId: {
                     accountId: account.id,
                     kind: "account",
-                    entityId: "self",
+                    entityId: "linked-identities",
                 },
             },
             select: { cursor: true, hint: true },

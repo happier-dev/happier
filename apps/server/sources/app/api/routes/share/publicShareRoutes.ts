@@ -1,4 +1,3 @@
-import { registerArtifactSignedInLinkRoutes } from './registerArtifactSignedInLinkRoutes';
 import { type Fastify } from "../../types";
 import { z } from "zod/mini";
 import { assertSessionCapabilityInTx } from "@/app/session/access/sessionAccess";
@@ -10,6 +9,7 @@ import { registerPublicShareViewerRoutes } from "./registerPublicShareViewerRout
 import { readSessionAccessAuthenticationFromRequest } from "@/app/session/access/sessionAccessAuthentication";
 import { inReadSnapshot } from "@/storage/inTx";
 import { createServerFeatureGatedRouteApp } from "@/app/features/catalog/serverFeatureGate";
+import { registerArtifactSignedInLinkRoutes } from './registerArtifactSignedInLinkRoutes';
 
 /**
  * Public session sharing API routes

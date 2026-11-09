@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { db } from "@/storage/db";
+import { makeShareEligibleForTest } from '@/testkit/shareEligibility.testkit';
 import { inTx, type Tx } from "@/storage/inTx";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
 import { createPresentUserSessionAccessAuthentication } from "@/app/session/access/sessionAccessAuthentication.testkit";
@@ -76,6 +77,7 @@ describe("Discussion grant-entry baseline (SQLite)", () => {
     it("baselines a new invitation at its own ceiling and preserves unread on retry", async () => {
         const owner = await db.account.create({ data: { publicKey: randomUUID(), encryptionMode: "plain" } });
         const reader = await db.account.create({ data: { publicKey: randomUUID(), encryptionMode: "plain" } });
+        await makeShareEligibleForTest(owner.id, reader.id);
         const created = await createDiscussion({
             authentication, actorAccountId: owner.id,
             request: {

@@ -121,6 +121,10 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("m
                     const results = await resolveManagedGitHubIdentityProviderModulesInTx(tx, { inputs });
                     await new Promise<void>(done => setImmediate(done));
                     const selects = statements.filter(({ query }) => /^SELECT\b/.test(query));
+                    console.info("MANAGED_GITHUB_BATCH_WORK", JSON.stringify({
+                        providers: count, selects: selects.length, decryptions: decryptions.mock.calls.length,
+                        elapsedMs: performance.now() - startedAt,
+                    }));
                     expect(results.size).toBe(count);
                     expect(selects).toHaveLength(2);
                     expect(decryptions).toHaveBeenCalledTimes(1);
@@ -152,6 +156,9 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("m
                 });
                 await new Promise<void>(done => setImmediate(done));
                 const draftSelects = statements.filter(({ query }) => /^SELECT\b/.test(query));
+                console.info("MANAGED_GITHUB_DRAFT_BATCH_WORK", JSON.stringify({
+                    providers: drafts.size, selects: draftSelects.length, decryptions: decryptions.mock.calls.length,
+                }));
                 expect(drafts.size).toBe(128);
                 expect(draftSelects).toHaveLength(2);
                 expect(draftSelects.some(({ query }) => query.includes("encryptedSecrets"))).toBe(false);

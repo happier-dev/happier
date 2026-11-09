@@ -7,10 +7,9 @@ import { db, getDbProviderFromEnv, initDbPostgres, shutdownDbClient } from '@/st
 import { inReadSnapshot } from '@/storage/inTx';
 import { encodeAutomationRunCause } from '@/app/automations/automationRunCauseCodec';
 import { encodeAutomationSessionLifecycleConfiguration } from '@/app/automations/automationSessionLifecycleConfigurationCodec';
-import { readAutomationSessionReviewProjectionIdsInTx } from '@/app/automations/sessionReviewProjectionInvalidation';
 import { readManagedWakePublicationAccountIdsInTx } from '@/app/machines/managed/managedWake';
 import { readCurrentSessionInputMachineTargetInTx } from '@/app/session/messages/sessionInputAdmission';
-import { getSessionLifecycleAutomationPublicationAudienceInTx } from './workflowPublicationAudience';
+import { getSessionLifecycleAutomationPublicationAudienceInTx, getWorkflowPublicationAudienceInTx } from './workflowPublicationAudience';
 
 describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('Lifecycle publication inventory bind bounds (PostgreSQL)', () => {
     const queries: Prisma.QueryEvent[] = [];
@@ -102,6 +101,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('L
     function assertBindBudget(name: string) {
         const binds = queries.map(query => (JSON.parse(query.params) as unknown[]).length);
         expect(binds.length).toBeGreaterThan(0);
+        console.info('LIFECYCLE_AUDIENCE_SQL_BINDS', JSON.stringify({ name, statements: queries.length, maxBinds: Math.max(...binds) }));
         expect(Math.max(...binds)).toBeLessThanOrEqual(999);
     }
 
@@ -112,20 +112,42 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('L
         expect(await inReadSnapshot(tx => getSessionLifecycleAutomationPublicationAudienceInTx(tx, [fixture.sessions[0].id])))
             .toEqual({ accountIds: [fixture.owners[0].id], sessionIds: [fixture.sessions[0].id] });
         const inventoryIds = new Set([...fixture.automationIds, ...fixture.sessions.map(session => session.id), ...fixture.machines.map(machine => machine.id)]);
+        console.info('LIFECYCLE_AUDIENCE_NATIVE_QUERY_SHAPES', JSON.stringify(queries.map(query => {
+            const parameters = JSON.parse(query.params) as unknown[];
+            return { table: /FROM\s+"public"\."([^"]+)"/.exec(query.query)?.[1] ?? query.query,
+                binds: parameters.length, fixedBindings: parameters.filter(value => typeof value !== 'string' || !inventoryIds.has(value)).length };
+        })));
         queries.length = 0;
         const audience = await inReadSnapshot(tx => getSessionLifecycleAutomationPublicationAudienceInTx(tx, sourceIds));
         expect(audience).toEqual({ accountIds: fixture.owners.map(owner => owner.id).sort(),
-            sessionIds: [fixture.sessions[0].id, fixture.sessions[1].id, fixture.sessions[3].id].sort() });
+            sessionIds: fixture.sessions.map(session => session.id).sort() });
         assertBindBudget('lifecycle-source-and-automation-fanout');
     });
 
-    it('deduplicates retained review origins across Automation inventory chunks', async () => {
+    it('does not read retained Run review origins for an Automation definition audience', async () => {
         const automationIds = [...fixture.automationIds.slice(0, -1),
             ...Array.from({ length: 34000 }, (_, index) => `missing-automation-${index}`), fixture.automationIds[1000]];
         queries.length = 0;
-        const sessionIds = await inReadSnapshot(tx => readAutomationSessionReviewProjectionIdsInTx(tx, automationIds));
-        expect(sessionIds).toEqual([fixture.sessions[0].id, fixture.sessions[1].id, fixture.sessions[3].id].sort());
-        assertBindBudget('retained-review');
+        const audience = await inReadSnapshot(tx => getWorkflowPublicationAudienceInTx(tx, {
+            accountId: fixture.owners[0].id, automationIds,
+        }));
+        expect(audience.sessionIds).toEqual([fixture.sessions[0].id, fixture.sessions[1].id, fixture.sessions[3].id].sort());
+        expect(queries.some(query => /FROM\s+"public"\."AutomationRun"/.test(query.query))).toBe(false);
+        assertBindBudget('definition-without-retained-review');
+    });
+
+    it('unions portable Run selector batches without losing or duplicating actual review sources', async () => {
+        const selected = await db.automationRun.findFirstOrThrow({ where: { automationId: fixture.automationIds[0] }, select: { id: true } });
+        const other = await db.automationRun.findFirstOrThrow({ where: { automationId: fixture.automationIds[1] }, select: { id: true } });
+        queries.length = 0;
+        const audience = await inReadSnapshot(tx => getWorkflowPublicationAudienceInTx(tx, {
+            accountId: fixture.owners[0].id,
+            runIds: [selected.id, ...Array.from({ length: 35_000 }, (_, index) => `missing-run-${index}`)],
+            runWhere: [{ id: selected.id }, { id: other.id }],
+        }));
+        expect(audience.runIds).toEqual([selected.id, other.id].sort());
+        expect(audience.sessionIds).toEqual([fixture.sessions[0].id, fixture.sessions[1].id].sort());
+        assertBindBudget('run-selector-union');
     });
 
     it('retains wake custodians across Session and Machine inventory chunks', async () => {

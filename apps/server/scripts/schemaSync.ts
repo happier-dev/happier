@@ -104,11 +104,16 @@ function generateProviderSchemaFromPostgres(
         body = stripRelationMapArguments(body);
         // SQLite String already maps to TEXT and has no native @db.Text annotation.
         body = body.replace(/[ \t]+@db\.Text\b/g, "");
+        body = body.replace(/^model\s+UsageAccountingProjection\s+\{[\s\S]*?^\}/gm,
+            model => model.replace(/[ \t]+@db\.VarChar\(\d+\)/g, "").replace(/[ \t]+$/gm, ""));
     }
 
     if (opts.provider === "mysql") {
         // Publication documents follow the admitted transport/query size, not VARCHAR or TEXT limits.
         body = body.replace(/^model\s+AccountPublicProfile\s+\{[\s\S]*?^\}/gm,
+            model => model.replace(/@db\.Text\b/g, "@db.LongText"));
+        // Projection payloads retain full native identities and exact accounting operands.
+        body = body.replace(/^model\s+UsageAccountingProjection\s+\{[\s\S]*?^\}/gm,
             model => model.replace(/@db\.Text\b/g, "@db.LongText"));
         // Preserve the String API and full Account/key identity index. Column
         // collation is enforced by the MySQL migration, not expressible in Prisma.
@@ -292,7 +297,7 @@ function annotateMySqlTeamFields(schemaBody: string): string {
             (model) => model
                 // Resource ids are caller-supplied by the V1 contract up to 256 characters.
                 .replace(/^([ \t]*id\s+String\s+@id\s+@default\(cuid\(\)\))(?![^\n]*@db\.)/m, "$1 @db.VarChar(256)")
-                .replace(/^([ \t]*(?:displayName|sourceBindingJson|directSourceVersionsJson|requestPolicyJson)\s+String\??)(?![^\n]*@db\.)/gm, "$1 @db.LongText"),
+                .replace(/^([ \t]*(?:displayName|sourceBindingJson|directSourceVersionsJson|requestPolicyJson|disclosureCeiling)\s+String\??)(?![^\n]*@db\.)/gm, "$1 @db.LongText"),
         )
         .replace(
             /^model\s+(?:TeamCredentialExternalApiKey|TeamCredentialRecipientMaterial|TeamCredentialActivityEvent|TeamCredentialGroupGrant|TeamCredentialMemberGrant|SessionTeamCredentialBinding)\s+\{[\s\S]*?^\}\s*$/gm,
@@ -431,6 +436,14 @@ function annotateMySqlPluginPermissionIndexes(schemaBody: string): string {
 
 function annotateMySqlPluginCollectionFields(schemaBody: string): string {
     return schemaBody
+        .replace(
+            /^model\s+PluginCollectionUsage\s+\{[\s\S]*?^\}\s*$/gm,
+            model => model.replace(/^(\s*(?:pluginId|collectionId)\s+String)(?![^\n]*@db\.)/gm, '$1 @db.VarChar(256)'),
+        )
+        .replace(
+            /^model\s+PluginCollectionContractUsage\s+\{[\s\S]*?^\}\s*$/gm,
+            model => model.replace(/^(\s*contractId\s+String)(?![^\n]*@db\.)/m, '$1 @db.VarChar(25)'),
+        )
         .replace(
             /^model\s+PluginCollectionContract\s+\{[\s\S]*?^\}\s*$/gm,
             (model) => model
@@ -652,6 +665,8 @@ function annotateMySqlPluginWebhookIngressFields(schemaBody: string): string {
                 .replace(/^(\s*id\s+String)(?![^\n]*@db\.)/m, "$1 @db.VarChar(28)")
                 .replace(/^(\s*pluginId\s+String\?)(?![^\n]*@db\.)/m, "$1 @db.VarChar(256)")
                 .replace(/^(\s*(?:webhookContributionId|handlerActionId|sourceInstanceId|ensureIdempotencyKey)\s+String\?)(?![^\n]*@db\.)/gm, "$1 @db.VarChar(128)")
+                .replace(/^(\s*checkId\s+String)(?![^\n]*@db\.)/m, "$1 @db.VarChar(2000)")
+                .replace(/^(\s*checkIdDigest\s+String)(?![^\n]*@db\.)/m, "$1 @db.Char(64)")
                 .replace(/^(\s*ensureRequestFingerprint\s+String\?)(?![^\n]*@db\.)/m, "$1 @db.Char(64)")
                 .replace(/^(\s*setupKind\s+String\?)(?![^\n]*@db\.)/m, "$1 @db.VarChar(64)")
                 .replace(/^(\s*routingKind\s+String)(?![^\n]*@db\.)/m, "$1 @db.VarChar(64)")

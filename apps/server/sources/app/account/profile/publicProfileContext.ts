@@ -45,8 +45,9 @@ export async function readPublicProfileContextInTx(tx: Tx, accountId: string, en
     const page = publicBaseUrl && account.username ? publicProfilePageUrl(publicBaseUrl, account.username) : null;
     return PublicProfileContextV1Schema.parse({
         handle: account.username,
-        // Account avatars have no admitted public-profile URL yet; never expose a private storage/provider URL.
-        identity: { ...(name ? { name } : {}), sinceMs: account.createdAt.getTime() },
+        // Missing, unsafe and revoked Account images share the explained fallback; no private source is disclosed.
+        identity: { ...(name ? { name } : {}), sinceMs: account.createdAt.getTime(),
+            avatar: { kind: 'planet', reason: 'account_image_unavailable' } },
         service: publicBaseUrl && displayName ? { displayName, publicBaseUrl } : null,
         urls: page && publicBaseUrl && account.username && report ? {
             page,

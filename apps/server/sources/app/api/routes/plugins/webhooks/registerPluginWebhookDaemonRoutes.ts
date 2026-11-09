@@ -3,6 +3,7 @@ import { z } from "zod/mini";
 import { PluginWebhookClaimRequestV1Schema, PluginWebhookClaimResultV1Schema, PluginWebhookCompleteRequestV1Schema, PluginWebhookFailRequestV1Schema, PluginWebhookRenewRequestV1Schema, PluginWebhookRenewResultV1Schema, PluginWebhookSettleResultV1Schema, type PluginWebhookClaimRequestV1, type PluginWebhookClaimResultV1 } from '@happier-dev/protocol/plugins/webhooks/deliveryV1';
 import { PluginMachineMaterializationRefV1Schema } from '@happier-dev/protocol/plugins/availability/materializationRefV1';
 import { PluginWebhookEndpointCheckCorrespondenceInputV1Schema, PluginWebhookEndpointCheckCorrespondenceResultV1Schema, PluginWebhookEndpointConvergeTargetInputV1Schema, PluginWebhookEndpointConvergeTargetResultV1Schema, PluginWebhookPluginSurfaceActionHttpPathsV1 } from '@happier-dev/protocol/plugins/webhooks/endpointV1';
+import { PLUGIN_WEBHOOK_HEARTBEAT_ENSURE_PATH_V1, PLUGIN_WEBHOOK_HEARTBEAT_READ_PATH_V1, PluginWebhookEndpointEnsureInputV1Schema, PluginWebhookEndpointEnsureResultV1Schema, PluginWebhookHeartbeatReadInputV1Schema, PluginWebhookHeartbeatReadResultV1Schema } from '@happier-dev/protocol/plugins/webhooks/endpointV1';
 
 import { createServerFeatureGatePreHandler } from "@/app/features/catalog/serverFeatureGate";
 import { authenticateCurrentPluginMaterializationCallerV1 } from "@/app/plugins/availability/callerMaterialization";
@@ -11,6 +12,7 @@ import {
     type VerifiedPluginInstallationPublisher,
 } from "@/app/plugins/installations/publisherProof";
 import { createPluginWebhookEndpointActionsV1 } from "@/app/plugins/webhooks/endpointActions";
+import { PluginWebhookEndpointStoreError } from "@/app/plugins/webhooks/endpointStore";
 import {
     claimPluginWebhookDeliveryWithBoundedWaitV1,
     completePluginWebhookDeliveryV1,
@@ -59,6 +61,8 @@ type RouteDependencies = Readonly<{
     fail: typeof failPluginWebhookDeliveryV1;
     checkCorrespondence: typeof webhookEndpointActions.checkCorrespondence;
     convergeTarget: typeof webhookEndpointActions.convergeTarget;
+    ensureHeartbeat?: typeof webhookEndpointActions.ensureHeartbeat;
+    readHeartbeat?: typeof webhookEndpointActions.readHeartbeat;
     authenticateCaller: AuthenticatePluginCallerV1;
     verifyPublisher: typeof verifyPluginInstallationPublisherHeader;
 }>;
@@ -81,6 +85,8 @@ const DEFAULT_DEPENDENCIES: RouteDependencies = {
     fail: failPluginWebhookDeliveryV1,
     checkCorrespondence: webhookEndpointActions.checkCorrespondence,
     convergeTarget: webhookEndpointActions.convergeTarget,
+    ensureHeartbeat: webhookEndpointActions.ensureHeartbeat,
+    readHeartbeat: webhookEndpointActions.readHeartbeat,
     authenticateCaller: authenticateCurrentPluginCallerV1,
     verifyPublisher: verifyPluginInstallationPublisherHeader,
 };
@@ -166,6 +172,51 @@ export function registerPluginWebhookDaemonRoutes(
         });
         return caller ?? "unavailable";
     };
+
+    app.post(PLUGIN_WEBHOOK_HEARTBEAT_ENSURE_PATH_V1, {
+        preHandler: authenticatedWebhookPreHandler,
+        schema: {
+            querystring: EmptyQuerySchema,
+            body: z.strictObject({ caller: PluginMachineMaterializationRefV1Schema, input: PluginWebhookEndpointEnsureInputV1Schema }),
+            response: { 200: z.union([PluginWebhookEndpointEnsureResultV1Schema, PluginWebhookHeartbeatReadResultV1Schema]), 401: z.null() },
+        },
+    }, async (request, reply) => {
+        noStore(reply);
+        const caller = await admitPluginSurfaceEndpointCaller({ path: PLUGIN_WEBHOOK_HEARTBEAT_ENSURE_PATH_V1,
+            accountId: request.userId, request, caller: request.body.caller });
+        if (caller === "unauthenticated") return reply.code(401).send(null);
+        if (caller === "unavailable") return reply.send({ kind: "unavailable", code: "endpoint_unavailable" });
+        // Endpoint creation is a host effect for this exact observation host.
+        const target = request.body.input.targetMaterialization;
+        if (target.machineId !== request.body.caller.machineId || target.materializationId !== request.body.caller.materializationId
+            || target.pluginId !== caller.pluginId) return reply.send({ kind: "unavailable", code: "endpoint_unavailable" });
+        try {
+            return reply.send(await (dependencies.ensureHeartbeat ?? webhookEndpointActions.ensureHeartbeat)({
+                accountId: request.userId, callerPluginId: caller.pluginId, input: request.body.input,
+            }));
+        } catch (error) {
+            if (!(error instanceof PluginWebhookEndpointStoreError)) throw error;
+            return reply.send({ kind: "unavailable", code: "endpoint_unavailable" });
+        }
+    });
+
+    app.post(PLUGIN_WEBHOOK_HEARTBEAT_READ_PATH_V1, {
+        preHandler: authenticatedWebhookPreHandler,
+        schema: {
+            querystring: EmptyQuerySchema,
+            body: z.strictObject({ caller: PluginMachineMaterializationRefV1Schema, input: PluginWebhookHeartbeatReadInputV1Schema }),
+            response: { 200: PluginWebhookHeartbeatReadResultV1Schema, 401: z.null() },
+        },
+    }, async (request, reply) => {
+        noStore(reply);
+        const caller = await admitPluginSurfaceEndpointCaller({ path: PLUGIN_WEBHOOK_HEARTBEAT_READ_PATH_V1,
+            accountId: request.userId, request, caller: request.body.caller });
+        if (caller === "unauthenticated") return reply.code(401).send(null);
+        if (caller === "unavailable") return reply.send({ kind: "unavailable", code: "endpoint_unavailable" });
+        return reply.send(await (dependencies.readHeartbeat ?? webhookEndpointActions.readHeartbeat)({
+            accountId: request.userId, caller: request.body.caller, input: request.body.input,
+        }));
+    });
 
     app.post(CHECK_CORRESPONDENCE_PATH, {
         preHandler: authenticatedWebhookPreHandler,

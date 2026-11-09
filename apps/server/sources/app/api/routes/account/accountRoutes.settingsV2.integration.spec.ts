@@ -16,6 +16,8 @@ import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lig
 import { withAuthenticatedTestApp } from "../../testkit/sqliteFastify";
 import { currentAccountStoredContentCompatibilityHeaders } from "../../testkit/accountStoredContentCompatibility";
 import { accountRoutes } from "./accountRoutes";
+import { deriveAccountRemoteAlertPolicyV1 } from '@happier-dev/protocol/account/settings/accountRemoteAlertPolicy';
+import { eventRouter } from '@/app/events/eventRouter';
 
 function deferred(): Readonly<{
     promise: Promise<void>;
@@ -49,12 +51,60 @@ describe("accountRoutes (/v2/account/settings) (integration)", () => {
     });
 
     afterEach(async () => {
+        vi.restoreAllMocks();
         harness.resetEnv();
         await harness.resetDbTables([
             () => db.accountChange.deleteMany(),
             () => db.repeatKey.deleteMany(),
             () => db.account.deleteMany(),
         ]);
+    });
+
+    it("advertises accepted remote-policy writes on the existing baseline without changing its strict JSON envelope", async () => {
+        const account = await db.account.create({ data: { ...createSignedAccountContentBinding(),
+            encryptionMode: 'e2ee', settings: null, settingsVersion: 0 }, select: { id: true } });
+        await withAuthenticatedTestApp(app => accountRoutes(app), async app => {
+            const response = await app.inject({ method: 'GET', url: '/v2/account/settings',
+                headers: { 'x-test-user-id': account.id } });
+            expect(response.statusCode).toBe(200);
+            expect(response.json()).toEqual({ content: null, version: 0 });
+            expect(response.headers['x-happier-account-settings-protocols']).toBe('remote-alert-policy-v1');
+            expect(response.headers['x-happier-account-remote-alert-policy-status']).toBe('disabled');
+        });
+    });
+
+    it.each(['v1', 'v2'] as const)('publishes stale policy currentness when a compatible %s writer advances Settings without a policy', async (api) => {
+        const published = vi.spyOn(eventRouter, 'emitUpdate');
+        const account = await db.account.create({ data: { ...createSignedAccountContentBinding(),
+            encryptionMode: 'e2ee', settings: null, settingsVersion: 0,
+            remoteAlertPolicy: { settingsVersion: 0, policy: deriveAccountRemoteAlertPolicyV1({ sessionRemoteAlertsEnabled: true }) },
+        }, select: { id: true } });
+        await withAuthenticatedTestApp(app => accountRoutes(app), async app => {
+            const headers = { 'x-test-user-id': account.id, ...currentAccountStoredContentCompatibilityHeaders };
+            const before = await app.inject({ method: 'GET', url: '/v2/account/settings', headers });
+            expect(before.headers['x-happier-account-remote-alert-policy-status']).toBe('current');
+            const write = await app.inject({ method: 'POST', url: `/${api}/account/settings`, headers,
+                payload: api === 'v1' ? { settings: 'next-document', expectedVersion: 0 }
+                    : { content: { t: 'encrypted', c: 'next-document' }, expectedVersion: 0 } });
+            expect(write.json()).toEqual({ success: true, version: 1 });
+            expect(write.headers['x-happier-account-remote-alert-policy-status']).toBe('stale');
+            expect(published).toHaveBeenCalledWith(expect.objectContaining({ payload: expect.objectContaining({
+                body: expect.objectContaining({ t: 'update-account', remoteAlertPolicyStatus: 'stale' }),
+            }) }));
+            expect(published).toHaveBeenCalledWith(expect.objectContaining({ payload: expect.objectContaining({
+                body: expect.objectContaining({ t: 'account-settings-changed', settingsVersion: 1, remoteAlertPolicyStatus: 'stale' }),
+            }) }));
+            const after = await app.inject({ method: 'GET', url: '/v2/account/settings', headers });
+            expect(after.json()).toEqual({ content: { t: 'encrypted', c: 'next-document' }, version: 1 });
+            expect(after.headers['x-happier-account-remote-alert-policy-status']).toBe('stale');
+            const conflict = await app.inject({ method: 'POST', url: `/${api}/account/settings`, headers,
+                payload: api === 'v1' ? { settings: 'losing-document', expectedVersion: 0 }
+                    : { content: { t: 'encrypted', c: 'losing-document' }, expectedVersion: 0 } });
+            expect(conflict.json()).toEqual(api === 'v1'
+                ? { success: false, error: 'version-mismatch', currentVersion: 1, currentSettings: 'next-document' }
+                : { success: false, error: 'version-mismatch', currentVersion: 1, currentContent: { t: 'encrypted', c: 'next-document' } });
+            expect(conflict.headers['x-happier-account-remote-alert-policy-status']).toBe('stale');
+        });
     });
 
     it("does not commit an old-mode v2 Settings writer across the Account transition fence", async () => {

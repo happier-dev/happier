@@ -16,18 +16,21 @@ import type { SessionMessageRole } from '@happier-dev/protocol/sessions/messages
 import { readPublicSessionVisualMessages } from './publicSessionVisuals';
 import type { UiSurfaceNetworkRequestV1 } from '@happier-dev/protocol/plugins/contributions/ui/hostedHtmlCapabilitiesV1';
 import { projectInlineReferenceLabelsV1 } from '@happier-dev/protocol/sessions/messages/sessionInputReferenceProjectionV1';
+import type { Message } from '@happier-dev/session-core/messages';
+import { readPublishedSessionTranscript } from '@happier-dev/session-core/transcript';
+import { normalizeToolCallForRendering, resolveToolRowPresentation, type ToolStatusIndicatorKind } from '@happier-dev/session-core/tools';
 
 export type PublicSessionVisualResult = { status: 'ready'; item: SessionSurfaceItemV1; networkOff: boolean }
     | { status: 'unavailable' | 'invalid_content' | 'network_error' };
 export type PublicSessionOpenedMessage = Readonly<{
-    id: string; publishedSessionId: string; seq: number; localId: string | null; createdAt: number; raw: unknown; text: string;
+    id: string; publishedSessionId: string; seq: number; localId: string | null; createdAt: number; raw: unknown;
     reference: SessionTranscriptSurfaceItemReferenceInputV1 | null;
     messageRole?: SessionMessageRole;
     loadVisual?: (referenceIndex?: number, signal?: AbortSignal) => Promise<PublicSessionVisualResult>;
 }>;
 
 export type PublicShareViewerResult =
-    | { status: "ready"; title: string; text: string; messages?: readonly PublicSessionOpenedMessage[]; html?: ArtifactHtmlBundleV1; widgetDefinition?: WidgetDefinitionV1; binary?: { bytes: Uint8Array; mime: string }; nextBeforeSeq: number | null; messagesAccessToken: string | null }
+    | { status: "ready"; title: string; text: string; networkOff?: boolean; messages?: readonly PublicSessionOpenedMessage[]; html?: ArtifactHtmlBundleV1; widgetDefinition?: WidgetDefinitionV1; binary?: { bytes: Uint8Array; mime: string }; nextBeforeSeq: number | null; messagesAccessToken: string | null }
     | { status: "invalid_link" | "unavailable" | "invalid_content" | "consent_required" | "network_error" | "metadata_privacy_upgrade_required" };
 
 interface ViewerInput {
@@ -42,15 +45,12 @@ function record(value: unknown): Record<string, unknown> | null {
     return value !== null && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
 }
 
-// This is presentation only. Structured transcript records remain readable without
-// interpreting their tool payloads, links, HTML, or executable content.
-function contentText(value: unknown): string {
-    if (typeof value === "string") return value;
-    const entry = record(value);
-    if (typeof entry?.text === "string") return entry.text;
-    const content = record(entry?.content);
-    if (typeof content?.text === "string") return content.text;
-    return JSON.stringify(value, null, 2) ?? "";
+export function readPublicSessionTranscriptText(messages: readonly PublicSessionOpenedMessage[]): string {
+    return readPublishedSessionTranscript(messages).messages.flatMap(message => {
+        if (message.kind === 'user-text' || message.kind === 'agent-text') return [message.displayText ?? message.text];
+        if (message.kind === 'tool-call') return [resolveToolRowPresentation(normalizeToolCallForRendering(message.tool)).title];
+        return [];
+    }).join('\n\n');
 }
 
 export async function loadPublicShareViewerContent(input: ViewerInput): Promise<PublicShareViewerResult> {
@@ -103,7 +103,7 @@ export async function loadPublicShareViewerContent(input: ViewerInput): Promise<
                 const definition = WidgetDefinitionV1StoredSchema.parse(stored);
                 if (definition.id !== share.subject.id || getWidgetSharedInputIssuesV1({ id: definition.id,
                     definition: { kind: 'inline', definition: stored } }).length > 0) return { status: 'invalid_content' };
-                return { status: 'ready', title: definition.name, text: '', widgetDefinition: definition,
+                return { status: 'ready', title: definition.name, text: '', widgetDefinition: definition, networkOff: share.networkOff,
                     nextBeforeSeq: null, messagesAccessToken: null };
             }
             let html: ArtifactHtmlBundleV1 | undefined;
@@ -128,7 +128,7 @@ export async function loadPublicShareViewerContent(input: ViewerInput): Promise<
                 if (typeof body.body !== 'string') return { status: 'invalid_content' };
                 html = artifactHtmlBundleFromBodyV1(body.body, typeof header.mime === 'string' ? header.mime : 'text/html', 'stored');
             }
-            return { status: "ready", title: typeof header.title === "string" ? header.title : "Shared Artifact",
+            return { status: "ready", title: typeof header.title === "string" ? header.title : "Shared Artifact", networkOff: share.networkOff,
                 text: typeof body.body === 'string' ? body.body : '', ...(html ? { html } : {}), ...(binary ? { binary } : {}), nextBeforeSeq: null, messagesAccessToken: null };
         }
         const messages = await Promise.all(share.content.messages.map(async (message): Promise<PublicSessionOpenedMessage> => {
@@ -166,10 +166,10 @@ export async function loadPublicShareViewerContent(input: ViewerInput): Promise<
                 } catch { return { status: 'invalid_content' }; }
             } : undefined;
             return { id: message.id, publishedSessionId: share.subject.id, seq: message.seq, localId: message.localId ?? null, createdAt: message.createdAt,
-                raw, text: contentText(raw), reference, ...(message.messageRole ? { messageRole: message.messageRole } : {}), ...(loadVisual ? { loadVisual } : {}) };
+                raw, reference, ...(message.messageRole ? { messageRole: message.messageRole } : {}), ...(loadVisual ? { loadVisual } : {}) };
         }));
         messages.sort((a, b) => a.seq - b.seq);
-        return { status: "ready", title: "Shared Session", messages, text: messages.map(message => message.text).join("\n\n"),
+        return { status: "ready", title: "Shared Session", messages, text: readPublicSessionTranscriptText(messages),
             nextBeforeSeq: share.content.hasMore ? share.content.nextBeforeSeq : null,
             messagesAccessToken: share.messagesAccessToken ?? null };
     } catch { return { status: "invalid_content" }; }
@@ -226,26 +226,70 @@ export function disposePublicShareViewerContent(root: HTMLElement): void {
     }
 }
 
+const toolStatusLabels: Readonly<Record<ToolStatusIndicatorKind, string>> = {
+    permission_blocked: 'Permission denied', permission_pending: 'Waiting for permission',
+    running: 'Running', completed: 'Completed', error: 'Failed', none: 'Unavailable',
+};
+
+function renderTranscriptMessage(document: Document, message: Message): HTMLElement {
+    const element = document.createElement('section');
+    element.setAttribute('data-message-id', message.realID ?? message.id);
+    element.setAttribute('data-message-kind', message.kind);
+    if (message.kind === 'user-text' || message.kind === 'agent-text') {
+        const text = document.createElement('pre');
+        text.textContent = projectInlineReferenceLabelsV1(message.displayText ?? message.text);
+        element.append(text);
+        return element;
+    }
+    if (message.kind === 'tool-call') {
+        const tool = normalizeToolCallForRendering(message.tool);
+        const presentation = resolveToolRowPresentation(tool);
+        const heading = document.createElement('h2');
+        heading.textContent = presentation.title;
+        const status = document.createElement('p');
+        status.textContent = toolStatusLabels[presentation.statusKind];
+        element.setAttribute('data-tool-status', presentation.statusKind);
+        element.append(heading, status);
+        return element;
+    }
+    const event = document.createElement('p');
+    event.textContent = 'Agent event';
+    element.append(event);
+    return element;
+}
+
 function renderSessionMessages(root: HTMLElement, messages: readonly PublicSessionOpenedMessage[], title: HTMLElement, action?: () => void): void {
     const document = root.ownerDocument;
     let presentation = sessionPresentations.get(root);
     if (!presentation) { presentation = { active: true, rows: new Map() }; sessionPresentations.set(root, presentation); }
     const current = presentation;
     const visible = readPublicSessionVisualMessages(messages);
-    const elements = [...messages].sort((left, right) => left.seq - right.seq).map(message => {
-        let row = current.rows.get(message.id);
+    const elements = readPublishedSessionTranscript(messages).messages.map(message => {
+        const stableId = message.realID ?? message.id;
+        let row = current.rows.get(stableId);
         if (!row) {
+            const element = renderTranscriptMessage(document, message);
+            const body = document.createElement('div');
+            body.setAttribute('aria-live', 'polite');
+            element.append(body);
+            row = { element, body, visuals: new Map() };
+            current.rows.set(stableId, row);
+        }
+        return row.element;
+    });
+    for (const message of [...messages].sort((left, right) => left.seq - right.seq)) {
+        let row = current.rows.get(message.id);
+        if (!row && (visible.get(message.id)?.length ?? 0) > 0) {
             const element = document.createElement('section');
             element.setAttribute('data-message-id', message.id);
-            const text = document.createElement('pre');
-            text.textContent = projectInlineReferenceLabelsV1(message.text);
-            element.append(text);
             const body = document.createElement('div');
             body.setAttribute('aria-live', 'polite');
             element.append(body);
             row = { element, body, visuals: new Map() };
             current.rows.set(message.id, row);
         }
+        if (!row) continue;
+        if ((visible.get(message.id)?.length ?? 0) > 0 && !elements.includes(row.element)) elements.push(row.element);
         for (const visual of visible.get(message.id) ?? []) {
             const key = visual.status === 'available' ? `available:${visual.referenceIndex}` : `not_copied:${visual.sourceKey}`;
             let saved = row.visuals.get(key);
@@ -352,8 +396,7 @@ function renderSessionMessages(root: HTMLElement, messages: readonly PublicSessi
                 }
             }
         }
-        return row.element;
-    });
+    }
     root.replaceChildren(title, ...elements);
     if (action) {
         const button = document.createElement('button');
@@ -381,14 +424,14 @@ export function renderPublicShareViewer(root: HTMLElement, result: PublicShareVi
             const presentation: { active: boolean; dispose?: () => void } = { active: true };
             widgetPresentations.set(root, presentation);
             surface.textContent = 'Opening visual…';
-            void mountPublicWidgetDefinition(surface, definition).then(dispose => {
+            void mountPublicWidgetDefinition(surface, definition, { networkOff: result.networkOff }).then(dispose => {
                 if (presentation.active) presentation.dispose = dispose;
                 else dispose();
             }).catch(() => { if (presentation.active) surface.textContent = 'This visual could not be displayed.'; });
             return;
         }
         if (result.html) {
-            try { renderArtifactHtmlViewer(root, result.html, result.title); }
+            try { renderArtifactHtmlViewer(root, result.html, result.title, { networkOff: result.networkOff }); }
             catch { renderPublicShareViewer(root, { status: 'invalid_content' }); }
             return;
         }

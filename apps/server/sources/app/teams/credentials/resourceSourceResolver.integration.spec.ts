@@ -70,6 +70,9 @@ describe("Team credential source identity", () => {
         const owner = await createOwner();
         const secondRef = { service, accountId: "second-private-account" };
         const firstCredential = await createCredential(owner.id);
+        await db.serviceAccountToken.update({ where: { id: firstCredential.id }, data: {
+            metadata: { ...directMetadata("csr_aaaaaaaaaaaaaaaaaaaaaa"), health: { v: 1, status: "needs_reauth", reconnectRequired: true } },
+        } });
         const secondCredential = await db.serviceAccountToken.create({
             data: {
                 accountId: owner.id,
@@ -154,6 +157,16 @@ describe("Team credential source identity", () => {
         expect(results.slice(0, 8)).toEqual(Array(8).fill(results[0]));
         expect(results.slice(8, 13)).toEqual(Array(5).fill(results[8]));
         expect(results.slice(13, 17)).toEqual(Array(4).fill(results[13]));
+        expect(results[0]).toMatchObject({ status: "current", authenticationFailure: "connected_service_credential_reconnect_required" });
+        expect(results[8]).not.toHaveProperty("authenticationFailure");
+        await expect(inTx(tx => resolveTeamCredentialSourceMemberCurrentnessInTx(tx, {
+            custodianAccountId: owner.id, source: firstSource, deliveryMode: 'direct',
+            sourceMemberKey: computeTeamCredentialSourceMemberKeyV1({ kind: 'connected_account', service, connectedAccountId: ref.accountId }),
+        }))).resolves.toMatchObject({ status: 'current', directExportSupport: 'supported' });
+        await db.serviceAccountToken.update({ where: { id: firstCredential.id }, data: {
+            metadata: directMetadata("csr_aaaaaaaaaaaaaaaaaaaaaa"),
+        } });
+        await expect(resolve(owner.id, firstSource)).resolves.not.toHaveProperty("authenticationFailure");
     });
 
     it("preserves missing and replaced source semantics in the batched owner", async () => {
@@ -230,6 +243,7 @@ describe("Team credential source identity", () => {
                     credentialRevision: "csr_aaaaaaaaaaaaaaaaaaaaaa",
                     configurationRevision: null,
                     authenticationModeId: "api-key",
+                    status: "connected",
                     contributionContractVersion: "artifact-example-1",
                     directExportContract: "happier.team-credential-manual-connected-account-direct.v1",
                 },
@@ -360,6 +374,7 @@ describe("Team credential source identity", () => {
                     incarnation: pool.id,
                     generation: 0,
                     runtimeStateRevision: 0,
+                    activeConnectedAccountId: null,
                     members: [],
                 },
             },

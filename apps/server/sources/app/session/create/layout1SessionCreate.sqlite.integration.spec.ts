@@ -841,6 +841,23 @@ describe("Layout-1 Session constructor (SQLite integration)", () => {
         },
     );
 
+    it("refreshes meaningful activity for an inactive unarchived tag rejoin", async () => {
+        const owner = await createPlainAccount(`pk-constructor-inactive-${randomUUID()}`);
+        const input = prepared({ accountId: owner.id, tag: `inactive-${randomUUID()}` });
+        const created = await inTx((tx) => createOrRejoinLayout1SessionByTagInTx(tx, input));
+        if (created.kind !== "created") throw new Error("Expected a fresh Session");
+        const oldActivityAt = new Date(1_000);
+        await db.session.update({ where: { id: created.session.id }, data: {
+            active: false, archivedAt: null, meaningfulActivityAt: oldActivityAt,
+        } });
+        const rejoined = await inTx((tx) => createOrRejoinLayout1SessionByTagInTx(tx, input));
+        if (rejoined.kind !== "rejoined") throw new Error("Expected the inactive Session to rejoin");
+        expect(rejoined.session).toMatchObject({ id: created.session.id, active: false, archivedAt: null });
+        expect(rejoined.session.meaningfulActivityAt?.getTime()).toBeGreaterThan(oldActivityAt.getTime());
+        expect(rejoined.publication?.projection).toMatchObject({ sessionStart: true,
+            meaningfulActivityAt: rejoined.session.meaningfulActivityAt?.getTime() });
+    });
+
     it("keeps an active unarchived tag rejoin unchanged", async () => {
         const owner = await createPlainAccount("pk-constructor-active-rejoin");
         const input = prepared({ accountId: owner.id, tag: "active-rejoin" });

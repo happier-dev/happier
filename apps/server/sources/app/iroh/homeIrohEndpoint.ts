@@ -2,11 +2,12 @@ import { rm, stat } from 'node:fs/promises';
 import type { AddressInfo } from 'node:net';
 import { IrohError } from '@happier-dev/iroh-native/node';
 import { parseIrohEndpointDescriptorV1, type IrohEndpointDescriptorV1 } from '@happier-dev/protocol/connectivity/iroh/endpointDescriptorV1';
-import { resolvePersonalHomeRuntimeLayout } from '@happier-dev/cli-common/firstPartyRuntime/server';
+import { resolveHomeIrohEndpointKeyPath } from '@happier-dev/cli-common/firstPartyRuntime/server';
 import { resolveBoundServerListener } from '@/app/runtime/startupReceipt';
 import { resolveConfiguredCanonicalServerUrl } from '@/app/serverUrls/effectiveServerUrls';
 import { log } from '@/utils/logging/log';
 import { readHomeIrohEndpointConfigFromEnv, type HomeIrohEndpointEnvConfig } from './homeIrohEndpointConfig';
+import { readHomeIrohTopologyFailure, type HomeIrohTopologyFailure } from './topology';
 import {
     createHomeConnectionDescriptorContinuityStoreForServer,
     homeConnectionDescriptorContentKeyCarriesIroh,
@@ -18,9 +19,8 @@ import {
 } from './homeIrohNativeLifecycle';
 
 /**
- * Canonical server-side owner of the managed Personal Home Iroh endpoint
- * (server-light Home acceptor). startServer composes it once, after the API
- * has listened, for flavor `light` with role `all`/`api`:
+ * Canonical server-side owner of a Home's Iroh endpoint. startServer composes
+ * it once after the API has listened, for either flavor with role `all`/`api`:
  *
  *   existing startApi listener -> one persistent Iroh endpoint (keyed by the
  *   canonical runtime layout key) -> one Home acceptor fixed to
@@ -52,10 +52,13 @@ export type HomeIrohEndpointLifecycleStatus =
     | 'retired';
 
 export type HomeIrohEndpointFailureReason =
+    | HomeIrohTopologyFailure
     | 'invalid_iroh_config'
     | 'canonical_server_url_missing'
     | 'api_listen_port_unavailable'
+    | 'continuity_metadata_unavailable'
     | 'continuity_metadata_unreadable'
+    | 'exposure_proof_missing'
     | 'endpoint_key_lost'
     | 'endpoint_key_unavailable'
     | 'endpoint_config_conflict'
@@ -220,7 +223,7 @@ export type HomeIrohEndpointMaterializationResult =
     }>;
 
 /**
- * Idempotently composes the managed Home Iroh endpoint. Repeated compatible
+ * Idempotently composes the Home Iroh endpoint. Repeated compatible
  * calls reuse the one active endpoint handle and acceptor; incompatible
  * configuration fails with a typed `endpoint_config_conflict` IrohError.
  */
@@ -244,9 +247,13 @@ export function beginHomeIrohEndpointStartup(): void {
     if (!activeState && !stopInFlight) lifecycleState = STARTING_STATE;
 }
 
-/** Completes a pre-listen attempt that could not satisfy the exposure proof. */
-export function markHomeIrohEndpointStartupUnavailable(): void {
-    if (!activeState && lifecycleState.status === 'starting') lifecycleState = UNAVAILABLE_STATE;
+/** Completes a pre-listen attempt refused by topology or exposure admission. */
+export function markHomeIrohEndpointStartupUnavailable(failureReason: HomeIrohEndpointFailureReason): void {
+    if (!activeState && !stopInFlight && lifecycleState.status !== 'retired') {
+        lifecycleState = { ...UNAVAILABLE_STATE, failureReason };
+        log({ module: 'iroh', level: 'warn', failureReason },
+            'Home Iroh startup unavailable; ordinary HTTP remains available');
+    }
 }
 
 /**
@@ -285,7 +292,7 @@ export async function retireHomeIrohEndpoint(): Promise<HomeIrohEndpointState> {
     const current = composition;
     if (!current) return lifecycleState;
     await stopHomeIrohEndpoint();
-    const keyPath = resolvePersonalHomeRuntimeLayout({ env: current.env }).irohEndpointKeyPath;
+    const keyPath = resolveHomeIrohEndpointKeyPath({ env: current.env });
     await rm(keyPath, { force: true });
     lifecycleState = RETIRED_STATE;
     return lifecycleState;
@@ -317,6 +324,8 @@ export async function resumeHomeIrohEndpoint(): Promise<HomeIrohEndpointState> {
 export async function materializeHomeIrohEndpointDescriptor(
     params: MaterializeHomeIrohEndpointDescriptorParams,
 ): Promise<HomeIrohEndpointMaterializationResult> {
+    const topologyFailure = readHomeIrohTopologyFailure(params.env);
+    if (topologyFailure) return { status: 'failed', failureReason: topologyFailure };
     if (activeState) {
         return { status: 'failed', failureReason: 'endpoint_config_conflict' };
     }
@@ -337,7 +346,7 @@ export async function materializeHomeIrohEndpointDescriptor(
         const state = failed('canonical_server_url_missing');
         return { status: 'failed', failureReason: state.failureReason };
     }
-    const keyPath = resolvePersonalHomeRuntimeLayout({ env: params.env }).irohEndpointKeyPath;
+    const keyPath = resolveHomeIrohEndpointKeyPath({ env: params.env });
     const provisioned = await provisionHomeIrohEndpoint({
         env: params.env,
         native,
@@ -655,6 +664,8 @@ async function provisionHomeIrohEndpoint(params: Readonly<{
 
 async function runEnsure(params: EnsureHomeIrohEndpointParams, admittedEpoch: number): Promise<HomeIrohEndpointState> {
     const env = params.env;
+    const topologyFailure = readHomeIrohTopologyFailure(env);
+    if (topologyFailure) return { ...UNAVAILABLE_STATE, failureReason: topologyFailure };
     const native = params.native !== undefined ? params.native : loadHomeIrohNativeLifecycle();
 
     // (1) Strict operator relay configuration. Invalid explicit Iroh config
@@ -681,7 +692,7 @@ async function runEnsure(params: EnsureHomeIrohEndpointParams, admittedEpoch: nu
     }
 
     // (4) Repeated compatible ensure reuses the one active lifecycle.
-    const keyPath = resolvePersonalHomeRuntimeLayout({ env }).irohEndpointKeyPath;
+    const keyPath = resolveHomeIrohEndpointKeyPath({ env });
     const configKey = JSON.stringify([canonicalServerUrl, config.relayPolicy, [...config.relayUrls], keyPath, apiPort]);
     if (activeState) {
         if (activeState.configKey !== configKey) {

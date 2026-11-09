@@ -12,6 +12,7 @@ import {
     applySqliteRuntimePragmas,
     createDbSqliteMaintenanceClient,
     db,
+    disconnectDbReadinessProbe,
     getDbProviderFromEnv,
     initDbMysql,
     initDbPostgres,
@@ -26,7 +27,6 @@ import {
     type HomeOwnerClaimRequestV1,
 } from '@/app/home/governance/claimHomeOwnerCommand';
 import { initializeSessionSystemRecordsProtocolV1Activation } from '@/app/session/systemRecords/sessionSystemRecordProtocolContract';
-import { initializeSessionTurnTranscriptAnchorProjection } from '@/app/session/turns/sessionTurnTranscriptAnchorProjectionBackfill';
 import {
     resolveSqliteIncrementalVacuumIntervalMsFromEnv,
     resolveSqliteIncrementalVacuumPagesFromEnv,
@@ -36,7 +36,7 @@ import {
     startSqliteWalCheckpointWorker,
 } from '@/storage/sqliteWalCheckpoint';
 import { initializeServerLogging, log } from '@/utils/logging/log';
-import { awaitShutdown, onShutdown, shutdownSignal } from '@/utils/process/shutdown';
+import { awaitShutdown, onShutdown } from '@/utils/process/shutdown';
 import { isPersonalHomeRuntimePurpose } from '@/app/runtime/personalHomeRuntimePurpose';
 import {
     applyLightDefaultEnv,
@@ -77,19 +77,11 @@ import { stat } from 'node:fs/promises';
 import { resolveBoundServerListener, writeStartupReceiptFromEnvironment } from '@/app/runtime/startupReceipt';
 import { readPluginsFeatureEnv } from '@/app/features/catalog/readFeatureEnv';
 import { readHomeConfigEnv, readStoredHomeSettingsForStartup } from '@/app/home/settings/homeSettings';
+import { refreshAuthDiagnosticsLogsFlag } from '@/app/home/settings/authDiagnosticsFlag';
 import { applyStartupHomeEnvToProcess, loadStartupHomeEnv } from '@/app/home/settings/startupHomeEnv';
-import {
-    beginHomeIrohEndpointStartup,
-    ensureHomeIrohEndpoint,
-    markHomeIrohEndpointRetired,
-    markHomeIrohEndpointStartupUnavailable,
-    registerHomeIrohComposition,
-    stopHomeIrohEndpoint,
-} from '@/app/iroh/homeIrohEndpoint';
-import { verifyPersonalHomeExposureProof } from '@/app/iroh/personalHomeExposureProof';
+import { prepareHomeIrohStartup } from '@/app/iroh/startup';
 import { createPersonalHomeAuthenticatedReadiness } from '@/app/runtime/personalHomeReadiness';
 import { createHomeConnectionDescriptorContinuityStoreForServer } from '@/app/features/homeConnectionDescriptorContinuity';
-import { readHomeConnectionDescriptor } from '@/app/features/homeConnectionDescriptorPublication';
 
 export type ServerFlavor = 'full' | 'light';
 export { getServerRoleFromEnv } from '@/config/backends';
@@ -302,6 +294,12 @@ export async function startServer(flavor: ServerFlavor, options?: StartServerOpt
             sqliteWalCheckpointClient = null;
         }
 
+        try {
+            await disconnectDbReadinessProbe();
+        } catch (error) {
+            firstError ??= error;
+        }
+
         if (dbConnected) {
             try {
                 await db.$disconnect();
@@ -337,6 +335,8 @@ export async function startServer(flavor: ServerFlavor, options?: StartServerOpt
         }), process.env);
         initializeServerLogging(process.env);
         initializeServerSentry(process.env);
+        // Authenticated requests read this flag in-process; the Home settings writer keeps it current.
+        await refreshAuthDiagnosticsLogsFlag();
 
         const filesBackend = getFilesBackendFromEnv(process.env, resolveDefaultFilesBackend(flavor));
         process.env.HAPPY_FILES_BACKEND = filesBackend;
@@ -354,7 +354,6 @@ export async function startServer(flavor: ServerFlavor, options?: StartServerOpt
             throw new Error(`Unsupported HAPPY_FILES_BACKEND/HAPPIER_FILES_BACKEND: ${String(filesBackend)}`);
         }
         await initializeSessionSystemRecordsProtocolV1Activation(db);
-        await initializeSessionTurnTranscriptAnchorProjection(shutdownSignal);
         if (shouldStartSqliteMaintenanceClient) {
             sqliteWalCheckpointClient = await createDbSqliteMaintenanceClient();
             await sqliteWalCheckpointClient.$connect();
@@ -470,18 +469,7 @@ export async function startServer(flavor: ServerFlavor, options?: StartServerOpt
             // Best-effort: warm the read-only public-address inference so the first requests' overlay
             // can publish an inferred address. Cached and single-flight; it never writes the env.
             void resolveInferredPublicServerAccess(process.env).catch(() => null);
-            const shouldPreparePersonalHomeIroh = flavor === 'light'
-                && isPersonalHomeRuntimePurpose(process.env.HAPPIER_MANAGED_RELAY_PURPOSE);
-            // The owner's direct-connection choice (plan 2026-09-26-home-owner-console §3.2, AM-2) is
-            // the source of truth at every start: off means nothing is composed and the retirement
-            // is (re)published, which also completes a turn-off an earlier process did not finish.
-            const personalHomeIrohRetired = shouldPreparePersonalHomeIroh
-                && readServerConfig(await readHomeConfigEnv(), SERVER_CONFIG.HAPPIER_HOME_IROH_MODE) === 'disabled';
-            if (shouldPreparePersonalHomeIroh && !personalHomeIrohRetired) {
-                // Close the descriptor-publication retirement window before
-                // HTTP can answer its first features request.
-                beginHomeIrohEndpointStartup();
-            }
+            const composeHomeIroh = prepareHomeIrohStartup(await readHomeConfigEnv());
             const homeConnectionDescriptorContinuityStore =
                 createHomeConnectionDescriptorContinuityStoreForServer(process.env);
             const api = await startApi({
@@ -490,53 +478,11 @@ export async function startServer(flavor: ServerFlavor, options?: StartServerOpt
             apiListenerOwner = api;
             await startPresenceConsumer();
             await presenceTimeouts.start();
-            const listener = resolveBoundServerListener(api);
-
-            // Managed Personal Home / server-light composition: expose the
-            // already-listening loopback API through one persistent Iroh Home
-            // acceptor fixed to 127.0.0.1:<actual bound port>. Never composed
-            // for the full server flavor, a worker-only role, a managed
-            // runtime whose canonical purpose is not Personal Home, or until
-            // the canonical auth-policy owner confirms anonymous signup was
-            // explicitly disabled. Composition always follows a successful
-            // API listen. Failures fail the Iroh composition closed and keep
-            // the ordinary HTTPS Home running; Iroh ingress shutdown is
-            // registered with a priority ahead of api:socket/api:http.
-            if (
-                shouldPreparePersonalHomeIroh
-                && verifyPersonalHomeExposureProof({ env: process.env, listener })
-                && homeConnectionDescriptorContinuityStore
-            ) {
-                onShutdown('iroh', () => stopHomeIrohEndpoint());
-                registerHomeIrohComposition({
-                    env: process.env,
-                    apiPort: listener?.port ?? null,
-                    continuityStore: homeConnectionDescriptorContinuityStore,
-                });
-                if (personalHomeIrohRetired) markHomeIrohEndpointRetired();
-                const irohState = personalHomeIrohRetired
-                    ? null
-                    : await ensureHomeIrohEndpoint({
-                        env: process.env,
-                        apiPort: listener?.port ?? null,
-                        continuityStore: homeConnectionDescriptorContinuityStore,
-                    });
-                if (personalHomeIrohRetired || irohState?.status === 'active') {
-                    // The public features route only projects a committed
-                    // generation. A restarted acceptor may have new direct
-                    // addresses (or the owner retired Iroh), so commit through
-                    // the canonical publisher, over the same configuration
-                    // overlay requests read, before the startup receipt makes
-                    // this Home discoverable.
-                    await readHomeConnectionDescriptor({
-                        env: await readHomeConfigEnv(),
-                        continuityStore: homeConnectionDescriptorContinuityStore,
-                        visibility: 'authenticated',
-                    });
-                }
-            } else if (shouldPreparePersonalHomeIroh) {
-                markHomeIrohEndpointStartupUnavailable();
-            }
+            await composeHomeIroh({
+                listener: resolveBoundServerListener(api),
+                ingressPort: api.getDecorator<number | null>('homeIrohIngressPort'),
+                continuityStore: homeConnectionDescriptorContinuityStore,
+            });
         }
 
         if (role === 'all' || role === 'worker') {

@@ -154,7 +154,7 @@ describe("managed identity-provider instance creation", () => {
         }));
         expect(updated).toMatchObject({ status: "applied", instance: { revision: 2 } });
         await expect(db.accountChange.findUniqueOrThrow({
-            where: { accountId_kind_entityId: { accountId: account.id, kind: "account", entityId: "self" } },
+            where: { accountId_kind_entityId: { accountId: account.id, kind: "account", entityId: "linked-identities" } },
         })).resolves.toMatchObject({ cursor: 1 });
 
         const replaced = await inTx(async (tx) => await replaceIdentityProviderSecretsInTx(tx, {
@@ -165,7 +165,7 @@ describe("managed identity-provider instance creation", () => {
         }));
         expect(replaced).toMatchObject({ status: "applied", instance: { revision: 3, securityRevision: 2 } });
         await expect(db.accountChange.findUniqueOrThrow({
-            where: { accountId_kind_entityId: { accountId: account.id, kind: "account", entityId: "self" } },
+            where: { accountId_kind_entityId: { accountId: account.id, kind: "account", entityId: "linked-identities" } },
         })).resolves.toMatchObject({ cursor: 2 });
 
         const enabled = await inTx(async (tx) => await setIdentityProviderInstanceEnabledInTx(tx, {
@@ -177,7 +177,7 @@ describe("managed identity-provider instance creation", () => {
         }));
         expect(enabled).toMatchObject({ status: "applied", instance: { revision: 4, securityRevision: 3, enabled: true } });
         await expect(db.accountChange.findUniqueOrThrow({
-            where: { accountId_kind_entityId: { accountId: account.id, kind: "account", entityId: "self" } },
+            where: { accountId_kind_entityId: { accountId: account.id, kind: "account", entityId: "linked-identities" } },
         })).resolves.toMatchObject({ cursor: 3 });
 
         await expect(inTx(async (tx) => await updateIdentityProviderInstanceInTx(tx, {
@@ -187,7 +187,7 @@ describe("managed identity-provider instance creation", () => {
             displayName: "Stale rename",
         }))).resolves.toMatchObject({ status: "revision_conflict" });
         await expect(db.accountChange.findUniqueOrThrow({
-            where: { accountId_kind_entityId: { accountId: account.id, kind: "account", entityId: "self" } },
+            where: { accountId_kind_entityId: { accountId: account.id, kind: "account", entityId: "linked-identities" } },
         })).resolves.toMatchObject({ cursor: 3 });
     });
 

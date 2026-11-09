@@ -512,14 +512,14 @@ describe("Account erasure ordering against Home ownership", () => {
             .resolves.toEqual({ status: "active" });
     });
 
-    it("refuses to finish an administrative erasure whose actor lost authority mid-flight", async () => {
+    it("finishes an admitted administrative erasure after its actor is demoted mid-flight", async () => {
         const { accountId: ownerId } = await createAccountWithBlob({ homeRole: "owner" });
         await createAccountWithBlob({ homeRole: "owner" });
-        const { accountId } = await createAccountWithBlob({ homeRole: "member" });
+        const { accountId, path } = await createAccountWithBlob({ homeRole: "member" });
 
-        // The administrator was demoted while the object store ran. The final
-        // transaction is the one that deletes rows, so it must recheck the
-        // independent actor rather than trust Phase A's admission.
+        // Authority is decided once, at admission. A demotion that lands while
+        // the admitted erasure runs takes effect at the actor's next request;
+        // it must not strand the already-retired target half erased.
         duringBlobDeletion = async () => {
             await db.account.update({ where: { id: ownerId }, data: { homeRole: "member" } });
         };
@@ -527,15 +527,21 @@ describe("Account erasure ordering against Home ownership", () => {
         await expect(deleteAccountForErasure({
             accountId,
             actor: { kind: "home_administration", actorAccountId: ownerId },
-        })).resolves.toEqual({ status: "failed", code: "home_governance_forbidden" });
+        })).resolves.toEqual({ status: "deleted" });
 
-        // The target keeps its terminally retired row: access is already gone,
-        // and only a currently authorized owner may finish the deletion.
-        expect(await db.account.findUniqueOrThrow({ where: { id: accountId }, select: { status: true } }))
-            .toEqual({ status: "disabled" });
+        expect(blobCalls).toEqual([{ path, accountStatusAtCall: "disabled" }]);
+        expect(await db.account.findUnique({ where: { id: accountId } })).toBeNull();
+        // The next request from the demoted actor is refused at its admission.
+        const { accountId: nextTargetId } = await createAccountWithBlob({ homeRole: "member" });
+        await expect(deleteAccountForErasure({
+            accountId: nextTargetId,
+            actor: { kind: "home_administration", actorAccountId: ownerId },
+        })).resolves.toEqual({ status: "failed", code: "home_governance_forbidden" });
+        expect(await db.account.findUniqueOrThrow({ where: { id: nextTargetId }, select: { status: true } }))
+            .toEqual({ status: "active" });
     });
 
-    it("does not reveal a concurrently erased Account after its administrative actor loses authority", async () => {
+    it("settles an admitted administrative erasure as already deleted when a concurrent erasure finished first", async () => {
         const { accountId: ownerId } = await createAccountWithBlob({ homeRole: "owner" });
         await createAccountWithBlob({ homeRole: "owner" });
         const { accountId } = await createAccountWithBlob({ homeRole: "member" });
@@ -549,7 +555,7 @@ describe("Account erasure ordering against Home ownership", () => {
         await expect(deleteAccountForErasure({
             accountId,
             actor: { kind: "home_administration", actorAccountId: ownerId },
-        })).resolves.toEqual({ status: "failed", code: "home_governance_forbidden" });
+        })).resolves.toEqual({ status: "already-deleted" });
     });
 
     it("completes an admitted self-erasure through its own credential revocation", async () => {

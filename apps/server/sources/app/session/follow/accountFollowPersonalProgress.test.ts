@@ -7,9 +7,14 @@ import { createDbMocks, createDbTransactionMock, installDbModuleMock, matchesDbM
 import { createPresentUserSessionAccessAuthentication } from '@/app/session/access/sessionAccessAuthentication.testkit';
 import type { ExecutionRunFollowFrontierWitness } from './executionRunFollowSource';
 import { sourceKeyForSessionFollowSourceV1 } from './sessionFollowSourceIdentity';
+import { normalizeSessionListFilterV1 } from '@happier-dev/protocol/sessions/listFilter/sessionListFilterV1';
+import { encodeAccountScopedKvJson } from '@/app/kv/accountScopedKv';
+import { buildSessionFollowRulePhysicalKeyV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowRuleV1';
 
-const boundary = createDbMocks({ account: ['findUnique', 'update'], session: ['findUnique'], machine: ['findUnique', 'findMany'],
-    accessKey: ['findUnique'], accountSessionFollow: ['findUnique', 'updateMany', 'upsert'], accountChange: ['upsert'], accountPushToken: ['findMany'] });
+const boundary = createDbMocks({ account: ['findUnique', 'findMany', 'update'], session: ['findUnique', 'findMany'], machine: ['findUnique', 'findMany'],
+    sessionShare: ['findMany'], sessionTeamGrant: ['findMany'], sessionGroupGrant: ['findMany'],
+    accessKey: ['findUnique'], userKVStore: ['findUnique'], sessionMessage: ['findUnique'],
+    accountSessionFollow: ['findUnique', 'updateMany', 'upsert'], accountChange: ['upsert'], accountPushToken: ['findMany'] });
 const transactions = createDbTransactionMock(() => ({ ...boundary.db,
     $executeRawUnsafe: async (query: string, accountId: string) => {
         if (query === 'UPDATE "Account" SET "settingsVersion" = "settingsVersion" WHERE "id" = ?' && accountId === 'account') return 1;
@@ -22,6 +27,7 @@ installDbModuleMock({ db: transactions.wrapDb(boundary.db) });
 const { acceptAccountFollowPersonalProgress } = await import('./accountFollowPersonalProgress');
 const { inTx } = await import('@/storage/inTx');
 const { readAccountRunFollowDeliveryInTx, setOtherAccountFollow } = await import('./accountFollowService');
+const { admitSessionFollowRuleOccurrenceInTx } = await import('./sessionFollowRuleProgress');
 
 beforeEach(() => { boundary.reset(); vi.stubEnv('HAPPIER_DB_PROVIDER', 'sqlite'); vi.stubEnv('HAPPIER_SERVER_IDENTITY_ID', 'srv_home'); });
 afterEach(() => vi.unstubAllEnvs());
@@ -40,6 +46,7 @@ function fixture() {
         accountId: account.id, following: true, hasPersistentFollow: true, followPolicy: '{"preset":"important"}',
         deliveredExecutionRunTerminalEventId: null, deliveredExecutionRunPermissionKey: null as string | null, deliveredWorkflowRunRevision: null };
     const frontier: { -readonly [K in keyof ExecutionRunFollowFrontierWitness]: ExecutionRunFollowFrontierWitness[K] } = { source: { kind: 'execution_run', sessionId: session.id, runId: 'run' },
+        machineCustodianAccountId: account.id,
         status: 'running', terminalEventId: null, attention: { kind: 'permission_required', requestIds: ['permission'],
             requests: [{ requestId: 'permission', createdAt: 10 }] }, target, publisherGeneration: '1' };
     boundary.db.account.findUnique.mockResolvedValue(account);
@@ -118,4 +125,84 @@ it('withdraws cleared/replaced personal permissions and respects the same receiv
     f.follow.followPolicy = JSON.stringify({ preset: 'custom', events: {} });
     expect(await f.accept()).toMatchObject({ value: { accepted: false } });
     expect(f.follow.deliveredExecutionRunPermissionKey).toBeNull();
+});
+
+it('reads personal receiver mute policy once across matching rules and reads the next intake fresh', async () => {
+    const f = fixture();
+    const source = { id: 'source', accountId: 'source-owner', account: { ...f.account, id: 'source-owner' }, archivedAt: null,
+        seq: 2, agentStateVersion: 0, publisherGeneration: 1n, encryptionMode: 'plain', currentStorageState: 'hosted',
+        shares: [{ sharedWithUserId: f.account.id, accessLevel: 'view', canApprovePermissions: false }], teamGrants: [], groupGrants: [],
+        accountFollows: [{ following: true, followPolicy: '{"preset":"important"}' }], accountReadStates: [] };
+    boundary.db.session.findUnique.mockResolvedValue(source);
+    boundary.db.sessionMessage.findUnique.mockResolvedValue({ seq: 2, sidechainId: null, createdAt: new Date(10), messageRole: 'agent',
+        content: { t: 'plain', v: { role: 'agent', content: { type: 'text', text: 'Update' } } }, inputAdmissionReceipt: null });
+    const rules = ['first', 'second'].map(ruleId => ({ ruleId, ruleVersion: 0 }));
+    boundary.db.userKVStore.findUnique.mockImplementation(async ({ where }: { where: { accountId_key: { key: string } } }) => {
+        const rule = rules.find(rule => buildSessionFollowRulePhysicalKeyV1(rule.ruleId) === where.accountId_key.key);
+        if (!rule) return null;
+        const value = encodeAccountScopedKvJson({ version: 0, receiver: { kind: 'account' }, inception: { createdAt: 1 },
+            content: { t: 'plain', v: { v: 1, enabled: true, filter: normalizeSessionListFilterV1(), policy: { preset: 'important' } } },
+            sources: [{ sourceSessionId: source.id, delivered: { transcriptSeq: 2, readyEventSeq: 0, agentStateVersion: 0, turn: null } }] });
+        if (!value) throw new Error('Expected encoded rule');
+        return { version: 0, value: decodeBase64(value), createdAt: new Date(1) };
+    });
+    const accept = () => acceptAccountFollowPersonalProgress({ accountId: f.account.id,
+        authentication: createPresentUserSessionAccessAuthentication(), occurrence: {
+            evaluation: 'receiver', production: 'source', sourceSessionId: source.id, rules, sourceMessage: { localId: 'message', seq: 2 },
+        } });
+    const muteReads = () => boundary.db.account.findUnique.mock.calls.filter(([input]) =>
+        input.select && Object.keys(input.select).join() === 'deliveryMutes').length;
+    expect(await accept()).toEqual({ ok: true, value: { accepted: true, alreadyRepresented: true } });
+    expect(muteReads()).toBe(1);
+    f.account.deliveryMutes = JSON.stringify([{ kind: 'source', source: { kind: 'rule', ruleId: 'second' } }]);
+    expect(await accept()).toEqual({ ok: true, value: { accepted: false, alreadyRepresented: false } });
+    expect(muteReads()).toBe(2);
+    f.account.deliveryMutes = null;
+    expect(await accept()).toMatchObject({ value: { accepted: true } });
+    expect(muteReads()).toBe(3);
+    source.shares = [];
+    expect(await accept()).toMatchObject({ value: { accepted: false } });
+    expect(muteReads()).toBe(3);
+});
+
+it('shares the Session receiver mute read across source and rule admission while retaining each mute decision', async () => {
+    const f = fixture();
+    const receiver = { kind: 'session', sessionId: 'destination' } as const;
+    const source = { id: 'source', accountId: f.account.id, account: f.account, archivedAt: null, encryptionMode: 'plain',
+        seq: 2, agentStateVersion: 0, publisherGeneration: 1n, currentStorageState: 'hosted', publicShare: null,
+        shares: [], teamGrants: [], groupGrants: [] };
+    const destination = { ...source, id: receiver.sessionId, deliveryMutes: null as string | null };
+    boundary.db.session.findUnique.mockImplementation(async ({ where }: { where: { id: string } }) =>
+        where.id === source.id ? source : where.id === destination.id ? destination : null);
+    boundary.db.session.findMany.mockImplementation(async ({ where }: { where: { id: { in: readonly string[] } } }) =>
+        [source, destination].filter(row => where.id.in.includes(row.id)));
+    boundary.db.account.findMany.mockResolvedValue([{ id: f.account.id }]);
+    boundary.db.sessionShare.findMany.mockResolvedValue([]);
+    boundary.db.sessionTeamGrant.findMany.mockResolvedValue([]);
+    boundary.db.sessionGroupGrant.findMany.mockResolvedValue([]);
+    const value = encodeAccountScopedKvJson({ version: 0, receiver, inception: { createdAt: 1 }, content: { t: 'plain', v: {
+        v: 1, enabled: true, filter: normalizeSessionListFilterV1(), policy: { preset: 'important' },
+    } } });
+    if (!value) throw new Error('Expected encoded rule');
+    boundary.db.userKVStore.findUnique.mockResolvedValue({ version: 0, value: decodeBase64(value), createdAt: new Date(1) });
+    boundary.db.sessionMessage.findUnique.mockResolvedValue({ seq: 2, sidechainId: null, createdAt: new Date(10), messageRole: 'agent',
+        content: { t: 'plain', v: { role: 'agent', content: { type: 'text', text: 'Update' } } }, inputAdmissionReceipt: null });
+    const admit = () => inTx(tx => admitSessionFollowRuleOccurrenceInTx(tx, { accountId: f.account.id,
+        authority: { kind: 'account', admitted: true, authentication: createPresentUserSessionAccessAuthentication() },
+        witness: { sourceSessionId: source.id, destinationSessionId: destination.id, rule: { ruleId: 'first', ruleVersion: 0 }, selectedDelivery: 'next_turn',
+            machineId: 'machine', installationId: 'installation', expectedSourcePublisherGeneration: '1', sourceMessage: { localId: 'message', seq: 2 } },
+    }));
+    const muteReads = () => boundary.db.session.findUnique.mock.calls.filter(([input]) =>
+        input.select && Object.keys(input.select).join() === 'deliveryMutes').length;
+    expect(await admit()).toMatchObject({ source: { id: source.id }, destination: { id: destination.id } });
+    expect(muteReads()).toBe(1);
+    destination.deliveryMutes = JSON.stringify([{ kind: 'source', source: { kind: 'rule', ruleId: 'first' } }]);
+    expect(await admit()).toBeNull();
+    expect(muteReads()).toBe(2);
+    destination.deliveryMutes = JSON.stringify([{ kind: 'source', source: { kind: 'session', sessionId: source.id } }]);
+    expect(await admit()).toBeNull();
+    expect(muteReads()).toBe(3);
+    destination.deliveryMutes = null;
+    expect(await admit()).not.toBeNull();
+    expect(muteReads()).toBe(4);
 });

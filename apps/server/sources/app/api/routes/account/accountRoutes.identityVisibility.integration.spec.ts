@@ -70,7 +70,7 @@ describe("Account identity visibility (integration)", () => {
                 expect(updateRes.json()).toEqual({ success: true });
 
                 const change = await db.accountChange.findFirst({
-                    where: { accountId: account.id, kind: "account", entityId: "self" },
+                    where: { accountId: account.id, kind: "account", entityId: "linked-identities" },
                     select: { cursor: true },
                 });
                 expect(change).toBeTruthy();

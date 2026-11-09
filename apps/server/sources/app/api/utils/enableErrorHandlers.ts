@@ -33,6 +33,12 @@ function isFastifyValidationError(error: FastifyError): boolean {
 export function enableErrorHandlers(app: Fastify) {
     // Global error handler
     app.setErrorHandler(async (error: FastifyError, request, reply) => {
+        // A peer can close after the handler returns but before Fastify wires
+        // its response stream. That transport cancellation has no 500 to send.
+        if (reply.raw.destroyed && error.code === 'ERR_STREAM_PREMATURE_CLOSE') {
+            reply.hijack();
+            return;
+        }
         // Fresh sign-in proof adapters map this to account-disabled themselves.
         // An already-issued credential reveals no lifecycle state at effect time.
         if (error instanceof InactiveAccountError) {
@@ -42,20 +48,24 @@ export function enableErrorHandlers(app: Fastify) {
         const correlation = {
             module: 'fastify-error' as const,
             httpRequestId: request.id,
+            method: request.method,
+            // The registered pattern identifies the owner without retaining a
+            // Session id, query, credential or other caller-controlled URL data.
+            route: request.routeOptions.url,
             ...(request.externalActionExecutionRequestId ? { requestId: request.externalActionExecutionRequestId } : {}),
             ...(request.externalActionEffectActionId ? { actionId: request.externalActionEffectActionId } : {}),
         };
         if (databaseError) {
             // Expected storage refusals still need the same safe request
             // correlation as other failures; never retain SQL or HTTP input.
-            logUnexpectedRequestError(error, correlation);
+            logUnexpectedRequestError(error, { ...correlation, statusCode: 503, responseCode: databaseError });
             return sendGlobalErrorResponse(reply, 503, { error: databaseError, statusCode: 503,
                 ...(isTransactionDeadlineExceededError(error) && error.transactionOutcome
                     ? { transactionOutcome: error.transactionOutcome } : {}) });
         }
         const prismaValidation = readPrismaQueryValidationDiagnostic(error);
         if (prismaValidation) {
-            logUnexpectedRequestError(error, correlation);
+            logUnexpectedRequestError(error, { ...correlation, statusCode: 500, responseCode: prismaValidation.errorCode });
             captureFastifyExceptionForSentry(withPrismaQueryValidationDiagnostic(error), request);
             return sendGlobalErrorResponse(reply, 500, {
                 error: 'Internal Server Error', code: prismaValidation.errorCode,
@@ -65,7 +75,8 @@ export function enableErrorHandlers(app: Fastify) {
         const statusCode = error.statusCode || 500;
         const schemaMismatch = readSharedQaSchemaMismatchDiagnostic(error);
         if (statusCode >= 500) {
-            logUnexpectedRequestError(error, correlation);
+            logUnexpectedRequestError(error, { ...correlation, statusCode,
+                responseCode: schemaMismatch?.error ?? 'internal_error' });
             captureFastifyExceptionForSentry(error, request);
             if (schemaMismatch) {
                 return sendGlobalErrorResponse(reply, statusCode, { ...schemaMismatch, statusCode });

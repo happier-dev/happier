@@ -5,8 +5,7 @@ import type { Prisma } from "@prisma/client";
 import { decodeV2SessionListCursorV1, decodeV2SessionListCursorV2, encodeV2SessionListCursorV2, type V2SessionListCursorV2 } from '@happier-dev/protocol/sessions/control/contract';
 import { db } from "@/storage/db";
 import type { Tx } from "@/storage/inTx";
-import { readSnapshotWithCurrentAdmission } from "@/storage/readSnapshotWithCurrentAdmission";
-import { readCurrentSessionIdsInTx, readmitSessionRowsInTx } from "@/app/session/access/sessionReadAdmission";
+import { captureReadSnapshot } from "@/storage/captureReadSnapshot";
 import { buildSessionAccessWhere, resolveEffectiveSessionAccessWhere, type SessionCollectiveAccessSnapshot } from "@/app/session/access/sessionAccessWhere";
 import type { SessionAccessAuthentication } from "@/app/session/access/sessionAccessAuthentication";
 import { resolveCurrentSessionRecipientAccountIdsBySessionInTx } from "@/app/session/access/sessionRecipients";
@@ -21,7 +20,9 @@ import type {
 import {
     isSessionMetadataPrivacyUpgradeRequiredError,
 } from "@/app/session/metadata/sessionMetadataRecipientProjection";
-import { iterateBoundedSessionPersonalAttentionRows } from "@/app/session/personal/attentionQuery";
+import { iterateBoundedSessionPersonalAttentionRows, SESSION_PERSONAL_ATTENTION_SCAN_BATCH_SIZE } from "@/app/session/personal/attentionQuery";
+import type { SessionRuleReadStates } from "@/app/session/personal/readState";
+import type { AccountFollowRuleProjectionRows } from "@/app/session/follow/accountFollowRuleService";
 import {
     loadSessionPersonalDiscussionFactsInTx,
     QUIET_SESSION_PERSONAL_DISCUSSION_FACTS,
@@ -55,10 +56,13 @@ export type SessionListReadSource = Readonly<{
     kind: "effective";
     reader: Pick<Tx, "session" | "sessionPin" | "account">;
     baseWhere: Prisma.SessionWhereInput;
+    /** The same predicate's compiled scope union; only ordered merges split it. */
+    baseWhereBranches?: readonly Prisma.SessionWhereInput[];
     accessMode: "effective_access_v1" | "legacy_owner_or_direct";
     qualifiedTeamIds?: ReadonlySet<string>;
     collectiveAccessSnapshot?: SessionCollectiveAccessSnapshot;
     discussionReader?: Tx;
+    ruleRows?: AccountFollowRuleProjectionRows;
 }>;
 
 export type SessionListRowAdmission = (
@@ -88,6 +92,7 @@ export async function findV2SessionListRows(params: FindV2SessionListRowsParams)
                 reader,
                 select,
                 visibilityWhere,
+                visibilityWhereBranches: params.source?.baseWhereBranches,
                 where: params.where,
                 cursor: page.cursor ?? cursor,
                 take: page.take ?? take,
@@ -125,12 +130,34 @@ export async function findV2SessionListRows(params: FindV2SessionListRowsParams)
     };
 
     if (params.source) return await readFrom(params.source.reader, params.source.baseWhere, params.source.collectiveAccessSnapshot);
-    return await readSnapshotWithCurrentAdmission(async (tx) => {
+    return await captureReadSnapshot(async (tx) => {
         const access = await resolveEffectiveSessionAccessWhere({ tx, accountId: userId, capability: "readTranscript", mode: "effective_access_v1", authentication: params.authentication });
         return await readFrom(tx, access.where, access.collectiveAccessSnapshot);
-    }, async (tx, captured) => await readmitSessionRowsInTx(tx, {
-        accountId: userId, authentication: params.authentication,
-    }, captured));
+    });
+}
+
+/**
+ * One existing maximum-response-sized attention batch bounds admission work.
+ * A short (even empty) exact page continues after the last examined candidate;
+ * an output overflow instead continues after the last emitted row.
+ */
+export async function findV2SessionListCandidatePage(params: FindV2SessionListRowsParams & Readonly<{
+    limit: number;
+    candidateLimit?: number;
+    onCandidatesExamined?: (count: number, limit: number) => void;
+}>) {
+    const candidateLimit = params.candidateLimit ?? Math.max(params.limit, SESSION_PERSONAL_ATTENTION_SCAN_BATCH_SIZE);
+    const candidates = await findV2SessionListRows({ ...params, take: candidateLimit + 1, rowAdmission: undefined });
+    const candidatePage = createV2SessionListRowPage({ rows: candidates, limit: candidateLimit });
+    params.onCandidatesExamined?.(candidatePage.rows.length, candidateLimit);
+    const admitted = params.rowAdmission ? [...await params.rowAdmission(candidatePage.rows)] : candidatePage.rows;
+    if (admitted.length > params.limit) {
+        const lastEmittedId = admitted[params.limit - 1]!.id;
+        const lastEmittedIndex = candidates.findIndex(row => row.id === lastEmittedId);
+        const continuation = createV2SessionListRowPage({ rows: candidates, limit: lastEmittedIndex + 1 });
+        return { ...continuation, rows: admitted.slice(0, params.limit) };
+    }
+    return { ...candidatePage, rows: admitted };
 }
 
 export async function runWithSessionListProjectionFallback<T>(
@@ -176,6 +203,7 @@ export function mapV2SessionListRows(params: Readonly<{
     ownerAccountModes?: ReadonlyMap<string, SessionMetadataOwnerAccountMode>;
     discussionFacts?: ReadonlyMap<string, SessionPersonalDiscussionFacts>;
     latestFailureSequences?: ReadonlyMap<string, number>;
+    ruleReadStates?: ReadonlyMap<string, SessionRuleReadStates>;
     otherNamedCollaboratorFacts?: ReadonlyMap<string, boolean>;
     qualifiedTeamIds?: ReadonlySet<string>;
     accessMode?: "effective_access_v1" | "legacy_owner_or_direct";
@@ -194,6 +222,7 @@ export function mapV2SessionListRows(params: Readonly<{
                 ownerAccountModes: params.ownerAccountModes,
                 discussionFacts: params.discussionFacts,
                 latestFailureSequences: params.latestFailureSequences,
+                ruleReadStates: params.ruleReadStates,
                 hasOtherNamedCollaborator: params.otherNamedCollaboratorFacts?.get(row.id),
                 qualifiedTeamIds: params.qualifiedTeamIds,
                 accessMode: params.accessMode,
@@ -286,6 +315,7 @@ export function createV2SessionListPage(params: Readonly<{
     ownerAccountModes?: ReadonlyMap<string, SessionMetadataOwnerAccountMode>;
     discussionFacts?: ReadonlyMap<string, SessionPersonalDiscussionFacts>;
     latestFailureSequences?: ReadonlyMap<string, number>;
+    ruleReadStates?: ReadonlyMap<string, SessionRuleReadStates>;
     otherNamedCollaboratorFacts?: ReadonlyMap<string, boolean>;
     qualifiedTeamIds?: ReadonlySet<string>;
     accessMode?: "effective_access_v1" | "legacy_owner_or_direct";
@@ -303,6 +333,7 @@ export function createV2SessionListPage(params: Readonly<{
             ownerAccountModes: params.ownerAccountModes,
             discussionFacts: params.discussionFacts,
             latestFailureSequences: params.latestFailureSequences,
+            ruleReadStates: params.ruleReadStates,
             otherNamedCollaboratorFacts: params.otherNamedCollaboratorFacts,
             qualifiedTeamIds: params.qualifiedTeamIds,
             accessMode: params.accessMode,
@@ -380,14 +411,9 @@ export async function resolveV2SessionListCursorForVisibleRows(params: ResolveV2
         }))[0] ?? null
         : params.source
             ? await read(params.source.reader, params.source.baseWhere)
-            : await readSnapshotWithCurrentAdmission(async (tx) => await read(tx, await buildSessionAccessWhere({
+            : await captureReadSnapshot(async (tx) => await read(tx, await buildSessionAccessWhere({
                 tx, accountId: params.userId, capability: "readTranscript", mode: "effective_access_v1", authentication: params.authentication,
-            })), async (tx, captured) => {
-                if (!captured) return captured;
-                const current = await readCurrentSessionIdsInTx(tx, { accountId: params.userId,
-                    sessionIds: [captured.id], authentication: params.authentication });
-                return current.has(captured.id) ? captured : null;
-            });
+            })));
     if (!row) return null;
 
     return {
@@ -401,6 +427,7 @@ async function findV2SessionListRowsByEffectiveActivity(params: Readonly<{
     select: SessionListRowSelect;
     userId: string;
     visibilityWhere: Prisma.SessionWhereInput;
+    visibilityWhereBranches?: readonly Prisma.SessionWhereInput[];
     where?: Prisma.SessionWhereInput;
     take?: number;
     cursor?: V2SessionListMeaningfulActivityCursor;
@@ -415,11 +442,11 @@ async function findV2SessionListRowsByEffectiveActivity(params: Readonly<{
                     activityAt: cursor.meaningfulActivityAt,
                 }
                 : cursor,
-        ).map((branch) => collectSessionTranscriptVisibleRowsBeforeTake({
+        ).flatMap((branch) => (params.visibilityWhereBranches ?? [visibilityWhere]).map(branchVisibility => collectSessionTranscriptVisibleRowsBeforeTake({
             take: branchTake,
             fetchPage: async (page) => await reader.session.findMany({
                 where: conjoinSessionListWhereInputs(
-                    visibilityWhere,
+                    branchVisibility,
                     where,
                     branch.where,
                     branch.cursorWhere,
@@ -431,7 +458,7 @@ async function findV2SessionListRowsByEffectiveActivity(params: Readonly<{
             }),
             isOwner: (row) => row.accountId === userId,
             readPublication: (row) => row,
-        })),
+        }))),
     );
 
     const merged = mergeV2SessionListRowsByEffectiveActivity(branchRows.flat());

@@ -1,7 +1,6 @@
 import { randomUUID } from "node:crypto";
 import tweetnacl from "tweetnacl";
 import {
-    MAX_NON_TERMINAL_EVENT_CONVERSATION_RUNS_PER_ACCOUNT,
     serializeAutomationStoredDefinitionExecutionRecipeV1,
     serializeAutomationStoredWorkflowDefinitionRecipeV2,
     sealWorkflowCheckpointStoredEnvelopeV1,
@@ -37,8 +36,10 @@ import { admitDueAutomationScheduleTriggerTx } from "./automationRunQueueService
 import { failAutomationRun } from "./automationRunService";
 import { validateSessionLifecycleTriggerRegistrationTx } from "./automationSessionLifecycleRegistration";
 import { decodeAutomationRunCause, encodeAutomationRunCause } from "./automationRunCauseCodec";
-import { clearAutomationRunHistory, deleteAutomationTrigger } from "./automationCrudService";
+import { clearAutomationRunHistory, deleteAutomationTrigger, getAutomation } from "./automationCrudService";
 import { isAutomationOriginRunPublisherTx, readAutomationOriginTriggerIdsTx } from "./automationTriggerCauseChain";
+import { observeSqliteRequests } from "@/testkit/observeSqliteRequests";
+import { loadAutomationSessionLifecycleStatusProjections } from "./automationSessionLifecycleStatusProjection";
 
 const authentication = createPresentUserSessionAccessAuthentication();
 
@@ -339,6 +340,68 @@ describe("Session lifecycle Automation admission on SQLite", () => {
             await db.automationRun.update({ where: { id: run.id }, data: { state: "succeeded", workflowCustodyState: "settled" } });
             expect(await readStatus(attached.automationId, attached.id)).toEqual({ state: "finished", runId: run.id });
         });
+    });
+
+    it("reads only the latest applicable lifecycle Run per demanded trigger regardless of retained history", async () => {
+        const current = await source();
+        const exact = await trigger(current);
+        const recurring = await trigger({ ...current, workflow: true, policy: { kind: "everyMatch" } });
+        const noRun = await trigger({ ...current, triggerEnabled: false });
+        await expect(applySessionTurnMutation({ actorUserId: current.accountId, mutation: {
+            v: 1, sessionId: current.sessionId, turnId: current.turnId, action: "complete",
+            mutationId: `complete-${current.suffix}`, observedAt: Date.now(),
+        } })).resolves.toMatchObject({ ok: true, didApply: true });
+        const exactRun = await db.automationRun.findFirstOrThrow({ where: { triggerId: exact.id } });
+        const recurringRun = await db.automationRun.findFirstOrThrow({ where: { triggerId: recurring.id } });
+        const latestAt = new Date(Date.now() + 1_000);
+        const parkedId = `z-${randomUUID()}`;
+        await db.automationRun.update({ where: { id: exactRun.id }, data: { state: "succeeded" } });
+        await db.automationRun.createMany({ data: [
+            ...[exactRun, recurringRun].flatMap(run => Array.from({ length: 40 }, (_, index) => ({
+                ...run, id: randomUUID(), occurrenceKey: `history-${randomUUID()}`,
+                createdAt: new Date(run.createdAt.getTime() - index - 1), state: "succeeded" as const,
+            }))),
+            // Exact-turn selection must happen before choosing the latest row.
+            { ...exactRun, id: randomUUID(), occurrenceKey: `other-turn-${randomUUID()}`,
+                createdAt: latestAt, causeSourceTurnId: `other-${current.turnId}`, state: "running" },
+            { ...recurringRun, id: `a-${randomUUID()}`, occurrenceKey: `tie-${randomUUID()}`,
+                createdAt: latestAt, state: "succeeded" },
+            { ...recurringRun, id: parkedId, occurrenceKey: `parked-${randomUUID()}`,
+                createdAt: latestAt, state: "waiting_for_review" },
+        ] });
+        const automations = await Promise.all([exact.automationId, recurring.automationId, noRun.automationId].map(async automationId => {
+            const automation = await getAutomation({ accountId: current.accountId, automationId });
+            if (!automation) throw new Error("Expected lifecycle Automation fixture");
+            return automation;
+        }));
+        let returnedRunRows = 0;
+        let runReads = 0;
+        const read = async () => {
+            returnedRunRows = 0;
+            runReads = 0;
+            const stop = observeSqliteRequests({ after(request, rows) {
+                if (request.model === "AutomationRun" && request.action === "findMany"
+                    || request.model === undefined && request.action === "queryRaw") {
+                    runReads += 1;
+                    if (Array.isArray(rows)) returnedRunRows += rows.length;
+                }
+            } });
+            try {
+                return await loadAutomationSessionLifecycleStatusProjections({ automations });
+            } finally { stop(); }
+        };
+        const statuses = await read();
+        expect(statuses.get(exact.automationId)?.get(exact.id)).toEqual({ state: "finished", runId: exactRun.id });
+        expect(statuses.get(recurring.automationId)?.get(recurring.id)).toEqual({ state: "running", runId: parkedId });
+        expect(statuses.get(noRun.automationId)?.get(noRun.id)).toEqual({ state: "finished", runId: null });
+        expect({ runReads, returnedRunRows }).toEqual({ runReads: 1, returnedRunRows: 2 });
+
+        const newestId = randomUUID();
+        await db.automationRun.create({ data: { ...recurringRun, id: newestId,
+            occurrenceKey: `newest-${randomUUID()}`, createdAt: new Date(latestAt.getTime() + 1), state: "queued" } });
+        expect((await read()).get(recurring.automationId)?.get(recurring.id))
+            .toEqual({ state: "triggered", runId: newestId });
+        expect({ runReads, returnedRunRows }).toEqual({ runReads: 1, returnedRunRows: 2 });
     });
 
     it.each([false, true, "deleteRun"] as const)("suppresses an ancestor trigger's own needs-you event before consuming its budget, while unrelated and later user events still fire (clear history: %s)", async (clearHistory) => {
@@ -880,7 +943,7 @@ describe("Session lifecycle Automation admission on SQLite", () => {
         })).resolves.toBe(matchCount);
     });
 
-    it("admits every eligible exact-turn sibling outside Event and Conversation capacity", async () => {
+    it("admits every eligible exact-turn sibling alongside unrelated Conversation work", async () => {
         const current = await source();
         const triggers = [
             await trigger(current),
@@ -888,7 +951,7 @@ describe("Session lifecycle Automation admission on SQLite", () => {
         ].sort((left, right) => left.id.localeCompare(right.id));
         const now = new Date();
         const occupiedRuns = Array.from(
-            { length: MAX_NON_TERMINAL_EVENT_CONVERSATION_RUNS_PER_ACCOUNT - 1 },
+            { length: 1 },
             (_, index) => ({
                 id: `exact-turn-capacity-${index}`,
                 automationId: triggers[0]!.automationId,

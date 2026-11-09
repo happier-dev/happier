@@ -19,6 +19,23 @@ describe("Automation current transport and retained 0.2 data", () => {
 
     afterAll(async () => await harness.close());
 
+    it('closes the retained Automation route when the canonical Workflow gate is disabled', async () => {
+        const account = await db.account.create({ data: { encryptionMode: 'plain' } });
+        vi.stubEnv('HAPPIER_FEATURE_WORKFLOWS__ENABLED', '0');
+        vi.stubEnv('HAPPIER_FEATURE_AUTOMATIONS__ENABLED', '1');
+        try {
+            await withAuthenticatedTestApp(automationRoutes, async (app) => {
+                const response = await app.inject({
+                    method: 'GET', url: '/v3/automations', headers: { 'x-test-user-id': account.id },
+                });
+                expect(response.statusCode).toBe(404);
+                expect(response.json()).toEqual({ error: 'not_found' });
+            });
+        } finally {
+            vi.unstubAllEnvs();
+        }
+    });
+
     it("returns the live deleted revision rather than an earlier displayed revision", async () => {
         const account = await db.account.create({ data: { encryptionMode: "plain" } });
         const other = await db.account.create({ data: { encryptionMode: "plain" } });

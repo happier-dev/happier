@@ -1,4 +1,4 @@
-import type { AccountRemoteAlertPolicyV1 } from '@happier-dev/protocol/account/settings/accountRemoteAlertPolicy';
+import { resolveAccountRemoteAlertPolicyCurrentness, type AccountRemoteAlertPolicyV1 } from '@happier-dev/protocol/account/settings/accountRemoteAlertPolicy';
 import type { AccountSettingsStoredContentEnvelope } from '@happier-dev/protocol/account/settings/accountSettingsStoredContentEnvelope';
 import type { Prisma } from "@prisma/client";
 
@@ -39,13 +39,15 @@ function isAccountSettingsSourceRetainedOrRemoved(
 }
 
 export type AccountSettingsWriteInTxResult =
-    | Readonly<{ status: "success"; version: number }>
+    | Readonly<{ status: "success"; version: number;
+        remoteAlertPolicyStatus: ReturnType<typeof resolveAccountRemoteAlertPolicyCurrentness>['status'] }>
     | Readonly<{ status: 'profile_transfer_mismatch'; currentRevision: number | 'absent' }>
     | Readonly<{
         status: "version_mismatch";
         currentVersion: number;
         currentSettings: string | null;
         currentContent: AccountSettingsStoredContentEnvelope | null;
+        remoteAlertPolicyStatus: ReturnType<typeof resolveAccountRemoteAlertPolicyCurrentness>['status'];
     }>
     | Readonly<{
         status:
@@ -97,7 +99,7 @@ async function readAccountSettingsPublicationConflictInTx(
         where: { id: input.accountId },
         select: {
             settings: true, settingsVersion: true, publicKey: true, encryptionMode: true,
-            contentPublicKey: true, contentPublicKeySig: true,
+            contentPublicKey: true, contentPublicKeySig: true, remoteAlertPolicy: true,
         },
     });
     const currentness = account ? deriveAccountEncryptionCurrentnessFromRow(account) : null;
@@ -109,6 +111,7 @@ async function readAccountSettingsPublicationConflictInTx(
         status: "version_mismatch", currentVersion: account?.settingsVersion ?? 0,
         currentSettings: input.kind === "v1" ? account?.settings || null : account?.settings ?? null,
         currentContent,
+        remoteAlertPolicyStatus: resolveAccountRemoteAlertPolicyCurrentness(account?.remoteAlertPolicy, account?.settingsVersion ?? 0).status,
     };
 }
 
@@ -127,8 +130,9 @@ export function validateAccountSettingsVersionAtPublicationInTx(
 
 /**
  * Stages one mode-fenced Account Settings CAS for terminal publication after
- * domain history/resource writes. The caller's inTx must commit before exposing
- * success; a final version conflict rolls the whole composed transaction back.
+ * domain resource writes. History is recorded only after that CAS succeeds.
+ * The caller's inTx must commit before exposing success; a final version
+ * conflict rolls the whole composed transaction back.
  */
 export async function writeAccountSettingsInTx(
     input: AccountSettingsWriteInTxInput,
@@ -171,12 +175,7 @@ export async function writeAccountSettingsInTx(
                 ? { t: "encrypted", c: currentAccount.settings }
                 : null;
     if (currentAccount.settingsVersion !== input.expectedVersion) {
-        return {
-            status: "version_mismatch",
-            currentVersion: currentAccount.settingsVersion,
-            currentSettings: currentAccount.settings,
-            currentContent,
-        };
+        return readAccountSettingsPublicationConflictInTx(input.tx, { accountId: input.accountId });
     }
 
     const validateSourceAuthority = async (
@@ -249,8 +248,9 @@ export async function writeAccountSettingsInTx(
                     ? input.next.content.c
                     : null;
     const nextVersion = input.expectedVersion + 1;
-    const previousRemoteAlertPolicy = input.next.kind === 'v2' && input.next.remoteAlertPolicy !== undefined
-        ? await input.tx.account.findUnique({ where: { id: input.accountId }, select: { remoteAlertPolicy: true } }) : null;
+    const previousRemoteAlertPolicy = await input.tx.account.findUnique({
+        where: { id: input.accountId }, select: { remoteAlertPolicy: true },
+    });
     const remoteAlertPolicyWrite =
         input.next.kind === "v2"
         && input.next.remoteAlertPolicy !== undefined
@@ -264,6 +264,12 @@ export async function writeAccountSettingsInTx(
                         } as Prisma.InputJsonValue,
             }
             : {};
+    const remoteAlertPolicyStatus = resolveAccountRemoteAlertPolicyCurrentness(
+        input.next.kind === 'v2' && input.next.remoteAlertPolicy !== undefined
+            ? input.next.remoteAlertPolicy === null ? null : remoteAlertPolicyWrite.remoteAlertPolicy
+            : previousRemoteAlertPolicy?.remoteAlertPolicy,
+        nextVersion,
+    ).status;
     enqueueAccountChangePublication(input.tx, [input.accountId], async (tx) => {
         const updated = await tx.account.updateMany({
             where: {
@@ -281,6 +287,23 @@ export async function writeAccountSettingsInTx(
             throw new AccountSettingsPublicationConflict(await readAccountSettingsPublicationConflictInTx(tx,
                 { accountId: input.accountId, kind: input.next.kind }));
         }
+        // Only the winning Account CAS may record its candidate N+1 history.
+        // Keep history and pruning in this same transaction/publication order.
+        await recordAccountSettingsSnapshotsForWrite({
+            tx,
+            previous: {
+                accountId: input.accountId,
+                version: input.expectedVersion,
+                settingsDbValue: currentAccount.settings,
+                encryptionMode: mode,
+            },
+            next: {
+                accountId: input.accountId,
+                version: nextVersion,
+                settingsDbValue: nextSettingsDbValue,
+                encryptionMode: mode,
+            },
+        });
     });
 
     if (input.next.kind === 'v2' && input.next.remoteAlertPolicy !== undefined) {
@@ -288,22 +311,9 @@ export async function writeAccountSettingsInTx(
             previousPolicy: previousRemoteAlertPolicy?.remoteAlertPolicy, nextPolicy: input.next.remoteAlertPolicy });
     }
 
-    await recordAccountSettingsSnapshotsForWrite({
-        tx: input.tx,
-        previous: {
-            accountId: input.accountId,
-            version: input.expectedVersion,
-            settingsDbValue: currentAccount.settings,
-            encryptionMode: mode,
-        },
-        next: {
-            accountId: input.accountId,
-            version: nextVersion,
-            settingsDbValue: nextSettingsDbValue,
-            encryptionMode: mode,
-        },
-    });
-
+    // Keep self: predecessor CLI 285ee7c5 apiMachine's changes reader ignores a
+    // dedicated Settings key after missed live delivery. Narrow this identity
+    // only once every supported reader honors that key during catch-up.
     const cursor = await markAccountChanged(input.tx, {
         accountId: input.accountId,
         kind: "account",
@@ -319,7 +329,7 @@ export async function writeAccountSettingsInTx(
             userId: input.accountId,
             payload: buildUpdateAccountUpdate(
                 input.accountId,
-                settingsUpdate,
+                { ...settingsUpdate, remoteAlertPolicyStatus },
                 cursor.resolveCursor(),
                 randomKeyNaked(12),
             ),
@@ -331,10 +341,11 @@ export async function writeAccountSettingsInTx(
                 nextVersion,
                 cursor.resolveCursor(),
                 randomKeyNaked(12),
+                remoteAlertPolicyStatus,
             ),
             recipientFilter: { type: "user-machine-scoped-only" },
         });
     });
 
-    return { status: "success", version: nextVersion };
+    return { status: "success", version: nextVersion, remoteAlertPolicyStatus };
 }

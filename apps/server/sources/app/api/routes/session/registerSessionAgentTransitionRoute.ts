@@ -15,6 +15,7 @@ import {
 import { publishSessionCurrentViewUpdates } from "@/app/session/metadata/publishSessionCurrentViewUpdates";
 import { publishSessionReadyProjectionUpdate } from "@/app/session/ready/publishSessionReadyProjectionUpdate";
 import { SessionStoredMessageContentSchema } from '@happier-dev/protocol/sessions/messages/sessionStoredMessageContent';
+import { UsageSessionTimingV1Schema, UsageTimingBoundsV1Schema } from '@happier-dev/protocol/usage/usageWorkEvidence';
 import { randomKeyNaked } from "@/utils/keys/randomKeyNaked";
 import { type Fastify } from "../../types";
 
@@ -45,6 +46,7 @@ export function registerSessionAgentTransitionRoute(
             metadataCiphertext: z.string().check(z.minLength(1)),
             expectedAgentStateVersion: z.number().check(z.int(), z.minimum(0)),
             agentStateCiphertext: z.null(),
+            usageTimingV1: z.optional(UsageSessionTimingV1Schema),
         }),
         z.strictObject({
             kind: z.literal("envelope_tuple_v1"),
@@ -65,6 +67,7 @@ export function registerSessionAgentTransitionRoute(
                 divider: z.strictObject({
                     localId: z.string().check(z.minLength(1)),
                     content: SessionStoredMessageContentSchema,
+                    usageTimingV1: z.optional(z.nullable(UsageTimingBoundsV1Schema)),
                 }),
                 // The target Agent's Team slot bindings. The cutover is the
                 // transition's one Session switch mutation, so the witness the
@@ -132,6 +135,7 @@ export function registerSessionAgentTransitionRoute(
             divider: {
                 localId: request.body.divider.localId,
                 content: request.body.divider.content,
+                usageTimingV1: request.body.divider.usageTimingV1,
             },
             ...(request.body.teamCredentialBindings
                 ? {

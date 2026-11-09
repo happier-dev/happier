@@ -1,5 +1,6 @@
 import { once } from 'node:events';
 import { randomBytes } from 'node:crypto';
+import { createServer } from 'node:http';
 import { io as connect, type Socket as ClientSocket } from 'socket.io-client';
 import type { Socket } from 'socket.io';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -14,6 +15,8 @@ import { isMachineDaemonRpcUnsupportedError } from '../../../../../../ui/sources
 import { db } from '@/storage/db';
 import { getMachineSocketRoom } from '../../socketRooms';
 import { registerSocketRpcHandlers } from './registerSocketRpcHandlers';
+import { observeOwnDaemonReachability } from '../../../../../../cli/src/machines/reachability/observeOwnDaemonReachability';
+import { authorizeMachineRpcRequest } from '../../../../../../cli/src/api/machine/machineRpcAuthorization';
 
 // Only persistence and metrics are external boundaries. The shared UI client,
 // Home relay, Redis adapters and daemon handler manager all run their real logic.
@@ -26,6 +29,135 @@ vi.mock('@/app/monitoring/metrics/index', () => ({
 
 import { forwardRpcCall } from './forwardRpcCall';
 import { buildRpcMethodRoom } from './rpcMethodRoom';
+import { registerSocketRoomDiscovery } from '../socketRoomDiscovery';
+import { Server } from 'socket.io';
+
+describe('concurrent Machine RPC delivery through the real local relay', () => {
+    let source: { io: Server; port: number };
+    const clients: ClientSocket[] = [];
+    beforeAll(async () => {
+        const http = createServer();
+        const io = new Server(http, { path: '/v1/updates', transports: ['websocket'], serveClient: false });
+        registerSocketRoomDiscovery(io);
+        await new Promise<void>(resolve => http.listen(0, '127.0.0.1', resolve));
+        const address = http.address();
+        if (!address || typeof address === 'string') throw new Error('Missing relay listener');
+        source = { io, port: address.port };
+    });
+    afterAll(async () => { await source?.io.close(); });
+    afterEach(() => { for (const client of clients.splice(0)) client.disconnect(); });
+
+    it.each(['plain', 'e2ee'] as const)('observes a post-stage %s daemon ACK through Home on its own registered socket', async mode => {
+        const daemon = await fixture();
+        const machineId = 'post-stage-machine', method = `${machineId}:${RPC_METHODS.CAPABILITIES_DESCRIBE}`;
+        const received: string[] = [];
+        const dataKey = randomBytes(32);
+        const manager = new RpcHandlerManager({ scopePrefix: machineId, scopeKind: 'machine', localMachineId: machineId, encryptionMode: mode,
+            ...(mode === 'e2ee' ? { encryptionKey: dataKey, encryptionVariant: 'dataKey' as const } : {}), logger() {},
+            authorizeRequest: (request, source) => authorizeMachineRpcRequest(request, { machineId,
+                resolveCustodianAccountId: async () => 'account-one', resolveInstallationId: () => 'installed-post-stage',
+                async verifyMachineAdmission() { throw new Error('Authenticated Home delivery must consume its existing admission'); },
+            }, source),
+        });
+        manager.registerHandler(RPC_METHODS.CAPABILITIES_DESCRIBE, () => { received.push(method); return { capabilities: [] }; });
+        daemon.target.on(SOCKET_RPC_EVENTS.REQUEST, (request, ack) => manager.handleRequest(request, ack, 'authenticated_home_socket'));
+        await daemon.targetSocket.join(buildRpcMethodRoom({ userId: 'account-one', method }));
+        const replies: unknown[] = [];
+        const relay = async (request: SocketRpcRequestPayload, ack: (value: unknown) => void) => {
+            const reply = await forwardRpcCall({
+            io: source.io, targetUserId: 'account-one', method: request.method, callParams: request.params,
+            callerSocketId: daemon.targetSocket.id, timeoutMs: null,
+            machineAdmission: { actorAccountId: 'account-one', custodianAccountId: 'account-one', machineId,
+                installationId: 'installed-post-stage', role: 'use', encryptionMode: mode },
+            });
+            replies.push(reply); ack(reply);
+        };
+        daemon.targetSocket.on(SOCKET_RPC_EVENTS.CALL, relay);
+        const content = mode === 'plain' ? { mode: 'plain' as const } : { mode: 'e2ee' as const, cipher: {
+            encryptRaw: async (value: unknown) => encodeBase64(encrypt(dataKey, 'dataKey', value)),
+            decryptRaw: async (value: string) => decrypt(dataKey, 'dataKey', decodeBase64(value)),
+        } };
+        const proof = await observeOwnDaemonReachability({ client: {
+            isMachineControlRegistrationReady: () => true,
+            async callConnectedClientRpc<T>(rpcMethod: string, params: unknown, options) {
+                try { return { ok: true as const, result: await callSocketRpc<T>({ socket: daemon.target,
+                    target: { kind: 'machine', id: machineId }, method: rpcMethod, params, content, ...options }) }; }
+                catch { return { ok: false as const, error: 'Home rejected the daemon observation' }; }
+            },
+        } });
+        expect(received, JSON.stringify({ replies, proof })).toEqual([method]);
+        expect(proof).toEqual({ status: 'ready' });
+        // The exception must not enable arbitrary self-routed effects or an
+        // unadmitted caller. Preserve the canonical relay rejection for both.
+        expect(await forwardRpcCall({ io: source.io, targetUserId: 'account-one', method,
+            callParams: {}, callerSocketId: daemon.targetSocket.id, timeoutMs: null })).toMatchObject({ ok: false });
+        await daemon.targetSocket.join(buildRpcMethodRoom({ userId: 'account-one', method: `${machineId}:daemon.stop` }));
+        expect(await forwardRpcCall({ io: source.io, targetUserId: 'account-one', method: `${machineId}:daemon.stop`,
+            callParams: {}, callerSocketId: daemon.targetSocket.id, timeoutMs: null,
+            machineAdmission: { actorAccountId: 'account-one', custodianAccountId: 'account-one', machineId,
+                installationId: 'installed-post-stage', role: 'use', encryptionMode: mode } })).toMatchObject({ ok: false });
+    });
+
+    it.each(['plain', 'e2ee'] as const)('correlates 27 concurrent %s Machine replies on one Account socket', async mode => {
+        const daemons = [await fixture(), await fixture(), await fixture()];
+        const methods = Array.from({ length: 27 }, (_, index) => `fanout-machine-${index}:plugin.delivery.read`);
+        // Share each daemon across nine distinct Machine routes on one Account connection.
+        for (const [index, method] of methods.entries()) {
+            await daemons[index % daemons.length].targetSocket.join(buildRpcMethodRoom({ userId: 'account-one', method }));
+        }
+        const received: string[] = [];
+        const routes = methods.map((method, index) => {
+            const dataKey = randomBytes(32);
+            const manager = new RpcHandlerManager({ scopePrefix: `fanout-machine-${index}`, encryptionMode: mode,
+                ...(mode === 'e2ee' ? { encryptionKey: dataKey, encryptionVariant: 'dataKey' as const } : {}), logger() {} });
+            manager.registerHandler('plugin.delivery.read', (value: unknown) => {
+                received.push(method);
+                return { method, params: value };
+            });
+            return { manager, content: mode === 'plain' ? { mode: 'plain' as const } : { mode: 'e2ee' as const, cipher: {
+                encryptRaw: async (value: unknown) => encodeBase64(encrypt(dataKey, 'dataKey', value)),
+                decryptRaw: async (value: string) => decrypt(dataKey, 'dataKey', decodeBase64(value)),
+            } } };
+        });
+        for (const daemon of daemons) {
+            daemon.target.on(SOCKET_RPC_EVENTS.REQUEST, async (request: SocketRpcRequestPayload, ack: (value: unknown) => void) => {
+                const route = routes[methods.indexOf(request.method)];
+                await route.manager.handleRequest(request, ack);
+            });
+        }
+        const relay = (socket: Socket) => socket.on(SOCKET_RPC_EVENTS.CALL,
+            async (request: SocketRpcRequestPayload, ack: (value: unknown) => void) => {
+                ack(await forwardRpcCall({ io: source.io, targetUserId: 'account-one', method: request.method,
+                    callParams: request.params, callerSocketId: socket.id, timeoutMs: null }));
+            });
+        source.io.on('connection', relay);
+        const ui = connect(`http://${'127.0.0.1'}:${source.port}`, {
+            path: '/v1/updates', transports: ['websocket'], reconnection: false, forceNew: true,
+        });
+        clients.push(ui);
+        try {
+            await new Promise<void>(resolve => ui.once('connect', resolve));
+            const replies = await Promise.all(methods.map((method, index) => callSocketRpc({ socket: ui,
+                target: { kind: 'machine', id: `fanout-machine-${index}` }, method: 'plugin.delivery.read',
+                params: { index }, content: routes[index].content, timeoutMs: null })));
+            expect(replies).toEqual(methods.map((method, index) => ({ method, params: { index } })));
+            expect(received.sort()).toEqual([...methods].sort());
+            expect(Reflect.get(ui, 'acks')).toEqual({});
+            for (const daemon of daemons) expect(Reflect.get(daemon.targetSocket, 'acks').size).toBe(0);
+        } finally { source.io.off('connection', relay); }
+    });
+
+    async function fixture() {
+        const accepted = once(source.io, 'connection');
+        const target = connect(`http://${'127.0.0.1'}:${source.port}`, {
+            path: '/v1/updates', transports: ['websocket'], reconnection: false, forceNew: true,
+        });
+        clients.push(target);
+        await new Promise<void>(resolve => target.once('connect', resolve));
+        const [targetSocket] = await accepted as [Socket];
+        return { target, targetSocket };
+    }
+});
 
 describe('client to daemon RPC reply delivery across Redis adapter nodes', () => {
     let cluster: Awaited<ReturnType<typeof startRedisAdapterRecoveryCluster>>;

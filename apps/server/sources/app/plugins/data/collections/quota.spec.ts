@@ -113,6 +113,7 @@ describe('Plugin Collection quota policy', () => {
             before: usage(10_001, 1_000, [['row-1', 100]]),
             after: usage(10_000, 900, []),
             collections,
+            changedRows: [{ pluginId: 'example.tasks', collectionId: 'tasks', rowIds: ['row-1'] }],
             beforePrefixUsage: [],
             afterPrefixUsage: [],
         })).toBeNull();
@@ -121,6 +122,7 @@ describe('Plugin Collection quota policy', () => {
             before: usage(10_001, 1_000, [['row-1', 100]]),
             after: usage(10_001, 900, [['row-1', 50]]),
             collections,
+            changedRows: [{ pluginId: 'example.tasks', collectionId: 'tasks', rowIds: ['row-1'] }],
             beforePrefixUsage: [],
             afterPrefixUsage: [],
         })).toEqual({ dimension: 'maxRows', effectiveMaximum: 10_000 });
@@ -170,6 +172,7 @@ describe('Plugin Collection quota policy', () => {
             before: accountUsage(600),
             after: accountUsage(700),
             collections,
+            changedRows: [{ pluginId: 'example.tasks', collectionId: 'tasks', rowIds: ['task-1'] }],
             beforePrefixUsage: [],
             afterPrefixUsage: [],
         })).toEqual({ dimension: 'maxAccountBytes', effectiveMaximum: 1_000 });
@@ -178,12 +181,13 @@ describe('Plugin Collection quota policy', () => {
             before: accountUsage(600),
             after: accountUsage(500),
             collections,
+            changedRows: [{ pluginId: 'example.tasks', collectionId: 'tasks', rowIds: ['task-1'] }],
             beforePrefixUsage: [],
             afterPrefixUsage: [],
         })).toBeNull();
     });
 
-    it('does not let a retained oversized row bypass its declared quota through another Collection transition', () => {
+    it('admits a small Collection transition beside an unchanged oversized row', () => {
         const before = {
             rows: 2,
             encodedBytes: 700,
@@ -223,6 +227,7 @@ describe('Plugin Collection quota policy', () => {
             deployment,
             before,
             after,
+            changedRows: [{ pluginId: 'example.beta', collectionId: 'beta', rowIds: ['beta-2'] }],
             collections: [
                 {
                     pluginId: 'example.alpha',
@@ -237,7 +242,7 @@ describe('Plugin Collection quota policy', () => {
             ],
             beforePrefixUsage: [],
             afterPrefixUsage: [],
-        })).toEqual({ dimension: 'maxRowEncodedBytes', effectiveMaximum: 512 });
+        })).toBeNull();
     });
 
     it('rejects activation with an indexed-prefix overage at the same quota owner', () => {
@@ -326,6 +331,7 @@ describe('Plugin Collection quota policy', () => {
             before: usage,
             after: usage,
             collections: [],
+            changedRows: [],
             beforePrefixUsage: prefix(3),
             afterPrefixUsage: prefix(2),
         })).toBeNull();
@@ -334,6 +340,7 @@ describe('Plugin Collection quota policy', () => {
             before: usage,
             after: usage,
             collections: [],
+            changedRows: [],
             beforePrefixUsage: prefix(3),
             afterPrefixUsage: prefix(3),
         })).toEqual({ dimension: 'maxRows', effectiveMaximum: 1 });

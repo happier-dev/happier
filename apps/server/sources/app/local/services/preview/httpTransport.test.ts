@@ -19,6 +19,7 @@ import { registerLocalServicePublicRoutes } from "@/app/api/routes/local/service
 import { proxyLocalServicePreviewWebSocketUpgrade } from "./websocketAdapter";
 import { runInNewContext } from 'node:vm';
 import { createLocalServicePublicRuntime } from '../public/runtime';
+import { createLocalServicePreviewRuntime } from './runtime';
 import { createPublicExposureObservabilityEmitter } from '../public/websocket';
 import { LocalServicePublicExposureV1Schema, LocalServicePublicPreviewSnapshotV1Schema } from '@happier-dev/protocol/local/services/public/v1';
 
@@ -60,7 +61,9 @@ async function listenUpstream(server: Server, scheme: "http" | "https", host = "
             abort: () => { socket.destroy(); },
         };
     };
-    return { preview, openTunnel };
+    return { preview, openTunnel, retainMachineAccess: createLocalServicePreviewRuntime({
+        tokenSecret: 'transport-test-secret', publicBaseUrl: 'https://app.happier.test', hostOriginBaseDomain: 'example.test',
+    }).retainMachineAccess };
 }
 
 async function proxy(fixture: Awaited<ReturnType<typeof upstream>>, headers: IncomingHttpHeaders = {}, externalProtocol: "http" | "https" = "http", exposureId?: string) {
@@ -137,22 +140,42 @@ describe('preview destination availability', () => {
         expect(applyPeerMediationObservabilityEventToFlowSnapshot(started, response.events[1]!).lifecycleState).toBe('closed');
     });
 
-    it('preserves the stopped-listener refusal and CORS through the real collector state route', async () => {
-        const server = createServer((_request, response) => response.end('running'));
+    it.each(['transport', 'occurrence-open', 'occurrence-stream', 'policy-open', 'policy-stream', 'application', 'application-policy'] as const)(
+        'preserves only proxy-owned refusals and CORS through the real collector state route (%s)', async (failure) => {
+        const server = createServer((_request, response) => {
+            response.writeHead(failure === 'application-policy' ? 403 : 404, { 'content-type': 'application/json' });
+            response.end(JSON.stringify(failure === 'application-policy'
+                ? { error: 'preview_access_denied', reasonCode: 'destination_port_not_allowed', port: 5173 }
+                : { error: 'preview_not_found', reasonCode: 'preview_not_found' }));
+        });
         const fixture = await listenUpstream(server, 'http', '127.0.0.1', false);
-        await new Promise<void>((resolve) => server.close(() => resolve()));
+        if (failure === 'transport') await new Promise<void>((resolve) => server.close(() => resolve()));
+        const policy = failure.startsWith('policy');
+        const application = failure.startsWith('application');
+        const openTunnel: OpenLocalServicePreviewTunnel = failure.startsWith('occurrence') || policy ? async () => {
+            const reasonCode = policy ? 'destination_port_not_allowed' : 'preview_not_found';
+            const ended = () => Object.assign(new Error(reasonCode), { reasonCode });
+            if (failure.endsWith('-open')) throw ended();
+            return { tunnelId: 'ended', substreamId: 'ended', write() {}, endWrite() {},
+                async *read() { throw ended(); }, close() {}, abort() {} };
+        } : fixture.openTunnel;
         const config = { browserSessionId: 'bs', viewId: 'v', navigationGeneration: 1,
             collector: { collectorId: 'c', nonce: 'n', version: '1.0.0' }, webPostMessageTargetOrigin: 'https://app.example.test' };
         const app = Fastify();
         app.decorate('authenticate', async () => {});
         registerLocalServicePreviewRoutes(app as never, { resolvePreview: () => fixture.preview,
+            retainMachineAccess: fixture.retainMachineAccess,
             resolvePreviewByHost: () => fixture.preview, hostOriginBaseDomain: 'example.test',
-            validateAccess: () => ({ ok: true }), openTunnel: fixture.openTunnel });
+            validateAccess: () => ({ ok: true }), openTunnel });
         try {
             const response = await app.inject({ url: `/?__happierCollector=${encodeURIComponent(JSON.stringify(config))}&__happierCollectorState=1`,
                 headers: { host: 'preview.example.test', origin: config.webPostMessageTargetOrigin } });
-            expect(response.statusCode).toBe(503);
-            expect(response.json()).toEqual({ error: 'preview_transport_unavailable', reasonCode: 'pms_tunnel_unavailable' });
+            expect(response.statusCode).toBe(failure === 'transport' ? 503 : application ? 200 : policy ? 403 : 404);
+            expect(response.json()).toEqual(failure === 'transport'
+                ? { error: 'preview_transport_unavailable', reasonCode: 'pms_tunnel_unavailable' }
+                : application ? { state: 'runtime_unavailable' }
+                    : policy ? { error: 'preview_access_denied', reasonCode: 'destination_port_not_allowed', port: fixture.preview.target.port }
+                    : { error: 'preview_not_found', reasonCode: 'preview_not_found' });
             expect(response.headers['access-control-allow-origin']).toBe(config.webPostMessageTargetOrigin);
             expect(response.headers['access-control-allow-credentials']).toBe('true');
         } finally { await app.close(); }
@@ -207,7 +230,7 @@ describe('public preview sharing and withdrawal through real routes', () => {
         let nextExposure = 0;
         const runtime = createLocalServicePublicRuntime({
             publicBaseUrl: 'https://home.example.test', hostOriginBaseDomain: 'preview.example.test', tokenSecret: 'fixture-key',
-            policy: { enabled: true, allowedModes: ['secret_link', 'authenticated'], maxTtlMs: 60_000, maxConcurrentExposures: 2,
+            policy: { enabled: true, allowedModes: ['secret_link', 'public'], maxTtlMs: 60_000, maxConcurrentExposures: 2,
                 dnsTlsRequired: false, auditRequired: true, rateLimitProfileIds: ['default'] },
             nowMs: options.wallClock ? Date.now : () => now, generateExposureId: () => `share-${++nextExposure}`, auditSinkDurable: true,
             recordAuditEvent() { if (!auditAvailable) throw new Error('audit boundary unavailable'); },
@@ -219,10 +242,11 @@ describe('public preview sharing and withdrawal through real routes', () => {
             Object.assign(request, { userId: 'owner', authAuthority: 'present_user' });
         });
         registerLocalServicePublicRoutes(app as never, {
+            retainMachineAccess: fixture.retainMachineAccess,
             ...runtime, resolvePreview: () => fixture.preview, getStatus: runtime.getSnapshot,
             authorizeSessionAccess: ({ userId }) => userId === 'owner', openTunnel: fixture.openTunnel,
         });
-        const create = async (mode: 'secret_link' | 'authenticated' = 'secret_link') => {
+        const create = async (mode: 'secret_link' | 'public' = 'secret_link') => {
             const response = await app.inject({ method: 'POST', url: '/v1/local-services/public', payload: {
                 machineId: fixture.preview.machineId, sessionId: fixture.preview.sessionId, previewId: fixture.preview.previewId,
                 mode, ttlMs: options.ttlMs ?? 60_000, rateLimitProfileId: 'default', confirmation: { acknowledged: true },
@@ -467,12 +491,14 @@ describe("preview native HTTP transport", () => {
         app.decorate('authenticate', async () => {});
         let transportAvailable = false;
         if (publicExposure) registerLocalServicePublicRoutes(app as never, {
+            retainMachineAccess: fixture.retainMachineAccess,
             resolvePreview: () => fixture.preview,
             createExposure: () => ({ ok: false, reasonCode: 'public_origin_unavailable' }),
             revokeExposure: () => ({ ok: true }),
             validateAccess: () => ({ ok: true, preview: fixture.preview }),
         });
         else registerLocalServicePreviewRoutes(app as never, { resolvePreview: () => fixture.preview,
+            retainMachineAccess: fixture.retainMachineAccess,
             resolvePreviewByHost: () => fixture.preview, hostOriginBaseDomain: 'example.test',
             validateAccess: () => ({ ok: true }), ...(configured ? { openTunnel: async (input: Parameters<OpenLocalServicePreviewTunnel>[0]) => {
                 if (!transportAvailable) throw new Error('transport unavailable');

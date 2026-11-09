@@ -1,3 +1,4 @@
+import { MACHINE_RECIPIENT_ACCESS_CHANGE_KIND_V1 } from "@happier-dev/protocol/changes";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { randomUUID } from "node:crypto";
 import { homeDomainActionPathForMethod } from "@/app/api/routes/actions/homeDomainActionRoute";
@@ -386,9 +387,10 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("T
             expect((await db.session.findUniqueOrThrow({ where: { id: session.id } })).responsibleAccountId).toBeNull();
             const revokedAt = (await db.teamInvitation.findUniqueOrThrow({ where: { id: invitation.id } })).revokedAt;
             expect(revokedAt).not.toBeNull();
-            for (const [kind, entityId] of [["session", session.id], ["machine", machine.id]] as const) {
+            for (const [kind, entityId] of [["session", session.id], [MACHINE_RECIPIENT_ACCESS_CHANGE_KIND_V1, machine.id]] as const) {
                 expect(await db.accountChange.count({ where: { accountId: member.id, kind, entityId } })).toBeGreaterThan(0);
             }
+            expect(await db.accountChange.count({ where: { accountId: member.id, kind: "machine", entityId: machine.id } })).toBe(0);
             const restored = await post("restore");
             expect(restored.statusCode, restored.body).toBe(200);
             expect((await sessionAccess()).get(member.id)?.capabilities.readTranscript).toBe(true);
@@ -409,16 +411,13 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("T
             headers: { "x-test-user-id": input.owner.id }, payload: input.payload });
         let competitor: ReturnType<typeof post> | undefined;
         let competitorOutcome: Promise<PromiseSettledResult<Awaited<ReturnType<typeof post>>>[]> | undefined;
-        let ready!: (pid: number) => void;
-        const started = new Promise<number>(resolve => { ready = resolve; });
+        let blockedPeer = false;
         db.$transaction = new Proxy(original, { apply(target, receiver, args: unknown[]) {
             const callback = args[0];
             if (typeof callback !== "function") return Reflect.apply(target, receiver, args);
             const isCompetitor = competitorScope.getStore();
             return Reflect.apply(target, receiver, [async (tx: Tx) => {
                 if (isCompetitor) {
-                    const [{ pid }] = await tx.$queryRaw<Array<{ pid: number }>>`SELECT pg_backend_pid() AS pid`;
-                    ready(pid);
                     return callback(tx);
                 }
                 const dedupe = new Proxy(tx.repeatKey, { get(owner, property, receiver) {
@@ -427,15 +426,20 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("T
                         const found = await owner.findUnique(...values);
                         if (!scheduled && found === null) {
                             scheduled = true;
+                            const [{ pid: firstPid }] = await tx.$queryRaw<Array<{ pid: number }>>`SELECT pg_backend_pid() AS pid`;
                             let settled = false;
                             competitor = competitorScope.run(true, post);
                             competitorOutcome = Promise.allSettled([competitor]).finally(() => { settled = true; });
-                            const pid = await Promise.race([started, competitor.then(() => { throw new Error("Creation missed rendezvous"); })]);
+                            // Authentication can use an earlier transaction on
+                            // another backend. Observe the actual waiter on
+                            // this admitted creation, not that earlier PID.
                             while (!settled) {
                                 const [{ blocked }] = await db.$queryRaw<Array<{ blocked: boolean }>>`
-                                    SELECT cardinality(pg_blocking_pids(${pid}::int)) > 0 AS blocked
+                                    SELECT EXISTS (SELECT 1 FROM pg_stat_activity
+                                        WHERE datname = current_database()
+                                        AND ${firstPid}::int = ANY(pg_blocking_pids(pid))) AS blocked
                                 `;
-                                if (blocked) break;
+                                if (blocked) { blockedPeer = true; break; }
                             }
                         }
                         return found;
@@ -455,6 +459,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("T
             expect(second.statusCode, second.body).toBe(200);
             teamIds.push(second.json().id);
             expect(second.json().id).toBe(first.json().id);
+            expect(blockedPeer).toBe(true);
             expect(await db.teamMembership.count({ where: { accountId: input.owner.id } })).toBe(1);
         } finally {
             db.$transaction = original;

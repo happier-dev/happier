@@ -11,6 +11,10 @@ export function logUnexpectedRequestError(error: unknown, correlation: Readonly<
     requestId?: string;
     actionId?: string;
     phase?: 'action_request' | 'managed_admission';
+    method?: string;
+    route?: string;
+    statusCode?: number;
+    responseCode?: string;
 }> | Readonly<{
     module: 'websocket';
     socketId: string;

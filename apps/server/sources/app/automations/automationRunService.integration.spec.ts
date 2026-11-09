@@ -14,12 +14,13 @@ import { eventRouter, type ClientConnection, type UpdatePayload } from "@/app/ev
 import { db } from "@/storage/db";
 import { createSignedAccountContentBinding } from "@/testkit/accountEncryption";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
+import { observeSqliteRequests } from '@/testkit/observeSqliteRequests';
 
 import { inTx } from "@/storage/inTx";
 import { markAccountChanged } from "@/app/changes/markAccountChanged";
 import { readSessionPendingReviewRunCountsInTx } from '@/app/session/awareness/sessionManagerProjection';
 import { sourceKeyForSessionFollowSourceV1 } from '@/app/session/follow/sessionFollowSourceIdentity';
-import { invalidateSessionReviewProjectionsForAutomationInTx } from './sessionReviewProjectionInvalidation';
+import { getWorkflowPublicationAudienceInTx } from '@/app/workflows/workflowPublicationAudience';
 import { createSessionMessageFromPending } from "@/app/session/pending/pendingMessageTranscriptCommit";
 
 import {
@@ -319,7 +320,7 @@ describe("automationRunService (integration)", () => {
         ]);
     });
 
-    it('projects the turn-end run barrier from actual cause source and releases it through Session/lead hints', async () => {
+    it('projects the turn-end run barrier and invalidates only the changed Run source and its lead', async () => {
         const seeded = await createAccountMachineAutomation({ publicKey: 'pk-review-projection', machineId: 'review-machine', automationName: 'Turn review' });
         const source = await db.session.create({ data: { accountId: seeded.accountId, tag: 'review-source', encryptionMode: 'plain', metadata: '{}' } });
         const lead = await db.session.create({ data: { accountId: seeded.accountId, tag: 'review-lead', encryptionMode: 'plain', metadata: '{}' } });
@@ -365,15 +366,59 @@ describe("automationRunService (integration)", () => {
         // The real Automation admission writes causeSourceSessionId, not originSessionId.
         expect(run.originSessionId).toBeNull();
         expect(await inTx(async (tx) => readSessionPendingReviewRunCountsInTx(tx, [source.id]))).toEqual(new Map([[source.id, 1]]));
+        const unrelated = await db.session.create({ data: { accountId: seeded.accountId,
+            tag: 'other-review-source', encryptionMode: 'plain', metadata: '{}' } });
+        await db.sessionTurn.create({ data: { sessionId: unrelated.id, turnId: sourceTurnId,
+            initiator: 'user', workDepth: 0, status: 'completed', startedAt: 1n, updatedAt: 2n } });
+        await db.automationTrigger.create({ data: {
+            automationId: seeded.automationId, kind: 'sessionLifecycle', revision: 1,
+            ...encodeAutomationSessionLifecycleConfiguration({
+                kind: 'sessionLifecycle', sourceSessionId: unrelated.id, events: ['parentTurnCompleted'],
+                policy: { kind: 'currentTurn', sourceTurnId },
+            }),
+        } });
+        const unrelatedAdmissions = await inTx(async (tx) => admitSessionLifecycleAutomationRunsTx({
+            tx, accountId: seeded.accountId,
+            occurrence: { v: 1, kind: 'sessionLifecycle', event: 'parentTurnCompleted',
+                sourceSessionId: unrelated.id, sourceTurnId, occurredAt: occurredAt.getTime() },
+        }));
+        expect(unrelatedAdmissions[0]?.result.kind).toBe('admitted');
+        const definitionAudience = await inTx(tx => getWorkflowPublicationAudienceInTx(tx, {
+            accountId: seeded.accountId, automationIds: [seeded.automationId],
+        }));
+        expect.soft(definitionAudience.sessionIds).toEqual([]);
+        const runAudience = await inTx(tx => getWorkflowPublicationAudienceInTx(tx, {
+            accountId: seeded.accountId, runIds: [run.id],
+        }));
+        expect.soft(runAudience.sessionIds).toEqual([source.id]);
+        const runReadBatchSizes: number[] = [];
+        const stopObserving = observeSqliteRequests({ before(request) {
+            if (request.model !== 'AutomationRun' || request.action !== 'findMany') return;
+            // Observe the real Prisma IO argument; every query still reaches SQLite.
+            const args = request.args as { where?: { id?: { in?: string[] }; OR?: { id?: { in?: string[] } }[] } };
+            const ids = args.where?.id?.in ?? args.where?.OR?.find(part => part.id?.in)?.id?.in;
+            if (ids) runReadBatchSizes.push(ids.length);
+        } });
+        try {
+            const largeAudience = await inTx(tx => getWorkflowPublicationAudienceInTx(tx, {
+                accountId: seeded.accountId,
+                runIds: [run.id, ...Array.from({ length: 35_000 }, (_, index) => `missing-review-run-${index}`)],
+            }));
+            expect(largeAudience.runIds).toEqual([run.id]);
+            expect(largeAudience.sessionIds).toEqual([source.id]);
+            expect(runReadBatchSizes.length).toBeGreaterThan(1);
+            expect(Math.max(...runReadBatchSizes)).toBeLessThanOrEqual(999);
+        } finally {
+            stopObserving();
+        }
         // Admission also publishes hints; observe only the later barrier-release hints below.
         await db.accountChange.deleteMany({ where: { accountId: seeded.accountId, kind: 'session' } });
-        await inTx(async (tx) => {
-            await tx.automationRun.update({ where: { id: run.id }, data: { state: 'cancelled' } });
-            await invalidateSessionReviewProjectionsForAutomationInTx(tx, seeded.automationId);
-        });
-        expect(await inTx(async (tx) => readSessionPendingReviewRunCountsInTx(tx, [source.id]))).toEqual(new Map());
+        await expect(cancelAutomationRun({ accountId: seeded.accountId, runId: run.id }))
+            .resolves.toMatchObject({ state: 'cancelled' });
+        expect(await inTx(async (tx) => readSessionPendingReviewRunCountsInTx(tx, [source.id, unrelated.id])))
+            .toEqual(new Map([[unrelated.id, 1]]));
         const sessionChanges = await db.accountChange.findMany({ where: { accountId: seeded.accountId, kind: 'session' }, select: { entityId: true } });
-        expect(sessionChanges.map(({ entityId }) => entityId)).toEqual(expect.arrayContaining([source.id, lead.id]));
+        expect(sessionChanges.map(({ entityId }) => entityId).sort()).toEqual([source.id, lead.id].sort());
     });
 
 
@@ -1061,128 +1106,24 @@ describe("automationRunService (integration)", () => {
                 triggers: { select: { id: true, nextRunAt: true } },
             },
         });
-        expect(automation?.lastRunAt).not.toBeNull();
+        expect(automation?.lastRunAt).toBeNull();
         expect(automation?.triggers).toEqual([{
             id: seeded.triggerId,
             nextRunAt: expect.any(Date),
         }]);
     });
 
-    it("atomically persists execution dispatch permission and terminalizes an exhausted retry through the incumbent failed-run lifecycle", async () => {
-        const first = await seedExecutionDispatchRun({ id: "run-execution-dispatch-first" });
-        const started = await startAutomationRun({
-            accountId: first.account.id,
-            runId: first.run.id,
-            machineId: first.machine.id,
-            attempt: 1,
-            accountCurrentness: await readAutomationAccountCurrentness(first.account.id),
-        });
-
-        expect(started?.run).toEqual(expect.objectContaining({
-            state: "running",
-            executionDispatchState: "dispatchPermitted",
-            executionAttempt: 1,
-        }));
-        expect(started?.run.executionDispatchCommittedAt).not.toBeNull();
-
-        const exhausted = await seedExecutionDispatchRun({
-            id: "run-execution-dispatch-exhausted",
-            executionDispatchState: "retryWaiting",
-            executionAttempt: 3,
-        });
-        const updates: UpdatePayload[] = [];
-        const observer = createMachineConnection({
-            accountId: exhausted.account.id,
-            machineId: exhausted.machine.id,
-            updates,
-        });
-        eventRouter.addConnection(exhausted.account.id, observer);
-        try {
-            await expect(startAutomationRun({
-                accountId: exhausted.account.id,
-                runId: exhausted.run.id,
-                machineId: exhausted.machine.id,
-                attempt: 1,
-                accountCurrentness: await readAutomationAccountCurrentness(exhausted.account.id),
-            })).resolves.toBeNull();
-            expect(updates).toEqual([
-                expect.objectContaining({
-                    body: expect.objectContaining({
-                        t: "automation-run-state-changed",
-                        runId: exhausted.run.id,
-                        automationId: exhausted.automation.id,
-                        runCause: expect.objectContaining({
-                            kind: "trigger",
-                            triggerId: exhausted.automation.triggers[0]!.id,
-                            triggerKind: "schedule",
-                        }),
-                        previousState: "claimed",
-                        currentState: "failed",
-                        claimedByMachineId: null,
-                    }),
-                }),
-            ]);
-        } finally {
-            eventRouter.removeConnection(exhausted.account.id, observer);
-        }
-        await expect(db.automationRun.findUniqueOrThrow({
-            where: { id: exhausted.run.id },
-            select: {
-                state: true,
-                executionDispatchState: true,
-                executionAttempt: true,
-                executionDispatchCommittedAt: true,
-                executionDispatchDueAt: true,
-                executionNativeRunId: true,
-                executionNativeCallId: true,
-                executionNativeSidechainId: true,
-                finishedAt: true,
-                claimedByMachineId: true,
-                leaseExpiresAt: true,
-                errorCode: true,
-                errorMessage: true,
-                revision: true,
-            },
-        })).resolves.toEqual({
-            state: "failed",
-            executionDispatchState: "settled",
-            executionAttempt: 3,
-            executionDispatchCommittedAt: null,
-            executionDispatchDueAt: null,
-            executionNativeRunId: null,
-            executionNativeCallId: null,
-            executionNativeSidechainId: null,
-            finishedAt: expect.any(Date),
-            claimedByMachineId: null,
-            leaseExpiresAt: null,
-            errorCode: "execution_run_retry_exhausted",
-            errorMessage: null,
-            revision: 1,
-        });
-        await expect(db.automationRunEvent.findMany({
-            where: { runId: exhausted.run.id },
-            select: { type: true },
-        })).resolves.toEqual([{ type: "run_failed" }]);
-        await expect(db.automationRun.findMany({
-            where: { automationId: exhausted.automation.id },
-            orderBy: [{ createdAt: "asc" }],
-            select: { state: true, dueAt: true },
-        })).resolves.toEqual([
-            expect.objectContaining({ state: "failed" }),
-        ]);
-        await expect(db.automation.findUniqueOrThrow({
-            where: { id: exhausted.automation.id },
-            select: {
-                lastRunAt: true,
-                triggers: { select: { nextRunAt: true } },
-            },
-        })).resolves.toEqual({
-            lastRunAt: null,
-            triggers: [{ nextRunAt: null }],
-        });
+    it("atomically permits a fourth execution dispatch after three proven no-effect attempts", async () => {
+        const seeded = await seedExecutionDispatchRun({ id: 'dispatch-fourth', executionDispatchState: 'retryWaiting', executionAttempt: 3 });
+        const result = await startAutomationRun({ accountId: seeded.account.id, runId: seeded.run.id,
+            machineId: seeded.machine.id, attempt: 1, accountCurrentness: await readAutomationAccountCurrentness(seeded.account.id) });
+        expect(result?.run).toMatchObject({ state: 'running', executionDispatchState: 'dispatchPermitted', executionAttempt: 4 });
+        expect(result?.run.executionDispatchCommittedAt).toEqual(expect.any(Date));
+        expect(await db.automationRunEvent.findMany({ where: { runId: seeded.run.id }, select: { type: true } }))
+            .toEqual([{ type: 'run_started' }]);
     });
 
-    it("does not terminalize an exhausted execution retry from stale currentness or claim authority", async () => {
+    it("refuses a further execution retry from stale content identity or claim authority", async () => {
         const seeded = await seedExecutionDispatchRun({
             id: "run-execution-dispatch-exhausted-stale-authority",
             executionDispatchState: "retryWaiting",
@@ -1222,7 +1163,7 @@ describe("automationRunService (integration)", () => {
             runId: seeded.run.id,
             machineId: seeded.machine.id,
             attempt: 1,
-            accountCurrentness: { ...currentness, version: currentness.version + 1 },
+            accountCurrentness: { mode: "e2ee", version: currentness.version, contentKeyFingerprint: "different-content-key" },
         })).resolves.toBeNull();
         await expect(db.automationRun.findUniqueOrThrow({
             where: { id: seeded.run.id },
@@ -1242,52 +1183,17 @@ describe("automationRunService (integration)", () => {
         })).resolves.toBe(0);
     });
 
-    it("allows only one concurrent worker to terminalize an exhausted execution retry", async () => {
-        const seeded = await seedExecutionDispatchRun({
-            id: "run-execution-dispatch-exhausted-concurrent",
-            executionDispatchState: "retryWaiting",
-            executionAttempt: 3,
-        });
-        const currentness = await readAutomationAccountCurrentness(seeded.account.id);
-
-        await expect(Promise.all([
-            startAutomationRun({
-                accountId: seeded.account.id,
-                runId: seeded.run.id,
-                machineId: seeded.machine.id,
-                attempt: 1,
-                accountCurrentness: currentness,
-            }),
-            startAutomationRun({
-                accountId: seeded.account.id,
-                runId: seeded.run.id,
-                machineId: seeded.machine.id,
-                attempt: 1,
-                accountCurrentness: currentness,
-            }),
-        ])).resolves.toEqual([null, null]);
-        await expect(db.automationRun.findUniqueOrThrow({
-            where: { id: seeded.run.id },
-            select: {
-                state: true,
-                executionDispatchState: true,
-                finishedAt: true,
-                claimedByMachineId: true,
-                leaseExpiresAt: true,
-                revision: true,
-            },
-        })).resolves.toEqual({
-            state: "failed",
-            executionDispatchState: "settled",
-            finishedAt: expect.any(Date),
-            claimedByMachineId: null,
-            leaseExpiresAt: null,
-            revision: 1,
-        });
-        await expect(db.automationRunEvent.findMany({
-            where: { runId: seeded.run.id },
-            select: { type: true },
-        })).resolves.toEqual([{ type: "run_failed" }]);
+    it("permits only one concurrent worker to start the next proven-no-effect execution attempt", async () => {
+        const seeded = await seedExecutionDispatchRun({ id: 'dispatch-fourth-concurrent', executionDispatchState: 'retryWaiting', executionAttempt: 3 });
+        const request = { accountId: seeded.account.id, runId: seeded.run.id, machineId: seeded.machine.id,
+            attempt: 1, accountCurrentness: await readAutomationAccountCurrentness(seeded.account.id) };
+        const results = await Promise.all([startAutomationRun(request), startAutomationRun(request)]);
+        expect(results.filter(result => result !== null)).toHaveLength(1);
+        expect(await db.automationRun.findUniqueOrThrow({ where: { id: seeded.run.id },
+            select: { state: true, executionDispatchState: true, executionAttempt: true, finishedAt: true, revision: true } }))
+            .toEqual({ state: 'running', executionDispatchState: 'dispatchPermitted', executionAttempt: 4, finishedAt: null, revision: 1 });
+        expect(await db.automationRunEvent.findMany({ where: { runId: seeded.run.id }, select: { type: true } }))
+            .toEqual([{ type: 'run_started' }]);
     });
 
     it("durably requeues only a strict noRunCreated dispatch result under the same Automation Run", async () => {
@@ -1364,11 +1270,11 @@ describe("automationRunService (integration)", () => {
                 leaseExpiresAt: true,
             },
         })).resolves.toEqual({
-            state: "failed",
-            executionDispatchState: "settled",
+            state: "queued",
+            executionDispatchState: "retryWaiting",
             executionAttempt: 3,
-            executionDispatchDueAt: null,
-            finishedAt: expect.any(Date),
+            executionDispatchDueAt: expect.any(Date),
+            finishedAt: null,
             claimedByMachineId: null,
             leaseExpiresAt: null,
         });
@@ -1467,6 +1373,13 @@ describe("automationRunService (integration)", () => {
             executionDispatchDueAt: null,
             executionNativeRunId: null,
         });
+        await expect(startAutomationRun({
+            accountId: seeded.account.id,
+            runId: seeded.run.id,
+            machineId: seeded.machine.id,
+            attempt: 1,
+            accountCurrentness: await readAutomationAccountCurrentness(seeded.account.id),
+        })).resolves.toBeNull();
     });
 
     it("commits outcomeUnknown after an unrelated Account write moves only the global sequence", async () => {
@@ -1727,7 +1640,7 @@ describe("automationRunService (integration)", () => {
         });
     });
 
-    it("still refuses a noRunCreated redispatch permission after an unrelated Account write", async () => {
+    it("preserves proven noRunCreated retry permission after an unrelated Account write", async () => {
         const seeded = await seedExecutionDispatchRun({
             id: "run-execution-dispatch-unrelated-seq-retry",
             state: "running",
@@ -1743,9 +1656,8 @@ describe("automationRunService (integration)", () => {
             });
         });
 
-        // Redispatch permission is a pre-effect decision. It keeps the exact
-        // witness: nothing external has run, so a stale claimant may not
-        // re-authorize a new attempt.
+        // Typed proof that no Run was created permits retry under the same
+        // mode/key and exact Run claim; an unrelated publication is not revocation.
         const settle = readExecutionDispatchSettlementOwner();
         await expect(settle({
             accountId: seeded.account.id,
@@ -1754,13 +1666,13 @@ describe("automationRunService (integration)", () => {
             attempt: 1,
             accountCurrentness: startWitness,
             outcome: { kind: "noRunCreated", errorCode: "execution_run_not_created" },
-        })).resolves.toBeNull();
+        })).resolves.toMatchObject({ state: "queued", executionDispatchState: "retryWaiting" });
         await expect(db.automationRun.findUniqueOrThrow({
             where: { id: seeded.run.id },
             select: { state: true, executionDispatchState: true, executionAttempt: true },
         })).resolves.toEqual({
-            state: "running",
-            executionDispatchState: "dispatchPermitted",
+            state: "queued",
+            executionDispatchState: "retryWaiting",
             executionAttempt: 1,
         });
     });
@@ -2730,7 +2642,7 @@ describe("automationRunService (integration)", () => {
                 state: terminalState === "cancelled" ? "outcome_uncertain" : terminalState,
                 replyHandoffState: "blocked",
                 replyHandoffDueAt: null,
-                revision: before.revision + 2,
+                revision: before.revision + 1,
             }));
             await expect(findNextAutomationReplyHandoffDueAt({ now: new Date() })).resolves.toBeNull();
             await expect(claimNextAutomationReplyHandoff({ now: new Date() })).resolves.toBeNull();
@@ -3206,6 +3118,7 @@ describe("automationRunService (integration)", () => {
             select: { state: true },
         })).resolves.toEqual({ state: "failed" });
     });
+
 
 
     it("still refuses terminal settlement from stale claim authority after the Account sequence moved", async () => {
