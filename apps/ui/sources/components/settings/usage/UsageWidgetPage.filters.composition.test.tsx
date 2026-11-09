@@ -554,6 +554,59 @@ describe('mounted Usage page scope commands', () => {
         await vi.waitFor(() => expect(cost()?.props.slice.accounting?.totals.eventCount).toBe(2));
     });
 
+    it('settles a cold target accounting refusal after one viewport read', async () => {
+        vi.spyOn(Date, 'now').mockReturnValue(Date.now());
+        const artifacts = createArtifactStoreBoundary({ ownerAccountId: () => 'account-a', encryptionMode: 'plain' });
+        home = await serveActionHomes({ homes: [{ key: 'a', serverUrl: 'https://usage-viewport-refusal.test', accountId: 'account-a' }],
+            route: request => {
+                if (request.path === '/v1/features' || request.path === '/v1/features/authenticated') return Response.json(createRootLayoutFeaturesResponse());
+                if (request.path === '/v1/kv/bulk') return Response.json({ values: [] });
+                if (request.path === '/v2/usage/query-batch') return Response.json({ error: 'denied' }, { status: 403 });
+                return artifacts.handle(request.url.toString(), { method: request.method })
+                    ?? createEmptyAccountBootstrapHttpResponse(request.path, { method: request.method }) ?? undefined;
+            } });
+        const server = home.homes.a!;
+        publishAppliedActiveServerSnapshot({ serverId: server.id, serverUrl: server.serverUrl, generation: 0 });
+        const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+        const credentials = (await TokenStorage.getCredentialsForServerUrl(server.serverUrl))!;
+        const posts = () => home!.httpRequests.filter(request => request.path === '/v2/usage/query-batch');
+        type MeasureDone = (x: number, y: number, width: number, height: number) => void;
+        const positions = new Map<string, number>();
+        const content = { measureInWindow: (done: MeasureDone) => done(0, 0, 1000, 6000) };
+        const scroll = { getInnerViewRef: () => content };
+        const screen = await renderScreen(<InjectedAuthProvider credentials={credentials}>
+            <MainAppTabStateProvider><AppPaneProvider><CurrentUiContextProvider>
+                <UsageWidgetPage initialFilters={{ layoutId: 'how-you-work', period: '7days', metric: 'tokens', costMode: 'auto', focus: null }} />
+            </CurrentUiContextProvider></AppPaneProvider></MainAppTabStateProvider>
+        </InjectedAuthProvider>, {
+            // Geometry and HTTP are external boundaries; mounted query demand and Resource remain real.
+            createNodeMock: node => {
+                const id = node.props.testID;
+                if (id === 'usage-page') return scroll;
+                if (typeof id !== 'string' || !/^usage-area\.widget\.[^.]+$/.test(id)) return null;
+                return { measureInWindow: (done: MeasureDone) => {
+                    if (!positions.has(id)) positions.set(id, 410 + positions.size * 400);
+                    done(0, positions.get(id)!, 1000, 300);
+                } };
+            },
+        });
+        const { sync } = await import('@/sync/sync');
+        await sync.awaitBootstrapForegroundAcquisition();
+        await waitForHomeGovernance(() => expect(screen.findByType(UsageFilterBar).props.metricPending).toBe(false));
+        await flushHookEffects({ cycles: 10 });
+        expect(screen.findByType(WidgetAreaLayoutBar).props.selectedId).toBe('how-you-work');
+        expect(posts(), 'a cold target waits for viewport demand').toHaveLength(0);
+        expect(screen.findAllByType(WidgetSurface)).toHaveLength(0);
+        await act(async () => screen.findByTestId('usage-page')!.props.onLayout?.({
+            nativeEvent: { layout: { x: 0, y: 0, width: 1000, height: 900 } },
+        }));
+        await vi.waitFor(() => expect(screen.findAll(node => typeof node.props.testID === 'string'
+            && node.props.testID.startsWith('usage-area.widget.how-you-work:')
+            && node.props.diagnosticCode === 'denied').length).toBeGreaterThan(0));
+        await flushHookEffects({ cycles: 30 });
+        expect(posts(), 'a settled refusal does not cause an automatic second accounting read').toHaveLength(1);
+    });
+
     it('defers never-near widgets and keeps admitted content mounted through partial visibility and scroll return', async () => {
         // Change viewport demand without also advancing the accounting period's end.
         const observedAt = Date.now();

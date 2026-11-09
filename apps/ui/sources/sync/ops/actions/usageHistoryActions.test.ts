@@ -23,6 +23,9 @@ import { useOptionalCurrentUiContextReader } from '@/components/appShell/current
 import { usePublishUsageWidgetPageContext, useUsageWidgetPageContext } from '@/components/settings/usage/useUsageWidgetPageContext';
 import { ACTION_ID_FAMILIES_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { t } from '@/text';
+import { InjectedAuthProvider } from '@/auth/context/AuthContext';
+import { UsageWidgetBatchProvider, useUsageWidgetBatchHistory, useUsageWidgetModel } from '@/components/settings/usage/widgets/usageWidgetBatch';
+import { readUsageWidgetQueryOverrides } from '@/components/settings/usage/usageWidgetPageContext';
 
 // HTTP serves the Account; Socket.IO cannot connect to this constructed Home.
 vi.mock('socket.io-client', async (importOriginal) =>
@@ -32,12 +35,58 @@ let home: Awaited<ReturnType<typeof serveAccountHomes>> | undefined;
 afterEach(async () => { standardCleanup(); retireActiveServerAccountScopeLifetime(); await home?.dispose(); home = undefined; });
 
 describe('Usage history through the shared Account Action', () => {
+  it('targets the page period for history when a pinned sibling sorts before its following widget', async () => {
+    home = await serveAccountHomes({ homes: [{ key: 'a', serverUrl: 'https://usage-history-distinct-periods.test', accountId: 'account-a' }],
+      route: async request => {
+        if (request.path === '/v1/kv/bulk') return Response.json({ values: [] });
+        if (request.path === '/v2/usage/query') return Response.json({ v: 1, totals: { eventCount: 0,
+          tokens: { input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+          cost: { reportedUsd: 0, estimatedUsd: 0, currency: 'USD' } }, contributions: [] });
+        if (request.path !== USAGE_SESSION_EVIDENCE_PATH) return undefined;
+        const input = UsageSessionEvidenceRequestSchema.parse(request.body);
+        return Response.json({ requests: input.requests.map(row => ({ query: row.query, sessionIds: [] })), results: [] });
+      } });
+    const focused = home.homes.a!;
+    publishAppliedActiveServerSnapshot({ serverId: focused.id, serverUrl: focused.serverUrl, generation: 0 });
+    const credentials = (await TokenStorage.getCredentialsForServerUrl(focused.serverUrl))!;
+    const pinned = normalizeUsageQuery({ period: { relative: '90days' } });
+    const following = normalizeUsageQuery({ period: { relative: 'all' } });
+    const clauses = readUsageWidgetQueryOverrides(pinned);
+    let model: ReturnType<typeof useUsageHistory> | undefined;
+    const displayed = new Map<'90days' | 'all', typeof pinned>();
+    function Body({ period }: { period: '90days' | 'all' }) {
+      const { query } = useUsageWidgetModel({ period: { relative: period }, metric: 'tokens' }, 'usage_parallel');
+      if (query) displayed.set(period, query);
+      return null;
+    }
+    function History() { model = useUsageWidgetBatchHistory(); return null; }
+    const screen = await renderScreen(React.createElement(InjectedAuthProvider, { credentials,
+      children: React.createElement(UsageWidgetBatchProvider, { clauses, inventoryQuery: following,
+        children: React.createElement(React.Fragment, null,
+          React.createElement(Body, { period: '90days' }), React.createElement(Body, { period: 'all' }), React.createElement(History)),
+      }),
+    }));
+    const dispose: (() => void)[] = [];
+    try {
+      await expect.poll(() => model?.state).not.toBeNull();
+      const { captureUiUsageQueryAccountContext, getUiUsageHistoryState, subscribeUiUsageHistory } = await import('@/sync/api/account/usageQueryResource');
+      const context = captureUiUsageQueryAccountContext(credentials)!;
+      const reading: string[] = [];
+      for (const [period, query] of displayed) dispose.push(subscribeUiUsageHistory(context, query, () => {
+        if (getUiUsageHistoryState(context, query).status === 'reading') reading.push(period);
+      }));
+      await act(async () => { expect(await model!.readNow()).toMatchObject({ ok: true }); });
+      expect(reading.length).toBeGreaterThan(0);
+      expect(new Set(reading), 'the page Read now targets its own period rather than a lexically earlier pin').toEqual(new Set(['all']));
+    } finally { dispose.forEach(stop => stop()); await screen.unmount(); }
+  });
   it('retains an admitted page-command history read when Retry retires into Cancel', async () => {
     const held = createDeferred<void>();
     const signals: (AbortSignal | null | undefined)[] = [];
     let requests = 0;
     home = await serveAccountHomes({ homes: [{ key: 'a', serverUrl: 'https://usage-history-command-lifetime.test', accountId: 'account-a' }],
       route: async request => {
+        if (request.path === '/v1/kv/bulk') return Response.json({ values: [] });
         if (request.path === '/v2/usage/query') return Response.json({ v: 1, totals: { eventCount: 0,
           tokens: { input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
           cost: { reportedUsd: 0, estimatedUsd: 0, currency: 'USD' } }, contributions: [] });
@@ -64,9 +113,9 @@ describe('Usage history through the shared Account Action', () => {
       const authority = React.useMemo(() => captureActiveServerAccountScopeLifetime(), []);
       const page = useUsageWidgetPageContext({ authority });
       model = useUsageHistory({ credentials, query: { query, authority: { serverId: focused.id, accountId: 'account-a' } } });
-      usePublishUsageWidgetPageContext({ authority, page, costBasisOptions: [], history: model });
+      const published = usePublishUsageWidgetPageContext({ authority, page, costBasisOptions: [], history: model });
       mounted.reader = useOptionalCurrentUiContextReader();
-      return null;
+      return published.publication;
     }
     const screen = await renderMountedCurrentUiContext(React.createElement(Page));
     try {
@@ -107,6 +156,7 @@ describe('Usage history through the shared Account Action', () => {
     const signals: (AbortSignal | null | undefined)[] = [];
     home = await serveAccountHomes({ homes: [{ key: 'a', serverUrl: 'https://usage-history-view-lifetime.test', accountId: 'account-a' }],
       route: async request => {
+        if (request.path === '/v1/kv/bulk') return Response.json({ values: [] });
         if (request.path === '/v2/usage/query') return Response.json({ v: 1, totals: { eventCount: 0,
           tokens: { input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
           cost: { reportedUsd: 0, estimatedUsd: 0, currency: 'USD' } }, contributions: [] });
@@ -152,6 +202,7 @@ describe('Usage history through the shared Account Action', () => {
   it('keeps a focused restricted Action read on its admitted request transport', async () => {
     home = await serveAccountHomes({ homes: [{ key: 'a', serverUrl: 'https://usage-history-restricted.test', accountId: 'account-a' }],
       route: request => {
+        if (request.path === '/v1/kv/bulk') return Response.json({ values: [] });
         if (request.path === '/v2/usage/query') {
           if (request.headers.get('x-usage-test-proof') !== 'admitted') return Response.json({ error: 'forbidden' }, { status: 403 });
           return Response.json({ v: 1, totals: { eventCount: 7,
@@ -197,6 +248,7 @@ describe('Usage history through the shared Account Action', () => {
       { key: 'a', serverUrl: 'https://usage-history-background.test', accountId: 'account-a' },
       { key: 'b', serverUrl: 'https://usage-history-focused.test', accountId: 'account-b' },
     ], route: request => {
+      if (request.path === '/v1/kv/bulk') return Response.json({ values: [] });
       if (request.path === '/v2/usage/query') return Response.json({ v: 1, totals: { eventCount: 0,
         tokens: { input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
         cost: { reportedUsd: 0, estimatedUsd: 0, currency: 'USD' } }, contributions: [] });
@@ -238,6 +290,7 @@ describe('Usage history through the shared Account Action', () => {
   it('observes without reading, explicitly reads an empty selection, and retains that owner state for later callers', async () => {
     home = await serveAccountHomes({ homes: [{ key: 'a', serverUrl: 'https://usage-history-actions.test', accountId: 'account-a' }],
       route: request => {
+        if (request.path === '/v1/kv/bulk') return Response.json({ values: [] });
         if (request.path === '/v2/usage/query') return Response.json({ v: 1, totals: { eventCount: 0,
           tokens: { input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
           cost: { reportedUsd: 0, estimatedUsd: 0, currency: 'USD' } }, contributions: [] });

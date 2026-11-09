@@ -1,6 +1,7 @@
 import * as React from 'react';
 import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { buildWidgetAreaActionInputV1, PluginUiWidgetAreaResultV1Schema, pluginUiWidgetAreaOperationHasOutwardEffectV1 } from '@happier-dev/protocol/plugins/ui';
 import { WidgetSurfaceRefV1Schema, WidgetSurfaceReadV1Schema, readWidgetActionSurfaceV1, type WidgetAreaPresetV1, type WidgetAreaPresetUndoV1, type WidgetSurfaceRefV1 } from '@happier-dev/protocol/widgets';
@@ -26,8 +27,8 @@ export function useCorePageWidgetAreaBinding(input: Readonly<{
     undoReset(capture: WidgetAreaPresetUndoV1): Promise<ActionExecuteResult>;
     listLayouts(): Promise<ActionExecuteResult>;
     createLayout(layoutId: string, name: string): Promise<ActionExecuteResult>;
-    selectLayout(layoutId: string): Promise<ActionExecuteResult>;
-    executeLayoutAction(actionId: Extract<ActionId, `widgets.area.layout.${string}`>, args: unknown): Promise<ActionExecuteResult>;
+    selectLayout(layoutId: string, callerContext?: ActionExecutorContext): Promise<ActionExecuteResult>;
+    executeLayoutAction(actionId: Extract<ActionId, `widgets.area.layout.${string}`>, args: unknown, callerContext?: ActionExecutorContext): Promise<ActionExecuteResult>;
 }> {
     const lifetime = useActiveServerAccountScopeLifetime();
     const viewer = lifetime?.scope ?? null;
@@ -58,19 +59,19 @@ export function useCorePageWidgetAreaBinding(input: Readonly<{
         const resolvePresets = (target: WidgetSurfaceRefV1) => surface && areServerProfileIdentifiersEquivalent(target.serverId, surface.serverId) && target.accountId === surface.accountId
             && target.owner.kind === 'corePage' && target.owner.pageId === input.pageId && target.owner.area === input.area
             ? input.presets ?? (input.preset ? [input.preset] : []) : undefined;
-        const execute = async (actionId: ActionId, args: unknown, signal?: AbortSignal, context = input.context, current = isCurrent) => {
+        const execute = async (actionId: ActionId, args: unknown, signal?: AbortSignal, context = input.context, current = isCurrent, callerContext?: ActionExecutorContext) => {
             if (!surface || !lifetime || !current() || signal?.aborted) return failed();
             const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
             if (!current() || signal?.aborted) return failed();
             const target = readWidgetActionSurfaceV1(args) ?? surface;
             return createDefaultActionExecutor({ resolveWidgetAreaPresets: resolvePresets, widgetAreaIsCurrent: current }).execute(actionId, args, {
-                surface: 'ui', actionCaller: { kind: 'host' }, serverId: lifetime.scope.serverId,
+                ...(callerContext ?? { surface: 'ui', actionCaller: { kind: 'host' } }), serverId: lifetime.scope.serverId,
                 expectedAccountId: lifetime.scope.accountId, signal, widgetAreaContext: { surface: target, values: widgetProvidedContext(context) },
             });
         };
-        const executeLayoutAction = (actionId: Extract<ActionId, `widgets.area.layout.${string}`>, args: unknown) =>
-            execute(actionId, args, undefined, input.context, isSelectionCurrent);
-        const port: WidgetAreaPort | null = surface ? { execute: async (operation, signal, admitted) => {
+        const executeLayoutAction = (actionId: Extract<ActionId, `widgets.area.layout.${string}`>, args: unknown, callerContext?: ActionExecutorContext) =>
+            execute(actionId, args, callerContext?.signal, input.context, isSelectionCurrent, callerContext);
+        const port: WidgetAreaPort | null = surface ? { surface, execute: async (operation, signal, admitted) => {
             const target = admitted?.surface ?? surface;
             if (!sameStrictJsonValue(widgetAreaLayoutBaseSurface(target), widgetAreaLayoutBaseSurface(surface)))
                 return { ok: false, errorCode: 'widget_area_owner_mismatch', error: 'widget_area_owner_mismatch' };
@@ -103,9 +104,9 @@ export function useCorePageWidgetAreaBinding(input: Readonly<{
         },
             listLayouts: () => executeLayoutAction('widgets.area.layout.list', { surface }),
             createLayout: (layoutId: string, name: string) => executeLayoutAction('widgets.area.layout.create', { surface, layoutId, name, fromSurface: surface }),
-            selectLayout: async (layoutId: string) => {
+            selectLayout: async (layoutId: string, callerContext?: ActionExecutorContext) => {
                 if (!surface || surface.owner.kind !== 'corePage') return failed();
-                return executeLayoutAction('widgets.area.layout.select', { surface: { ...surface, owner: { ...surface.owner, layoutId } } });
+                return executeLayoutAction('widgets.area.layout.select', { surface: { ...surface, owner: { ...surface.owner, layoutId } } }, callerContext);
             },
             executeLayoutAction,
             undoReset: (capture: WidgetAreaPresetUndoV1) => execute('widgets.area.layout.undo', { capture }) };
@@ -115,7 +116,7 @@ export function useCorePageWidgetAreaBinding(input: Readonly<{
     // The inventory addresses the base area across selected views. Keep its executor
     // stable while each invocation still uses the latest admitted binding and scope.
     const executeLayoutAction = React.useCallback<typeof binding.executeLayoutAction>(
-        (actionId, args) => currentLayoutAction.current(actionId, args), [input.preset, input.presets]);
+        (actionId, args, callerContext) => currentLayoutAction.current(actionId, args, callerContext), [input.preset, input.presets]);
     useWidgetAreaLayoutSelectionOwner(binding.selectionOwner);
     return React.useMemo(() => {
         const { selectionOwner: _selectionOwner, ...operations } = binding;

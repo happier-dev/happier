@@ -5,7 +5,12 @@ import { MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/ma
 import { ScopeActionOutputSchemas } from '@happier-dev/protocol/actions/scopeActionFamily';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createActionExecutor, type ActionExecutorDeps, RPC_METHODS, UiActionDispatchRequestV1Schema, ActionIdSchema, tryWriteServerEnabledBitInPlace } from '@happier-dev/protocol';
+import { createActionExecutor} from '@happier-dev/protocol/actions/actionExecutor';
+import { type ActionExecutorDeps} from '@happier-dev/protocol/actions/executor/types';
+import { RPC_METHODS} from '@happier-dev/protocol/rpc/methods';
+import { UiActionDispatchRequestV1Schema} from '@happier-dev/protocol/actions/clientDispatchV1';
+import { ActionIdSchema} from '@happier-dev/protocol/actions/actionIds';
+import { tryWriteServerEnabledBitInPlace } from '@happier-dev/protocol/features/serverEnabledBit';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { SessionAuthoringOpenResultV1Schema } from '@happier-dev/protocol/plugins/ui';
 import { SessionResumeRequestV1Schema } from '@happier-dev/protocol/sessions/control/sessionResumeRequestV1';
@@ -122,57 +127,78 @@ afterEach(async () => {
 });
 
 describe('admitted app Actions and daemon-to-app continuations', () => {
-  it.each(['cli', 'agent'] as const)('changes the answering device Administration target through the %s reverse-dispatch path', async surface => {
-    const target = { serverIdentityId: 'srv_administration_destination', machineId: 'chosen-machine' };
-    const sibling = { serverIdentityId: 'srv_other_destination', machineId: 'other-machine' };
-    storage.setState(state => ({ settings: { ...state.settings,
-      machineAdministrationTargetsLocalV1: { preserved: sibling } } }));
+  it.each(['cli', 'agent'] as const)('detail-navigation.T6 %s lists a large mounted catalog once and selects only the addressed client and column', async surface => {
     const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
+    const { selectRpcTarget } = await import('../../../../../server/sources/app/api/socket/rpc/rpcTargetSelection');
+    const { usePluginDetailNavigation } = await import('@/components/plugins/pages/pluginDetailNavigation');
+    const { registerShellColumnActionOwner } = await import('./scopeActionFamily');
     const lifetime = captureActiveServerAccountScopeLifetime();
     if (!lifetime) throw new Error('Restored Account lifetime is unavailable');
-    const receive = createUiClientActionReverseHandler({ serverId, accountId: 'relay-account', isCurrent: lifetime.isCurrent });
-    const { selectRpcTarget } = await import('../../../../../server/sources/app/api/socket/rpc/rpcTargetSelection');
-    let multipleClients = true;
-    let unrelatedEffects = 0;
-    // Only the daemon-to-App network hop is synthetic. Placement, strict envelopes,
-    // receiving Account admission and the device preference owner remain real.
+    // Stress input only, never a host limit. The normal descriptor, placement and
+    // mounted Action owners consume every entry; no synthetic per-item transport.
+    const items = Array.from({ length: 1000 }, (_, index) => ({ value: `page-${index}`, title: `Page ${index}`, kind: 'page' as const, phonePlacement: 'bar' as const }));
+    let selections = 0;
+    let bodyLoads = 0;
+    let sideEffects = 0;
+    let delivered = 0;
+    let issued = 0;
+    let otherDeliveries = 0;
+    function Body({ value }: Readonly<{ value: string }>) {
+      React.useEffect(() => { bodyLoads++; }, []);
+      return React.createElement('span', { testID: 'column-selected-body' }, value);
+    }
+    function Detail() {
+      const [activeId, setActiveId] = React.useState('page-0');
+      const host = usePluginDetailNavigation({ identity: 't-close/detail', lifetime, scope: lifetime!.scope,
+        live: true, presented: true, title: 'Detail' });
+      React.useEffect(() => {
+        host.owner.setPageNavigation({ navigation: { pageKind: { pluginId: 'acme.catalog', localId: 'detail' }, value: activeId, items } });
+      }, [host.owner, activeId]);
+      const request = host.projection?.request;
+      React.useEffect(() => { if (request) { selections++; setActiveId(request); } }, [request]);
+      return React.createElement(Body, { key: activeId, value: activeId });
+    }
+    const screen = await renderScreen(React.createElement(Detail));
+    releases.push(registerShellColumnActionOwner('side', () => ({ present: true, visible: true, available: true,
+      tabs: ['other-scope'], activeTab: 'other-scope', selectTab: () => { sideEffects++; }, setVisible: () => { sideEffects++; } })));
+    const initialBodyLoads = bodyLoads;
+    const receive = createUiClientActionReverseHandler({ serverId, accountId: lifetime.scope.accountId, isCurrent: lifetime.isCurrent });
+    const chosen = { id: 'chosen-detail', timeout: () => ({ emitWithAck: async (_event: string, payload: unknown) => {
+      delivered++;
+      return await receive(JSON.parse(JSON.stringify(payload)), { signal: new AbortController().signal });
+    } }) };
+    const other = { id: 'other-account-detail', timeout: () => ({ emitWithAck: async () => {
+      otherDeliveries++; throw new Error('Unaddressed detail received the request');
+    } }) };
     const reverse = createClientActionReverseDispatcher(() => ({
       hasConnectedClientRpcHandler: method => method === RPC_METHODS.UI_ACTION_EXECUTE,
       callConnectedClientRpc: async (method, payload, options) => {
         expect(method).toBe(RPC_METHODS.UI_ACTION_EXECUTE);
-        expect(options.answeringClient).toMatchObject({ requireSingle: true });
-        const target = { id: 'chosen-app', timeout: () => ({ emitWithAck: async () => await receive(JSON.parse(JSON.stringify(payload)),
-          { signal: options.signal ?? new AbortController().signal }) }) };
-        const unrelated = { id: 'other-app', timeout: () => ({ emitWithAck: async () => {
-          unrelatedEffects++; throw new Error('Unselected client executed an Action');
-        } }) };
-        const selection = selectRpcTarget({ targets: multipleClients ? [target, unrelated] : [target], answeringClient: options.answeringClient });
-        if (selection.type === 'ambiguous') return { ok: false, errorCode: 'RPC_CLIENT_AMBIGUOUS', answeringClients: selection.clients };
-        if (selection.type !== 'target') return { ok: false, errorCode: 'RPC_CLIENT_NOT_AVAILABLE' };
-        options.onIssued();
-        return { ok: true, result: await selection.target.timeout(0).emitWithAck(SOCKET_RPC_EVENTS.REQUEST, payload) };
+        const selected = selectRpcTarget({ targets: [chosen, other], answeringClient: options.answeringClient });
+        if (selected.type === 'ambiguous') return { ok: false, errorCode: 'RPC_CLIENT_AMBIGUOUS', answeringClients: selected.clients };
+        if (selected.type !== 'target') return { ok: false, errorCode: 'RPC_CLIENT_NOT_AVAILABLE' };
+        options.onIssued(); issued++;
+        return { ok: true, result: await selected.target.timeout(0).emitWithAck(SOCKET_RPC_EVENTS.REQUEST, payload) };
       },
     }));
     const caller = createActionExecutor({ clientActionExecute: reverse });
-    const context = { surface, authority: 'account_automation',
-      ...(surface === 'agent' ? { defaultSessionId: 'background-agent-session' } : {}) } as const;
-    const input = { anchor: 'machines.administrationTarget', key: 'agents', value: target, clientId: 'chosen-app' };
-    expect(await caller.execute('settings.get', { anchor: input.anchor, key: input.key }, context))
-      .toMatchObject({ ok: false, errorCode: 'client_ambiguous', details: {
-        clients: [{ id: 'chosen-app', deviceLabel: null }, { id: 'other-app', deviceLabel: null }],
-        recovery: { inputField: 'clientId' },
-      } });
-    expect(await caller.execute('settings.set', input, context)).toEqual({ ok: true, result: { anchor: input.anchor, value: target } });
-    expect(storage.getState().settings.machineAdministrationTargetsLocalV1).toEqual({ preserved: sibling, agents: target });
-    expect(await caller.execute('settings.get', { anchor: input.anchor, key: input.key, clientId: input.clientId }, context))
-      .toEqual({ ok: true, result: { anchor: input.anchor, value: target } });
-    expect(await caller.execute('settings.set', { ...input, value: null }, context))
-      .toEqual({ ok: true, result: { anchor: input.anchor, value: null } });
-    expect(storage.getState().settings.machineAdministrationTargetsLocalV1).toEqual({ preserved: sibling });
-    multipleClients = false;
-    expect(await caller.execute('settings.get', { anchor: input.anchor, key: input.key }, context))
-      .toEqual({ ok: true, result: { anchor: input.anchor, value: null } });
-    expect(unrelatedEffects).toBe(0);
+    const context = { surface, authority: 'account_automation', bypassApprovals: true } as const;
+    try {
+      expect(await caller.execute('shell.column.set', { column: 'main', visible: true, tab: 'page-999' }, context))
+        .toMatchObject({ ok: false, errorCode: 'client_ambiguous' });
+      expect([issued, delivered, selections, bodyLoads - initialBodyLoads, sideEffects, otherDeliveries]).toEqual([0, 0, 0, 0, 0, 0]);
+      const read = await caller.execute('shell.column.get', { column: 'main', clientId: chosen.id }, context);
+      expect(read).toMatchObject({ ok: true, result: { activeTab: 'page-0', tabs: items.map(item => item.value) } });
+      expect([issued, delivered, selections, bodyLoads - initialBodyLoads]).toEqual([1, 1, 0, 0]);
+      let selection: Awaited<ReturnType<typeof caller.execute>> | undefined;
+      await act(async () => { selection = await caller.execute('shell.column.set', { column: 'main', visible: true, tab: 'page-999', clientId: chosen.id }, context); });
+      expect(selection).toEqual({ ok: true, result: { ok: true } });
+      expect(screen.findHostByTestId('column-selected-body')?.props.children).toBe('page-999');
+      expect([issued, delivered, selections, bodyLoads - initialBodyLoads, sideEffects, otherDeliveries]).toEqual([2, 2, 1, 1, 0, 0]);
+      expect(await caller.execute('shell.column.get', { column: 'main', clientId: chosen.id }, context))
+        .toMatchObject({ ok: true, result: { activeTab: 'page-999' } });
+      expect([issued, delivered, selections, bodyLoads - initialBodyLoads]).toEqual([3, 3, 1, 1]);
+    } finally { await screen.unmount(); }
   });
   it('advertises remote mounted methods through the Home responder and withdraws them without removing local owners', async () => {
     const { ClientActionReverseRuntime } = await import('@/components/appShell/runtime/ClientActionReverseRuntime');
@@ -187,9 +213,10 @@ describe('admitted app Actions and daemon-to-app continuations', () => {
     const remoteAddress = { scope, draftId: 'window-workflow' };
     const localMethod = workflowDraftClientRpcMethod(localAddress);
     const sharedScopeMethod = workflowDraftClientRpcMethod({ scope });
+    // A window's opaque command id selects that window locally; it is never a Socket room.
+    const windowCommandMethod = currentUiContextCommandClientRpcMethod('window.command');
     const remoteMethods = [workflowDraftClientRpcMethod(remoteAddress), sharedScopeMethod,
-      mountedWorkReadClientRpcMethod('session.work.get', 'window-session'),
-      currentUiContextCommandClientRpcMethod('window.command')];
+      mountedWorkReadClientRpcMethod('session.work.get', 'window-session')];
     const foreignMethod = currentUiContextCommandClientRpcMethod('other-account.command');
     const surfaceListeners = new Set<(surface: Surface) => void>();
     // Only the native snapshot/event boundary is synthetic; its projection,
@@ -226,11 +253,12 @@ describe('admitted app Actions and daemon-to-app continuations', () => {
     const runtime = await renderScreen(React.createElement(ClientActionReverseRuntime));
     const wireMethod = (method: string) => `${machine.id}:${method}`;
     const surface = { windowId: 'workflow-window', homeId: serverId, accountId: scope.accountId,
-      sessionId: 'window-session', focused: false, methods: remoteMethods };
+      sessionId: 'window-session', focused: false, methods: [...remoteMethods, windowCommandMethod] };
     try {
       expect(registered.has(wireMethod(localMethod))).toBe(true);
       await act(async () => { for (const receive of surfaceListeners) receive(surface); });
       expect([...registered]).toEqual(expect.arrayContaining(remoteMethods.map(wireMethod)));
+      expect(registered.has(wireMethod(windowCommandMethod))).toBe(false);
       await act(async () => { for (const receive of surfaceListeners) receive({ ...surface,
         windowId: 'other-account-window', accountId: 'other-account', methods: [foreignMethod] }); });
       expect(registered.has(wireMethod(foreignMethod))).toBe(false);
@@ -242,6 +270,92 @@ describe('admitted app Actions and daemon-to-app continuations', () => {
         wireMethod(localMethod), wireMethod(sharedScopeMethod), wireMethod(RPC_METHODS.UI_ACTION_EXECUTE),
       ]));
     } finally { await runtime.unmount(); removeLocal(); stopObserving(); }
+  });
+  it.each([
+    ['cli', 'agents'], ['agent', 'agents'], ['cli', 'machines.managed'], ['agent', 'machines.managed'],
+  ] as const)('changes the answering device Administration target through the %s reverse-dispatch path for %s', async (surface, selectionKey) => {
+    const target = { serverIdentityId: 'srv_administration_destination', machineId: 'chosen-machine' };
+    const sibling = { serverIdentityId: 'srv_other_destination', machineId: 'other-machine' };
+    storage.setState(state => ({ settings: { ...state.settings,
+      machineAdministrationTargetsLocalV1: { preserved: sibling } } }));
+    const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
+    const lifetime = captureActiveServerAccountScopeLifetime();
+    if (!lifetime) throw new Error('Restored Account lifetime is unavailable');
+    const receive = createUiClientActionReverseHandler({ serverId, accountId: 'relay-account', isCurrent: lifetime.isCurrent });
+    const { selectRpcTarget } = await import('../../../../../server/sources/app/api/socket/rpc/rpcTargetSelection');
+    let multipleClients = true;
+    let unrelatedEffects = 0;
+    // Only the daemon-to-App network hop is synthetic. Placement, strict envelopes,
+    // receiving Account admission and the device preference owner remain real.
+    const reverse = createClientActionReverseDispatcher(() => ({
+      hasConnectedClientRpcHandler: method => method === RPC_METHODS.UI_ACTION_EXECUTE,
+      callConnectedClientRpc: async (method, payload, options) => {
+        expect(method).toBe(RPC_METHODS.UI_ACTION_EXECUTE);
+        expect(options.answeringClient).toMatchObject({ requireSingle: true });
+        const target = { id: 'chosen-app', timeout: () => ({ emitWithAck: async () => await receive(JSON.parse(JSON.stringify(payload)),
+          { signal: options.signal ?? new AbortController().signal }) }) };
+        const unrelated = { id: 'other-app', timeout: () => ({ emitWithAck: async () => {
+          unrelatedEffects++; throw new Error('Unselected client executed an Action');
+        } }) };
+        const selection = selectRpcTarget({ targets: multipleClients ? [target, unrelated] : [target], answeringClient: options.answeringClient });
+        if (selection.type === 'ambiguous') return { ok: false, errorCode: 'RPC_CLIENT_AMBIGUOUS', answeringClients: selection.clients };
+        if (selection.type !== 'target') return { ok: false, errorCode: 'RPC_CLIENT_NOT_AVAILABLE' };
+        options.onIssued();
+        return { ok: true, result: await selection.target.timeout(0).emitWithAck(SOCKET_RPC_EVENTS.REQUEST, payload) };
+      },
+    }));
+    const caller = createActionExecutor({ clientActionExecute: reverse });
+    const context = { surface, authority: 'account_automation',
+      ...(surface === 'agent' ? { defaultSessionId: 'background-agent-session' } : {}) } as const;
+    const { rememberMachineAdministrationTargetObservation, readMachineAdministrationTargetObservation } = await import('@/sync/domains/state/machineAdministrationUiState');
+    const scope = storage.getState().settingsScope;
+    if (!scope) throw new Error('Restored settings scope is unavailable');
+    rememberMachineAdministrationTargetObservation(scope, selectionKey, sibling);
+    const input = { anchor: 'machines.administrationTarget', key: selectionKey, value: target, clientId: 'chosen-app' };
+    expect(await caller.execute('settings.get', { anchor: input.anchor, key: input.key }, context))
+      .toMatchObject({ ok: false, errorCode: 'client_ambiguous', details: {
+        clients: [{ id: 'chosen-app', deviceLabel: null }, { id: 'other-app', deviceLabel: null }],
+        recovery: { inputField: 'clientId' },
+      } });
+    expect(await caller.execute('settings.set', input, context)).toEqual({ ok: true, result: { anchor: input.anchor, value: target } });
+    const { readMachineAdministrationTargetSelection } = await import('@/sync/domains/machines/administration/selectionPreferences');
+    expect(readMachineAdministrationTargetSelection(scope, selectionKey)).toEqual({ available: true, target });
+    const { loadAccountSettings } = await import('@/sync/domains/state/accountSettingsPersistence');
+    const reloaded = loadAccountSettings(scope);
+    storage.setState(state => ({ settings: { ...state.settings, ...reloaded.settings } }));
+    expect(await caller.execute('settings.get', { anchor: input.anchor, key: input.key, clientId: input.clientId }, context))
+      .toEqual({ ok: true, result: { anchor: input.anchor, value: target } });
+    expect(await caller.execute('settings.set', { ...input, value: null }, context))
+      .toEqual({ ok: true, result: { anchor: input.anchor, value: null } });
+    expect(storage.getState().settings.machineAdministrationTargetsLocalV1).toEqual({ preserved: sibling });
+    if (selectionKey === 'machines.managed') expect(readMachineAdministrationTargetObservation(scope, selectionKey)).toEqual(sibling);
+    multipleClients = false;
+    expect(await caller.execute('settings.get', { anchor: input.anchor, key: input.key }, context))
+      .toEqual({ ok: true, result: { anchor: input.anchor, value: null } });
+    expect(unrelatedEffects).toBe(0);
+  });
+  it('admits a deliberate managed default through settings.set without overwriting the last-pick observation', async () => {
+    const scope = storage.getState().settingsScope;
+    if (!scope) throw new Error('Restored settings scope is unavailable');
+    const { rememberMachineAdministrationTargetObservation, readMachineAdministrationTargetObservation } = await import('@/sync/domains/state/machineAdministrationUiState');
+    const { readMachineAdministrationTargetSelection } = await import('@/sync/domains/machines/administration/selectionPreferences');
+    const lastPick = { serverIdentityId: 'srv_last_pick', machineId: 'last-machine' };
+    const namedDefault = { serverIdentityId: 'srv_named_default', machineId: 'default-machine' };
+    rememberMachineAdministrationTargetObservation(scope, 'machines.managed', lastPick);
+    const input = { anchor: 'machines.administrationTarget', key: 'machines.managed', value: namedDefault };
+    const context = { surface: 'ui', serverId, expectedAccountId: 'relay-account' } as const;
+    await homes.setActionPolicy(serverId, 'settings.set', 'ui', 'off');
+    expect(await createDefaultActionExecutor().execute('settings.set', input, context)).toMatchObject({ ok: false });
+    expect(readMachineAdministrationTargetSelection(scope, input.key)).toEqual({ available: true, target: null });
+    await homes.setActionPolicy(serverId, 'settings.set', 'ui', 'allowed');
+    expect(await createDefaultActionExecutor().execute('settings.set', input, context))
+      .toEqual({ ok: true, result: { anchor: input.anchor, value: namedDefault } });
+    expect(readMachineAdministrationTargetSelection(scope, input.key)).toEqual({ available: true, target: namedDefault });
+    const { loadAccountSettings } = await import('@/sync/domains/state/accountSettingsPersistence');
+    const reloaded = loadAccountSettings(scope);
+    storage.setState(state => ({ settings: { ...state.settings, ...reloaded.settings } }));
+    expect(readMachineAdministrationTargetSelection(scope, input.key)).toEqual({ available: true, target: namedDefault });
+    expect(readMachineAdministrationTargetObservation(scope, input.key)).toEqual(lastPick);
   });
   it('delivers unbound empty Next and All-Machines search through a connected app without an availability hint', async () => {
     const { ClientActionReverseRuntime } = await import('@/components/appShell/runtime/ClientActionReverseRuntime');
@@ -291,7 +405,12 @@ describe('admitted app Actions and daemon-to-app continuations', () => {
       React.createElement(ClientActionReverseRuntime), React.createElement(NextPendingNavigationHost)));
     try {
       expect([...registered].some(method => method.includes('.session.'))).toBe(false);
-      homes.answer(serverId, '/v2/sessions/lookup-by-tags', { body: { sessions: [] } });
+      // Voice History lists current and archived conversations through the Session owner.
+      const { SessionListQueryResponseV1Schema } = await import('@happier-dev/protocol/sessions/listing/response');
+      homes.answer(serverId, '/v2/sessions/archived', {
+        body: SessionListQueryResponseV1Schema.parse({ sessions: [], nextCursor: null, hasNext: false,
+          attentionNextCursor: null, attentionHasNext: false }),
+      });
       const backgroundAgent = { ...context, defaultSessionId: 'background-agent-session' };
       expect(await caller.execute('ui.voice_global.history.search', { refresh: true }, backgroundAgent))
         .toEqual({ ok: true, result: { sessionId: null, loadedRowCount: 0, hasMore: null, rows: [] } });
@@ -317,7 +436,7 @@ describe('admitted app Actions and daemon-to-app continuations', () => {
     const { AppShellPluginUiProjectionValueProvider } = await import('@/components/appShell/plugins/AppShellPluginUiProjection');
     const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
     const { EMPTY_PLUGIN_UI_PROJECTION } = await import('@/sync/domains/plugins/ui/projection');
-    const { PluginProjectedActionV2Schema, PluginMachineExecutionOriginV1Schema } = await import('@happier-dev/protocol');
+    const [{ PluginProjectedActionV2Schema}, { PluginMachineExecutionOriginV1Schema}] = await Promise.all([import('@happier-dev/protocol/daemon/contributionRegistryProjection'), import('@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1')]);
     const { PLUGIN_UI_CONTRIBUTION_ORIGIN_KEY } = await import('@/sync/domains/plugins/ui/projectionUnion');
     const { createDeferred, flushHookEffects } = await import('@/dev/testkit');
     const machine = createMachineFixture({ id: 'declaration-bound-machine', activeAt: Date.now() });
@@ -417,6 +536,10 @@ describe('admitted app Actions and daemon-to-app continuations', () => {
     const { registerSessionComposerPresentationTarget } = await import('@/components/sessions/presentation/sessionComposerPresentationTargets');
     const { ComposerSnapshotV1Schema } = await import('@happier-dev/protocol/plugins/ui/composer');
     const { selectRpcTarget } = await import('../../../../../server/sources/app/api/socket/rpc/rpcTargetSelection');
+    // Only native scheduling is replaced; the notification Action and its captured Account stay real.
+    const notifications = await import('expo-notifications');
+    const scheduleNotification = vi.spyOn(notifications, 'scheduleNotificationAsync').mockResolvedValue('viewed-client-preview');
+    releases.push(() => scheduleNotification.mockRestore());
     const sessionId = 'viewed-session';
     navigation.segments = ['session', '[id]'];
     navigation.sessionId = sessionId;
@@ -462,6 +585,7 @@ describe('admitted app Actions and daemon-to-app continuations', () => {
     }));
     let foreignEffects = 0;
     let alsoViewing = false;
+    let deliveredMethod: string | null = null;
     const foreign = { id: 'a-foreign-client', timeout: () => ({ emitWithAck: async () => {
       foreignEffects++; return { v: 1, execution: { ok: true, result: { status: 'noMountedSurface' } } };
     } }) };
@@ -478,6 +602,7 @@ describe('admitted app Actions and daemon-to-app continuations', () => {
     const reverse = createClientActionReverseDispatcher(() => ({
       hasConnectedClientRpcHandler: () => false,
       callConnectedClientRpc: async (method, payload, options) => {
+        deliveredMethod = method;
         // Only Socket.IO is replaced. Use the real server selection owner over the
         // clients' actual method memberships, then the actual app receiver.
         // Two unrelated generic clients must neither receive nor block this call.
@@ -502,6 +627,11 @@ describe('admitted app Actions and daemon-to-app continuations', () => {
     }));
     const runtime = await renderMountedCurrentUiContext(React.createElement(ClientActionReverseRuntime));
     try {
+      const preview = await caller.execute('notifications.sounds.preview', {}, context);
+      expect(deliveredMethod).toBe(`${RPC_METHODS.UI_ACTION_EXECUTE}.session.${encodeURIComponent(JSON.stringify(sessionId))}`);
+      expect(preview).toEqual({ ok: true, result: { notificationId: 'viewed-client-preview' } });
+      expect(scheduleNotification).toHaveBeenCalledTimes(1);
+      expect(foreignEffects).toBe(0);
       expect(await caller.execute('ui.find', { op: 'set', query: 'needle' }, context))
         .toMatchObject({ ok: true, result: { status: 'results', current: 1, total: 2 } });
       expect(await caller.execute('ui.find', { op: 'read' }, context)).toMatchObject({ ok: true, result: { current: 1, total: 2 } });
@@ -518,6 +648,9 @@ describe('admitted app Actions and daemon-to-app continuations', () => {
         .toMatchObject({ ok: true, result: { hits: [], machines: [{ machineId: machine.id, status: 'partial' }] } });
       expect(foreignEffects).toBe(0);
       alsoViewing = true;
+      expect(await caller.execute('notifications.sounds.preview', {}, context))
+        .toMatchObject({ ok: false, errorCode: 'client_ambiguous' });
+      expect(scheduleNotification).toHaveBeenCalledTimes(1);
       expect(await caller.execute('ui.find', { op: 'step', direction: -1 }, context))
         .toMatchObject({ ok: false, errorCode: 'client_ambiguous' });
       expect(model.status).toMatchObject({ current: 2 });
@@ -548,6 +681,9 @@ describe('admitted app Actions and daemon-to-app continuations', () => {
         .toEqual({ ok: true, result: { status: 'opened' } });
       expect(nextReceiptOrder[0]).toBe('receipt');
       await act(async () => { setFocusedSessionId(null); });
+      expect(await caller.execute('notifications.sounds.preview', {}, context))
+        .toMatchObject({ ok: false, errorCode: 'unavailable', error: 'noClient' });
+      expect(scheduleNotification).toHaveBeenCalledTimes(1);
       expect(await caller.execute('ui.find', { op: 'read' }, context))
         .toEqual({ ok: true, result: { status: 'unavailable', reason: 'noClient' } });
       expect(await caller.execute('session.pending.next', {}, context))
@@ -559,9 +695,9 @@ describe('admitted app Actions and daemon-to-app continuations', () => {
     expect(await caller.execute('ui.find', { op: 'read' }, context)).toEqual({ ok: true, result: { status: 'unavailable', reason: 'noClient' } });
     expect(foreignEffects).toBe(0);
   });
-  it('keeps Usage view, period and filter switches at zero binding mounts and registrations across 46 Machines', async () => {
+  it('keeps Usage view, period and filter changes at zero binding mounts and command registrations across 46 Machines', async () => {
     const { ClientActionReverseRuntime } = await import('@/components/appShell/runtime/ClientActionReverseRuntime');
-    const { currentUiContextCommandClientRpcMethod } = await import('@happier-dev/protocol/actions/clientDispatchV1');
+    const { currentUiContextCommandClientRpcMethod, currentUiContextReadClientRpcMethod } = await import('@happier-dev/protocol/actions/clientDispatchV1');
     const { renderMountedCurrentUiContext } = await import('@/dev/testkit/harness/mountedCurrentUiContext');
     const { useUsageWidgetPageContext, usePublishUsageWidgetPageContext } = await import('@/components/settings/usage/useUsageWidgetPageContext');
     const { useOptionalCurrentUiContextReader } = await import('@/components/appShell/currentUiContext/CurrentUiContextProvider');
@@ -591,7 +727,7 @@ describe('admitted app Actions and daemon-to-app continuations', () => {
       addFilter = () => setExtraFilter(true);
       removeFilter = () => setExtraFilter(false);
       page = useUsageWidgetPageContext({ authority, nowMs: 1_790_000_000_000, initialFilters, onFiltersChange: setInitialFilters });
-      usePublishUsageWidgetPageContext({ authority, page, layoutId, costBasisOptions: ['auto', 'reported'],
+      const published = usePublishUsageWidgetPageContext({ authority, page, layoutId, costBasisOptions: ['auto', 'reported'],
         layouts: [{ id: 'costs', name: 'Costs' }, { id: 'plans', name: 'Plans' }],
         selectLayout: next => { setLayoutId(next); return true; },
         filterCommands: [{ field: 'agents', id: 'codex', title: 'Agent: Codex',
@@ -601,7 +737,7 @@ describe('admitted app Actions and daemon-to-app continuations', () => {
             { field: 'agents', id: 'gemini', title: 'Agent: Gemini', invoke: () => true },
           ] : [])] });
       reader = useOptionalCurrentUiContextReader();
-      return React.createElement(ClientActionReverseRuntime);
+      return React.createElement(React.Fragment, null, published.publication, React.createElement(ClientActionReverseRuntime));
     }
     const registrations = vi.spyOn(apiSocket, 'registerMachineScopedRpcHandler');
     releases.push(() => registrations.mockRestore());
@@ -624,8 +760,30 @@ describe('admitted app Actions and daemon-to-app continuations', () => {
     const originalIds = originalCommands.map(command => command.id);
     const commandPairs = (ids: readonly string[]) => machines.flatMap(machine =>
       ids.map(id => `${machine.id}:${currentUiContextCommandClientRpcMethod(id)}`));
+    // Commands travel in the one per-Machine current-context room; an opaque
+    // command id is never its own Socket room (P03-SESSION-E2E: 1,889 register
+    // + 1,806 unregister frames in 320 s when every id was a room per Machine).
     expect(registrations.mock.calls.map(([machineId, method]) => `${machineId}:${method}`))
-      .toEqual(expect.arrayContaining(commandPairs(originalIds)));
+      .not.toEqual(expect.arrayContaining(commandPairs(originalIds.slice(0, 1))));
+    expect(registrations.mock.calls.filter(([, method]) => method === currentUiContextReadClientRpcMethod()))
+      .toHaveLength(machines.length);
+    // A reconnect re-joins every inbound room: one replay per (Machine, room),
+    // never per command (P03-FOREGROUND2: ~2,400 frames per reconnect).
+    const registeredMethods = () => emissions.mock.calls.flatMap(([event, payload]) =>
+      event === SOCKET_RPC_EVENTS.REGISTER && payload && typeof payload === 'object'
+        && 'method' in payload && typeof payload.method === 'string' && payload.method.startsWith('usage-command-machine-')
+        ? [payload.method] : []);
+    const connectListeners = socket.listeners('connect');
+    expect(connectListeners.length).toBeGreaterThan(0);
+    emissions.mockClear();
+    await act(async () => { for (const listener of connectListeners) listener(); });
+    const replayed = registeredMethods();
+    console.info('[P03-UI-CHURN] reconnect replay registrations', { machines: machines.length, replayed: replayed.length,
+      commandRooms: replayed.filter(method => method.includes('.current-context.command.')).length,
+      mountRegistrations: registrations.mock.calls.length });
+    expect(replayed.filter(method => method.includes('.current-context.command.'))).toEqual([]);
+    expect(replayed.length).toBe(registrations.mock.calls.length);
+    emissions.mockClear();
     const filterId = originalCommands.find(command => command.title === 'Agent: Codex')!.id;
     const originalSignal = reader!.resolveCurrentUiCommand(filterId)!.retirementSignal;
     const invoke = (commandId: string) => executeCurrentUiContextAction({ actionId: 'ui.current_context.command.invoke',
@@ -650,18 +808,16 @@ describe('admitted app Actions and daemon-to-app continuations', () => {
       await act(async () => { addFilter?.(); });
       const added = reader!.readCurrentUiContext()!.commands.filter(command => !originalIds.includes(command.id));
       expect(added).toHaveLength(2);
-      const addedPairs = commandPairs(added.map(command => command.id));
-      expect(registrations.mock.calls).toHaveLength(addedPairs.length);
-      expect(new Set(registrations.mock.calls.map(([machineId, method]) => `${machineId}:${method}`)))
-        .toEqual(new Set(addedPairs));
-      expect(unregisteredMethods()).toHaveLength(0);
+      // RED before the fix: 2 commands × 46 Machines = 92 registrations here, and 92 withdrawals below.
+      expect({ registrations: registrations.mock.calls.length, withdrawals: unregisteredMethods().length })
+        .toEqual({ registrations: 0, withdrawals: 0 });
+      await act(async () => { expect(await invoke(added[0]!.id)).toMatchObject({ ok: true }); });
       expect(bindingNodes().filter(node => !initialBindings.has(node)), 'new commands reuse mounted Machine bindings').toHaveLength(0);
       registrations.mockClear();
       emissions.mockClear();
       await act(async () => { removeFilter?.(); });
-      expect(registrations.mock.calls).toHaveLength(0);
-      expect(unregisteredMethods()).toHaveLength(addedPairs.length);
-      expect(new Set(unregisteredMethods())).toEqual(new Set(addedPairs));
+      expect({ registrations: registrations.mock.calls.length, withdrawals: unregisteredMethods().length })
+        .toEqual({ registrations: 0, withdrawals: 0 });
       for (const command of added) expect(reader!.resolveCurrentUiCommand(command.id)).toBeNull();
       expect(reader!.resolveCurrentUiCommand(filterId)?.retirementSignal.aborted).toBe(false);
       await act(async () => { storage.getState().clearProfileScope(); });
@@ -739,7 +895,7 @@ describe('admitted app Actions and daemon-to-app continuations', () => {
       const method = (id: string) => `${machine.id}:${currentUiContextCommandClientRpcMethod(id)}`;
       expect(registered.has(`${machine.id}:${RPC_METHODS.UI_ACTION_EXECUTE}`)).toBe(true);
       expect(registered.has(`${machine.id}:${currentUiContextReadClientRpcMethod()}`)).toBe(true);
-      expect(registered.has(method(command.id))).toBe(true);
+      expect(registered.has(method(command.id))).toBe(false);
       expect([...new Set([...registered].map(method => method.slice(0, method.indexOf(':'))))]).toEqual([machine.id]);
       const beforeRefresh = [...registrations];
       await act(async () => { refreshDeclaration?.(); });
@@ -748,7 +904,7 @@ describe('admitted app Actions and daemon-to-app continuations', () => {
       await act(async () => {
         storage.setState(state => ({ machines: { ...state.machines, [offline.id]: { ...offline, active: true, activeAt: Date.now() } } }));
       });
-      expect(registered.has(`${offline.id}:${currentUiContextCommandClientRpcMethod(command.id)}`)).toBe(true);
+      expect(registered.has(`${offline.id}:${currentUiContextReadClientRpcMethod()}`)).toBe(true);
       const stableRegistrations = registrations.filter(method => method.startsWith(`${machine.id}:`));
       await act(async () => {
         storage.setState(state => ({ machines: { ...state.machines, [offline.id]: { ...offline, revokedAt: 1 } } }));
@@ -758,8 +914,8 @@ describe('admitted app Actions and daemon-to-app continuations', () => {
       await act(async () => { replaceCommand?.(); });
       const replacement = readContext?.()?.commands[0];
       expect(replacement?.id).not.toBe(command.id);
-      expect(registered.has(method(command.id))).toBe(false);
-      expect(registered.has(method(replacement!.id))).toBe(true);
+      expect(registered.has(method(replacement!.id))).toBe(false);
+      expect(registrations.filter(method => method.startsWith(`${machine.id}:`))).toEqual(stableRegistrations);
     } finally {
       await runtime.unmount();
       unsubscribe?.();
@@ -1052,7 +1208,7 @@ describe('admitted app Actions and daemon-to-app continuations', () => {
     expect(homes.requestsFor(path).every(request => request.serverId === serverId)).toBe(true);
     expect(homes.requestsFor(path)).toEqual(expect.arrayContaining([expect.objectContaining({ serverId,
       input: ownerId === 'home.settings.set' ? { expectedRevision: 3, values: { [key]: 900 } }
-        : { assigned: true, direct: true, team: false, group: true },
+        : { defaultRules: { assigned: true, direct: true, team: false, group: true } },
     })]));
   });
   it('returns nested Account Home approval with original requester identity without executing the Home write', async () => {
@@ -1060,20 +1216,16 @@ describe('admitted app Actions and daemon-to-app continuations', () => {
     const anchor = `homeAdministration.serverSettings.${key}`;
     // UI danger writes are normally direct; this Home policy explicitly requires
     // approval and must survive the outer Settings Action's approved bypass.
-    const actionsSettingsV1 = ActionsSettingsV1Schema.parse({ v: 1,
-      actions: { 'home.settings.set': { approvalRequiredSurfaces: ['ui'] } },
-    });
-    storage.setState({ settings: { ...storage.getState().settings, actionsSettingsV1 } });
-    homes.answer(serverId, '/v2/account/settings', { body: { content: { t: 'plain', v: {
-      actionsSettingsV1,
-    } }, version: 1 } });
+    // Seed the captured Account's policy through its owner, including hydration.
+    await homes.requireUiApproval(serverId, 'home.settings.set');
     homes.answer(serverId, '/v1/home/settings/get', { body: { revision: 3, startedAt: null, entries: [{ key, value: 600,
       source: 'home', fixed: false, editable: 'home', apply: 'restart', declaration: { type: 'int', section: 'server' } }] } });
     const caller = createDefaultActionExecutor();
-    expect(await caller.execute('settings.set', { anchor, value: 900 }, {
+    const result = await caller.execute('settings.set', { anchor, value: 900 }, {
       surface: 'ui', authority: 'present_user', serverId, bypassApprovals: true, actionRequestId: 'nested-home-request',
-    })).toEqual({ ok: true, result: { kind: 'approval_request_created', actionId: 'home.settings.set', artifactId: expect.any(String) } });
-    expect(homes.requestsFor('/v1/home/settings/set')).toEqual([]);
+    });
+    expect(homes.requestsFor('/v1/home/settings/set').map(request => request.path)).toEqual([]);
+    expect(result).toEqual({ ok: true, result: { kind: 'approval_request_created', actionId: 'home.settings.set', artifactId: expect.any(String) } });
     expect(homes.artifacts(serverId).list()).toHaveLength(1);
     const artifact = homes.artifacts(serverId).list()[0];
     expect(JSON.parse(homes.artifacts(serverId).readPlainBody(artifact.id)!)).toMatchObject({
@@ -1103,6 +1255,44 @@ describe('admitted app Actions and daemon-to-app continuations', () => {
     expect(listNewSessionDraftProjections(scope)).toHaveLength(before + 1);
     expect(navigation.push).toHaveBeenLastCalledWith({ pathname: '/new', params: { draftId: acknowledgement.draftId } });
     expect(storage.getState().sessions).toBe(sessionsBefore);
+  });
+  it('routes CLI Find to its mounted surface and preserves no-surface and no-client results', async () => {
+    const { createFileViewerFindModel } = await import('@/components/workspaces/files/details/useFileViewerFind');
+    const { listActionCliCommandDeclarations } = await import('@happier-dev/protocol/actions/actionSpecs');
+    const find = createFindSurfaceRegistry();
+    const model = createFileViewerFindModel(() => ({ path: 'ci.log', mode: 'file', text: 'needle\nneedle' }));
+    releases.push(registerFindActionRuntime(find));
+    releases.push(find.register({ surfaceId: 'file:ci-log', controller: model, open: model.open,
+      containsFocus: () => false, isOpen: () => model.getSnapshot().open, isInputFocused: () => false }));
+    const receive = createUiClientActionReverseHandler({ serverId, accountId: 'relay-account', isCurrent: () => true });
+    let connected = true;
+    let transportAvailable = true;
+    // Replace only the network hop; both Action executors and the mounted Find model stay real.
+    const clientActionExecute = createClientActionReverseDispatcher(() => transportAvailable ? {
+      hasConnectedClientRpcHandler: () => true,
+      callConnectedClientRpc: async (_method, payload, options) => {
+        if (!connected) return { ok: false, errorCode: 'RPC_CLIENT_NOT_AVAILABLE' };
+        options.onIssued();
+        return { ok: true, result: await receive(payload, { signal: options.signal ?? new AbortController().signal }) };
+      },
+    } : null);
+    const caller = createActionExecutor({ clientActionExecute });
+    const context = { surface: 'cli', authority: 'account_automation', defaultSessionId: 'caller-session' } as const;
+    expect(await caller.execute('ui.find', { op: 'set', query: 'needle', target: 'file:ci-log' }, context))
+      .toMatchObject({ ok: true, result: { status: 'results', current: 1, total: 2 } });
+    expect(await caller.execute('ui.find', { op: 'step', direction: 1, target: 'file:ci-log' }, context))
+      .toMatchObject({ ok: true, result: { current: 2, total: 2 } });
+    expect(await caller.execute('ui.find', { op: 'read', target: 'not-mounted' }, context))
+      .toEqual({ ok: true, result: { status: 'noMountedSurface' } });
+    connected = false;
+    expect(await caller.execute('ui.find', { op: 'read', target: 'file:ci-log' }, context))
+      .toEqual({ ok: true, result: { status: 'unavailable', reason: 'noClient' } });
+    transportAvailable = false;
+    expect(await caller.execute('ui.find', { op: 'read', target: 'file:ci-log' }, context))
+      .toMatchObject({ ok: false, errorCode: 'machine_transport_unavailable' });
+    expect(model.query).toBe('needle');
+    expect(listActionCliCommandDeclarations().filter(({ spec }) => spec.id === 'ui.find').map(({ binding }) => binding.path))
+      .toEqual([['ui', 'find']]);
   });
   it.each(['agent', 'mcp'] as const)('executes Find, Next and workspace list through the real app executor on %s', async surface => {
     const find = createFindSurfaceRegistry();
@@ -1380,6 +1570,7 @@ describe('admitted app Actions and daemon-to-app continuations', () => {
     expect(await receive(request, { signal: new AbortController().signal }))
       .toMatchObject({ execution: { ok: false, errorCode: 'target_unavailable' } });
   });
+
   it('advertises window-mounted Session and Work handlers through the sole main reverse responder', async () => {
     const { ClientActionReverseRuntime } = await import('@/components/appShell/runtime/ClientActionReverseRuntime');
     const { observeDesktopAppWindowSurfaces } = await import('@/desktop/window/appWindowSurface');

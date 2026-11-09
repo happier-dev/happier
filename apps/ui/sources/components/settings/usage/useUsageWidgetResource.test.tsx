@@ -118,10 +118,10 @@ describe('Usage widget shared Resource selection', () => {
             const admitted = filters.map(filter => ({ ...filter,
                 select: (id: string, context?: ActionExecutorContext, invocation?: CurrentUiContextCommandInvocation) => published.selectFilter(filter.field, id, context, invocation) }));
             mounted.reader = useOptionalCurrentUiContextReader();
-            return model.slice ? <UsageDrillProvider value={usageDrillFromPageFilters(admitted)}>
+            return <>{published.publication}{model.slice ? <UsageDrillProvider value={usageDrillFromPageFilters(admitted)}>
                 <UsageDailyWidget id="usage_daily" query={selectedQuery} slice={model.slice} model={model}
                     serverId={home!.homes.a!.id} testID="held-origin" />
-            </UsageDrillProvider> : null;
+            </UsageDrillProvider> : null}</>;
         }
         const settings = storage.getState().settings;
         const screen = await renderMountedCurrentUiContext(<CurrentUiContextCommandsProvider authority={authority}><Page /></CurrentUiContextCommandsProvider>);
@@ -298,7 +298,7 @@ describe('Usage widget shared Resource selection', () => {
         function Page(props: Readonly<{ showBody: boolean }>) {
             const page = useUsageWidgetPageContext({ authority,
                 initialFilters: { queryOverrides: readUsageWidgetQueryOverrides(query) } });
-            usePublishUsageWidgetPageContext({ authority, page, costBasisOptions: [], filterCommands: [{
+            const published = usePublishUsageWidgetPageContext({ authority, page, costBasisOptions: [], filterCommands: [{
                 field: 'agents', id: 'codex', title: 'Same-key scope selection',
                 invoke: context => page.setScope({ agents: ['codex'] }, context),
             }] });
@@ -306,7 +306,7 @@ describe('Usage widget shared Resource selection', () => {
             // Filter inventory deliberately remains unfiltered, including when no body is shown.
             return <UsageWidgetBatchProvider clauses={page.queryOverrides} inventoryQuery={query} inventoryOnly
                 callerContext={page.callerContext} callerQuery={page.callerQuery}>
-                <Inventory />{props.showBody ? <Body agents={page.scope.agents} /> : null}
+                {published.publication}<Inventory />{props.showBody ? <Body agents={page.scope.agents} /> : null}
             </UsageWidgetBatchProvider>;
         }
         const screen = await renderMountedCurrentUiContext(<CurrentUiContextCommandsProvider authority={authority}><Page showBody={false} /></CurrentUiContextCommandsProvider>);
@@ -392,7 +392,7 @@ describe('Usage widget shared Resource selection', () => {
             const page = useUsageWidgetPageContext({ authority,
                 initialFilters: { queryOverrides: readUsageWidgetQueryOverrides(query) } });
             const selected = page.scope.agents.length > 0;
-            usePublishUsageWidgetPageContext({ authority, page, costBasisOptions: [], retryRead: context => model?.refresh(context), filterCommands: selected ? [] : [{
+            const published = usePublishUsageWidgetPageContext({ authority, page, costBasisOptions: [], retryRead: context => model?.refresh(context), filterCommands: selected ? [] : [{
                 field: 'agents', id: 'codex', title: 'Agent origin selection', invoke: (callerContext?: ActionExecutorContext) => {
                     receivedContext = callerContext;
                     return page.setScope({ agents: ['codex'] }, callerContext);
@@ -403,7 +403,7 @@ describe('Usage widget shared Resource selection', () => {
                 period: { relative: page.period } }), [page.queryOverrides, page.period]);
             return <UsageWidgetBatchProvider clauses={page.queryOverrides} inventoryQuery={inventoryQuery}
                 callerContext={page.callerContext} callerQuery={page.callerQuery}>
-                <SelectedBody agents={page.scope.agents} period={page.period} />
+                {published.publication}<SelectedBody agents={page.scope.agents} period={page.period} />
             </UsageWidgetBatchProvider>;
         }
         const screen = await renderMountedCurrentUiContext(<CurrentUiContextCommandsProvider authority={authority}><Page /></CurrentUiContextCommandsProvider>);

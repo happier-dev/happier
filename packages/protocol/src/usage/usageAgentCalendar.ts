@@ -199,9 +199,10 @@ export function projectUsageAgentAccountingCalendar(input: Pick<UsageAgentCalend
             accountingSelectedCosts: input.accountingSelectedCosts, accountingHourFacts: input.accountingHourFacts }) };
 }
 
+type BusyFigures = { busyMs: number; peakParallel: number };
 type BucketPopulation = { rows: UsageAnalyticsContribution[];
     accounting: Map<string | null, UsageCalendarAccountingFacts[]>;
-    busy: Map<string | null, UsageWorkIntervalSegment[]>; steering: Map<string | null, Array<number | null>>;
+    busy: Map<string | null, BusyFigures>; busyTotal: BusyFigures; steering: Map<string | null, Array<number | null>>;
     costs: Map<string | null, UsageSelectedCostAccumulator> };
 type BucketFacts = BucketPopulation & { startMs: number; endMs: number };
 const compareAgent = (left: string | null, right: string | null) => (left ?? '').localeCompare(right ?? '');
@@ -212,17 +213,24 @@ export function resolveUsageCalendarShare(value: number | null, total: number | 
 }
 
 function createBucketPopulation(): BucketPopulation {
-    return { rows: [], accounting: new Map(), busy: new Map(), steering: new Map(), costs: new Map() };
+    return { rows: [], accounting: new Map(), busy: new Map(), busyTotal: { busyMs: 0, peakParallel: 0 }, steering: new Map(), costs: new Map() };
+}
+
+/** Dated hour populations are disjoint: durations add and concurrency peaks take their maximum. */
+function appendBusyFigures(target: BusyFigures, source: BusyFigures): void {
+    target.busyMs += source.busyMs;
+    target.peakParallel = Math.max(target.peakParallel, source.peakParallel);
 }
 
 function appendBucketPopulation(target: BucketPopulation, source: BucketPopulation, costMode: UsageCostMode): void {
     for (const row of source.rows) target.rows.push(row);
     for (const [agentId, facts] of source.accounting) target.accounting.set(agentId, [...target.accounting.get(agentId) ?? [], ...facts]);
-    for (const [agentId, spans] of source.busy) {
-        const combined = target.busy.get(agentId) ?? [];
-        for (const span of spans) combined.push(span);
+    for (const [agentId, figures] of source.busy) {
+        const combined = target.busy.get(agentId) ?? { busyMs: 0, peakParallel: 0 };
+        appendBusyFigures(combined, figures);
         target.busy.set(agentId, combined);
     }
+    appendBusyFigures(target.busyTotal, source.busyTotal);
     for (const [agentId, values] of source.steering) {
         const combined = target.steering.get(agentId) ?? [];
         for (const value of values) combined.push(value);
@@ -402,18 +410,18 @@ function projectUsageAgentCalendarPopulation(input: UsageAgentCalendarInput): Us
         : rows && projectUsageCalendarAccountingFacts(rows);
     const coverage: UsageAgentCalendar['coverage'] = { accounting: accountingCoverage(allAccounting, input.accounting, sourceIndex), busy: busyCoverage, steering: steeringCoverage };
 
-    const metrics = (facts: UsageCalendarAccountingFacts, busy: readonly UsageWorkIntervalSegment[], steers: readonly (number | null)[],
+    const metrics = (facts: UsageCalendarAccountingFacts, busy: BusyFigures | undefined, steers: readonly (number | null)[],
         cost: UsageSelectedCostAccumulator): CalendarMetrics => {
         const hasAccounting = hasAccountingInput && (facts.contributionCount > 0 || coverage.accounting === 'complete_for_supplied_facts');
-        const hasBusy = intervals !== null && (busy.length > 0 || busyCoverage === 'complete_for_supplied_facts');
+        const hasBusy = intervals !== null && ((busy?.busyMs ?? 0) > 0 || busyCoverage === 'complete_for_supplied_facts');
         const hasSteers = steering?.inputsObserved === true && (steers.length > 0 || steeringCoverage === 'complete_for_supplied_facts');
         return { tokens: hasAccounting ? facts.tokens : null,
             eventCount: hasAccounting ? facts.eventCount : null,
             sessions: hasAccounting && facts.sessionIds !== null ? facts.sessionIds.length : null,
             cost: cost.available ? cost.selected : null,
-            busyMs: hasBusy ? busy.reduce((sum, span) => sum + span.endMs - span.startMs, 0) : null,
+            busyMs: hasBusy ? busy?.busyMs ?? 0 : null,
             steeringCount: hasSteers && steers.every(value => value !== null) ? steers.reduce<number>((sum, value) => sum + value!, 0) : null,
-            peakParallel: hasBusy ? summarizeUsageConcurrency(busy).maxParallel : null };
+            peakParallel: hasBusy ? busy?.peakParallel ?? 0 : null };
     };
     const projectFigures = (population: BucketPopulation): z.infer<typeof Figures> => {
         const rowsByAgent = new Map<string | null, UsageAnalyticsContribution[]>();
@@ -428,13 +436,13 @@ function projectUsageAgentCalendarPopulation(input: UsageAgentCalendarInput): Us
         const members = [...new Set([...accountingByAgent.keys(), ...population.busy.keys(), ...population.steering.keys()])].sort(compareAgent);
         const agents = members.map(agentId => {
             const facts = accountingByAgent.get(agentId) ?? mergeUsageCalendarAccountingFacts([]);
-            return { agentId, metrics: metrics(facts, population.busy.get(agentId) ?? [], population.steering.get(agentId) ?? [],
+            return { agentId, metrics: metrics(facts, population.busy.get(agentId), population.steering.get(agentId) ?? [],
                 population.costs.get(agentId) ?? createEmptyUsageSelectedCost()),
                 coverage: { accounting: facts.contributionCount > 0 ? accountingCoverage(facts, input.accounting, sourceIndex) : !hasAccountingInput ? 'unavailable' as const : 'unknown' as const,
                     busy: busyCoverage, steering: steeringCoverage } };
         });
         const totalCost = [...population.costs.values()].reduce((total, cost) => mergeUsageSelectedCosts(total, cost, costMode), createEmptyUsageSelectedCost());
-        const totals = metrics(mergeUsageCalendarAccountingFacts([...accountingByAgent.values()]), [...population.busy.values()].flat(), [...population.steering.values()].flat(), totalCost);
+        const totals = metrics(mergeUsageCalendarAccountingFacts([...accountingByAgent.values()]), population.busyTotal, [...population.steering.values()].flat(), totalCost);
         return { totals, agents,
             leaders: { tokens: resolveUsageCalendarLeaders(agents, 'tokens', totals), eventCount: resolveUsageCalendarLeaders(agents, 'eventCount', totals),
                 sessions: resolveUsageCalendarLeaders(agents, 'sessions', totals), cost: resolveUsageCalendarLeaders(agents, 'cost', totals), busyMs: resolveUsageCalendarLeaders(agents, 'busyMs', totals),
@@ -461,6 +469,7 @@ function projectUsageAgentCalendarPopulation(input: UsageAgentCalendarInput): Us
         };
         if (hours) for (const hour of hours) appendBucketPopulation(bucketAt(hour.startMs)!, hour, costMode);
         else {
+        const busySpans = new Map<BucketFacts, Map<string | null, UsageWorkIntervalSegment[]>>();
         for (const hour of input.accountingHourFacts ?? []) {
             const bucket = bucketAt(Math.max(hour.startMs, period.startMs));
             if (!bucket) continue;
@@ -476,11 +485,25 @@ function projectUsageAgentCalendarPopulation(input: UsageAgentCalendarInput): Us
             for (let cursor = Math.max(span.startMs, period.startMs); cursor < Math.min(span.endMs, period.endMs);) {
                 const bucket = bucketAt(cursor)!;
                 const endMs = Math.min(bucket.endMs, span.endMs);
-                const spans = bucket.busy.get(lane.agentId) ?? [];
+                const agents = busySpans.get(bucket) ?? new Map<string | null, UsageWorkIntervalSegment[]>();
+                const spans = agents.get(lane.agentId) ?? [];
                 spans.push({ startMs: cursor, endMs });
-                bucket.busy.set(lane.agentId, spans);
+                agents.set(lane.agentId, spans);
+                busySpans.set(bucket, agents);
                 cursor = endMs;
             }
+        }
+        // Clip and sweep only the canonical hour population. Every later calendar
+        // partition consumes these figures, never copies or re-sweeps its raw spans.
+        for (const [bucket, agents] of busySpans) {
+            const allSpans: UsageWorkIntervalSegment[] = [];
+            for (const [agentId, spans] of agents) {
+                const busyMs = spans.reduce((sum, span) => sum + span.endMs - span.startMs, 0);
+                bucket.busy.set(agentId, { busyMs, peakParallel: summarizeUsageConcurrency(spans).maxParallel });
+                bucket.busyTotal.busyMs += busyMs;
+                for (const span of spans) allSpans.push(span);
+            }
+            bucket.busyTotal.peakParallel = summarizeUsageConcurrency(allSpans).maxParallel;
         }
         for (const row of steering?.hourly ?? []) {
             const instant = resolveUsageCalendarDateStart(row.date, timeZoneOffsetMinutes) + row.hour * 3_600_000;
@@ -522,7 +545,7 @@ function projectUsageAgentCalendarPopulation(input: UsageAgentCalendarInput): Us
     }
     // A witnessed wait or unknown-ended lane still establishes Agent membership,
     // although it supplies no measured busy span or accounting denominator.
-    for (const lane of intervals?.lanes ?? []) if (!periodPopulation.busy.has(lane.agentId)) periodPopulation.busy.set(lane.agentId, []);
+    for (const lane of intervals?.lanes ?? []) if (!periodPopulation.busy.has(lane.agentId)) periodPopulation.busy.set(lane.agentId, { busyMs: 0, peakParallel: 0 });
     const periodFigures = projectFigures(periodPopulation);
     // Context-only runtime observations currently encode absent accounting as zero.
     // The query has no measurement-presence marker, so zero cannot establish a

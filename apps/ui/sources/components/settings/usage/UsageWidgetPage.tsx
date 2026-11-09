@@ -1,7 +1,7 @@
 import * as React from 'react';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
-import { normalizeUsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import { normalizeUsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
 import type { UsageQueryResultSlice } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
 import { ScrollView, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
@@ -361,7 +361,7 @@ function UsagePageDocumentContent(props: UsagePageDocumentProps & Readonly<{ lay
   const pageReadRetry = useUsageWidgetPageRetry();
   const homeUnavailable = useActiveHomeUnavailable();
   const historyRead = useUsageWidgetBatchHistory();
-  const { selectLayout, selectPeriod, selectCostBasis, selectFilter, retryRead, retryLayouts, history } = usePublishUsageWidgetPageContext({
+  const { publication, selectLayout, selectPeriod, selectCostBasis, selectFilter, retryRead, retryLayouts, history } = usePublishUsageWidgetPageContext({
     page,
     authority: props.authority,
     layoutId: selectedLayoutId,
@@ -428,6 +428,7 @@ function UsagePageDocumentContent(props: UsagePageDocumentProps & Readonly<{ lay
   // The selected document and the named-view inventory settle independently.
   return (
     <>
+      {publication}
       <UsagePageHeader facts={facts} retry={pageReadRetry ? retryRead : null} history={history}
         layouts={layoutsFact} {...(props.sessionId ? { sessionId: props.sessionId } : {})} />
       {/* The page's reads wait on the Home: it says why once, here, and the views and bodies keep their room. */}

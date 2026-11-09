@@ -141,8 +141,21 @@ function pageCommandKey(kind: string, ...ids: string[]): string {
     return JSON.stringify([kind, ...ids]);
 }
 
+/** Keep command-composition updates at the publication, outside the page's rendered content. */
+function UsageWidgetPagePublication(props: Readonly<{ enrichment: CurrentUiContextMountedEnrichment | null }>) {
+    const descendantCommands = useCurrentUiContextComposedCommands();
+    const enrichment = React.useMemo(() => props.enrichment === null ? null : {
+        ...props.enrichment,
+        commands: [...(props.enrichment.commands ?? []), ...descendantCommands],
+    }, [props.enrichment, descendantCommands]);
+    usePublishCurrentUiContext(enrichment);
+    return null;
+}
+
 /** Called after the area binding, so its inventory/selection stays at the platform owner. */
 export function usePublishUsageWidgetPageContext(input: UsageWidgetPagePublicationInput): Readonly<{
+    /** Render beside page content; descendant command publication does not redraw that content. */
+    publication: React.ReactElement;
     selectLayout(layoutId: string, signal?: AbortSignal): Promise<boolean>;
     selectPeriod(period: UsagePeriod): Promise<boolean>;
     selectCostBasis(costBasis: UsageWidgetPageScope['costBasis'], callerContext?: ActionExecutorContext, invocation?: CurrentUiContextCommandInvocation): Promise<boolean>;
@@ -153,7 +166,6 @@ export function usePublishUsageWidgetPageContext(input: UsageWidgetPagePublicati
     history: UsagePageHistoryFact | null;
 }> {
     const { page } = input;
-    const descendantCommands = useCurrentUiContextComposedCommands();
     const reader = useOptionalCurrentUiContextReader();
     const execution = useMountedActionExecution(input.authority?.scope);
     const latest = React.useRef(input);
@@ -210,11 +222,10 @@ export function usePublishUsageWidgetPageContext(input: UsageWidgetPagePublicati
         const enrichment: CurrentUiContextMountedEnrichment = {
             entity: { kind: 'usage_summary', label: t('usage.summary.title'), summary: t(getUsagePeriodDefinition(page.period).translationKey) },
             detail: JSON.stringify({ scope: page.scope, layoutId: input.layoutId ?? null }),
-            commands: [...definitions, ...descendantCommands],
+            commands: definitions,
         };
         return { enrichment, definitions };
-    }, [canChange, input.active, page.isCurrent, page.period, page.scope, input.layoutId, definitions, descendantCommands]);
-    usePublishCurrentUiContext(publication?.enrichment ?? null);
+    }, [canChange, input.active, page.isCurrent, page.period, page.scope, input.layoutId, definitions]);
     const currentPublication = React.useRef(publication);
     React.useLayoutEffect(() => { currentPublication.current = publication; }, [publication]);
     const invoke = React.useCallback(async (command: CurrentUiContextMountedCommand | undefined, invocation?: CurrentUiContextCommandInvocation): Promise<boolean> => {
@@ -239,5 +250,6 @@ export function usePublishUsageWidgetPageContext(input: UsageWidgetPagePublicati
         // The header's control runs the published command, never a second path to the Action.
         onPress: () => { void invoke(currentPublication.current?.definitions.find(row => row.key === pageCommandKey('history', historyOperation))?.command); },
     }, [historyRead?.text, historyRead?.label, historyRead?.failed, historyTitle, historyOperation, invoke]);
-    return { selectLayout, selectPeriod, selectCostBasis, selectFilter, retryRead, retryLayouts, history };
+    return { publication: React.createElement(UsageWidgetPagePublication, { enrichment: publication?.enrichment ?? null }),
+        selectLayout, selectPeriod, selectCostBasis, selectFilter, retryRead, retryLayouts, history };
 }

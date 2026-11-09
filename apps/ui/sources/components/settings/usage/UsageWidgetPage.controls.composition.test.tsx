@@ -8,6 +8,7 @@ import { resolveUsagePageAggregation } from '@happier-dev/protocol/usage/resolve
 import { ConnectedServiceQuotaGetResultV1Schema } from '@happier-dev/protocol/connect/providerAccountUsageHistory';
 import { buildProviderAccountUsageRecordId } from '@happier-dev/protocol/connect/account-usage-primitives';
 import { renderScreen, standardCleanup, flushHookEffects } from '@/dev/testkit';
+import { createRenderCommitCounter, useRenderCommitCounter } from '@/dev/testkit/performance/counts';
 import { serveActionHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { InjectedAuthProvider } from '@/auth/context/AuthContext';
 import { AppPaneProvider } from '@/components/appShell/panes/AppPaneProvider';
@@ -50,6 +51,11 @@ let historyModel: UsageHistoryModel | null = null;
 let historyFact: ReturnType<typeof usePublishUsageWidgetPageContext>['history'] = null;
 let pageRetryRead: (() => Promise<void>) | undefined;
 let publishedRetryRead: ReturnType<typeof usePublishUsageWidgetPageContext>['retryRead'] | null = null;
+const publicationContentCounter = createRenderCommitCounter();
+function PublicationContent(props: Readonly<{ selected: string }>) {
+    useRenderCommitCounter(publicationContentCounter);
+    return <Text testID="selected-layout">{props.selected}</Text>;
+}
 function Publication(props: Readonly<{ retireOnSelection?: boolean }>) {
     const authority = captureActiveServerAccountScopeLifetime();
     const page = useUsageWidgetPageContext({ authority });
@@ -72,7 +78,7 @@ function Publication(props: Readonly<{ retireOnSelection?: boolean }>) {
         }));
         return unregister;
     }, [reader]);
-    return <Text testID="selected-layout">{selected}</Text>;
+    return <>{published.publication}<PublicationContent selected={selected} /></>;
 }
 function ControlsPage(props: Readonly<{ children: React.ReactNode; retireOnSelection?: boolean }>) {
     // Capture inside the authenticated tree, after its Account authority is applied.
@@ -120,6 +126,25 @@ function WorkDetails() {
     return <><Text testID="project-details" onPress={() => details.toggle('project')}>{String(details.isOpen('project'))}</Text>
         <Text testID="branch-details">{String(details.isOpen('branch'))}</Text></>;
 }
+
+it('publishes descendant command changes without rerendering unchanged page content', async () => {
+    const { screen } = await mount(<WorkDetails />);
+    const before = reader!.readCurrentUiContext()!.commands;
+    const project = before.find(command => command.title.startsWith('Project details'))!;
+    const branch = before.find(command => command.title.startsWith('Branch details'))!;
+    expect(project).toBeDefined();
+    expect(branch).toBeDefined();
+    publicationContentCounter.reset();
+
+    await screen.pressByTestIdAsync('project-details');
+
+    expect(screen.findByTestId('project-details')!.props.children).toBe('true');
+    const after = reader!.readCurrentUiContext()!.commands;
+    expect(after.find(command => command.title.startsWith('Project details'))?.title).not.toBe(project.title);
+    expect(after.find(command => command.title === branch.title)?.id).toBe(branch.id);
+    expect(reader!.resolveCurrentUiCommand(project.id)).toBeNull();
+    expect(publicationContentCounter.read()).toEqual({ renders: 0, commits: 0 });
+});
 
 it('publishes visible body recovery and navigation through their mounted owner and retires both', async () => {
     let retried = 0;

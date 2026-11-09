@@ -1,7 +1,8 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { UsageAnalyticsContribution, UsageAnalyticsQueryResponse } from './usageAnalyticsContracts.js';
 import { projectUsageAgentAccountingCalendar, projectUsageAgentCalendar, UsageAgentCalendarSchema } from './usageAgentCalendar.js';
 import { projectUsageWorkIntervals } from './usageWorkIntervals.js';
+import * as workIntervals from './usageWorkIntervals.js';
 import { aggregateUsageContributionCosts, resolveUsageContributionCosts } from './usageAggregation.js';
 import { resolveUsageCostBasis, type UsageCostMode } from './usageCostFacts.js';
 import { buildUsagePricingPopulation, priceUsagePricingPopulation, resolveUsagePricingPopulationStates } from './usagePricingPopulation.js';
@@ -23,6 +24,37 @@ function accounting(contributions: UsageAnalyticsContribution[]): UsageAnalytics
 }
 
 describe('projectUsageAgentCalendar', () => {
+    it('sweeps each witnessed hour once for Agent and total concurrency before reducing calendar partitions', () => {
+        const hour = 3_600_000;
+        const startMs = ms('2026-10-19T00:00Z');
+        const nextWeek = startMs + 7 * 24 * hour;
+        const range = { startMs: startMs + hour / 2, endMs: nextWeek + hour };
+        const spans: Array<[string, string, number, number]> = [
+            ['a-first', 'a', startMs, startMs + hour],
+            ['b-first', 'b', startMs, startMs + hour],
+            ['a-next', 'a', nextWeek, nextWeek + hour],
+            ['b-next', 'b', nextWeek, nextWeek + hour],
+            ['b-parallel', 'b', nextWeek, nextWeek + hour],
+        ];
+        const intervals = projectUsageWorkIntervals({ period: range, timeZoneOffsetMinutes: 120,
+            facts: spans.map(([workId, agentId, startMs, endMs]) => ({ workId, agentId, evidenceId: 'busy',
+                machineId: null, kind: 'busy', startMs, endMs })) });
+        // Observe the real sweep without replacing its implementation or any projected facts.
+        const sweep = vi.spyOn(workIntervals, 'summarizeUsageConcurrency');
+        let result: ReturnType<typeof projectUsageAgentCalendar>;
+        let sweptSpans: number;
+        try {
+            result = projectUsageAgentCalendar({ period: range, timeZoneOffsetMinutes: 120, intervals, detailStatus: 'available' });
+            sweptSpans = sweep.mock.calls.reduce((sum, [spans]) => sum + spans.length, 0);
+        } finally { sweep.mockRestore(); }
+        expect(result.periodSummary.totals).toMatchObject({ busyMs: 4 * hour, peakParallel: 3 });
+        expect(result.weeks.map(week => week.totals.peakParallel)).toEqual([2, 3]);
+        const mondayHour = result.weekdayHourBuckets.find(cell => cell.weekday === 1 && cell.hour === 2)!;
+        expect(mondayHour.totals).toMatchObject({ busyMs: 4 * hour, peakParallel: 3 });
+        expect(mondayHour.agents.map(agent => [agent.agentId, agent.metrics.peakParallel])).toEqual([['a', 1], ['b', 2]]);
+        expect(result.hourOfDayBuckets[0]!.totals.peakParallel).toBe(3);
+        expect(sweptSpans, 'the five dated hour spans need one Agent sweep and one shared total sweep').toBe(10);
+    });
     it('keeps covered identity separate from unavailable money when admitted compact costs cross local hours', () => {
         const selectedPeriod = { startMs: 0, endMs: 3_600_000 };
         const covered = { ...row('covered', 'a', 2), observedAtMs: 600_000,

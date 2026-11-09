@@ -19,14 +19,22 @@ it('reuses settled Session inputs without per-Session cancellation subscriptions
     const owner = createUsageQuerySessionInputs({ lifetime: { scope, isCurrent: () => true,
         onRetire: () => ({ dispose() {} }) }, signal: controller.signal, assertCurrent() {} });
     const ids = Array.from({ length: 3_634 }, (_, index) => `session-${index}`);
+    let accessFactReads = 0;
+    const sessions = Object.fromEntries(ids.map(id => {
+        const session = createSessionFixture({ id, encryptionMode: 'plain' });
+        Object.defineProperty(session.access!.capabilities, 'submitAgentInput', {
+            enumerable: true, get() { accessFactReads++; return true; },
+        });
+        return [id, session] as const;
+    }));
+    storage.setState({ sessions });
     let loads = 0;
     let asynchronousReads = 0;
     const values = new Map<string, SessionInputEvidence>();
     const read = async (id: string) => {
         const result = owner.read(id, false, async () => {
             loads++;
-            const session = projectUsageSessionInput(createSessionFixture({ id, encryptionMode: 'plain',
-                seq: storage.getState().sessions[id]?.seq ?? 1 }));
+            const session = projectUsageSessionInput(storage.getState().sessions[id]!);
             return { session, callerDataKeyEnvelope: null, completeMessageCoverage: true,
                 detail: { status: 'available', facts: [] } };
         }, value => { values.set(id, value); }, undefined, 'range', 'widget', controller.signal);
@@ -43,19 +51,35 @@ it('reuses settled Session inputs without per-Session cancellation subscriptions
         subscriptions.mockClear();
         loads = 0;
         asynchronousReads = 0;
+        accessFactReads = 0;
         await Promise.all(ids.map(read));
+        expect.soft(accessFactReads, 'a settled range does not traverse unchanged Session access facts').toBe(0);
         expect(loads, 'entering an already-read range acquires no Session inputs').toBe(0);
         expect(asynchronousReads, 'settled Session evidence returns directly without allocating per-Session continuations').toBe(0);
         expect(subscriptions.mock.calls.filter(([type]) => type === 'abort'),
             'settled work cannot be cancelled and must not subscribe once per Session on a view switch').toHaveLength(0);
         for (const id of ids) expect(values.get(id)).toBe(admitted.get(id));
-        storage.setState({ sessions: { [ids[0]!]: createSessionFixture({ id: ids[0]!, seq: 2, encryptionMode: 'plain' }) } });
+        storage.setState({ sessions: { ...sessions,
+            [ids[0]!]: createSessionFixture({ ...sessions[ids[0]!]!, seq: 2 }) } });
         expect(owner.reconcile([ids[0]!])).toBe(true);
         asynchronousReads = 0;
         await Promise.all(ids.map(read));
         expect(loads, 'one changed Session acquires one replacement input').toBe(1);
         expect(asynchronousReads, 'only the changed Session needs an asynchronous acquisition').toBe(1);
         expect(values.get(ids[0]!)?.session.seq).toBe(2);
+        for (const id of ids.slice(1)) expect(values.get(id)).toBe(admitted.get(id));
+        const changed = storage.getState().sessions[ids[0]!]!;
+        storage.setState({ sessions: { ...storage.getState().sessions,
+            [ids[0]!]: { ...changed, access: { ...changed.access!, capabilities: {
+                ...changed.access!.capabilities, readTranscript: false,
+            } } } } });
+        expect(owner.reconcile([ids[0]!]), 'access-only changes invalidate the same Session input').toBe(true);
+        loads = 0;
+        asynchronousReads = 0;
+        await Promise.all(ids.map(read));
+        expect(loads, 'one changed access projection acquires one replacement input').toBe(1);
+        expect(asynchronousReads).toBe(1);
+        expect(values.get(ids[0]!)?.session.access?.capabilities.readTranscript).toBe(false);
         for (const id of ids.slice(1)) expect(values.get(id)).toBe(admitted.get(id));
     } finally {
         owner.dispose();

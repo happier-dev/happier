@@ -1,11 +1,12 @@
 import type { Session } from '@/sync/domains/state/storageTypes';
 import type { UsageSessionMessageEvidence, projectSessionUsageWorkEvidence } from '@happier-dev/protocol/usage/usageWorkEvidence';
-import { USAGE_SESSION_WORK_FACTS_SYSTEM_RECORD_ADDRESS } from '@happier-dev/protocol/usage/usageTimingV1';
+import { isUsageSessionFactRecordAddress } from '@happier-dev/protocol/usage/usageSessionFactKinds';
 import type { UsageSessionInput } from '@/sync/domains/usage/usageWorkEvidence';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { areServerAccountScopesEqual } from '@/sync/domains/scope/serverAccountScope';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { readRegisteredStorageState } from '@/sync/domains/state/storageStateReaderBridge';
+import { areSnapshotProjectionsEquivalent } from '@/sync/domains/state/structuralSharing';
 import { readSessionListRowForServerId } from '@/sync/domains/session/listing/sessionListRowStateLookup';
 import type { HomeAccountChangeEvent } from '@/sync/runtime/orchestration/homeAccountChange';
 import { isTransientConnectivityError } from '@/sync/runtime/connectivity/transientConnectivityErrors';
@@ -100,7 +101,7 @@ export function createUsageQuerySessionInputs(input: Readonly<{
     dispose(): void;
 }> {
     type InputEntry = { sessionId: string; readTranscript: boolean; sourceReferenceKeys: Set<string>;
-        basis: Readonly<{ storage: string; admitted?: string }>; needsAdmission: boolean;
+        basis: Readonly<{ storage: ReturnType<typeof readBasis>; admitted?: readonly unknown[] }>; needsAdmission: boolean;
         value?: SessionInputEvidence; failure?: unknown; read: ReturnType<SessionInputReader>;
         listeners: Set<(value: SessionInputEvidence) => void>; shared?: SharedRead; lastGood?: SessionInputEvidence };
     const entries = new Map<string, Map<string, InputEntry>>();
@@ -188,23 +189,24 @@ export function createUsageQuerySessionInputs(input: Readonly<{
     };
     const version = (session: Pick<Session, 'seq' | 'updatedAt' | 'metadataVersion' | 'agentStateVersion'
         | 'metadataLayoutVersion' | 'encryptionMode' | 'encryptedContentAvailability' | 'access' | 'active'> | null | undefined) => [
-        session?.seq, session?.updatedAt, session?.metadataVersion, session?.agentStateVersion,
-        session?.metadataLayoutVersion, session?.encryptionMode, session?.encryptedContentAvailability, session?.access, session?.active,
-    ];
+        session?.seq ?? null, session?.updatedAt ?? null, session?.metadataVersion ?? null, session?.agentStateVersion ?? null,
+        session?.metadataLayoutVersion ?? null, session?.encryptionMode ?? null, session?.encryptedContentAvailability ?? null,
+        session?.access ?? null, session?.active ?? null,
+    ] as const;
     const readBasis = (id: string, state = readRegisteredStorageState()) => {
         const session = readSessionState(id, state);
         // List markers survive detail eviction. Transport withdrawal is not a
         // content version; the canonical finite witness fences identity changes.
-        return JSON.stringify([version(session), session?.sessionTurns?.updatedAt, version(readSessionRow(id, state))]);
+        return [version(session), session?.sessionTurns?.updatedAt ?? null, version(readSessionRow(id, state))] as const;
     };
     const matchesOpenedInput = (id: string, value: SessionInputEvidence) => {
         const state = readRegisteredStorageState();
         const session = readSessionState(id, state);
         const row = readSessionRow(id, state);
         if (!session && !row) return false;
-        const openedVersion = JSON.stringify(version(value.session));
-        return (!session || JSON.stringify(version(session)) === openedVersion)
-            && (!row || JSON.stringify(version(row)) === openedVersion)
+        const openedVersion = version(value.session);
+        return (!session || areSnapshotProjectionsEquivalent(version(session), openedVersion))
+            && (!row || areSnapshotProjectionsEquivalent(version(row), openedVersion))
             && (!session?.sessionTurns || session.sessionTurns.updatedAt === value.session.sessionTurns?.updatedAt);
     };
     const read: SessionInputReader = (sessionId, readTranscript, load, onProgress, admitted, demandKey, sourceReferenceKey, signal) => {
@@ -213,9 +215,9 @@ export function createUsageQuerySessionInputs(input: Readonly<{
         const witness = currentness;
         // A transcript belongs to its admitted summary. A streaming marker may
         // advance between phases without changing that finite read's summary.
-        const basis = { storage: readBasis(sessionId), ...(admitted ? { admitted: JSON.stringify([
-            version(admitted.session), admitted.session.sessionTurns?.updatedAt, admitted.callerDataKeyEnvelope,
-        ]) } : {}) };
+        const basis = { storage: readBasis(sessionId), ...(admitted ? { admitted: [
+            version(admitted.session), admitted.session.sessionTurns?.updatedAt ?? null, admitted.callerDataKeyEnvelope,
+        ] as const } : {}) };
         // Summary admission cannot satisfy later private transcript demand,
         // and a held transcript must not hold an interval-only consumer.
         const key = JSON.stringify([sessionId, readTranscript, demandKey ?? null]);
@@ -244,7 +246,8 @@ export function createUsageQuerySessionInputs(input: Readonly<{
             if (entry.value) onProgress(entry.value);
             return read.finally(() => entry.listeners.delete(onProgress));
         };
-        if (retained && retained.basis.storage === basis.storage && retained.basis.admitted === basis.admitted
+        if (retained && areSnapshotProjectionsEquivalent(retained.basis.storage, basis.storage)
+            && areSnapshotProjectionsEquivalent(retained.basis.admitted, basis.admitted)
             && !retained.needsAdmission) return observe(retained);
         const entry: InputEntry = { sessionId, readTranscript,
             sourceReferenceKeys: new Set(sourceReferenceKey ? [sourceReferenceKey] : []), basis, needsAdmission: false,
@@ -262,19 +265,19 @@ export function createUsageQuerySessionInputs(input: Readonly<{
             input.assertCurrent();
             // Selection can precede per-Session admission. A wake during that
             // finite read must leave its replacement requiring fresh evidence.
-            entry.needsAdmission ||= readBasis(sessionId) !== basis.storage;
+            entry.needsAdmission ||= !areSnapshotProjectionsEquivalent(readBasis(sessionId), basis.storage);
             entry.needsAdmission ||= value?.workFactsPersisted === false;
             entry.needsAdmission ||= readTranscript && value?.completeMessageCoverage === false;
             if (value) entry.value = value;
             if (value?.workFactsPersisted && value.completeMessageCoverage && !entry.needsAdmission) {
                 // One converted Session also completes its already-admitted summaries.
                 // Keep this in the input owner: an ordinary reopen must not revive Not read.
-                const openedVersion = JSON.stringify(version(value.session));
+                const openedVersion = version(value.session);
                 for (const sibling of group.values()) {
                     if (sibling.readTranscript || sibling.needsAdmission || sibling.failure || !sibling.value
-                        || sibling.shared && !sibling.shared.settled || sibling.basis.storage !== basis.storage
+                        || sibling.shared && !sibling.shared.settled || !areSnapshotProjectionsEquivalent(sibling.basis.storage, basis.storage)
                         || sibling.value.callerDataKeyEnvelope !== value.callerDataKeyEnvelope
-                        || JSON.stringify(version(sibling.value.session)) !== openedVersion) continue;
+                        || !areSnapshotProjectionsEquivalent(version(sibling.value.session), openedVersion)) continue;
                     sibling.value = value;
                     sibling.read = value;
                     for (const listener of sibling.listeners) listener(value);
@@ -293,7 +296,7 @@ export function createUsageQuerySessionInputs(input: Readonly<{
                 const failure = readUsageHistoryFailure(error);
                 if (retained?.value && failure.retryable
                     && (isTransientConnectivityError(error) || failure.httpStatus !== undefined && failure.httpStatus >= 500)
-                    && witness.isCurrent() && input.lifetime.isCurrent() && readBasis(sessionId) === basis.storage) {
+                    && witness.isCurrent() && input.lifetime.isCurrent() && areSnapshotProjectionsEquivalent(readBasis(sessionId), basis.storage)) {
                     entry.value = retained.value;
                     entry.needsAdmission = true;
                     // Keep this input available for its next admission. Whether
@@ -325,7 +328,7 @@ export function createUsageQuerySessionInputs(input: Readonly<{
         const start = (selection: Selection, candidateSessionIds?: readonly string[]) => {
             const admittedState = readRegisteredStorageState();
             const started = startSharedRead(input.signal, loadSignal => Promise.resolve()
-                .then(() => load(id => readBasis(id, admittedState) === readBasis(id), loadSignal, candidateSessionIds)));
+                .then(() => load(id => areSnapshotProjectionsEquivalent(readBasis(id, admittedState), readBasis(id)), loadSignal, candidateSessionIds)));
             selection.shared = started.shared;
             return started.read;
         };
@@ -390,10 +393,7 @@ export function createUsageQuerySessionInputs(input: Readonly<{
         },
         invalidateForHomeChange(event) {
             const workFactSessionIds = event.sessionSystemRecords?.filter(record => record.address === undefined
-                || record.address.owner === USAGE_SESSION_WORK_FACTS_SYSTEM_RECORD_ADDRESS.owner
-                    && record.address.namespace === USAGE_SESSION_WORK_FACTS_SYSTEM_RECORD_ADDRESS.namespace
-                    && record.address.kind === USAGE_SESSION_WORK_FACTS_SYSTEM_RECORD_ADDRESS.kind
-                    && record.address.localId === USAGE_SESSION_WORK_FACTS_SYSTEM_RECORD_ADDRESS.localId)
+                || isUsageSessionFactRecordAddress(record.address))
                 .map(record => record.sessionId) ?? [];
             // A record write changes private evidence, not Session membership.
             // Unconsumed Sessions need no read; retained inputs re-admit by id.
@@ -416,7 +416,7 @@ export function createUsageQuerySessionInputs(input: Readonly<{
             const selected = sessionIds === undefined ? allEntries() : entriesForSessions(sessionIds);
             for (const entry of selected) {
                 const storage = readBasis(entry.sessionId);
-                if (storage === entry.basis.storage) continue;
+                if (areSnapshotProjectionsEquivalent(storage, entry.basis.storage)) continue;
                 // Cold list/detail hydration can arrive after Usage opened
                 // this exact revision. It adds a local marker, not new facts.
                 if (!entry.needsAdmission && entry.value && matchesOpenedInput(entry.sessionId, entry.value)) {
