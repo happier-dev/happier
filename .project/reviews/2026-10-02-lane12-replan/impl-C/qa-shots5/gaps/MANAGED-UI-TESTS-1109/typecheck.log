@@ -1,0 +1,3 @@
+$ node scripts/workspaces/typecheckTouched.mjs -- --baseline .project/tmp/systemic-orch/ui-1104b.locs apps/ui apps/ui/sources/components/settings/machines/managed/ManagedMachineStateRow.test.tsx apps/ui/sources/components/settings/machines/managed/ManagedMachineDetail.test.tsx apps/ui/sources/components/sharing/machines/machineShareAdapter.test.tsx
+touched delta unavailable: invalid shared typecheck baseline
+[ELIFECYCLE] Command failed with exit code 2.

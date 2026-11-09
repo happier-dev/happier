@@ -1,0 +1,40 @@
+HSTACK_PLACEMENT_EXCLUDED target=mac-host reason=not-in-command-pool class=entry-loads
+[preferred-execution] selected windows1-linux (load=0.548333, active=8, effective=1.215000, fresh)
+
+Forcing synchronization cycle for session sync_cIxwsqAzcLau1ppaPbTvK9b9XkYNY8Aex
+
+pnpm 12.14.0 ready; root archive integrity verified
+[preferred-execution] heavyweight admission refused (HSTACK_MEMORY_BUSY)
+HSTACK_ADMISSION_BUSY:native-vFOLzG-4-1794210654
+[preferred-execution] custody_signal {"at":"2026-11-09T07:51:05Z","execution_id":"native-vFOLzG-4-1794210654","initiating_execution_id":"native-vFOLzG-4-1794210654","reason":"completed","signal":"TERM","target_kind":"pid","target_id":3826717,"members":["3826717:50634329"],"syscall_result":0}
+[preferred-execution] reclaimed historical temporary root /home/happier/.happier/dev-targets/windows1-linux/tmp/hstack-1bqGbz (2723840 allocated bytes)
+HSTACK_PLACEMENT_EXCLUDED target=mac-host reason=not-in-command-pool class=entry-loads
+[preferred-execution] selected nl3 (load=1.393887, active=59, effective=1.854825, cached)
+pnpm 12.14.0 ready; root archive integrity verified
+[preferred-execution] heavyweight admission refused (HSTACK_MEMORY_BUSY)
+HSTACK_ADMISSION_BUSY:native-aUVAHv-7-1794211005
+[preferred-execution] custody_signal {"at":"2026-11-09T07:57:08Z","execution_id":"native-aUVAHv-7-1794211005","initiating_execution_id":"native-aUVAHv-7-1794211005","reason":"completed","signal":"TERM","target_kind":"pid","target_id":1967128,"members":["1967128:66071912"],"syscall_result":0}
+[preferred-execution] reclaimed historical temporary root /home/happier/.happier/dev-targets/nl3/tmp/hstack-ZRFCRh (2727936 allocated bytes)
+HSTACK_PLACEMENT_EXCLUDED target=mac-host reason=not-in-command-pool class=entry-loads
+[preferred-execution] selected mac3-linux (load=0.152500, active=14, effective=1.319167, fresh)
+
+Forcing synchronization cycle for session sync_BVA9yzt7U4B2dDSXxNpEVkHO3h4UwKXci
+
+pnpm 12.14.0 ready; root archive integrity verified
+[preferred-execution] heavyweight admission refused (HSTACK_MEMORY_BUSY)
+HSTACK_ADMISSION_BUSY:native-KkLsRb-2-1794211237
+[preferred-execution] custody_signal {"at":"2026-11-09T08:00:47Z","execution_id":"native-KkLsRb-2-1794211237","initiating_execution_id":"native-KkLsRb-2-1794211237","reason":"completed","signal":"TERM","target_kind":"pid","target_id":3731849,"members":["3731849:15121978"],"syscall_result":0}
+[preferred-execution] reclaimed historical temporary root /home/leeroy.linux/.happier/dev-targets/mac3-linux/tmp/hstack-gZ1rYT (2846720 allocated bytes)
+HSTACK_PLACEMENT_EXCLUDED target=mac-host reason=not-in-command-pool class=entry-loads
+[preferred-execution] insufficient memory capacity on windows1-linux for entry-loads (requires=3145728 KiB; total/achievable KiB=12250604/1750745)
+HSTACK_PLACEMENT_EXCLUDED target=windows1-linux reason=memory-capacity class=entry-loads
+[preferred-execution] selected linux1 (load=19.831824, active=54, effective=26.581824, fresh)
+
+Forcing synchronization cycle for session sync_NGYqezQZxED9xshUdhdd7VQJbiXIsYiOR
+
+pnpm 12.14.0 ready; root archive integrity verified
+[preferred-execution] heavyweight admission refused (HSTACK_MEMORY_BUSY)
+HSTACK_ADMISSION_BUSY:native-vioJAk-3-1794211468
+[preferred-execution] custody_signal {"at":"2026-11-09T08:07:14Z","execution_id":"native-vioJAk-3-1794211468","initiating_execution_id":"native-vioJAk-3-1794211468","reason":"completed","signal":"TERM","target_kind":"pid","target_id":3936185,"members":["3936185:275435153"],"syscall_result":0}
+[preferred-execution] historical temporary sweep retained 1 roots: live process 2917419 references unavailable (EACCES)
+HSTACK_PLACEMENT_EXCLUDED target=mac-host reason=not-in-command-pool class=entry-loads

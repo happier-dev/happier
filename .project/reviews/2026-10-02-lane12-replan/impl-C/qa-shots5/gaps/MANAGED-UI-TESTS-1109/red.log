@@ -1,0 +1,67 @@
+HSTACK_PLACEMENT_EXCLUDED target=mac-host reason=not-in-command-pool class=validation
+[preferred-execution] selected nl3 (load=0.327734, active=55, effective=0.757421, fresh)
+pnpm 12.14.0 ready; root archive integrity verified
+[preferred-execution] heavyweight admission refused (HSTACK_MEMORY_BUSY)
+HSTACK_ADMISSION_BUSY:native-ipPPD8-7-1794208865
+[preferred-execution] custody_signal {"at":"2026-11-09T07:21:24Z","execution_id":"native-ipPPD8-7-1794208865","initiating_execution_id":"native-ipPPD8-7-1794208865","reason":"completed","signal":"TERM","target_kind":"pid","target_id":1333539,"members":["1333539:65857564"],"syscall_result":0}
+[preferred-execution] reclaimed historical temporary root /home/happier/.happier/dev-targets/nl3/tmp/hstack-VzUfrx (2723840 allocated bytes)
+HSTACK_PLACEMENT_EXCLUDED target=mac-host reason=not-in-command-pool class=validation
+hstack-dev-target-control: happier-linux1 synchronization needs a fresh scan (scan=0/0/0/0 transition=0/0/1/0): apps/ui/sources/components/browser/surfaces/BrowserSurfaceHost.tsx: unable to swap file: unable to set staged file permissions: unable to set permission bits: chmod /home/ubuntu/.mutagen/staging/sync_NGYqezQZxED9xshUdhdd7VQJbiXIsYiORVCxjflEuSA-beta/de/de7f7c709ada43f998cd451699d89d4a51715a991307dab442c772df5db753f37730597c: no such file or directory
+[preferred-execution] selected linux1 (load=10.720000, active=112, effective=24.720000, fresh)
+
+Forcing synchronization cycle for session sync_NGYqezQZxED9xshUdhdd7VQJbiXIsYiOR
+
+pnpm 12.14.0 ready; root archive integrity verified
+[preferred-execution] heavyweight admission refused (HSTACK_MEMORY_BUSY)
+HSTACK_ADMISSION_BUSY:native-DZkkPV-3-1794209160
+[preferred-execution] custody_signal {"at":"2026-11-09T07:53:37Z","execution_id":"native-DZkkPV-3-1794209160","initiating_execution_id":"native-DZkkPV-3-1794209160","reason":"completed","signal":"TERM","target_kind":"pid","target_id":3669489,"members":["3669489:275211081"],"syscall_result":0}
+[preferred-execution] historical temporary sweep retained 1 roots: live process 2917419 references unavailable (EACCES)
+HSTACK_PLACEMENT_EXCLUDED target=mac-host reason=not-in-command-pool class=validation
+[preferred-execution] selected nl1 (load=0.543333, active=31, effective=1.189166, fresh)
+
+Forcing synchronization cycle for session sync_IHUMeArC1QLiqQHsDbbYN5Y8oA5izGTfY
+
+pnpm 12.14.0 ready; root archive integrity verified
+[preferred-execution] heavyweight admission refused (HSTACK_MEMORY_BUSY)
+HSTACK_ADMISSION_BUSY:native-WnoqjP-6-1794210827
+[preferred-execution] custody_signal {"at":"2026-11-09T07:54:06Z","execution_id":"native-WnoqjP-6-1794210827","initiating_execution_id":"native-WnoqjP-6-1794210827","reason":"completed","signal":"TERM","target_kind":"pid","target_id":2588165,"members":["2588165:66059073"],"syscall_result":0}
+[preferred-execution] reclaimed historical temporary root /home/happier/.happier/dev-targets/nl1/tmp/hstack-5IaBfw (2727936 allocated bytes)
+HSTACK_PLACEMENT_EXCLUDED target=mac-host reason=not-in-command-pool class=validation
+[preferred-execution] selected windows1-linux (load=0.337500, active=7, effective=0.920833, fresh)
+
+Forcing synchronization cycle for session sync_cIxwsqAzcLau1ppaPbTvK9b9XkYNY8Aex
+
+pnpm 12.14.0 ready; root archive integrity verified
+[preferred-execution] heavyweight admission refused (HSTACK_MEMORY_BUSY)
+HSTACK_ADMISSION_BUSY:native-xLwYSP-4-1794210866
+[preferred-execution] custody_signal {"at":"2026-11-09T07:54:42Z","execution_id":"native-xLwYSP-4-1794210866","initiating_execution_id":"native-xLwYSP-4-1794210866","reason":"completed","signal":"TERM","target_kind":"pid","target_id":3844557,"members":["3844557:50655511"],"syscall_result":0}
+[preferred-execution] reclaimed historical temporary root /home/happier/.happier/dev-targets/windows1-linux/tmp/hstack-4vK7sc (2723840 allocated bytes)
+HSTACK_PLACEMENT_EXCLUDED target=mac-host reason=not-in-command-pool class=validation
+[preferred-execution] selected windows2-linux (load=1.958742, active=13, effective=3.042075, fresh)
+
+Forcing synchronization cycle for session sync_cQSrARPoKjAudJQYDaRUKy2p01D47O4pO
+
+pnpm 12.14.0 ready; root archive integrity verified
+[preferred-execution] heavyweight admission refused (HSTACK_MEMORY_BUSY)
+HSTACK_ADMISSION_BUSY:native-rxMVNs-5-1794211175
+[preferred-execution] custody_signal {"at":"2026-11-09T07:59:46Z","execution_id":"native-rxMVNs-5-1794211175","initiating_execution_id":"native-rxMVNs-5-1794211175","reason":"completed","signal":"TERM","target_kind":"pid","target_id":3767546,"members":["3767546:80274014"],"syscall_result":0}
+[preferred-execution] reclaimed historical temporary root /home/happier/.happier/dev-targets/windows2-linux/tmp/hstack-Z2GQIM (2727936 allocated bytes)
+HSTACK_PLACEMENT_EXCLUDED target=mac-host reason=not-in-command-pool class=validation
+[preferred-execution] selected mac3-linux (load=0.164167, active=16, effective=1.497500, fresh)
+
+Forcing synchronization cycle for session sync_BVA9yzt7U4B2dDSXxNpEVkHO3h4UwKXci
+
+pnpm 12.14.0 ready; root archive integrity verified
+[preferred-execution] heavyweight admission refused (HSTACK_MEMORY_BUSY)
+HSTACK_ADMISSION_BUSY:native-5CNquk-2-1794211386
+[preferred-execution] custody_signal {"at":"2026-11-09T08:03:19Z","execution_id":"native-5CNquk-2-1794211386","initiating_execution_id":"native-5CNquk-2-1794211386","reason":"completed","signal":"TERM","target_kind":"pid","target_id":3742960,"members":["3742960:15137171"],"syscall_result":0}
+[preferred-execution] reclaimed historical temporary root /home/leeroy.linux/.happier/dev-targets/mac3-linux/tmp/hstack-Txuhw1 (2846720 allocated bytes)
+HSTACK_PLACEMENT_EXCLUDED target=mac-host reason=not-in-command-pool class=validation
+HSTACK_PLACEMENT_EXCLUDED target=windows1-linux reason=unreachable class=validation
+[preferred-execution] selected mac3-linux (load=0.146667, active=19, effective=1.730000, fresh)
+
+Forcing synchronization cycle for session sync_BVA9yzt7U4B2dDSXxNpEVkHO3h4UwKXci
+
+[preferred-execution] workers busy; queued on mac3-linux for memory, waiting (Ctrl-C cancels)
+pnpm 12.14.0 ready; root archive integrity verified
+[preferred-execution] waiting for admission (class=validation, floorKiB=2097152, position=45, ahead=44, waiting=45)
