@@ -2,7 +2,8 @@ import type {
     LocalServiceActionAuditEventV1,
     LocalServiceActionResultV1,
 } from '@happier-dev/protocol/local/services/actions/v1';
-import { RpcError, RPC_ERROR_CODES, RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { RPC_ERROR_CODES, RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { RpcError } from '@happier-dev/protocol/rpc/errors';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const machineRpcWithServerScopeMock = vi.hoisted(() => vi.fn());

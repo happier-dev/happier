@@ -2,7 +2,8 @@ import {
     DaemonLocalServiceActionExecuteRequestV1Schema,
     DaemonLocalServiceActionExecuteResponseV1Schema,
 } from '@happier-dev/protocol/local/services/actions/v1';
-import { isRpcError, isRpcMethodNotFoundError, isRpcMethodNotFoundResult, RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { isRpcMethodNotFoundResult, RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { isRpcError, isRpcMethodNotFoundError } from '@happier-dev/protocol/rpc/errors';
 import { readActionFailureEnvelope } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
 
 import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
