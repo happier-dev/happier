@@ -108,11 +108,22 @@ export type UsageSessionWorkContextV1 = z.infer<typeof UsageSessionWorkContextSc
 
 /** Closed opened payload at the encrypted system-record boundary. */
 export const UsageSessionWorkFactsV1Schema: z.ZodMiniType<UsageSessionWorkFactsV1> = lazyZodSchema(() => z.strictObject({
-    v: z.literal(1), seq: EvidenceTime,
+    v: z.literal(1), kind: z.literal('work'), seq: EvidenceTime,
     metadataVersion: z.optional(EvidenceTime), agentStateVersion: z.optional(EvidenceTime),
     evidence: UsageSessionWorkDetailSchema,
     session: z.optional(UsageSessionWorkContextSchema),
 }));
+
+export const UsageSessionCoachFactsV1Schema = lazyZodSchema(() => z.strictObject({
+    v: z.literal(1), kind: z.literal('coach'), seq: EvidenceTime,
+    metadataVersion: z.optional(EvidenceTime), agentStateVersion: z.optional(EvidenceTime),
+    evidence: UsageSessionMessageEvidenceSchema.shape.coach,
+}));
+export type UsageSessionCoachFactsV1 = z.infer<typeof UsageSessionCoachFactsV1Schema>;
+export const UsageSessionFactRecordV1Schema = lazyZodSchema(() => z.union([
+    UsageSessionWorkFactsV1Schema, UsageSessionCoachFactsV1Schema,
+]));
+export type UsageSessionFactRecordV1 = UsageSessionWorkFactsV1 | UsageSessionCoachFactsV1;
 
 export type OpenedUsageSession = Readonly<{
     id: string;
@@ -140,6 +151,7 @@ export type OpenedUsageSession = Readonly<{
 /** The encrypted projection retains only facts already derived by the Usage owner. */
 export type UsageSessionWorkFactsV1 = Readonly<{
     v: 1;
+    kind: 'work';
     seq: number;
     metadataVersion?: number;
     agentStateVersion?: number;
@@ -150,7 +162,11 @@ export type UsageSessionWorkFactsV1 = Readonly<{
 /** Content versions belong to the Session owner; every consumer uses this one admission basis. */
 export function readCurrentUsageSessionWorkFactsV1(session: Pick<OpenedUsageSession,
     'seq' | 'active' | 'metadataVersion' | 'agentStateVersion' | 'usageWorkFactsV1'>): UsageSessionWorkFactsV1 | null {
-    const facts = session.usageWorkFactsV1;
+    return readCurrentUsageSessionFactRecordV1(session, session.usageWorkFactsV1);
+}
+
+export function readCurrentUsageSessionFactRecordV1<T extends UsageSessionFactRecordV1>(session: Pick<OpenedUsageSession,
+    'seq' | 'active' | 'metadataVersion' | 'agentStateVersion'>, facts: T | undefined): T | null {
     return facts && session.active !== true && session.seq !== undefined && facts.seq === session.seq
         && (facts.metadataVersion === undefined || facts.metadataVersion === session.metadataVersion)
         && (facts.agentStateVersion === undefined || facts.agentStateVersion === session.agentStateVersion) ? facts : null;
@@ -288,16 +304,32 @@ export function createUsageSessionWorkFactsV1(
     evidence: UsageHowYouWorkDetailInput,
 ): UsageSessionWorkFactsV1 {
     const projected = projectUsageSessionInput(session);
-    return { v: 1, seq: session.seq,
+    const { coach, ...workEvidence } = evidence;
+    return { v: 1, kind: 'work', seq: session.seq,
         ...(session.metadataVersion === undefined ? {} : { metadataVersion: session.metadataVersion }),
         ...(session.agentStateVersion === undefined ? {} : { agentStateVersion: session.agentStateVersion }),
-        evidence,
+        evidence: { ...workEvidence, ...(coach?.detail === undefined ? {} : {
+            coach: { detail: { coverage: coach.detail.coverage,
+                ...(coach.detail.compactions === undefined ? {} : { compactions: coach.detail.compactions }) } },
+        }) },
         session: { metadata: projected.metadata,
             ...(projected.origin === undefined ? {} : { origin: projected.origin }),
             ...(projected.manager === undefined ? {} : { manager: projected.manager }),
             ...(session.ownerMetadata === undefined ? {} : { ownerMetadata: session.ownerMetadata }),
             ...(session.agentTarget === undefined ? {} : { agentTarget: session.agentTarget }),
         } };
+}
+
+/** Both records come from the same admitted derivation and Session content versions. */
+export function createUsageSessionFactRecordsV1(
+    session: Parameters<typeof createUsageSessionWorkFactsV1>[0], evidence: UsageHowYouWorkDetailInput,
+): readonly UsageSessionFactRecordV1[] {
+    const work = createUsageSessionWorkFactsV1(session, evidence);
+    const coach: UsageSessionCoachFactsV1 = { v: 1, kind: 'coach', seq: work.seq,
+        ...(work.metadataVersion === undefined ? {} : { metadataVersion: work.metadataVersion }),
+        ...(work.agentStateVersion === undefined ? {} : { agentStateVersion: work.agentStateVersion }),
+        ...(evidence.coach === undefined ? {} : { evidence: evidence.coach }) };
+    return [work, coach];
 }
 
 function usageTimingBounds(points: readonly (number | null)[], open = false): UsageTimingBoundsV1 | null {

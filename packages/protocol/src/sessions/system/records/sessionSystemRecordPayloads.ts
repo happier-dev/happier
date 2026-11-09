@@ -1,6 +1,6 @@
-import { UsageSessionWorkFactsV1Schema } from '../../../usage/usageWorkEvidence.js';
+import { UsageSessionFactRecordV1Schema } from '../../../usage/usageWorkEvidence.js';
 import { lazyZodSchema } from '../../../lazyZodSchema.js';
-import type { UsageSessionWorkFactsV1 } from '../../../usage/usageWorkEvidence.js';
+import type { UsageSessionFactRecordV1 } from '../../../usage/usageWorkEvidence.js';
 import { z } from 'zod/mini';
 
 import {
@@ -17,13 +17,13 @@ import {
 } from '../../permissions/mediationRecordsV1.js';
 
 export const SessionSystemRecordPayloadSchema = lazyZodSchema(() => z.union([
-  UsageSessionWorkFactsV1Schema,
+  UsageSessionFactRecordV1Schema,
   MemorySessionSystemRecordRawPayloadSchema,
   ActivitySessionSystemRecordRawPayloadSchema,
   SessionPermissionRemoteMediationRecordV1Schema,
 ]));
 export type SessionSystemRecordPayload =
-  | UsageSessionWorkFactsV1
+  | UsageSessionFactRecordV1
   | MemorySessionSystemRecordRawPayload
   | ActivitySessionSystemRecordRawPayload
   | SessionPermissionRemoteMediationRecordV1;

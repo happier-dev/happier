@@ -1,6 +1,7 @@
 import { USAGE_SESSION_EVIDENCE_PATH, UsageSessionEvidenceRequestSchema, UsageSessionEvidenceResponseSchema,
     type UsageSessionEvidenceRequest, type UsageSessionEvidenceResponse } from '@happier-dev/protocol/usage/usageSessionEvidence';
-import { USAGE_COLLABORATION_TOOL_LEAF_KEYS, USAGE_SESSION_WORK_FACTS_SYSTEM_RECORD_ADDRESS, projectSessionUsageWorkEvidence, usageQueryNeedsSessionCandidates,
+import { getUsageSessionFactKinds, getUsageSessionFactRecordAddress } from '@happier-dev/protocol/usage/usageSessionFactKinds';
+import { USAGE_COLLABORATION_TOOL_LEAF_KEYS, projectSessionUsageWorkEvidence, usageQueryNeedsSessionCandidates,
     UsageSessionPermissionRequestProjectionSchema, UsageSessionPermissionCompletedProjectionSchema,
     projectUsageSessionStateEvidenceFromRequests, type UsageSessionPermissionRequestProjection,
     type UsageSessionPermissionCompletedProjection,
@@ -71,8 +72,11 @@ export function registerSessionEvidenceRoute(app: Fastify): void {
         const unavailable = (reason: unknown) => ({ status: 503 as const,
             body: { error: readDatabaseErrorCode(reason) ?? 'session_read_unavailable' } });
         if (request.body.readWorkFacts) {
+            const factKinds = [...new Set(request.body.workFactKinds ?? getUsageSessionFactKinds({ includeCoach: false }))];
+            const kindsByLocalId = new Map<string, typeof factKinds[number]>(factKinds.map(kind => [getUsageSessionFactRecordAddress(kind).localId, kind]));
+            const workAddress = getUsageSessionFactRecordAddress('work');
             const records = await readActorSessionSystemRecordsV1({ actorUserId: request.userId, authentication,
-                sessionIds: ids, address: USAGE_SESSION_WORK_FACTS_SYSTEM_RECORD_ADDRESS });
+                sessionIds: ids, addresses: factKinds.map(getUsageSessionFactRecordAddress) });
             if (reply.raw.destroyed) { reply.hijack(); return; }
             const evidenceIds = new Set(selected.flatMap(row => row.query.includeSessionEvidence ? row.sessionIds : []));
             const turns = await readSessionTurnsBatch({ userId: request.userId, authentication,
@@ -80,7 +84,8 @@ export function registerSessionEvidenceRoute(app: Fastify): void {
                     const record = records.get(id);
                     // Saved facts contain their derived intervals. The client owns encrypted
                     // fact currentness and requests the existing summary projection if needed.
-                    return record?.ok && !record.record && evidenceIds.has(id);
+                    return record?.ok && record.records.some(row => row.address.localId === workAddress.localId && !row.record)
+                        && evidenceIds.has(id);
                 }) });
             const results: UsageSessionEvidenceResponse['results'] = ids.map(sessionId => {
                 const record = records.get(sessionId);
@@ -102,7 +107,9 @@ export function registerSessionEvidenceRoute(app: Fastify): void {
                     dataEncryptionKey: projectViewerSessionDataKey(session),
                     viewerRole: record.access.level === 'owner' ? 'owner' : 'recipient',
                     access: projectSessionEffectiveAccessV1(record.access),
-                }, content: record.record?.content ?? null },
+                }, records: record.records.map(({ address, record }) => ({
+                    kind: kindsByLocalId.get(address.localId)!, content: record?.content ?? null,
+                })) },
                 ...(turn ? { turns: turn.status === 'fulfilled' ? turn.value : unavailable(turn.reason) } : {}) };
             });
             return sendEvidence(results);

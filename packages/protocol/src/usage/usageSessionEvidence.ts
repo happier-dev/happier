@@ -6,6 +6,7 @@ import { UsageSessionMessageEvidenceSchema, UsageSessionStateEvidenceSchema,
     type UsageSessionMessageEvidence, type UsageSessionStateEvidence } from './usageWorkEvidence.js';
 import { SessionSystemRecordContentSchema } from '../sessions/system/records/sessionSystemRecordContent.js';
 import { SessionEffectiveAccessV1Schema } from '../sessions/access/sessionEffectiveAccessV1.js';
+import { UsageSessionFactKindV1Schema, getUsageSessionFactKinds } from './usageSessionFactKinds.js';
 
 export const USAGE_SESSION_EVIDENCE_PATH = '/v2/usage/session-evidence';
 /** Full Session histories retain relative window identity as its read end advances. */
@@ -18,7 +19,8 @@ export function getUsageSessionEvidenceDemandKey(query: UsageQuery, nowMs: numbe
     return JSON.stringify({ period: demandPeriod,
         filters: request.filters, population: request.population ?? 'all_personal_history',
         sessionIds: sessionIds === undefined ? null : [...new Set(sessionIds)].sort(), includeSessionEvidence: query.includeSessionEvidence,
-        includeTranscriptEvidence: query.includeSessionEvidence && query.includeTranscriptEvidence });
+        includeTranscriptEvidence: query.includeSessionEvidence && query.includeTranscriptEvidence,
+        workFactKinds: getUsageSessionFactKinds(query) });
 }
 
 const Id = lazyZodSchema(() => z.string().check(z.minLength(1)));
@@ -33,6 +35,7 @@ const UsageSessionEvidenceQuerySchema = lazyZodSchema(() => z.pipe(UsageQuerySch
 export const UsageSessionEvidenceRequestSchema = lazyZodSchema(() => z.strictObject({
     nowMs: Time,
     readWorkFacts: z.optional(z.literal(true)),
+    workFactKinds: z.optional(z.array(UsageSessionFactKindV1Schema)),
     requests: z.array(z.strictObject({ query: UsageSessionEvidenceQuerySchema, sessionIds: z.optional(z.array(Id)),
         /** Row-level window question: which of these Sessions belong to the window. Ignored with explicit sessionIds. */
         candidateSessionIds: z.optional(z.array(Id)) })),
@@ -45,7 +48,7 @@ const UsageSessionEvidenceResultSchema = lazyZodSchema(() => z.safeExtend(Sessio
             active: z.boolean(), metadataVersion: Time, agentStateVersion: Time, metadataLayoutVersion: Time,
             encryptionMode: z.enum(['plain', 'e2ee']), dataEncryptionKey: z.nullable(z.string()),
             viewerRole: z.enum(['owner', 'recipient']), access: SessionEffectiveAccessV1Schema }),
-        content: z.nullable(SessionSystemRecordContentSchema),
+        records: z.array(z.strictObject({ kind: UsageSessionFactKindV1Schema, content: z.nullable(SessionSystemRecordContentSchema) })),
     })),
     stateEvidence: z.optional<z.ZodMiniType<UsageSessionStateEvidence>>(UsageSessionStateEvidenceSchema),
     messageEvidence: z.optional<z.ZodMiniType<UsageSessionMessageEvidence>>(UsageSessionMessageEvidenceSchema), messagesComplete: z.optional(z.boolean()),

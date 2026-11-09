@@ -41,12 +41,14 @@ import { readAccountSettingsForScope } from '@/sync/domains/state/accountSetting
 import { getConnectedMetadataCatalog, subscribeConnectedMetadataCatalog } from '@/sync/store/settings/connectedMetadataCatalogSnapshot';
 import { observeConnectedMetadataCatalog } from '@/sync/engine/settings/connectedMetadataCatalogEngine';
 import { readConnectedSubscriptionMonthlyPriceV1 } from '@happier-dev/protocol/connect/connectedAccountPresentationRowsV1';
+import { isConnectedPresentationCatalogUsableV1 } from '@happier-dev/protocol/connect/connectedAccountPresentationSchemasV1';
 import { settingsDefaults } from '@/sync/domains/settings/settings';
 import { projectUsageAccountingSessionMembership, readUsageAccountingSessionMembership, usageQueryNeedsSessionCandidates, projectSessionUsageWorkEvidence,
     type UsageSessionMessageEvidence } from '@happier-dev/protocol/usage/usageWorkEvidence';
 import { USAGE_SESSION_EVIDENCE_PATH, UsageSessionEvidenceRequestSchema, UsageSessionEvidenceResponseSchema, getUsageSessionEvidenceDemandKey,
     createUsageSessionEvidenceStreamDecoder,
     type UsageSessionEvidenceResponse } from '@happier-dev/protocol/usage/usageSessionEvidence';
+import { getUsageSessionFactKinds } from '@happier-dev/protocol/usage/usageSessionFactKinds';
 import { isSessionContentReadable, readSessionContentAvailability } from '@/sync/domains/session/encryptedContentAvailability';
 import { ConnectedServiceQuotaGetInputV1Schema, projectProviderAccountUsageQuotaReadV1, type ConnectedServiceQuotaGetInputV1, type ConnectedServiceQuotaGetResultV1 } from '@happier-dev/protocol/connect/providerAccountUsageHistory';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
@@ -629,7 +631,9 @@ async function readHowYouWorkEvidence(context: UsageQueryAccountContext, query: 
         consumeResult?: (row: UsageSessionEvidenceResponse['results'][number]) => Promise<void>,
         candidateSessionIds?: readonly string[], readWorkFacts = false): Promise<UsageSessionEvidenceResponse> => {
         const currentness = await readAccountCurrentnessSource();
-        const input = UsageSessionEvidenceRequestSchema.parse({ nowMs, ...(readWorkFacts ? { readWorkFacts: true } : {}), requests: [{ query, ...(sessionIds ? { sessionIds } : {}),
+        const input = UsageSessionEvidenceRequestSchema.parse({ nowMs, ...(readWorkFacts ? {
+            readWorkFacts: true, workFactKinds: getUsageSessionFactKinds(query),
+        } : {}), requests: [{ query, ...(sessionIds ? { sessionIds } : {}),
             ...(candidateSessionIds ? { candidateSessionIds } : {}) }] });
         const init = { method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/x-ndjson' },
             body: JSON.stringify(input), signal: phaseSignal };
@@ -757,6 +761,7 @@ async function readHowYouWorkEvidence(context: UsageQueryAccountContext, query: 
                 if (row.workFacts) {
                     try {
                         const value = await openUsageCompactInput({ context, opening: authority.context, row,
+                            recordKinds: getUsageSessionFactKinds(query),
                             isCurrent: () => context.accountLifetime.isCurrent() && accountCurrentnessSource.isCurrent() });
                         if (value) inputs.set(row.sessionId, { value });
                         else summaryIds.push(row.sessionId);
@@ -1591,7 +1596,7 @@ type UsageAccountingAnswer = {
     /** Protocol validates the prepared operand, cost basis and overrides before reuse. */
     prepared?: PreparedUsageAccountingSnapshot;
 };
-type AccountResourceOwner = Readonly<{ store: UsageQueryResourceStore; invalidate(event?: UsageQueryInvalidation): void; readSessionInput: SessionInputReader;
+type AccountResourceOwner = Readonly<{ store: UsageQueryResourceStore; invalidate(event?: UsageQueryInvalidation, quotaRecordIds?: readonly string[]): void; readSessionInput: SessionInputReader;
     readSessionSelection: SessionInputSelectionReader;
     projectSessionSelection: SessionInputSelectionProjector;
     history: Map<string, UsageHistoryEntry>;
@@ -1763,7 +1768,7 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
     const slicesByQuery = new Map<string, UsageQueryBatchResult['results'][number]>();
     const sessionInputs = createUsageQuerySessionInputs({ lifetime, signal: evidenceAbort.signal,
         assertCurrent: () => requireCurrent(sharedContext, evidenceAbort.signal) });
-    const listeners = new Map<(event: ResourceSubscriptionEvent, change?: UsageQueryInvalidation) => void, Readonly<{
+    const listeners = new Map<(event: ResourceSubscriptionEvent, change?: UsageQueryInvalidation, quotaRecordIds?: readonly string[]) => void, Readonly<{
         reference: Parameters<PluginUiResourceStore['getEntry']>[0];
         takeReadDemand(): UsageQueryReadDemand;
         isAllowanceReadPending(): boolean;
@@ -2167,11 +2172,13 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                     accountModeCurrentness = captureAccountEncryptionCurrentness(lifetime.scope.serverId);
                     return true;
                 };
-                const observe = (event: ResourceSubscriptionEvent, change?: UsageQueryInvalidation) => {
+                const observe = (event: ResourceSubscriptionEvent, change?: UsageQueryInvalidation, quotaRecordIds?: readonly string[]) => {
                     const accountModeChanged = takeAccountModeChange();
                     if (accountModeChanged) replaceAccounting();
                     if (!accountModeChanged && typeof change === 'object' && isUsagePresentationHomeAccountChange(change)) return;
                     if (!accountModeChanged && change === 'session-evidence' && !privateEvidence) return;
+                    if (!accountModeChanged && change === 'quota-inputs' && quotaRecordIds !== undefined
+                        && !readQuotaRecordIds().some(id => usageQuotaRecordChangeAffects(id, quotaRecordIds))) return;
                     if (!accountModeChanged && !readsAllowance && (change === 'quota-inputs' || change === 'quota-projection-inputs'
                         || typeof change === 'object' && isUsageQuotaHomeAccountChange(change))) return;
                     const accountingChange = typeof change === 'object' && change.usageAccountingChange
@@ -2187,7 +2194,8 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                     const allowanceChanged = readsAllowance && (accountModeChanged || change === undefined || change === 'quota-inputs' || change === 'material-inputs'
                         || typeof change === 'object' && isUsageProjectionHomeAccountChange(change, true, readQuotaRecordIds()));
                     if (allowanceChanged) {
-                        const changedIds = !accountModeChanged && typeof change === 'object' ? readUsageQuotaChangedRecordIds(change) : undefined;
+                        const changedIds = accountModeChanged ? undefined : quotaRecordIds
+                            ?? (typeof change === 'object' ? readUsageQuotaChangedRecordIds(change) : undefined);
                         allowanceRecordIds = allowanceReadDemand === true
                             ? allowanceRecordIds === undefined || changedIds === undefined ? undefined : [...new Set([...allowanceRecordIds, ...changedIds])]
                             : changedIds;
@@ -2322,7 +2330,7 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                 return ready;
             };
         }),
-        invalidate(homeChange) {
+        invalidate(homeChange, quotaRecordIds) {
             if (!lifetime.isCurrent()) return;
             // A replacement demanded by this wake must not join pre-wake accounting.
             // Existing borrowers retain their own publication and Account fences.
@@ -2364,7 +2372,7 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                 }
             } else if (homeChange === 'session-evidence') sessionEvidenceInputs = {};
             else if (quotaChange || typeof homeChange === 'string') resourceInputs = {};
-            for (const listener of [...listeners.keys()]) listener({ version: 1, subscriptionId: 'usage-query', kind: 'invalidated', digest: INVALIDATION_DIGEST }, homeChange);
+            for (const listener of [...listeners.keys()]) listener({ version: 1, subscriptionId: 'usage-query', kind: 'invalidated', digest: INVALIDATION_DIGEST }, homeChange, quotaRecordIds);
         },
     };
     accountStores.set(lifetime, owner);
@@ -2398,12 +2406,13 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                 const admissionChanged = next.supported !== observed.supported || next.usageRecordId !== observed.usageRecordId;
                 const settled = !next.loading && !next.refreshing;
                 const changed = admissionChanged || settled && (next.error === null) !== (observed.error === null);
+                const recordIds = [observed.usageRecordId, next.usageRecordId].filter((id): id is string => id !== null);
                 // Beginning acquisition clears the cache's error optimistically;
                 // only its settled answer can replace that error observation.
                 if (admissionChanged || settled) observed = next;
                 // This reader consumes admission, not the cache's acquisition
                 // flags. Starting/finishing an unchanged read is not invalidation.
-                if (changed) owner.invalidate('quota-inputs');
+                if (changed) owner.invalidate('quota-inputs', recordIds.length ? recordIds : undefined);
             }));
         }
     }
@@ -2434,8 +2443,8 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
         if (rows === observedRows) return;
         const previous = observedRows;
         observedRows = rows;
-        // Cache loading, retry deadlines and observation-only publications do
-        // not change Usage facts. Preserve real replacement/removal and errors.
+        // Loading and retry deadlines change no displayed fact. Observation
+        // times, replacements, removals and errors retain their known record scope.
         const keys = new Set([
             ...(allowance?.quota?.flatMap(read => read.current ? [read.current.recordId] : []) ?? []),
             ...(readOpenedQuotaScope(sharedContext)?.sources.flatMap(({ key }) => {
@@ -2443,8 +2452,9 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                 return id ? [id] : [];
             }) ?? []),
         ]);
-        if ([...keys].some(key => previous?.[key]?.hadError !== rows?.[key]?.hadError
-            || !sameStrictJsonValue(previous?.[key]?.snapshot, rows?.[key]?.snapshot))) owner.invalidate('quota-inputs');
+        const changedIds = [...keys].filter(key => previous?.[key]?.hadError !== rows?.[key]?.hadError
+            || !sameStrictJsonValue(previous?.[key]?.snapshot, rows?.[key]?.snapshot));
+        if (changedIds.length) owner.invalidate('quota-inputs', changedIds);
     };
     const unwatchProvider = whileDemanded(() => { reconcileProvider(); return subscribeProviderAccountUsageCache(reconcileProvider); }, true);
     let observedFeatures = getCachedServerFeaturesSnapshot({ serverId: lifetime.scope.serverId });
@@ -2506,7 +2516,7 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
         // while refreshing and publishes the settled record separately.
         if (presentation.status === 'loading') return undefined;
         return { status: presentation.status,
-            prices: presentation.status === 'ready' ? scope.sources.map(({ source }) =>
+            prices: isConnectedPresentationCatalogUsableV1(presentation) ? scope.sources.map(({ source }) =>
                 [source.ref, readConnectedSubscriptionMonthlyPriceV1(presentation, source.ref)]) : undefined };
     };
     let observedPrices = readEnteredPrices();

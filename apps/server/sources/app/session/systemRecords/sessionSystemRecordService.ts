@@ -1168,34 +1168,38 @@ type ActorRecordSession = Omit<Prisma.SessionGetPayload<{ select: ReturnType<typ
 type ActorSessionSystemRecordRead = SessionSystemRecordV1Result<{
     session: ActorRecordSession;
     access: EffectiveSessionAccess;
-    record: SessionSystemRecordStored | null;
+    records: readonly Readonly<{ address: SessionSystemRecordAddress; record: SessionSystemRecordStored | null }>[];
 }>;
 
-/** Same-address actor records share catalog admission, Session access and mode parsing with scalar reads. */
+/** Actor records share address admission, batched Session access and mode parsing with scalar reads. */
 export async function readActorSessionSystemRecordsV1(
     params: Omit<SessionSystemRecordV1BaseParams, 'sessionId'> & Readonly<{
         sessionIds: readonly string[];
-        address: SessionSystemRecordAddress;
+        addresses: readonly SessionSystemRecordAddress[];
     }>,
 ): Promise<ReadonlyMap<string, ActorSessionSystemRecordRead>> {
     const ids = [...new Set(params.sessionIds)];
     const failed = (failure: SessionSystemRecordV1Failure) => new Map<string, ActorSessionSystemRecordRead>(ids.map(id => [id, failure]));
     if (!ids.length) return new Map();
-    if (!SessionSystemRecordReadRequestSchema.safeParse({ address: params.address }).success || ids.some(id => !id)) {
+    if (params.addresses.some(address => !SessionSystemRecordReadRequestSchema.safeParse({ address }).success) || ids.some(id => !id)) {
         return failed({ ok: false, code: 'plugin_session_record_invalid_query' });
     }
     try {
         return await captureReadSnapshot<ReadonlyMap<string, ActorSessionSystemRecordRead>>(async tx => {
-            const admission = await admitV1RecordTarget(params, { ...params.address, operation: 'read' }, tx);
-            if (!admission.ok) return failed(admission);
-            const policy = params.address.owner === 'host' ? resolveV1HostPolicy({ ...params.address, operation: 'read' }) : null;
-            // This set read serves actor-owned projections; owner-scoped records retain their existing reader.
-            if (params.address.owner === 'host' && (!policy || policy.accountScope !== 'actor')) {
-                return failed({ ok: false, code: 'plugin_session_record_invalid_query' });
+            const targets = [];
+            for (const address of params.addresses) {
+                const admission = await admitV1RecordTarget(params, { ...address, operation: 'read' }, tx);
+                if (!admission.ok) return failed(admission);
+                const policy = address.owner === 'host' ? resolveV1HostPolicy({ ...address, operation: 'read' }) : null;
+                // This set read serves actor-owned projections; owner-scoped records retain their existing reader.
+                if (address.owner === 'host' && (!policy || policy.accountScope !== 'actor')) {
+                    return failed({ ok: false, code: 'plugin_session_record_invalid_query' });
+                }
+                const expected = persistedV1Address(params.pluginId, address);
+                if (!expected) return failed({ ok: false, code: 'plugin_session_record_invalid_query' });
+                const keys = deriveSessionSystemRecordAddressKeys(expected);
+                targets.push({ address, policy, expected, keys, key: Buffer.from(keys.recordAddressKey).toString('hex') });
             }
-            const expected = persistedV1Address(params.pluginId, params.address);
-            if (!expected) return failed({ ok: false, code: 'plugin_session_record_invalid_query' });
-            const keys = deriveSessionSystemRecordAddressKeys(expected);
             const results = new Map<string, ActorSessionSystemRecordRead>();
             for (let offset = 0; offset < ids.length; offset += SESSION_ACCESS_SESSION_BATCH_SIZE) {
                 const batch = ids.slice(offset, offset + SESSION_ACCESS_SESSION_BATCH_SIZE);
@@ -1206,26 +1210,41 @@ export async function readActorSessionSystemRecordsV1(
                 const admitted = sessions.flatMap(session => {
                     const decision = decisions.get(session.id);
                     if (decision?.status !== 'allowed') return [];
-                    if (policy && !satisfiesSystemRecordPolicy(decision.access, policy.requirement)) {
+                    if (targets.some(({ policy }) => policy && !satisfiesSystemRecordPolicy(decision.access, policy.requirement))) {
                         results.set(session.id, { ok: false, code: 'plugin_session_record_forbidden' });
                         return [];
                     }
                     return [{ session, access: decision.access }];
                 });
-                const records = admitted.length ? await tx.sessionSystemRecord.findMany({ where: {
-                    accountId: params.actorUserId, sessionId: { in: admitted.map(row => row.session.id) }, recordAddressKey: keys.recordAddressKey,
+                const records = admitted.length && targets.length ? await tx.sessionSystemRecord.findMany({ where: {
+                    accountId: params.actorUserId, sessionId: { in: admitted.map(row => row.session.id) },
+                    recordAddressKey: { in: targets.map(target => target.keys.recordAddressKey) },
                 }, select: SESSION_SYSTEM_RECORD_SELECT }) : [];
-                const bySession = new Map(records.map(row => [row.sessionId, row]));
+                const bySession = new Map<string, Map<string, typeof records[number]>>();
+                for (const row of records) {
+                    const rows = bySession.get(row.sessionId) ?? new Map<string, typeof row>();
+                    rows.set(Buffer.from(row.recordAddressKey).toString('hex'), row);
+                    bySession.set(row.sessionId, rows);
+                }
                 for (const { session, access } of admitted) {
                     if (session.encryptionMode !== 'plain' && session.encryptionMode !== 'e2ee') {
                         results.set(session.id, { ok: false, code: 'plugin_session_record_storage_mode_mismatch' });
                         continue;
                     }
-                    const row = bySession.get(session.id);
-                    const projected = row ? storedV1RecordForSessionMode(row, expected, session.encryptionMode) : { ok: true as const, record: null };
-                    results.set(session.id, !projected.ok ? projected : row && row.kind !== params.address.kind
-                        ? { ok: false, code: 'plugin_session_record_kind_conflict' }
-                        : { ok: true, session: { ...session, encryptionMode: session.encryptionMode }, access, record: projected.record });
+                    const projectedRecords: Array<Readonly<{ address: SessionSystemRecordAddress; record: SessionSystemRecordStored | null }>> = [];
+                    let failure: SessionSystemRecordV1Failure | undefined;
+                    for (const target of targets) {
+                        const row = bySession.get(session.id)?.get(target.key);
+                        const projected = row ? storedV1RecordForSessionMode(row, target.expected, session.encryptionMode) : { ok: true as const, record: null };
+                        if (!projected.ok) { failure = projected; break; }
+                        if (row && row.kind !== target.address.kind) {
+                            failure = { ok: false, code: 'plugin_session_record_kind_conflict' };
+                            break;
+                        }
+                        projectedRecords.push({ address: target.address, record: projected.record });
+                    }
+                    results.set(session.id, failure ?? { ok: true,
+                        session: { ...session, encryptionMode: session.encryptionMode }, access, records: projectedRecords });
                 }
             }
             return results;

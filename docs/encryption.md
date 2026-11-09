@@ -3186,7 +3186,7 @@ Session `encryptionMode`. Plain Sessions require `{t:'plain',v}`; E2EE Sessions
 require `{t:'encrypted',c}` and the incumbent Session encryption context. Key
 presence never selects the mode. A mismatched envelope fails closed.
 
-The UI's `sync/encryption/sessionStoredContent.ts` owns these mechanics for both
+The sync client's `content/sessionStoredContent.ts` owns these mechanics for both
 persisted-Session drafts and System Records. The record codec under
 `sync/domains/sessionSystemRecords` separately validates the exact address and
 domain payload. Missing Session keys produce `locked`; an available context
@@ -3194,9 +3194,12 @@ that cannot open the bytes produces `corrupt_or_unopenable`. Neither means the
 record is absent, and neither justifies interpreting encrypted bytes as plain.
 
 In 0.3 development, Usage's optional `readWorkFacts: true` Session-evidence read
-uses the host System Record at
-`{owner:'host', namespace:'usage', kind:'work_facts.v1', localId:'how_you_work'}`.
-The catalog scopes it to the actor Account and requires visible Session access;
+uses host System Records with namespace `usage`, kind `work_facts.v1` and local
+ids `work` and `coach`. The optional `workFactKinds` read scope defaults to work
+only. A Coach consumer requests both records through the same batch reader;
+ordinary Usage reads never acquire the Coach record. Work retains shared
+compactions; Coach retains composition, model, MCP and compaction evidence with
+its original coverage. The catalog scopes both records to the actor Account and requires visible Session access;
 the batch reader reuses canonical transcript-read admission and the ordinary
 viewer Session-key envelope. How-you-work and Coach facts, including their narrow
 Session context such as paths, remain inside that Session-protected content
@@ -3218,7 +3221,12 @@ All conversion uses the explicit `usage.history.read` Action, with Account-owned
 progress and local cancellation. The query's transcript-output flag does not
 suppress this conversion policy or an explicit read; the original query identity
 is preserved. Its read-once boundary seals the same projector output through the
-Session owner. Neither startup nor mounting a wide window starts a bulk rebuild.
+Session owner, writing Coach before work. Both records use the same content-version
+admission; a missing or stale Coach record cannot turn partial history into complete
+Coach evidence. Retained inputs include read scope in their identity and invalidate
+on changes to either record. These unshipped 0.3 records need no migration: the
+former `how_you_work` address is not consumed and missing facts can be read again.
+Neither startup nor mounting a wide window starts a bulk rebuild.
 
 The same domain owns the Account-scoped runtime repository used by workflow
 activity and Board Actions. It retains last-known records during failed refreshes,
@@ -5817,6 +5825,13 @@ mutation, role, request or Agent target. Missing or invalid display falls back
 to the existing scoped full reader when a visible row, open Session or explicit
 query/inventory needs it. A missing sidecar alone never starts a body read during
 ordinary list bootstrap; the first demanded full read persists its repair.
+Voice conversation History uses that same Session-list reader with a client-only
+selection over opened owner summaries. Both the mounted History and its list
+Action advance existing active/archive cursors past unrelated summaries until a
+Voice page fills or the corpus ends. The selector is never sent to the Server;
+no server-readable Voice facet or separate History index is created. An
+unreadable summary keeps coverage incomplete even when those cursors end, and
+discovery does not request transcript messages.
 Fresh Server admission rechecks an owner
 display's mode against the already-read current Account mode, withdrawing an
 incompatible owner leaf without rereading documents or replacing captured

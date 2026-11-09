@@ -16,7 +16,7 @@ describe('Usage Session evidence demand', () => {
                 encryptionMode: 'e2ee', dataEncryptionKey: null, viewerRole: 'owner',
                 access: { v: 1, level: 'owner', sources: [{ kind: 'owner' }],
                     capabilities: projectSessionAccessCapabilitiesV1({ owner: true, grants: [] }) } },
-                content: { t: 'encrypted', c: 'sealed-facts' } } }] }).success).toBe(true);
+                records: [{ kind: 'work', content: { t: 'encrypted', c: 'sealed-facts' } }] } }] }).success).toBe(true);
         expect(evidence.UsageSessionEvidenceResponseSchema.safeParse({ requests: [{ query, sessionIds: ['session'] }],
             results: [{ sessionId: 'session', detail: { status: 404, body: { error: 'Session not found' } } }] }).success).toBe(true);
     });
@@ -66,6 +66,7 @@ describe('Usage Session evidence demand', () => {
         expect(evidence.getUsageSessionEvidenceDemandKey(normalizeUsageQuery({ ...base, metric: 'cost', granularity: 'hour' }), 1000, ['a', 'b'])).toBe(key);
         expect(evidence.getUsageSessionEvidenceDemandKey(base, 1001, ['a', 'b'])).toBe(key);
         expect(evidence.getUsageSessionEvidenceDemandKey(base, 1000, ['a'])).not.toBe(key);
+        expect(evidence.getUsageSessionEvidenceDemandKey(normalizeUsageQuery({ ...base, includeCoach: false }), 1000, ['a', 'b'])).not.toBe(key);
         expect(evidence.getUsageSessionEvidenceDemandKey(normalizeUsageQuery({ ...base, includeTranscriptEvidence: false }), 1000, ['a', 'b'])).not.toBe(key);
         expect(evidence.getUsageSessionEvidenceDemandKey(normalizeUsageQuery({ ...base, machines: ['a'] }), 1000, undefined)).not.toBe(
             evidence.getUsageSessionEvidenceDemandKey(normalizeUsageQuery({ ...base, machines: ['b'] }), 1000, undefined));

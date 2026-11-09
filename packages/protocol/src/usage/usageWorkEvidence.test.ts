@@ -8,12 +8,28 @@ import { UsageAnalyticsContributionSchema, UsageAnalyticsQueryResponseSchema } f
 import { UsagePromptCompositionSchema } from './coach/usagePromptComposition.js';
 import { TranscriptRawAgentEventV1Schema } from '../sessions/messages/transcriptRawRecordV1.js';
 import * as workEvidence from './usageWorkEvidence.js';
+import { SessionSystemRecordPayloadSchema } from '../sessions/system/records/sessionSystemRecordPayloads.js';
 
 const turns = { v: 1 as const, sessionId: 'parent', updatedAt: 900, turns: [
     { turnId: 'old', agentId: 'claude', status: 'completed' as const, startedAt: 100, terminalAt: 500, updatedAt: 500 },
     { turnId: 'new', agentId: 'codex', status: 'in_progress' as const, startedAt: 600, updatedAt: 900 },
 ] };
 const session = { id: 'parent', metadata: { machineId: 'machine' }, agentState: null, sessionTurns: turns };
+it('keeps shared compactions in work facts without Coach-only composition or model evidence', () => {
+    const compactions = [{ evidenceId: 'compacted', observedAtMs: 300, sessionId: session.id, turnId: 'old' }];
+    const evidence = { status: 'available' as const, coach: { compositionCoverage: 'complete' as const,
+        composition: [], detail: { coverage: 'complete' as const, compactions, modelRequests: [], mcpUsage: [] } } };
+    const fact = workEvidence.createUsageSessionWorkFactsV1({ ...session, seq: 2, active: false }, evidence);
+    expect(fact.evidence.coach?.detail?.compactions).toEqual(compactions);
+    expect(fact.evidence.coach).not.toHaveProperty('composition');
+    expect(fact.evidence.coach).not.toHaveProperty('compositionCoverage');
+    expect(fact.evidence.coach?.detail).not.toHaveProperty('modelRequests');
+    expect(fact.evidence.coach?.detail).not.toHaveProperty('mcpUsage');
+    const records = workEvidence.createUsageSessionFactRecordsV1({ ...session, seq: 2, active: false }, evidence);
+    expect(records.map(record => workEvidence.UsageSessionFactRecordV1Schema.parse(record))).toEqual(records);
+    expect(records.map(record => SessionSystemRecordPayloadSchema.safeParse(record).success)).toEqual([true, true]);
+    expect(records.find(record => record.kind === 'coach')?.evidence).toEqual(evidence.coach);
+});
 const tool = (id: string, name: string, input: unknown, createdAt = 200) => ({ id, createdAt,
     content: { role: 'agent', content: { type: 'codex', data: { type: 'tool-call', callId: id, name, input } } } });
 const contribution = (sessionId: string, turnId: string) => UsageAnalyticsContributionSchema.parse({
@@ -64,6 +80,28 @@ it('invalidates retained membership when a null-turn Session leaves the admitted
     })).toBe(false);
 });
 
+it('reuses identical admitted membership without visiting facts while changed turns and unknown inputs still invalidate it', () => {
+    const query = normalizeUsageQuery({ modelIds: ['model'] });
+    let visits = 0;
+    const sample = { ...contribution('session', 'turn'), modelId: 'model' };
+    // Existing Account capture contains 5,288 contributions and 664 admitted turns.
+    const contributions = Array.from({ length: 5288 }, (_, index) => ({ ...sample, id: `row-${index}`,
+        get sessionId() { visits += 1; return 'session'; },
+    }));
+    const admittedTurns = Array.from({ length: 664 }, (_, index) => ({ sessionId: 'session', turnId: `turn-${index}` }));
+    const sessionMembership = { turns: admittedTurns, sessionIds: ['session'] };
+    expect(workEvidence.hasSameUsageQueryWorkEvidenceMembership({ query, contributions, previousContributions: contributions,
+        admittedTurns, previousAdmittedTurns: admittedTurns, sessionMembership, previousSessionMembership: sessionMembership })).toBe(true);
+    expect(visits, 'identical admitted membership must not reconstruct either population').toBe(0);
+    expect(workEvidence.hasSameUsageQueryWorkEvidenceMembership({ query })).toBe(false);
+    expect(workEvidence.hasSameUsageQueryWorkEvidenceMembership({ query, contributions: [], previousContributions: [] })).toBe(true);
+    expect(workEvidence.hasSameUsageQueryWorkEvidenceMembership({ query, contributions, previousContributions: contributions,
+        admittedTurns: [{ sessionId: 'session', turnId: 'replacement' }], previousAdmittedTurns: admittedTurns })).toBe(false);
+    expect(workEvidence.hasSameUsageQueryWorkEvidenceMembership({ query, contributions, previousContributions: contributions,
+        sessionMembership: { turns: admittedTurns, sessionIds: ['session', 'new-null-turn-session'] },
+        previousSessionMembership: sessionMembership })).toBe(false);
+});
+
 describe('Usage shared work evidence', () => {
     it('round-trips the compact private context through the same registered fact schema', () => {
         const opened = { ...session, seq: 7, metadataVersion: 3, agentStateVersion: 2,
@@ -84,7 +122,7 @@ describe('Usage shared work evidence', () => {
         const opened = { ...session, seq: 7, metadataVersion: 3, agentStateVersion: 2 };
         const messages = [tool('read', 'Read', { file_path: '/private/file' }, 300)];
         const original = projectSessionUsageWorkEvidence(opened, messages, { messagesComplete: true });
-        const usageWorkFactsV1 = { v: 1 as const, seq: 7, metadataVersion: 3, agentStateVersion: 2, evidence: original };
+        const usageWorkFactsV1 = { v: 1 as const, kind: 'work' as const, seq: 7, metadataVersion: 3, agentStateVersion: 2, evidence: original };
         const converted = { ...opened, usageWorkFactsV1 };
         const restored = projectSessionUsageWorkEvidence(workEvidence.projectUsageSessionInput(converted));
         expect(restored.phaseEvents).toEqual(original.phaseEvents);
@@ -96,7 +134,8 @@ describe('Usage shared work evidence', () => {
         expect(projectSessionUsageWorkEvidence(converted, []).phaseEvents).toEqual([]);
         const persisted = workEvidence.createUsageSessionWorkFactsV1(opened, original);
         expect(workEvidence.UsageSessionWorkFactsV1Schema.parse(persisted)).toEqual(persisted);
-        expect(persisted.evidence).toEqual(original);
+        const coach = workEvidence.createUsageSessionFactRecordsV1(opened, original).find(record => record.kind === 'coach');
+        expect({ ...persisted.evidence, coach: coach?.evidence }).toEqual(original);
         expect(workEvidence.readCurrentUsageSessionWorkFactsV1(converted)).toBe(usageWorkFactsV1);
         expect(JSON.stringify(usageWorkFactsV1)).not.toContain('/private/file');
         expect(projectSessionUsageWorkEvidence({ ...converted, seq: 8 }).phaseEvents).toBeUndefined();

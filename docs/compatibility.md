@@ -7360,6 +7360,17 @@ No migration, alternate routing owner or wire epoch is added.
 
 ## SDK protocol evolution
 
+Unreleased 0.3 Session launch errors add optional closed `pluginCodeRefusal`
+with the existing closed Machine setup remedy union. Linux plugin-code access
+failures retain `plugin_code_unreadable` and the admitted requester's remedy:
+Manage opens the existing Machine Security page; Use receives an informational
+manager handoff. This is presentation only and grants no setup authority.
+Matching Protocol, daemon and UI readers reload together because earlier strict
+development readers reject the added field. New readers accept earlier launch
+errors without it. No Action, persisted format, wire epoch or adapter changes.
+The inspected `../0.2` frontier at `7b37d65ca75e58560f8f3ca850958ac5407d2e75`
+has no Session creation launch-error schema in tracked or scoped local source.
+
 Unreleased 0.3 Voice Session creation allows `agentTarget` omission on its Voice
 surface only. The Voice host binds the existing inventory's complete default
 target before strict Action admission, review or daemon dispatch. Named tools,

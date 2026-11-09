@@ -3,7 +3,7 @@ import { lazyDefinition } from '../lazyZodSchema.js';
 import { createStoredReadSchema } from '../json/storedReadSchema.js';
 import { asProtocolZod } from '../plugins/actions/internalProtocolZodAdapter.js';
 import { ConnectedAccountServiceIdentityV1Schema } from './qualifiedConnectedAccountPersistence.js';
-import { QualifiedConnectedAccountRefSchema, QualifiedConnectedAccountIdSchema } from './qualifiedConnectedAccountPersistence.js';
+import { QualifiedConnectedAccountRefSchema } from './qualifiedConnectedAccountPersistence.js';
 import { ConnectedServiceAuthGroupIdSchema } from './connectedServiceBindings.js';
 import { BackendTargetKeyV2Schema } from '../backends/targets/backendTargetRefV2.js';
 import { listSavedSecretReferenceCarrierPathsV1 } from '../account/settings/savedSecretReferenceV1.js';
@@ -90,6 +90,12 @@ type CatalogSnapshot<Entry> = Readonly<{ status: 'ready'; entries: readonly Entr
 export type ConnectedPresentationCatalogSnapshotV1 = CatalogSnapshot<ConnectedPresentationEntryV1>;
 export type ConnectedAcknowledgementsCatalogSnapshotV1 = CatalogSnapshot<ConnectedAcknowledgementEntryV1>;
 
+/** Partial reads retain individually admitted presentation entries. */
+export function isConnectedPresentationCatalogUsableV1(catalog: ConnectedPresentationCatalogSnapshotV1):
+    catalog is Extract<ConnectedPresentationCatalogSnapshotV1, { status: 'ready' | 'partial' }> {
+    return catalog.status === 'ready' || catalog.status === 'partial';
+}
+
 const revision = lazyDefinition(() => z.int().check(z.minimum(0), z.maximum(Number.MAX_SAFE_INTEGER)));
 export const ConnectedMetadataRowFailureV1Schema = lazyDefinition(() => z.strictObject({
     status: z.enum(['account-not-found', 'account-inconsistent', 'account-mode-mismatch', 'invalid-stored-content']), reason: z.optional(z.string()),
@@ -132,19 +138,12 @@ export type AccountEncryptionMigrateConnectedPresentationResultV1 = z.infer<type
 export const AccountEncryptionMigrateConnectedAcknowledgementsResultV1Schema = lazyDefinition(() => z.strictObject({ revision, content: z.nullable(ConnectedAcknowledgementsContentV1Schema) }));
 export type AccountEncryptionMigrateConnectedAcknowledgementsResultV1 = z.infer<typeof AccountEncryptionMigrateConnectedAcknowledgementsResultV1Schema>;
 
-export const QualifiedConnectedDisclosureSubjectSchema = lazyDefinition(() => z.discriminatedUnion('kind', [
-    z.strictObject({ kind: z.literal('account'), account: asProtocolZod(QualifiedConnectedAccountRefSchema) }),
-    z.strictObject({ kind: z.literal('group-member'), group: z.strictObject({ service: asProtocolZod(ConnectedAccountServiceIdentityV1Schema), groupId: ConnectedServiceAuthGroupIdSchema }), accountId: asProtocolZod(QualifiedConnectedAccountIdSchema) }),
-]));
-export type QualifiedConnectedDisclosureSubject = z.infer<typeof QualifiedConnectedDisclosureSubjectSchema>;
 export type LegacyConnectedMetadataInventoryV1 = Readonly<{
     entities: readonly QualifiedConnectedEntityRef[]; agents: readonly Readonly<{ agentTargetKey: string; legacyAgentId: string }>[];
-    disclosureSubjects?: readonly QualifiedConnectedDisclosureSubject[];
 }>;
-export type ConnectedDisclosureEntryV1 = Readonly<{ subject: QualifiedConnectedDisclosureSubject; collapsed: boolean }>;
 export type LegacyConnectedMetadataResultV1 = Readonly<{
     status: 'ready' | 'partial'; presentation: ConnectedPresentationRecordV1; acknowledgements: ConnectedAcknowledgementsRecordV1;
-    disclosure: readonly ConnectedDisclosureEntryV1[]; diagnostics: readonly ConnectedMetadataDiagnosticV1[];
+    diagnostics: readonly ConnectedMetadataDiagnosticV1[];
 }>;
 
 export const ConnectedMetadataCleanupV1Schema = lazyDefinition(() => z.discriminatedUnion('status', [

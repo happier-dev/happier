@@ -600,6 +600,11 @@
       "types": "./dist/actions/actionIds.d.ts",
       "default": "./dist/actions/actionIds.js"
     },
+    "./actions/actionIdsBrowser": {
+      "happier-source": "./src/actions/actionIdsBrowser.ts",
+      "types": "./dist/actions/actionIdsBrowser.d.ts",
+      "default": "./dist/actions/actionIdsBrowser.js"
+    },
     "./actions/actionInputHints": {
       "happier-source": "./src/actions/actionInputHints.ts",
       "types": "./dist/actions/actionInputHints.d.ts",
@@ -14010,6 +14015,11 @@
       "happier-source": "./src/usage/usageSessionEvidence.ts",
       "types": "./dist/usage/usageSessionEvidence.d.ts",
       "default": "./dist/usage/usageSessionEvidence.js"
+    },
+    "./usage/usageSessionFactKinds": {
+      "happier-source": "./src/usage/usageSessionFactKinds.ts",
+      "types": "./dist/usage/usageSessionFactKinds.d.ts",
+      "default": "./dist/usage/usageSessionFactKinds.js"
     },
     "./usage/usageSourceSummary": {
       "happier-source": "./src/usage/usageSourceSummary.ts",
