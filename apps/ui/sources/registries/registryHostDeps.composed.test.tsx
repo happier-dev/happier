@@ -37,7 +37,9 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', (
         if (input.op === 'link') return { op: 'error', status: { state: 'unreachable' } };
         if (input.op !== 'list') throw new Error('Fixture serves registry lists');
         if (transport.unreachableList) return { op: 'error', status: { state: 'unreachable' } };
-        return { op: 'list', page: { sourceId: input.sourceId, status: { state: 'ok', fetchedAt: 1 }, items: [], nextCursor: null } };
+        return { op: 'list', page: { sourceId: input.sourceId, status: { state: 'ok', fetchedAt: 1 }, items: input.kind === 'app' && input.sourceId === 'environment-databases'
+            ? [{ sourceId: input.sourceId, kind: 'app', itemId: 'postgresql', title: `${request.machineId} database`, appMetadata: { category: 'database' } }]
+            : [], nextCursor: null } };
     },
 }));
 vi.mock('react-native', async () => {
@@ -70,6 +72,41 @@ const { useSkillsLibrary } = await import('@/sync/domains/skills/useSkillsLibrar
 const { useSkillsUpdates } = await import('@/components/settings/skills/updates/useSkillsUpdates');
 const { useSkillDetail } = await import('@/components/settings/skills/detail/useSkillDetail');
 const { useRegistrySources } = await import('./useRegistrySources');
+
+it('reads the Environment database picker on its controller when another own Machine is first', async () => {
+    const sourceId = 'environment-databases';
+    const fixture = await createPlainPromptLibraryCatalogHomeFixture('https://registry-environment-controller.test', {
+        key: 'registry-sources', value: { v: 2, disabledSourceIds: [], sources: [{ id: sourceId, title: 'Environment databases',
+            format: 'happier-catalog', kinds: ['app'], url: 'https://private.example.test/apps.json', enabled: true, addedAt: 0 }] },
+    }, 'updated', { handleExternalRequest: async url => {
+        // Browser network/CORS failure enters the registry owner's existing daemon fallback.
+        if (url === 'https://private.example.test/apps.json') throw new TypeError('Network request failed');
+        return new Response(null, { status: 503 });
+    } });
+    onTestFinished(async () => { await standardCleanup(); await fixture.dispose(); });
+    await setServerProfileIdentityForUrl(fixture.home.serverUrl, 'srv_registry_environment_controller');
+    const account = await captureLazyActionAccountContext(fixture.home.id);
+    onTestFinished(() => account.dispose());
+    await storage.getState().activateSettingsScope(account.accountLifetime.scope);
+    storage.getState().applySettingsForScope(account.accountLifetime.scope, storage.getState().settings, 1);
+    storage.getState().activateProfileScope(account.accountLifetime.scope);
+    publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
+    const arbitrary = createMachineFixture({ id: 'c71-arbitrary-own-machine', createdAt: 2, activeAt: Date.now() });
+    const controller = createMachineFixture({ id: 'environment-controller', createdAt: 1, activeAt: Date.now() });
+    const inventory = [arbitrary, controller];
+    storage.setState({ machines: Object.fromEntries(inventory.map(machine => [machine.id, machine])),
+        machineListByServerId: { [account.serverId]: inventory }, machineListStatusByServerId: { [account.serverId]: 'idle' } });
+    transport.calls.length = 0;
+    const { StoreRegistryItemPicker, Directory } = await import('@/components/store/StoreKindPage');
+    const screen = await renderScreen(<StoreRegistryItemPicker presented machine={{ serverId: account.serverId, machineId: controller.id }}
+        initialFilters={{ source: { include: [sourceId], exclude: [] } }} onSelect={() => {}} testID="environment-database-picker" />);
+    // The renderer has no native viewport for the virtualized Collection. Read its
+    // real Directory model, as the composed Store search tests do.
+    await waitForHomeGovernance(() => expect(screen.findAllByType(Directory).flatMap(node => node.props.rows)
+        .map((row: { title: string }) => row.title)).toContain('environment-controller database'));
+    expect(new Set(transport.calls.filter(call => call.payload.op === 'list' && call.payload.sourceId === sourceId)
+        .map(call => call.machineId))).toEqual(new Set([controller.id]));
+});
 
 it('Link preview skips active Machines without usable content and retains its typed registry refusal', async () => {
     const fixture = await createPlainPromptLibraryCatalogHomeFixture('https://registry-link-carrier.test', {
@@ -438,7 +475,7 @@ it('refreshes daemon-created sources in the UI and reads tokened sources through
         { kind: 'skill', sourceId: source.id, itemId: 'private-skill', version: '1'.repeat(40) })).item.summary.title).toBe('Requester skill');
     expect(actionCalls).toEqual(['registries.items.list', 'registries.items.read']);
     expect(transport.calls).toEqual([]);
-    phase = 'packaged app requester read through the exact supplier';
+    phase = 'packaged app requester read after its supplier reloads independently';
     const lifetime = captureActiveServerAccountScopeLifetime();
     if (!lifetime) throw new Error('Requester Account lifetime must be applied');
     const packageOccurrenceId = 'requester-apps:1';
@@ -451,10 +488,20 @@ it('refreshes daemon-created sources in the UI and reads tokened sources through
     const packageModel = normalizePluginInstalledUiDeclarations({}, undefined, { id: packagePluginId, displayName: 'Requester apps',
         version: '1.0.0', enabled: true, occurrenceId: packageOccurrenceId, source: { kind: 'path', locator: '/plugins/requester-apps' } },
     [{ ...packageEntry, occurrenceId: packageOccurrenceId, executionOrigin: packageOrigin }]);
-    const packageProjection = unionPluginUiProjections([{ machineId, serverId: account.serverId, phase: 'current',
-        interactionEnabled: true, selectableExecutionOrigins: [packageOrigin], projection: packageModel }],
-    new Map([[packagePluginId, packageOrigin]])).pluginUiProjection;
-    expect(packageProjection?.registrySourcesById[packageSourceId]).toMatchObject({ occurrenceId: packageOccurrenceId });
+    const otherOccurrenceId = 'requester-apps:older';
+    const otherOrigin = { serverIdentityId: homeIdentityId, materializationRef: {
+        machineId: 'other-package-supplier', pluginId: packagePluginId, materializationId: 'other-requester-apps',
+    } };
+    const otherModel = normalizePluginInstalledUiDeclarations({}, undefined, { id: packagePluginId, displayName: 'Requester apps',
+        version: '1.0.0', enabled: true, occurrenceId: otherOccurrenceId, source: { kind: 'path', locator: '/plugins/requester-apps' } },
+    [{ ...packageEntry, occurrenceId: otherOccurrenceId, executionOrigin: otherOrigin }]);
+    const packageProjection = unionPluginUiProjections([
+        { machineId: 'other-package-supplier', serverId: account.serverId, phase: 'current', interactionEnabled: true,
+            selectableExecutionOrigins: [otherOrigin], projection: otherModel },
+        { machineId, serverId: account.serverId, phase: 'current', interactionEnabled: true,
+            selectableExecutionOrigins: [packageOrigin], projection: packageModel },
+    ], new Map([[packagePluginId, otherOrigin]])).pluginUiProjection;
+    expect(packageProjection?.registrySourcesById[packageSourceId]).toMatchObject({ occurrenceId: otherOccurrenceId });
     const packageScreen = await renderScreen(React.createElement(AppShellPluginUiProjectionValueProvider, { value: {
         pluginUiProjection: packageProjection, pluginBrowserProjection: null, phase: 'current', interactionEnabled: true,
         machineId, serverId: account.serverId, platform: 'web', accountLifetime: lifetime,
@@ -465,7 +512,7 @@ it('refreshes daemon-created sources in the UI and reads tokened sources through
     expect(lifetime.scope).toEqual({ serverId: account.serverId, accountId: account.accountId });
     expect(readCurrentAppShellPluginUiProjection()).toBe(packageProjection);
     expect(readCurrentAppShellPluginUiProjection({ scope: account, declarationsOnly: true })?.registrySourcesById[packageSourceId])
-        .toMatchObject({ occurrenceId: packageOccurrenceId });
+        .toMatchObject({ occurrenceId: otherOccurrenceId });
     const packagedPage = REGISTRY_ACTION_OUTPUT_SCHEMAS_V1['registries.items.list'].parse(await host.execute('registries.items.list', {
         kind: 'app', sourceIds: [packageSourceId], refresh: true,
     })).pages[0];

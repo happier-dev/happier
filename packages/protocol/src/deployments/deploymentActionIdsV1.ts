@@ -39,6 +39,7 @@ export const DEPLOYMENT_ROLLBACK_ACTION_ID_V1 = 'deployments.rollback';
 export const DEPLOYMENT_TEARDOWN_ACTION_ID_V1 = 'deployments.teardown';
 export const DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1 = 'deployments.environments.create';
 export const DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1 = 'deployments.environments.update';
+export const DEPLOYMENT_ENVIRONMENT_LIST_ACTION_ID_V1 = 'deployments.environments.list';
 export const DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1 = 'deployments.bindings.set';
 export const DEPLOYMENT_RECEIPT_OBSERVE_ACTION_ID_V1 = 'deployments.receipts.observe';
 export const DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1 = 'deployments.templates.instantiate';
@@ -64,7 +65,7 @@ export const DEPLOYMENT_ACTION_IDS_V1 = [
   DEPLOYMENT_TEARDOWN_ACTION_ID_V1,
   DEPLOYMENT_CANCEL_ACTION_ID_V1,
   'deployments.environments.get', 'deployments.receipts.get', DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1,
-  'deployments.environments.list', 'deployments.receipts.list', DEPLOYMENT_RECEIPT_OBSERVE_ACTION_ID_V1,
+  DEPLOYMENT_ENVIRONMENT_LIST_ACTION_ID_V1, 'deployments.receipts.list', DEPLOYMENT_RECEIPT_OBSERVE_ACTION_ID_V1,
   'deployments.observation.get',
   DEPLOYMENT_PUBLISH_PREPARE_ACTION_ID_V1, 'deployments.prepare', DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1,
   'deployments.health.read', 'deployments.health.current', 'deployments.drift.read', 'deployments.logs.read',

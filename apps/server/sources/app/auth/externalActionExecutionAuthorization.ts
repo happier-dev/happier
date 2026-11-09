@@ -7,7 +7,7 @@ import * as z from 'zod/mini';
 import { DeploymentApprovalEnvironmentInputV1Schema } from '@happier-dev/protocol/deployments/deploymentApprovalScopeV1';
 import type { ExternalActionAuthorizationRefusalPhase } from '@happier-dev/protocol/actions/externalActionHttpError';
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { ArtifactReadBatchHttpInputV1Schema, ArtifactTemplateAcceptedVersionInputV1Schema } from '@happier-dev/protocol/artifacts/artifactAccessV1';
+import { ArtifactReadBatchHttpInputV1Schema, ArtifactReadHeadersBatchInputV1Schema, ArtifactTemplateAcceptedVersionInputV1Schema } from '@happier-dev/protocol/artifacts/artifactAccessV1';
 import { ArtifactSignedInLinkCreateRequestV1Schema } from '@happier-dev/protocol/artifacts/artifactActionsV1';
 import { MachineReadBatchRequestV1Schema } from '@happier-dev/protocol/machines/machineReadBatchV1';
 import { isBotTemplateRetainedExecutionRootActionIdV1, isBotTemplateRestrictedPatHttpPurposeRootActionIdV1 } from '@happier-dev/protocol/bots/templates/botTemplateActionIdsV1';
@@ -43,7 +43,7 @@ import { isDeploymentActionIdV1, DeploymentDeployAdmissionInputV1Schema, Deploym
 import { deploymentOperationForRootActionV1, deploymentChildEffectActionIdForRootV1, isDeploymentDomainChildActionIdV1, isDeploymentBackupActionIdV1 } from '@happier-dev/protocol';
 import { isDeploymentEnvironmentMetadataReadActionIdV1, isDeploymentApprovalMetadataPreparationActionIdV1, isDeploymentObservationReadActionIdV1, isDeploymentDomainAddActionIdV1,
     isDeploymentDomainMetadataReadActionIdV1, DEPLOYMENT_RECEIPT_OBSERVE_ACTION_ID_V1,
-    DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+    DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_LIST_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { EnvironmentSecretLaunchAdmissionInputV1Schema, DeploymentEnvironmentUpdateStorageInputV1Schema,
     DeploymentBindingsSetStorageInputV1Schema } from '@happier-dev/deployment-protocol';
 import { isMachineConnectorSecretGrantHttpPurpose } from '@/app/deployments/machineConnectorSecretGrantAuthorization';
@@ -2493,6 +2493,14 @@ async function isAccountActionHttpPurpose(verified: VerifiedSignedChildRequest,
     const root = verified.binding.actionId;
     if (isExternalActionConnectedAccountInventoryHttpPurpose(verified.binding, verified.effectActionId, proof)) return true;
     if (isExternalActionConnectedSubscriptionPriceHttpPurpose(verified.binding, verified.effectActionId, proof)) return true;
+    // Environment names live in private headers. Listing opens only that
+    // projection; the Artifact owner retains requester per-record access.
+    if (root === DEPLOYMENT_ENVIRONMENT_LIST_ACTION_ID_V1 && verified.effectActionId === root
+        && proof.method.toUpperCase() === 'POST' && proof.path === '/v1/artifacts/read') {
+        const read = ArtifactReadHeadersBatchInputV1Schema.safeParse(proof.body);
+        return read.success && sameManagedInput(proof.body, read.data)
+            && (proof.routeInput === undefined || sameManagedInput(proof.routeInput, read.data));
+    }
     // The native reader admits exact metadata references before opening content;
     // Artifact routes retain requester Account/content authorization as for receipt observation.
     if (isDeploymentObservationReadActionIdV1(root) && verified.effectActionId === root

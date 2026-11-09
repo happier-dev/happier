@@ -18,7 +18,7 @@ const member = (machineId: string, url = `https://github.com/acme/${machineId}`)
     }]), generation: 1 },
 });
 
-it('keeps packaged source version and occurrence from the admitted supplier', () => {
+it('keeps every admitted packaged supplier across Machine-local occurrence ids', () => {
     const source = projectPluginRegistrySourceDeclarationV1({ pluginId, pluginVersion: '1.0.0', definition: {
         id: 'apps', title: 'Apps', format: 'happier-catalog', kinds: ['app'], packageContent: { path: 'resources/apps.json' },
     } });
@@ -36,7 +36,7 @@ it('keeps packaged source version and occurrence from the admitted supplier', ()
         { ...member('second'), projection: { ...second, generation: 1 } },
     ], new Map([[pluginId, origin('first')]])).pluginUiProjection;
     expect(projectPluginRegistrySources(combined)).toMatchObject([{ packageContent: { occurrenceId: 'first' },
-        origin: { suppliers: ['first'] } }]);
+        origin: { suppliers: ['first', 'second'] } }]);
     const cold = normalizePluginInstalledUiDeclarations({}, undefined, { id: pluginId, displayName: 'Acme sources',
         version: '1.0.0', enabled: true, source: { kind: 'path', locator: '/plugins/first' } }, [source]);
     expect(projectPluginRegistrySources(cold)).toEqual([]);

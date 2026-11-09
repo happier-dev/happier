@@ -4598,7 +4598,19 @@ describe("external Action execution authorization", () => {
         await db.accessKey.create({ data: { accountId: fixture.account.id, machineId: fixture.machine.id,
             sessionId: session.id, data: 'opaque-source-key' } });
         let publisher: string | null = fixture.machine.id;
-        const { app } = await createApp(fixture.team.id, false, async () => publisher);
+        const { app } = await createApp(fixture.team.id, false, async () => publisher, undefined, false,
+            routes => artifactsRoutes(routes));
+        const namedEnvironment = await createArtifact({ actorUserId: fixture.account.id, artifactId: crypto.randomUUID(),
+            header: decodeBase64(encodePlainArtifactStoredContent({ kind: 'deployment-environment.v1', title: 'Named Environment' })),
+            body: decodeBase64(encodePlainArtifactStoredContent({ body: '{}' })),
+            dataEncryptionKey: decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER) });
+        if (!namedEnvironment.ok) throw new Error(namedEnvironment.error);
+        const otherAccount = await db.account.create({ data: { publicKey: null, encryptionMode: 'plain' } });
+        const privateEnvironment = await createArtifact({ actorUserId: otherAccount.id, artifactId: crypto.randomUUID(),
+            header: decodeBase64(encodePlainArtifactStoredContent({ kind: 'deployment-environment.v1', title: 'Private Environment' })),
+            body: decodeBase64(encodePlainArtifactStoredContent({ body: '{}' })),
+            dataEncryptionKey: decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER) });
+        if (!privateEnvironment.ok) throw new Error(privateEnvironment.error);
         const token = await auth.createToken(fixture.account.id, undefined, kind === 'account'
             ? { kind, authority: 'present_user' } : { kind, authority: 'account_automation' });
         const homeId = await getOrCreateServerIdentityId();
@@ -4642,6 +4654,28 @@ describe("external Action execution authorization", () => {
                     headers: machineHeaders({ authorizationToken: authorization.token, method: 'POST', path,
                         body: proofBody, privateKey: fixture.keyPair.secretKey, effectActionId: actionId }) });
                 expect(verify.statusCode, `${actionId}: ${verify.body}`).toBe(200);
+                if (actionId === 'deployments.environments.list') {
+                    const path = '/v1/artifacts/read';
+                    const headerRead = { artifactIds: [namedEnvironment.artifact.id], projection: 'headers' };
+                    const read = (payload: unknown) => app.inject({ method: 'POST', url: path, payload,
+                        headers: machineHeaders({ authorizationToken: authorization.token, method: 'POST', path,
+                            body: payload, privateKey: fixture.keyPair.secretKey, effectActionId: actionId }) });
+                    const opened = await read(headerRead);
+                    expect(opened.statusCode, opened.body).toBe(200);
+                    expect(opened.json()).toMatchObject({ projection: 'headers', items: [{ artifactId: namedEnvironment.artifact.id,
+                        ok: true, artifact: { header: encodePlainArtifactStoredContent({ kind: 'deployment-environment.v1', title: 'Named Environment' }) } }] });
+                    expect(opened.json().items[0].artifact).not.toHaveProperty('body');
+                    expect((await read({ artifactIds: headerRead.artifactIds })).statusCode).toBe(401);
+                    const denied = await read({ artifactIds: [privateEnvironment.artifact.id], projection: 'headers' });
+                    expect(denied.statusCode).toBe(200);
+                    expect(denied.json()).toMatchObject({ projection: 'headers', items: [{ artifactId: privateEnvironment.artifact.id,
+                        ok: false, error: 'artifact_not_found', status: 404 }] });
+                    expect(denied.json().items[0]).not.toHaveProperty('artifact');
+                    const detailPath = `/v1/artifacts/${namedEnvironment.artifact.id}`;
+                    expect((await app.inject({ method: 'GET', url: detailPath,
+                        headers: machineHeaders({ authorizationToken: authorization.token, method: 'GET', path: detailPath,
+                            privateKey: fixture.keyPair.secretKey, effectActionId: actionId }) })).statusCode).toBe(401);
+                }
                 const missingProof = await mint({ ...body, installationProof: undefined });
                 // Paired origin/proof validation may reject before credential
                 // admission; neither refusal may mint an authorization token.
