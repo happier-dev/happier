@@ -1,15 +1,17 @@
-import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import fileSystem from 'node:fs/promises';
 import { syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
-import { basename, join } from 'node:path';
+import { basename, join, relative } from 'node:path';
 
 import { describe, expect, it, vi } from 'vitest';
 import { sessionFileNameMatchesSessionId } from '@happier-dev/plugin-sdk/sessions/file-stores';
 import { verifyResumeReachableCodex } from '../../../../../../packages/plugins/codex/src/agent/auth/services/runtime/control/verifyResumeReachable';
 import { antigravityConnectedAccountLaunch } from '../../../../../../packages/plugins/antigravity/src/agent/connectedServices/continuity';
+import { FX_STATE_SHARING, verifyFxResumeReachable } from '../../../../../../packages/plugins/fx/src/agent/auth/connectedAccount';
 
 import { verifyDeclaredResumeFileReachability } from './verifyDeclaredResumeFileReachability';
+import { importConnectedServiceSessionFiles } from './importConnectedServiceSessionFiles';
 
 // Keep the OS read boundary observable even when a plugin loads the SDK first.
 vi.mock('node:fs/promises', async importOriginal => {
@@ -51,11 +53,48 @@ describe('verifyDeclaredResumeFileReachability', () => {
       const opens = vi.spyOn(fileSystem, 'open');
       syncBuiltinESMExports();
       try {
-        await expect(verify()).resolves.toEqual({ ok: true, resolvedPath: candidate });
+        await expect(verify()).resolves.toEqual({ ok: true, resolvedPath: candidate, requiredPaths: [
+          candidate, join(conversations, `${id}.meta`), join(root, 'antigravity-acp', 'brain', id),
+        ] });
         expect(opens.mock.calls).toEqual([]);
         await rm(join(conversations, `${id}.meta`));
         await expect(verify()).resolves.toEqual({ ok: false, reason: 'agy_session_state_not_found' });
       } finally { opens.mockRestore(); syncBuiltinESMExports(); }
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
+
+  it('resolves FX exact native state without correlating another session fixed filename', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-resume-fx-'));
+    const id = 'native-fx-session';
+    const session = join(root, '.fx', 'sessions', id);
+    const events = join(session, 'events.jsonl');
+    const metadata = join(session, 'session.json');
+    const verify = () => verifyDeclaredResumeFileReachability({
+      targetMaterializedRoot: root, stateSharingDescriptor: { providerId: 'fx', ...FX_STATE_SHARING },
+      vendorResumeId: id, verifyResumeReachable: verifyFxResumeReachable,
+    });
+    try {
+      await mkdir(session, { recursive: true });
+      await mkdir(join(root, '.fx', 'sessions', 'another-session'));
+      await writeFile(join(root, '.fx', 'sessions', 'another-session', 'events.jsonl'), '{}\n');
+      await writeFile(events, '{}\n');
+      await writeFile(metadata, JSON.stringify({ schema_version: 4, id }));
+      await mkdir(join(session, 'images'));
+      await writeFile(join(session, 'images', 'native-snapshot.png'), 'native image sidecar');
+      const proof = await verify();
+      expect(proof).toEqual({ ok: true, resolvedPath: events, requiredPaths: [events, metadata, session] });
+      if (!proof.ok) throw new Error('FX state not reachable');
+      const sessions = join(root, '.fx', 'sessions');
+      const destination = join(root, 'target', '.fx', 'sessions');
+      await importConnectedServiceSessionFiles({ roots: [{ sourceRoot: sessions, destinationRoot: destination,
+        includePaths: proof.requiredPaths?.map(path => relative(sessions, path)),
+      }] });
+      expect(await readFile(join(destination, id, 'events.jsonl'), 'utf8')).toBe('{}\n');
+      expect(JSON.parse(await readFile(join(destination, id, 'session.json'), 'utf8'))).toEqual({ schema_version: 4, id });
+      expect(await readFile(join(destination, id, 'images', 'native-snapshot.png'), 'utf8')).toBe('native image sidecar');
+      await expect(readFile(join(destination, 'another-session', 'events.jsonl'))).rejects.toMatchObject({ code: 'ENOENT' });
+      await rm(metadata);
+      await expect(verify()).resolves.toEqual({ ok: false, reason: 'fx_session_not_found' });
     } finally { await rm(root, { recursive: true, force: true }); }
   });
 

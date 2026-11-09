@@ -6,7 +6,7 @@ import type { AgentExternalSessionsContribution, AgentExternalSessionsInvocation
   AgentExternalSessionsTranscriptPage } from '@happier-dev/plugin-sdk/sessions/external';
 
 import { listFxCandidates } from './candidates.js';
-import { fxFailureCode, fxResultFiles, fxSessionDir, fxSessionsRoot, FxSourceError, isFxRecord as isRecord, listFxSessionIds, readFxMetadata } from './source.js';
+import { fxFailureCode, fxSidecarFiles, fxSessionDir, fxSessionsRoot, FxSourceError, isFxRecord as isRecord, listFxSessionIds, readFxMetadata } from './source.js';
 import { fxPrefix, readFxTranscript } from './transcript.js';
 
 type Cursor = Readonly<{ v: 1; root: string; id: string; identity: string; count: number; position: number; prefix: string }>;
@@ -57,10 +57,12 @@ export function createFxExternalSessionsContribution(env: () => NodeJS.ProcessEn
       for (const id of (await listFxSessionIds(root, request.signal)).ids) {
         const dir = await fxSessionDir(root, id);
         files.add(join(dir, 'session.json'));
-        const results = await fxResultFiles(dir);
-        request.signal.throwIfAborted();
-        directories.add(results.directory);
-        for (const path of results.files) files.add(path);
+        for (const kind of ['tool-results', 'images'] as const) {
+          const sidecars = await fxSidecarFiles(dir, kind);
+          request.signal.throwIfAborted();
+          directories.add(sidecars.directory);
+          for (const path of sidecars.files) files.add(path);
+        }
       }
       return { source, accountingSource: { rootPath: root,
         resourceKey: `fx:transcripts:${createHash('sha256').update(root).digest('base64url')}`,
@@ -86,13 +88,27 @@ export function createFxExternalSessionsContribution(env: () => NodeJS.ProcessEn
         count, position: count, prefix: fxPrefix(projection.items, count) };
       const items: AgentExternalSessionsTranscriptPage['items'][number][] = [];
       let position = bound;
+      let truncated = projection.partial;
       while (items.length < request.maxItems && (request.direction === 'older' ? position > 0 : position < count)) {
         const index = request.direction === 'older' ? position - 1 : position;
-        const nextItems = request.direction === 'older' ? [projection.items[index]!.item, ...items] : [...items, projection.items[index]!.item];
+        const row = await projection.hydrateRow(projection.items[index]!);
+        truncated ||= row.partial === true;
+        let nextItems = request.direction === 'older' ? [row.item, ...items] : [...items, row.item];
         const nextPosition = position + (request.direction === 'older' ? -1 : 1);
-        const trial = { ok: true as const, value: { items: nextItems,
-          nextCursor: encode({ ...base, position: nextPosition }), tailCursor: encode(base), hasMore: true, truncated: projection.partial } };
-        if (!isAgentExternalSessionsResultWithinByteBudget(trial, request.maxSerializedBytes)) {
+        const trial = () => ({ ok: true as const, value: { items: nextItems,
+          nextCursor: encode({ ...base, position: nextPosition }), tailCursor: encode(base), hasMore: true, truncated } });
+        let fits = isAgentExternalSessionsResultWithinByteBudget(trial(), request.maxSerializedBytes);
+        if (!fits) {
+          // The caller owns transport capacity. Preserve an otherwise valid
+          // image-bearing item explicitly when its inline bytes cannot fit.
+          // The cursor continues to witness the full canonical projection.
+          if (!items.length && row.imageUnavailableItem) {
+            nextItems = [row.imageUnavailableItem];
+            truncated = true;
+            fits = isAgentExternalSessionsResultWithinByteBudget(trial(), request.maxSerializedBytes);
+          }
+        }
+        if (!fits) {
           if (!items.length) throw new FxSourceError('agent_error');
           break;
         }
@@ -101,7 +117,7 @@ export function createFxExternalSessionsContribution(env: () => NodeJS.ProcessEn
       }
       const hasMore = request.direction === 'older' ? position > 0 : position < count;
       return { items, nextCursor: hasMore ? encode({ ...base, position }) : null,
-        tailCursor: encode(base), hasMore, truncated: projection.partial };
+        tailCursor: encode(base), hasMore, truncated };
     }),
     readAfterTranscript: request => guarded(request, async () => {
       const root = fxSessionsRoot(request.source, env());
@@ -122,14 +138,17 @@ export function createFxExternalSessionsContribution(env: () => NodeJS.ProcessEn
       let count = prior.count;
       const items: AgentExternalSessionsTranscriptPage['items'][number][] = [];
       while (count < projection.items.length && items.length < request.maxItems) {
-        const nextItems = [...items, projection.items[count]!.item];
+        const row = await projection.hydrateRow(projection.items[count]!);
+        if (row.partial) return { outcome: 'read_failed' as const };
+        const nextItems = [...items, row.item];
         const nextCursor = encode({ ...prior, count: count + 1, position: count + 1, prefix: fxPrefix(projection.items, count + 1) });
         if (!isAgentExternalSessionsResultWithinByteBudget({ ok: true, value: { outcome: 'advanced', items: nextItems,
           nextCursor, boundary: projection.identity, hasMore: true } }, request.maxSerializedBytes)) {
+          if (!items.length && row.imageUnavailableItem) return { outcome: 'read_failed' as const };
           if (!items.length) throw new FxSourceError('agent_error');
           break;
         }
-        items.push(projection.items[count]!.item);
+        items.push(row.item);
         count++;
       }
       return { outcome: 'advanced' as const, items, nextCursor: encode({ ...prior, count, position: count,

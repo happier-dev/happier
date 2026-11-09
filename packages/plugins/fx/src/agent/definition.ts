@@ -19,7 +19,7 @@ export const AGENT_DEFINITION = Object.freeze({
     },
     handoff: { vendorStateTransfer: 'unsupported' },
     localControl: { supported: true, topology: 'exclusive', attachStrategy: 'terminal_host' },
-    runtimeInput: { inFlightSteerSupported: false, terminalPromptInjectionSupported: false },
+    runtimeInput: { inFlightSteerSupported: true, terminalPromptInjectionSupported: false },
     tools: { delivery: 'native_mcp', support: 'supported' },
   },
   sessionModeDescriptor: { source: 'acp', semantics: 'agent-modes', runtimeSwitch: 'acp-setSessionMode' },
@@ -28,7 +28,7 @@ export const AGENT_DEFINITION = Object.freeze({
     supportsSelection: true,
     supportsFreeform: false,
     nonAcpApplyScope: 'next_prompt',
-    acpApplyBehavior: 'set_model',
+    // Model selection uses session/set_config_option for this advertised id.
     acpModelConfigOptionId: 'model',
     dynamicProbe: 'auto',
     defaultMode: 'default',

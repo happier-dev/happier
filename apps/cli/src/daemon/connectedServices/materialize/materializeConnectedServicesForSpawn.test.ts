@@ -2,9 +2,11 @@ import { existsSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { lstat, mkdir, mkdtemp, readFile, realpath, rm, symlink, utimes, writeFile } from 'node:fs/promises';
 import * as filesystem from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { performance } from 'node:perf_hooks';
+import { PassThrough, Readable } from 'node:stream';
+import * as nativeProcess from '@happier-dev/cli-common/process';
 
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
@@ -14,10 +16,19 @@ vi.mock('node:fs/promises', async (importOriginal) => {
   return { ...actual, readdir: vi.fn(actual.readdir) };
 });
 
+// Isolate platform home lookup while preserving the real materializer and filesystem.
+vi.mock('node:os', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:os')>();
+  return { ...actual, homedir: vi.fn(actual.homedir) };
+});
+
 import { AccountSettingsSchema, buildConnectedServiceCredentialRecord, QualifiedConnectedAccountListResponseV4Schema } from '@happier-dev/protocol';
 import * as nativeFilesystem from '@happier-dev/plugin-sdk/fs';
 import { resolveCodexRuntimeHomeEnvironment } from '../../../../../../packages/plugins/codex/src/agent/auth/services/state/sharing/files';
 import { ApiClient } from '@/api/api';
+import type { DaemonState } from '@/api/types';
+import { createProviderAccountSettingsController } from '@/daemon/lifecycle/providerAccountSettings';
+import { setActiveAccountSettingsSnapshot, resetActiveAccountSettingsSnapshotForTests } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { reloadConfiguration } from '@/configuration';
 import { logger } from '@/utils/logger';
@@ -30,6 +41,13 @@ import { resolveExecutionRunConnectedServicesEnv } from '@/agent/runtime/bridges
 import { resolveRequesterSessionRuntimeDirectories } from '@/daemon/sessionEncryption/createRequesterSessionRuntimeContext';
 import { buildInactiveSessionResumeSpawnOptions } from '@/daemon/sessions/runtimeSnapshot/buildInactiveSessionResumeSpawnOptions';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
+import type { AgentLaunchPayload } from '@/daemon/agentIsolation/agentLaunchFrame';
+import { readAgentLaunchFrame } from '@/daemon/agentIsolation/agentLaunchFrame';
+import { executeAgentLaunchPayload, publishAgentLaunchMaterials } from '@/daemon/agentIsolation/agentLaunchShim';
+import { createUnixAgentIdentityLaunch } from '@/daemon/agentIsolation/unixAgentIdentityAdapter';
+import { createAgentIsolationSessionContext } from '@/daemon/agentIsolation/agentIsolationSessionContext';
+import { prepareSessionMcpLocalTransport } from '@/mcp/runtime/sessionMcpLocalTransport';
+import { authorizeResolvedProjectExecLaunchForHost } from '@/plugins/runtime/invocation/services/exec';
 import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
 import { createForegroundPurposeOwnerFixture } from '@/daemon/agentRuntime/prepareForegroundAdmission.connectedServices.testkit';
 import {
@@ -50,6 +68,7 @@ import { readConnectedServiceStateSharingManifest } from '../stateSharing/connec
 import { createConnectedAccountPurposeBindingOwner } from '../purposeBindings/ConnectedAccountPurposeBindingOwner';
 import { createExecutionRunConnectedServicesBridge } from '../runs/executionRunMaterialization';
 import { createConnectedAccountRequestAuthSubjectRegistry } from '../requestAuth/ConnectedAccountRequestAuthSubjectRegistry';
+import { writeConnectedAccountRequestAuthCapabilityFile, verifyConnectedAccountRequestAuthCapabilityFile } from '../requestAuth/capabilityFile';
 import { ConnectedServiceRuntimeRegistry } from '../runtimeRegistry/registry';
 import { verifyResumeReachableThroughCatalog } from '../catalogHooks';
 import { resolveConnectedServiceAuthForSpawn } from '../resolveConnectedServiceAuthForSpawn';
@@ -60,6 +79,8 @@ import {
 
 type MaterializeParams = Parameters<typeof materializeConnectedServicesForSpawnProduction>[0];
 
+let retentionPolicyForTest: { mode: 'days'; days: number } | null = null;
+
 let runtimeFixture: Awaited<ReturnType<typeof createAdmittedPluginRuntimeFixture>> | null = null;
 
 function isMaterializationPhase(fields: unknown, materializationKey: string, phase: string, status: string): boolean {
@@ -68,6 +89,277 @@ function isMaterializationPhase(fields: unknown, materializationKey: string, pha
     && 'phase' in fields && fields.phase === phase
     && 'status' in fields && fields.status === status;
 }
+
+it('materializes native configuration from the supplied environment home', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'claude-environment-native-home-'));
+  const actualOs = await vi.importActual<typeof import('node:os')>('node:os');
+  let result: Awaited<ReturnType<typeof materializeConnectedServicesForSpawnProduction>> = null;
+  let bindingLease: { dispose(): void } | undefined;
+  try {
+    const suppliedHome = join(root, 'supplied-home');
+    const native = join(suppliedHome, '.claude');
+    await mkdir(native, { recursive: true });
+    await writeFile(join(native, 'settings.json'), JSON.stringify({ cleanupPeriodDays: 365, theme: 'light' }));
+    vi.mocked(homedir).mockReturnValue(join(root, 'platform-home'));
+    const declaration = resolveQualifiedPurposeDeclarationSnapshotForAgentSpawn({
+      agentId: 'claude', contributions: runtimeFixture!.registry.contributes,
+    })!;
+    const scope = declaration.fileMaterializationPurposes[0]!;
+    const fixture = createForegroundPurposeOwnerFixture({
+      consumer: scope.purpose.consumer, service: scope.serviceRefs[0]!, purpose: scope.purpose.purpose,
+      materializeAccount: async () => ({ kind: 'files', files: { '.credentials.json': Buffer.from('{"token":"selected"}') } }),
+    });
+    bindingLease = fixture.owner.activateSessionPurposeBindings({
+      sessionId: 'environment-home', purposes: declaration.purposes, bindings: [fixture.binding],
+    });
+    result = await materializeConnectedServicesForSpawnProduction({
+      agentId: 'claude', materializationKey: 'environment-home', purposeBindingSessionId: 'environment-home',
+      connectedAccountsOwner: fixture.owner,
+      connectedAccountMaterializationAuthority: { kind: 'qualified', purposeBindings: [fixture.binding], requestAuthPurposeBindings: [] },
+      qualifiedPurposeBindingSnapshot: { ...declaration, bindings: [fixture.binding] },
+      activeServerDir: root, baseDir: join(root, 'materialized'), recordsByServiceId: new Map(),
+      processEnv: { HOME: suppliedHome, USERPROFILE: suppliedHome },
+      accountSettings: { connectedServicesProviderStateSharingSettingsV1: {
+        v: 1, defaults: { configMode: 'copied', stateMode: 'isolated' }, byAgentId: {}, acknowledgedRisksByAgentId: {},
+      } },
+    });
+    expect(result?.env.HAPPIER_CLAUDE_NATIVE_CONFIG_DIR).toBe(native);
+    expect(JSON.parse(await readFile(join(result!.env.CLAUDE_CONFIG_DIR!, 'settings.json'), 'utf8')))
+      .toEqual({ cleanupPeriodDays: 365, theme: 'light' });
+  } finally {
+    vi.mocked(homedir).mockImplementation(actualOs.homedir);
+    bindingLease?.dispose();
+    await result?.cleanupOnExit?.();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+it.each(['copied', 'isolated'] as const)('reapplies Agent Account settings after %s native configuration refresh', async configMode => {
+  const root = await mkdtemp(join(tmpdir(), 'claude-account-retention-materialize-'));
+  const materialized: Awaited<ReturnType<typeof materializeConnectedServicesForSpawnProduction>>[] = [];
+  retentionPolicyForTest = { mode: 'days', days: 365 };
+  let bindingLease: { dispose(): void } | undefined;
+  try {
+    const native = join(root, 'native');
+    await mkdir(native);
+    await writeFile(join(native, 'settings.json'), JSON.stringify({ cleanupPeriodDays: 7, theme: 'dark' }));
+    const declaration = resolveQualifiedPurposeDeclarationSnapshotForAgentSpawn({
+      agentId: 'claude', contributions: runtimeFixture!.registry.contributes,
+    })!;
+    const scope = declaration.fileMaterializationPurposes[0]!;
+    const fixture = createForegroundPurposeOwnerFixture({
+      consumer: scope.purpose.consumer, service: scope.serviceRefs[0]!, purpose: scope.purpose.purpose,
+      materializeAccount: async () => ({ kind: 'files', files: { '.credentials.json': Buffer.from('{"token":"selected"}') } }),
+    });
+    bindingLease = fixture.owner.activateSessionPurposeBindings({
+      sessionId: 'retention-profile', purposes: declaration.purposes, bindings: [fixture.binding],
+    });
+    const refresh = async () => {
+      const result = await materializeConnectedServicesForSpawnProduction({
+        agentId: 'claude', materializationKey: 'retention-profile', purposeBindingSessionId: 'retention-profile',
+        connectedAccountsOwner: fixture.owner,
+        connectedAccountMaterializationAuthority: {
+          kind: 'qualified', purposeBindings: [fixture.binding], requestAuthPurposeBindings: [],
+        },
+        qualifiedPurposeBindingSnapshot: { ...declaration, bindings: [fixture.binding] },
+        activeServerDir: root, baseDir: join(root, 'materialized'), recordsByServiceId: new Map(),
+        processEnv: { CLAUDE_CONFIG_DIR: native },
+        accountSettings: { connectedServicesProviderStateSharingSettingsV1: {
+          v: 1, defaults: { configMode, stateMode: 'isolated' }, byAgentId: {}, acknowledgedRisksByAgentId: {},
+        } },
+      });
+      materialized.push(result);
+      expect(result?.env.CLAUDE_CONFIG_DIR).toBeTruthy();
+      return JSON.parse(await readFile(join(result!.env.CLAUDE_CONFIG_DIR!, 'settings.json'), 'utf8'));
+    };
+    if (configMode === 'isolated') {
+      // The Account database is the boundary. Bob's admitted scoped record
+      // must win over Alice's daemon record without reaching Alice's home.
+      const requester = await materializeConnectedServicesForSpawnProduction({
+        agentId: 'claude', materializationKey: 'requester-retention',
+        activeServerDir: join(root, 'requester'), baseDir: join(root, 'requester-materialized'),
+        recordsByServiceId: new Map(), allowNativeAccountState: false,
+        processEnv: { CLAUDE_CONFIG_DIR: native },
+        accountPluginSettingsSource: {
+          recordAdapter: { bindOperation: async () => ({
+            readRecord: async () => ({ status: 'present', revision: 1,
+              values: { claudeSessionRetentionV1: { mode: 'days', days: 120 } } }),
+            writeRecord: async () => { throw new Error('Requester settings must be read-only'); },
+          }) },
+          readReleasedAccountSettings: () => null,
+        },
+      });
+      materialized.push(requester);
+      expect(JSON.parse(await readFile(join(requester!.env.CLAUDE_CONFIG_DIR!, 'settings.json'), 'utf8')))
+        .toMatchObject({ cleanupPeriodDays: 120 });
+      expect(JSON.parse(await readFile(join(native, 'settings.json'), 'utf8')))
+        .toEqual({ cleanupPeriodDays: 7, theme: 'dark' });
+    }
+    expect(await refresh()).toMatchObject({ cleanupPeriodDays: 365 });
+    await writeFile(join(native, 'settings.json'), JSON.stringify({ cleanupPeriodDays: 14, theme: 'light' }));
+    expect(await refresh()).toMatchObject({ cleanupPeriodDays: 365 });
+    expect(JSON.parse(await readFile(join(native, 'settings.json'), 'utf8'))).toEqual({ cleanupPeriodDays: 14, theme: 'light' });
+
+  } finally {
+    retentionPolicyForTest = null;
+    bindingLease?.dispose();
+    for (const result of materialized.reverse()) await result?.cleanupOnExit?.();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+it.skipIf(process.platform !== 'linux')('persists the admitted Account policy in the actual member home without replacing member settings', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'claude-member-retention-'));
+  const agentHome = join(root, 'member');
+  const runtimeHome = join(agentHome, 'runtime', 'retained-session');
+  const memberConfig = join(runtimeHome, 'native-home', 'settings.json');
+  let result: Awaited<ReturnType<typeof materializeConnectedServicesForSpawnProduction>> = null;
+  try {
+    await mkdir(join(runtimeHome, 'native-home'), { recursive: true, mode: 0o700 });
+    await writeFile(memberConfig, JSON.stringify({ cleanupPeriodDays: 14, theme: 'member' }), { mode: 0o600 });
+    const materializeAndLaunch = async (policy: { mode: 'days'; days: number } | { mode: 'providerDefault' } | null,
+      unavailable?: 'plugin' | 'version' | 'agent' | 'build') => {
+      result = await materializeConnectedServicesForSpawnProduction({
+        agentId: 'claude', materializationKey: 'member-retention',
+        activeServerDir: join(root, 'requester'), baseDir: join(root, 'materialized'),
+        recordsByServiceId: new Map(), allowNativeAccountState: false, processEnv: {},
+        agentLaunchTarget: { runtimeHome },
+        accountPluginSettingsSource: {
+          recordAdapter: { bindOperation: async () => ({
+            readRecord: async () => ({ status: 'present', revision: 1, values: { claudeSessionRetentionV1: policy, undeclaredPrivateValue: 'must-not-cross' } }),
+            writeRecord: async () => { throw new Error('Launch must not rewrite Account preferences'); },
+          }) },
+          readReleasedAccountSettings: () => null,
+        },
+      });
+      const material = result?.agentLaunchMaterials;
+      if (!material) throw new Error('Member launch material unavailable');
+      const launch = createUnixAgentIdentityLaunch({
+        ...material, managedHappierBinaryPath: '/managed/happier', executable: process.execPath,
+        args: ['-e', 'process.stdout.write(require("node:fs").readFileSync(process.env.CLAUDE_CONFIG_DIR+"/settings.json","utf8"))'],
+        cwd: root, selectedEnvironmentKeys: ['CLAUDE_CONFIG_DIR'],
+      });
+      let frame = await readAgentLaunchFrame(Readable.from([launch.stdinPreamble], { objectMode: false }));
+      const application = frame.accountSettingsApplication;
+      expect(application?.account).toEqual({ claudeSessionRetentionV1: policy });
+      if (application && unavailable) frame = { ...frame, accountSettingsApplication: { ...application,
+        ...(unavailable === 'plugin' ? { pluginId: 'happier.agent.unavailable' } : {}),
+        ...(unavailable === 'version' ? { pluginVersion: 'different-version' } : {}),
+        ...(unavailable === 'agent' ? { localAgentId: 'different-agent' } : {}),
+        ...(unavailable === 'build' ? { cliVersion: 'different-build' } : {}),
+      } };
+      const stdout = new PassThrough();
+      const chunks: Buffer[] = [];
+      stdout.on('data', chunk => { chunks.push(Buffer.from(chunk)); });
+      expect(await executeAgentLaunchPayload(frame, { agentHome, input: Readable.from([]), stdout, stderr: new PassThrough() }))
+        .toEqual({ code: 0, signal: null });
+      const observed = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+      // Retained user configuration survives selected credential cleanup.
+      expect(JSON.parse(await readFile(memberConfig, 'utf8'))).toEqual(observed);
+      await result?.cleanupOnExit?.();
+      result = null;
+      return observed;
+    };
+    expect(await materializeAndLaunch({ mode: 'days', days: 365 })).toEqual({ cleanupPeriodDays: 365, theme: 'member' });
+    expect(await materializeAndLaunch(null)).toEqual({ cleanupPeriodDays: 365, theme: 'member' });
+    expect(await materializeAndLaunch({ mode: 'providerDefault' })).toEqual({ theme: 'member' });
+    for (const unavailable of ['plugin', 'version', 'agent', 'build'] as const) {
+      expect(await materializeAndLaunch({ mode: 'days', days: 36500 }, unavailable)).toEqual({ theme: 'member' });
+    }
+  } finally {
+    await result?.cleanupOnExit?.();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+it('reapplies the latest Account preference after a delayed materialization completes and excludes foreign scopes', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'claude-retention-completion-'));
+  const native = join(root, 'native');
+  const results: Awaited<ReturnType<typeof materializeConnectedServicesForSpawnProduction>>[] = [];
+  let releaseRead = () => {};
+  let markReadStarted = () => {};
+  const readGate = new Promise<void>(resolve => { releaseRead = resolve; });
+  const readStarted = new Promise<void>(resolve => { markReadStarted = resolve; });
+  let pending: Promise<Awaited<ReturnType<typeof materializeConnectedServicesForSpawnProduction>>> | undefined;
+  let bindingLease: { dispose(): void } | undefined;
+  let state: DaemonState = { status: 'running', startedAt: 101 };
+  const errors: unknown[] = [];
+  const controller = createProviderAccountSettingsController({
+    scopeKey: 'completion-account', activeServerDir: root, materializationBaseDir: join(root, 'materialized'),
+    processEnv: { CLAUDE_CONFIG_DIR: native },
+    apiMachine: { updateDaemonState: async updater => {
+      state = updater(state);
+      return 'published';
+    } },
+    onError: error => { errors.push(error); },
+  });
+  const source = (days: number, delayed = false): NonNullable<MaterializeParams['accountPluginSettingsSource']> => ({
+    recordAdapter: { bindOperation: async () => ({
+      readRecord: async () => {
+        // Delay only the Account database response; all admitted settings,
+        // home materialization, editor and publication logic remain real.
+        if (delayed) { markReadStarted(); await readGate; }
+        return { status: 'present', revision: 1, values: { claudeSessionRetentionV1: { mode: 'days', days } } };
+      },
+      writeRecord: async () => { throw new Error('Materialization must not rewrite Account preferences'); },
+    }) },
+    readReleasedAccountSettings: () => null,
+  });
+  try {
+    await mkdir(native);
+    await writeFile(join(native, 'settings.json'), '{"cleanupPeriodDays":7}');
+    const declaration = resolveQualifiedPurposeDeclarationSnapshotForAgentSpawn({
+      agentId: 'claude', contributions: runtimeFixture!.registry.contributes,
+    })!;
+    const scope = declaration.fileMaterializationPurposes[0]!;
+    const fixture = createForegroundPurposeOwnerFixture({
+      consumer: scope.purpose.consumer, service: scope.serviceRefs[0]!, purpose: scope.purpose.purpose,
+      materializeAccount: async () => ({ kind: 'files', files: { '.credentials.json': Buffer.from('{"token":"selected"}') } }),
+    });
+    bindingLease = fixture.owner.activateSessionPurposeBindings({
+      sessionId: 'completion-profile', purposes: declaration.purposes, bindings: [fixture.binding],
+    });
+    const materialize = (activeServerDir: string, accountPluginSettingsSource: NonNullable<MaterializeParams['accountPluginSettingsSource']>) =>
+      materializeConnectedServicesForSpawnProduction({
+        agentId: 'claude', materializationKey: 'completion-profile', purposeBindingSessionId: 'completion-profile',
+        connectedAccountsOwner: fixture.owner,
+        connectedAccountMaterializationAuthority: { kind: 'qualified', purposeBindings: [fixture.binding], requestAuthPurposeBindings: [] },
+        qualifiedPurposeBindingSnapshot: { ...declaration, bindings: [fixture.binding] },
+        activeServerDir, baseDir: join(activeServerDir, 'materialized'), recordsByServiceId: new Map(),
+        processEnv: { CLAUDE_CONFIG_DIR: native }, accountPluginSettingsSource,
+        accountSettings: { connectedServicesProviderStateSharingSettingsV1: {
+          v: 1, defaults: { configMode: 'isolated', stateMode: 'isolated' }, byAgentId: {}, acknowledgedRisksByAgentId: {},
+        } },
+      });
+    retentionPolicyForTest = { mode: 'days', days: 365 };
+    setActiveAccountSettingsSnapshot({ source: 'network', scopeKey: 'completion-account',
+      settings: AccountSettingsSchema.parse({}), rawSettings: {}, settingsVersion: 1, loadedAtMs: 1, settingsSecretsReadKeys: [] });
+    await controller.refresh();
+    pending = materialize(root, source(365, true));
+    await readStarted;
+    retentionPolicyForTest = { mode: 'days', days: 36500 };
+    await controller.refresh();
+    releaseRead();
+    const completed = await pending;
+    results.push(completed);
+    expect(JSON.parse(await readFile(join(completed!.env.CLAUDE_CONFIG_DIR!, 'settings.json'), 'utf8')).cleanupPeriodDays).toBe(36500);
+    await writeFile(join(native, 'settings.json'), '{"cleanupPeriodDays":14}');
+    const foreign = await materialize(join(root, 'foreign-account'), source(120));
+    results.push(foreign);
+    expect(JSON.parse(await readFile(join(foreign!.env.CLAUDE_CONFIG_DIR!, 'settings.json'), 'utf8')).cleanupPeriodDays).toBe(120);
+    expect(JSON.parse(await readFile(join(native, 'settings.json'), 'utf8')).cleanupPeriodDays).toBe(14);
+    expect(errors).toEqual([]);
+  } finally {
+    releaseRead();
+    if (pending) await pending.catch(() => null);
+    await controller.stop();
+    resetActiveAccountSettingsSnapshotForTests();
+    retentionPolicyForTest = null;
+    bindingLease?.dispose();
+    for (const result of results.reverse()) await result?.cleanupOnExit?.();
+    await rm(root, { recursive: true, force: true });
+  }
+});
 
 it('prepares an isolated requester Agent home without a Connected Account for Provider or API-key authentication', async () => {
   const baseDir = await mkdtemp(join(tmpdir(), 'requester-native-only-'));
@@ -95,6 +387,30 @@ it('prepares an isolated requester Agent home without a Connected Account for Pr
     expect(requesterVerifications).toBe(8);
     await materialized?.cleanupOnExit?.();
   } finally { await rm(baseDir, { recursive: true, force: true }); }
+});
+
+it('publishes the selected member native home when a Provider needs no native credential file', async () => {
+  const agentHome = await mkdtemp(join(tmpdir(), 'member-provider-home-'));
+  let materialized: Awaited<ReturnType<typeof materializeConnectedServicesForSpawnProduction>> = null;
+  try {
+    materialized = await materializeConnectedServicesForSpawnProduction({
+      agentId: 'codex', materializationKey: 'provider-only', activeServerDir: agentHome,
+      baseDir: join(agentHome, 'daemon-staging'), recordsByServiceId: new Map(), allowNativeAccountState: false,
+      processEnv: {}, agentLaunchTarget: { runtimeHome: join(agentHome, 'session', 'codex') },
+      isAccountRuntimeCurrent: async () => true,
+    });
+    const material = materialized?.agentLaunchMaterials;
+    expect(material).toBeDefined();
+    if (!material) throw new Error('Expected member material');
+    expect(material.selectedMaterials).toEqual([]);
+    await publishAgentLaunchMaterials({ v: 1, executable: process.execPath, args: [], cwd: agentHome, ...material }, agentHome);
+    const nativeHome = await lstat(material.environment.CODEX_HOME!);
+    expect(nativeHome.isDirectory()).toBe(true);
+    if (process.platform !== 'win32') expect(nativeHome.mode & 0o777).toBe(0o700);
+  } finally {
+    await materialized?.cleanupOnExit?.();
+    await rm(agentHome, { recursive: true, force: true });
+  }
 });
 
 it.each([
@@ -141,12 +457,23 @@ beforeAll(async () => {
   runtimeFixture = await createAdmittedPluginRuntimeFixture({
     controller: pluginReloadController,
     runtimeOptions: {
+      // The Account database is the only substituted boundary; Agent admission,
+      // scoped settings validation, descriptor copies and the native editor stay real.
+      accountSettingsRecordAdapter: {
+        bindOperation: async () => ({
+          readRecord: async model => ({ status: 'present', revision: 1,
+            values: model.identity.pluginId === 'happier.agent.claude' && retentionPolicyForTest
+              ? { claudeSessionRetentionV1: retentionPolicyForTest } : {} }),
+          writeRecord: async () => { throw new Error('Materialization must not write Account preferences'); },
+        }),
+      },
       pluginIds: [
         'happier.agent.claude',
         'happier.agent.codex',
         'happier.agent.gemini',
         'happier.agent.opencode',
         'happier.agent.pi',
+        'happier.agent.antigravity',
       ],
     },
   });
@@ -207,6 +534,260 @@ const LEGACY_UNFENCED_ONE_SHOT_MATERIALIZATION_AUTHORITY = {
 } as const satisfies MaterializeParams['connectedAccountMaterializationAuthority'];
 
 describe('materializeConnectedServicesForSpawn', () => {
+  it('retains Antigravity companion state while detaching a shared account home', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-antigravity-retained-companions-'));
+    const results: Awaited<ReturnType<typeof materializeConnectedServicesForSpawnProduction>>[] = [];
+    let bindingLease: { dispose(): void } | undefined;
+    try {
+      const id = 'retained-conversation';
+      const nativeHome = join(root, 'native');
+      const conversations = join(nativeHome, 'antigravity-acp', 'conversations');
+      const brain = join(nativeHome, 'antigravity-acp', 'brain');
+      await mkdir(conversations, { recursive: true });
+      await mkdir(brain, { recursive: true });
+      for (const session of [id, 'unrelated-conversation']) {
+        await writeFile(join(conversations, `${session}.db`), `${session} trajectory`);
+        await writeFile(join(conversations, `${session}.meta`), JSON.stringify({ id: session }));
+        await mkdir(join(brain, session));
+        await writeFile(join(brain, session, 'task.md'), `${session} task`);
+      }
+      const declaration = resolveQualifiedPurposeDeclarationSnapshotForAgentSpawn({
+        agentId: 'antigravity', contributions: runtimeFixture!.registry.contributes,
+      })!;
+      const scope = declaration.fileMaterializationPurposes[0]!;
+      const fixture = createForegroundPurposeOwnerFixture({
+        consumer: scope.purpose.consumer, service: scope.serviceRefs[0]!, purpose: scope.purpose.purpose,
+        accountId: 'retained-profile',
+        materializeAccount: async () => ({ kind: 'files', files: {
+          'antigravity-acp/acp_token.json': Buffer.from('{"access_token":"fixture-access"}'),
+        } }),
+      });
+      bindingLease = fixture.owner.activateSessionPurposeBindings({
+        sessionId: 'retained-companions', purposes: declaration.purposes, bindings: [fixture.binding],
+      });
+      const prepare = async (stateMode: 'shared' | 'isolated') => {
+        const result = await materializeConnectedServicesForSpawnProduction({
+          agentId: 'antigravity', materializationKey: 'retained-companions', vendorResumeId: id,
+          purposeBindingSessionId: 'retained-companions', connectedAccountsOwner: fixture.owner,
+          connectedAccountMaterializationAuthority: {
+            kind: 'qualified', purposeBindings: [fixture.binding], requestAuthPurposeBindings: [],
+          },
+          qualifiedPurposeBindingSnapshot: { ...declaration, bindings: [fixture.binding] },
+          activeServerDir: join(root, 'server'), baseDir: join(root, 'materialized'),
+          recordsByServiceId: new Map(), processEnv: { GEMINI_HOME: nativeHome },
+          accountSettings: { connectedServicesProviderStateSharingSettingsV1: {
+            v: 1, defaults: { configMode: 'isolated', stateMode }, byAgentId: {}, acknowledgedRisksByAgentId: {},
+          } },
+        });
+        results.push(result);
+        if (!result?.env.GEMINI_HOME) throw new Error('Antigravity native home unavailable');
+        return result.env.GEMINI_HOME;
+      };
+      const home = await prepare('shared');
+      expect((await lstat(join(home, 'antigravity-acp', 'conversations'))).isSymbolicLink()).toBe(true);
+      await results[0]?.cleanupOnExit?.();
+      expect(await prepare('isolated')).toBe(home);
+      expect((await lstat(join(home, 'antigravity-acp', 'conversations'))).isSymbolicLink()).toBe(false);
+      expect(await readFile(join(home, 'antigravity-acp', 'conversations', `${id}.db`), 'utf8')).toBe(`${id} trajectory`);
+      expect(JSON.parse(await readFile(join(home, 'antigravity-acp', 'conversations', `${id}.meta`), 'utf8'))).toEqual({ id });
+      expect(await readFile(join(home, 'antigravity-acp', 'brain', id, 'task.md'), 'utf8')).toBe(`${id} task`);
+      expect(existsSync(join(home, 'antigravity-acp', 'conversations', 'unrelated-conversation.db'))).toBe(false);
+      expect(existsSync(join(home, 'antigravity-acp', 'brain', 'unrelated-conversation'))).toBe(false);
+      expect(await verifyResumeReachableThroughCatalog('antigravity', { targetMaterializedRoot: home, vendorResumeId: id }))
+        .toMatchObject({ ok: true, resolvedPath: join(home, 'antigravity-acp', 'conversations', `${id}.db`) });
+    } finally {
+      bindingLease?.dispose();
+      for (const result of results.reverse()) await result?.cleanupOnExit?.();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('preserves the live OpenCode request-auth capability through credential rematerialization', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-opencode-request-auth-rematerialization-'));
+    const declaration = resolveQualifiedPurposeDeclarationSnapshotForAgentSpawn({
+      agentId: 'opencode', contributions: runtimeFixture!.registry.contributes,
+    })!;
+    const use = declaration.requestAuthUses![0]!;
+    const scope = declaration.authorizedPurposes.find(candidate => candidate.purpose.purpose === use.purpose.purpose)!;
+    const fixture = createForegroundPurposeOwnerFixture({
+      consumer: use.purpose.consumer, purpose: use.purpose.purpose, service: scope.serviceRefs[0]!,
+      materializeAccount: async () => { throw new Error('Request auth must not materialize OAuth credential bytes'); },
+    });
+    const sessionId = 'live-opencode-request-auth';
+    const lease = fixture.owner.activateSessionPurposeBindings({
+      sessionId, purposes: declaration.purposes, bindings: [fixture.binding],
+    });
+    try {
+      const params: MaterializeParams = {
+        agentId: 'opencode', materializationKey: sessionId, purposeBindingSessionId: sessionId,
+        activeServerDir: join(root, 'server'), baseDir: join(root, 'materialized'),
+        recordsByServiceId: new Map(), connectedAccountsOwner: fixture.owner, processEnv: {},
+        connectedAccountMaterializationAuthority: {
+          kind: 'qualified', purposeBindings: [fixture.binding], requestAuthPurposeBindings: [fixture.binding],
+        },
+        qualifiedPurposeBindingSnapshot: { ...declaration, bindings: [fixture.binding] },
+      };
+      const first = await materializeConnectedServicesForSpawnProduction(params);
+      const materializedRootDir = first!.requestAuthMaterializedRoot!;
+      const descriptor = await writeConnectedAccountRequestAuthCapabilityFile({
+        rootDir: materializedRootDir, materializationId: sessionId,
+        subjectScopeDigest: 'a'.repeat(64), httpPort: 43123,
+      });
+      const refreshed = await materializeConnectedServicesForSpawnProduction(params);
+      expect(refreshed!.env.HAPPIER_CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_PATH).toBe(descriptor.path);
+      await expect(verifyConnectedAccountRequestAuthCapabilityFile({
+        ...descriptor, materializedRootDir,
+      })).resolves.toEqual(descriptor);
+      await refreshed!.cleanupOnExit!();
+      await expect(lstat(descriptor.path)).rejects.toMatchObject({ code: 'ENOENT' });
+    } finally {
+      lease.dispose();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    { agentId: 'claude', environmentKey: 'CLAUDE_CONFIG_DIR', nativeFile: '.credentials.json', failsAccountSettingsRead: false },
+    { agentId: 'claude', environmentKey: 'CLAUDE_CONFIG_DIR', nativeFile: '.credentials.json', failsAccountSettingsRead: true },
+    { agentId: 'codex', environmentKey: 'CODEX_HOME', nativeFile: 'auth.json', failsAccountSettingsRead: false },
+  ] as const)('projects selected $agentId native-home and file-environment bytes without optional Account settings (failed read: $failsAccountSettingsRead)', async ({
+    agentId, environmentKey, nativeFile, failsAccountSettingsRead,
+  }) => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-agent-selected-frame-'));
+    let result: Awaited<ReturnType<typeof materializeConnectedServicesForSpawnProduction>> = null;
+    let bindingLease: { dispose(): void } | undefined;
+    try {
+      const declaration = resolveQualifiedPurposeDeclarationSnapshotForAgentSpawn({
+        agentId, contributions: runtimeFixture!.registry.contributes,
+      })!;
+      const scope = declaration.fileMaterializationPurposes[0]!;
+      const selectedNative = Buffer.from('{"selected":"native-home"}');
+      const selectedFile = Buffer.from([0, 255, 10, 128]);
+      const fileId = 'selected-file-environment';
+      const fixture = createForegroundPurposeOwnerFixture({
+        consumer: scope.purpose.consumer, service: scope.serviceRefs[0]!,
+        purpose: scope.purpose.purpose,
+        // Genuine credential boundary; selection/currentness and both materializers stay real.
+        materializeAccount: async ({ request }) => {
+          if (request.kind !== 'files') throw new Error('This fixture admits file material only');
+          return { kind: 'files', files: Object.fromEntries((request.fileIds ?? [nativeFile])
+            .filter(id => id === fileId || id === nativeFile).map(id => [
+            id, id === fileId ? selectedFile : selectedNative,
+          ])) };
+        },
+      });
+      const sessionId = `selected-frame-${agentId}`;
+      bindingLease = fixture.owner.activateSessionPurposeBindings({
+        sessionId, purposes: declaration.purposes, bindings: [fixture.binding],
+      });
+      const daemonHome = join(root, 'daemon-private');
+      await mkdir(daemonHome);
+      await writeFile(join(daemonHome, 'unselected-sentinel'), 'never-selected');
+      await writeFile(join(daemonHome, 'settings.json'), JSON.stringify({ cleanupPeriodDays: 365 }));
+      // Prospective owner-local port: S0 supplies this only after launch admission.
+      // Its existing frame/publisher owns publication, refresh and lease cleanup.
+      const agentLaunchTarget: Pick<AgentLaunchPayload, 'runtimeHome'> = {
+        runtimeHome: join(root, 'agent-home', 'runtime', sessionId),
+      };
+      const params = {
+        agentId, materializationKey: sessionId, purposeBindingSessionId: sessionId,
+        activeServerDir: daemonHome, baseDir: join(daemonHome, 'materialized'),
+        recordsByServiceId: new Map(), connectedAccountsOwner: fixture.owner,
+        connectedAccountMaterializationAuthority: {
+          kind: 'qualified' as const, purposeBindings: [fixture.binding], requestAuthPurposeBindings: [],
+        },
+        qualifiedPurposeBindingSnapshot: {
+          ...declaration, bindings: [fixture.binding],
+          fileEnvironmentUses: [{
+            purpose: scope.purpose, serviceRefs: scope.serviceRefs, fileId,
+            environmentKey: 'SELECTED_AUTH_FILE',
+          }],
+        },
+        allowNativeAccountState: false,
+        ...(failsAccountSettingsRead ? { accountPluginSettingsSource: {
+          // Account storage is a boundary; a failed optional read must neither
+          // deny launch nor substitute the daemon Account's 365-day policy.
+          recordAdapter: { bindOperation: async () => ({
+            readRecord: async () => { throw new Error('Account storage unavailable'); },
+            writeRecord: async () => { throw new Error('Launch materialization is read-only'); },
+          }) },
+          readReleasedAccountSettings: () => null,
+        } } : {}),
+        processEnv: { [environmentKey]: daemonHome, HAPPIER_HOME_DIR: daemonHome,
+          HAPPIER_DAEMON_TOKEN: 'unselected-daemon-sentinel' },
+        agentLaunchTarget,
+      };
+      result = await materializeConnectedServicesForSpawnProduction(params);
+      expect(result).toMatchObject({
+        agentLaunchMaterials: {
+          runtimeHome: agentLaunchTarget.runtimeHome,
+          environment: {
+            [environmentKey]: join(agentLaunchTarget.runtimeHome, 'native-home'),
+            SELECTED_AUTH_FILE: join(agentLaunchTarget.runtimeHome, 'files', '0'),
+          },
+          selectedMaterials: expect.arrayContaining([
+            { relativePath: `native-home/${nativeFile}`, contentBase64: selectedNative.toString('base64') },
+            { relativePath: 'files/0', contentBase64: selectedFile.toString('base64') },
+          ]),
+        },
+      });
+      expect(JSON.stringify(result?.agentLaunchMaterials?.environment)).not.toContain(daemonHome);
+      expect(result?.agentLaunchMaterials?.environment).not.toHaveProperty('HAPPIER_HOME_DIR');
+      expect(result?.agentLaunchMaterials?.environment).not.toHaveProperty('HAPPIER_DAEMON_TOKEN');
+      expect(JSON.stringify(result)).not.toContain('never-selected');
+      expect(JSON.parse(await readFile(join(daemonHome, 'settings.json'), 'utf8'))).toEqual({ cleanupPeriodDays: 365 });
+      const selectedHome = result?.env[environmentKey];
+      if (!selectedHome) throw new Error('Selected materialized home unavailable');
+      await expect(readFile(join(selectedHome, 'settings.json'))).rejects.toMatchObject({ code: 'ENOENT' });
+      expect(result?.agentLaunchMaterials?.selectedMaterials).not.toContainEqual(expect.objectContaining({ relativePath: 'native-home/settings.json' }));
+      // The host projects bytes; only the existing Agent shim may publish at this destination.
+      expect(existsSync(agentLaunchTarget.runtimeHome)).toBe(false);
+      if (process.platform === 'linux') {
+        const material = result?.agentLaunchMaterials;
+        if (!material) throw new Error('The actual materializer must produce the selected launch bytes');
+        const registry = new ConnectedServiceRuntimeRegistry();
+        registry.registerTarget({ pid: process.pid, sessionId, agentId, materializationKey: sessionId, agentLaunchMaterials: material });
+        const transport = await prepareSessionMcpLocalTransport({ agentUid: process.getuid!() });
+        // OS identity is a boundary. This source test does not claim cross-UID
+        // socket access, sudo readiness or a loaded native effective observation.
+        const identity = vi.spyOn(nativeProcess, 'execFileWithDeadline').mockResolvedValue({
+          stdout: `happier-agent:x:${process.getuid!() + 1}:1001::${join(root, 'agent-home')}:/usr/sbin/nologin\n`, stderr: '',
+        });
+        try {
+          const context = createAgentIsolationSessionContext({
+            machine: { read: () => ({ enabled: true,
+              status: { kind: 'effective', platform: 'linux', agentUser: 'happier-agent' }, workspaceRoots: [root] }) },
+            managedHappierBinaryPath: '/opt/happier/cli/current/happier',
+            sessionRequester: { serverId: 'home', accountId: 'owner', machineId: 'machine', installationId: 'installation' },
+            sessionRequesterHomeServerIdentityId: 'home', sessionCustodianAccountId: 'owner', hostHomeServerIdentityId: 'home',
+            readMaterial: () => registry.getBySessionId(sessionId)?.agentLaunchMaterials,
+          });
+          const prepared = await context.prepareLaunch!({ requesterIdentity: context.requesterIdentity, sessionMcpContext: transport.localContext });
+          const launch = await authorizeResolvedProjectExecLaunchForHost({
+            launch: { command: '/agent', args: ['--stdio'], cwd: root, env: { HAPPIER_DAEMON_TOKEN: 'custodian-sentinel' } },
+            agentIsolation: prepared, agentNativeLaunch: true, signal: new AbortController().signal, assertCurrent() {},
+          });
+          try {
+            const payload = await readAgentLaunchFrame(Readable.from([Buffer.from(launch.stdinPreamble!)], { objectMode: false }));
+            expect(payload.runtimeHome).toBe(material.runtimeHome);
+            expect(payload.environment).toMatchObject(material.environment);
+            expect(payload.selectedMaterials).toEqual(expect.arrayContaining([...material.selectedMaterials]));
+            expect(JSON.stringify(payload)).not.toContain('custodian-sentinel');
+            registry.unregisterPid(process.pid);
+            await expect(authorizeResolvedProjectExecLaunchForHost({
+              launch: { command: '/agent', args: [], cwd: root, env: {} }, agentIsolation: prepared,
+              agentNativeLaunch: true, signal: new AbortController().signal, assertCurrent() {},
+            })).rejects.toMatchObject({ code: 'agent_isolation_unavailable' });
+          } finally { await launch.release(); }
+        } finally { identity.mockRestore(); await transport.retire(); }
+      }
+    } finally {
+      await result?.cleanupOnExit?.();
+      bindingLease?.dispose();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it('does not project a selected account without a materialized credential use', async () => {
     const root = await mkdtemp(join(tmpdir(), 'happier-unmaterialized-account-'));
     const declaration = resolveQualifiedPurposeDeclarationSnapshotForAgentSpawn({

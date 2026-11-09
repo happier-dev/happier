@@ -5,9 +5,11 @@ import { AgentExternalSessionTranscriptRawRecordSchema } from '@happier-dev/plug
 import type { AgentExternalSessionTranscriptItem } from '@happier-dev/plugin-sdk/sessions/external';
 
 import { fxFile, fxSessionDir, FxSourceError, isFxRecord as isRecord, readFxMetadata } from './source.js';
+import { fxImageUnavailable, readFxImageSourceWitness, readFxToolImages, readFxUserImages } from './images.js';
 
 export type FxTranscriptRow = Readonly<{ item: AgentExternalSessionTranscriptItem; text?: string; unsupported?: true;
-  result?: Readonly<{ handle: string; callId: string; failed: boolean }> }>;
+  images?: unknown; imageWitness?: string; partial?: boolean; imageUnavailableItem?: AgentExternalSessionTranscriptItem;
+  result?: Readonly<{ handle: string; callId: string; failed: boolean; imageHandle?: unknown }> }>;
 
 // Exact v0.0.14 ConversationEvent payload fields. Unknown fields may carry
 // new branch/content meaning and cannot be silently treated as old frames.
@@ -104,11 +106,14 @@ export async function readFxTranscript(root: string, id: string, signal: AbortSi
       }
       const text = value.text;
       switch (kind) {
-        case 'user':
+        case 'user': {
           if (open || typeof text !== 'string') { unsupported(seq, frame.timestamp_ms); break; }
           open = true;
-          pending = text ? [textRow(seq, frame.timestamp_ms, text, true)] : [];
+          const images = value.images ?? [];
+          pending = text || !Array.isArray(images) || images.length
+            ? [{ ...textRow(seq, frame.timestamp_ms, text, true), images }] : [];
           break;
+        }
         case 'assistant':
           if (!open || calls.size || typeof text !== 'string') { unsupported(seq, frame.timestamp_ms); break; }
           flushAssistant();
@@ -143,7 +148,7 @@ export async function readFxTranscript(root: string, id: string, signal: AbortSi
           if (value.completeness !== 'complete') partial = true;
           calls.delete(value.call_id);
           results.set(value.call_id, { ...toolRow(seq, frame.timestamp_ms, { type: 'tool-result', callId: value.call_id, output: '' }),
-            result: { handle: value.artifact_ref, callId: value.call_id, failed: value.status === 'failure' } });
+            result: { handle: value.artifact_ref, callId: value.call_id, failed: value.status === 'failure', imageHandle: value.tool_image_handle } });
           if (!calls.size) {
             flushAssistant();
             // ACP history pairs each completed result with its call in call
@@ -208,18 +213,22 @@ export async function readFxTranscript(root: string, id: string, signal: AbortSi
   signal.throwIfAborted();
   for (let index = 0; index < items.length; index++) {
     const row = items[index]!;
+    const imageWitness = await readFxImageSourceWitness(dir, row.images, row.result?.imageHandle, signal);
+    items[index] = { ...row, imageWitness };
     if (!row.result) continue;
+    let body: string;
     try {
       const bytes = await readFile(await fxFile(dir, 'tool-results', row.result.handle));
       signal.throwIfAborted();
-      const body = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
-      items[index] = { ...toolRow(Number(row.item.id.slice(3)), row.item.createdAtMs,
-        { type: 'tool-result', callId: row.result.callId, output: body, isError: row.result.failed }), text: body };
+      body = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
     } catch {
       signal.throwIfAborted();
-      items[index] = { item: createExternalSessionUnsupportedTranscriptItem({ agentId: 'fx', id: row.item.id, createdAtMs: row.item.createdAtMs }) };
+      body = '[Tool result unavailable]';
       partial = true;
     }
+    const data = { type: 'tool-result', callId: row.result.callId, output: body, isError: row.result.failed };
+    const hydrated = toolRow(Number(row.item.id.slice(3)), row.item.createdAtMs, data);
+    items[index] = { ...hydrated, text: body, result: row.result, imageWitness };
   }
   const after = await stat(path);
   if (before.dev !== after.dev || before.ino !== after.ino || after.size < before.size
@@ -227,12 +236,33 @@ export async function readFxTranscript(root: string, id: string, signal: AbortSi
     throw new FxSourceError('source_invalid');
   }
   return { items, partial: partial || items.some(row => row.unsupported), complete: !yielded, throughSeq,
+    hydrateRow: (row: FxTranscriptRow) => hydrateFxTranscriptRow(dir, row, signal),
     identity: `${before.dev}:${before.ino}:${before.birthtimeMs}` };
+}
+
+/** Only a demanded page/follow row opens its native image bodies. Search consumes the text index. */
+async function hydrateFxTranscriptRow(dir: string, row: FxTranscriptRow, signal: AbortSignal): Promise<FxTranscriptRow> {
+  if (row.images === undefined && !row.result) return row;
+  const images = row.images !== undefined ? await readFxUserImages(dir, row.images, signal)
+    : await readFxToolImages(dir, row.result!.imageHandle, signal);
+  const body = row.text ?? '';
+  const text = images.partial ? fxImageUnavailable(body) : body;
+  const seq = Number(row.item.id.slice(3));
+  const project = (text: string) => row.result
+    ? toolRow(seq, row.item.createdAtMs, { type: 'tool-result', callId: row.result.callId, output: text, isError: row.result.failed })
+    : textRow(seq, row.item.createdAtMs, text, true);
+  const hydrated = project(text);
+  return { ...hydrated, partial: images.partial,
+    ...(images.media.length ? { item: { ...hydrated.item, raw: { ...hydrated.item.raw, media: images.media } },
+      imageUnavailableItem: project(fxImageUnavailable(body)).item } : {}) };
 }
 
 /** A normalized prefix witness also catches same-size rewrites and sidecar-only edits. */
 export function fxPrefix(rows: readonly FxTranscriptRow[], count: number): string {
   const digest = createHash('sha256');
-  for (let index = 0; index < count; index++) digest.update(JSON.stringify(rows[index]!.item));
+  for (let index = 0; index < count; index++) {
+    const row = rows[index]!;
+    digest.update(JSON.stringify([row.item, row.images, row.result?.imageHandle, row.imageWitness]));
+  }
   return digest.digest('base64url');
 }

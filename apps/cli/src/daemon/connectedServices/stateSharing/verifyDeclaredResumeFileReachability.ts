@@ -12,6 +12,7 @@ import {
 } from '@happier-dev/plugin-sdk/sessions/file-stores';
 
 import type { ConnectedServiceStateSharingDescriptor } from '@/agent/catalog/types';
+import type { VerifyResumeReachableResult } from '../verifyResumeReachableTypes';
 import { isSafeConnectedServiceStateSharingEntry } from './connectedServiceStateSharingManifest';
 
 const RESUME_SESSION_FILE_NOT_FOUND_REASON = 'resume_session_file_not_found';
@@ -20,9 +21,7 @@ type VerifyResumeReachable = (
   input: AgentConnectedAccountResumeReachabilityInputV1,
 ) => Promise<AgentConnectedAccountResumeReachabilityResultV1>;
 
-export type VerifyDeclaredResumeFileReachabilityResult =
-  | Readonly<{ ok: true; resolvedPath: string }>
-  | Readonly<{ ok: false; reason: string }>;
+export type VerifyDeclaredResumeFileReachabilityResult = VerifyResumeReachableResult;
 
 function isWithinRoot(root: string, candidate: string): boolean {
   const pathFromRoot = relative(root, candidate);
@@ -88,11 +87,13 @@ export async function verifyDeclaredResumeFileReachability(input: Readonly<{
     return { ok: false, reason: RESUME_SESSION_FILE_NOT_FOUND_REASON };
   }
   let matchedPath: string | null = null;
+  const requiredPaths = new Set<string>();
   const sessionFiles = Object.freeze({
     verifyDeclaredPaths: async (request: Parameters<
       AgentConnectedAccountResumeReachabilityInputV1['sessionFiles']['verifyDeclaredPaths']
     >[0]) => {
       if (request.paths.length === 0) return Object.freeze({ found: false });
+      const verifiedPaths: string[] = [];
       for (const required of request.paths) {
         if (!isSafeConnectedServiceStateSharingEntry(required.path)) return Object.freeze({ found: false });
         const candidate = resolve(targetMaterializedRoot, ...required.path.split(/[\\/]+/));
@@ -111,10 +112,12 @@ export async function verifyDeclaredResumeFileReachability(input: Readonly<{
             if (!contents || typeof contents !== 'object' || Array.isArray(contents)) continue;
           }
           found = true;
+          verifiedPaths.push(canonicalPath);
           break;
         }
         if (!found) return Object.freeze({ found: false });
       }
+      for (const path of verifiedPaths) requiredPaths.add(path);
       return Object.freeze({ found: true });
     },
     findDeclaredCandidate: async (request: Parameters<
@@ -153,7 +156,11 @@ export async function verifyDeclaredResumeFileReachability(input: Readonly<{
     sessionFiles,
   })).catch(() => ({ ok: false as const, reason: 'resume_reachability_check_failed' }));
   if (!result.ok) return result;
-  return matchedPath
-    ? { ok: true, resolvedPath: matchedPath }
+  // Exact declared paths already carry Agent-owned native correlation. Keep
+  // the candidate as primary when supplied, and preserve every companion for
+  // the retained-state importer rather than copying only one trajectory.
+  const resolvedPath = matchedPath ?? requiredPaths.values().next().value;
+  return resolvedPath
+    ? { ok: true, resolvedPath, ...(requiredPaths.size ? { requiredPaths: [...requiredPaths] } : {}) }
     : { ok: false, reason: RESUME_SESSION_FILE_NOT_FOUND_REASON };
 }

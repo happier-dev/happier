@@ -1,7 +1,8 @@
 import { appendFile, cp, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import * as fs from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, sep } from 'node:path';
+import { createHash } from 'node:crypto';
 import type { AgentExternalSessionsInvocation } from '@happier-dev/plugin-sdk/sessions/external';
 import { AgentExternalSessionTranscriptRawRecordSchema } from '@happier-dev/plugin-sdk/sessions/external';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -55,6 +56,166 @@ async function fixture() {
 }
 
 describe('FX v0.0.14 native External Sessions reader', () => {
+  // Source-derived 2026-10-27: vercel-labs/fx@1a070af32cdf, session_log.zig
+  // appendHistoryTurn; session_codec.zig writePersistedToolImages; result_store.zig storeToolImages.
+  const png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jP0cAAAAASUVORK5CYII=';
+  it('loads only selected-page image bodies and reads none for text search or an unchanged follow', async () => {
+    const { contribution, invocation, source, eventsPath, sessionDir } = await fixture();
+    const bytes = Buffer.from(png, 'base64');
+    await mkdir(join(sessionDir, 'images'));
+    const frames = [];
+    for (let index = 0; index < 12; index++) {
+      await writeFile(join(sessionDir, 'images', `${index}.bin`), bytes);
+      frames.push({ schema_version: 3, seq: index * 2 + 1, timestamp_ms: index * 2 + 1,
+        event: { user: { text: `image ${index}`, images: [{ snapshot_path: `images/${index}.bin`,
+          snapshot_sha256: createHash('sha256').update(bytes).digest('hex'), media_type: 'image/png' }] } } },
+      { schema_version: 3, seq: index * 2 + 2, timestamp_ms: index * 2 + 2, event: { turn_completed: { files: [], turn_summary: null } } });
+    }
+    await writeFile(eventsPath, frames.map(frame => JSON.stringify(frame)).join('\n') + '\n');
+    const imageDirectory = await fs.realpath(join(sessionDir, 'images'));
+    const reads = vi.spyOn(fs, 'readFile');
+    const imageReads = () => reads.mock.calls.filter(([path]) => String(path).startsWith(imageDirectory + sep));
+    const page = await contribution.pageTranscript({ ...invocation, source, remoteSessionId: 'native-session', direction: 'older', maxItems: 1 });
+    expect(page).toMatchObject({ ok: true, value: { items: [{ id: 'fx:23', raw: { media: [{ data: png }] } }] } });
+    expect(imageReads()).toHaveLength(1);
+    reads.mockClear();
+    expect(await contribution.listCandidates({ ...invocation, source, maxItems: 10, searchTarget: 'content', searchTerm: 'image 5' }))
+      .toMatchObject({ ok: true, value: { candidates: [{ match: { sourceItemId: 'fx:11' } }] } });
+    expect(imageReads()).toHaveLength(0);
+    if (!page.ok || !page.value.tailCursor) throw new Error('Missing frontier');
+    expect(await contribution.readAfterTranscript({ ...invocation, source, remoteSessionId: 'native-session', cursor: page.value.tailCursor, maxItems: 1 }))
+      .toMatchObject({ ok: true, value: { outcome: 'already_current' } });
+    expect(imageReads()).toHaveLength(0);
+  });
+  it.each(['', 'inspect this'])('preserves an image-bearing user turn (%j) without reading its original path', async text => {
+    const { contribution, invocation, source, eventsPath, sessionDir } = await fixture();
+    const bytes = Buffer.from(png, 'base64');
+    await mkdir(join(sessionDir, 'images'));
+    await writeFile(join(sessionDir, 'images', 'image-1.bin'), bytes);
+    await writeFile(eventsPath, [
+      { schema_version: 3, seq: 1, timestamp_ms: 1, event: { user: { text, images: [{
+        id: 1, path: '/never-read/original.png', media_type: 'image/png', snapshot_path: 'images/image-1.bin',
+        snapshot_sha256: createHash('sha256').update(bytes).digest('hex'), inline_data: null, source_ref: null,
+      }] } } },
+      { schema_version: 3, seq: 2, timestamp_ms: 2, event: { turn_completed: { files: [], turn_summary: null } } },
+      { schema_version: 3, seq: 3, timestamp_ms: 3, event: { user: { text: 'unfinished image', images: [{
+        media_type: 'image/png', snapshot_path: 'images/image-1.bin', snapshot_sha256: '0'.repeat(64),
+      }] } } },
+    ].map(row => JSON.stringify(row)).join('\n') + '\n');
+    const imageReads = vi.spyOn(fs, 'readFile');
+    const page = await contribution.pageTranscript({ ...invocation, source, remoteSessionId: 'native-session', direction: 'older', maxItems: 100 });
+    expect(page).toMatchObject({ ok: true, value: { truncated: false, items: [{ id: 'fx:1', raw: {
+      role: 'user', content: { type: 'text', text }, media: [{ type: 'image', mimeType: 'image/png', data: png }],
+    } }] } });
+    if (page.ok) expect(AgentExternalSessionTranscriptRawRecordSchema.safeParse(page.value.items[0]!.raw).success).toBe(true);
+    expect(imageReads.mock.calls.filter(([path]) => path === join(sessionDir, 'images', 'image-1.bin'))).toHaveLength(1);
+  });
+
+  it.each(['images/missing.bin', 'images/corrupt.bin', '../outside.png', 'https://example.com/image.png', 'images/link.bin'])('keeps unavailable user images explicit and partial (%s)', async snapshot_path => {
+    const { contribution, invocation, source, eventsPath, sessionDir } = await fixture();
+    await mkdir(join(sessionDir, 'images'));
+    await writeFile(join(sessionDir, 'images', 'corrupt.bin'), Buffer.from(png, 'base64'));
+    await symlink(join(sessionDir, 'session.json'), join(sessionDir, 'images', 'link.bin'));
+    await writeFile(eventsPath, [
+      { schema_version: 3, seq: 1, timestamp_ms: 1, event: { user: { text: '', images: [{ id: 1,
+        path: '/never-read/original.png', media_type: 'image/png', snapshot_path,
+        snapshot_sha256: '0'.repeat(64), inline_data: null, source_ref: null }] } } },
+      { schema_version: 3, seq: 2, timestamp_ms: 2, event: { turn_completed: { files: [], turn_summary: null } } },
+    ].map(row => JSON.stringify(row)).join('\n') + '\n');
+    const page = await contribution.pageTranscript({ ...invocation, source, remoteSessionId: 'native-session', direction: 'older', maxItems: 100 });
+    expect(page).toMatchObject({ ok: true, value: { truncated: true, items: [{ raw: {
+      role: 'user', content: { type: 'text', text: expect.stringMatching(/image unavailable/i) },
+    } }] } });
+    expect(await contribution.listCandidates({ ...invocation, source, maxItems: 10, searchTarget: 'content', searchTerm: 'unavailable' }))
+      // Text coverage does not open/validate images or invent searchable image-failure prose.
+      .toMatchObject({ ok: true, value: { candidates: [], contentCoverage: 'complete' } });
+  });
+
+  it('restores tool image handles together with the text result and marks a missing pack partial', async () => {
+    const { contribution, invocation, source, eventsPath, events, sessionDir, resultPath } = await fixture();
+    const pack = (await readFile(new URL('./__fixtures__/fx-v0.0.14-tool-images.json', import.meta.url), 'utf8')).trimEnd();
+    const digest = createHash('sha256').update(pack).digest('hex');
+    const handle = `image-result-read_file-${createHash('sha256').update('call-1').digest('hex').slice(0, 16)}-${digest.slice(0, 16)}.txt`;
+    await writeFile(join(sessionDir, 'tool-results', handle), pack);
+    await writeFile(eventsPath, events.replace('"tool_image_handle":null', `"tool_image_handle":"${handle}"`));
+    const reads = vi.spyOn(fs, 'readFile');
+    const imagePackPath = await fs.realpath(join(sessionDir, 'tool-results', handle));
+    const request = { ...invocation, source, remoteSessionId: 'native-session', direction: 'older' as const, maxItems: 100 };
+    const page = await contribution.pageTranscript(request);
+    expect(page).toMatchObject({ ok: true, value: { truncated: false, items: expect.arrayContaining([expect.objectContaining({ id: 'fx:9', raw: expect.objectContaining({
+      media: [{ type: 'image', mimeType: 'image/png', data: png }],
+    }) })]) } });
+    expect(reads.mock.calls.filter(([path]) => path === imagePackPath)).toHaveLength(1);
+    reads.mockClear();
+    expect(await contribution.listCandidates({ ...invocation, source, maxItems: 10, searchTarget: 'content', searchTerm: 'full referenced result' }))
+      .toMatchObject({ ok: true, value: { candidates: [{ match: { sourceItemId: 'fx:9' } }] } });
+    expect(reads.mock.calls.filter(([path]) => path === imagePackPath)).toHaveLength(0);
+    const originalText = await readFile(resultPath);
+    await rm(resultPath);
+    const missingText = await contribution.pageTranscript(request);
+    expect(missingText).toMatchObject({ ok: true, value: { truncated: true, items: expect.arrayContaining([expect.objectContaining({
+      id: 'fx:9', raw: expect.objectContaining({ media: [{ type: 'image', mimeType: 'image/png', data: png }] }),
+    })]) } });
+    expect(JSON.stringify(missingText)).toMatch(/tool result unavailable/i);
+    await writeFile(resultPath, originalText);
+    await writeFile(join(sessionDir, 'tool-results', handle), pack + ' ');
+    expect(await contribution.pageTranscript(request)).toMatchObject({ ok: true, value: { truncated: true } });
+    await rm(join(sessionDir, 'tool-results', handle));
+    const missing = await contribution.pageTranscript(request);
+    expect(missing).toMatchObject({ ok: true, value: { truncated: true } });
+    expect(JSON.stringify(missing)).toMatch(/image unavailable/i);
+    expect(JSON.stringify(missing)).toContain('full referenced result');
+  });
+
+  it.each([{ images: [] }, { images: [{ type: 'image', mimeType: 'image/png', data: '', source_ref: '/never-read/deferred.png' }] }])
+    ('keeps unavailable image-pack content explicit (%j)', async ({ images }) => {
+      const { contribution, invocation, source, eventsPath, events, sessionDir } = await fixture();
+      const pack = JSON.stringify(images);
+      const handle = `image-result-read_file-1111111111111111-${createHash('sha256').update(pack).digest('hex').slice(0, 16)}.txt`;
+      await writeFile(join(sessionDir, 'tool-results', handle), pack);
+      await writeFile(eventsPath, events.replace('"tool_image_handle":null', `"tool_image_handle":"${handle}"`));
+      const page = await contribution.pageTranscript({ ...invocation, source, remoteSessionId: 'native-session', direction: 'older', maxItems: 100 });
+      expect(page).toMatchObject({ ok: true, value: { truncated: true } });
+      expect(JSON.stringify(page)).toContain('full referenced result beyond the inline preview\\n[Image unavailable]');
+      if (page.ok) expect(page.value.items.find(item => item.id === 'fx:9')?.raw.media).toBeUndefined();
+    });
+
+  it('observes image sidecars and invalidates a frontier when their verified bytes change', async () => {
+    const { contribution, invocation, source, eventsPath, sessionDir } = await fixture();
+    const bytes = Buffer.concat([Buffer.from(png, 'base64'), Buffer.alloc(8192)]);
+    const imagePath = join(sessionDir, 'images', 'image-1.bin');
+    await mkdir(join(sessionDir, 'images'));
+    await writeFile(imagePath, bytes);
+    await writeFile(eventsPath, '');
+    const empty = await contribution.pageTranscript({ ...invocation, source, remoteSessionId: 'native-session', direction: 'older', maxItems: 100 });
+    if (!empty.ok || !empty.value.tailCursor) throw new Error('Expected initial frontier');
+    await writeFile(eventsPath, [
+      { schema_version: 3, seq: 1, timestamp_ms: 1, event: { user: { text: 'image body', images: [{
+        id: 1, path: '/never-read/original.png', media_type: 'image/png', snapshot_path: 'images/image-1.bin',
+        snapshot_sha256: createHash('sha256').update(bytes).digest('hex'), inline_data: null, source_ref: null,
+      }] } } },
+      { schema_version: 3, seq: 2, timestamp_ms: 2, event: { turn_completed: { files: [], turn_summary: null } } },
+    ].map(row => JSON.stringify(row)).join('\n') + '\n');
+    expect(await contribution.resolveSource({ ...invocation, source })).toMatchObject({ ok: true, value: {
+      accountingSource: { watchFileChanges: { files: expect.arrayContaining([imagePath]),
+        topologyDirectories: expect.arrayContaining([join(sessionDir, 'images')]) } },
+    } });
+    const page = await contribution.pageTranscript({ ...invocation, source, remoteSessionId: 'native-session', direction: 'older', maxItems: 100 });
+    if (!page.ok || !page.value.tailCursor) throw new Error('Expected native image frontier');
+    const bounded = await contribution.pageTranscript({ ...invocation, source, remoteSessionId: 'native-session',
+      direction: 'older', maxItems: 100, maxSerializedBytes: 3000 });
+    expect(bounded).toMatchObject({ ok: true, value: { truncated: true, items: [{ id: 'fx:1', raw: {
+      content: { type: 'text', text: expect.stringMatching(/image body.*\n\[Image unavailable\]/) },
+    } }] } });
+    expect(Buffer.byteLength(JSON.stringify(bounded))).toBeLessThanOrEqual(3000);
+    expect(await contribution.readAfterTranscript({ ...invocation, source, remoteSessionId: 'native-session',
+      cursor: empty.value.tailCursor, maxItems: 100, maxSerializedBytes: 3000 }))
+      .toMatchObject({ ok: true, value: { outcome: 'read_failed' } });
+    await writeFile(imagePath, 'changed snapshot');
+    expect(await contribution.readAfterTranscript({ ...invocation, source, remoteSessionId: 'native-session',
+      cursor: page.value.tailCursor, maxItems: 100 })).toMatchObject({ ok: true, value: { outcome: 'gap_or_cursor_expired' } });
+  });
+
   it('finds decoded body-only text through the contribution and lands on the same transcript item', async () => {
     const { contribution, invocation, source } = await fixture();
     const listed = await contribution.listCandidates({ ...invocation, source, maxItems: 10,

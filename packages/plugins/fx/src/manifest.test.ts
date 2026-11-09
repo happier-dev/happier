@@ -1,7 +1,5 @@
-import {
-  derivePluginDaemonContributionRegistrationRights,
-  ingestPluginManifestV2,
-} from '@happier-dev/protocol';
+import { derivePluginDaemonContributionRegistrationRights } from '@happier-dev/protocol/plugins/contributions/catalog';
+import { ingestPluginManifestV2 } from '@happier-dev/protocol/plugins/manifest/ingest';
 import { projectAgentCapabilitiesV2FromDefinition } from '@happier-dev/plugin-sdk/agents';
 import { describe, expect, it } from 'vitest';
 
@@ -9,28 +7,13 @@ import { AGENT_DEFINITION } from './agent/definition.js';
 import { PLUGIN_MANIFEST } from './manifest.js';
 
 describe('FX plugin manifest', () => {
-  it('retains the released v0.0.13 native permission presets', () => {
-    // Installer latest.txt resolves to v0.0.13, commit 4d966e272cfc4296cdf703f409480088cf2e72ba.
-    expect(PLUGIN_MANIFEST.contributes.agents[0]?.runtime).toMatchObject({
-      kind: 'acp',
-      definition: { permissionModeMapping: { default: null, 'read-only': 'ask', 'safe-yolo': 'code' } },
-    });
-  });
-  it('ingests and declares the `fx acp` session runtime without a custom factory', () => {
+  it('ingests the plugin runtime that composes the shared ACP owner', () => {
     expect(ingestPluginManifestV2(PLUGIN_MANIFEST)).toMatchObject({ ok: true });
     expect(PLUGIN_MANIFEST).toHaveProperty('entrypoints.daemon', './.happier-plugin/daemon.js');
     expect(PLUGIN_MANIFEST.contributes.agents).toEqual([
       expect.objectContaining({
         id: 'fx',
-        runtime: expect.objectContaining({
-          kind: 'acp',
-          transport: expect.objectContaining({
-            kind: 'stdio',
-            executable: { kind: 'systemTool', id: 'fx-cli' },
-            // FX's documented ACP contract is exactly `fx acp`.
-            args: ['acp'],
-          }),
-        }),
+        runtime: { kind: 'custom' },
         primary: 'sessions',
       }),
     ]);
@@ -39,21 +22,24 @@ describe('FX plugin manifest', () => {
 
   it('projects capabilities from the agent definition through the canonical owner', () => {
     const [agent] = PLUGIN_MANIFEST.contributes.agents;
+    const { skills, providerStateSharing, ...coreCapabilities } = agent.capabilities;
     // The manifest must equal the canonical projection of its own definition:
     // hand-copied capability blocks (and a session-primary `executionRuns`
     // restatement) drift from the definition and fail manifest ingest.
-    expect(agent.capabilities).toEqual(
+    expect(coreCapabilities).toEqual(
       projectAgentCapabilitiesV2FromDefinition(AGENT_DEFINITION.core, {
         surfaces: ['externalSessions'],
         sessions: {
           open: ['create', 'resume'],
-          delivery: ['newTurn', 'followUp'],
+          delivery: ['newTurn', 'followUp', 'steer'],
           cancel: true,
           configuration: true,
           executionRunContext: { versions: [1] },
         },
       }),
     );
+    expect(skills).toMatchObject({ delivery: 'none', nativeDisable: 'unsupported', liveReload: 'unsupported' });
+    expect(providerStateSharing).toMatchObject({ config: { supported: true }, state: { supported: true } });
     // Terminal hosting is derived from `localControl.attachStrategy`, and tool
     // delivery from the definition's tool facts — never restated by hand.
     expect(agent.capabilities).toMatchObject({
@@ -76,7 +62,7 @@ describe('FX plugin manifest', () => {
       }],
     });
     expect(agent.surfaces?.externalSession).not.toHaveProperty('externalLinkedTakeover');
-    expect(agent).toMatchObject({ primary: 'sessions', runtime: { kind: 'acp' } });
+    expect(agent).toMatchObject({ primary: 'sessions', runtime: { kind: 'custom' } });
     expect(agent.capabilities.sessions?.open).toContain('resume');
   });
 
@@ -86,7 +72,7 @@ describe('FX plugin manifest', () => {
     )).toContainEqual(expect.objectContaining({
       family: 'agents',
       localId: 'fx',
-      requiredFields: expect.arrayContaining(['terminal', 'externalSessions']),
+      requiredFields: expect.arrayContaining(['factory', 'externalSessions']),
     }));
   });
 });

@@ -9,7 +9,12 @@ export type VerifyResumeReachableInput = Readonly<{
 }>;
 
 export type VerifyResumeReachableResult =
-  | Readonly<{ ok: true; resolvedPath: string }>
+  | Readonly<{
+      ok: true;
+      resolvedPath: string;
+      /** Exact host-verified companion files/subtrees required by the Agent. */
+      requiredPaths?: readonly string[];
+    }>
   | Readonly<{ ok: false; reason: string }>;
 
 export const REACHABILITY_CHECK_NOT_IMPLEMENTED_REASON = 'reachability_check_not_implemented' as const;

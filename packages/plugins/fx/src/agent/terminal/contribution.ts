@@ -1,4 +1,5 @@
 import type { AgentTerminalSurface } from '@happier-dev/plugin-sdk/agents/runtime';
+import { prepareFxConnectedAccount } from '../auth/connectedAccount.js';
 
 /**
  * FX has no terminal-only flags: the ordinary interactive `fx` command is the
@@ -7,9 +8,11 @@ import type { AgentTerminalSurface } from '@happier-dev/plugin-sdk/agents/runtim
  * `fx fx`.
  */
 export const FX_TERMINAL_CONTRIBUTION: AgentTerminalSurface = Object.freeze({
-  async resolveLaunch() {
+  async resolveLaunch(request) {
+    const environment = await prepareFxConnectedAccount(request.launchEnvironment);
     return {
       argv: [],
+      ...(environment ? { environment } : {}),
       process: { stdio: 'inherit' as const, windowsHide: true },
       presentation: {
         onLaunch: { target: 'local' as const, reason: 'fx_terminal_launch' },

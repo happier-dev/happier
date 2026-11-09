@@ -43,8 +43,8 @@ export async function fxFile(dir: string, ...parts: string[]): Promise<string> {
   return physical;
 }
 
-export async function fxResultFiles(dir: string): Promise<Readonly<{ directory: string; files: readonly string[] }>> {
-  const directory = join(dir, 'tool-results');
+export async function fxSidecarFiles(dir: string, kind: 'tool-results' | 'images'): Promise<Readonly<{ directory: string; files: readonly string[] }>> {
+  const directory = join(dir, kind);
   let info;
   try { info = await lstat(directory); }
   catch (error) {
