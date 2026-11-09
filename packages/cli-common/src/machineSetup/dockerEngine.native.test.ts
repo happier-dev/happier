@@ -1,7 +1,9 @@
 import { expect, it } from 'vitest';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { createDockerEngineSetupSteps } from './dockerEngine.js';
 import { applyMachineSetupEffectPlan, checkMachineSetupEffectPlan } from './index.js';
-import { createMachineSetupNativeBackend } from './nativeBackend.js';
+import { createMachineSetupNativeBackend, runMachineSetupNativeCommand } from './nativeBackend.js';
 
 it.each(['ubuntu', 'debian'] as const)('installs %s distro Docker, grants daemon access and starts the service idempotently', async distribution => {
     const steps = createDockerEngineSetupSteps({ distribution, daemonUsername: 'happier', enginePresent: false });
@@ -56,4 +58,49 @@ it.each(['ubuntu', 'debian'] as const)('installs %s distro Docker, grants daemon
     const repeated = await checkMachineSetupEffectPlan({ basis, steps, backend });
     expect(await applyMachineSetupEffectPlan({ plan: repeated, backend })).toMatchObject({ status: 'applied' });
     expect(effects).toEqual(before);
+});
+
+it.skipIf(process.getuid?.() !== 0).each([true, false])('preserves foreign Docker JSON and restarts only after successful candidate validation (%s)', async valid => {
+    const root = await mkdtemp('/run/happier-docker-config-test-');
+    const path = join(root, 'daemon.json');
+    const previous = JSON.stringify({ 'log-driver': 'json-file', 'log-opts': { 'max-size': '100m', 'max-file': '7', labels: 'team' }, 'live-restore': true });
+    const daemonConfig = { icc: false, 'log-opts': { 'max-size': '25m' } };
+    const steps = createDockerEngineSetupSteps({ distribution: 'ubuntu', daemonUsername: 'root', enginePresent: true, daemonConfig })
+        .filter(step => step.kind === 'file' || step.kind === 'serviceUnit')
+        .map(step => step.kind === 'file' ? { ...step, path } : step);
+    const effects: string[] = [];
+    const backend = createMachineSetupNativeBackend({ run: async command => {
+        if (command.executable === 'dockerd') {
+            expect(command.args).toEqual(['--validate', '--config-file', expect.any(String)]);
+            const candidate = JSON.parse(await readFile(command.args[2]!, 'utf8'));
+            expect(candidate).toEqual({ 'log-driver': 'json-file', 'log-opts': { 'max-size': '25m', 'max-file': '7', labels: 'team' }, 'live-restore': true, icc: false });
+            expect(await readFile(path, 'utf8')).toBe(previous);
+            effects.push('validate');
+            return { code: valid ? 0 : 1, stdout: '', stderr: '' };
+        }
+        if (command.executable === 'systemctl') {
+            if (command.args[0] === 'show') return { code: 0, stdout: 'LoadState=loaded\nUnitFileState=enabled\nActiveState=active\n', stderr: '' };
+            expect(command.args).toEqual(['restart', '--', 'docker.service']);
+            expect(JSON.parse(await readFile(path, 'utf8'))).toMatchObject(daemonConfig);
+            effects.push('restart');
+            return { code: 0, stdout: '', stderr: '' };
+        }
+        return runMachineSetupNativeCommand(command);
+    } });
+    const basis = { kind: 'bootstrap' as const, managedId: 'm-a', operationId: 'op-a', admittedInputDigest: 'a'.repeat(64) };
+    try {
+        await writeFile(path, previous, { mode: 0o644 });
+        const plan = await checkMachineSetupEffectPlan({ basis, steps, backend });
+        const applied = await applyMachineSetupEffectPlan({ plan, backend });
+        expect(applied).toMatchObject({ status: valid ? 'applied' : 'failed' });
+        expect(effects).toEqual(valid ? ['validate', 'restart'] : ['validate']);
+        if (!valid) expect(await readFile(path, 'utf8')).toBe(previous);
+        else {
+            const repeated = await checkMachineSetupEffectPlan({ basis, steps, backend });
+            expect(await applyMachineSetupEffectPlan({ plan: repeated, backend })).toMatchObject({ status: 'applied' });
+            expect(effects).toEqual(['validate', 'restart']);
+        }
+    } finally {
+        await rm(root, { recursive: true, force: true });
+    }
 });
