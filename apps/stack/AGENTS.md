@@ -47,9 +47,30 @@ hstack wt status
 
 A stack READY lists each participating daemon's loaded source; stale participants are refreshed or reported, never silently included.
 
+In 0.3 development, QA source stacks adopt the repository producer's completed
+server, daemon, SDK and Plugin UI products on their actual execution host. They
+never compile a replacement in the consumer stack. `buildSourceRuntimeBundle`
+owns runtime production and reuse; `resolveRuntimeBuildAuthority` owns producer
+identity. The existing dev reload coordinator keeps the producer current on
+eligible execution hosts, with nl3 first. A plain source reload records one
+request-start time and requires each requested server and daemon capture at or
+after that time. The coordinator forwards the same boundary to every execution
+host and any explicit UI export. `--source-after=<ISO timestamp>` can require a
+later capture to include a later fix; it cannot weaken the default boundary.
+`--allow-older-source` explicitly permits older completed compatible captures,
+while still honoring an explicit `--source-after` value. General source starts
+and other non-reload adoption keep their newest-completed default. Check the
+printed capture time and input identity before attributing a loaded fix. A
+producer failure retains the incumbent and reports the reason and recovery
+action; it never falls back to a consumer compiler. Borrowed Expo remains the
+default; `--ui=export` requests a finite producer-owned web export. Registered
+built-runtime publication remains a separate supported contract.
+
 Do not create a dedicated stack merely because testing or QA involves stack services. When a human explicitly requests a dedicated, isolated, stable, controlled, snapshot-backed, or manual-restart QA stack, invoke `.agents/skills/happier-controlled-stack-qa`; that skill owns creation, session-wide reuse of one remembered stack, runtime selection, reload boundaries, borrowed Expo, and teardown. Additional or replacement stacks require an explicit human request.
 
 When a human has already authorized or named a stack, use that exact stack for the session rather than creating a replacement because its identity was forgotten.
+
+Each QA stack owns all of its fixture daemons, including a recipient Account's Machine daemon. One stack reload refreshes every fixture identity and its daemon against that stack's current endpoints before QA resumes, so QA never depends on another lane's stack lifecycle.
 
 Prefer stack env files and `hstack stack env ...` over hand-editing `env.local`.
 
@@ -59,7 +80,7 @@ Keep the default `main` stack stable and do not commandeer a human-owned develop
 
 - The deterministic `repo-<checkout>-<id>` stack resolved from the current checkout is its repo-local development stack. Resolve it from current stack metadata and verify its `repo.dir` matches the current checkout; never guess from a similar stack name or mutate every stack that references the checkout.
 - Its managed database contains retained development data and is not disposable. Never delete, reset, recreate, replace, truncate, clean, or discard it to fix migration drift.
-- When an agent edits a local-only/development-exposed migration already applied to that database, the same task automatically owns in-place reconciliation and canonical migration deployment. No separate confirmation or backup/snapshot/clone is required for this one target.
+- If an applied migration was edited anyway, reconciliation under the 2026-10-31 **Migrations: no edits during development, one consolidation before 0.3 release** row in `.project/OWNER-RULINGS.md` belongs to the same task, including canonical migration deployment. No separate confirmation or backup/snapshot/clone is required for this one target.
 - If its writers are running, quiesce only stack-owned processes through `hstack`, record whether the stack was running, reconcile, and restore the prior running state. Never kill by port or stop another stack.
 - Locate the live database from the stack's current runtime placement (`dev-targets.json` `runtimePlacement.server`, then that target's stack-state `server-light` data dir), not from the local default path; a placed server uses the target's database, and other copies are not authoritative.
 - Reconcile to the canonical schema, never to the ledger alone:

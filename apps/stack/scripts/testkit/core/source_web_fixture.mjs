@@ -30,6 +30,9 @@ export async function prepareFiniteSourceWebFixture({ sourceRepo, repoDir }) {
   const uiInput = join(repoDir, 'apps/ui/sources/app/_layout.tsx');
   const uiSource = 'export const admissionInput = "captured-ui-input";';
   await writeFile(uiInput, uiSource);
+  // The tiny app still goes through the real source asset generators.
+  await mkdir(join(repoDir, 'apps/ui/sources/text'), { recursive: true });
+  await writeFile(join(repoDir, 'apps/ui/sources/text/_all.ts'), 'export const SUPPORTED_LANGUAGE_CODES = ["en"] as const;');
   const pluginRoot = join(repoDir, 'packages/plugins/admission-fixture');
   await mkdir(join(pluginRoot, 'src'), { recursive: true });
   await writeFile(join(pluginRoot, 'package.json'), JSON.stringify({ name: pluginName, version: '0.0.0',

@@ -1,7 +1,7 @@
-import { existsSync, lstatSync, readFileSync, readdirSync, realpathSync } from 'node:fs';
+import { existsSync, lstatSync, readFileSync, readdirSync, realpathSync, statSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, posix, relative, resolve, sep } from 'node:path';
 import cliDistBuildManifest from '../../../../../packages/cli-common/cliDistBuildManifest.cjs';
-import { readWorkspacePackages, workspaceSourcePackageClosure } from '../../../../../packages/cli-common/sourceRuntimeEntries.mjs';
+import { packageNameOfSpecifier, readWorkspacePackages, workspaceSourcePackageClosure } from '../../../../../packages/cli-common/sourceRuntimeEntries.mjs';
 import { readBundledPluginPackageNames } from '../../../../cli/scripts/build-owned/bundledPluginMembership.ts';
 import { resolveBundledPluginUiProjectionInputPaths } from '../../../../cli/scripts/build-owned/bundledPlugins/projectionPaths.mjs';
 import { readSourcePluginUiGraph } from '../../../../ui/scripts/sourcePluginUiGraph.mjs';
@@ -10,6 +10,11 @@ import { readBuildInputIdentity } from '../../../../../scripts/workspaces/buildI
 
 const SOURCE_ROOTS = ['src', 'sources', 'scripts'];
 const TEST_DIRECTORY_NAMES = new Set(['__fixtures__', '__snapshots__', '__tests__', 'fixtures', 'test', 'testkit', 'tests', 'test-support']);
+const SERVER_GENERATED_INPUT_ROOTS = ['node_modules/.prisma/client', 'node_modules/@prisma/client', 'apps/server/generated'];
+
+export function isSourceServerGeneratedInput(path) {
+  return SERVER_GENERATED_INPUT_ROOTS.some(root => path.startsWith(`${root}/`));
+}
 
 export { readNativeTestSourceInputs, readNativeTestPreparationDemand } from './nativeTestInputs.mjs';
 
@@ -135,7 +140,9 @@ export async function readSourceComponentBuildInputs({ repoDir, component }) {
   }).map(([, owner]) => owner);
   const files = new Set();
   const watchPaths = new Set();
-  for (const root of [repoDir, ...owners.map(({ root }) => root)]) {
+  const ownerRoots = new Set(owners.map(({ root }) => root));
+  const pendingRoots = [repoDir, ...ownerRoots];
+  for (const root of pendingRoots) {
     const path = relative(repoDir, root).replaceAll('\\', '/');
     const options = {
       // Source author emission uses the workspace copier's declared package
@@ -159,9 +166,15 @@ export async function readSourceComponentBuildInputs({ repoDir, component }) {
             ? resolveBundledPluginUiProjectionInputPaths(repoDir).map(input => relative(root, input))
           : path === 'apps/cli' ? ['native/processcustody', 'assets']
             : path === 'apps/server' ? ['prisma']
-              : component === 'daemon' && path.startsWith('packages/plugins/') ? ['managed-runtime'] : [],
+              // Cargo resolves every declared workspace member, including the
+              // WASM manifest which is not part of the Node package's files.
+              : path === 'packages/iroh-native' ? ['rust/happier-iroh-wasm']
+                : component === 'daemon' && path.startsWith('packages/plugins/') ? ['managed-runtime'] : [],
     };
-    const inputs = readWorkspaceBuildInputs(root, options);
+    // The first-party addon is built from captured Rust, never captured from a
+    // host's previously published native output.
+    const inputs = readWorkspaceBuildInputs(root, options).filter(input =>
+      path !== 'packages/iroh-native' || !/^native(?:-test)?\//.test(input));
     for (const input of inputs) {
       if (path === 'apps/ui' && (Object.values(SOURCE_UI_ASSET_OUTPUT_PATHS).includes(input)
         || basename(input) === SOURCE_UI_ASSET_RECORD_FILENAME)) continue;
@@ -169,8 +182,36 @@ export async function readSourceComponentBuildInputs({ repoDir, component }) {
       if (path === 'apps/server' && input.startsWith('prisma/')
         && !/\.(?:prisma|sql)$/.test(input) && !input.endsWith('/migration_lock.toml')) continue;
       files.add(relative(repoDir, resolve(root, input)).split(sep).join('/'));
+      // The source resolver admits discovered workspace imports even before
+      // manifests acquire their dependency projection. Capture those owners
+      // and their declared closure through this same inventory and watcher.
+      if (/\.[cm]?[jt]sx?$/.test(input)) {
+        for (const specifier of cliDistBuildManifest.extractModuleSpecifiers(readFileSync(resolve(root, input), 'utf8'))) {
+          const name = packageNameOfSpecifier(specifier);
+          if (!packages.has(name) || ownerRoots.has(packages.get(name).root)) continue;
+          for (const dependency of workspaceSourcePackageClosure(packages, [name])) {
+            const owner = packages.get(dependency);
+            if (ownerRoots.has(owner.root)) continue;
+            ownerRoots.add(owner.root);
+            owners.push(owner);
+            pendingRoots.push(owner.root);
+          }
+        }
+      }
     }
     for (const input of resolveWorkspaceBuildInputWatchPaths(root, { ...options, inputPaths: inputs })) watchPaths.add(input);
+  }
+  if (component === 'server') {
+    // These generated clients and their Prisma runtime are mutable build
+    // outputs, not shareable installed tools. Capture their physical files
+    // alongside the server source and schemas that consume them.
+    for (const directory of SERVER_GENERATED_INPUT_ROOTS) {
+      const root = join(repoDir, directory);
+      for (const path of readWorkspaceBuildInputs(root, { sourceRoots: [], additionalInputPaths: ['.'], stat: statSync })) {
+        files.add(`${directory}/${path}`);
+      }
+      if (existsSync(root)) watchPaths.add(root);
+    }
   }
   for (const { root } of packages.values()) {
     const path = join(root, 'package.json');

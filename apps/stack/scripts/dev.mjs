@@ -1,11 +1,13 @@
 import './utils/env/env.mjs';
+import { emitSourceReloadRefusal, formatSourceReloadRefusal } from './runtime/shared/source_reload_refusal.mjs';
 import { watchStackRunnerLogRetention } from './utils/stack/runner_log_retention.mjs';
 import { parseArgs } from './utils/cli/args.mjs';
 import { killProcessTree } from './utils/proc/proc.mjs';
 import { spawnProc } from './utils/proc/proc.mjs';
 import { getComponentDir, getDefaultAutostartPaths, getRepoDir, getRootDir } from './utils/paths/paths.mjs';
 import { killPortListeners, observeTcpPortAvailability } from './utils/net/ports.mjs';
-import { fetchHappierHealth, getServerComponentName } from './utils/server/server.mjs';
+import { fetchHappierHealth, getServerComponentName, resolveServerReadyTimeoutMs, waitForServerReady } from './utils/server/server.mjs';
+import { prepareStackRelay } from './utils/server/infra/iroh/runtime.mjs';
 import { resolveServerShutdownGraceMs } from './utils/server/shutdown_grace.mjs';
 import { ensureDepsInstalled, requireDir } from './utils/proc/pm.mjs';
 import { dirname, join, resolve } from 'node:path';
@@ -99,6 +101,8 @@ import {
   resolveServicePlansAfterTargetPreflight,
 } from './utils/dev_targets/service_placement.mjs';
 import { resolveRemoteServerRuntimeConfig } from './utils/dev_targets/remote_commands.mjs';
+import { createSourceRuntimeProducerReload } from './utils/dev_targets/source_runtime_producer.mjs';
+import { resolveEffectiveDbProvider } from './utils/server/effective_db_provider.mjs';
 import {
   planRequiresRemoteCliWorkspacePreparation,
   resolvePreservedDaemonTargetPlans,
@@ -125,6 +129,7 @@ async function main() {
   delete process.env.HAPPIER_STACK_RUNNER_LOG_PATH;
   const argv = process.argv.slice(2);
   const { flags, kv } = parseArgs(argv);
+  if (flags.has('--server-cpu-prof')) process.env.HAPPIER_STACK_SERVER_CPU_PROF = '1';
   const json = wantsJson(argv, { flags });
   if (hasExplicitStackRuntimeModeArg(argv)) {
     throw new Error('[dev] hstack dev does not support runtime mode flags. Use hstack start for runtime snapshots.');
@@ -145,6 +150,7 @@ async function main() {
 		          '--server-flavor=light|full',
               '--server-url=http(s)://host[:port]',
               '--server-public-url=http(s)://host[:port]',
+              '--server-cpu-prof',
               '--no-server',
 		          '--no-ui',
 		          '--no-daemon',
@@ -343,7 +349,7 @@ async function main() {
         + 'set runtime placement to local or use --no-dev-targets for this run',
     );
   }
-  const remoteServerRuntimeConfig = configuredServicePlans.targets.some((plan) => plan.services.server)
+  let remoteServerRuntimeConfig = configuredServicePlans.targets.some((plan) => plan.services.server)
     ? resolveRemoteServerRuntimeConfig({ serverComponentName, env: baseEnv })
     : null;
   let servicePlans = configuredServicePlans;
@@ -473,6 +479,18 @@ async function main() {
     : false;
 
   // Expo dev server state (worktree-scoped): single Expo process per stack/worktree.
+  const reportStartupFailure = (component, error) => {
+    emitSourceReloadRefusal(error, baseEnv);
+    console.error(`[local] ${component} startup failed; keeping other components running. `
+      + (error instanceof Error ? error.message : String(error)).replaceAll('\n', ' ') + formatSourceReloadRefusal(error, baseEnv));
+    return { ok: false, skipped: true, reason: 'startup_failed' };
+  };
+  // Admit dependencies before observing an incumbent's Metro inputs. The
+  // no-watch adopted-runtime decision must also see any initial refresh.
+  await ensureDepsInstalled(repoDir, 'development stack', {
+    env: baseEnv, prepareComponentOutputs: false,
+  }).catch(error => reportStartupFailure('dependencies', error));
+
   const expoPaths = getExpoStatePaths({
     baseDir: autostart.baseDir,
     kind: 'expo-dev',
@@ -483,7 +501,7 @@ async function main() {
   let expoAlreadyRunning = Boolean(expoRunning.running);
   if (expoAlreadyRunning) {
     try {
-      const metroConfig = await inspectExpoMetroConfigState({ projectDir: uiDir, state: expoRunning.state });
+      const metroConfig = await inspectExpoMetroConfigState({ projectDir: uiDir, state: expoRunning.state, env: baseEnv });
       expoAlreadyRunning = metroConfig.current;
     } catch {
       // Config inspection must not make an otherwise available Stack fail closed.
@@ -507,17 +525,6 @@ async function main() {
         serverComponentName,
       })
     : { admitted: false, reason: 'not_requested', detail: null };
-
-  const reportStartupFailure = (component, error) => {
-    console.error(`[local] ${component} startup failed; keeping other components running. `
-      + (error instanceof Error ? error.message : String(error)));
-    return { ok: false, skipped: true, reason: 'startup_failed' };
-  };
-  // Admit dependencies even when startup adopts an already-running Stack,
-  // and before cold source preparation can wait for those inputs.
-  await ensureDepsInstalled(repoDir, 'development stack', {
-    env: baseEnv, prepareComponentOutputs: false,
-  }).catch(error => reportStartupFailure('dependencies', error));
 
   if (shouldExitAdoptedDevRuntime({
     serviceTargetCount: servicePlans.targets.length,
@@ -568,7 +575,7 @@ async function main() {
       ...(initialRemoteExpoProjection ? { expo: initialRemoteExpoProjection } : {}),
       runtimeSnapshotId: null,
       serveUi: null,
-    });
+    }, { continueOwner: true });
     spawnStackOwnerDeathWatchdog({
       rootDir,
       stackName,
@@ -580,6 +587,12 @@ async function main() {
       env: baseEnv,
     });
   }
+
+  // One persistent host relay, not a child of this stack's teardown lifecycle.
+  baseEnv = (await prepareStackRelay({ repoDir, env: baseEnv, runtimeStatePath,
+    signal: startupAbort.signal, serverTarget: servicePlans.targets.find(plan => plan.services.server)?.target,
+    stackBaseDir: loadedDevTargets.path ? dirname(loadedDevTargets.path) : autostart.baseDir })).env;
+  if (remoteServerRuntimeConfig) remoteServerRuntimeConfig = resolveRemoteServerRuntimeConfig({ serverComponentName, env: baseEnv });
 
   // Start server (only if not already healthy)
   // NOTE: In stack mode we avoid killing arbitrary port listeners (fail-closed instead).
@@ -657,6 +670,8 @@ async function main() {
     });
     return expoResEarly;
   };
+  // Dependency publication and plugin source refresh do not own Metro lifecycle.
+  // Keep the serving process until an explicit restart or the next startup.
   // A cold or broken component must not gate admission of another component's
   // last-green output. Retain this single Expo operation for auth and UI readers.
   const expoStartup = startExpo ? ensureExpoAvailable().catch(error => {
@@ -687,6 +702,7 @@ async function main() {
       serverComponentName,
       serverDir,
       autostart,
+      cliHomeDir,
       baseEnv: parentServerRestartPreflightAlreadyDone
         ? { ...baseEnv, HAPPIER_STACK_SERVER_RESTART_PREFLIGHT_ALREADY_DONE: '1' }
         : baseEnv,
@@ -721,10 +737,13 @@ async function main() {
             }
           : null,
     });
-    })().catch(error => {
-      reportStartupFailure('server', error);
-      return { serverEnv: baseEnv, serverScript: null, serverProc: null };
-    }));
+    })());
+  }
+  if (!startupDecision.startServer && !localDaemonWaitsForRemoteServer) {
+    await waitForServerReady(internalServerUrl, {
+      env: baseEnv, cliHomeDir, signal: startupAbort.signal,
+      timeoutMs: resolveServerReadyTimeoutMs({ serverComponentName, env: baseEnv }),
+    });
   }
   if (!startServer) {
     console.log(`${green('✓')} server: external ${cyan(internalServerUrl)}`);
@@ -833,7 +852,7 @@ async function main() {
   }
 
   if (startDaemon && stackMode && runtimeStatePath) {
-    const daemonRuntimeEnv = getDaemonEnv({
+    const daemonRuntimeEnv = await getDaemonEnv({
       baseEnv,
       cliHomeDir,
       internalServerUrl,
@@ -890,6 +909,21 @@ async function main() {
   const dependencyReload = await createDevDependencyReload({ repoDir, env: baseEnv });
   const reloadDescriptors = [dependencyReload.descriptor];
   const reloadExecutors = [dependencyReload.executor];
+  const localProducerProvider = resolveEffectiveDbProvider({ serverComponentName, env: serverEnv });
+  const remoteProducerServer = remoteServerRuntimeConfig
+    ?? resolveRemoteServerRuntimeConfig({ serverComponentName: 'happier-server-light' });
+  const sourceProducerReload = stackMode && localProducerProvider.ok ? await createSourceRuntimeProducerReload({
+    repoDir, stackBaseDir: autostart.baseDir, stackName, servicePlans: servicePlans.targets,
+    localComponents: [{ component: 'server', serverComponent: serverComponentName, dbProvider: localProducerProvider.provider },
+      { component: 'daemon' }],
+    remoteComponents: [{ component: 'server', serverComponent: remoteProducerServer.serverComponentName,
+      dbProvider: remoteProducerServer.dbProvider }, { component: 'daemon' }],
+    env: baseEnv, signal: startupAbort.signal,
+  }) : null;
+  if (sourceProducerReload) {
+    reloadDescriptors.push(...sourceProducerReload.descriptors);
+    reloadExecutors.push(sourceProducerReload.executor);
+  }
   const daemonReloadEnabled =
     startDaemon
     && daemonStartGate({ env: baseEnv, cliHomeDir, serverUrl: internalServerUrl }).ok;
@@ -918,6 +952,7 @@ async function main() {
         env: baseEnv,
         stackName,
         sourceRuntimeOptions,
+        workspacePreparation: remoteWorkspacePreparationExecutor,
       })
       : remoteWorkspacePreparationExecutor;
     reloadExecutors.push(daemonRefreshExecutor);
@@ -960,6 +995,7 @@ async function main() {
       internalServerUrl: serverBackendInternalUrl,
       serverScript,
       serverEnv,
+      cliHomeDir,
       runtimeStatePath,
       stackName,
       envPath,
@@ -992,6 +1028,7 @@ async function main() {
     serverReloadEnabled,
     daemonReloadEnabled: daemonRefreshEnabled,
   });
+  if (sourceProducerReload) initialRefreshes.push(reloadWatcher.requestReload('source-runtime'));
   if (!watchEnabled && reloadWatcher) {
     void Promise.allSettled(initialRefreshes).then(() => reloadWatcher.close());
   }
@@ -1115,7 +1152,9 @@ async function main() {
   };
   if (devTargetsStartOptions) {
     const remoteWorkspacePreparation = remoteWorkspacePreparationExecutor
-      ? () => remoteWorkspacePreparationExecutor.build()
+      ? Object.assign(() => remoteWorkspacePreparationExecutor.prepare(), {
+          waitForBuild: options => remoteWorkspacePreparationExecutor.waitForBuild(options),
+        })
       : null;
     if (remoteWorkspacePreparation) {
       void remoteWorkspacePreparation().catch((error) => {
@@ -1256,6 +1295,7 @@ async function main() {
 }
 
 main().catch((err) => {
+  emitSourceReloadRefusal(err);
   if (err?.name === 'AbortError') process.exit(0);
   console.error('[local] failed:', err);
   process.exit(1);

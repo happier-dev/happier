@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { chmod, cp, mkdtemp, mkdir, writeFile, readFile, realpath, rename, symlink, rm, access, readdir, stat, utimes } from 'node:fs/promises';
+import { chmod, cp, mkdtemp, mkdir, writeFile, readFile, realpath, rename, symlink, rm, access, readdir, stat, utimes, open } from 'node:fs/promises';
 import fs, { existsSync, readFileSync, watch } from 'node:fs';
 import { runInNewContext } from 'node:vm';
 import { createHash } from 'node:crypto';
@@ -9,77 +9,117 @@ import { tmpdir } from 'node:os';
 import { basename, dirname, join, relative, resolve, sep } from 'node:path';
 import { createRequire, syncBuiltinESMExports } from 'node:module';
 import { createServer } from 'node:http';
-import { EventEmitter } from 'node:events';
 import childProcess from 'node:child_process';
+import { EventEmitter } from 'node:events';
 import { execFile, spawn, spawnSync } from 'node:child_process';
 import { promisify } from 'node:util';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { buildSourceRuntimeBundle, captureSourceWebBuildInputs, admitSourceRuntimeReload, setBundleReadOnly } from './build_source_runtime.mjs';
+import { buildSourceRuntimeBundle as buildSourceRuntimeBundleOwner, captureSourceWebBuildInputs, admitSourceRuntimeReload, setBundleReadOnly, withSourceBundlePublication } from './build_source_runtime.mjs';
 import { beginPendingSourceStart } from '../runtime/shared/pending_source_start.mjs';
 import { prepareSourceRuntimeReload } from '../runtime/launch/prepareSourceRuntimeReload.mjs';
 import { prepareSourceComponent, resolveSourceComponentWatchPaths } from '../utils/dev/devReloadCoordinator.mjs';
 import { runSourceBuildCommand } from '../utils/proc/runSourceBuildCommand.mjs';
 import { applyServerHostDatabaseProviderEnv } from '../utils/server/apply_runtime_server_database_env.mjs';
 import { createTempFixture } from '../testkit/core/temp_fixture.mjs';
-import { buildNativeAdmissionFixtureEnv, installNativeAdmissionFixture } from '../testkit/core/native_admission_fixture.mjs';
+import { installSourceAdmissionFixture, installSourcePreparationInputs, sourceProducerFixtureOptions } from '../testkit/core/source_runtime_fixture.mjs';
+import { buildNativeAdmissionFixtureEnv, holdNativeAdmissionFixtureMemory, installNativeAdmissionFixture } from '../testkit/core/native_admission_fixture.mjs';
 import { relocateSourceOwnerImports } from '../testkit/core/source_web_fixture.mjs';
-import { resolveCliRuntimeLaunchSpec } from '../runtime/launch/resolveCliRuntimeLaunchSpec.mjs';
-import { prepareDevDaemonSourceRuntime, startDevDaemon } from '../utils/dev/daemon.mjs';
 import { runServerRuntimeMigration } from '../runtime/launch/runServerRuntimeMigration.mjs';
 import { resolveServerRuntimeLaunchSpec } from '../runtime/launch/resolveServerRuntimeLaunchSpec.mjs';
+import { resolveCliRuntimeLaunchSpec } from '../runtime/launch/resolveCliRuntimeLaunchSpec.mjs';
+import { prepareDevDaemonSourceRuntime, startDevDaemon } from '../utils/dev/daemon.mjs';
+import { buildStackServerProfileSetArgs } from '../utils/stack/server_profile_reconciliation.mjs';
+import { appendBoundedTail, run } from '../utils/proc/proc.mjs';
 import { matchesNativeTypeScriptInputVersion, resolveTypeScriptCliInvocation } from '../../../../scripts/workspaces/resolveTypeScriptCliInvocation.mjs';
-import { resolveWorkspaceBundleLockPath, withWorkspaceBundleLock } from '../../../../packages/cli-common/workspaceBundleLock.mjs';
+import { resolveWorkspaceBundleLockPath, withWorkspaceBundleLock, isWorkspaceBundleLockActive } from '../../../../packages/cli-common/workspaceBundleLock.mjs';
 import { isJsonOwnerFileLockActive } from '../utils/proc/jsonOwnerFileLock.mjs';
 import { readWorkspaceBuildInputs, readSourceComponentBuildInputs } from '../utils/fs/workspaceBuildInputs.mjs';
 import { readCliSourceEntries, readWorkspacePackages, createWorkspaceSourceResolver } from '../../../../packages/cli-common/sourceRuntimeEntries.mjs';
-import { captureBuildInputFiles } from '../../../../scripts/workspaces/buildInputConvergence.mjs';
-import { withDependencyRefreshLock, withDependencyRefresh, resolveDependencyRefreshMarkerPath } from '../utils/proc/dependency_refresh.mjs';
-import { withJsonOwnerFileLock } from '../utils/proc/jsonOwnerFileLock.mjs';
-import { startDevServer, createDevServerReloadExecutor } from '../utils/dev/server.mjs';
-import { resolveHeavyweightMemoryFloorKiB } from '../utils/dev_targets/remote_commands.mjs';
-import { execPnpm } from '../../../../scripts/workspaces/execPnpmCommand.mjs';
+import { captureBuildInputFiles, readBuildInputDependencies, withBuildInputDependencies } from '../../../../scripts/workspaces/buildInputConvergence.mjs';
+import { markDependencyMutation, resolveDependencyRefreshLockPath, resolveDependencyRefreshMarkerPath, withDependencyRefresh } from '../utils/proc/dependency_refresh.mjs';
 
-test('explicit dev daemon restart prepares current dependencies instead of refusing a stale retained generation', async t => {
-  const fixture = await createTempFixture(t, { prefix: 'hstack-dev-restart-dependencies-', registerCleanup: false });
-  t.after(async () => { await makeFixtureWritable(fixture.root); await fixture.cleanup(); });
-  const repoDir = await createReloadDaemonRepo(fixture, 'import value from "restart-input"; console.log(value);');
-  const dependency = join(repoDir, 'apps/cli/node_modules/restart-input');
-  await mkdir(dependency, { recursive: true });
-  await mkdir(join(repoDir, 'node_modules'), { recursive: true });
-  await writeFile(join(dependency, 'package.json'), JSON.stringify({ name: 'restart-input', main: 'index.cjs' }));
-  await writeFile(join(dependency, 'index.cjs'), 'module.exports = 1;');
-  const native = process.platform === 'linux' ? await installSourceAdmissionFixture(fixture.root) : null;
-  const env = { ...process.env, ...native?.env, HAPPIER_STACK_HOME_DIR: fixture.path('home'),
-    HAPPIER_STACK_SKIP_REFRESH_DEPS: '0', HAPPIER_STACK_DISABLE_REFRESH_DEPS: '0' };
-  await mkdir(join(repoDir, 'apps/stack/scripts/build'), { recursive: true });
-  const identityOwner = new URL('./source_author_inputs.mjs', import.meta.url);
-  await writeFile(join(repoDir, 'apps/stack/scripts/build/source_author_inputs.mjs'),
-    relocateSourceOwnerImports(await readFile(identityOwner, 'utf8'), identityOwner));
-  await withDependencyRefresh({ installDir: repoDir, env, force: true }, async () => {
-    await writeFile(join(dependency, 'index.cjs'), 'module.exports = 1;');
+// This suite owns compiler/cache behavior. Name the requested fixture Stack as
+// producer; adoption-only QA requests live in source_runtime_producer.test.mjs.
+const buildSourceRuntimeBundle = options => buildSourceRuntimeBundleOwner(sourceProducerFixtureOptions(options));
+
+test('source launch waits for an active dependency writer, loads its bundled guard and preserves cancellation', async t => {
+  const fixture = await createTempFixture(t, { prefix: 'hstack-source-launch-writer-' });
+  const repoDir = fixture.path('repo');
+  const cliDir = fixture.path('runtime/apps/cli');
+  const entrypoint = join(cliDir, 'src/index.mjs');
+  const markerPath = join(repoDir, 'node_modules/.happier-stack-dependencies-ready');
+  const env = { ...process.env, HAPPIER_STACK_HOME_DIR: fixture.path('home') };
+  await mkdir(dirname(markerPath), { recursive: true });
+  await mkdir(join(repoDir, 'apps'), { recursive: true });
+  await symlink(fileURLToPath(new URL('../../', import.meta.url)), join(repoDir, 'apps/stack'),
+    process.platform === 'win32' ? 'junction' : 'dir');
+  await writeFile(join(repoDir, 'package.json'), JSON.stringify({ private: true, workspaces: ['apps/*'] }));
+  await mkdir(dirname(entrypoint), { recursive: true });
+  await writeFile(entrypoint, 'process.stdout.write("launched");');
+  await writeFile(markerPath, JSON.stringify({ identity: 'same-content' }));
+  const generationPath = `${resolveDependencyRefreshLockPath(repoDir, env)}.generation`;
+  await mkdir(dirname(generationPath), { recursive: true });
+  await writeFile(generationPath, JSON.stringify({ generation: 'before', completedGeneration: 'before' }));
+  await writeFile(fixture.path('runtime/source-bundle.json'), JSON.stringify({
+    dependencyPublication: { identity: 'same-content', writerActive: false, markerPath, generationPath },
+  }));
+  // Exercise the emitted dynamic-import path as consumed by a bundled daemon,
+  // while the real writer is active, without mutating installed dependencies.
+  const compiledGuard = fixture.path('compiled-guard.mjs');
+  const { build } = createRequire(new URL('../../../cli/package.json', import.meta.url))('esbuild');
+  await build({ stdin: { contents: `
+    import { assertSourceRuntimeDependenciesCurrent } from ${JSON.stringify(fileURLToPath(new URL('../../../../packages/cli-common/sourceRuntimeDependencies.mjs', import.meta.url)))};
+    process.stderr.write('guard-started');
+    await assertSourceRuntimeDependenciesCurrent({ entrypoint: ${JSON.stringify(entrypoint)} });
+    process.stdout.write('launched');
+  `, resolveDir: fixture.root }, outfile: compiledGuard, bundle: true, platform: 'node', format: 'esm' });
+  let release, started;
+  const released = new Promise(resolve => { release = resolve; });
+  const ready = new Promise(resolve => { started = resolve; });
+  const writer = withDependencyRefreshLock({ installDir: repoDir, env }, async () => {
+    await markDependencyMutation({ installDir: repoDir, env });
+    started();
+    await released;
   });
-  const build = native?.build ?? buildSourceRuntimeBundle;
-  const stackBaseDir = fixture.path('stacks/consumer');
-  const sourceRuntimeOptions = { repoDir, stackBaseDir };
-  await build({ ...sourceRuntimeOptions, component: 'daemon', env });
-  await withDependencyRefresh({ installDir: repoDir, env, force: true }, async () => {
-    await writeFile(join(dependency, 'index.cjs'), 'module.exports = 2;');
+  await ready;
+  const bundledChild = promisify(execFile)(process.execPath, [compiledGuard], { env, signal: t.signal });
+  void bundledChild.catch(() => {});
+  const bundledStarted = new Promise((resolve, reject) => {
+    bundledChild.child.stderr.once('data', resolve);
+    bundledChild.child.once('error', reject);
   });
-  const runtimeStatePath = join(stackBaseDir, 'stack.runtime.json');
-  // Keep the actual lifecycle owner active while preventing a fixture from
-  // starting a real daemon: a deliberate owner stop is its natural boundary.
-  await writeFile(runtimeStatePath, JSON.stringify({ daemon: { desiredStateByIdentity: { default: 'stopped' } } }));
-  const result = await startDevDaemon({ startDaemon: true, restart: true, env, runtimeStatePath,
-    cliHomeDir: fixture.path('cli-home'), sourceRuntimeOptions }, {
-    // Linux fixtures relocate the genuine build/admission owner, without
-    // replacing any preparation, selection or daemon lifecycle decisions.
-    prepareDevDaemonSourceRuntimeImpl: options => prepareDevDaemonSourceRuntime(options,
-      { buildSourceRuntimeBundleImpl: build }),
+  let settled = false;
+  const launch = Promise.resolve().then(async () => await resolveCliRuntimeLaunchSpec({
+    sourceRuntimeLaunch: { cliDir, entrypoint, env },
+  }));
+  void launch.then(() => { settled = true; }, () => { settled = true; });
+  try {
+    await bundledStarted;
+    await new Promise(setImmediate);
+    assert.equal(settled, false, 'active dependency writer must delay launch rather than refuse it');
+  } finally { release(); await writer; }
+  assert.equal((await bundledChild).stdout, 'launched');
+  const spec = await launch;
+  const child = await promisify(execFile)(spec.command, spec.args, { cwd: spec.cliDir, env });
+  assert.equal(child.stdout, 'launched');
+
+  let releaseCancelled, startedCancelled;
+  const cancelledRelease = new Promise(resolve => { releaseCancelled = resolve; });
+  const cancelledReady = new Promise(resolve => { startedCancelled = resolve; });
+  const cancelledWriter = withDependencyRefreshLock({ installDir: repoDir, env }, async () => {
+    await markDependencyMutation({ installDir: repoDir, env });
+    startedCancelled();
+    await cancelledRelease;
   });
-  assert.equal(result.reason, undefined, 'restart must get past stale dependency admission');
-  const selected = await build({ ...sourceRuntimeOptions, component: 'daemon', env, reuseSelected: true });
-  const spec = await resolveCliRuntimeLaunchSpec({ sourceRuntimeLaunch: selected });
-  assert.equal((await promisify(execFile)(spec.command, spec.args, { cwd: spec.cliDir, env })).stdout.trim(), '2');
+  await cancelledReady;
+  const controller = new AbortController();
+  const cancelledLaunch = resolveCliRuntimeLaunchSpec({ sourceRuntimeLaunch: { cliDir, entrypoint, env }, signal: controller.signal });
+  const reason = new Error('launch superseded');
+  try {
+    await new Promise(setImmediate);
+    controller.abort(reason);
+    await assert.rejects(cancelledLaunch, error => error === reason);
+  } finally { releaseCancelled(); await cancelledWriter; }
 });
 
 test('source CLI launches across unrelated dependency refreshes and refuses changed transitive runtime inputs', async t => {
@@ -150,6 +190,334 @@ test('source CLI launches across unrelated dependency refreshes and refuses chan
   await assert.rejects(launch(), { code: 'SOURCE_RUNTIME_RELOAD_REQUIRED', phase: 'dependencies', retryable: false });
   assert.deepEqual(await bundledCheck(), { code: 'SOURCE_RUNTIME_RELOAD_REQUIRED', phase: 'dependencies', retryable: false });
 });
+
+test('explicit dev daemon restart prepares current dependencies instead of refusing a stale retained generation', async t => {
+  const fixture = await createTempFixture(t, { prefix: 'hstack-dev-restart-dependencies-', registerCleanup: false });
+  t.after(async () => { await makeFixtureWritable(fixture.root); await fixture.cleanup(); });
+  const repoDir = await createReloadDaemonRepo(fixture, 'import value from "restart-input"; console.log(value);');
+  const dependency = join(repoDir, 'apps/cli/node_modules/restart-input');
+  await mkdir(dependency, { recursive: true });
+  await mkdir(join(repoDir, 'node_modules'), { recursive: true });
+  await writeFile(join(dependency, 'package.json'), JSON.stringify({ name: 'restart-input', main: 'index.cjs' }));
+  await writeFile(join(dependency, 'index.cjs'), 'module.exports = 1;');
+  const native = process.platform === 'linux' ? await installSourceAdmissionFixture(fixture.root) : null;
+  const env = { ...process.env, ...native?.env, HAPPIER_STACK_HOME_DIR: fixture.path('home'),
+    HAPPIER_STACK_SKIP_REFRESH_DEPS: '0', HAPPIER_STACK_DISABLE_REFRESH_DEPS: '0' };
+  await mkdir(join(repoDir, 'apps/stack/scripts/build'), { recursive: true });
+  const identityOwner = new URL('./source_author_inputs.mjs', import.meta.url);
+  await writeFile(join(repoDir, 'apps/stack/scripts/build/source_author_inputs.mjs'),
+    relocateSourceOwnerImports(await readFile(identityOwner, 'utf8'), identityOwner));
+  await withDependencyRefresh({ installDir: repoDir, env, force: true }, async () => {
+    await writeFile(join(dependency, 'index.cjs'), 'module.exports = 1;');
+  });
+  const build = native?.build ?? buildSourceRuntimeBundle;
+  const stackBaseDir = fixture.path('stacks/consumer');
+  const sourceRuntimeOptions = { repoDir, stackBaseDir };
+  await build({ ...sourceRuntimeOptions, component: 'daemon', env });
+  await withDependencyRefresh({ installDir: repoDir, env, force: true }, async () => {
+    await writeFile(join(dependency, 'index.cjs'), 'module.exports = 2;');
+  });
+  const runtimeStatePath = join(stackBaseDir, 'stack.runtime.json');
+  // Keep the actual lifecycle owner active while preventing a fixture from
+  // starting a real daemon: a deliberate owner stop is its natural boundary.
+  await writeFile(runtimeStatePath, JSON.stringify({ daemon: { desiredStateByIdentity: { default: 'stopped' } } }));
+  const result = await startDevDaemon({ startDaemon: true, restart: true, env, runtimeStatePath,
+    cliHomeDir: fixture.path('cli-home'), sourceRuntimeOptions }, {
+    // Linux fixtures relocate the genuine build/admission owner, without
+    // replacing any preparation, selection or daemon lifecycle decisions.
+    prepareDevDaemonSourceRuntimeImpl: options => prepareDevDaemonSourceRuntime(options,
+      { buildSourceRuntimeBundleImpl: build }),
+  });
+  assert.equal(result.reason, undefined, 'restart must get past stale dependency admission');
+  const selected = await build({ ...sourceRuntimeOptions, component: 'daemon', env, reuseSelected: true });
+  const spec = await resolveCliRuntimeLaunchSpec({ sourceRuntimeLaunch: selected });
+  assert.equal((await promisify(execFile)(spec.command, spec.args, { cwd: spec.cliDir, env })).stdout.trim(), '2');
+});
+
+test('selected source runtime refuses refreshed dependencies before probing its removed imports', async t => {
+  const fixture = await createTempFixture(t, { prefix: 'happier-runtime-stale-dependencies-' });
+  const repoDir = fixture.path('repo');
+  const stackBaseDir = fixture.path('stacks/consumer');
+  const outputDir = fixture.path('stacks/source-bundles/runtime-selected');
+  const runtimeDir = join(outputDir, 'apps/cli');
+  const entrypoint = join(runtimeDir, 'src/index.mjs');
+  const markerPath = join(repoDir, 'node_modules/.happier-stack-dependencies-ready');
+  const witness = fixture.path('import-probed');
+  await mkdir(dirname(entrypoint), { recursive: true });
+  await mkdir(dirname(markerPath), { recursive: true });
+  await mkdir(join(stackBaseDir, 'source-runtime'), { recursive: true });
+  const env = { ...process.env, HAPPIER_STACK_HOME_DIR: fixture.path('home') };
+  await writeFile(markerPath, JSON.stringify({ identity: 'installed-before-refresh' }));
+  const dependencyPublication = { ...await readBuildInputDependencies({ sourceDir: repoDir, env }),
+    markerPath, generationPath: `${resolveDependencyRefreshLockPath(repoDir, env)}.generation` };
+  await writeFile(entrypoint, `import { writeFileSync } from 'node:fs';
+    writeFileSync(${JSON.stringify(witness)}, 'probed');`);
+  await writeFile(join(outputDir, 'source-bundle.json'), JSON.stringify({
+    identity: 'selected-runtime', entrypoint, runtimeDir, cliDir: runtimeDir, dependencyPublication,
+  }));
+  const selected = JSON.stringify({ entrypoint });
+  await writeFile(join(stackBaseDir, 'source-runtime/selected-daemon.json'), selected);
+  const options = { repoDir, stackBaseDir, component: 'daemon', env, reuseSelected: true };
+  assert.equal((await buildSourceRuntimeBundle(options)).entrypoint, entrypoint);
+  await rm(witness);
+
+  // A completed reinstall with the same dependency content does not invalidate
+  // the graph. An unfinished refresh still cannot be consumed during launch.
+  await mkdir(dirname(dependencyPublication.generationPath), { recursive: true });
+  await writeFile(dependencyPublication.generationPath, JSON.stringify({
+    generation: 'same-content-reinstall', completedGeneration: 'same-content-reinstall',
+  }));
+  const retained = await buildSourceRuntimeBundle(options);
+  assert.equal((await resolveCliRuntimeLaunchSpec({ sourceRuntimeLaunch: retained })).entrypoint, entrypoint);
+  await rm(witness);
+  await writeFile(dependencyPublication.generationPath, JSON.stringify({
+    generation: 'unfinished-refresh', completedGeneration: 'same-content-reinstall',
+  }));
+  await assert.rejects(buildSourceRuntimeBundle(options), { code: 'SOURCE_RUNTIME_RELOAD_REQUIRED' });
+  await writeFile(dependencyPublication.generationPath, JSON.stringify({
+    generation: 'unfinished-refresh', completedGeneration: 'unfinished-refresh',
+  }));
+
+  // The same consumed module was moved by the dependency publisher. The
+  // preparation identity must refuse before a fresh process links that import.
+  await writeFile(markerPath, JSON.stringify({ identity: 'installed-after-refresh' }));
+  await writeFile(entrypoint, 'import "./removed-dependency.mjs";');
+  await assert.rejects(buildSourceRuntimeBundle(options), {
+    code: 'SOURCE_RUNTIME_RELOAD_REQUIRED', phase: 'dependencies', retryable: false,
+  });
+  await assert.rejects(readFile(witness), { code: 'ENOENT' });
+  const refusal = JSON.parse(await readFile(join(stackBaseDir, 'source-runtime/reload.json'), 'utf8'));
+  assert.equal(refusal.code, 'SOURCE_RUNTIME_RELOAD_REQUIRED');
+  assert.equal(refusal.phase, 'dependencies');
+  assert.equal(await readFile(join(stackBaseDir, 'source-runtime/selected-daemon.json'), 'utf8'), selected);
+  // A retained source capture without its publication binding cannot attest
+  // freshness either; only an explicit reload can prepare that older graph.
+  await writeFile(join(outputDir, 'source-bundle.json'), JSON.stringify({
+    identity: 'older-runtime', entrypoint, runtimeDir, cliDir: runtimeDir,
+  }));
+  await assert.rejects(buildSourceRuntimeBundle(options), { code: 'SOURCE_RUNTIME_RELOAD_REQUIRED' });
+});
+
+test('dependency publication rejects source completion before writing or selecting a spanned graph', async t => {
+  const fixture = await createTempFixture(t, { prefix: 'happier-runtime-dependency-publication-', registerCleanup: false });
+  t.after(async () => { await makeFixtureWritable(fixture.root); await fixture.cleanup(); });
+  const repoDir = fixture.path('repo');
+  const stackBaseDir = fixture.path('stacks/consumer');
+  const outputDir = fixture.path('stacks/source-bundles/runtime-candidate');
+  await mkdir(repoDir);
+  await mkdir(outputDir, { recursive: true });
+  const env = { ...process.env, HAPPIER_STACK_HOME_DIR: fixture.path('home') };
+  const generationPath = `${resolveDependencyRefreshLockPath(repoDir, env)}.generation`;
+  await mkdir(dirname(generationPath), { recursive: true });
+  let published = false;
+  await assert.rejects(withBuildInputDependencies({ sourceDir: repoDir, env }, async (_env, publication) => {
+    await writeFile(generationPath, JSON.stringify({ generation: 'writer-started-and-failed' }));
+    return await withSourceBundlePublication({ stackBaseDir, outputDir, dependencySourceDir: repoDir, dependencyEnv: env,
+      record: { component: 'server', dependencyPublication: publication?.state } }, async () => { published = true; });
+  }), { code: 'BUILD_INPUTS_CHANGED' });
+  assert.equal(published, false);
+  await assert.rejects(readFile(join(outputDir, 'source-bundle.json')), { code: 'ENOENT' });
+});
+
+test('source runtime reload rebuilds a dependency capture after published content changes', async t => {
+  const fixture = await createTempFixture(t, { prefix: 'happier-runtime-refresh-recovery-', registerCleanup: false });
+  t.after(async () => { await makeFixtureWritable(fixture.root); await fixture.cleanup(); });
+  const repoDir = await createReloadDaemonRepo(fixture, 'export const ready = true;');
+  const native = process.platform === 'linux' ? await installSourceAdmissionFixture(fixture.root) : null;
+  const env = { ...process.env, ...native?.env, HAPPIER_STACK_HOME_DIR: fixture.path('home') };
+  const options = { repoDir, stackBaseDir: fixture.path('stacks/consumer'), component: 'daemon', env,
+    waitForSourceChanges: false };
+  const build = native?.build ?? buildSourceRuntimeBundle;
+  const first = await build(options);
+  const generationPath = `${resolveDependencyRefreshLockPath(repoDir, env)}.generation`;
+  await mkdir(dirname(generationPath), { recursive: true });
+  await mkdir(dirname(first.dependencyPublication.markerPath), { recursive: true });
+  await writeFile(first.dependencyPublication.markerPath, JSON.stringify({ identity: 'changed-dependency-content' }));
+  await writeFile(generationPath, JSON.stringify({ generation: 'completed-refresh', completedGeneration: 'completed-refresh' }));
+  const second = await build(options);
+  assert.notEqual(second.entrypoint, first.entrypoint, 'reload must replace the old installed-tree binding');
+  assert.equal((await import(pathToFileURL(second.entrypoint))).ready, true);
+  assert.equal((await build({ ...options, reuseSelected: true })).entrypoint, second.entrypoint);
+});
+
+test('source runtime reload repairs an older selected dependency capture before launch', async t => {
+  const fixture = await createTempFixture(t, { prefix: 'happier-runtime-older-capture-', registerCleanup: false });
+  t.after(async () => { await makeFixtureWritable(fixture.root); await fixture.cleanup(); });
+  const repoDir = await createReloadDaemonRepo(fixture, 'export const ready = true;');
+  const native = process.platform === 'linux' ? await installSourceAdmissionFixture(fixture.root) : null;
+  const env = { ...process.env, ...native?.env, HAPPIER_STACK_HOME_DIR: fixture.path('home') };
+  const options = { repoDir, stackBaseDir: fixture.path('stacks/consumer'), component: 'daemon', env,
+    waitForSourceChanges: false };
+  const build = native?.build ?? buildSourceRuntimeBundle;
+  const first = await build(options);
+  const outputDir = resolve(dirname(first.entrypoint), '../../..');
+  const recordPath = join(outputDir, 'source-bundle.json');
+  await setBundleReadOnly(outputDir, false);
+  const record = JSON.parse(await readFile(recordPath, 'utf8'));
+  delete record.dependencyPublication.markerPath;
+  delete record.dependencyPublication.generationPath;
+  await writeFile(recordPath, JSON.stringify(record));
+  await setBundleReadOnly(outputDir, true);
+
+  // Reading an incumbent also serves recovery. Only consuming its graph may
+  // refuse; explicit reload must replace the pre-locator completion instead.
+  const refreshed = await build(options);
+  const launch = await resolveCliRuntimeLaunchSpec({ sourceRuntimeLaunch: refreshed });
+  assert.equal(launch.entrypoint, refreshed.entrypoint);
+  assert.equal((await import(pathToFileURL(launch.entrypoint))).ready, true);
+  assert.equal((await build({ ...options, reuseSelected: true })).entrypoint, refreshed.entrypoint);
+  const freshRecord = JSON.parse(await readFile(join(resolve(dirname(refreshed.entrypoint), '../../..'), 'source-bundle.json'), 'utf8'));
+  assert.equal(typeof freshRecord.dependencyPublication.markerPath, 'string');
+  assert.equal(typeof freshRecord.dependencyPublication.generationPath, 'string');
+});
+
+test('dependency publication preserves a preexisting private output when rejected consumption overlaps a writer', async t => {
+  const fixture = await createTempFixture(t, { prefix: 'happier-runtime-dependency-unowned-' });
+  const repoDir = fixture.path('repo');
+  const server = join(repoDir, 'apps/server');
+  const outputDir = fixture.path('output');
+  await mkdir(join(server, 'sources'), { recursive: true });
+  await mkdir(join(server, 'scripts'));
+  await mkdir(join(server, 'node_modules'));
+  await mkdir(outputDir);
+  await writeFile(join(server, 'package.json'), JSON.stringify({ name: '@happier-dev/server', type: 'module' }));
+  await writeFile(join(server, 'tsconfig.json'), '{}');
+  await writeFile(join(server, 'sources/main.light.ts'), 'export const ready = true;');
+  await writeFile(join(server, 'scripts/migrate.sqlite.deploy.ts'), 'export async function runSqliteMigrationDeploy() {}');
+  await symlink(dirname(createRequire(import.meta.url).resolve('esbuild/package.json')), join(server, 'node_modules/esbuild'),
+    process.platform === 'win32' ? 'junction' : 'dir');
+  await writeFile(join(outputDir, 'sentinel'), 'preexisting output');
+  const env = { ...process.env, HAPPIER_STACK_HOME_DIR: fixture.path('home') };
+  const generationPath = `${resolveDependencyRefreshLockPath(repoDir, env)}.generation`;
+  await mkdir(dirname(generationPath), { recursive: true });
+  await writeFile(generationPath, JSON.stringify({ generation: 'before' }));
+  const observer = fixture.path('observe-output.mjs');
+  // Instrument real directory reads at the OS boundary. Both attempts still
+  // observe and reject the same caller-owned nonempty output directory.
+  await writeFile(observer, `
+    import fs from 'node:fs/promises';
+    import { syncBuiltinESMExports } from 'node:module';
+    import { resolve } from 'node:path';
+    const readdir = fs.readdir;
+    fs.readdir = async (...args) => {
+      const result = await readdir(...args);
+      if (resolve(String(args[0])) === ${JSON.stringify(outputDir)})
+        await fs.writeFile(${JSON.stringify(generationPath)}, JSON.stringify({ generation: 'overlapping-writer' }));
+      return result;
+    };
+    syncBuiltinESMExports();
+  `);
+  await assert.rejects(buildSourceRuntimeBundle({ repoDir, outputDir, component: 'server',
+    env: { ...env, NODE_OPTIONS: `${env.NODE_OPTIONS ?? ''} --import=${pathToFileURL(observer).href}`.trim() } }), /Source preparation failed/);
+  assert.equal(await readFile(join(outputDir, 'sentinel'), 'utf8'), 'preexisting output');
+});
+
+test('dependency publication source worker discards an emitted graph across the real process boundary', async t => {
+  const fixture = await createTempFixture(t, { prefix: 'happier-runtime-dependency-worker-' });
+  const repoDir = fixture.path('repo');
+  const server = join(repoDir, 'apps/server');
+  await mkdir(join(server, 'sources'), { recursive: true });
+  await mkdir(join(server, 'scripts'));
+  await mkdir(join(server, 'node_modules/esbuild'), { recursive: true });
+  await writeFile(join(server, 'package.json'), JSON.stringify({ name: '@happier-dev/server', type: 'module' }));
+  await writeFile(join(server, 'tsconfig.json'), '{}');
+  await writeFile(join(server, 'sources/main.light.ts'), 'export const ready = true;');
+  await writeFile(join(server, 'scripts/migrate.sqlite.deploy.ts'), 'export async function runSqliteMigrationDeploy() {}');
+  const env = { ...process.env, HAPPIER_STACK_HOME_DIR: fixture.path('home') };
+  const generationPath = `${resolveDependencyRefreshLockPath(repoDir, env)}.generation`;
+  await mkdir(dirname(generationPath), { recursive: true });
+  await writeFile(generationPath, JSON.stringify({ generation: 'before' }));
+  const emissions = fixture.path('emissions.json');
+  const writerStarted = fixture.path('writer-started');
+  await writeFile(join(server, 'node_modules/esbuild/package.json'), JSON.stringify({ name: 'esbuild', main: './index.cjs' }));
+  // Instrument the genuine external compiler boundary and still execute its
+  // real build. The one failed-writer generation occurs inside its first read.
+  await writeFile(join(server, 'node_modules/esbuild/index.cjs'), `
+    const fs = require('node:fs');
+    const compiler = require(${JSON.stringify(createRequire(import.meta.url).resolve('esbuild'))});
+    module.exports = { ...compiler, async build(options) {
+      const count = fs.existsSync(${JSON.stringify(emissions)}) ? JSON.parse(fs.readFileSync(${JSON.stringify(emissions)}, 'utf8')) : 0;
+      fs.writeFileSync(${JSON.stringify(emissions)}, JSON.stringify(count + 1));
+      if (!fs.existsSync(${JSON.stringify(writerStarted)})) {
+        fs.writeFileSync(${JSON.stringify(writerStarted)}, 'started');
+        fs.writeFileSync(${JSON.stringify(generationPath)}, JSON.stringify({ generation: 'failed-writer' }));
+      }
+      return await compiler.build(options);
+    } };
+  `);
+  const outputDir = fixture.path('output');
+  const built = await buildSourceRuntimeBundle({ repoDir, outputDir, component: 'server', env });
+  assert.equal(JSON.parse(await readFile(emissions, 'utf8')), 2, 'one spanned emission requires exactly one rebuild');
+  assert.equal((await import(pathToFileURL(built.entrypoint))).ready, true);
+  const completed = JSON.parse(await readFile(join(outputDir, 'source-bundle.json'), 'utf8'));
+  assert.equal(completed.dependencyPublication.generation, 'failed-writer');
+});
+import { withDependencyRefreshLock } from '../utils/proc/dependency_refresh.mjs';
+import { withJsonOwnerFileLock } from '../utils/proc/jsonOwnerFileLock.mjs';
+import { startDevServer, createDevServerReloadExecutor } from '../utils/dev/server.mjs';
+import { resolveHeavyweightMemoryFloorKiB } from '../utils/dev_targets/remote_commands.mjs';
+import { execPnpm } from '../../../../scripts/workspaces/execPnpmCommand.mjs';
+
+test('publication reaps superseded private web exports and preserves selected, last green, pending and running stacks',
+  { skip: process.platform !== 'linux' }, async t => {
+    const { root } = await createTempFixture(t, { prefix: 'hstack-private-source-retention-' });
+    const stacksRoot = join(root, 'stacks');
+    await mkdir(join(stacksRoot, 'source-bundles'), { recursive: true });
+    const stopped = join(stacksRoot, 'stopped');
+    const running = join(stacksRoot, 'running');
+    const pending = join(stacksRoot, 'pending');
+    const old = new Date(Date.now() - 72 * 3600000);
+    const newer = new Date(Date.now() - 48 * 3600000);
+    for (const [stack, names] of [[stopped, ['web-obsolete', 'web-selected', 'web-green', 'web-held', 'web-incomplete']],
+      [running, ['web-old', 'web-green']], [pending, ['web-preparing', 'web-green']]]) {
+      for (const name of names) {
+        const directory = join(stack, 'source-runtime', name);
+        await mkdir(join(directory, 'export'), { recursive: true });
+        await writeFile(join(directory, 'export/index.html'), name === 'web-incomplete'
+          ? '<script src="missing.js"></script>' : '<!doctype html>');
+        const when = name === 'web-incomplete' ? new Date(newer.getTime() + 3600000)
+          : name === 'web-green' ? newer : old;
+        for (const path of [join(directory, 'export/index.html'), join(directory, 'export'), directory]) {
+          await utimes(path, when, when);
+        }
+      }
+    }
+    await writeFile(join(stopped, 'source-runtime/selected-ui.json'), JSON.stringify({
+      uiDir: join(stopped, 'source-runtime/web-selected/export'),
+    }));
+    await writeFile(join(running, 'stack.runtime.json'), JSON.stringify({ ownerPid: process.pid }));
+    await writeFile(join(pending, 'source-runtime/start.pending.json'), JSON.stringify({ pid: process.pid }));
+    const selection = await readFile(join(stopped, 'source-runtime/selected-ui.json'), 'utf8');
+    const held = await open(join(stopped, 'source-runtime/web-held/export/index.html'));
+    t.after(() => held.close());
+    await withSourceBundlePublication({ stackBaseDir: stopped }, async () => {});
+    await assert.rejects(access(join(stopped, 'source-runtime/web-obsolete')), { code: 'ENOENT' });
+    for (const path of [join(stopped, 'source-runtime/web-selected'), join(stopped, 'source-runtime/web-green'),
+      join(stopped, 'source-runtime/web-held'), join(running, 'source-runtime/web-old'),
+      join(pending, 'source-runtime/web-preparing')]) await access(path);
+    await assert.rejects(access(join(stopped, 'source-runtime/web-incomplete')), { code: 'ENOENT' });
+    assert.equal(await readFile(join(stopped, 'source-runtime/selected-ui.json'), 'utf8'), selection);
+    const late = join(stopped, 'source-runtime/web-late/export');
+    await mkdir(late, { recursive: true });
+    await writeFile(join(late, 'index.html'), '<!doctype html>');
+    for (const path of [join(late, 'index.html'), late, dirname(late)]) await utimes(path, old, old);
+    const originalRead = fs.readFileSync;
+    let activated = false;
+    // The procfs read is the OS boundary: another Stack starts after
+    // nomination but before the reaper's final ownership/reference check.
+    t.mock.method(fs, 'readFileSync', (path, ...args) => {
+      if (!activated && typeof path === 'string' && path.startsWith('/proc/') && path.endsWith('/environ')) {
+        activated = true;
+        fs.writeFileSync(join(stopped, 'stack.runtime.json'), JSON.stringify({ ownerPid: process.pid }));
+      }
+      return originalRead(path, ...args);
+    });
+    syncBuiltinESMExports();
+    t.after(() => { t.mock.restoreAll(); syncBuiltinESMExports(); });
+    await withSourceBundlePublication({ stackBaseDir: stopped }, async () => {});
+    assert.equal(activated, true);
+    await access(late);
+  });
 
 test('captured source workspaces run pnpm tasks with private real task state', async t => {
   const fixture = await createTempFixture(t, { prefix: 'happier-source-pnpm-state-' });
@@ -593,10 +961,13 @@ test('source edits refresh the inventory module consumed by a running Metro', as
     }
     assert.ok(after.files.some(file => file.asset.includes('live-after')));
     const channels = entries.find(entry => entry.artifactId === 'channels-app-native');
-    const channelsModule = { exports: {} };
-    runInNewContext(channels.files.find(file => file.relativePath.endsWith('/entry.cjs.bundle')).asset,
-      { module: channelsModule, exports: channelsModule.exports, require, TextEncoder, TextDecoder });
-    const contract = channelsModule.exports.renderSurface();
+    const channelsEntry = channels.files.find(file => file.relativePath.endsWith('/entry.cjs.bundle'));
+    const channelsPath = [...readFileSync(inventoryPath, 'utf8').matchAll(/require\(("(?:[^"\\]|\\.)*")\)/g)]
+      .map(match => JSON.parse(match[1])).find(path => path.replaceAll('\\', '/').endsWith(`/${channelsEntry.relativePath}`));
+    assert.ok(channelsPath);
+    // Execute the emitted CommonJS module with real Node globals. A partial VM
+    // realm lacks structuredClone, while borrowing it creates foreign objects.
+    const contract = require(channelsPath).renderSurface();
     assert.equal(contract.id, 'channel-state');
     assert.equal(contract.schemaVersion, CHANNEL_STATE_COLLECTION.schemaVersion,
       'the refreshed Channels consumer must carry the captured writer contract');
@@ -687,6 +1058,34 @@ test('source edits refresh the inventory module consumed by a running Metro', as
       assert.equal(indexedAsset(asset, 'web'), asset);
     }
   });
+  await t.test('a failed manifest keeps last-green UI and heals through the existing Metro change feed', async () => {
+    const { resolveBundledPluginUiArtifactsRetainedRoots } = await import(pathToFileURL(join(uiPackageDir, 'scripts/generateBundledPluginUiArtifacts.mjs')));
+    const { WORKSPACE_PACKAGE_BUILD_INPUT_RECORD } = await import('../../../../packages/cli-common/packageBuildOutputTargets.mjs');
+    const retainedRoot = resolveBundledPluginUiArtifactsRetainedRoots(inventoryPath).get('happier.inspector');
+    await rm(join(retainedRoot, WORKSPACE_PACKAGE_BUILD_INPUT_RECORD));
+    const incumbent = consumeInventory().find(entry => entry.artifactId === 'inspector-app-native');
+    const diagnostics = [];
+    const writeStderr = process.stderr.write;
+    t.mock.method(process.stderr, 'write', function(chunk, ...args) {
+      diagnostics.push(String(chunk));
+      return Reflect.apply(writeStderr, this, [chunk, ...args]);
+    });
+    const manifestPath = join(repoRoot, 'packages/plugins/inspector/src/manifest.ts');
+    const manifest = await readFile(manifestPath, 'utf8');
+    await writeFile(manifestPath, 'throw new Error("live manifest dependency unavailable");\n' + manifest);
+    await writeFile(join(repoRoot, 'packages/plugins/channels/src/ui/renderSurface.tsx'),
+      'export function renderSurface() { return "healthy-during-failure"; }');
+    await t.waitFor(() => {
+      assert.ok(diagnostics.some(line => line.includes('live manifest dependency unavailable') && line.includes('serving last-green UI')));
+      const entries = consumeInventory();
+      assert.equal(entries.find(entry => entry.artifactId === 'inspector-app-native').artifactGraph.digest, incumbent.artifactGraph.digest);
+      assert.ok(entries.find(entry => entry.artifactId === 'channels-app-native').files.some(file => file.asset.includes('healthy-during-failure')));
+    }, { timeout: 120_000, interval: 100 });
+    await writeFile(manifestPath, manifest);
+    await writeFile(source, 'export function renderSurface() { return "live-manifest-healed"; }');
+    await t.waitFor(() => assert.ok(consumeInventory().find(entry => entry.artifactId === 'inspector-app-native')
+      .files.some(file => file.asset.includes('live-manifest-healed'))), { timeout: 120_000, interval: 100 });
+  });
 });
 
 test('development server starts the retained coherent graph while source and workspace publication advance', { timeout: 30000 }, async t => {
@@ -736,23 +1135,23 @@ test('development server starts the retained coherent graph while source and wor
   const { pickNextFreeTcpPort } = await import('../utils/net/ports.mjs');
   const port = await pickNextFreeTcpPort(32000);
   let started;
-  await withJsonOwnerFileLock(async () => {
-    const retained = await buildSourceRuntimeBundle({ repoDir, stackBaseDir, component: 'server',
-      serverComponent: 'happier-server', dbProvider: 'postgres', env, devStartup: true,
-      reuseSelected: 'if-available', signal: t.signal });
-    assert.equal(retained.entrypoint, first.entrypoint);
-    await withWorkspaceBundleLock(async () => {
-      started = await startDevServer({ serverComponentName: 'happier-server', serverDir,
-        sourceRuntimeOptions: { repoDir, stackBaseDir, signal: t.signal }, autostart: { baseDir: stackBaseDir },
-        baseEnv: { ...env, HAPPIER_STACK_MANAGED_INFRA: '0', HAPPIER_STACK_PRISMA_MIGRATE: '0',
-          HAPPIER_WORKSPACE_DIST_BUILD_LOCK_WAIT_ALLOWED: '0' },
-        serverPort: port, internalServerUrl: `http://127.0.0.1:${port}`, publicServerUrl: `http://127.0.0.1:${port}`,
-        serverAlreadyRunning: false, restart: false, admitPriorBuildsImmediately: true, children, quiet: true },
-      { assertServerPortOwnedBySpawnedProcessGroupImpl: async () => null });
-      assert.equal(started.bootstrapSource, 'source-bundle');
-      assert.equal((await (await fetch(`http://127.0.0.1:${port}/health`)).json()).value, 'green-v1');
-    }, { lockPath: join(repoDir, '.project/tmp/cli-dist-build.lock') });
-  }, { lockPath: join(stackBaseDir, '../source-bundles/publication.lock') });
+  // Selection reads acquire publication custody themselves. Hold only the
+  // workspace compilation lock while proving the retained runtime can start.
+  const retained = await buildSourceRuntimeBundle({ repoDir, stackBaseDir, component: 'server',
+    serverComponent: 'happier-server', dbProvider: 'postgres', env, devStartup: true,
+    reuseSelected: 'if-available', signal: t.signal });
+  assert.equal(retained.entrypoint, first.entrypoint);
+  await withWorkspaceBundleLock(async () => {
+    started = await startDevServer({ serverComponentName: 'happier-server', serverDir,
+      sourceRuntimeOptions: { repoDir, stackBaseDir, signal: t.signal }, autostart: { baseDir: stackBaseDir },
+      baseEnv: { ...env, HAPPIER_STACK_MANAGED_INFRA: '0', HAPPIER_STACK_PRISMA_MIGRATE: '0',
+        HAPPIER_WORKSPACE_DIST_BUILD_LOCK_WAIT_ALLOWED: '0' },
+      serverPort: port, internalServerUrl: `http://127.0.0.1:${port}`, publicServerUrl: `http://127.0.0.1:${port}`,
+      serverAlreadyRunning: false, restart: false, admitPriorBuildsImmediately: true, children, quiet: true },
+    { assertServerPortOwnedBySpawnedProcessGroupImpl: async () => null });
+    assert.equal(started.bootstrapSource, 'source-bundle');
+    assert.equal((await (await fetch(`http://127.0.0.1:${port}/health`)).json()).value, 'green-v1');
+  }, { lockPath: join(repoDir, '.project/tmp/cli-dist-build.lock') });
   assert.equal(first.entrypoint, JSON.parse(await readFile(join(stackBaseDir, 'source-runtime/selected-server.json'), 'utf8')).entrypoint);
   const ref = { current: started.serverProc };
   const liveFixturePids = () => children.filter(child => child.exitCode === null && child.signalCode === null).map(child => child.pid);
@@ -773,7 +1172,7 @@ test('development server starts the retained coherent graph while source and wor
     },
   });
   await t.test('a failed capture retains the serving generation and selection', async () => {
-    await assert.rejects(executor.build(), /Source preparation failed/);
+    await assert.rejects(executor.build(), { code: 'source_runtime_producer_failed' });
     assert.equal((await (await fetch(`http://127.0.0.1:${port}/health`)).json()).value, 'green-v1');
     assert.equal(JSON.parse(await readFile(join(stackBaseDir, 'source-runtime/selected-server.json'), 'utf8')).entrypoint, first.entrypoint);
   });
@@ -805,13 +1204,101 @@ async function createSourcePluginUiFixture(t, directories) {
       name: `@happier-dev/plugins-${directory}`, version: '0.0.0',
       exports: { './happier-plugin-ui/panel': './src/panel.ts' },
     }));
-    plugins.push({ directory, manifest: { id: `happier.${directory}`, contributes: {
+    plugins.push({ directory, manifest: { schemaVersion: 2, id: `happier.${directory}`, version: '0.0.0',
+      displayName: directory, runtime: { apiVersion: 1 }, contributes: {
       ui: { renderers: [{ id: 'panel', kind: 'reactNative', artifact: 'panel' }] },
     } } });
   }
   const entry = directory => join(repoRoot, 'packages/plugins', directory, 'src/panel.ts');
   return { fixture, repoRoot, plugins, entry };
 }
+
+test('source UI repair watcher observes the preparation launcher and source loader inputs', async t => {
+  const fixture = await createTempFixture(t, { prefix: 'happier-ui-repair-inputs-' });
+  const owners = ['apps/stack/scripts/build/build_source_web_ui.mjs', 'packages/cli-common/registerSourceRuntime.mjs'];
+  for (const owner of owners) {
+    await mkdir(dirname(fixture.path(owner)), { recursive: true });
+    await writeFile(fixture.path(owner), 'export const source = true;');
+  }
+  const { readSourcePluginUiBuildInputs } = await import('../utils/fs/workspaceBuildInputs.mjs');
+  const compiler = await readSourcePluginUiBuildInputs({ repoDir: fixture.root, compiler: true, includeDirectories: true });
+  for (const owner of owners) {
+    assert.ok(compiler.includes(owner), `${owner} repairs must trigger the existing source inventory watcher`);
+  }
+});
+
+test('source plugin UI preparation uses source-only SDK and Protocol exports despite stale dist', async t => {
+  const sourceRepo = fileURLToPath(new URL('../../../../', import.meta.url));
+  const fixture = await createTempFixture(t, { prefix: 'happier-plugin-ui-source-exports-' });
+  const repoRoot = fixture.path('repo');
+  await captureSourceWebBuildInputs({ repoDir: sourceRepo, outputDir: repoRoot });
+  await cp(join(sourceRepo, 'apps/stack/bin'), join(repoRoot, 'apps/stack/bin'), { recursive: true });
+  const cliPath = join(repoRoot, 'apps/cli/package.json');
+  const cli = JSON.parse(await readFile(cliPath, 'utf8'));
+  await writeFile(cliPath, JSON.stringify({ ...cli, bundledDependencies: ['@happier-dev/plugins-inspector'] }));
+  for (const directory of ['plugin-sdk', 'protocol']) {
+    const packageRoot = join(repoRoot, 'packages', directory);
+    const packagePath = join(packageRoot, 'package.json');
+    const manifest = JSON.parse(await readFile(packagePath, 'utf8'));
+    manifest.exports['./uiartsrc-evidence'] = {
+      'happier-source': './src/uiartsrc-evidence.ts', default: './dist/uiartsrc-evidence.js',
+    };
+    manifest.exports['./uiartsrc-evidence-leaf'] = {
+      'happier-source': './src/uiartsrc-evidence-leaf.ts', default: './dist/uiartsrc-evidence.js',
+    };
+    await writeFile(packagePath, JSON.stringify(manifest));
+    await mkdir(join(packageRoot, 'dist'), { recursive: true });
+    await writeFile(join(packageRoot, 'dist/uiartsrc-evidence.js'), 'export const stale = true;');
+    // The live Expo cwd has declaration-only SDK paths. tsx can map these
+    // declarations to their stale JS siblings inside a synchronous graph.
+    await mkdir(join(packageRoot, 'dist/uiartsrc-evidence-leaf'), { recursive: true });
+    await writeFile(join(packageRoot, 'dist/uiartsrc-evidence-leaf/index.d.ts'), 'export declare const stale: boolean;');
+    await writeFile(join(packageRoot, 'dist/uiartsrc-evidence-leaf/index.js'), 'export const stale = true;');
+    await writeFile(join(packageRoot, 'src/uiartsrc-evidence-leaf.ts'), 'export const sourceEvidence = "source-' + directory + '";');
+    // ESM loader hooks do not govern Node's synchronous require(esm) graph.
+    // The source child must select the same condition for that path too.
+    await writeFile(join(packageRoot, 'src/uiartsrc-evidence.ts'),
+      'import { createRequire } from "node:module";\n'
+      + `const leaf = createRequire(import.meta.url)("${manifest.name}/uiartsrc-evidence-leaf");\n`
+      + `if (leaf.sourceEvidence !== "source-${directory}") throw new Error("stale ${directory} dependency");\n`
+      + (directory === 'protocol' ? 'export const sourceEvidence = leaf.sourceEvidence;'
+        : 'export { sourceEvidence } from "@happier-dev/protocol/uiartsrc-evidence";'));
+  }
+  const manifestPath = join(repoRoot, 'packages/plugins/inspector/src/manifest.ts');
+  const original = await readFile(manifestPath, 'utf8');
+  const staleSessions = join(repoRoot, 'packages/plugin-sdk/dist/sessions');
+  await mkdir(staleSessions, { recursive: true });
+  await writeFile(join(staleSessions, 'index.d.ts'), 'export declare const stale: boolean;');
+  await writeFile(join(staleSessions, 'index.js'), 'export const stale = true;');
+  await writeFile(manifestPath, 'import { SessionInputForgeEvidenceV1Schema } from "@happier-dev/plugin-sdk/sessions";\n'
+    + 'if (!SessionInputForgeEvidenceV1Schema) throw new Error("missing source schema");\n'
+    + 'import { sourceEvidence } from "@happier-dev/plugin-sdk/uiartsrc-evidence";\n'
+    + 'if (sourceEvidence !== "source-protocol") throw new Error("stale manifest dependencies");\n' + original);
+  await writeFile(join(repoRoot, 'packages/plugins/inspector/src/ui/renderSurface.tsx'),
+    'import { sourceEvidence as sdk } from "@happier-dev/plugin-sdk/uiartsrc-evidence-leaf";\n'
+    + 'import { sourceEvidence as protocol } from "@happier-dev/protocol/uiartsrc-evidence-leaf";\n'
+    + 'export function renderSurface() { return sdk + "/" + protocol; }');
+  const outputDir = fixture.path('preparation');
+  await mkdir(outputDir);
+  const inventoryPath = fixture.path('inventory.js');
+  const { prepareSourcePluginUiInventory } = await import('./build_source_web_ui.mjs');
+  await prepareSourcePluginUiInventory({ repoDir: repoRoot, outputDir, inventoryPath });
+  const { resolveBundledPluginUiArtifactsRetainedRoots } = await import('../../../ui/scripts/generateBundledPluginUiArtifacts.mjs');
+  const root = resolveBundledPluginUiArtifactsRetainedRoots(inventoryPath).get('happier.inspector');
+  assert.ok(root, 'the manifest and UI must compile without the missing dist export');
+  const graph = JSON.parse(await readFile(join(root, 'ui-artifacts.json'), 'utf8'));
+  const renderer = graph.entries.find(entry => entry.executable?.exports.includes('renderSurface'));
+  assert.ok(renderer);
+  const compiled = await readFile(join(root, renderer.entry), 'utf8');
+  const module = { exports: {} };
+  runInNewContext(compiled, { module, exports: module.exports, require: createRequire(import.meta.url) });
+  assert.equal(module.exports.renderSurface(), 'source-plugin-sdk/source-protocol');
+  assert.equal(await readFile(join(staleSessions, 'index.js'), 'utf8'), 'export const stale = true;');
+  for (const directory of ['plugin-sdk', 'protocol']) {
+    assert.equal(await readFile(join(repoRoot, 'packages', directory, 'dist/uiartsrc-evidence.js'), 'utf8'),
+      'export const stale = true;', 'source preparation must not repair dist');
+  }
+});
 
 test('source plugin UI preparation isolates manifest evaluation and syntax failures while refreshing healthy peers', async t => {
   const sourceRepo = fileURLToPath(new URL('../../../../', import.meta.url));
@@ -936,10 +1423,28 @@ test('source plugin UI preparation isolates cold failure, retains green bytes an
   await writeFile(entry('openai'), valid('broken-v2'));
   assert.deepEqual((await prepare()).diagnostics, []);
   assert.deepEqual(await load(), new Map([['happier.healthy', 'healthy-v2'], ['happier.openai', 'broken-v2']]));
+  // A previously published inventory remains last-green even when its bytes
+  // predate the optional compiler-input reuse record.
+  const { resolveBundledPluginUiArtifactsRetainedRoots } = await import('../../../ui/scripts/generateBundledPluginUiArtifacts.mjs');
+  const { WORKSPACE_PACKAGE_BUILD_INPUT_RECORD } = await import('../../../../packages/cli-common/packageBuildOutputTargets.mjs');
+  const retainedRoot = resolveBundledPluginUiArtifactsRetainedRoots(outputPath).get('happier.openai');
+  await rm(join(retainedRoot, WORKSPACE_PACKAGE_BUILD_INPUT_RECORD));
+  plugins[0].loadManifest = async () => { throw new Error('source manifest dependency unavailable'); };
+  await writeFile(entry('healthy'), valid('healthy-v3'));
+  const retained = await prepare();
+  assert.deepEqual(retained.pluginFailures, [], 'a manifest failure must retain admitted inventory bytes without a compiler reuse record');
+  assert.ok(retained.diagnostics.some(row => row.pluginId === 'happier.openai' && row.code === 'plugin_ui_artifact_invalid'),
+    'serving stale bytes must retain the preparation diagnostic');
+  assert.deepEqual(await load(), new Map([['happier.healthy', 'healthy-v3'], ['happier.openai', 'broken-v2']]));
+  delete plugins[0].loadManifest;
+  await writeFile(entry('openai'), valid('broken-v3'));
+  assert.deepEqual((await prepare()).diagnostics, []);
+  assert.deepEqual(await load(), new Map([['happier.healthy', 'healthy-v3'], ['happier.openai', 'broken-v3']]));
 });
 
 test('source plugin UI preparation reuses unchanged plugins and rebuilds only changed inputs', async t => {
   await import('../../../../packages/cli-common/registerSourceRuntime.mjs');
+  const { SOURCE_PLUGIN_UI_IMPORT_CONDITIONS } = await import('../../../../scripts/workspaces/sourcePluginUiBuildOptions.mjs');
   const { resolveBundledPluginUiArtifactsInputPaths } = await import('../../../ui/scripts/generateBundledPluginUiArtifacts.mjs');
   const { fixture, repoRoot, plugins, entry } = await createSourcePluginUiFixture(t, ['alpha', 'beta']);
   // This test changes plugin inputs while holding compiler inputs constant.
@@ -957,25 +1462,53 @@ test('source plugin UI preparation reuses unchanged plugins and rebuilds only ch
     banner: { js: "import { createRequire as fixtureCreateRequire } from 'node:module'; const require = fixtureCreateRequire(import.meta.url);" },
   });
   const { prepareSourcePluginUiArtifacts } = await import(pathToFileURL(compilerPath));
-  const betaPackagePath = join(repoRoot, 'packages/plugins/beta/package.json');
-  const betaPackage = JSON.parse(await readFile(betaPackagePath, 'utf8'));
-  betaPackage.devDependencies = { '@happier-dev/cli': '0.0.0', '@fixture/ui-helper': '0.0.0' };
-  await writeFile(betaPackagePath, JSON.stringify(betaPackage));
-  const helperRoot = join(repoRoot, 'packages/ui-helper');
-  await mkdir(join(helperRoot, 'src'), { recursive: true });
-  await writeFile(join(helperRoot, 'package.json'), JSON.stringify({ name: '@fixture/ui-helper', version: '0.0.0' }));
-  await writeFile(join(helperRoot, 'src/value.ts'), 'export const value = "v1";');
-  const compiled = [];
+  // Observe filesystem boundaries without mutating the compiler checkout's
+  // admitted dependencies or replacing any internal identity/compiler logic.
+  const markerPath = join(compilerRoot, 'node_modules/.happier-stack-dependencies-ready');
+  let dependencyMarker = { identity: { packageManager: 'fixture', nodeVersion: process.version },
+    inputs: [{ path: 'install:pnpm-lock.yaml', kind: 'file', digest: 'dependencies-v1', size: 1 }],
+    stacksNeedingRestart: [] };
+  const originalReadFile = fs.promises.readFile;
+  const originalExists = fs.existsSync;
   const originalWriteFile = fs.promises.writeFile;
+  const originalReaddirSync = fs.readdirSync;
+  const manifestWrites = [];
+  let sharedInputEnumerations = 0;
+  t.mock.method(fs, 'readdirSync', (path, ...args) => {
+    if (String(path) === join(repoRoot, 'packages/shared-ui-input/src')) sharedInputEnumerations++;
+    return originalReaddirSync(path, ...args);
+  });
+  t.mock.method(fs, 'existsSync', path => String(path) === markerPath || originalExists(path));
+  t.mock.method(fs.promises, 'readFile', (path, ...args) => String(path) === markerPath
+    ? Promise.resolve(JSON.stringify(dependencyMarker)) : originalReadFile(path, ...args));
   t.mock.method(fs.promises, 'writeFile', (path, ...args) => {
     const match = String(path).startsWith(fixture.path('preparation-')) && String(path).match(/[\\/](alpha|beta)\.json$/u);
     if (match) {
+      manifestWrites.push(path);
       compiled.push(match[1]);
+      duringCompile?.();
     }
     return originalWriteFile(path, ...args);
   });
   syncBuiltinESMExports();
   t.after(() => { t.mock.restoreAll(); syncBuiltinESMExports(); });
+  const betaPackagePath = join(repoRoot, 'packages/plugins/beta/package.json');
+  const betaPackage = JSON.parse(await readFile(betaPackagePath, 'utf8'));
+  betaPackage.devDependencies = { '@happier-dev/cli': '0.0.0', '@fixture/ui-helper': '0.0.0', '@fixture/shared-ui-input': '0.0.0' };
+  await writeFile(betaPackagePath, JSON.stringify(betaPackage));
+  const helperRoot = join(repoRoot, 'packages/ui-helper');
+  await mkdir(join(helperRoot, 'src'), { recursive: true });
+  await writeFile(join(helperRoot, 'package.json'), JSON.stringify({ name: '@fixture/ui-helper', version: '0.0.0' }));
+  await writeFile(join(helperRoot, 'src/value.ts'), 'export const value = "v1";');
+  const alphaPackagePath = join(repoRoot, 'packages/plugins/alpha/package.json');
+  const alphaPackage = JSON.parse(await readFile(alphaPackagePath, 'utf8'));
+  alphaPackage.devDependencies = { '@fixture/shared-ui-input': '0.0.0' };
+  await writeFile(alphaPackagePath, JSON.stringify(alphaPackage));
+  const sharedRoot = join(repoRoot, 'packages/shared-ui-input');
+  await mkdir(join(sharedRoot, 'src'), { recursive: true });
+  await writeFile(join(sharedRoot, 'package.json'), JSON.stringify({ name: '@fixture/shared-ui-input', version: '0.0.0' }));
+  await writeFile(join(sharedRoot, 'src/value.ts'), 'export const shared = true;');
+  const compiled = [];
   for (const { directory } of plugins) {
     await writeFile(entry(directory), `import {value} from "fixture-ui-${directory}"; export function renderSurface(){return value;}`);
     await writeFile(join(repoRoot, 'packages/plugins', directory, 'src/value.ts'), 'export const value = "v1";');
@@ -984,7 +1517,8 @@ test('source plugin UI preparation reuses unchanged plugins and rebuilds only ch
   const outputPath = fixture.path('consumer/inventory.js');
   const artifactStoreDir = fixture.path('consumer/artifacts');
   let preparation = 0;
-  const prepare = () => prepareSourcePluginUiArtifacts({ repoRoot, plugins, outputPath, artifactStoreDir,
+  let duringCompile;
+  const prepare = (sourceImportConditions) => prepareSourcePluginUiArtifacts({ repoRoot, plugins, outputPath, artifactStoreDir, sourceImportConditions,
     outputDir: fixture.path(`preparation-${preparation++}`), resolveSourceImport(specifier) {
       if (specifier === '@fixture/ui-helper') return join(helperRoot, 'src/value.ts');
       if (!specifier.startsWith('fixture-ui-')) return undefined;
@@ -993,14 +1527,37 @@ test('source plugin UI preparation reuses unchanged plugins and rebuilds only ch
     } });
   await prepare();
   assert.deepEqual(compiled, ['alpha', 'beta']);
+  assert.equal(sharedInputEnumerations, 0,
+    'unused workspace dependencies must not enumerate source membership');
   const firstPaths = resolveBundledPluginUiArtifactsInputPaths(outputPath).slice(1);
   assert.ok(firstPaths.every(path => path.startsWith(`${artifactStoreDir}${sep}`)),
     'published source assets must be independent of disposable preparation paths');
   const firstStats = await Promise.all(firstPaths.map(path => stat(path)));
   for (const path of firstPaths) await setBundleReadOnly(join(dirname(path), '../..'), true);
   compiled.length = 0;
-  await prepare();
+  manifestWrites.length = 0;
+  sharedInputEnumerations = 0;
+  const unchangedPreparationStarted = performance.now();
+  await prepare(SOURCE_PLUGIN_UI_IMPORT_CONDITIONS);
+  console.error(`[reload-cost] scenario=unchanged-plugin-ui elapsedMs=${Math.round(performance.now() - unchangedPreparationStarted)} compilers=${compiled.length}`);
   assert.deepEqual(compiled, [], 'unchanged plugins must not enter the compiler');
+  assert.equal(sharedInputEnumerations, 0, 'warm preparation must not enumerate unused workspace dependencies');
+  await t.test('warm reuse writes zero manifests', () => {
+    assert.deepEqual(manifestWrites, [], 'warm reuse must perform zero compiler manifest writes');
+  });
+  for (const path of firstPaths) await setBundleReadOnly(join(dirname(path), '../..'), false);
+  dependencyMarker = { ...dependencyMarker, stacksNeedingRestart: ['another-running-stack'] };
+  await prepare();
+  await t.test('restart advice causes zero compiles', () => {
+    assert.deepEqual(compiled, [], 'restart advice alone must cause zero plugin compiles');
+  });
+  compiled.length = 0;
+  manifestWrites.length = 0;
+  dependencyMarker = { ...dependencyMarker, inputs: [{ ...dependencyMarker.inputs[0], digest: 'dependencies-v2' }] };
+  await prepare();
+  assert.deepEqual(compiled, ['alpha', 'beta'], 'changed admitted dependency bytes must invalidate every plugin');
+  assert.equal(manifestWrites.length, 2, 'each dependency-invalidated compiler receives its manifest');
+  compiled.length = 0;
   assert.deepEqual(resolveBundledPluginUiArtifactsInputPaths(outputPath).slice(1), firstPaths);
   assert.deepEqual((await Promise.all(firstPaths.map(path => stat(path)))).map(value => value.mtimeMs), firstStats.map(value => value.mtimeMs),
     'reusing identical content must not rewrite served files or invalidate Metro');
@@ -1014,7 +1571,9 @@ test('source plugin UI preparation reuses unchanged plugins and rebuilds only ch
     await setBundleReadOnly(join(dirname(path), '../..'), false);
   }
   await writeFile(join(repoRoot, 'packages/plugins/alpha/src/notImported.ts'), 'export const unused = true;');
+  const backendPreparationStarted = performance.now();
   await prepare();
+  console.error(`[reload-cost] scenario=backend-only-plugin-edit elapsedMs=${Math.round(performance.now() - backendPreparationStarted)} compilers=${compiled.length}`);
   assert.deepEqual(compiled, [], 'an unconsumed plugin source addition must compile zero unchanged UI graphs');
   assert.deepEqual(resolveBundledPluginUiArtifactsInputPaths(outputPath).slice(1), firstPaths,
     'recompiled identical byte graphs must reuse their content paths');
@@ -1036,6 +1595,82 @@ test('source plugin UI preparation reuses unchanged plugins and rebuilds only ch
   await rm(currentBeta);
   await prepare();
   assert.deepEqual(compiled, ['beta'], 'damaged output must rebuild even when its inputs did not change');
+  compiled.length = 0;
+  await writeFile(join(repoRoot, 'packages/plugins/alpha/src/value.ts'), 'export const value = "v3";');
+  duringCompile = () => {
+    duringCompile = undefined;
+    fs.writeFileSync(join(sharedRoot, 'src/addedDuringCompile.ts'), 'export const added = true;');
+  };
+  await prepare();
+  compiled.length = 0;
+  await prepare();
+  assert.deepEqual(compiled, [],
+    'an added file in an unused workspace dependency must not invalidate either plugin');
+  compiled.length = 0;
+  await prepare();
+  assert.deepEqual(compiled, [], 'settled shared membership must return to zero compiles');
+});
+
+test('source plugin UI preparation retains empty compiler graphs across disposable preparation roots', async t => {
+  await import('../../../../packages/cli-common/registerSourceRuntime.mjs');
+  const { prepareSourcePluginUiArtifacts } = await import('../../../ui/scripts/prepareSourcePluginUiArtifacts.mjs');
+  const { readBundledPluginUiArtifactsRetainedInventory, reapBundledPluginUiArtifactStore,
+    resolveBundledPluginUiArtifactsInputPaths } = await import('../../../ui/scripts/generateBundledPluginUiArtifacts.mjs');
+  const { fixture, repoRoot, plugins } = await createSourcePluginUiFixture(t, ['empty']);
+  plugins[0].manifest.contributes = {};
+  await writeFile(join(repoRoot, 'packages/plugins/empty/package.json'), JSON.stringify({
+    name: '@happier-dev/plugins-empty', version: '0.0.0', exports: {},
+  }));
+  const outputPath = fixture.path('consumer/inventory.js');
+  const artifactStoreDir = fixture.path('consumer/artifacts');
+  const writes = [];
+  const write = fs.promises.writeFile;
+  t.mock.method(fs.promises, 'writeFile', (path, ...args) => {
+    if (String(path).endsWith(`${sep}empty.json`)) writes.push(path);
+    return write(path, ...args);
+  });
+  syncBuiltinESMExports();
+  t.after(() => { t.mock.restoreAll(); syncBuiltinESMExports(); });
+  let generation = 0;
+  const prepare = async () => {
+    const outputDir = fixture.path(`preparation-${generation++}`);
+    const result = await prepareSourcePluginUiArtifacts({ repoRoot, plugins, outputPath, artifactStoreDir, outputDir });
+    await rm(outputDir, { recursive: true });
+    assert.deepEqual(result.pluginFailures, []);
+    return result;
+  };
+  await prepare();
+  assert.equal(writes.length, 1, 'the cold empty graph still enters the canonical compiler');
+  writes.length = 0;
+  await mkdir(join(repoRoot, 'apps/ui/sources'), { recursive: true });
+  await writeFile(join(repoRoot, 'apps/ui/sources/unrelated.ts'), 'export const revision = 1;');
+  await prepare();
+  assert.equal(writes.length, 0, 'an unrelated UI edit must compile zero unchanged empty graphs');
+  const retainedRoot = readBundledPluginUiArtifactsRetainedInventory(outputPath).roots.get('happier.empty');
+  assert.ok(retainedRoot);
+  await t.test('empty compiler metadata preserves byte admission and inventory lifetime', async () => {
+    const inventory = await readFile(outputPath, 'utf8');
+    const byteInputs = resolveBundledPluginUiArtifactsInputPaths(outputPath);
+    await writeFile(outputPath, inventory.replace(/^\/\/ BUNDLED_PLUGIN_UI_ARTIFACT_ROOTS = .+;$/m,
+      '// BUNDLED_PLUGIN_UI_ARTIFACT_ROOTS = {;'));
+    assert.deepEqual(resolveBundledPluginUiArtifactsInputPaths(outputPath), byteInputs,
+      'damaged optional compiler metadata must not withdraw admitted bytes');
+    await writeFile(outputPath, inventory);
+    const historical = new Date(Date.now() - 48 * 60 * 60 * 1000);
+    for (const file of await readdir(retainedRoot)) await utimes(join(retainedRoot, file), historical, historical);
+    await utimes(retainedRoot, historical, historical);
+    const procRoot = fixture.path('empty-proc');
+    await mkdir(procRoot);
+    assert.equal(reapBundledPluginUiArtifactStore({ artifactStoreDir, inventoryPaths: [outputPath], procRoot,
+      retainCandidate: () => false }).reclaimedRoots, 0, 'the current empty compiler root is owned by its inventory lifetime');
+    assert.ok(await stat(retainedRoot));
+  });
+  await writeFile(join(repoRoot, 'packages/plugins/empty/src/changed.ts'), 'export const revision = 2;');
+  await prepare();
+  assert.equal(writes.length, 0, 'an unused plugin source must not recompile its empty UI graph');
+  plugins[0].manifest.displayName = 'Updated empty plugin';
+  await prepare();
+  assert.equal(writes.length, 1, 'a changed admitted manifest must compile its empty graph once');
 });
 
 for (const startup of [false, true]) test(startup
@@ -1044,7 +1679,7 @@ for (const startup of [false, true]) test(startup
   skip: process.platform !== 'linux', timeout: 30000,
 }, async t => {
   const fixture = await createTempFixture(t, { prefix: 'happier-stack-source-dependency-order-', registerCleanup: false });
-  const native = await installNativeAdmissionFixture({ root: fixture.root });
+  const native = await installSourceAdmissionFixture(fixture.root);
   const repoDir = fixture.path('repo');
   const server = join(repoDir, 'apps/server');
   for (const app of ['server', 'cli', 'ui']) {
@@ -1059,50 +1694,30 @@ for (const startup of [false, true]) test(startup
   await writeFile(join(server, 'sources/main.light.ts'), 'export const ready = true;');
   await writeFile(join(server, 'scripts/migrate.sqlite.deploy.ts'), 'export async function runSqliteMigrationDeploy() {}');
   await symlink(dirname(createRequire(import.meta.url).resolve('esbuild/package.json')), join(server, 'node_modules/esbuild'));
-  const sourceUrl = new URL('./build_source_runtime.mjs', import.meta.url);
-  const ownerPath = fixture.path('runtime.mjs');
-  // Remap only the physical admission host; use the real Stack source producer,
-  // pending-start retention, capture, compiler and publication owners.
-  await writeFile(ownerPath, (await readFile(sourceUrl, 'utf8'))
-    .replaceAll("fileURLToPath(new URL('../../bin/hstack-exec', import.meta.url))", JSON.stringify(native.launcher))
-    .replace(/^(import|export) ([^\n]*) from '(\.[^']+)'/gm,
-      (_match, declaration, clause, specifier) => `${declaration} ${clause} from ${JSON.stringify(new URL(specifier, sourceUrl).href)}`));
-  const { buildSourceRuntimeBundle: prepare } = await import(pathToFileURL(ownerPath));
-  const available = fixture.path('available');
-  const pressured = fixture.path('pressure-observed');
-  await writeFile(available, '5242880');
-  await mkdir(fixture.path('bin'));
-  await writeFile(fixture.path('bin/awk'), `#!/bin/sh
-case "$*" in
-  */proc/meminfo*) value=$(/bin/cat '${available}'); printf '%s 33554432\\n' "$value"; [ "$value" -ne 5242880 ] || printf observed > '${pressured}' ;;
-  */proc/loadavg*|*/proc/pressure/*) printf '0\\n' ;;
-  *) exec /usr/bin/awk "$@" ;;
-esac
-`);
-  await chmod(fixture.path('bin/awk'), 0o755);
-  const env = { ...process.env, PATH: `${fixture.path('bin')}:/usr/bin:/bin`, HAPPIER_DEV_TARGET_EXECUTION: '1',
-    HAPPIER_STACK_HOME_DIR: fixture.path('home') };
+  await installSourcePreparationInputs(repoDir, 'server');
+  const prepare = native.build;
+  const pressure = await holdNativeAdmissionFixtureMemory(t, native, { totalKiB: 33554432, availableKiB: 5242880 });
+  const env = { ...native.env, HAPPIER_STACK_HOME_DIR: fixture.path('home'),
+    HAPPIER_STACK_RUNTIME_BUILD_AUTHORITY_STACK: 'consumer' };
   for (const key of Object.keys(env)) if (key.startsWith('HAPPIER_HEAVYWEIGHT_ADMISSION_')
-    || key.startsWith('HAPPIER_WORKSPACE_DIST_BUILD_LOCK_') || key === 'HAPPIER_BUILD_DEPENDENCY_CUSTODY') delete env[key];
+    || key.startsWith('HAPPIER_WORKSPACE_DIST_BUILD_LOCK_')) delete env[key];
   const phases = [];
   const pending = await beginPendingSourceStart({ stackBaseDir: fixture.path('stacks/consumer'), onPhase: phase => phases.push(phase) });
-  const observer = watch(fixture.root);
-  const observed = new Promise((resolveObserved, rejectObserved) => {
-    observer.on('error', rejectObserved);
-    observer.on('change', (_event, file) => { if (file === 'pressure-observed') resolveObserved(); });
-  });
+  let reportQueued;
+  const observed = new Promise(resolve => { reportQueued = resolve; });
   let preparation;
   t.after(async () => {
-    observer.close();
     pending.abort(new Error('source preparation fixture cleanup'));
     await pending.dispose();
     await Promise.allSettled([preparation]);
     await setBundleReadOnly(fixture.root, false);
     await fixture.cleanup();
   });
-  preparation = prepare({ repoDir, stackBaseDir: fixture.path('stacks/consumer'), component: 'server', env,
-    ...(startup ? {} : { devStartup: false }),
-    pending, signal: AbortSignal.any([pending.signal, t.signal]) });
+  preparation = prepare({ repoDir, component: 'server', env,
+    ...(startup ? { stackBaseDir: fixture.path('stacks/consumer'), pending }
+      : { outputDir: fixture.path('finite-output'), devStartup: false }),
+    signal: AbortSignal.any([pending.signal, t.signal]),
+    stderrStream:{write(chunk) { if (String(chunk).includes('waiting for admission')) reportQueued(); }} });
   void preparation.catch(() => {});
   if (startup) {
     const outcome = await Promise.race([preparation.then(built => ({ built })), observed.then(() => ({ queued: true }))]);
@@ -1113,13 +1728,12 @@ esac
     return;
   }
   await observed;
-  assert.equal(JSON.parse(await readFile(fixture.path('stacks/consumer/source-runtime/start.pending.json'), 'utf8')).phase, 'queued');
   await withDependencyRefreshLock({ installDir: repoDir, env, signal: t.signal }, async () => {});
-  await writeFile(available, '33554432');
+  await pressure.release();
   const built = await preparation;
-  assert.ok(phases.some(value => value.phase === 'building' && value.component === 'server'), 'the admitted producer reports actual building, not just queued');
   assert.equal((await import(pathToFileURL(built.entrypoint))).ready, true);
-  assert.deepEqual(await readdir(join(native.admissionRoot, 'owners')), []);
+  assert.deepEqual(await readdir(join(native.admissionRoot, 'owners')).catch(error =>
+    error.code === 'ENOENT' ? [] : Promise.reject(error)), []);
 });
 
 test('source web capture rejects a missing installed package entry before plugin preparation or Metro', { timeout: 10_000 }, async t => {
@@ -1180,7 +1794,7 @@ test('source server recovery observes copied Prisma inputs and extended build co
   assert.ok(paths.includes(join(repoDir, 'tsconfig.base.json')), 'resolver configuration remains an input');
 });
 
-test('captured server runtime keeps generated Prisma support on its installed host after capture retirement', async t => {
+test('captured server runtime retains its generated Prisma support after capture retirement and regeneration', async t => {
   const fixture = await createTempFixture(t, { prefix: 'happier-captured-prisma-support-' });
   const repoDir = fixture.path('repo');
   const server = join(repoDir, 'apps/server');
@@ -1206,11 +1820,13 @@ test('captured server runtime keeps generated Prisma support on its installed ho
       if ((await loadGeneratedClient()).installedMarker !== 'installed-support') throw new Error('generated support unavailable');
     }
   `);
-  // Generated Prisma is installed third-party support; source capture must
-  // preserve its existing host lifetime rather than point into retired inputs.
+  // Generated Prisma belongs to this captured graph, independently of later
+  // generation in the installed checkout or retirement of temporary inputs.
   await writeFile(join(server, 'generated/sqlite-client/index.js'), 'export const installedMarker = "installed-support";');
   await symlink(dirname(createRequire(import.meta.url).resolve('esbuild/package.json')), join(server, 'node_modules/esbuild'), process.platform === 'win32' ? 'junction' : 'dir');
-  const built = await buildSourceRuntimeBundle({ repoDir, outputDir: fixture.path('output'), component: 'server' });
+  const native = process.platform === 'linux' ? await installSourceAdmissionFixture(fixture.root) : null;
+  const built = await (native?.build ?? buildSourceRuntimeBundle)({ repoDir, outputDir: fixture.path('output'),
+    component: 'server', env: native?.env ?? process.env });
   await assert.rejects(access(fixture.path('output/workspace')), { code: 'ENOENT' });
   assert.ok((await readdir(join(built.runtimeDir, 'src/chunks'))).length > 0, 'the regression exercises emitted shared chunks');
   const checkRuntimeFiles = async directory => {
@@ -1227,12 +1843,7 @@ test('captured server runtime keeps generated Prisma support on its installed ho
     }
   };
   await checkRuntimeFiles(built.runtimeDir);
-  // Model installed SDK support retained at the publication root after its
-  // original workspace locator retires. This is the real filesystem boundary,
-  // not a replacement Prisma/path resolver or a consumer-side rewrite.
-  await rename(join(server, 'generated'), fixture.path('retained-generated'));
-  await rm(join(built.runtimeDir, 'generated'), { recursive: true });
-  await rename(fixture.path('retained-generated'), join(built.runtimeDir, 'generated'));
+  await writeFile(join(server, 'generated/sqlite-client/index.js'), 'export const installedMarker = "later-generation";');
   const loaded = await import(pathToFileURL(built.entrypoint));
   assert.equal(loaded.installedMarker, 'installed-support');
   assert.equal((await loaded.loadGeneratedClient()).installedMarker, 'installed-support');
@@ -1374,53 +1985,6 @@ async function makeFixtureWritable(directory) {
   }
 }
 
-async function installSourcePreparationInputs(repoDir, component) {
-  // Model the checkout inputs watched by the real preparation owner. Missing
-  // fixture roots must not replace the source failure each test exercises.
-  await mkdir(join(repoDir, 'scripts/workspaces'), { recursive: true });
-  await mkdir(join(repoDir, 'apps/stack/scripts/build'), { recursive: true });
-  if (!existsSync(join(repoDir, 'pnpm-lock.yaml'))) await writeFile(join(repoDir, 'pnpm-lock.yaml'), '');
-  await writeFile(join(repoDir, 'pnpm-workspace.yaml'), 'packages: []\n');
-  if (component !== 'daemon') return;
-  const sdk = join(repoDir, 'packages/plugin-sdk/package.json');
-  if (existsSync(sdk) && JSON.parse(await readFile(sdk, 'utf8')).happier?.publicSdkRelease) {
-    const canonicalRoot = fileURLToPath(new URL('../../../../packages/cli-common/', import.meta.url));
-    const sharedPackages = await realpath(join(repoDir, 'packages')) === await realpath(dirname(canonicalRoot));
-    // Native-admission fixtures borrow the canonical packages through a link.
-    // Capturing onto that same authority would unlink its source files.
-    if (!sharedPackages) {
-      await captureBuildInputFiles({ sourceDir: canonicalRoot, captureDir: join(repoDir, 'packages/cli-common'),
-        readPaths: () => readWorkspaceBuildInputs(canonicalRoot) });
-      await mkdir(join(repoDir, 'packages/cli-common/node_modules'), { recursive: true });
-      await symlink(dirname(createRequire(import.meta.url).resolve('semver/package.json')),
-        join(repoDir, 'packages/cli-common/node_modules/semver'), process.platform === 'win32' ? 'junction' : 'dir');
-    }
-  }
-  await mkdir(join(repoDir, 'apps/ui/scripts'), { recursive: true });
-  // The fixture models the canonical publisher's process boundary. Its actual
-  // authored-source drift semantics are covered by sourceGenerator.test.ts.
-  const pluginChecker = join(repoDir, 'apps/cli/scripts/build-owned/generateBundledPluginEntries.ts');
-  await mkdir(dirname(pluginChecker), { recursive: true });
-  if (!existsSync(pluginChecker)) await writeFile(pluginChecker, `
-    import {cpSync,existsSync,mkdirSync,readFileSync,writeFileSync} from 'node:fs';
-    import {join,dirname} from 'node:path';
-    const root = process.argv[process.argv.indexOf('--daemon-output-root') + 1];
-    const source = 'apps/cli/src/plugins/projection/registry/sources/generatedBundledPluginManifests.ts';
-    const locator = join(root, source);
-    mkdirSync(dirname(locator), {recursive:true});
-    writeFileSync(locator, existsSync(source) ? readFileSync(source) : 'export const BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS = [];');
-    if (existsSync('apps/cli/assets')) cpSync('apps/cli/assets', join(root,'apps/cli/assets'), {recursive:true});
-    const failures = join(root,'apps/cli/.project/tmp/bundled-plugin-publication/failures.json');
-    mkdirSync(dirname(failures), {recursive:true});
-    writeFileSync(failures,'[]');
-  `);
-  for (const [path, contents] of [
-    ['apps/ui/package.json', JSON.stringify({ name: '@happier-dev/ui' })],
-    ['apps/ui/scripts/prepareSourcePluginUiArtifacts.mjs', ''],
-    ['apps/ui/scripts/generateBundledPluginUiArtifacts.mjs', ''],
-  ]) if (!existsSync(join(repoDir, path))) await writeFile(join(repoDir, path), contents);
-}
-
 test('source exports keep host dependency resolution through nested-to-hoisted relayouts', async t => {
   const fixture = await createTempFixture(t, { prefix: 'hstack-export-dependency-relayout-', registerCleanup: false });
   t.after(async () => { await makeFixtureWritable(fixture.root); await fixture.cleanup(); });
@@ -1462,6 +2026,85 @@ async function createReloadDaemonRepo(fixture, source) {
   return repoDir;
 }
 
+test('retained source maps resolve server and daemon TypeScript after capture retirement and participate in identity', async t => {
+  const fixture = await createTempFixture(t, { prefix: 'happier-source-maps-' });
+  const repoDir = await createReloadDaemonRepo(fixture,
+    "export async function crash() { return (await import('./crash')).crash(); }\n");
+  await writeFile(join(repoDir, 'apps/cli/scripts/process_tree.cjs'), 'module.exports = { ready: true };\n');
+  const server = join(repoDir, 'apps/server');
+  for (const directory of ['sources', 'scripts', 'node_modules']) await mkdir(join(server, directory), { recursive: true });
+  await writeFile(join(server, 'package.json'), JSON.stringify({ name: '@happier-dev/server', type: 'module' }));
+  await writeFile(join(server, 'tsconfig.json'), '{}');
+  await writeFile(join(server, 'sources/main.light.ts'), "export async function crash() { return (await import('./crash')).crash(); }\n");
+  await writeFile(join(server, 'scripts/migrate.sqlite.deploy.ts'), 'export async function runSqliteMigrationDeploy() {}');
+  await symlink(dirname(createRequire(import.meta.url).resolve('esbuild/package.json')), join(server, 'node_modules/esbuild'),
+    process.platform === 'win32' ? 'junction' : 'dir');
+  const native = process.platform === 'linux' ? await installSourceAdmissionFixture(fixture.root) : null;
+  for (const component of ['server', 'daemon']) {
+    const sourcePath = component === 'server' ? 'apps/server/sources/crash.ts' : 'apps/cli/src/crash.ts';
+    const source = "export function crash(): never {\n  throw new Error('mapped-source-failure');\n}\n";
+    await writeFile(join(repoDir, sourcePath), source);
+    const outputDir = fixture.path(component);
+    const runtime = await (native?.build ?? buildSourceRuntimeBundle)({ repoDir, outputDir, component, env: native?.env ?? process.env });
+    await assert.rejects(access(join(outputDir, 'workspace')), { code: 'ENOENT' });
+    const metafile = JSON.parse(await readFile(join(runtime.runtimeDir, 'metafile.json'), 'utf8'));
+    const emitted = Object.keys(metafile.outputs).map(path => resolve(outputDir, 'workspace', path));
+    const javascript = emitted.filter(path => /\.[cm]?js$/.test(path));
+    let retainedSource = false;
+    for (const path of javascript) {
+      const contents = await readFile(path, 'utf8');
+      const reference = /\/\/# sourceMappingURL=(.+)/.exec(contents)?.[1];
+      assert.ok(reference && !reference.startsWith('data:'), `external map reference required: ${relative(outputDir, path)}`);
+      const mapPath = resolve(dirname(path), reference);
+      assert.ok(emitted.includes(mapPath), 'source map belongs to the emitted identity inventory');
+      const map = JSON.parse(await readFile(mapPath, 'utf8'));
+      const index = map.sources.findIndex(path => path.endsWith(sourcePath));
+      if (index >= 0) {
+        assert.equal(map.sourcesContent[index], source, 'captured TypeScript is retained without reopening live source');
+        retainedSource = true;
+      }
+    }
+    assert.equal(retainedSource, true, 'lazy TypeScript source is available to the profiler');
+    const hash = createHash('sha256');
+    const wrappers = component === 'server'
+      ? [join(runtime.runtimeDir, 'sources/main.mjs'), join(runtime.runtimeDir, 'scripts/migrate.mjs')]
+      : [runtime.entrypoint];
+    for (const path of [...emitted, ...wrappers].sort()) {
+      hash.update(relative(runtime.runtimeDir, path));
+      hash.update(await readFile(path));
+    }
+    assert.equal(hash.digest('hex').slice(0, 16), runtime.identity, 'retained map bytes participate in runtime identity');
+    await writeFile(join(repoDir, sourcePath), 'export function crash() { throw new Error("moving-source"); }');
+    const child = spawnSync(process.execPath, ['--enable-source-maps', '--input-type=module', '--eval',
+      `const runtime = await import(${JSON.stringify(pathToFileURL(runtime.entrypoint).href)}); await runtime.crash();`],
+    { cwd: outputDir, env: { ...process.env, ...runtime.env, NODE_OPTIONS: '' }, encoding: 'utf8' });
+    assert.equal(child.status, 1, child.stderr);
+    assert.match(child.stderr, /mapped-source-failure/);
+    assert.ok(child.stderr.replaceAll('\\', '/').includes(`${sourcePath}:2:`), 'real runtime stack resolves captured TypeScript line');
+  }
+});
+
+test('source CLI profile reconciliation runs a staged nonexecutable entry through the admitted launcher', async t => {
+  const fixture = await createTempFixture(t, { prefix: 'happier-source-cli-profile-', registerCleanup: false });
+  t.after(async () => { await makeFixtureWritable(fixture.root); await fixture.cleanup(); });
+  const repoDir = await createReloadDaemonRepo(fixture, `
+    import { writeFileSync } from 'node:fs';
+    if (process.argv[2] === 'server') {
+      writeFileSync(process.env.PROFILE_ARGS_PATH, JSON.stringify(process.argv.slice(2)));
+    }
+  `);
+  const runtime = await buildSourceRuntimeBundle({ repoDir, outputDir: fixture.path('output'), component: 'daemon' });
+  assert.equal((await stat(runtime.entrypoint)).mode & 0o111, 0);
+  const launch = await resolveCliRuntimeLaunchSpec({ sourceRuntimeLaunch: runtime });
+  const args = buildStackServerProfileSetArgs({ serverId: 'source-profile',
+    internalServerUrl: 'http://127.0.0.1:4301', publicServerUrl: 'http://source-profile.localhost:4301' });
+  const capturedArgs = fixture.path('profile-args.json');
+  await run(launch.command, [...launch.args, ...args], {
+    cwd: fixture.root, env: { ...process.env, ...runtime.env, PROFILE_ARGS_PATH: capturedArgs }, stdio: 'ignore',
+  });
+  assert.deepEqual(JSON.parse(await readFile(capturedArgs, 'utf8')), args);
+});
+
 test('source daemon rejects a failed projection generator before replacing its working bundle',
   { skip: process.platform !== 'linux', timeout: 30000 }, async t => {
   const fixture = await createTempFixture(t, { prefix: 'happier-source-plugin-projection-', registerCleanup: false });
@@ -1487,14 +2130,30 @@ test('source daemon rejects a failed projection generator before replacing its w
   const input = join(repoDir, 'apps/cli/assets/bundled-plugin-manifests/fixture.json');
   await mkdir(dirname(input), { recursive: true });
   await writeFile(input, '{"module":"engine"}');
+  const sourceToolsDir = join(repoDir, 'packages/cli-common');
+  await mkdir(sourceToolsDir, { recursive: true });
+  await writeFile(join(sourceToolsDir, 'package.json'), JSON.stringify({
+    name: '@happier-dev/cli-common', type: 'module', files: ['*.mjs'],
+  }));
+  await mkdir(join(sourceToolsDir, 'node_modules'), { recursive: true });
+  await symlink(dirname(createRequire(import.meta.url).resolve('tsx/package.json')),
+    join(sourceToolsDir, 'node_modules/tsx'), process.platform === 'win32' ? 'junction' : 'dir');
+  for (const name of ['registerSourceRuntime.mjs', 'sourceRuntimeEntries.mjs', 'sourceRuntimeDependencies.mjs', 'cliRuntimeSidecars.mjs']) {
+    await cp(new URL('../../../../packages/cli-common/' + name, import.meta.url), join(sourceToolsDir, name));
+  }
+  await writeFile(join(pluginDir, 'src/value.ts'), 'export const value = 42;');
+  await writeFile(join(pluginDir, 'src/imports.ts'), "export { value } from './value.js';");
   // This subprocess is the external build-tool boundary, not a replacement
   // for the builder's input capture, compilation, cache, or publication logic.
   await writeFile(checker, `
     import assert from 'node:assert/strict';
+    import '../../../../packages/cli-common/registerSourceRuntime.mjs';
+    import { value } from '../../../../packages/plugins/fixture/src/imports.ts';
     import {readFileSync} from 'node:fs';
     import {resolveWorkspaceBundleLockPath,withWorkspaceBundleLock} from ${JSON.stringify(new URL('../../../../packages/cli-common/workspaceBundleLock.mjs', import.meta.url).href)};
     assert.equal(process.argv[2], '--daemon-projections');
     assert.equal(process.argv[3], '--daemon-output-root');
+    assert.equal(value, 42);
     await withWorkspaceBundleLock(async () => {
       const authored = readFileSync(new URL('../../../../packages/plugins/fixture/src/manifest.ts', import.meta.url), 'utf8');
       if (authored.includes('factory')) {
@@ -1518,7 +2177,7 @@ test('source daemon rejects a failed projection generator before replacing its w
     return Reflect.apply(writeStderr, this, [chunk, ...args]);
   });
   await withWorkspaceBundleLock(async () => {
-    await assert.rejects(native.build(options), /Source preparation failed \(exit 1\)/);
+    await assert.rejects(native.build(options), { code: 'source_runtime_producer_failed' });
   }, { lockPath: resolveWorkspaceBundleLockPath(repoDir) });
   assert.match(diagnostics.join(''), /Canonical projection generator failed/);
   assert.equal(await readFile(input, 'utf8'), '{"module":"engine"}');
@@ -1528,7 +2187,7 @@ test('source daemon rejects a failed projection generator before replacing its w
   await writeFile(join(repoDir, 'apps/cli/src/index.ts'), 'export const ready = true;');
   await writeFile(authoredManifest, 'export const locator = "engine";');
   await rm(checker);
-  await assert.rejects(native.build(options), /Source preparation failed/u);
+  await assert.rejects(native.build(options), { code: 'source_runtime_producer_failed' });
   assert.match(diagnostics.join(''), /Cannot find module.*generateBundledPluginEntries/u);
   assert.deepEqual(JSON.parse(await readFile(join(stackBaseDir, 'source-runtime/selected-daemon.json'), 'utf8')),
     { entrypoint: incumbent.entrypoint });
@@ -1594,6 +2253,62 @@ test('source daemon rejects a broken command loader before publishing its bundle
   await assert.rejects(access(join(outputDir, 'source-bundle.json')), { code: 'ENOENT' });
 });
 
+test('source bundle refusal identifies the compiler failing module across the finite worker', async t => {
+  const fixture = await createTempFixture(t, { prefix: 'hstack-source-refusal-module-' });
+  const repoDir = await createReloadDaemonRepo(fixture, 'import "./refusal-broken";');
+  const probeWitness = fixture.path('unexpected-entry-probe');
+  await mkdir(join(repoDir, 'apps/cli/src/daemon'), { recursive: true });
+  await writeFile(join(repoDir, 'apps/cli/src/daemon/startDaemon.ts'),
+    `import {writeFileSync} from 'node:fs'; writeFileSync(${JSON.stringify(probeWitness)}, 'loaded');`);
+  await writeFile(join(repoDir, 'apps/cli/src/refusal-broken.ts'), 'export const missing = ;');
+  await assert.rejects(buildSourceRuntimeBundle({ repoDir, outputDir: fixture.path('candidate'), component: 'daemon' }), error => {
+    assert.ok(error.firstFailingModule?.replaceAll('\\', '/').endsWith('apps/cli/src/refusal-broken.ts'),
+      `refusal must identify the compiler module; received ${error.firstFailingModule}`);
+    assert.equal(error.entryGraph, 'daemon');
+    return true;
+  });
+  await assert.rejects(access(probeWitness), { code: 'ENOENT' });
+  await writeFile(join(repoDir, 'apps/cli/src/refusal-broken.ts'), 'export const ready = true;');
+  await buildSourceRuntimeBundle({ repoDir, outputDir: fixture.path('green-candidate'), component: 'daemon' });
+  await assert.rejects(access(probeWitness), { code: 'ENOENT' }, 'successful preparation must execute zero entry-graph diagnostics');
+});
+
+test('source preparation preserves a missing loader code across the real finite worker', async t => {
+  const fixture = await createTempFixture(t, { prefix: 'hstack-source-loader-code-' });
+  const repoDir = await createReloadDaemonRepo(fixture, 'export const ready = true;');
+  const importer = join(repoDir, 'packages/cli-common/registerSourceRuntime.mjs');
+  await mkdir(dirname(importer), { recursive: true });
+  await writeFile(importer, "import 'constructed-missing-preparation-loader';\n");
+  await assert.rejects(buildSourceRuntimeBundle({ repoDir, outputDir: fixture.path('candidate'), component: 'daemon' }), error => {
+    assert.equal(error.code, 'ERR_MODULE_NOT_FOUND');
+    assert.equal(error.firstFailingModule, importer);
+    assert.equal(error.entryGraph, 'daemon');
+    return true;
+  });
+  await assert.rejects(access(fixture.path('candidate/source-bundle.json')), { code: 'ENOENT' });
+});
+
+test('source reload refusal publishes the failing module and preserves incumbent selection', async t => {
+  const graph = await reloadFixtureGraph(t, 'export {};');
+  graph.old.entrypoint = graph.daemon.entrypoint;
+  await writeFile(graph.selectedPath, JSON.stringify(graph.old));
+  const repoDir = await createReloadDaemonRepo(graph.fixture, 'throw new ReferenceError("reload-refusal-leaf");');
+  await assert.rejects(prepareSourceRuntimeReload({ stackName: 'qa', stackBaseDir: graph.stackBaseDir, repoDir,
+    args: ['--no-server', '--no-ui'], onHost: true,
+    env: { ...process.env, HAPPIER_STACK_DAEMON: '1', HAPPIER_SERVER_URL: ['http:', '', '127.0.0.1:12345'].join('/') } }), error => {
+    assert.equal(error.entryGraph, 'daemon');
+    assert.ok(error.firstFailingModule);
+    return true;
+  });
+  const refusal = JSON.parse(await readFile(join(graph.stackBaseDir, 'source-runtime/reload.json'), 'utf8'));
+  assert.equal(refusal.status, 'failed');
+  assert.equal(refusal.entryGraph, 'daemon');
+  assert.ok(refusal.firstFailingModule);
+  assert.match(await readFile(refusal.logPath, 'utf8'), /firstFailingModule=/);
+  assert.deepEqual(JSON.parse(await readFile(graph.selectedPath, 'utf8')), graph.old);
+  assert.deepEqual(JSON.parse(await readFile(graph.runtimePath, 'utf8')), graph.runtime);
+});
+
 for (const activate of [false, true]) {
 test(`source reload preparation ${activate ? 'selects only after activation' : 'keeps the incumbent when activation is cancelled'}`, async t => {
   const graph = await reloadFixtureGraph(t, 'export {};');
@@ -1621,8 +2336,14 @@ test(`source reload preparation ${activate ? 'selects only after activation' : '
       const selected = JSON.parse(await readFile(graph.selectedPath, 'utf8'));
       assert.notEqual(selected.entrypoint, graph.old.entrypoint);
       assert.equal(await runCaptureSourceEntrypoint(selected.entrypoint), 0);
+      const completion = JSON.parse(await readFile(join(resolve(dirname(selected.entrypoint), '../../..'), 'source-bundle.json'), 'utf8'));
       const reload = JSON.parse(await readFile(join(graph.stackBaseDir, 'source-runtime/reload.json'), 'utf8'));
+      assert.equal(reload.sourceTimes?.daemon, completion.sourceCapture.capturedAt,
+        'reload readiness reports the selected capture time, not completion or activation time');
+      assert.deepEqual(reload.sourceCaptures?.daemon, completion.sourceCapture);
       const log = await readFile(reload.logPath, 'utf8');
+      assert.ok(log.includes(`sourceTime daemon=${completion.sourceCapture.capturedAt}`));
+      assert.ok(log.includes(`inputIdentity daemon=${completion.sourceCapture.inputIdentity}`));
       for (const phase of ['entry-preparation', 'esbuild-main', 'publication']) {
         assert.match(log, new RegExp(`^\\[source-bundle\\] phase=${phase} .*component=daemon`, 'm'),
           `the reload log retains the daemon producer's ${phase} diagnostic`);
@@ -1647,6 +2368,8 @@ async function runCaptureSourceEntrypoint(entrypoint) {
 
 test('source reload reuses completed runtime products while deferring selection until smoke and activation', async t => {
   const graph = await reloadFixtureGraph(t, 'export {};');
+  const native = process.platform === 'linux' ? await installSourceAdmissionFixture(graph.fixture.root)
+    : { build: buildSourceRuntimeBundle, prepareReload: prepareSourceRuntimeReload, env: process.env };
   // This cold preparation has no incumbent yet. The shared fixture's missing
   // incumbent belongs to refusal tests; the first build below selects a real one.
   await rm(graph.selectedPath);
@@ -1661,9 +2384,9 @@ test('source reload reuses completed runtime products while deferring selection 
   await writeFile(join(serverDir, 'scripts/migrate.sqlite.deploy.ts'), 'export async function runSqliteMigrationDeploy() {}');
   await symlink(dirname(createRequire(import.meta.url).resolve('esbuild/package.json')), join(serverDir, 'node_modules/esbuild'),
     process.platform === 'win32' ? 'junction' : 'dir');
-  const env = { ...process.env, HAPPIER_STACK_SERVER_COMPONENT: 'happier-server-light', HAPPIER_STACK_DAEMON: '1' };
-  const incumbent = await buildSourceRuntimeBundle({ repoDir, stackBaseDir: graph.stackBaseDir, component: 'daemon', env });
-  await buildSourceRuntimeBundle({ repoDir, stackBaseDir: graph.stackBaseDir, component: 'server', env });
+  const env = { ...native.env, HAPPIER_STACK_SERVER_COMPONENT: 'happier-server-light', HAPPIER_STACK_DAEMON: '1' };
+  const incumbent = await native.build({ repoDir, stackBaseDir: graph.stackBaseDir, component: 'daemon', env });
+  await native.build({ repoDir, stackBaseDir: graph.stackBaseDir, component: 'server', env });
   const serverSelectionPath = join(graph.stackBaseDir, 'source-runtime/selected-server.json');
   const incumbentServer = JSON.parse(await readFile(serverSelectionPath, 'utf8'));
   assert.equal((await import(pathToFileURL(incumbent.entrypoint))).ready, 1);
@@ -1673,17 +2396,61 @@ test('source reload reuses completed runtime products while deferring selection 
   await writeFile(join(repoDir, 'apps/cli/src/index.ts'), 'export const ready = 2;');
   const options = { stackName: 'qa', stackBaseDir: graph.stackBaseDir, repoDir, env,
     args: ['--no-ui'], onHost: true };
-  await prepareSourceRuntimeReload({ ...options, onPrepared: async () => {
+  await writeFile(join(serverDir, 'sources/main.light.ts'), `${reloadHttpServerSource}\nexport const replacement = true;`);
+  const processes = (await import('node:child_process')).default;
+  const spawnProcess = processes.spawn;
+  const forkProcess = processes.fork;
+  const preparationStartedAt = Date.now();
+  const preparationSpans = [];
+  const componentPreparations = new Map();
+  let preparationsOverlapped = false;
+  const readComponent = args => {
+    for (const value of args ?? []) {
+      let request;
+      try { request = JSON.parse(value); } catch { continue; }
+      if (request?.component === 'server' || request?.component === 'daemon') return request.component;
+      const nested = readComponent(request?.args);
+      if (nested) return nested;
+    }
+    return null;
+  };
+  const observeProcess = (launch, command, args, ...rest) => {
+    // POSIX foreground custody forks its real adapter before launching the
+    // requested command. Observe both OS forms; retain the actual processes.
+    const component = readComponent(args);
+    if (component) preparationsOverlapped ||= [...componentPreparations]
+      .some(([other, child]) => other !== component && child.exitCode === null && child.signalCode === null);
+    const child = launch(command, args, ...rest);
+    if (component) {
+      const span = { component, startMs: Date.now() - preparationStartedAt };
+      preparationSpans.push(span);
+      child.once('close', () => { span.elapsedMs = Date.now() - preparationStartedAt - span.startMs; });
+    }
+    if (component) componentPreparations.set(component, child);
+    return child;
+  };
+  t.mock.method(processes, 'spawn', (...args) => observeProcess(spawnProcess, ...args));
+  t.mock.method(processes, 'fork', (...args) => observeProcess(forkProcess, ...args));
+  syncBuiltinESMExports();
+  t.after(() => { t.mock.restoreAll(); syncBuiltinESMExports(); });
+  await native.prepareReload({ ...options, onPrepared: async () => {
     assert.equal(JSON.parse(await readFile(join(graph.stackBaseDir, 'source-runtime/start.pending.json'), 'utf8')).phase, 'prepared',
       'completed smoke waiting for activation is prepared, not still checking');
     assert.deepEqual(JSON.parse(await readFile(graph.selectedPath, 'utf8')), incumbentSelection,
       'preparation and smoke do not replace the incumbent selection');
     assert.deepEqual(JSON.parse(await readFile(serverSelectionPath, 'utf8')), incumbentServer);
   } });
+  t.diagnostic(`reload-preparation-measurement ${JSON.stringify({ wallMs: Date.now() - preparationStartedAt,
+    spans: preparationSpans })}`);
+  assert.equal(componentPreparations.size, 2, 'the OS observer must see both real finite producers');
+  assert.equal(preparationsOverlapped, true,
+    'server and daemon preparation must overlap before either replacement is selected');
+  t.mock.restoreAll();
+  syncBuiltinESMExports();
   const first = JSON.parse(await readFile(graph.selectedPath, 'utf8'));
   const firstServer = JSON.parse(await readFile(serverSelectionPath, 'utf8'));
   assert.equal((await import(pathToFileURL(first.entrypoint))).ready, 2);
-  await prepareSourceRuntimeReload({ ...options, onPrepared: async () => {
+  await native.prepareReload({ ...options, onPrepared: async () => {
     assert.deepEqual(JSON.parse(await readFile(graph.selectedPath, 'utf8')), first);
     assert.deepEqual(JSON.parse(await readFile(serverSelectionPath, 'utf8')), firstServer);
   } });
@@ -1697,7 +2464,11 @@ test('source reload reuses completed runtime products while deferring selection 
     'reload has no private runtime rebuild path');
 });
 
-test('source reload and required startup reuse agree on a shared Postgres provider', async t => {
+test('source reload and required startup reuse agree on a shared Postgres provider', {
+  skip: process.env.HAPPIER_DB_PROVIDER !== 'postgres'
+    || !/^[a-f0-9]{64}$/.test(process.env.HAPPIER_DB_CONTRACT_CONTAINER_ID ?? '')
+    || !/^\d+$/.test(process.env.VITEST_POOL_ID ?? ''),
+}, async t => {
   const fixture = await createTempFixture(t, { prefix: 'hstack-source-reload-shared-postgres-', registerCleanup: false });
   t.after(async () => { await makeFixtureWritable(fixture.root); await fixture.cleanup(); });
   const repoDir = fixture.path('repo');
@@ -1712,12 +2483,26 @@ test('source reload and required startup reuse agree on a shared Postgres provid
   await symlink(dirname(createRequire(import.meta.url).resolve('esbuild/package.json')), join(serverDir, 'node_modules/esbuild'),
     process.platform === 'win32' ? 'junction' : 'dir');
   await installSourcePreparationInputs(repoDir, 'server');
+  const canonicalRepo = fileURLToPath(new URL('../../../../', import.meta.url));
+  // Shared launch readiness must observe a real applied ledger. This case runs
+  // under the existing ephemeral Postgres contract owner, never a retained DB.
+  const database = new URL(process.env.DATABASE_URL);
+  assert.equal(database.pathname, `/happier_contract_${process.env.VITEST_POOL_ID}`);
+  await symlink(join(canonicalRepo, 'node_modules'), join(repoDir, 'node_modules'),
+    process.platform === 'win32' ? 'junction' : 'dir');
+  const canonicalMigrations = join(canonicalRepo, 'apps/server/prisma/migrations');
+  const appliedMigration = (await readdir(canonicalMigrations, { withFileTypes: true }))
+    .filter(entry => entry.isDirectory()).map(entry => entry.name).sort()[0];
+  assert.ok(appliedMigration);
+  const migrationDir = join(serverDir, 'prisma/migrations', appliedMigration);
+  await mkdir(migrationDir, { recursive: true });
+  await cp(join(canonicalMigrations, appliedMigration, 'migration.sql'), join(migrationDir, 'migration.sql'));
 
   const sourceEnvPath = fixture.path('producer/env');
   await mkdir(dirname(sourceEnvPath), { recursive: true });
   await writeFile(sourceEnvPath, [
     'HAPPIER_DB_PROVIDER=postgres',
-    'DATABASE_URL=postgresql://fixture:fixture-password@private-host/dev',
+    `DATABASE_URL=${process.env.DATABASE_URL}`,
     'HANDY_MASTER_SECRET=fixture-only-master-secret',
     `HAPPIER_SERVER_LIGHT_DATA_DIR=${fixture.path('producer/server-light')}`,
   ].join('\n'));
@@ -1749,6 +2534,14 @@ test('source reload and required startup reuse agree on a shared Postgres provid
   assert.equal(reused.entrypoint, selection.entrypoint, 'required startup reuse consumes the prepared selection without a mismatch');
 });
 
+async function readFixtureDependencyPublication(repoDir) {
+  return {
+    ...await readBuildInputDependencies({ sourceDir: repoDir }),
+    markerPath: resolveDependencyRefreshMarkerPath(repoDir),
+    generationPath: `${resolveDependencyRefreshLockPath(repoDir)}.generation`,
+  };
+}
+
 async function reloadFixtureGraph(t, source) {
   const fixture = await createTempFixture(t, { prefix: 'hstack-source-reload-selection-', registerCleanup: false });
   const stackBaseDir = fixture.path('stacks/qa');
@@ -1757,7 +2550,8 @@ async function reloadFixtureGraph(t, source) {
   const candidateRoot = fixture.path('candidate');
   const runtimeDir = join(candidateRoot, 'apps/cli');
   await mkdir(join(runtimeDir, 'src'), { recursive: true });
-  const daemon = { identity: 'candidate', runtimeDir, cliDir: runtimeDir, entrypoint: join(runtimeDir, 'src/index.mjs') };
+  const daemon = { identity: 'candidate', runtimeDir, cliDir: runtimeDir, entrypoint: join(runtimeDir, 'src/index.mjs'),
+    dependencyPublication: await readFixtureDependencyPublication(fixture.root) };
   await writeFile(daemon.entrypoint, source);
   await writeFile(join(candidateRoot, 'source-bundle.json'), JSON.stringify(daemon));
   const incumbentRoot = fixture.path('incumbent');
@@ -1775,7 +2569,10 @@ async function reloadFixtureGraph(t, source) {
   const runtime = { ownerPid: process.pid, sourceRuntimeIdentities: { daemon: { selected: 'incumbent', loaded: 'incumbent' } } };
   await writeFile(runtimePath, JSON.stringify(runtime));
   const pending = await beginPendingSourceStart({ stackBaseDir });
-  t.after(async () => { await pending.dispose(); await makeFixtureWritable(fixture.root); await fixture.cleanup(); });
+  t.after(async () => {
+    try { await pending.dispose(); }
+    finally { await makeFixtureWritable(fixture.root); await fixture.cleanup(); }
+  });
   return { fixture, stackBaseDir, selectedPath, runtimePath, runtime, old, daemon, pending };
 }
 
@@ -1790,6 +2587,7 @@ async function installCoherenceRuntimeBundle(fixture, {
   const built = {
     identity: name,
     component,
+    dependencyPublication: await readFixtureDependencyPublication(fixture.root),
     runtimeDir,
     entrypoint,
     ...(component === 'daemon'
@@ -1891,6 +2689,7 @@ test('deferred source restart publishes the server before its matching daemon co
   const fixture = await createTempFixture(t, { prefix: 'hstack-source-deferred-companion-' });
   const stackBaseDir = fixture.path('stacks/qa');
   const sourceRoot = join(stackBaseDir, 'source-runtime');
+  const env = { ...process.env, HAPPIER_STACK_REPO_DIR: fileURLToPath(new URL('../../../../', import.meta.url)) };
   await mkdir(sourceRoot, { recursive: true });
   const staleDaemon = await installCoherenceRuntimeBundle(fixture, {
     name: 'daemon-stale', component: 'daemon', sharedDigest: 'stale',
@@ -1906,7 +2705,7 @@ test('deferred source restart publishes the server before its matching daemon co
   const serverPending = await beginPendingSourceStart({ stackBaseDir });
   t.after(() => serverPending.dispose());
   const serverAdmission = await admitSourceRuntimeReload({
-    stackBaseDir, components: { server: currentServer }, pending: serverPending,
+    stackBaseDir, components: { server: currentServer }, pending: serverPending, env,
   });
   await serverAdmission.activate();
   assert.equal(
@@ -1917,7 +2716,7 @@ test('deferred source restart publishes the server before its matching daemon co
   const daemonPending = await beginPendingSourceStart({ stackBaseDir });
   t.after(() => daemonPending.dispose());
   const daemonAdmission = await admitSourceRuntimeReload({
-    stackBaseDir, components: { daemon: currentDaemon }, pending: daemonPending,
+    stackBaseDir, components: { daemon: currentDaemon }, pending: daemonPending, env,
   });
   await daemonAdmission.activate();
   assert.equal(
@@ -1930,10 +2729,7 @@ test('deferred source restart publishes the server before its matching daemon co
   );
 });
 
-test('fresh source restart converges when protocol source changes between server and daemon captures',
-  { timeout: 90000 }, async t => {
-  const fixture = await createTempFixture(t, { prefix: 'hstack-source-reload-converges-', registerCleanup: false });
-  t.after(async () => { await makeFixtureWritable(fixture.root); await fixture.cleanup(); });
+async function createProtocolReloadRepo(fixture, { protocolFileCount = 700 } = {}) {
   const repoDir = await createReloadDaemonRepo(fixture, 'export const ready = true;');
   const stackBaseDir = fixture.path('stacks/qa');
   const serverDir = join(repoDir, 'apps/server');
@@ -1958,7 +2754,7 @@ test('fresh source restart converges when protocol source changes between server
   }));
   const sharedProtocolSource = 'export const version = "shared-capture";';
   await writeFile(protocolPath, sharedProtocolSource);
-  await Promise.all(Array.from({ length: 700 }, (_, index) => writeFile(
+  await Promise.all(Array.from({ length: protocolFileCount }, (_, index) => writeFile(
     join(dirname(protocolPath), `shared-${index}-${'x'.repeat(96)}.ts`),
     `export const shared${index} = ${index};`,
   )));
@@ -1966,6 +2762,14 @@ test('fresh source restart converges when protocol source changes between server
   await writeFile(join(repoDir, 'pnpm-workspace.yaml'), 'packages:\n  - apps/*\n  - packages/*\n');
   await installSourcePreparationInputs(repoDir, 'server');
   await writeFile(join(repoDir, 'pnpm-workspace.yaml'), 'packages:\n  - apps/*\n  - packages/*\n');
+  return { repoDir, stackBaseDir, protocolPath, sharedProtocolSource };
+}
+
+test('fresh source restart converges when protocol source changes between server and daemon captures',
+  { timeout: 90000 }, async t => {
+  const fixture = await createTempFixture(t, { prefix: 'hstack-source-reload-converges-', registerCleanup: false });
+  t.after(async () => { await makeFixtureWritable(fixture.root); await fixture.cleanup(); });
+  const { repoDir, stackBaseDir, protocolPath, sharedProtocolSource } = await createProtocolReloadRepo(fixture);
 
   let changed = false;
   await prepareSourceRuntimeReload({ stackName: 'qa', stackBaseDir, repoDir, args: ['--no-ui'], onHost: true,
@@ -1988,45 +2792,228 @@ test('fresh source restart converges when protocol source changes between server
   assert.equal(selected[0].sourceInputDigests['packages/protocol/src/shared.ts'],
     createHash('sha256').update(sharedProtocolSource).digest('hex'),
     'both components consume the one shared Protocol capture taken before either build');
+  assert.ok(Number.isFinite(Date.parse(selected[0].sourceCapture?.capturedAt)));
+  assert.equal(selected[0].sourceCapture.capturedAt, selected[1].sourceCapture?.capturedAt,
+    'component copies preserve the one shared capture time instead of their later build times');
 });
 
-test('completed source runtime lookup keeps publication custody through adoption', async t => {
+test('source reload pins complete component inputs until next demand and retains daemon-only reuse',
+  { timeout: 90000 }, async t => {
+  const fixture = await createTempFixture(t, { prefix: 'hstack-source-pinned-reload-', registerCleanup: false });
+  let incumbentProcess;
+  let incumbentExit;
+  t.after(async () => {
+    incumbentProcess?.kill();
+    await incumbentExit;
+    await makeFixtureWritable(fixture.root); await fixture.cleanup();
+  });
+  // Phase observation fixes the edit after capture; this case needs no padding
+  // to widen the older between-captures test's timing window.
+  const { repoDir, stackBaseDir, protocolPath } = await createProtocolReloadRepo(fixture, { protocolFileCount: 0 });
+  const installed = join(repoDir, 'apps/server/node_modules/capture-fixture-dependency');
+  await mkdir(installed, { recursive: true });
+  await writeFile(join(installed, 'package.json'), JSON.stringify({ name: 'capture-fixture-dependency', main: './index.cjs' }));
+  await writeFile(join(installed, 'index.cjs'), 'exports.marker = "installed-dependency";');
+  await writeFile(join(repoDir, 'apps/server/sources/main.light.ts'),
+    `import * as protocol from '@happier-dev/protocol';\nimport { marker } from 'capture-fixture-dependency';\n${reloadHttpServerSource.replace(
+      '.listen(Number(process.env.PORT),process.env.HOST);',
+      '.listen(Number(process.env.PORT),process.env.HOST,function(){process.send?.({port:this.address().port});});',
+    )}\nexport { protocol, marker };`);
+  const env = { ...process.env, HAPPIER_STACK_SERVER_COMPONENT: 'happier-server-light', HAPPIER_STACK_DAEMON: '1' };
+  const options = { stackName: 'qa', stackBaseDir, repoDir, args: ['--no-ui'], onHost: true, env };
+  const sourceRoot = join(stackBaseDir, 'source-runtime');
+  const selections = () => Promise.all(['server', 'daemon'].map(async component => {
+    const selection = JSON.parse(await readFile(join(sourceRoot, `selected-${component}.json`), 'utf8'));
+    return JSON.parse(await readFile(resolve(dirname(selection.entrypoint), '../../../source-bundle.json'), 'utf8'));
+  }));
+  await prepareSourceRuntimeReload(options);
+  const incumbent = await selections();
+  incumbentProcess = spawn(process.execPath, [incumbent[0].entrypoint], {
+    env: { ...env, ...incumbent[0].env, HOST: '127.0.0.1', PORT: '0',
+      DATABASE_URL: pathToFileURL(fixture.path('incumbent.sqlite')).href },
+    stdio: ['ignore', 'ignore', 'pipe', 'ipc'], signal: t.signal,
+  });
+  incumbentExit = new Promise(resolve => incumbentProcess.once('exit', resolve));
+  const { port } = await new Promise((resolve, reject) => {
+    incumbentProcess.once('message', resolve);
+    incumbentProcess.once('error', reject);
+    incumbentProcess.once('exit', code => reject(new Error(`incumbent exited before readiness (${code})`)));
+  });
+  const assertIncumbentHealthy = async () => {
+    assert.equal(incumbentProcess.exitCode, null);
+    assert.equal((await fetch(`http://127.0.0.1:${port}/health`)).status, 200);
+  };
+  await assertIncumbentHealthy();
+  const cliPath = join(repoDir, 'apps/cli/src/index.ts');
+  const replacementSource = 'export const version = "shared-capture"; export const added = "new-export";';
+  let attempts = 0;
+  await prepareSourceRuntimeReload({ ...options, onPrepared: assertIncumbentHealthy, onPhase: phase => {
+    if (phase.phase !== 'preparing' || phase.component !== 'daemon') return;
+    attempts += 1;
+    assert.equal(incumbentProcess.exitCode, null, 'the loaded incumbent survives every replacement attempt');
+    if (attempts === 1) {
+      fs.writeFileSync(protocolPath, replacementSource);
+      fs.writeFileSync(cliPath, 'import { added } from "@happier-dev/protocol"; export const ready = added;');
+    }
+    assert.deepEqual(['server', 'daemon'].map(component => {
+      const selection = JSON.parse(fs.readFileSync(join(sourceRoot, `selected-${component}.json`), 'utf8'));
+      return JSON.parse(fs.readFileSync(resolve(dirname(selection.entrypoint), '../../../source-bundle.json'), 'utf8')).identity;
+    }), incumbent.map(record => record.identity),
+      'both incumbent selections stay active throughout failed and replacement preparation');
+  } });
+  const pinned = await selections();
+  assert.equal(attempts, 1, 'later imports belong to the next demand, without retrying the captured pair');
+  assert.deepEqual(pinned.map(record => record.identity), incumbent.map(record => record.identity));
+  assert.deepEqual(pinned.map(record => record.entrypoint), incumbent.map(record => record.entrypoint),
+    'unchanged captured inputs reuse the existing product, including installed dependency inputs');
+  await prepareSourceRuntimeReload(options);
+  const replaced = await selections();
+  assert.equal((await import(pathToFileURL(replaced[1].entrypoint))).ready, 'new-export');
+  const digest = createHash('sha256').update(replacementSource).digest('hex');
+  for (const record of replaced) assert.equal(record.sourceInputDigests['packages/protocol/src/shared.ts'], digest);
+  assert.notEqual(replaced[0].identity, incumbent[0].identity);
+
+  await writeFile(cliPath, 'import { added } from "@happier-dev/protocol"; export const ready = added + "-daemon-only";');
+  await prepareSourceRuntimeReload(options);
+  const daemonOnly = await selections();
+  assert.equal(daemonOnly[0].identity, replaced[0].identity, 'unchanged Protocol reuses the server product');
+  assert.notEqual(daemonOnly[1].identity, replaced[1].identity);
+  assert.equal((await import(pathToFileURL(daemonOnly[1].entrypoint))).ready, 'new-export-daemon-only');
+});
+
+test('completed source runtime lookup reads one candidate and verifies outside publication custody', async t => {
   const graph = await reloadFixtureGraph(t, 'export {};');
   // This is a cold-build/adoption test, not a broken-incumbent recovery test.
   // The shared reload fixture intentionally seeds a nonexistent incumbent.
   await rm(graph.selectedPath);
   const repoDir = await createReloadDaemonRepo(graph.fixture, 'export const ready = 1;');
-  const options = { repoDir, stackBaseDir: graph.stackBaseDir, component: 'daemon' };
-  const first = await buildSourceRuntimeBundle(options);
-  const completionPath = join(first.runtimeDir, '../../source-bundle.json');
+  const native = process.platform === 'linux' ? await installSourceAdmissionFixture(graph.fixture.root) : null;
+  const build = native?.build ?? buildSourceRuntimeBundle;
+  const options = { repoDir, stackBaseDir: graph.stackBaseDir, component: 'daemon', env: native?.env ?? process.env };
   const publicationLock = join(graph.stackBaseDir, '../source-bundles/publication.lock');
-  // Observe the real filesystem boundary, not the reuse or publication owner.
-  // A fingerprint lease alone cannot exclude another fingerprint's reclaimer.
+  const bundleRoot = dirname(publicationLock);
+  const observerPath = graph.fixture.path('observe-cold-retention.mjs');
+  const observerLoaded = graph.fixture.path('cold-observer-loaded');
+  const allocationStarted = graph.fixture.path('cold-allocation-started');
+  const coldInventories = graph.fixture.path('cold-inventories');
+  // The admitted worker is a real child process. Observe its OS filesystem
+  // boundary, allowing normal maintenance after its output allocation while
+  // forbidding a store-wide retention pass for the read-only incumbent lookup.
+  await writeFile(observerPath, `
+    import fs from 'node:fs/promises';
+    import { appendFileSync, existsSync, writeFileSync } from 'node:fs';
+    import { basename, dirname, resolve } from 'node:path';
+    import { syncBuiltinESMExports } from 'node:module';
+    const bundleRoot = ${JSON.stringify(bundleRoot)};
+    const allocated = ${JSON.stringify(allocationStarted)};
+    const readdir = fs.readdir;
+    const mkdtemp = fs.mkdtemp;
+    writeFileSync(${JSON.stringify(observerLoaded)}, 'loaded');
+    fs.readdir = async (path, ...args) => {
+      if (resolve(String(path)) === bundleRoot && !existsSync(allocated))
+        appendFileSync(${JSON.stringify(coldInventories)}, 'inventory\\n');
+      return await readdir(path, ...args);
+    };
+    fs.mkdtemp = async (...args) => {
+      const path = await mkdtemp(...args);
+      if (dirname(path) === bundleRoot && basename(path).startsWith('runtime-')) writeFileSync(allocated, 'allocated');
+      return path;
+    };
+    syncBuiltinESMExports();
+  `);
+  const first = await build({ ...options, env: { ...options.env,
+    NODE_OPTIONS: [process.env.NODE_OPTIONS, `--import=${pathToFileURL(observerPath).href}`].filter(Boolean).join(' ') } });
+  assert.equal(await readFile(observerLoaded, 'utf8'), 'loaded', 'the cold worker must execute the filesystem observer');
+  const coldInventoryReads = (await readFile(coldInventories, 'utf8').catch(error => {
+    if (error.code === 'ENOENT') return '';
+    throw error;
+  })).trim().split('\n').filter(Boolean).length;
+  t.diagnostic(`coldPreallocationInventoryReads=${coldInventoryReads}`);
+  assert.equal(coldInventoryReads, 0, 'read-only incumbent lookup must not run store-wide retention before allocation');
+  const completionPath = join(first.runtimeDir, '../../source-bundle.json');
+  const completed = JSON.parse(await readFile(completionPath, 'utf8'));
+  assert.equal(Object.hasOwn(first, 'captureFingerprint'), false);
+  assert.equal(Object.hasOwn(completed, 'captureFingerprint'), false, 'capture lookup metadata stays private to the finite producer');
+  const candidateLock = join(bundleRoot, `build-${completed.reuseFingerprint}.lock`);
+  await rm(join(graph.stackBaseDir, 'source-runtime/selected-daemon.json'));
+  for (let index = 0; index < 128; index += 1) {
+    const directory = join(bundleRoot, `bundle-unrelated-${index}`);
+    await mkdir(directory);
+    await writeFile(join(directory, 'source-bundle.json'), JSON.stringify({ ...completed,
+      dependencyPublication: { ...completed.dependencyPublication, identity: `unrelated-${index}` } }));
+  }
+  // Observe real filesystem and process boundaries. Retained unrelated
+  // products must not be enumerated to answer one warm candidate lookup.
   const fs = (await import('node:fs/promises')).default;
+  const childProcess = (await import('node:child_process')).default;
   const { syncBuiltinESMExports } = await import('node:module');
   const original = fs.readFile;
-  let observed = false;
+  const originalLstat = fs.lstat;
+  const originalReaddir = fs.readdir;
+  const originalSpawn = childProcess.spawn;
+  let completionReads = 0;
+  let protectedCompletionReads = 0;
+  let inventoryReads = 0;
+  let probes = 0;
+  let probesUnderPublication = 0;
+  let protectedProbes = 0;
+  let hashingUnderPublication = 0;
   fs.readFile = async (path, ...args) => {
-    if (String(path) === join(completionPath)) {
-      observed = true;
-      assert.equal(isJsonOwnerFileLockActive(publicationLock), true,
-        'completed runtime lookup must exclude publication reclamation before reading its record');
-      assert.deepEqual((await readdir(dirname(publicationLock))).filter(name => /^build-[a-f0-9]+\.lock$/.test(name)), [],
-        'completed runtime adoption must not hold a producer lease while taking publication custody');
+    if (basename(String(path)) === 'source-bundle.json') {
+      completionReads += 1;
+      if (isJsonOwnerFileLockActive(publicationLock)) protectedCompletionReads += 1;
     }
+    if (String(path).startsWith(repoDir) && isJsonOwnerFileLockActive(publicationLock)) hashingUnderPublication += 1;
     return await original(path, ...args);
+  };
+  fs.lstat = async (path, ...args) => {
+    if (String(path).startsWith(repoDir) && isJsonOwnerFileLockActive(publicationLock)) hashingUnderPublication += 1;
+    return await originalLstat(path, ...args);
+  };
+  fs.readdir = async (path, ...args) => {
+    if (resolve(String(path)) === bundleRoot) inventoryReads += 1;
+    return await originalReaddir(path, ...args);
+  };
+  childProcess.spawn = (...args) => {
+    if (args[1]?.[0] === first.entrypoint) {
+      probes += 1;
+      if (isJsonOwnerFileLockActive(publicationLock)) probesUnderPublication += 1;
+      if (isWorkspaceBundleLockActive(candidateLock, { staleAfterMs: Infinity })) protectedProbes += 1;
+    }
+    return originalSpawn(...args);
   };
   syncBuiltinESMExports();
   try {
-    assert.equal((await buildSourceRuntimeBundle(options)).entrypoint, first.entrypoint);
-    assert.equal(observed, true);
-  } finally { fs.readFile = original; syncBuiltinESMExports(); }
+    assert.equal((await build(options)).entrypoint, first.entrypoint);
+    t.diagnostic(`retained=128 inventoryReads=${inventoryReads} completionReads=${completionReads} probesUnderPublication=${probesUnderPublication} protectedProbes=${protectedProbes}`);
+    assert.equal(inventoryReads, 0, 'warm lookup must not scan N retained bundle directories');
+    assert.equal(completionReads, 2, 'only the chosen record and its final selection are read');
+    assert.equal(protectedCompletionReads, 2, 'short completion admission and final selection both exclude retirement');
+    assert.equal(hashingUnderPublication, 0);
+    assert.equal(probes, 1);
+    assert.equal(probesUnderPublication, 0, 'the real daemon import probe must run outside publication custody');
+    assert.equal(protectedProbes, 1, 'existing fingerprint custody protects the chosen graph until selection');
+    assert.equal(isWorkspaceBundleLockActive(candidateLock, { staleAfterMs: Infinity }), false);
+    assert.deepEqual(JSON.parse(await readFile(join(graph.stackBaseDir, 'source-runtime/selected-daemon.json'), 'utf8')),
+      { entrypoint: first.entrypoint }, 'selection pins the candidate after fingerprint custody ends');
+  } finally {
+    fs.readFile = original;
+    fs.lstat = originalLstat;
+    fs.readdir = originalReaddir;
+    childProcess.spawn = originalSpawn;
+    syncBuiltinESMExports();
+  }
 });
 
 test('source reload failing daemon leaves incumbent selection and loaded runtime intact', async t => {
   const graph = await reloadFixtureGraph(t, 'throw new ReferenceError("candidate-loader-broken");');
   await assert.rejects(admitSourceRuntimeReload({ stackBaseDir: graph.stackBaseDir,
-    components: { daemon: graph.daemon }, pending: graph.pending }), /candidate-loader-broken/);
+    components: { daemon: graph.daemon }, pending: graph.pending }), error => {
+    assert.match(error.message, /candidate-loader-broken/);
+    assert.equal(error.entryGraph, 'daemon');
+    assert.ok(error.firstFailingModule);
+    return true;
+  });
   assert.deepEqual(JSON.parse(await readFile(graph.selectedPath, 'utf8')), graph.old);
   assert.deepEqual(JSON.parse(await readFile(graph.runtimePath, 'utf8')), graph.runtime);
 });
@@ -2067,18 +3054,29 @@ test('source reload cancellation during command load preserves selection and the
   let observeStarted;
   const entered = new Promise(resolve => { observeStarted = resolve; });
   const observer = watch(graph.fixture.root, (_event, name) => { if (name === 'loader-started') observeStarted(); });
+  const probeDeadlines = [];
+  const setTimeout = globalThis.setTimeout;
+  // Source preparation belongs to the pending request's cancellation owner;
+  // installed CLI probes retain their independent default deadline.
+  t.mock.method(globalThis, 'setTimeout', (callback, delay, ...args) => {
+    probeDeadlines.push(delay);
+    return setTimeout(callback, delay, ...args);
+  });
   const loading = admitSourceRuntimeReload({ stackBaseDir: graph.stackBaseDir,
     components: { daemon: graph.daemon }, pending: graph.pending });
   void loading.catch(() => {});
   let replacement;
   try {
     await Promise.race([entered, loading.then(() => { throw new Error('loader exited before interruption'); })]);
+    assert.deepEqual(probeDeadlines, [], 'source command loads must not schedule a subordinate default deadline');
     replacement = await beginPendingSourceStart({ stackBaseDir: graph.stackBaseDir });
     await assert.rejects(loading, { code: 'ESOURCESTARTSUPERSEDED' });
     assert.deepEqual(JSON.parse(await readFile(graph.selectedPath, 'utf8')), graph.old);
     assert.deepEqual(JSON.parse(await readFile(graph.runtimePath, 'utf8')), graph.runtime);
   } finally {
     observer.close();
+    graph.pending.abort(new Error('source probe fixture finished'));
+    await loading.catch(() => {});
     await replacement?.dispose();
   }
 });
@@ -2201,30 +3199,6 @@ test(`source reload browser boot ${broken ? 'rejects entry exceptions' : 'admits
 });
 }
 
-async function installSourceAdmissionFixture(root) {
-  const native = await installNativeAdmissionFixture({root});
-  const adapterSource = new URL('../utils/proc/runSourceBuildCommand.mjs',import.meta.url);
-  const adapter = join(root,'native-owner/apps/stack/scripts/utils/proc/runSourceBuildCommand.mjs');
-  await writeFile(adapter,(await readFile(adapterSource,'utf8')).replace(
-    "from '../dev/devReloadCoordinator.mjs'",`from ${JSON.stringify(new URL('../dev/devReloadCoordinator.mjs',adapterSource).href)}`));
-  const runtimeSource = new URL('./build_source_runtime.mjs',import.meta.url);
-  const runtimePath = join(root,'native-owner/apps/stack/scripts/build/build_source_runtime.mjs');
-  await mkdir(dirname(runtimePath),{recursive:true});
-  // Install the genuine owner beside the fixture's genuine native launcher.
-  // Remap imports only, preserving real selection/build/retention decisions.
-  await writeFile(runtimePath,(await readFile(runtimeSource,'utf8')).replace(/^((?:import|export) [^\n]*from )'(\.[^']+)'/gm,(match,prefix,path)=> {
-    if(path==='../utils/proc/runSourceBuildCommand.mjs' || path==='../utils/proc/workspace_build_admission.mjs') return match;
-    return `${prefix}${JSON.stringify(new URL(path,runtimeSource).href)}`;
-  }));
-  const {buildSourceRuntimeBundle:build} = await import(pathToFileURL(runtimePath));
-  const {runSourceBuildCommand:runSourceCommand} = await import(pathToFileURL(adapter));
-  await mkdir(join(root,'bin'));
-  await writeFile(join(root,'bin/awk'),`#!/bin/sh\ncase "$*" in\n  */proc/meminfo*) printf '16777216 16777216\\n' ;;\n  */proc/loadavg*|*/proc/pressure/*) printf '0\\n' ;;\n  *) exec /usr/bin/awk "$@" ;;\nesac\n`);
-  await chmod(join(root,'bin/awk'),0o755);
-  const env = {...buildNativeAdmissionFixtureEnv(),PATH:`${join(root,'bin')}:/usr/bin:/bin`,HAPPIER_DEV_TARGET_EXECUTION:'1'};
-  return {...native,runtimePath,build,runSourceCommand,env};
-}
-
 test('source daemon stages current native custody source instead of borrowing stale checkout tools', async context => {
   const fixture = await createTempFixture(context, { prefix: 'happier-source-native-custody-' });
   const repoDir = fixture.path('repo');
@@ -2341,7 +3315,7 @@ func main() { target:=flag.String("target","",""); output:=flag.String("output",
   assert.equal((await promisify(execFile)(join(second.runtimeDir, 'tools/unpacked', basename(executable)), [])).stdout, 'current-source-v2');
 });
 
-test('shared source daemon preparation rejoins joint admission after a queued launcher cutover',
+test('shared source daemon preparation uses joint admission and surfaces a genuine order refusal once',
   { skip: process.platform !== 'linux' }, async context => {
   const fixture = await createTempFixture(context, { prefix: 'happier-source-native-admission-', registerCleanup: false });
   context.after(async () => { await makeFixtureWritable(fixture.root); await rm(fixture.root, { recursive: true, force: true }); });
@@ -2365,56 +3339,29 @@ test('shared source daemon preparation rejoins joint admission after a queued la
   await rm(join(repoDir, 'packages'));
   await symlink(join(inputsDir, 'packages'), join(repoDir, 'packages'), 'dir');
   const env = { ...native.env, PATH: `${native.env.PATH}:${process.env.PATH}` };
-  const statePath = fixture.path('native-owner/apps/stack/scripts/utils/proc/native_host_admission_state.sh');
-  const currentState = await readFile(statePath, 'utf8');
-  const legacyRoot = fixture.path('legacy-admission');
-  await writeFile(statePath, currentState.replace(native.admissionRoot, legacyRoot));
   const available = fixture.path('available-memory');
-  const observed = fixture.path('memory-observed');
-  await writeFile(available, '5242880');
+  await writeFile(available, '16777216');
   await writeFile(fixture.path('bin/awk'), `#!/bin/sh
 case "$*" in
   */proc/meminfo*)
     available=$(/bin/cat '${available}')
     printf '%s 16777216\\n' "$available"
-    [ "$available" -ne 5242880 ] || printf observed > '${observed}'
     ;;
   */proc/loadavg*|*/proc/pressure/*) printf '0\\n' ;;
   *) exec /usr/bin/awk "$@" ;;
 esac
 `);
-  const watcher = watch(fixture.root);
-  context.after(() => watcher.close());
-  const pressure = new Promise((resolve, reject) => {
-    watcher.on('error', reject);
-    watcher.on('change', (_event, name) => { if (name === 'memory-observed') { watcher.close(); resolve(); } });
-  });
-  await mkdir(native.admissionRoot, { recursive: true });
-  const mutex = spawn('flock', [join(native.admissionRoot, 'lock'), process.execPath, '-e',
-    'process.stdout.write("locked\\n"); process.stdin.resume();'], { env, stdio: ['pipe', 'pipe', 'pipe'] });
-  const mutexClosed = new Promise(resolve => mutex.once('close', resolve));
-  context.after(async () => { mutex.stdin.end(); await mutexClosed; });
-  await new Promise((resolve, reject) => { mutex.stdout.once('data', resolve); mutex.once('error', reject); });
   let diagnostic = '';
   const stderrWrite = process.stderr.write;
   process.stderr.write = function(chunk, ...args) {
     diagnostic += String(chunk);
-    if (diagnostic.includes('HSTACK_WORKSPACE_ADMISSION_ORDER:')) mutex.stdin.end();
     return stderrWrite.call(this, chunk, ...args);
   };
   context.after(() => { process.stderr.write = stderrWrite; });
-  const pending = native.build({ repoDir, stackBaseDir: fixture.path('stacks/consumer'), component: 'daemon', env, signal: context.signal });
-  const completion = pending.then(built => ({ built }), error => ({ error }));
-  await pressure;
-  // The parent has parsed the old root while queued; its newly launched
-  // preparation children read the current root and find its mutex occupied.
-  await writeFile(`${statePath}.next`, currentState);
-  await rename(`${statePath}.next`, statePath);
-  await writeFile(available, '16777216');
-  const outcome = await completion;
-  assert.equal(outcome.error, undefined);
-  assert.match(diagnostic, /HSTACK_WORKSPACE_ADMISSION_ORDER:/);
-  const built = outcome.built;
+  // The source fingerprint lease and nested native compilation use the real
+  // joint owner; ordinary composition needs no consumer-level replay.
+  const built = await native.build({ repoDir, stackBaseDir: fixture.path('stacks/consumer'), component: 'daemon', env, signal: context.signal });
+  assert.doesNotMatch(diagnostic, /HSTACK_WORKSPACE_ADMISSION_ORDER:|re-invoking joint workspace admission/);
   const helper = join(built.runtimeDir, 'tools/unpacked/happier-process-custody');
   const stdout = await new Promise((resolve, reject) => {
     const child = execFile(helper, ['disk-measure'], (error, stdout) => error ? reject(error) : resolve(stdout));
@@ -2425,15 +3372,17 @@ esac
   assert.equal(reused.entrypoint, built.entrypoint, 'a fresh preparation retains ordinary bundle reuse');
   await writeFile(join(cliDir, 'src/index.ts'), 'export const ready = "requires-build";');
   await writeFile(available, '5242880');
+  diagnostic = '';
   await withWorkspaceBundleLock(async ({ heldLockValue }) => {
     await assert.rejects(native.build({ repoDir, stackBaseDir: fixture.path('stacks/consumer'), component: 'daemon',
       env: { ...env, HAPPIER_WORKSPACE_DIST_BUILD_LOCK_HELD: heldLockValue }, signal: context.signal }),
-      { code: 1, sourceDrift: false }, 're-invocation cannot bypass a live inherited lease or unavailable admission');
+      { code: 1, sourceDrift: false }, 'a live inherited lease cannot wait for unavailable admission');
   }, { lockPath: fixture.path('unadmitted.lock') });
+  assert.equal((diagnostic.match(/^HSTACK_WORKSPACE_ADMISSION_ORDER:/gm) ?? []).length, 1,
+    'a genuine native refusal must surface once without replaying the producer');
+  assert.doesNotMatch(diagnostic, /re-invoking joint workspace admission/);
   assert.deepEqual(await readdir(join(native.admissionRoot, 'owners')), []);
   assert.deepEqual(await readdir(join(native.admissionRoot, 'waiters')), []);
-  assert.deepEqual(await readdir(join(legacyRoot, 'owners')), []);
-  assert.deepEqual(await readdir(join(legacyRoot, 'waiters')), []);
 });
 
 test('source daemon owns its UI graph and bytes after checkout artifacts change', async context => {
@@ -2452,11 +3401,6 @@ test('source daemon owns its UI graph and bytes after checkout artifacts change'
   const repoDir = fixture.path('repo');
   const canonicalRepo = fileURLToPath(new URL('../../../../', import.meta.url));
   await captureSourceWebBuildInputs({ repoDir: canonicalRepo, outputDir: repoDir });
-  // Characterize the genuine compiler-process boundary: its containing build
-  // must forward dependency custody, not queue the child behind its own lock.
-  const uiCompiler = join(repoDir, 'apps/ui/scripts/prepareSourcePluginUiArtifacts.mjs');
-  const compilerSource = await readFile(uiCompiler, 'utf8');
-  await writeFile(uiCompiler, `if (!process.env.HAPPIER_BUILD_DEPENDENCY_CUSTODY) throw new Error('missing-containing-build-dependency-custody');\n${compilerSource}`);
   const cliDir = join(repoDir,'apps/cli');
   const pluginDir = join(repoDir,'packages/plugins/fixture');
   // This fixture replaces the complete plugin census with its UI-only plugin;
@@ -2536,53 +3480,14 @@ test('source daemon owns its UI graph and bytes after checkout artifacts change'
 
 });
 
-test('source snapshot startup stays pending on a missing source import and rebuilds after its creation', { timeout: 30000 }, async context => {
+test('finite source web preparation waits for source repair and preserves cancellation', { timeout: 30000 }, async context => {
   const fixture = await createTempFixture(context, {prefix:'happier-source-start-drift-', registerCleanup:false});
-  context.after(async () => {
-    await makeFixtureWritable(fixture.root);
-    await rm(fixture.root, {recursive:true, force:true});
-  });
+  context.after(async () => { await makeFixtureWritable(fixture.root); await fixture.cleanup(); });
   const repoDir = fixture.path('repo');
-  const serverDir = join(repoDir, 'apps/server');
-  await mkdir(join(serverDir, 'sources'), {recursive:true});
-  await mkdir(join(serverDir, 'scripts'));
-  await mkdir(join(serverDir, 'node_modules'));
-  await writeFile(join(serverDir, 'package.json'), JSON.stringify({name:'@happier-dev/server',type:'module'}));
-  await writeFile(join(serverDir, 'tsconfig.json'), '{}');
-  await writeFile(join(serverDir, 'sources/main.ts'), 'export {value} from "./createdLater";');
-  await writeFile(join(serverDir, 'scripts/migrate.full.deploy.ts'), 'export const migrate = true;');
-  await symlink(dirname(createRequire(import.meta.url).resolve('esbuild/package.json')), join(serverDir, 'node_modules/esbuild'),
-    process.platform === 'win32' ? 'junction' : 'dir');
+  await installSourcePreparationInputs(repoDir, 'expo');
+  const native = process.platform === 'linux' ? await installSourceAdmissionFixture(fixture.root) : null;
   const abort = new AbortController();
   context.after(() => abort.abort());
-  let reportDrift;
-  const reported = new Promise(resolve => { reportDrift = resolve; });
-  let failures = 0;
-  const stackBaseDir = fixture.path('stacks/lane');
-  await installSourcePreparationInputs(repoDir, 'server');
-  const native = process.platform === 'linux' ? await installSourceAdmissionFixture(fixture.root) : null;
-  const options = {repoDir, stackBaseDir, component:'server', serverComponent:'happier-server', dbProvider:'postgres',
-    signal:abort.signal, ...(native ? {env:native.env} : {}), logger:{log() {}, warn() {}, error(message) {
-      if (message.includes('will retry when affected inputs change')) { failures++; reportDrift(); }
-    }}};
-  const pending = (native?.build ?? buildSourceRuntimeBundle)(options);
-  const completion = pending.then(built => ({built}), error => ({error}));
-  context.after(async () => { abort.abort(); await completion; });
-  assert.equal(await Promise.race([reported.then(() => 'waiting'), completion.then(() => 'exited')]), 'waiting',
-    'a missing authored import must leave source startup pending');
-  await assert.rejects(access(join(stackBaseDir, 'source-runtime/selected-server.json')), {code:'ENOENT'});
-  await writeFile(fixture.path('unrelated.ts'), 'export const unrelated = true;');
-  await new Promise(resolve => setTimeout(resolve, 600));
-  assert.equal(failures, 1, 'unrelated edits must not rebuild the source snapshot');
-  await writeFile(join(serverDir, 'sources/createdLater.ts'), 'export const value = "recovered";');
-  const {built, error} = await completion;
-  assert.equal(error, undefined);
-  assert.equal((await import(pathToFileURL(built.entrypoint))).value, 'recovered');
-  assert.equal(JSON.parse(await readFile(join(stackBaseDir, 'source-runtime/selected-server.json'), 'utf8')).entrypoint,
-    built.entrypoint);
-  await assert.rejects((native?.build ?? buildSourceRuntimeBundle)({...options, dbProvider:'invalid'}), /Source preparation failed \(exit 1\)/,
-    'configuration errors must still fail fast');
-
   // Simulate only Metro's external process boundary, including its real numeric
   // exit/diagnostic shape. Its wait and input observation use the same owner.
   const uiDir = join(repoDir, 'apps/ui');
@@ -2643,6 +3548,81 @@ test('native author input versions accept settled text and refuse changed bytes'
     assert.equal(await matchesNativeTypeScriptInputVersion(Buffer.from(`${text}\n// changed`), version), false,
       'a graph consumed from different bytes must not be reused under restored source');
   }
+});
+
+test('source author declaration failure reaches the bundle caller with package and compiler diagnostics', async context => {
+  const fixture = await createTempFixture(context, {prefix:'happier-source-author-failure-'});
+  const {build, env} = await installSourceAdmissionFixture(fixture.root);
+  const repoDir = fixture.path('repo');
+  const cliDir = join(repoDir, 'apps/cli');
+  const sdkDir = join(repoDir, 'packages/plugin-sdk');
+  for (const directory of [join(cliDir, 'src'), join(cliDir, 'node_modules'),
+    join(sdkDir, 'src'), join(repoDir, 'node_modules/@happier-dev')]) {
+    await mkdir(directory, {recursive:true});
+  }
+  await writeFile(join(cliDir, 'package.json'), JSON.stringify({name:'@happier-dev/cli',type:'module',
+    dependencies:{'@happier-dev/plugin-sdk':'0.0.0'},bundledDependencies:['@happier-dev/plugin-sdk'],exports:{}}));
+  await writeFile(join(cliDir, 'tsconfig.json'), '{}');
+  await writeFile(join(cliDir, 'src/index.ts'), 'export const ready=true;');
+  await writeFile(join(sdkDir, 'package.json'), JSON.stringify({name:'@happier-dev/plugin-sdk',version:'0.0.0',
+    type:'module',main:'./dist/index.js',types:'./dist/index.d.ts',
+    exports:{'.':{'happier-source':'./src/index.ts',types:'./dist/index.d.ts',default:'./dist/index.js'}},
+    happier:{publicSdkRelease:{posture:'developer_preview'}}}));
+  await writeFile(join(sdkDir, 'tsconfig.json'), JSON.stringify({compilerOptions:{target:'ES2022',
+    module:'NodeNext',moduleResolution:'NodeNext',rootDir:'src',outDir:'dist',declaration:true},include:['src/**/*.ts']}));
+  // --noCheck still needs declaration inference, which cannot expose a private
+  // member of an exported anonymous class (TS4094).
+  await writeFile(join(sdkDir, 'src/index.ts'), 'export const broken = class { private hidden = 1; };');
+  await symlink(sdkDir, join(repoDir, 'node_modules/@happier-dev/plugin-sdk'),
+    process.platform === 'win32' ? 'junction' : 'dir');
+  await symlink(dirname(createRequire(import.meta.url).resolve('esbuild/package.json')), join(cliDir, 'node_modules/esbuild'),
+    process.platform === 'win32' ? 'junction' : 'dir');
+  await installSourcePreparationInputs(repoDir, 'daemon');
+  const diagnosticBudget = appendBoundedTail('', 'x'.repeat(100_000)).length;
+  const privateValue = createHash('sha256').update(fixture.root).digest('hex');
+  const observer = fixture.path('compiler-diagnostics.mjs');
+  // Add noisy output only at the compiler process boundary; declaration emit
+  // and all source-bundle capture, admission and failure transport stay real.
+  await writeFile(observer, `
+    import {createRequire,syncBuiltinESMExports} from 'node:module';
+    const childProcess=createRequire(import.meta.url)('node:child_process');
+    for (const method of ['spawn','fork']) {
+    const original=childProcess[method];
+    childProcess[method]=function(command,args,...options) {
+      const child=original.call(this,command,args,...options);
+      if (child.stdout && args?.some(arg=>arg.includes('--noCheck'))) child.once('exit',code=>{
+        if (code !== 0) child.stdout.emit('data',Buffer.from('\\nBearer '+process.env.SOURCE_AUTHOR_DIAGNOSTIC_SECRET
+          +'\\n'+'x'.repeat(${diagnosticBudget * 2})+'\\nlate-diagnostic\\n'));
+      });
+      return child;
+    };
+    }
+    syncBuiltinESMExports();
+  `);
+  const diagnosticEnv = {...env, SOURCE_AUTHOR_DIAGNOSTIC_SECRET:privateValue,
+    NODE_OPTIONS:`${env.NODE_OPTIONS ?? ''} --import=${pathToFileURL(observer).href}`.trim()};
+  for (const location of [{outputDir:fixture.path('output')},
+    {stackBaseDir:fixture.path('stacks/failure'),waitForSourceChanges:false}]) {
+    await assert.rejects(build({repoDir,...location,component:'daemon',env:diagnosticEnv}), error => {
+      assert.equal(error.code, 'WORKSPACE_PACKAGE_BUILD_FAILED');
+      assert.match(error.message, /phase=author-packages/);
+      assert.match(error.message, /package=@happier-dev\/plugin-sdk/);
+      assert.match(error.message, /exitCode=1/);
+      assert.match(error.message, /src[/\\]index\.ts.*TS4094/);
+      assert.equal(error.message.includes(privateValue), false, 'compiler output must be redacted before transport');
+      assert.match(error.message, /<redacted>/);
+      assert.equal(error.message.includes('late-diagnostic'), false, 'keep the first diagnostics, not the tail');
+      assert.match(error.message, /\[later diagnostics omitted\]/);
+      const [, ...diagnostics] = error.message.split('\n');
+      assert.ok(diagnostics.join('\n').replace('\n[later diagnostics omitted]', '').length <= diagnosticBudget,
+        'the excerpt must reuse the process diagnostic budget');
+      return true;
+    });
+  }
+  await writeFile(join(sdkDir, 'src/index.ts'), 'export const repaired = true;');
+  const recovered = await build({repoDir,stackBaseDir:fixture.path('stacks/failure'),component:'daemon',env:diagnosticEnv});
+  assert.match(await readFile(join(recovered.runtimeDir, 'authoring/node_modules/@happier-dev/plugin-sdk/dist/index.d.ts'), 'utf8'),
+    /repaired = true/, 'a repaired package must emit and publish normally after a terminal refusal');
 });
 
 test('source daemon owns a usable public author SDK closure without workspace dist', async context => {
@@ -3013,11 +3993,17 @@ test('shared source runtime compiles one captured view and reuses it after live 
   const native = process.platform === 'linux' ? await installSourceAdmissionFixture(fixture.root) : null;
   const build = native?.build ?? buildSourceRuntimeBundle;
   const options = { repoDir, stackBaseDir: fixture.path('stacks/a'), component: 'daemon', env: native?.env ?? process.env };
+  const captureStarted = Date.now();
   const first = await build(options);
   assert.equal((await import(pathToFileURL(first.entrypoint))).ready, 1, 'entry discovery and compilation must consume the same captured view');
+  const firstRecord = JSON.parse(await readFile(resolve(dirname(first.entrypoint), '../../../source-bundle.json'), 'utf8'));
+  assert.ok(Date.parse(first.sourceCapture?.capturedAt) >= captureStarted);
+  assert.match(first.sourceCapture?.inputIdentity ?? '', /^[a-f0-9]{64}$/);
+  assert.deepEqual(firstRecord.sourceCapture, first.sourceCapture, 'activation metadata describes the exact completed captured graph');
   await writeFile(entry, original);
   const warm = await build(options);
   assert.equal(warm.entrypoint, first.entrypoint, 'unconsumed live churn must preserve a completed captured graph');
+  assert.deepEqual(warm.sourceCapture, first.sourceCapture, 'reuse preserves capture identity and time instead of claiming a new capture');
   assert.equal((await readFile(builds, 'utf8')).trim().split('\n').length, 1);
   await writeFile(entry, 'import {value} from "./added.js"; export const ready = value;');
   await writeFile(join(cliDir, 'src/added.ts'), 'export const value = 3;');
@@ -3025,16 +4011,7 @@ test('shared source runtime compiles one captured view and reuses it after live 
   assert.equal((await import(pathToFileURL(added.entrypoint))).ready, 3, 'new transitive imports change the captured graph');
   await writeFile(entry, 'import {value} from "./added.js"; export const ready = value;');
   await rm(join(cliDir, 'src/added.ts'));
-  const controller = new AbortController();
-  let reportFailure;
-  const failure = new Promise(resolve => { reportFailure = resolve; });
-  const failed = build({ ...options, signal: controller.signal,
-    logger: { log() {}, warn() {}, error() { reportFailure(); } } });
-  // The preparation owner waits for source repair on a missing import. Cancel
-  // that real recovery path, then prove failed publication kept the incumbent.
-  await failure;
-  controller.abort();
-  await assert.rejects(failed);
+  await assert.rejects(build(options), { code: 'source_runtime_producer_failed' });
   assert.equal(JSON.parse(await readFile(join(options.stackBaseDir, 'source-runtime/selected-daemon.json'), 'utf8')).entrypoint, added.entrypoint);
 });
 
@@ -3061,6 +4038,8 @@ test('concurrent stacks share one read-only source bundle and retain selected bu
   await symlink(dirname(createRequire(import.meta.url).resolve('esbuild/package.json')), join(cliDir, 'node_modules/esbuild'), process.platform === 'win32' ? 'junction' : 'dir');
   const builds = join(root, 'builds');
   await writeFile(join(locatorDir, 'generatedBundledPluginManifests.ts'), `import {appendFileSync} from 'node:fs'; appendFileSync(${JSON.stringify(builds)}, 'built\\n'); export const BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS=[];`);
+  const unconsumed = join(cliDir, 'src/unconsumed.ts');
+  await writeFile(unconsumed, 'export const unused = true;');
   const stacks = [join(root, 'stacks/a'), join(root, 'stacks/b')];
   await installSourcePreparationInputs(repoDir, 'daemon');
   const native = process.platform === 'linux' ? await installSourceAdmissionFixture(root) : null;
@@ -3073,7 +4052,8 @@ test('concurrent stacks share one read-only source bundle and retain selected bu
   const runtimeUrl = native ? pathToFileURL(native.runtimePath).href : new URL('./build_source_runtime.mjs',import.meta.url).href;
   const script = `import {buildSourceRuntimeBundle} from ${JSON.stringify(runtimeUrl)}; console.log(JSON.stringify(await buildSourceRuntimeBundle({repoDir:process.argv[1],stackBaseDir:process.argv[2],component:'daemon'})));`;
   const results = await Promise.all(stacks.map(async stackBaseDir => {
-    const {stdout} = await promisify(execFile)(process.execPath, ['--input-type=module', '--eval', script, repoDir, stackBaseDir], {env:buildEnv});
+    const {stdout} = await promisify(execFile)(process.execPath, ['--input-type=module', '--eval', script, repoDir, stackBaseDir],
+      {env:{...buildEnv,HAPPIER_STACK_RUNTIME_BUILD_AUTHORITY_STACK:basename(stackBaseDir)}});
     return JSON.parse(stdout);
   }));
   assert.equal(results[0].entrypoint, results[1].entrypoint);
@@ -3118,8 +4098,34 @@ test('concurrent stacks share one read-only source bundle and retain selected bu
   const directoryTouchTime = new Date(Math.max(...retentionBasis.flatMap(item => [item.directoryMtime, item.completionMtime])) + 1);
   await utimes(retentionBasis[0].directory, directoryTouchTime, directoryTouchTime);
   retentionBasis[0].directoryMtime = (await stat(retentionBasis[0].directory)).mtimeMs;
-  const readopted = await build({repoDir, stackBaseDir:stacks[0], component:'daemon',env:buildEnv});
+  const filesystem = (await import('node:fs/promises')).default;
+  const originalRename = filesystem.rename;
+  filesystem.rename = async (from, to, ...args) => {
+    if (dirname(String(to)) === join(root, 'stacks/source-bundles') && basename(String(to)).startsWith('candidate-')) {
+      throw Object.assign(new Error('ENOSPC adopting captured source'), { code: 'ENOSPC' });
+    }
+    return await originalRename(from, to, ...args);
+  };
+  syncBuiltinESMExports();
+  try {
+    await assert.rejects(build({ repoDir, stackBaseDir: stacks[0], component: 'daemon', env: buildEnv, waitForSourceChanges: false }),
+      { code: 'ENOSPC' });
+    assert.deepEqual(JSON.parse(await readFile(join(stacks[0], 'source-runtime/selected-daemon.json'), 'utf8')),
+      { entrypoint: fourth.entrypoint }, 'failed current-hint publication preserves the incumbent selection');
+  } finally { filesystem.rename = originalRename; syncBuiltinESMExports(); }
+  const readopted = await build({repoDir, stackBaseDir:stacks[0], component:'daemon',env:buildEnv, waitForSourceChanges: false});
   assert.equal(readopted.entrypoint, results[0].entrypoint);
+  const originalLstat = filesystem.lstat;
+  let unconsumedFingerprintReads = 0;
+  filesystem.lstat = async (path, ...args) => {
+    if (resolve(String(path)) === unconsumed) unconsumedFingerprintReads += 1;
+    return await originalLstat(path, ...args);
+  };
+  syncBuiltinESMExports();
+  try {
+    assert.equal((await build({ repoDir, stackBaseDir: stacks[0], component: 'daemon', env: buildEnv, waitForSourceChanges: false })).entrypoint, readopted.entrypoint);
+    assert.equal(unconsumedFingerprintReads, 0, 'a restored product becomes the current hint without another full fingerprint');
+  } finally { filesystem.lstat = originalLstat; syncBuiltinESMExports(); }
   try {
     await access(fourth.entrypoint); // The newest built bundle survives adopting an older selected bundle.
   } catch (error) {
@@ -3170,8 +4176,10 @@ test('source CLI commands preserve a pending start selection across source chang
     sourceRuntimeIdentities: { daemon: { selected: 'remote-code', loaded: 'remote-code' } } };
   const controller = await resolveStackRuntimeLaunchContext({ argv: ['--runtime=source'], env,
     activeRuntimeState: remoteState });
-  assert.equal(controller.cliLaunchSpec.entrypoint, pending.entrypoint,
-    'a remote daemon identity must not prevent controller CLI selection');
+  // CONTINUATION 2 §2(a): controller auth resolves its own runnable checkout
+  // CLI; a target-owned graph cannot impose its publication on this host.
+  assert.equal(controller.runtimeMode.mode, 'source');
+  assert.equal(controller.cliLaunchSpec, undefined);
   assert.equal(await readFile(selectionPath, 'utf8'), selection);
   await assert.rejects(resolveStackRuntimeLaunchContext({ argv: ['--runtime=source'], env,
     activeRuntimeState: { ...remoteState, placement: { daemon: 'local' } } }), /loaded source CLI.*unavailable/i,
@@ -3193,57 +4201,11 @@ test('source CLI commands preserve a pending start selection across source chang
   assert.equal(await readFile(bootstrapSelection, 'utf8'), unavailableSelection,
     'an unavailable selected graph must fail closed instead of replacing its pin');
   // Once the real startup replaces the selection, the old unlaunched graph
-  // becomes reclaimable; command resolution must not create a permanent pin.
+  // becomes reclaimable at a later publication; warm adoption does not run GC.
+  await native.build(options);
+  await writeFile(entry, 'export const ready = 3;');
   await native.build(options);
   await assert.rejects(access(pending.entrypoint), { code: 'ENOENT' });
-});
-
-test('a cold source CLI bootstrap adopts a selection published during its build',
-  { skip: process.platform !== 'linux' }, async context => {
-  const fixture = await createTempFixture(context, { prefix: 'happier-source-cli-cold-selection-', registerCleanup: false });
-  context.after(async () => { await makeFixtureWritable(fixture.root); await rm(fixture.root, { recursive: true, force: true }); });
-  const native = await installSourceAdmissionFixture(fixture.root);
-  // Admit the two tiny real graphs independently, as in the existing
-  // unfinished-producer test; the OS resource observation is the only seam.
-  await writeFile(fixture.path('bin/awk'), `#!/bin/sh\ncase "$*" in\n */proc/meminfo*) printf '67108864 67108864\\n' ;;\n */proc/loadavg*|*/proc/pressure/*) printf '0\\n' ;;\n *) exec /usr/bin/awk "$@" ;;\nesac\n`);
-  const started = fixture.path('started');
-  const release = fixture.path('release');
-  const watcher = watch(fixture.root);
-  context.after(() => watcher.close());
-  const active = new Promise((resolve, reject) => {
-    watcher.on('error', reject);
-    watcher.on('change', (_event, name) => { if (name === 'started') resolve(); });
-  });
-  const repos = [fixture.path('command-repo'), fixture.path('start-repo')];
-  for (const [index, repoDir] of repos.entries()) {
-    const cliDir = join(repoDir, 'apps/cli');
-    const locator = join(cliDir, 'src/plugins/projection/registry/sources');
-    await mkdir(locator, { recursive: true });
-    await mkdir(join(cliDir, 'node_modules'));
-    await writeFile(join(cliDir, 'package.json'), JSON.stringify({ name: '@happier-dev/cli', type: 'module', exports: {} }));
-    await writeFile(join(cliDir, 'tsconfig.json'), '{}');
-    await writeFile(join(cliDir, 'src/index.ts'), `export const ready = ${index};`);
-    await symlink(dirname(createRequire(import.meta.url).resolve('esbuild/package.json')), join(cliDir, 'node_modules/esbuild'), 'dir');
-    await writeFile(join(locator, 'generatedBundledPluginManifests.ts'), (index === 0
-      ? `import {writeFileSync,existsSync} from 'node:fs'; writeFileSync(${JSON.stringify(started)},'ready'); while(!existsSync(${JSON.stringify(release)})) await new Promise(resolve=>setTimeout(resolve,10)); ` : '')
-      + 'export const BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS=[];');
-    await installSourcePreparationInputs(repoDir, 'daemon');
-  }
-  const controller = new AbortController();
-  const options = { stackBaseDir: fixture.path('stacks/consumer'), component: 'daemon', env: native.env,
-    signal: AbortSignal.any([controller.signal, context.signal]) };
-  const command = native.build({ ...options, repoDir: repos[0], reuseSelected: 'if-available' });
-  const completion = command.then(built => ({ built }), error => ({ error }));
-  context.after(async () => { controller.abort(); await completion; });
-  await active;
-  const pending = await native.build({ ...options, repoDir: repos[1] });
-  await writeFile(release, 'release');
-  const outcome = await completion;
-  if (outcome.error) throw outcome.error;
-  assert.equal(outcome.built.entrypoint, pending.entrypoint);
-  assert.equal(JSON.parse(await readFile(join(options.stackBaseDir, 'source-runtime/selected-daemon.json'), 'utf8')).entrypoint,
-    pending.entrypoint);
-  assert.equal((await import(pathToFileURL(pending.entrypoint))).ready, 1);
 });
 
 test('failed source completion publication preserves the previous coherent selection',
@@ -3274,7 +4236,7 @@ test('failed source completion publication preserves the previous coherent selec
     syncBuiltinESMExports();`);
   await assert.rejects(native.build({...options,env:{...native.env,
     NODE_OPTIONS:[native.env.NODE_OPTIONS,`--import=${pathToFileURL(preload).href}`].filter(Boolean).join(' ')}}),
-    /Source preparation failed \(exit 1\)/);
+    { code: 'source_runtime_producer_failed', reason: 'ENOSPC' });
   assert.equal(await readFile(selectionPath,'utf8'),priorSelection,
     'failed completion publication must preserve the previous coherent selection');
   const recovered = await native.build({...options,reuseSelected:true});
@@ -3283,12 +4245,12 @@ test('failed source completion publication preserves the previous coherent selec
   assert.equal((await readdir(fixture.path('stacks/source-bundles'))).filter(name=>/^(bundle|runtime)-/.test(name)).length,1);
 });
 
-test('different source fingerprints compile independently and retention preserves an unfinished graph',
+test('different source fingerprints serialize at the producer and retention preserves an unfinished graph',
   {skip:process.platform !== 'linux',timeout:30000}, async context => {
   const fixture = await createTempFixture(context, {prefix:'happier-source-independent-',registerCleanup:false});
   context.after(async () => { await makeFixtureWritable(fixture.root); await rm(fixture.root,{recursive:true,force:true}); });
   const native = await installSourceAdmissionFixture(fixture.root);
-  // Two tiny real esbuild graphs fit; report enough host memory to admit both.
+  // Resource headroom must not bypass the repository producer's serial lease.
   await writeFile(fixture.path('bin/awk'), `#!/bin/sh\ncase "$*" in\n */proc/meminfo*) printf '67108864 67108864\\n' ;;\n */proc/loadavg*|*/proc/pressure/*) printf '0\\n' ;;\n *) exec /usr/bin/awk "$@" ;;\nesac\n`);
   const started = fixture.path('started');
   const release = fixture.path('release');
@@ -3319,119 +4281,63 @@ test('different source fingerprints compile independently and retention preserve
   const completion = first.then(built=>({built}),error=>({error}));
   context.after(async () => { controller.abort(); await completion; });
   await active;
-  const second = await native.build({repoDir:repos[1],stackBaseDir:fixture.path('stacks/b'),component:'daemon',
-    env:native.env,signal:context.signal});
-  assert.equal((await import(pathToFileURL(second.entrypoint))).ready,1);
+  let waiting;
+  const queued = new Promise(resolve => { waiting = resolve; });
+  const secondRequest = native.build({repoDir:repos[1],stackBaseDir:fixture.path('stacks/b'),component:'daemon',
+    env:native.env,signal:context.signal,stderrStream:{write(chunk) {
+      if (String(chunk).includes('build-producer.lock')) waiting();
+    }}});
+  await queued;
+  const { reclaimSourceBundles } = await import(pathToFileURL(native.runtimePath));
+  const bundleRoot = fixture.path('stacks/source-bundles');
+  const unfinished = (await readdir(bundleRoot)).find(name => name.startsWith('runtime-'));
+  assert.ok(unfinished);
+  await reclaimSourceBundles({ stacksRoot: fixture.path('stacks'), dryRun: false });
+  await access(join(bundleRoot, unfinished));
   await writeFile(release,'release');
   const outcome = await completion;
   if(outcome.error) throw outcome.error;
   assert.equal((await import(pathToFileURL(outcome.built.entrypoint))).ready,0);
-  await access(second.entrypoint);
+  const second = await secondRequest;
+  assert.equal((await import(pathToFileURL(second.entrypoint))).ready,1);
+  await access(outcome.built.entrypoint);
 });
 
-test('shared source preparation releases its build lock while queued and selected recovery does not need build admission',
+test('source producer waiting retains no fingerprint or publication custody and selected recovery bypasses admission',
   {skip:process.platform !== 'linux',timeout:30000}, async context => {
   const fixture = await createTempFixture(context, {prefix:'happier-source-joint-admission-',registerCleanup:false});
   context.after(async () => { await makeFixtureWritable(fixture.root); await rm(fixture.root,{recursive:true,force:true}); });
   const native = await installSourceAdmissionFixture(fixture.root);
-  const {build} = native;
-  const available = fixture.path('available-memory');
-  const observed = fixture.path('memory-observed');
-  await writeFile(available,'16777216');
-  await writeFile(fixture.path('bin/awk'),`#!/bin/sh
-case "$*" in
-  */proc/meminfo*)
-    available=$(/bin/cat '${available}')
-    printf '%s 16777216\\n' "$available"
-    [ "$available" -ne 5242880 ] || printf observed > '${observed}'
-    ;;
-  */proc/loadavg*|*/proc/pressure/*) printf '0\\n' ;;
-  *) exec /usr/bin/awk "$@" ;;
-esac
-`);
-  await chmod(fixture.path('bin/awk'),0o755);
-  const env = {...buildNativeAdmissionFixtureEnv(),PATH:`${fixture.path('bin')}:/usr/bin:/bin`,HAPPIER_DEV_TARGET_EXECUTION:'1'};
-  const repoDir = fixture.path('repo');
-  const cliDir = join(repoDir,'apps/cli');
-  await mkdir(join(cliDir,'src'),{recursive:true});
-  await mkdir(join(cliDir,'node_modules'));
-  await writeFile(join(cliDir,'package.json'),JSON.stringify({name:'@happier-dev/cli',type:'module',exports:{}}));
-  await writeFile(join(cliDir,'tsconfig.json'),'{}');
-  await writeFile(join(cliDir,'src/index.ts'),'export const ready = 1;');
-  await symlink(dirname(createRequire(import.meta.url).resolve('esbuild/package.json')),join(cliDir,'node_modules/esbuild'),'dir');
+  const repoDir = await createReloadDaemonRepo(fixture, 'export const ready = 1;');
   const stackBaseDir = fixture.path('stacks/consumer');
-  await installSourcePreparationInputs(repoDir, 'daemon');
-  const options = {repoDir,stackBaseDir,component:'daemon',env};
-  const selected = await build(options);
-  // A queued launcher may have parsed the preceding worker payload before
-  // source changes. Exercise that actual process boundary, not a mock caller.
-  const priorPayload = JSON.parse(await native.runSourceCommand({repoDir,scriptPath:native.runtimePath,
-    args:[JSON.stringify({repoDir,stackBaseDir,component:'daemon',serverComponent:'happier-server-light'})],env,signal:context.signal,
-    admissionClass:'source-bundle'}));
-  assert.equal(priorPayload.entrypoint,selected.entrypoint,'a queued preceding launcher still receives its runtime');
-  await writeFile(available,'5242880');
-  const warm = await build({...options,signal:context.signal});
-  assert.equal(warm.entrypoint,selected.entrypoint,'unchanged inputs reuse a bundle without compiler memory admission');
-  await writeFile(available,'16777216');
-  await writeFile(join(cliDir,'src/index.ts'),'export const ready = 2;');
-  const buildLockPath = fixture.path('stacks/source-bundles/build.lock');
-  let lockDiagnostic = '';
-  const stderrWrite = process.stderr.write;
-  process.stderr.write = function(chunk,...args) {
-    lockDiagnostic += String(chunk);
-    return stderrWrite.call(this,chunk,...args);
-  };
-  context.after(()=> { process.stderr.write=stderrWrite; });
-  await withWorkspaceBundleLock(async () => {
-    const independent = await build({...options,signal:context.signal});
-    assert.equal((await import(pathToFileURL(independent.entrypoint))).ready,2,
-      'an unrelated legacy global build lock cannot serialize current fingerprints');
-  }, {lockPath:buildLockPath,signal:context.signal});
-  const afterLockWait = await build({...options,signal:context.signal});
-  assert.notEqual(afterLockWait.entrypoint,selected.entrypoint);
-  assert.equal((await import(pathToFileURL(afterLockWait.entrypoint))).ready,2);
-  await writeFile(join(cliDir,'src/index.ts'),'export const ready = 3;');
-  await writeFile(available,'5242880');
-  const watcher = watch(fixture.root);
-  context.after(()=>watcher.close());
-  const pressure = new Promise((resolve,reject)=> {
-    watcher.on('error',reject);
-    watcher.on('change',(_event,name)=> { if(name==='memory-observed') { watcher.close(); resolve(); } });
-  });
+  const options = {repoDir,stackBaseDir,component:'daemon',env:native.env};
+  const selected = await native.build(options);
+  await writeFile(join(repoDir,'apps/cli/src/index.ts'),'export const ready = 2;');
+  const { sourceRuntimeProducerBuildLockPath } = await import(pathToFileURL(native.runtimePath));
   const controller = new AbortController();
-  let waiting;
-  const queued = new Promise(resolve=> { waiting=resolve; });
-  const admissionDiagnosticWrite = process.stderr.write;
-  process.stderr.write = function(chunk,...args) {
-    lockDiagnostic += String(chunk);
-    if(lockDiagnostic.includes('[preferred-execution] waiting for heavyweight admission')) waiting();
-    return admissionDiagnosticWrite.call(this,chunk,...args);
-  };
-  const pending = build({...options,signal:AbortSignal.any([controller.signal,context.signal])});
-  const completion = pending.then(built=>({built}),error=>({error}));
-  context.after(async()=> { controller.abort(); await completion; });
-  await Promise.all([pressure,queued]);
-  const currentLeases = (await readdir(fixture.path('stacks/source-bundles')))
-    .filter(name => /^build-[a-f0-9]{64}\.lock$/.test(name));
-  assert.deepEqual(currentLeases, [], 'capacity waiting releases every current fingerprint lease');
-  await assert.rejects(access(fixture.path('stacks/source-bundles/publication.lock')), {code:'ENOENT'},
-    'capacity waiting must not retain shared publication custody');
-  const beforeRecovery = (await readdir(fixture.path('stacks/source-bundles')))
-    .filter(name => /^(bundle|runtime)-/.test(name)).sort();
-  // CLI launch resolution uses this mode for read-only commands such as server
-  // list, even while startup has selected code and source has since changed.
-  const recovered = await build({...options,reuseSelected:'if-available',signal:context.signal});
-  assert.equal(recovered.entrypoint,afterLockWait.entrypoint,'selected CLI commands bypass heavyweight admission');
-  assert.deepEqual((await readdir(fixture.path('stacks/source-bundles')))
-    .filter(name => /^(bundle|runtime)-/.test(name)).sort(),beforeRecovery,
-    'a valid selected CLI bundle must not allocate or build another graph');
-  await writeFile(available,'16777216');
+  let completion;
+  context.after(async () => { controller.abort(); if (completion) await completion; });
+  await withWorkspaceBundleLock(async () => {
+    let waiting;
+    const queued = new Promise(resolve => { waiting = resolve; });
+    completion = native.build({...options,signal:AbortSignal.any([controller.signal,context.signal]),
+      stderrStream:{write(chunk) { if (String(chunk).includes('build-producer.lock')) waiting(); }}})
+      .then(built => ({built}),error => ({error}));
+    await queued;
+    const bundleRoot = fixture.path('stacks/source-bundles');
+    const names = await readdir(bundleRoot);
+    assert.deepEqual(names.filter(name => /^build-[a-f0-9]{64}\.lock$/.test(name)), [],
+      'producer waiting must not retain a captured graph lease');
+    assert.equal(names.includes('publication.lock'), false);
+    const recovered = await native.build({...options,reuseSelected:'if-available',signal:context.signal});
+    assert.equal(recovered.entrypoint,selected.entrypoint);
+    assert.deepEqual((await readdir(bundleRoot)).filter(name => /^(bundle|runtime)-/.test(name)),
+      names.filter(name => /^(bundle|runtime)-/.test(name)), 'selected recovery allocates no replacement');
+  }, {lockPath:sourceRuntimeProducerBuildLockPath(stackBaseDir),signal:context.signal});
   const next = await completion;
   if(next.error) throw next.error;
-  assert.notEqual(next.built.entrypoint,afterLockWait.entrypoint);
-  assert.equal((await import(pathToFileURL(next.built.entrypoint))).ready,3);
-  assert.deepEqual(await readdir(join(native.admissionRoot,'owners')),[]);
-  assert.deepEqual(await readdir(join(native.admissionRoot,'waiters')),[]);
+  assert.notEqual(next.built.entrypoint,selected.entrypoint);
+  assert.equal((await import(pathToFileURL(next.built.entrypoint))).ready,2);
 });
 
 test('one-shot source builds retire their real preparation process after success and failure', async (context) => {
@@ -3559,7 +4465,7 @@ export function namedUnicodeFailure() { throw new Error('雪 😀'); }
   await symlink(dirname(createRequire(import.meta.url).resolve('tsx/package.json')), join(repoDir, 'node_modules/tsx'), process.platform === 'win32' ? 'junction' : 'dir');
   const sourceToolsDir = join(repoDir, 'packages/cli-common');
   await mkdir(sourceToolsDir, { recursive: true });
-  for (const file of ['registerSourceRuntime.mjs', 'sourceRuntimeEntries.mjs', 'cliRuntimeSidecars.mjs']) {
+  for (const file of ['registerSourceRuntime.mjs', 'sourceRuntimeEntries.mjs', 'sourceRuntimeDependencies.mjs', 'cliRuntimeSidecars.mjs']) {
     await cp(new URL('../../../../packages/cli-common/' + file, import.meta.url), join(sourceToolsDir, file));
   }
   const { stdout: sdkSourceValue } = await promisify(execFile)(process.execPath, [
@@ -3597,8 +4503,15 @@ export function namedUnicodeFailure() { throw new Error('雪 😀'); }
   await writeFile(join(unscopedDir, 'src/index.ts'), "throw new Error('moving unscoped source was loaded');\n");
   assert.equal(await (await import(pathToFileURL(result.entrypoint).href)).read(), 'frozen-lazy-unscoped-canonical-protocol');
   assert.equal(await createRequire(import.meta.url)(join(result.cliDir, 'scripts/process_tree.cjs')).read(), 'frozen');
-  const publicLibrary = createRequire(join(result.cliDir, 'package.json')).resolve('@happier-dev/cli/lib');
-  assert.equal((await import(pathToFileURL(publicLibrary).href)).value, 'frozen-library');
+  // Published consumers do not inherit the source tool's workspace resolver.
+  // Resolve the public export in the same fresh product process boundary.
+  const { stdout: publicLibraryValue } = await promisify(execFile)(process.execPath,
+    ['--input-type=module', '--eval', `import {createRequire} from 'node:module';
+      import {pathToFileURL} from 'node:url';
+      const library=createRequire(${JSON.stringify(join(result.cliDir, 'package.json'))}).resolve('@happier-dev/cli/lib');
+      console.log((await import(pathToFileURL(library))).value);`],
+    { env: { ...process.env, NODE_OPTIONS: '' } });
+  assert.equal(publicLibraryValue.trim(), 'frozen-library');
   assert.match(result.identity, /^[a-f0-9]{16}$/);
   const metafile = JSON.parse(await readFile(join(result.runtimeDir, 'metafile.json'), 'utf8'));
   assert.equal(Object.keys(metafile.inputs).some((file) => file.includes('/dist/')), false);
@@ -3799,6 +4712,7 @@ test('Node source-light runs the canonical SQLite migration before startup witho
 test('cancelling source author emission retires its declaration compiler',
   { skip: process.platform !== 'linux', timeout: 20000 }, async context => {
     const fixture = await createTempFixture(context, {prefix:'happier-source-author-cancel-'});
+    const {build, env} = await installSourceAdmissionFixture(fixture.root);
     const repoDir = fixture.path('repo');
     const cliDir = join(repoDir, 'apps/cli');
     const sdkDir = join(repoDir, 'packages/plugin-sdk');
@@ -3852,9 +4766,9 @@ test('cancelling source author emission retires its declaration compiler',
     });
     const controller = new AbortController();
     await installSourcePreparationInputs(repoDir, 'daemon');
-    const pending = buildSourceRuntimeBundle({repoDir,outputDir:fixture.path('output'),component:'daemon',
-      signal:AbortSignal.any([controller.signal,context.signal]),env:{...process.env,
-        NODE_OPTIONS:`${process.env.NODE_OPTIONS??''} --import=${pathToFileURL(observer).href}`.trim()}});
+    const pending = build({repoDir,outputDir:fixture.path('output'),component:'daemon',
+      signal:AbortSignal.any([controller.signal,context.signal]),env:{...env,
+        NODE_OPTIONS:`${env.NODE_OPTIONS??''} --import=${pathToFileURL(observer).href}`.trim()}});
     const cancelled = assert.rejects(pending,{name:'AbortError'});
     await active;
     compilerPid = JSON.parse(await readFile(ready,'utf8')).pid;

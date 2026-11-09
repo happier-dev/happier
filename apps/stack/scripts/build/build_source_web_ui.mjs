@@ -5,7 +5,9 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { performance } from 'node:perf_hooks';
 
 import { captureSourceWebBuildInputs, readWorkspacePackages, resolveWorkspaceSource,
-  sourceBundleBuildLockPath, setBundleReadOnly, withSourceBundlePublication } from './build_source_runtime.mjs';
+  sourceBundleBuildLockPath, setBundleReadOnly, withSourceBundlePublication,
+  adoptReusableSourceBundle, publishSourceBundleCandidate, resolveSourceRuntimeProducerContext,
+  sourceRuntimeProducerBuildLockPath, normalizeSourceCapturedAfter, sourceRuntimeProducerUnavailable } from './build_source_runtime.mjs';
 import { resolveExpoBin, prepareExpoCommandEnv } from '../utils/expo/command.mjs';
 import { applyExpoNodeHeapEnv } from '../utils/expo/expoNodeHeapEnv.mjs';
 import { run } from '../utils/proc/proc.mjs';
@@ -17,41 +19,31 @@ import { precompressUiWebAssets } from './precompress_ui_web_assets.mjs';
 import { listBundledPluginUiArtifactExports } from '../../../ui/scripts/generateBundledPluginUiArtifacts.mjs';
 import { buildIntoTempThenReplace } from '../utils/fs/atomic_dir_swap.mjs';
 import { readSourceComponentBuildInputs } from '../utils/fs/workspaceBuildInputs.mjs';
-import { readBuildInputIdentity, withBuildInputDependencies } from '../../../../scripts/workspaces/buildInputConvergence.mjs';
+import { assertBuildInputDependencies, buildInputDependencyIdentityMatches, readBuildInputDependencies, readBuildInputIdentity, readTerminalBuildFailure, serializeTerminalBuildFailure, withBuildInputDependencies, withSingleTrailingBuildPass } from '../../../../scripts/workspaces/buildInputConvergence.mjs';
 import { runWorkspaceBuildAdmission } from '../utils/proc/workspace_build_admission.mjs';
 import { retainPendingSourcePreparation, updatePendingSourcePreparationPhase } from '../runtime/shared/pending_source_start.mjs';
-import { readJsonIfExists } from '../utils/fs/json.mjs';
+import { emitSourceReloadRefusal, parseSourceReloadRefusalLine } from '../runtime/shared/source_reload_refusal.mjs';
 import { readCachedFileDigest } from '../utils/fs/cached_file_digest.mjs';
 import { sourceWebExportArgs } from './sourceWebExportArgs.mjs';
 import { withJsonOwnerFileLock } from '../utils/proc/jsonOwnerFileLock.mjs';
 import { SOURCE_WEB_EXPORT_ADMISSION_CLASS } from '../utils/dev_targets/remote_commands.mjs';
+import { withWorkspaceBundleLock } from '../../../../packages/cli-common/workspaceBundleLock.mjs';
 
 /** Stack starts reuse completed account-free exports through source publication.
- * Explicit outputDir callers keep their private finite producer boundary, used
- * by artifact preparation and older path-based web reloads. */
+ * Explicit outputDir callers keep their private finite producer boundary. */
 export async function exportSourceWebUi({ repoDir, baseDir, outputDir, stackBaseDir, pending,
-  replaceUiDir = null, env = process.env, signal = pending?.signal, runImpl }) {
+  replaceUiDir = null, env = process.env, signal = pending?.signal, runImpl, sourceCapturedAfter }) {
   if (stackBaseDir && !pending?.requestId) throw new Error('[source-ui] shared export requires its pending Stack start');
-  const preparationStackBaseDir = stackBaseDir;
-  await pending?.setPhase({ phase: 'preparing', component: 'ui' });
-  // An explicit executable app-local module can consume files outside the
-  // authored capture. Preserve that path, without claiming shared reuse proof.
-  if (stackBaseDir && String(env.EXPO_APP_LOCAL_CONFIG_PATH ?? '').trim()) {
-    await withSourceBundlePublication({ stackBaseDir, signal }, async () => {
-      await mkdir(baseDir, { recursive: true });
-      outputDir ??= join(await mkdtemp(join(baseDir, 'bundle-web-')), 'export');
-      await pending.retainPreparation(dirname(outputDir));
-    });
-    stackBaseDir = null;
-  }
   if (stackBaseDir) {
-    const built = await prepareSourceWebComponent({ repoDir, env, signal,
-      prepare: () => exportSharedSourceWebUi({ repoDir, baseDir, stackBaseDir, requestId: pending.requestId, env, signal }) });
+    let built = await exportSharedSourceWebUi({ repoDir, stackBaseDir, requestId: pending.requestId,
+      env, signal, sourceCapturedAfter });
+    if (replaceUiDir) built = await pending.publishPreparation(() =>
+      replaceSourceWebUi({ built, replaceUiDir, repoDir, env, signal }));
     await pending.setPhase({ phase: 'prepared', component: 'ui' });
     return built;
   }
   let createdOutput = false;
-  const built = await prepareSourceWebComponent({ repoDir, env, signal,
+  const built = await prepareSourceWebComponent({ repoDir, env, signal, preparation: pending, stackBaseDir,
     prepare: async () => {
       // This call's private partial export is never selected or served. A retry
       // must rerun preparation in an empty directory, preserving EEXIST for a
@@ -61,19 +53,26 @@ export async function exportSourceWebUi({ repoDir, baseDir, outputDir, stackBase
       await mkdir(outputDir);
       createdOutput = true;
       await pending?.setPhase({ phase: 'queued', component: 'ui' });
-      const built = await exportSourceWebUiOnce({ repoDir, baseDir, outputDir, env, signal, runImpl,
-        preparationStackBaseDir, requestId: pending?.requestId });
+      const built = await exportSourceWebUiOnce({ repoDir, baseDir, outputDir, env, signal, runImpl }).catch(async error => {
+          if (error.code === 'BUILD_INPUTS_CHANGED') await rm(outputDir, { recursive: true, force: true });
+          throw error;
+        });
       if (!replaceUiDir) return built;
-      signal?.throwIfAborted();
-      // The running server retains this path. Publish only validated output
-      // through the existing directory-swap owner after preparation succeeds.
-      await buildIntoTempThenReplace(replaceUiDir, async stagedDir => {
-        await cp(built.uiDir, stagedDir, { recursive: true });
-      });
-      return { ...built, uiDir: replaceUiDir };
+      return await replaceSourceWebUi({ built, replaceUiDir, repoDir, env, signal });
     } });
   await pending?.setPhase({ phase: 'prepared', component: 'ui' });
   return built;
+}
+
+async function replaceSourceWebUi({ built, replaceUiDir, repoDir, env, signal }) {
+  signal?.throwIfAborted();
+  // Older loaded servers retain a private directory. Copy the completed
+  // producer output through the existing atomic directory publication owner.
+  await buildIntoTempThenReplace(replaceUiDir, async stagedDir => {
+    await cp(built.uiDir, stagedDir, { recursive: true });
+    await assertBuildInputDependencies({ sourceDir: repoDir, env, state: built.dependencyPublication });
+  });
+  return { ...built, uiDir: replaceUiDir };
 }
 
 /** A running server retains one Stack-owned path. Change its link, never the
@@ -116,8 +115,16 @@ async function sourceWebInputIdentity({ repoDir }) {
   return await readBuildInputIdentity({ sourceDir: repoDir, files });
 }
 
-async function prepareSourceWebComponent({ repoDir, env, signal, prepare }) {
-  return await prepareSourceComponent({ repoDir, target: 'expo', env, signal, prepare: async () => {
+function sourceWebBuildFingerprint({ inputIdentity, buildOptions }) {
+  return createHash('sha256').update(inputIdentity).update(buildOptions).digest('hex');
+}
+
+function sourceWebCandidateKey({ repoDir, buildOptions }) {
+  return `web-${createHash('sha256').update(JSON.stringify([repoDir, buildOptions])).digest('hex')}`;
+}
+
+async function prepareSourceWebComponent({ repoDir, env, signal, prepare, preparation, stackBaseDir }) {
+  return await prepareSourceComponent({ repoDir, target: 'expo', env, signal, preparation, stackBaseDir, prepare: () => withSingleTrailingBuildPass({ run: async () => {
     const before = await sourceWebInputIdentity({ repoDir });
     try {
       return await prepare();
@@ -125,11 +132,12 @@ async function prepareSourceWebComponent({ repoDir, env, signal, prepare }) {
       // Diagnostics alone cannot distinguish a missing watch root from source
       // churn. Reuse the canonical input-byte identity for this attempt, across
       // both private and shared subprocess exports, before deciding to retry.
+      if (error.code === 'BUILD_INPUTS_CHANGED') throw error;
       error.sourceDrift = !signal?.aborted && !error.signal
         && before !== await sourceWebInputIdentity({ repoDir });
       throw error;
     }
-  } });
+  } }) });
 }
 
 async function webOutputDigests(directory, prefix = '') {
@@ -148,127 +156,172 @@ async function webOutputDigests(directory, prefix = '') {
   return Object.fromEntries(Object.entries(digests).sort(([left], [right]) => left.localeCompare(right)));
 }
 
-async function readReusableSourceWebUi({ repoDir, bundleRoot, buildOptions }) {
-  const inputIdentity = await sourceWebInputIdentity({ repoDir });
-  const entries = await readdir(bundleRoot, { withFileTypes: true }).catch(error => {
-    if (error.code === 'ENOENT') return []; throw error;
-  });
-  for (const entry of entries) {
-    if (!entry.isDirectory() || !entry.name.startsWith('web-')) continue;
-    const outputDir = join(bundleRoot, entry.name);
-    const record = await readJsonIfExists(join(outputDir, 'source-bundle.json'));
-    if (record?.component !== 'web' || record.inputIdentity !== inputIdentity || record.buildOptions !== buildOptions
-      || record.uiDir !== join(outputDir, 'web') || !record.outputDigests) continue;
-    try {
-      await assertWebArtifactPayload({ payloadDir: record.uiDir, entrypoint: 'index.html' });
-      if (JSON.stringify(await webOutputDigests(record.uiDir)) !== JSON.stringify(record.outputDigests)) continue;
-    } catch (error) {
-      if (error.code && !['ENOENT', 'ENOTDIR'].includes(error.code)) throw error;
-      continue;
-    }
-    return { outputDir, built: { uiDir: record.uiDir, entrypoint: 'index.html', runtimeMode: 'source' } };
+async function readReusableSourceWebUi({ repoDir, outputDir, record, buildOptions, env, inputIdentity, requireCurrentSource, sourceCapturedAfter }) {
+  const dependencyPublication = await readBuildInputDependencies({ sourceDir: repoDir, env });
+  if (record.component !== 'web' || record.buildOptions !== buildOptions
+    || (inputIdentity && record.inputIdentity !== inputIdentity)
+    || record.uiDir !== join(outputDir, 'web') || !record.outputDigests) return null;
+  if (sourceCapturedAfter !== undefined && !(Date.parse(record.sourceCapture?.capturedAt) >= sourceCapturedAfter)) return null;
+  // Only the repository producer's refresh compares authored inputs. QA
+  // consumers adopt completed captures while the shared checkout keeps moving.
+  if (requireCurrentSource && !inputIdentity && record.inputIdentity !== await sourceWebInputIdentity({ repoDir })) return null;
+  if (!buildInputDependencyIdentityMatches(record.dependencyPublication, dependencyPublication)) return null;
+  try {
+    await assertWebArtifactPayload({ payloadDir: record.uiDir, entrypoint: 'index.html' });
+    if (JSON.stringify(await webOutputDigests(record.uiDir)) !== JSON.stringify(record.outputDigests)) return null;
+  } catch (error) {
+    if (error.code && !['ENOENT', 'ENOTDIR'].includes(error.code)) throw error;
+    return null;
   }
-  return null;
+  return { outputDir, built: { uiDir: record.uiDir, entrypoint: 'index.html', runtimeMode: 'source', dependencyPublication,
+    ...(record.sourceCapture ? { sourceCapture: record.sourceCapture } : {}) } };
 }
 
 async function pinSourceWebUi({ stackBaseDir, requestId, outputDir, signal }) {
   await retainPendingSourcePreparation({ stackBaseDir, requestId, preparationDir: outputDir, signal });
 }
 
-async function exportSharedSourceWebUi({ repoDir, baseDir, stackBaseDir, requestId, env, signal }) {
+async function adoptReusableSourceWebUi({ repoDir, bundleRoot, stackBaseDir, requestId, inputIdentity, buildOptions, env, signal,
+  sourceCapturedAfter, requireCurrentSource = false }) {
+  return await adoptReusableSourceBundle({ bundleRoot, component: 'web', env, signal,
+    candidateKey: inputIdentity ? sourceWebBuildFingerprint({ inputIdentity, buildOptions }) : sourceWebCandidateKey({ repoDir, buildOptions }),
+    verify: async ({ record, outputDir }) => {
+      const reusable = await readReusableSourceWebUi({ repoDir, record, outputDir, buildOptions, env,
+        inputIdentity, requireCurrentSource, sourceCapturedAfter });
+      if (!reusable) return null;
+      await assertBuildInputDependencies({ sourceDir: repoDir, env, state: reusable.built.dependencyPublication });
+      return reusable;
+    },
+    publish: async ({ built, outputDir, record }) => {
+      if (inputIdentity) await publishSourceBundleCandidate({ bundleRoot, outputDir, record,
+        candidateKey: sourceWebCandidateKey({ repoDir, buildOptions }) });
+      if (requestId) await pinSourceWebUi({ stackBaseDir, requestId, outputDir, signal });
+      return built;
+    },
+  });
+}
+
+async function exportSharedSourceWebUi({ repoDir, stackBaseDir, requestId, env, signal, sourceCapturedAfter }) {
   repoDir = resolve(repoDir);
   stackBaseDir = resolve(stackBaseDir);
   const bundleRoot = join(dirname(stackBaseDir), 'source-bundles');
-  const buildOptions = await sourceWebBuildOptions({ repoDir, env });
-  const inputs = { repoDir, baseDir, stackBaseDir, requestId, buildOptions };
+  sourceCapturedAfter = normalizeSourceCapturedAfter(sourceCapturedAfter);
+  const context = resolveSourceRuntimeProducerContext({ repoDir, stackBaseDir, env });
+  const buildOptions = await sourceWebBuildOptions({ repoDir, env: context.env });
+  const requireCurrentSource = context.consumerStackName === context.producerStackName;
+  const adopt = async () => {
+    const built = await adoptReusableSourceWebUi({ repoDir, bundleRoot, stackBaseDir, requestId, buildOptions,
+      env: context.env, signal, sourceCapturedAfter, requireCurrentSource });
+    if (built) console.error(`[source-ui] adopted producer=${context.producerStackName} capturedAt=${built.sourceCapture?.capturedAt} inputIdentity=${built.sourceCapture?.inputIdentity}`);
+    return built;
+  };
   await updatePendingSourcePreparationPhase({ stackBaseDir, requestId, phase: 'queued', component: 'ui', signal });
-  // Lookup and pending retention share publication custody, without capacity
-  // reservation or a producer lease on a completed hit.
-  const cached = await withSourceBundlePublication({ stackBaseDir, signal }, async () => {
-    const reusable = await readReusableSourceWebUi({ repoDir, bundleRoot, buildOptions });
-    if (!reusable) return null;
-    await pinSourceWebUi({ stackBaseDir, requestId, outputDir: reusable.outputDir, signal });
-    return reusable.built;
-  });
+  const cached = await adopt();
   if (cached) return cached;
-  await updatePendingSourcePreparationPhase({ stackBaseDir, requestId, phase: 'preparing', component: 'ui', signal });
-  const fingerprint = createHash('sha256').update(await sourceWebInputIdentity({ repoDir })).update(buildOptions).digest('hex');
-  const lockPath = sourceBundleBuildLockPath(bundleRoot, fingerprint);
-  await updatePendingSourcePreparationPhase({ stackBaseDir, requestId, phase: 'queued', component: 'ui', signal });
-  const result = await runWorkspaceBuildAdmission({ repoDir, dependencyInstallDir: repoDir,
-    launcherPath: fileURLToPath(new URL('../../bin/hstack-exec', import.meta.url)),
-    command: process.execPath, args: [fileURLToPath(import.meta.url), JSON.stringify({ ...inputs, fingerprint, shared: true })],
-    locks: [{ path: lockPath, kind: 'workspace', timeoutMs: null, errorLabel: 'source-web build lock' }],
-    env, signal, cwd: repoDir, admissionClass: SOURCE_WEB_EXPORT_ADMISSION_CLASS, stdio: ['ignore', 'pipe', 'pipe'],
-    onStderr: chunk => process.stderr.write(chunk) });
-  if (result.error) throw result.error;
-  if (result.status !== 0) {
-    const error = new Error(`Source web preparation failed (${result.signal ? `signal ${result.signal}` : `exit ${result.status}`})\n${result.stderr}`);
-    error.code = result.status;
-    error.signal = result.signal;
-    throw error;
-  }
-  signal?.throwIfAborted();
-  return JSON.parse(result.stdout);
-}
-
-async function prepareSharedSourceWebUi({ repoDir, baseDir, stackBaseDir, requestId, buildOptions, fingerprint, env, signal }) {
-  const bundleRoot = join(dirname(stackBaseDir), 'source-bundles');
-  const cached = await withSourceBundlePublication({ stackBaseDir, signal }, async () => {
-    const reusable = await readReusableSourceWebUi({ repoDir, bundleRoot, buildOptions });
-    if (!reusable) return null;
-    await pinSourceWebUi({ stackBaseDir, requestId, outputDir: reusable.outputDir, signal });
-    return reusable.built;
-  });
-  if (cached) return cached;
-  await mkdir(bundleRoot, { recursive: true });
-  await updatePendingSourcePreparationPhase({ stackBaseDir, requestId, phase: 'building', component: 'ui', signal });
-  // Already-loaded runtime retainers enumerate bundle-* without knowing web
-  // serving references. Keep web allocations out of that runtime namespace;
-  // the shared publication owner still governs both products' custody.
-  const outputDir = await mkdtemp(join(bundleRoot, `web-${fingerprint}-`));
   try {
-    const { built, captured } = await withBuildInputDependencies({ sourceDir: repoDir, env, signal }, env =>
-      consumeSourceWebUiInputs({ repoDir, baseDir, outputDir, env, signal }));
-    // The shared product contains only its serving closure. Compiler candidates
-    // belong to the export context; captured source has already been retired.
-    const record = { ...built, component: 'web', inputIdentity: captured.inputIdentity, buildOptions,
-      outputDigests: await webOutputDigests(built.uiDir), reuseFingerprint: fingerprint };
-    return await withSourceBundlePublication({ stackBaseDir, outputDir, record, signal }, async () => {
-      signal.throwIfAborted();
-      await pinSourceWebUi({ stackBaseDir, requestId, outputDir, signal });
-      return built;
-    });
-  } catch (error) {
-    const remaining = await lstat(outputDir).catch(error => { if (error.code === 'ENOENT') return null; throw error; });
-    if (remaining) {
-      await setBundleReadOnly(outputDir, false);
-      await rm(outputDir, { recursive: true, force: true });
+    const inputs = { repoDir, baseDir: join(context.producerStackBaseDir, 'source-runtime'),
+      stackBaseDir: context.producerStackBaseDir, consumerStackBaseDir: stackBaseDir, requestId,
+      buildOptions, sourceCapturedAfter, requireCurrentSource };
+    const result = await runWorkspaceBuildAdmission({ repoDir,
+      launcherPath: fileURLToPath(new URL('../../bin/hstack-exec', import.meta.url)),
+      command: process.execPath, args: [fileURLToPath(import.meta.url), JSON.stringify({ ...inputs, shared: true })],
+      locks: [{ path: sourceRuntimeProducerBuildLockPath(context.producerStackBaseDir), kind: 'workspace', timeoutMs: null,
+        errorLabel: 'source runtime producer lock' }],
+      env: context.env, signal, cwd: repoDir, admissionClass: SOURCE_WEB_EXPORT_ADMISSION_CLASS, stdio: ['ignore', 'pipe', 'pipe'],
+      onStderr: chunk => process.stderr.write(chunk) });
+    if (result.error) throw result.error;
+    if (result.status !== 0) {
+      const refusal = String(result.stderr).split('\n').map(line => parseSourceReloadRefusalLine(line, context.env))
+        .find(refusal => refusal?.code);
+      const error = new Error(`Source web preparation failed (${result.signal ? `signal ${result.signal}` : `exit ${result.status}`})\n${result.stderr}`);
+      throw Object.assign(error, { code: 'source_runtime_producer_failed', signal: result.signal, ...refusal, producerFailed: true });
     }
-    throw error;
+    signal?.throwIfAborted();
+    const built = JSON.parse(result.stdout);
+    const failure = readTerminalBuildFailure(built);
+    if (failure) throw failure;
+    // The admitted producer has validated and pinned this result in our
+    // pending request before releasing custody. Consume that owner result.
+    console.error(`[source-ui] adopted producer=${context.producerStackName} capturedAt=${built.sourceCapture?.capturedAt} inputIdentity=${built.sourceCapture?.inputIdentity}`);
+    return built;
+  } catch (cause) {
+    if (signal?.aborted) throw cause;
+    throw sourceRuntimeProducerUnavailable(cause, context);
   }
 }
 
-async function exportSourceWebUiOnce({ repoDir, baseDir, outputDir, env, signal, runImpl, preparationStackBaseDir, requestId }) {
+async function prepareSharedSourceWebUi({ repoDir, baseDir, stackBaseDir, consumerStackBaseDir = stackBaseDir, requestId,
+  buildOptions, sourceCapturedAfter, requireCurrentSource, env, signal }) {
+  const bundleRoot = join(dirname(stackBaseDir), 'source-bundles');
+  const inputs = { repoDir, bundleRoot, stackBaseDir: consumerStackBaseDir, requestId,
+    buildOptions, sourceCapturedAfter, requireCurrentSource, env, signal };
+  const current = await adoptReusableSourceWebUi(inputs);
+  if (current) return current;
+  const inputIdentity = await sourceWebInputIdentity({ repoDir });
+  const cached = await adoptReusableSourceWebUi({ ...inputs, inputIdentity });
+  if (cached) return cached;
+  const fingerprint = sourceWebBuildFingerprint({ inputIdentity, buildOptions });
+  return await withWorkspaceBundleLock(async () => {
+    await mkdir(bundleRoot, { recursive: true });
+    // Already-loaded runtime retainers enumerate bundle-* without knowing web
+    // serving references. Keep web allocations out of that runtime namespace;
+    // the shared publication owner still governs both products' custody.
+    const outputDir = await mkdtemp(join(bundleRoot, `web-${fingerprint}-`));
+    try {
+      const { built, captured } = await consumeSourceWebUiInputs({ repoDir, baseDir, outputDir, env, signal });
+      if (sourceCapturedAfter !== undefined && !(Date.parse(captured.capturedAt) >= sourceCapturedAfter)) {
+        throw Object.assign(new Error('producer capture predates the requested sourceCapturedAfter boundary'), {
+          code: 'source_runtime_producer_capture_unavailable',
+          nextAction: 'Wait until the requested capture boundary or retry with a valid sourceCapturedAfter timestamp',
+        });
+      }
+      // The shared product contains only its serving closure. Compiler candidates
+      // belong to the export context; captured source has already been retired.
+      const record = { ...built, component: 'web', inputIdentity: captured.inputIdentity, buildOptions,
+        outputDigests: await webOutputDigests(built.uiDir), reuseFingerprint: fingerprint };
+      return await withSourceBundlePublication({ stackBaseDir, outputDir, record, signal, dependencySourceDir: repoDir, dependencyEnv: env }, async () => {
+        signal.throwIfAborted();
+        await publishSourceBundleCandidate({ bundleRoot, outputDir, record,
+          candidateKey: sourceWebBuildFingerprint({ inputIdentity: captured.inputIdentity, buildOptions }) });
+        await publishSourceBundleCandidate({ bundleRoot, outputDir, record,
+          candidateKey: sourceWebCandidateKey({ repoDir, buildOptions }) });
+        if (requestId) await pinSourceWebUi({ stackBaseDir: consumerStackBaseDir, requestId, outputDir, signal });
+        return built;
+      });
+    } catch (error) {
+      const remaining = await lstat(outputDir).catch(error => { if (error.code === 'ENOENT') return null; throw error; });
+      if (remaining) {
+        await setBundleReadOnly(outputDir, false);
+        await rm(outputDir, { recursive: true, force: true });
+      }
+      throw error;
+    }
+  }, { lockPath: sourceBundleBuildLockPath(bundleRoot, fingerprint), timeoutMs: Infinity,
+    staleAfterMs: Infinity, env, signal, errorLabel: 'source-web build lock' });
+}
+
+async function exportSourceWebUiOnce({ repoDir, baseDir, outputDir, env, signal, runImpl }) {
   if (!runImpl) {
     const stdout = await runSourceBuildCommand({ repoDir, scriptPath: fileURLToPath(import.meta.url),
-      args: [JSON.stringify({ repoDir, baseDir, outputDir, privateExport: true, preparationStackBaseDir, requestId })], env, signal,
+      args: [JSON.stringify({ repoDir, baseDir, outputDir, privateExport: true })], env, signal,
       admissionClass: SOURCE_WEB_EXPORT_ADMISSION_CLASS, captureStderr: true });
-    return JSON.parse(stdout);
+    const built = JSON.parse(stdout);
+    const failure = readTerminalBuildFailure(built);
+    if (failure) throw failure;
+    return built;
   }
-  if (preparationStackBaseDir && requestId) await updatePendingSourcePreparationPhase({ stackBaseDir: preparationStackBaseDir,
-    requestId, phase: 'building', component: 'ui', signal });
-  const { built } = await withBuildInputDependencies({ sourceDir: repoDir, env, signal }, env =>
-    consumeSourceWebUiInputs({ repoDir, baseDir, outputDir, env, signal, runImpl }));
+  const { built } = await consumeSourceWebUiInputs({ repoDir, baseDir, outputDir, env, signal, runImpl });
   return built;
 }
 
 async function consumeSourceWebUiInputs({ repoDir, baseDir, outputDir, env, signal, runImpl }) {
-  return await withSourceWebUiInputs({ repoDir, baseDir, env, signal }, async ({ captured, inventoryPath, uiProjectDir }) => {
+  return await withBuildInputDependencies({ sourceDir: repoDir, env, signal }, (env, publication) =>
+    withSourceWebUiInputs({ repoDir, baseDir, env, signal }, async ({ captured, inventoryPath, uiProjectDir }) => {
     const built = await exportCapturedSourceWebUiInputs({ repoDir, baseDir, outputDir,
       inventoryPath, uiProjectDir, env, signal, runImpl });
-    return { built, captured };
-  });
+    return { built: { ...built, dependencyPublication: publication.state,
+      sourceCapture: { inputIdentity: captured.inputIdentity, capturedAt: captured.capturedAt } }, captured };
+  }));
 }
 
 /** Consume a fresh capture at one context-owned Metro root. Dependency custody
@@ -287,7 +340,7 @@ export async function withSourceWebUiInputs({ repoDir, baseDir, env = process.en
     try {
       const captured = await captureSourceWebBuildInputs({ repoDir, outputDir: workspace, signal });
       await prepareSourcePluginUiInventory({ repoDir, inputRepoDir: captured.repoDir,
-        outputDir: contextDir, env, signal, stdoutStream });
+        outputDir: contextDir, artifactStoreDir: join(contextDir, 'inputs/artifacts'), env, signal, stdoutStream });
       return await consume({ captured, inventoryPath: join(contextDir, 'inputs/inventory.js'), uiProjectDir: captured.uiProjectDir });
     } finally {
       await rm(workspace, { recursive: true, force: true });
@@ -354,14 +407,16 @@ async function prepareSourceWebUiInputs({ repoDir, outputDir, inventoryPath, ret
     `import { readWorkspacePackages, resolveWorkspaceSource } from ${JSON.stringify(join(repoDir, 'packages/cli-common/sourceRuntimeEntries.mjs'))};`,
     `import { pathToFileURL } from 'node:url';`,
     `const workspaces = await readWorkspacePackages(${JSON.stringify(repoDir)});`,
-    `await prepareSourcePluginUiArtifacts({repoRoot:${JSON.stringify(repoDir)},outputDir:${JSON.stringify(inputsDir)},outputPath:${JSON.stringify(inventoryPath)},retainedInventoryPath:${JSON.stringify(retainedInventoryPath)},artifactStoreDir:${JSON.stringify(artifactStoreDir)},resolveSourceImport(specifier) { const name = specifier.split('/').slice(0,specifier.startsWith('@') ? 2 : 1).join('/'); if (workspaces.has(name) || specifier.startsWith('@happier-dev/')) return resolveWorkspaceSource(workspaces,specifier); },plugins:[${plugins.map(([name]) => (
+    `await prepareSourcePluginUiArtifacts({repoRoot:${JSON.stringify(repoDir)},outputDir:${JSON.stringify(inputsDir)},outputPath:${JSON.stringify(inventoryPath)},retainedInventoryPath:${JSON.stringify(retainedInventoryPath)},artifactStoreDir:${JSON.stringify(artifactStoreDir)},plugins:[${plugins.map(([name]) => (
       `{directory:${JSON.stringify(name.slice('@happier-dev/plugins-'.length))},loadManifest:async()=> (await import(pathToFileURL(resolveWorkspaceSource(workspaces,${JSON.stringify(`${name}/manifest`)})).href)).PLUGIN_MANIFEST,uiArtifacts:${Boolean(uiPackage.dependencies?.[name] && listBundledPluginUiArtifactExports(packages.get(name).manifest).length > 0)}}`
     )).join(',')}]});`,
     `await prepareSourceUiAssets({uiPackageDir:${JSON.stringify(uiProjectDir)},outputDir:${JSON.stringify(inputsDir)},recordPath:resolveSourceUiAssetsRecordPath(${JSON.stringify(inventoryPath ?? join(inputsDir, 'inventory.js'))}),retainedRecordPath:resolveSourceUiAssetsRecordPath(${JSON.stringify(retainedInventoryPath ?? inventoryPath ?? join(inputsDir, 'inventory.js'))}),deferPublication:${Boolean(deferSourceAssetsPublication)}});`,
   ].join('\n');
   await writeFile(preparationPath, source);
   const preparationStartedAt = performance.now();
-  await run(process.execPath, ['--import', join(repoDir, 'packages/cli-common/registerSourceRuntime.mjs'), preparationPath],
+  // Match the daemon's managed source compiler, including synchronous
+  // require(esm) dependencies that do not pass through ESM loader hooks.
+  await run(process.execPath, ['--conditions=happier-source', '--import', join(repoDir, 'packages/cli-common/registerSourceRuntime.mjs'), preparationPath],
     { cwd: uiProjectDir, env: process.env });
   console.log(`[source-ui] phase=plugin-ui-preparation elapsedMs=${Math.round(performance.now() - preparationStartedAt)} plugins=${plugins.length}`);
 }
@@ -376,15 +431,20 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     process.once('SIGTERM', interrupt);
     console.log = console.error;
     try {
-      if (options.privateExport && options.preparationStackBaseDir && options.requestId) {
-        await updatePendingSourcePreparationPhase({ stackBaseDir: options.preparationStackBaseDir,
-          requestId: options.requestId, phase: 'building', component: 'ui', signal: cancellation.signal });
-      }
       const built = options.shared
-        ? await prepareSharedSourceWebUi({ ...options, env: process.env, signal: cancellation.signal })
-        : (await withBuildInputDependencies({ sourceDir: options.repoDir, env: process.env, signal: cancellation.signal }, env =>
-          consumeSourceWebUiInputs({ ...options, env, signal: cancellation.signal }))).built;
+        ? await withSingleTrailingBuildPass({ run: () => prepareSharedSourceWebUi({ ...options, env: process.env, signal: cancellation.signal }) })
+        : (await consumeSourceWebUiInputs({ ...options, env: process.env, signal: cancellation.signal })).built;
       process.stdout.write(JSON.stringify(built));
+    } catch (error) {
+      if (options.shared) {
+        Object.assign(error, { sourceStack: process.env.HAPPIER_STACK_STACK,
+          phase: error.phase ?? 'source-producer', retryable: error.retryable ?? true,
+          code: error.code ?? 'source_runtime_producer_failed' });
+        emitSourceReloadRefusal(error);
+      }
+      const failure = serializeTerminalBuildFailure(error, { includeRetryableDrift: true });
+      if (!failure) throw error;
+      process.stdout.write(JSON.stringify(failure));
     } finally {
       process.removeListener('SIGINT', interrupt);
       process.removeListener('SIGTERM', interrupt);

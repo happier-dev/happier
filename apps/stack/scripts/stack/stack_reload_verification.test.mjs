@@ -24,10 +24,15 @@ function readyInfo() {
 test('reload without a baseline requires an identified available replacement and matching loaded identity', () => {
   for (const beforeManagedCli of [null, { status: 'unavailable', binaryPath: null }, { status: 'absent', binaryPath: null }]) {
     const info = readyInfo();
+    info.runtime.sourceRuntimeIdentities.server.sourceTime = '2026-11-09T03:38:00.000Z';
+    info.runtime.sourceRuntimeIdentities.daemon.sourceTime = '2026-11-09T03:39:00.000Z';
     const input = { info, beforeManagedCli, auth: { authenticated: true } };
     const verdict = projectStackReloadVerification(input);
     assert.equal(verdict.status, 'READY');
     assert.equal(verdict.baseline, 'unavailable');
+    assert.deepEqual(verdict.sourceTimes, {
+      server: '2026-11-09T03:38:00.000Z', daemon: '2026-11-09T03:39:00.000Z',
+    });
     info.runtime.sourceRuntimeIdentities.daemon.loaded = 'daemon-old';
     assert.equal(projectStackReloadVerification(input).check, 'identity:daemon');
     info.runtime.sourceRuntimeIdentities.daemon.loaded = 'daemon-new';

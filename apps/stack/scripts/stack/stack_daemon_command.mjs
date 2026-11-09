@@ -37,12 +37,13 @@ export async function resolveStackDaemonCommandContext({
 }) {
   const preparesDaemonLaunch = argv.includes('start') || argv.includes('restart');
   const runtimeLaunchContext = await resolveStackRuntimeLaunchContext({ argv, env, activeRuntimeState,
-    purpose: preparesDaemonLaunch ? 'restart' : 'cli' });
+    purpose: argv.includes('stop') ? 'stop' : preparesDaemonLaunch ? 'restart' : 'cli' });
   let sourceRuntimeLaunchUpdate = null;
   if (runtimeLaunchContext.runtimeMode.mode === 'source-snapshot' && preparesDaemonLaunch) {
     const { buildSourceRuntimeBundle } = await import('../build/build_source_runtime.mjs');
     const built = await buildSourceRuntimeBundle({ repoDir: getRepoDir(rootDir, env),
-      stackBaseDir: runtimeLaunchContext.stackBaseDir, component: 'daemon', env });
+      stackBaseDir: runtimeLaunchContext.stackBaseDir, component: 'daemon', env,
+      sourceCapturedAfter: parseArgs(argv).kv.get('--source-after') });
     sourceRuntimeLaunchUpdate = { launch: { entrypoint: built.entrypoint, cliDir: built.cliDir, env: built.env ?? {} }, identity: built.identity };
     runtimeLaunchContext.cliLaunchSpec = await resolveCliRuntimeLaunchSpec({ sourceRuntimeLaunch: sourceRuntimeLaunchUpdate.launch });
   }
@@ -148,6 +149,7 @@ export async function runStackDaemonCommand({ rootDir, stackName, argv, json }) 
 
   const res = await withStackEnv({
     stackName,
+    includeRuntimeRelay: true,
     extraEnv:
       action === 'status' && !hasExplicitStackRuntimeModeArg(argv)
         ? { HAPPIER_STACK_RUNTIME_MODE: 'source' }

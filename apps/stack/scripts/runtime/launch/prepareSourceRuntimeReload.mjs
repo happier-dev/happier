@@ -1,11 +1,11 @@
-import { appendFile, mkdir, mkdtemp, rm } from 'node:fs/promises';
+import { appendFile, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createInterface } from 'node:readline';
 import { PassThrough } from 'node:stream';
 import { format } from 'node:util';
 
-import { buildSourceRuntimeBundle, admitSourceRuntimeReload, captureSourceRuntimeSharedInputs } from '../../build/build_source_runtime.mjs';
+import { prepareSourceRuntimeProducer, admitSourceRuntimeReload, normalizeSourceCapturedAfter } from '../../build/build_source_runtime.mjs';
 import { exportSourceWebUi } from '../../build/build_source_web_ui.mjs';
 import { parseArgs } from '../../utils/cli/args.mjs';
 import { resolveSourceQaUiMode } from '../shared/borrowed_expo.mjs';
@@ -18,12 +18,29 @@ import { writeJsonAtomic } from '../../utils/fs/json.mjs';
 import { getServerComponentName } from '../../utils/server/server.mjs';
 import { resolveDevServerConnection } from '../../utils/dev/resolveDevServerConnection.mjs';
 import { resolveStackServerEndpoint } from '../../utils/server/urls.mjs';
+import { emitSourceReloadRefusal, formatSourceReloadRefusal, recordSourceReloadRefusal } from '../shared/source_reload_refusal.mjs';
+import { preflightSourceRuntimeMigrations } from './preflightSourceRuntimeMigrations.mjs';
+import { emitSourceRuntimeSourceTimes, formatSourceRuntimeSourceTimes } from '../shared/source_bundle_record.mjs';
 import { redactFailureDiagnostic } from '../../utils/proc/proc.mjs';
+
+/** Normalize once at the reload boundary, before dispatch to execution hosts. */
+export function resolveSourceRuntimeReloadArguments({ args, onHost = false, requestStartedAt = Date.now() }) {
+  const { flags, kv } = parseArgs(args);
+  const requestedBoundary = normalizeSourceCapturedAfter(kv.get('--source-after'));
+  // The controller chooses one boundary for every execution host. An on-host
+  // worker honors that forwarded boundary rather than advancing its own clock.
+  const sourceCapturedAfter = flags.has('--allow-older-source') || (onHost && requestedBoundary != null)
+    ? requestedBoundary : Math.max(requestStartedAt, requestedBoundary ?? requestStartedAt);
+  if (sourceCapturedAfter != null) args = [...(args ?? []), `--source-after=${new Date(sourceCapturedAfter).toISOString()}`];
+  return { args, flags, kv, sourceCapturedAfter };
+}
 
 /** Called by the existing restart owner before any incumbent retirement. */
 export async function prepareSourceRuntimeReload({ stackName, stackBaseDir, repoDir, args, env,
   activation = Promise.resolve(true), onPrepared = async () => {}, onHost = false, onPhase, sourceStartRequestId }) {
-  const { flags, kv } = parseArgs(args);
+  const request = resolveSourceRuntimeReloadArguments({ args, onHost });
+  const { flags, kv, sourceCapturedAfter } = request;
+  args = request.args;
   const uiMode = resolveSourceQaUiMode({ uiMode: kv.get('--ui') ?? (flags.has('--ui') ? '' : undefined),
     noUi: flags.has('--no-ui'), consumerStackName: stackName, producerStackName: env.HAPPIER_STACK_EXPO_SOURCE_STACK });
   const serverComponent = getServerComponentName({ kv, env });
@@ -68,7 +85,6 @@ export async function prepareSourceRuntimeReload({ stackName, stackBaseDir, repo
     }
     let remote = null;
     let preparations = [];
-    let sharedSourceInputDir = null;
     try {
       if (serverComponent !== 'happier-server-light' && connection.startServer) {
         throw new Error('[reload] full-server smoke requires isolated managed infrastructure; incumbent retained');
@@ -80,6 +96,10 @@ export async function prepareSourceRuntimeReload({ stackName, stackBaseDir, repo
       const components = {};
       const daemonRequested = !placement?.daemonTarget
         && resolveStackDaemonStartRequested({ env, noDaemon: flags.has('--no-daemon') });
+      const localComponents = [
+        ...(connection.startServer && !placement?.target ? [{ component: 'server', serverComponent, dbProvider }] : []),
+        ...(daemonRequested ? [{ component: 'daemon' }] : []),
+      ];
       const remotePreparation = (async () => {
         if (placement?.target || placement?.daemonTarget) {
           remote = await (await import('../../utils/dev_targets/supervisor.mjs')).prepareStackDevTargetSourceReload({
@@ -93,40 +113,38 @@ export async function prepareSourceRuntimeReload({ stackName, stackBaseDir, repo
         }
         return remote;
       })();
-      const sharedSourceInputs = (async () => {
-        if (!connection.startServer || placement?.target || !daemonRequested) return null;
-        sharedSourceInputDir = await mkdtemp(join(sourceRoot, 'shared-inputs-'));
-        return await captureSourceRuntimeSharedInputs({ repoDir,
-          outputDir: sharedSourceInputDir, signal: pending.signal });
-      })();
+      const localPreparation = localComponents.length ? prepareSourceRuntimeProducer({ repoDir, stackBaseDir,
+        components: localComponents, pending, env: serverEnv, signal: pending.signal,
+        sourceCapturedAfter, logger, stderrStream }) : Promise.resolve({});
       // Finite producers retain their own joint host/resource admission. The
       // coordinator holds no capacity while the independent preparations run.
-      const serverPreparation = sharedSourceInputs.then(shared => connection.startServer && !placement?.target
-        ? buildSourceRuntimeBundle({ repoDir, stackBaseDir, pending, component: 'server', serverComponent,
-          dbProvider, env: serverEnv, signal: pending.signal, sharedSourceInputs: shared, logger, stderrStream }) : null);
-      const daemonPreparation = sharedSourceInputs.then(shared => daemonRequested
-        ? buildSourceRuntimeBundle({ repoDir, stackBaseDir, pending, component: 'daemon',
-          env, signal: pending.signal, sharedSourceInputs: shared, logger, stderrStream }) : null);
-      preparations = [serverPreparation, daemonPreparation, remotePreparation];
-      const [server, daemon] = await Promise.all(preparations);
+      preparations = [localPreparation, remotePreparation];
+      const [{ server, daemon }] = await Promise.all(preparations);
       if (server) components.server = server;
       if (daemon) components.daemon = daemon;
       const ui = components.server && uiMode === 'export' ? await exportSourceWebUi({ repoDir, baseDir: sourceRoot,
-        stackBaseDir, pending, env, signal: pending.signal }) : null;
+        stackBaseDir, pending, env, signal: pending.signal, sourceCapturedAfter }) : null;
       await log('[reload] build complete; checking replacement daemon loader, server health and UI boot');
       await pending.setPhase({ phase: 'checking' });
       const admitted = await admitSourceRuntimeReload({ stackBaseDir, components, ui, pending,
         env: { ...serverEnv, HAPPIER_STACK_REPO_DIR: repoDir } });
+      if (components.server) await preflightSourceRuntimeMigrations({ server: components.server,
+        env: serverEnv, stackBaseDir, signal: pending.signal });
+      const sourceCaptures = { ...remote?.sourceCaptures, ...Object.fromEntries(Object.entries(components)
+        .map(([component, built]) => [component, built.sourceCapture ?? null])) };
+      if (ui) sourceCaptures.ui = ui.sourceCapture ?? null;
+      const sourceTimes = { ...remote?.sourceTimes, ...Object.fromEntries(Object.entries(sourceCaptures)
+        .map(([component, capture]) => [component, capture?.capturedAt ?? null])) };
       await pending.setPhase({ phase: 'prepared' });
-      await onPrepared({ ui });
+      await onPrepared({ ui, sourceTimes, sourceCaptures });
       if (!await activation) throw new Error('[reload] preparation cancelled before selection; incumbent retained');
       pending.signal.throwIfAborted();
       await remote?.activate();
       await admitted.activate();
       // Successful selection is already authoritative. A diagnostic write must
       // not mislabel a validated graph as a failed preparation afterwards.
-      await writeJsonAtomic(statusPath, { status: 'ready', logPath }).catch(error => console.error('[reload] diagnostic publication failed:', error));
-      await log('[reload] replacement smoke passed; incumbent may now be retired by the restart owner')
+      await writeJsonAtomic(statusPath, { status: 'ready', logPath, sourceTimes, sourceCaptures }).catch(error => console.error('[reload] diagnostic publication failed:', error));
+      await log(`[reload] PREPARED${Object.keys(sourceTimes).length ? ` ${formatSourceRuntimeSourceTimes(sourceTimes, sourceCaptures)}` : ''}; replacement smoke passed; incumbent may now be retired by the restart owner; runtime readiness is still pending`)
         .catch(error => console.error('[reload] log publication failed:', error));
       return { ui, remote: Boolean(remote), remoteDaemon: Boolean(placement?.daemonTarget) };
     } catch (error) {
@@ -134,14 +152,12 @@ export async function prepareSourceRuntimeReload({ stackName, stackBaseDir, repo
       throw error;
     } finally {
       await Promise.allSettled(preparations);
-      try { await remote?.close(); }
-      finally { if (sharedSourceInputDir) await rm(sharedSourceInputDir, { recursive: true, force: true }); }
+      await remote?.close();
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    await writeJsonAtomic(statusPath, { status: 'failed', message, logPath })
-      .catch(diagnostic => console.error('[reload] failure diagnostic publication failed:', diagnostic));
-    await log(`[reload] replacement refused; incumbent retained: ${message}`)
+    await recordSourceReloadRefusal({ stackBaseDir, error, env, logPath });
+    await log(`[reload] replacement refused; incumbent retained:${formatSourceReloadRefusal(error, env)} ${message.replaceAll('\n', ' ')}`)
       .catch(diagnostic => console.error('[reload] failure log publication failed:', diagnostic));
     throw error;
   } finally {
@@ -166,8 +182,12 @@ if (process.argv[1] === fileURLToPath(import.meta.url) && process.argv[2] === '-
   try {
     await prepareSourceRuntimeReload({ ...request, env: process.env, onHost: true, activation,
       onPhase: emitSourcePreparationPhase,
-      onPrepared: () => process.stdout.write('HSTACK_SOURCE_RELOAD_PREPARED\n') });
+      onPrepared: ({ sourceTimes, sourceCaptures }) => {
+        emitSourceRuntimeSourceTimes(sourceTimes, sourceCaptures);
+        process.stdout.write('HSTACK_SOURCE_RELOAD_PREPARED\n');
+      } });
   } catch (error) {
+    emitSourceReloadRefusal(error);
     console.error(error);
     process.exitCode = 1;
   } finally { control.close(); }

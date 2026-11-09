@@ -9,7 +9,7 @@ import {
 import { resolveServerPortFromEnv } from './utils/server/urls.mjs';
 import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { readFile, rm, mkdir, mkdtemp, writeFile } from 'node:fs/promises';
+import { readFile, rm, mkdir, writeFile } from 'node:fs/promises';
 import { tailscaleServeHttpsUrl } from './tailscale.mjs';
 import { printResult, wantsHelp, wantsJson } from './utils/cli/cli.mjs';
 import { ensureExpoIsolationEnv, getExpoStatePaths, resolveExpoTmpDir, wantsExpoClearCache } from './utils/expo/expo.mjs';
@@ -44,7 +44,7 @@ async function prepareTauriSidecarForBuild({ env }) {
 
 async function main() {
   const argv = process.argv.slice(2);
-  const { flags } = parseArgs(argv);
+  const { flags, kv } = parseArgs(argv);
   const json = wantsJson(argv, { flags });
   if (wantsHelp(argv, { flags })) {
     printResult({
@@ -111,15 +111,14 @@ async function main() {
     const pending = await beginPendingSourceStart({ stackBaseDir: baseDir });
     let result;
     try {
-      // Older loaded Stacks retain a private directory. Preserve their
-      // path-based reload until an explicit restart adopts shared exports.
+      const built = await exportSourceWebUi({ repoDir: getRepoDir(rootDir, process.env), baseDir: sourceRoot,
+        stackBaseDir: baseDir, pending, env: process.env, sourceCapturedAfter: kv.get('--source-after'),
+        replaceUiDir: runtimeState.sourceUiLaunch.exportDir ? null : uiDir });
+      // Older loaded Stacks keep their serving path, but adopt the same
+      // completed producer bytes before the publication owner replaces it.
       if (!runtimeState.sourceUiLaunch.exportDir) {
-        result = await exportSourceWebUi({ repoDir: getRepoDir(rootDir, process.env), baseDir: sourceRoot,
-          outputDir: join(await mkdtemp(join(sourceRoot, 'web-')), 'export'), replaceUiDir: uiDir,
-          env: process.env, signal: pending.signal });
+        result = built;
       } else {
-        const built = await exportSourceWebUi({ repoDir: getRepoDir(rootDir, process.env), baseDir: sourceRoot,
-          stackBaseDir: baseDir, pending, env: process.env });
         result = await publishSourceWebUi({ built, uiDir, pending });
       }
       await pending.publish(() => updateStackRuntimeStateFile(runtimeStatePath, { sourceUiLaunch: {

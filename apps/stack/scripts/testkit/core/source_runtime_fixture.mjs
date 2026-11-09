@@ -2,15 +2,67 @@ import { existsSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { captureBuildInputFiles } from '../../../../../scripts/workspaces/buildInputConvergence.mjs';
 import { readWorkspaceBuildInputs } from '../../utils/fs/workspaceBuildInputs.mjs';
-import { mkdir, readFile, realpath, symlink, writeFile } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { chmod, mkdir, readFile, realpath, symlink, writeFile } from 'node:fs/promises';
+import { basename, dirname, join } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { buildNativeAdmissionFixtureEnv, installNativeAdmissionFixture } from './native_admission_fixture.mjs';
+
+/** Compiler/cache fixtures exercise the producer. QA fixtures name a separate
+ * authority explicitly and retain the real consumer request path. */
+export function sourceProducerFixtureOptions(options) {
+  if (!options.stackBaseDir) return options;
+  const env = options.env ?? process.env;
+  return { ...options, env: { ...env, HAPPIER_STACK_RUNTIME_BUILD_AUTHORITY_STACK:
+    env.HAPPIER_STACK_RUNTIME_BUILD_AUTHORITY_STACK || basename(options.stackBaseDir) } };
+}
+
+export async function installSourceAdmissionFixture(root) {
+  const native = await installNativeAdmissionFixture({root});
+  const runtimeSource = new URL('../../build/build_source_runtime.mjs', import.meta.url);
+  const adapterSource = new URL('../utils/proc/runSourceBuildCommand.mjs', runtimeSource);
+  const adapter = join(root,'native-owner/apps/stack/scripts/utils/proc/runSourceBuildCommand.mjs');
+  await writeFile(adapter,(await readFile(adapterSource,'utf8')).replace(
+    "from '../dev/devReloadCoordinator.mjs'",`from ${JSON.stringify(new URL('../dev/devReloadCoordinator.mjs',adapterSource).href)}`));
+  const runtimePath = join(root,'native-owner/apps/stack/scripts/build/build_source_runtime.mjs');
+  await mkdir(dirname(runtimePath),{recursive:true});
+  // Install the genuine owner beside the fixture's genuine native launcher.
+  // Remap imports only, preserving real selection/build/retention decisions.
+  await writeFile(runtimePath,(await readFile(runtimeSource,'utf8')).replace(/^((?:import|export) [^\n]*from )'(\.[^']+)'/gm,(match,prefix,path)=> {
+    if(path==='../utils/proc/runSourceBuildCommand.mjs' || path==='../utils/proc/workspace_build_admission.mjs') return match;
+    return `${prefix}${JSON.stringify(new URL(path,runtimeSource).href)}`;
+  }).replace(/import\('(\.[^']+)'\)/g, (_match, path) =>
+    `import(${JSON.stringify(new URL(path, runtimeSource).href)})`)
+    .replace(/new URL\('(\.[^']+)', import.meta.url\)/g, (match, path) => path === '../../bin/hstack-exec'
+      ? match : `new URL(${JSON.stringify(new URL(path, runtimeSource).href)})`));
+  const {buildSourceRuntimeBundle:buildOwner} = await import(pathToFileURL(runtimePath));
+  const build = options => buildOwner(sourceProducerFixtureOptions(options));
+  const reloadSource = new URL('../runtime/launch/prepareSourceRuntimeReload.mjs', runtimeSource);
+  const reloadPath = join(root, 'native-owner/apps/stack/scripts/runtime/launch/prepareSourceRuntimeReload.mjs');
+  await mkdir(dirname(reloadPath), { recursive: true });
+  await writeFile(reloadPath, (await readFile(reloadSource, 'utf8')).replace(
+    /^((?:import|export) [^\n]*from )'(\.[^']+)'/gm, (_match, prefix, path) =>
+      `${prefix}${JSON.stringify(path === '../../build/build_source_runtime.mjs'
+        ? pathToFileURL(runtimePath).href : new URL(path, reloadSource).href)}`));
+  const prepareReload = async options => {
+    const { prepareSourceRuntimeReload } = await import(pathToFileURL(reloadPath));
+    return await prepareSourceRuntimeReload(options);
+  };
+  const {runSourceBuildCommand:runSourceCommand} = await import(pathToFileURL(adapter));
+  await mkdir(join(root,'bin'));
+  await writeFile(join(root,'bin/awk'),`#!/bin/sh\ncase "$*" in\n  */proc/meminfo*) printf '16777216 16777216\\n' ;;\n  */proc/loadavg*|*/proc/pressure/*) printf '0\\n' ;;\n  *) exec /usr/bin/awk "$@" ;;\nesac\n`);
+  await chmod(join(root,'bin/awk'),0o755);
+  const env = {...buildNativeAdmissionFixtureEnv(),PATH:`${join(root,'bin')}:/usr/bin:/bin`,HAPPIER_DEV_TARGET_EXECUTION:'1'};
+  return {...native,runtimePath,build,prepareReload,runSourceCommand,env};
+}
+
 
 export async function installSourcePreparationInputs(repoDir, component) {
   // Model the checkout inputs watched by the real preparation owner. Missing
   // fixture roots must not replace the source failure each test exercises.
   await mkdir(join(repoDir, 'scripts/workspaces'), { recursive: true });
   await mkdir(join(repoDir, 'apps/stack/scripts/build'), { recursive: true });
+  if (!existsSync(join(repoDir, 'package.json'))) await writeFile(join(repoDir, 'package.json'),
+    JSON.stringify({ private: true, workspaces: ['apps/*'] }));
   if (!existsSync(join(repoDir, 'pnpm-lock.yaml'))) await writeFile(join(repoDir, 'pnpm-lock.yaml'), '');
   await writeFile(join(repoDir, 'pnpm-workspace.yaml'), 'packages: []\n');
   if (component !== 'daemon') return;

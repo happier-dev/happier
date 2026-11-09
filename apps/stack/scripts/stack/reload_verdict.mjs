@@ -50,7 +50,11 @@ export function projectStackReloadVerification({ info, beforeManagedCli, auth, r
   if (info.urls?.uiUrl && render?.status !== 'ready') {
     return notReady('render', { status: render?.status ?? 'pending' });
   }
-  return { status: 'READY', ...baseline, ...participants, identities: runtime.sourceRuntimeIdentities ?? {
+  const sourceTimes = runtime.mode === 'source-snapshot' ? { sourceTimes: {
+    server: runtime.sourceRuntimeIdentities?.server?.sourceTime ?? null,
+    daemon: runtime.sourceRuntimeIdentities?.daemon?.sourceTime ?? null,
+  } } : {};
+  return { status: 'READY', ...baseline, ...participants, ...sourceTimes, identities: runtime.sourceRuntimeIdentities ?? {
     snapshot: { selected: runtime.selectedSnapshotId, loaded: runtime.loadedSnapshotId },
   }, managedCli: afterManagedCli, render: info.urls?.uiUrl ? render : { status: 'disabled' } };
 }

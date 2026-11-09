@@ -80,6 +80,7 @@ export const REMOTE_COMMAND_CLASSIFICATION = Object.freeze({
     'apps/stack/scripts/build/source_runtime_producer.test.mjs',
     'apps/stack/scripts/build/build_source_web_ui.test.mjs',
     'apps/stack/scripts/runtime/shared/source_reload_refusal.test.mjs',
+    'apps/stack/scripts/stack/stack_reload_verification.test.mjs',
     // Patch recovery exercises a scratch pnpm installation through source owners.
     'apps/stack/scripts/utils/proc/dependency_refresh.patch_relock.test.mjs',
     'apps/stack/scripts/utils/proc/dependency_refresh.remote.test.mjs',

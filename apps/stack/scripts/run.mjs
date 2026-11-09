@@ -1,4 +1,5 @@
 import './utils/env/env.mjs';
+import { emitSourceReloadRefusal, formatSourceReloadRefusal } from './runtime/shared/source_reload_refusal.mjs';
 import { parseArgs } from './utils/cli/args.mjs';
 import { pathExists } from './utils/fs/fs.mjs';
 import { killProcessTree, runCapture, spawnProc } from './utils/proc/proc.mjs';
@@ -6,6 +7,7 @@ import { getComponentDir, getDefaultAutostartPaths, getRepoDir, getRootDir } fro
 import { killPortListeners, observeTcpPortAvailability } from './utils/net/ports.mjs';
 import { fetchHappierHealth, getServerComponentName, isHappierServerRunning, waitForServerReady } from './utils/server/server.mjs';
 import { resolveServerShutdownGraceMs } from './utils/server/shutdown_grace.mjs';
+import { prepareStackRelay } from './utils/server/infra/iroh/runtime.mjs';
 import { ensureDepsInstalled, requireDir } from './utils/proc/pm.mjs';
 import { join } from 'node:path';
 import { statSync } from 'node:fs';
@@ -107,6 +109,7 @@ async function main() {
   delete process.env.HAPPIER_STACK_RUNNER_LOG_PATH;
   const argv = process.argv.slice(2);
   const { flags, kv } = parseArgs(argv);
+  if (flags.has('--server-cpu-prof')) process.env.HAPPIER_STACK_SERVER_CPU_PROF = '1';
   const preparedBorrowedWebappOrigin = String(kv.get('--prepared-borrowed-webapp-origin') ?? '').trim();
   if (preparedBorrowedWebappOrigin) {
     // The wrapper projects the borrowed origin for cold starts as well as reloads.
@@ -132,6 +135,7 @@ async function main() {
           '--ui=export|borrowed',
           '--no-server',
           '--server-url=<url>',
+          '--server-cpu-prof',
           '--no-daemon',
           '--restart',
           '--no-browser',
@@ -147,6 +151,7 @@ async function main() {
         '[start] usage:',
         '  hstack start [--server=happier-server|happier-server-light] [--server-flavor=light|full] [--restart] [--json]',
         '  hstack start --mobile        # also start Expo dev-client Metro for mobile',
+        '  hstack start --runtime=source --server-cpu-prof # profile only the source server until it exits',
         '  hstack start --expo-tailscale # forward Expo to Tailscale interface for remote access',
         '  hstack start --bind=loopback  # prefer localhost-only URLs (not reachable from phones)',
         '  note: --json prints the resolved config (dry-run) and exits.',
@@ -279,6 +284,7 @@ async function main() {
         dbProvider,
         snapshot: runtimeSnapshot,
         migrationsEnabled: resolveServerMigrationsEnabled(process.env),
+        env: process.env, stackBaseDir: autostart.baseDir,
       })
     : null;
   const daemonRequested = resolveStackDaemonStartRequested({ env: process.env, noDaemon: flags.has('--no-daemon') });
@@ -294,19 +300,26 @@ async function main() {
   let sourceRuntimeEnv = {};
   let sourceUiLaunch = null;
   if (sourceSnapshot && !json && (serverRequested || localDaemonRequested)) {
-    const { buildSourceRuntimeBundle } = await import('./build/build_source_runtime.mjs');
+    const { buildSourceRuntimeBundle, prepareSourceRuntimeProducer } = await import('./build/build_source_runtime.mjs');
     const sourceRoot = join(autostart.baseDir, 'source-runtime');
     await mkdir(sourceRoot, { recursive: true });
     const repoDir = getRepoDir(rootDir);
     const requireCoherentSelection = serverRequested && localDaemonRequested;
+    const prepared = reuseSourceRuntime ? null : await prepareSourceRuntimeProducer({ repoDir,
+      stackBaseDir: autostart.baseDir, env: process.env, signal: pendingSourceStart?.signal,
+      sourceCapturedAfter: kv.get('--source-after'), components: [
+        ...(serverRequested ? [{ component: 'server', serverComponent: serverComponentName, dbProvider }] : []),
+        ...(localDaemonRequested ? [{ component: 'daemon' }] : []),
+      ] });
     if (serverRequested) {
-      const built = await buildSourceRuntimeBundle({ repoDir, stackBaseDir:autostart.baseDir, component: 'server', serverComponent: serverComponentName, dbProvider, env: process.env, preparation: pendingSourceStart, signal:pendingSourceStart?.signal, reuseSelected: reuseSourceRuntime, requireCoherentSelection });
+      const built = prepared?.server ?? await buildSourceRuntimeBundle({ repoDir, stackBaseDir:autostart.baseDir, component: 'server', serverComponent: serverComponentName, dbProvider, env: process.env, preparation: pendingSourceStart, signal:pendingSourceStart?.signal, reuseSelected: reuseSourceRuntime, requireCoherentSelection });
       serverLaunchSpec = resolveServerRuntimeLaunchSpec({ sourceRuntimeLaunch: built,
-        migrationsEnabled: resolveServerMigrationsEnabled(process.env) });
+        migrationsEnabled: resolveServerMigrationsEnabled(process.env),
+        env: process.env, stackBaseDir: autostart.baseDir });
       sourceRuntimeIdentities.server = { selected: built.identity, loaded: null };
     }
     if (localDaemonRequested) {
-      const built = await buildSourceRuntimeBundle({ repoDir, stackBaseDir:autostart.baseDir, component: 'daemon', env: process.env, preparation: pendingSourceStart, signal:pendingSourceStart?.signal, reuseSelected: reuseSourceRuntime, requireCoherentSelection });
+      const built = prepared?.daemon ?? await buildSourceRuntimeBundle({ repoDir, stackBaseDir:autostart.baseDir, component: 'daemon', env: process.env, preparation: pendingSourceStart, signal:pendingSourceStart?.signal, reuseSelected: reuseSourceRuntime, requireCoherentSelection });
       cliLaunchSpec = await resolveCliRuntimeLaunchSpec({ sourceRuntimeLaunch: built });
       sourceRuntimeEnv = applyCliRuntimeLaunchProvenanceEnv({ cliLaunchSpec });
       sourceRuntimeIdentities.daemon = { selected: built.identity, loaded: null };
@@ -326,7 +339,7 @@ async function main() {
         const { exportSourceWebUi, publishSourceWebUi } = await import('./build/build_source_web_ui.mjs');
         const built = await exportSourceWebUi({ repoDir, baseDir: sourceRoot,
           stackBaseDir: autostart.baseDir, pending: pendingSourceStart, env: process.env,
-          signal: pendingSourceStart?.signal });
+          signal: pendingSourceStart?.signal, sourceCapturedAfter: kv.get('--source-after') });
         sourceUiLaunch = await publishSourceWebUi({ built, uiDir: join(sourceRoot, 'ui'), pending: pendingSourceStart });
       }
     }
@@ -490,7 +503,7 @@ async function main() {
 	      env: baseEnv,
 	    });
 	  }
-	  const daemonScopeEnv = applyStackActiveServerScopeEnv({ env: { ...baseEnv, ...sourceRuntimeEnv }, stackName, cliIdentity: 'default' });
+	  let daemonScopeEnv = applyStackActiveServerScopeEnv({ env: { ...baseEnv, ...sourceRuntimeEnv }, stackName, cliIdentity: 'default' });
 	  const serviceMode = (daemonScopeEnv.HAPPIER_STACK_SERVICE_MODE ?? '').toString().trim() === '1';
   const terminalIsInteractive = Boolean(process.stdin.isTTY && process.stdout.isTTY);
 
@@ -676,7 +689,7 @@ async function main() {
         daemon: remoteSourceDaemonRequested ? remoteSourceDaemonPlan.target.name : localDaemonRequested ? 'local' : 'disabled',
         expo: borrowedExpo ? 'borrowed' : 'disabled' } } : {}),
       serveUi,
-    });
+    }, { continueOwner: true });
     const startedRuntime = pendingSourceStart
       ? await pendingSourceStart.publishPreparation(publishRuntimeStart) : await publishRuntimeStart();
     ownerDeathWatchdog = spawnStackOwnerDeathWatchdog({
@@ -690,6 +703,10 @@ async function main() {
       env: baseEnv,
     });
   }
+
+  baseEnv = (await prepareStackRelay({ repoDir: getRepoDir(rootDir, baseEnv), env: baseEnv,
+    runtimeStatePath, signal: pendingSourceStart?.signal })).env;
+  daemonScopeEnv = applyStackActiveServerScopeEnv({ env: { ...baseEnv, ...sourceRuntimeEnv }, stackName, cliIdentity: 'default' });
 
   // Server
   // If a previous run left a server behind, free the port first (prevents false "ready" checks).
@@ -763,7 +780,7 @@ async function main() {
 
         const backendEnv = { ...serverEnv, ...infra.env, PORT: String(backendPort) };
         if (!runtimeBackedStart) {
-          const autoMigrate = (baseEnv.HAPPIER_STACK_PRISMA_MIGRATE ?? '1') !== '0';
+          const autoMigrate = resolveServerMigrationsEnabled(backendEnv);
           if (autoMigrate) {
             await applyHappyServerMigrations({ serverDir: sourceServerDir, env: backendEnv, dbProvider });
           }
@@ -789,7 +806,7 @@ async function main() {
           : await spawnSourceServerScript({ label: 'server', serverDir, script: 'start', env: backendEnv });
         if (!serverLaunchSpec) children.push(backend);
         activeServerProcess = backend;
-        await waitForServerReady(backendUrl, { childProcess: backend });
+        await waitForServerReady(backendUrl, { childProcess: backend, env: daemonScopeEnv, cliHomeDir });
         if (sourceRuntimeIdentities.server) await recordStackRuntimeUpdate(runtimeStatePath, {
           sourceRuntimeIdentities: { server: { ...sourceRuntimeIdentities.server, loaded: sourceRuntimeIdentities.server.selected } },
         });
@@ -811,7 +828,7 @@ async function main() {
         ];
         const gateway = spawnProc('ui', process.execPath, gatewayArgs, { ...backendEnv, PORT: String(serverPort) }, { cwd: rootDir });
         children.push(gateway);
-        await waitForServerReady(internalServerUrl, { childProcess: gateway });
+        await waitForServerReady(internalServerUrl, { childProcess: gateway, env: daemonScopeEnv, cliHomeDir });
         if (stackMode && runtimeStatePath) {
           await recordStackRuntimeServerActivation(runtimeStatePath, {
             stablePort: serverPort,
@@ -825,6 +842,7 @@ async function main() {
 
         // Skip default server spawn below
       } else {
+        await waitForServerReady(internalServerUrl, { env: daemonScopeEnv, cliHomeDir });
         console.log(`${green('✓')} server: already running at ${cyan(internalServerUrl)}`);
       }
     }
@@ -843,7 +861,7 @@ async function main() {
         : await spawnSourceServerScript({ label: 'server', serverDir, script: serverStartScript, env: serverEnv });
       if (!serverLaunchSpec) children.push(server);
       activeServerProcess = server;
-      await waitForServerReady(internalServerUrl, { childProcess: server });
+      await waitForServerReady(internalServerUrl, { childProcess: server, env: daemonScopeEnv, cliHomeDir });
       if (sourceRuntimeIdentities.server) await recordStackRuntimeUpdate(runtimeStatePath, {
         sourceRuntimeIdentities: { server: { ...sourceRuntimeIdentities.server, loaded: sourceRuntimeIdentities.server.selected } },
       });
@@ -871,6 +889,7 @@ async function main() {
         });
       }
     } else {
+      await waitForServerReady(internalServerUrl, { env: daemonScopeEnv, cliHomeDir });
       console.log(`${green('✓')} server: already running at ${cyan(internalServerUrl)}`);
     }
   }
@@ -927,7 +946,7 @@ async function main() {
     forceRestart = restart && (!reuseSourceRuntime || preparedSourceReload) && !serviceMode,
     preserveExistingRunning = reuseSourceRuntime && !preparedSourceReload && daemonAlreadyRunning,
   } = {}) => {
-    await startLocalDaemonWithAuth({
+    const startResult = await startLocalDaemonWithAuth({
       cliBin,
       cliEntrypoint: cliLaunchSpec?.entrypoint ?? '',
       cliNodeEntrypoint,
@@ -949,7 +968,7 @@ async function main() {
     if (startResult?.ok === false && startResult.reason === 'sign-in-required') {
       process.stdout.write(formatDaemonReadinessLine({ state: 'sign-in-required' }));
     }
-    const daemonEnvForState = getDaemonEnv({
+    const daemonEnvForState = await getDaemonEnv({
       baseEnv: daemonScopeEnv,
       cliHomeDir,
       internalServerUrl: effectiveInternalServerUrl,
@@ -1055,7 +1074,7 @@ async function main() {
   }
 
   if (startDaemon && stackMode && runtimeStatePath) {
-    const daemonRuntimeEnv = getDaemonEnv({
+    const daemonRuntimeEnv = await getDaemonEnv({
       baseEnv: daemonScopeEnv,
       cliHomeDir,
       internalServerUrl: effectiveInternalServerUrl,
@@ -1307,7 +1326,7 @@ async function runControlledRemoteStack({ rootDir, flags, json, autostart, runti
     const { buildSourceRuntimeBundle } = await import('./build/build_source_runtime.mjs');
     const built = await buildSourceRuntimeBundle({ repoDir: getRepoDir(rootDir, env),
       stackBaseDir:autostart.baseDir, component: 'daemon', env, preparation: pendingSourceStart, signal:pendingSourceStart?.signal,
-      reuseSelected: env.HAPPIER_STACK_PREPARED_SOURCE_RELOAD === '1' });
+      reuseSelected: env.HAPPIER_STACK_PREPARED_SOURCE_RELOAD === '1', sourceCapturedAfter: kv.get('--source-after') });
     localCli = await resolveCliRuntimeLaunchSpec({ sourceRuntimeLaunch: built });
     localSourceIdentity = { selected: built.identity, loaded: null };
     env = applyCliRuntimeLaunchProvenanceEnv({ env, cliLaunchSpec: localCli });
@@ -1330,11 +1349,14 @@ async function runControlledRemoteStack({ rootDir, flags, json, autostart, runti
     sourceRuntimeIdentities: sourceSnapshot ? localSourceIdentity ? { daemon: localSourceIdentity } : {} : null,
     sourceRuntimeLaunch: sourceSnapshot && localCli ? { entrypoint: localCli.entrypoint, cliDir: localCli.cliDir, env: localCli.env } : null,
     placement: { server: placement.target.name, daemon: daemonPlacement,
-      expo: (!sourceSnapshot || sourceUi === 'borrowed') && env.HAPPIER_STACK_EXPO_SOURCE_STACK ? 'borrowed' : 'disabled' } });
+      expo: (!sourceSnapshot || sourceUi === 'borrowed') && env.HAPPIER_STACK_EXPO_SOURCE_STACK ? 'borrowed' : 'disabled' } }, { continueOwner: true });
   const started = pendingSourceStart
     ? await pendingSourceStart.publishPreparation(publishRuntimeStart) : await publishRuntimeStart();
   const ownerDeathWatchdog = spawnStackOwnerDeathWatchdog({ rootDir, stackName: context.stackName, baseDir: autostart.baseDir,
     envPath: context.envPath, runtimeStatePath: context.runtimeStatePath, ownerPid: process.pid, ownerStartedAt: started.startedAt, env });
+  env = (await prepareStackRelay({ repoDir: getRepoDir(rootDir, env), env,
+    runtimeStatePath: context.runtimeStatePath, signal: pendingSourceStart?.signal,
+    serverTarget: placement.target, stackBaseDir: placement.authority.producerStackBaseDir })).env;
   let controller;
   let daemonAutostarter;
   let daemonReconciler;
@@ -1393,7 +1415,7 @@ async function runControlledRemoteStack({ rootDir, flags, json, autostart, runti
             isShuttingDown: () => shuttingDown, ...resolveCliRuntimeLaunchProvenance(localCli) });
         }, logger: console });
       daemonAutostarter.start();
-      const daemonRuntimeEnv = getDaemonEnv({ baseEnv: env, cliHomeDir, internalServerUrl,
+      const daemonRuntimeEnv = await getDaemonEnv({ baseEnv: env, cliHomeDir, internalServerUrl,
         publicServerUrl: urls.publicServerUrl, stackName: context.stackName, cliIdentity: 'default' });
       daemonReconciler = startOwnerDaemonLifecycleReconciler({ enabled: true,
         runtimeStatePath: context.runtimeStatePath,
@@ -1444,10 +1466,11 @@ function resolveStackCredentialFingerprint({ cliHomeDir, serverUrl, env }) {
 }
 
 main().catch((err) => {
+  emitSourceReloadRefusal(err);
   if (emitSourceStartSuperseded(err)) {
     console.log('[local] pending source start superseded by a newer start for this stack');
     process.exit(0);
   }
-  console.error('[local] failed:', err);
+  console.error('[local] failed:', (err instanceof Error ? err.message : String(err)).replaceAll('\n', ' ') + formatSourceReloadRefusal(err));
   process.exit(1);
 });

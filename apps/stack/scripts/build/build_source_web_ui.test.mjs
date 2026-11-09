@@ -4,7 +4,7 @@ import { access, chmod, cp, mkdir, mkdtemp, readFile, readdir, realpath, rm, sym
 import { watch } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
-import { createRequire } from 'node:module';
+import { createRequire, syncBuiltinESMExports } from 'node:module';
 import { createHash } from 'node:crypto';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { execFileSync } from 'node:child_process';
@@ -14,16 +14,41 @@ import { run } from '../utils/proc/proc.mjs';
 import { exportSourceWebUi } from './build_source_web_ui.mjs';
 import { createTempFixture } from '../testkit/core/temp_fixture.mjs';
 import { prepareFiniteSourceWebFixture, relocateSourceOwnerImports } from '../testkit/core/source_web_fixture.mjs';
-import { buildNativeAdmissionFixtureEnv, installNativeAdmissionFixture } from '../testkit/core/native_admission_fixture.mjs';
+import { buildNativeAdmissionFixtureEnv, holdNativeAdmissionFixtureMemory, installNativeAdmissionFixture } from '../testkit/core/native_admission_fixture.mjs';
 import { captureSourceWebBuildInputs, readWorkspacePackages, setBundleReadOnly, withSourceBundlePublication } from './build_source_runtime.mjs';
 import { ensureExpoWorkspacePrepared, hasUsableExpoWorkspaceLastGreen, withExpoPreparationEnv } from '../utils/expo/command.mjs';
 import { runNodeCapture } from '../testkit/core/run_node_capture.mjs';
+import { sourceBuildNodeArgs } from '../utils/proc/runSourceBuildCommand.mjs';
 import { sanitizeStackTestRunnerEnv } from '../utils/test/test_env.mjs';
 import { recordStackRuntimeStart, readStackRuntimeStateFile } from '../utils/stack/runtime_state.mjs';
 import { beginPendingSourceStart } from '../runtime/shared/pending_source_start.mjs';
-import { withDependencyRefreshLock } from '../utils/proc/dependency_refresh.mjs';
+import { resolveDependencyRefreshLockPath, resolveDependencyRefreshMarkerPath, withDependencyRefreshLock } from '../utils/proc/dependency_refresh.mjs';
 import { withPatchedProcessEnv } from '../testkit/core/env_scope.mjs';
 import { resolveHeavyweightMemoryFloorKiB } from '../utils/dev_targets/remote_commands.mjs';
+import { isJsonOwnerFileLockActive } from '../utils/proc/jsonOwnerFileLock.mjs';
+import { isWorkspaceBundleLockActive } from '../../../../packages/cli-common/workspaceBundleLock.mjs';
+
+test('dependency publication web export discards a spanned candidate and returns only the rebuild', async t => {
+  const fixture = await createTempFixture(t, { prefix: 'happier-web-dependency-publication-' });
+  const repoDir = fixture.path('repo');
+  await prepareFiniteSourceWebFixture({ sourceRepo: fileURLToPath(new URL('../../../../', import.meta.url)), repoDir });
+  const env = { ...process.env, EXPO_PUBLIC_DEBUG: '0' };
+  const generationPath = `${resolveDependencyRefreshLockPath(repoDir, env)}.generation`;
+  await mkdir(dirname(generationPath), { recursive: true });
+  await writeFile(generationPath, JSON.stringify({ generation: 'before' }));
+  let attempts = 0;
+  const built = await exportSourceWebUi({ repoDir, baseDir: fixture.path('state'), outputDir: fixture.path('export'), env,
+    runImpl: async (_command, args) => {
+      const attempt = ++attempts;
+      const web = args[args.indexOf('--output-dir') + 1];
+      await mkdir(web);
+      await writeFile(join(web, 'index.html'), '<script src="./app.js"></script>');
+      await writeFile(join(web, 'app.js'), `globalThis.pass = ${attempt};`);
+      if (attempt === 1) await writeFile(generationPath, JSON.stringify({ generation: 'after-failed-writer' }));
+    } });
+  assert.equal(attempts, 2);
+  assert.equal(await readFile(join(built.uiDir, 'app.js'), 'utf8'), 'globalThis.pass = 2;');
+});
 
 test('relocated source owners resolve multiline runtime imports', async t => {
   const fixture = await createTempFixture(t, { prefix: 'happier-relocated-source-owner-' });
@@ -161,15 +186,138 @@ test('stack web source reload preserves other roles when the served export is un
   await assert.rejects(access(join(baseDir, 'runtime/artifacts')), { code: 'ENOENT' });
 });
 
+test('QA web export with app-local config uses the repository producer and adopts its completed capture', async t => {
+  const fixture = await createTempFixture(t, { prefix: 'happier-web-producer-adoption-', registerCleanup: false });
+  let pending;
+  let activeExport;
+  const cancellation = new AbortController();
+  t.after(async () => {
+    cancellation.abort();
+    try { await activeExport?.catch(() => {}); await pending?.dispose(); }
+    finally { await setBundleReadOnly(fixture.root, false); await fixture.cleanup(); }
+  });
+  const sourceUrl = new URL('./build_source_web_ui.mjs', import.meta.url);
+  const repoDir = fixture.path('repo');
+  const { uiInput } = await prepareFiniteSourceWebFixture({
+    sourceRepo: fileURLToPath(new URL('../../../../', import.meta.url)), repoDir,
+  });
+  const stackBaseDir = fixture.path('stacks/consumer');
+  const counter = fixture.path('exports.json');
+  const expo = fixture.path(process.platform === 'win32' ? 'expo.cmd' : 'expo');
+  await writeFile(expo, process.platform === 'win32'
+    ? `@echo off\r\n"${process.execPath}" "${fixture.path('expo.mjs')}" %*\r\n`
+    : `#!/bin/sh\nexec '${process.execPath}' '${fixture.path('expo.mjs')}' "$@"\n`);
+  await chmod(expo, 0o755);
+  await writeFile(fixture.path('expo.mjs'), `
+import {mkdir,readFile,writeFile} from 'node:fs/promises';import {join} from 'node:path';
+const prior=JSON.parse(await readFile(${JSON.stringify(counter)},'utf8').catch(()=>'[]'));
+prior.push({stack:process.env.HAPPIER_STACK_STACK,cwd:process.cwd(),config:process.env.EXPO_APP_LOCAL_CONFIG_PATH});
+await writeFile(${JSON.stringify(counter)},JSON.stringify(prior));
+const web=process.argv[process.argv.indexOf('--output-dir')+1];await mkdir(web,{recursive:true});
+await writeFile(join(web,'index.html'),'<script src="./app.js"></script>');await writeFile(join(web,'app.js'),'globalThis.ready=true;');
+`);
+  const native = process.platform === 'linux' ? await installNativeAdmissionFixture({ root: fixture.root }) : null;
+  const commandBoundary = fixture.path('expo-command.mjs');
+  await writeFile(commandBoundary, `export {prepareExpoCommandEnv} from ${JSON.stringify(new URL('../utils/expo/command.mjs', import.meta.url).href)};export async function resolveExpoBin(){return ${JSON.stringify(expo)}}`);
+  const publicOwner = fixture.path('source-web.mjs');
+  const adapterSource = new URL('../utils/proc/runSourceBuildCommand.mjs', import.meta.url);
+  const adapter = native && fixture.path('native-owner/apps/stack/scripts/utils/proc/runSourceBuildCommand.mjs');
+  if (adapter) await writeFile(adapter, relocateSourceOwnerImports(await readFile(adapterSource, 'utf8'), adapterSource,
+    new Map([['./workspace_build_admission.mjs', null]])));
+  await writeFile(publicOwner, relocateSourceOwnerImports((await readFile(sourceUrl, 'utf8'))
+    .replace("fileURLToPath(new URL('../../bin/hstack-exec', import.meta.url))", JSON.stringify(native?.launcher ?? fileURLToPath(new URL('../../bin/hstack-exec', sourceUrl)))),
+  sourceUrl, new Map([['../utils/expo/command.mjs', pathToFileURL(commandBoundary)],
+    ...(adapter ? [['../utils/proc/runSourceBuildCommand.mjs', pathToFileURL(adapter)]] : [])])));
+  const { exportSourceWebUi: exportShared } = await import(pathToFileURL(publicOwner));
+  const workerLog = fixture.path('workers.jsonl');
+  const handoffLog = fixture.path('worker-handoff.json');
+  const observationHook = fixture.path('observe-worker.mjs');
+  await writeFile(observationHook, `import {appendFileSync,readFileSync,writeFileSync} from 'node:fs';import {resolve} from 'node:path';
+if(resolve(process.argv[1]??'')===${JSON.stringify(publicOwner)}){
+  appendFileSync(${JSON.stringify(workerLog)},JSON.stringify({stack:process.env.HAPPIER_STACK_STACK})+'\\n');
+  const write=process.stdout.write;
+  process.stdout.write=function(chunk,...args){
+    let built;try{built=JSON.parse(String(chunk))}catch{}
+    if(built?.uiDir)writeFileSync(${JSON.stringify(handoffLog)},readFileSync(${JSON.stringify(join(stackBaseDir, 'source-runtime/start.pending.json'))},'utf8'));
+    return write.call(this,chunk,...args);
+  };
+}`);
+  // Observe the real OS process environment before compiler preparation. This
+  // assertion remains decisive even when unrelated source cannot compile.
+  const workerWatch = watch(fixture.root);
+  t.after(() => workerWatch.close());
+  const workerStarted = new Promise((resolve, reject) => {
+    workerWatch.on('error', reject);
+    workerWatch.on('change', async (_event, name) => {
+      if (name !== 'workers.jsonl') return;
+      try {
+        const first = (await readFile(workerLog, 'utf8')).split('\n').find(Boolean);
+        if (first) resolve(JSON.parse(first));
+      } catch (error) { reject(error); }
+    });
+  });
+  pending = await beginPendingSourceStart({ stackBaseDir });
+  const config = fixture.path('app.local.cjs');
+  await writeFile(config, 'module.exports = {};');
+  const options = { repoDir, stackBaseDir, pending, signal: cancellation.signal,
+    baseDir: fixture.path('consumer-state'), outputDir: fixture.path('private-bypass'),
+    env: { ...(native ? buildNativeAdmissionFixtureEnv() : process.env), EXPO_PUBLIC_DEBUG: '0',
+      HAPPIER_STACK_STACK: 'consumer', HAPPIER_STACK_RUNTIME_BUILD_AUTHORITY_STACK: 'producer',
+      HAPPIER_STACK_STORAGE_DIR: fixture.path('stacks'), EXPO_APP_LOCAL_CONFIG_PATH: config,
+      NODE_OPTIONS: [buildNativeAdmissionFixtureEnv().NODE_OPTIONS, `--import=${pathToFileURL(observationHook).href}`].filter(Boolean).join(' ') } };
+  activeExport = exportShared(options);
+  void activeExport.catch(() => {});
+  const worker = await Promise.race([workerStarted, activeExport.then(() => { throw new Error('export completed without an observed worker'); })]);
+  assert.equal(worker.stack, 'producer', 'QA export compiler processes must execute as the repository producer');
+  const first = await activeExport;
+  const handoff = JSON.parse(await readFile(handoffLog, 'utf8'));
+  assert.ok(handoff.preparationDirs?.includes(dirname(first.uiDir)),
+    'the producer pins completed output in the caller pending request before returning it');
+  const exports = async () => JSON.parse(await readFile(counter, 'utf8'));
+  assert.equal((await exports())[0].stack, 'producer', 'an executable app config must not bypass producer authority');
+  assert.equal((await exports())[0].config, config, 'the actual config variation remains part of the producer request');
+  await writeFile(uiInput, 'export const changed = true;');
+  const second = await exportShared(options);
+  assert.equal(second.uiDir, first.uiDir, 'source edits adopt the completed capture');
+  assert.equal((await exports()).length, 1, 'a QA adoption launches no compiler');
+  const legacyUiDir = fixture.path('legacy-serving');
+  await mkdir(legacyUiDir);
+  await writeFile(join(legacyUiDir, 'app.js'), 'globalThis.old=true;');
+  const replaced = await exportShared({ ...options, replaceUiDir: legacyUiDir });
+  assert.equal(replaced.uiDir, legacyUiDir, 'an older loaded Stack retains its private serving path');
+  assert.equal(replaced.exportDir, undefined);
+  assert.equal(await readFile(join(legacyUiDir, 'app.js'), 'utf8'), await readFile(join(first.uiDir, 'app.js'), 'utf8'));
+  assert.equal((await exports()).length, 1, 'legacy serving replacement copies the completed producer export without compiling');
+  activeExport = exportShared({ ...options, sourceCapturedAfter: new Date(Date.now() + 86400000).toISOString() });
+  await assert.rejects(activeExport, error => {
+    assert.equal(error.reason, 'source_runtime_producer_capture_unavailable');
+    return true;
+  });
+  assert.equal((await exportShared(options)).uiDir, first.uiDir,
+    'a capture older than the explicit boundary cannot replace the completed incumbent');
+  assert.equal((await exports()).length, 2);
+  const sourceCapturedAfter = new Date().toISOString();
+  activeExport = Promise.all([exportShared({ ...options, sourceCapturedAfter }), exportShared({ ...options, sourceCapturedAfter })]);
+  const refreshed = await activeExport;
+  assert.equal(refreshed[0].uiDir, refreshed[1].uiDir, 'concurrent freshness requests join one producer product');
+  assert.ok(Date.parse(refreshed[0].sourceCapture.capturedAt) >= Date.parse(sourceCapturedAfter));
+  assert.equal((await exports()).length, 3, 'only the repository producer exports the newer capture once');
+  const markerPath = resolveDependencyRefreshMarkerPath(repoDir);
+  const marker = JSON.parse(await readFile(markerPath, 'utf8').catch(() => '{}'));
+  await writeFile(markerPath, JSON.stringify({ ...marker, identity: 'new-dependency-publication' }));
+  activeExport = exportShared(options);
+  const changedDependencies = await activeExport;
+  assert.notEqual(changedDependencies.uiDir, refreshed[0].uiDir, 'a changed dependency publication cannot reuse the old capture');
+  assert.equal((await exports()).length, 4);
+});
+
 test('source stacks reuse completed web bytes while debug options and damaged exports require construction', async context => {
   const fixture = await createTempFixture(context, { prefix: 'happier-completed-source-web-', registerCleanup: false });
   let pending;
   let otherPending;
   context.after(async () => {
-    await otherPending?.dispose();
-    await pending?.dispose();
-    await setBundleReadOnly(fixture.root, false);
-    await fixture.cleanup();
+    try { await otherPending?.dispose(); await pending?.dispose(); }
+    finally { await setBundleReadOnly(fixture.root, false); await fixture.cleanup(); }
   });
   const sourceRepo = fileURLToPath(new URL('../../../../', import.meta.url));
   const repoDir = fixture.path('repo');
@@ -188,6 +336,7 @@ import {access,mkdir,readFile,writeFile} from 'node:fs/promises';
 import {join} from 'node:path';
 const count=Number(await readFile(${JSON.stringify(counter)},'utf8').catch(()=>0))+1;
 await writeFile(${JSON.stringify(counter)},String(count));
+await writeFile(${JSON.stringify(fixture.path('export-owner'))},process.env.HAPPIER_STACK_STACK ?? '');
 await access(join(process.cwd(),'sources/app/_layout.tsx'));
 if(process.env.EXPO_PUBLIC_FEATURES==='different') throw new Error('ENOSPC: test export boundary');
 const web=process.argv[process.argv.indexOf('--output-dir')+1];
@@ -225,7 +374,9 @@ await writeFile(join(web,'app.js'),'globalThis.debug = '+JSON.stringify(process.
   pending = await beginPendingSourceStart({ stackBaseDir });
   const exports = async () => Number(await readFile(counter, 'utf8'));
   const env = { ...(native ? buildNativeAdmissionFixtureEnv() : process.env), EXPO_PUBLIC_DEBUG: '0',
-    GOMAXPROCS: '2', HAPPIER_STACK_EXPO_EXPORT_MAX_WORKERS: '' };
+    GOMAXPROCS: '2', HAPPIER_STACK_EXPO_EXPORT_MAX_WORKERS: '',
+    HAPPIER_STACK_STACK: 'consumer', HAPPIER_STACK_RUNTIME_BUILD_AUTHORITY_STACK: 'producer',
+    HAPPIER_STACK_STORAGE_DIR: fixture.path('stacks') };
   const options = { repoDir, stackBaseDir, pending, baseDir: fixture.path('state'),
     env };
   const otherStackBaseDir = fixture.path('stacks/independent');
@@ -238,8 +389,58 @@ await writeFile(join(web,'app.js'),'globalThis.debug = '+JSON.stringify(process.
     if (result.status === 'rejected') throw result.reason;
     return result.value;
   });
-  const repeat = await exportShared({ ...options, outputDir: fixture.path('second'),
-    env: { ...env, GOMAXPROCS: '3' } });
+  assert.equal(await readFile(fixture.path('export-owner'), 'utf8'), 'producer',
+    'QA requests export work from the repository producer on this execution host');
+  const bundleRoot = fixture.path('stacks/source-bundles');
+  const publicationLock = join(bundleRoot, 'publication.lock');
+  const completedRecord = JSON.parse(await readFile(join(first.uiDir, '../source-bundle.json'), 'utf8'));
+  const candidateLock = join(bundleRoot, `build-${completedRecord.reuseFingerprint}.lock`);
+  for (let index = 0; index < 128; index += 1) {
+    const directory = join(bundleRoot, `web-unrelated-${index}`);
+    await mkdir(directory);
+    await writeFile(join(directory, 'source-bundle.json'), JSON.stringify({ ...completedRecord, buildOptions: 'unrelated' }));
+  }
+  const filesystem = (await import('node:fs/promises')).default;
+  const originalRead = filesystem.readFile;
+  const originalReaddir = filesystem.readdir;
+  const originalLstat = filesystem.lstat;
+  let inventoryReads = 0;
+  let completionReads = 0;
+  let verificationUnderPublication = 0;
+  let protectedDigestReads = 0;
+  filesystem.readFile = async (path, ...args) => {
+    if (String(path).endsWith('source-bundle.json')) completionReads += 1;
+    return await originalRead(path, ...args);
+  };
+  filesystem.readdir = async (path, ...args) => {
+    if (resolve(String(path)) === bundleRoot) inventoryReads += 1;
+    return await originalReaddir(path, ...args);
+  };
+  filesystem.lstat = async (path, ...args) => {
+    const absolute = resolve(String(path));
+    if ((absolute.startsWith(repoDir) || absolute.startsWith(first.uiDir)) && isJsonOwnerFileLockActive(publicationLock)) {
+      verificationUnderPublication += 1;
+    }
+    if (absolute.startsWith(first.uiDir) && isWorkspaceBundleLockActive(candidateLock, { staleAfterMs: Infinity })) {
+      protectedDigestReads += 1;
+    }
+    return await originalLstat(path, ...args);
+  };
+  syncBuiltinESMExports();
+  let repeat;
+  try {
+    repeat = await exportShared({ ...options, outputDir: fixture.path('second'), env: { ...env, GOMAXPROCS: '3' } });
+    context.diagnostic(`web retained=128 inventoryReads=${inventoryReads} completionReads=${completionReads} verificationUnderPublication=${verificationUnderPublication} protectedDigestReads=${protectedDigestReads}`);
+    assert.equal(inventoryReads, 0, 'warm web lookup must not scan retained bundle directories');
+    assert.ok(completionReads <= 2, 'warm web lookup reads only its chosen completion');
+    assert.equal(verificationUnderPublication, 0, 'source and output digest verification run outside publication custody');
+    assert.ok(protectedDigestReads > 0, 'existing fingerprint custody protects real exported-byte verification');
+  } finally {
+    filesystem.readFile = originalRead;
+    filesystem.readdir = originalReaddir;
+    filesystem.lstat = originalLstat;
+    syncBuiltinESMExports();
+  }
   assert.equal(await exports(), 1, 'changing the executor CPU budget must reuse unchanged completed bytes');
   assert.equal(repeat.uiDir, first.uiDir, 'restart selects the completed export without copying or mutating it');
   assert.equal(other.uiDir, first.uiDir, 'independent Stack homes share account-free completed bytes');
@@ -288,10 +489,15 @@ await writeFile(join(web,'app.js'),'globalThis.debug = '+JSON.stringify(process.
   const member = join(repoDir, 'apps/ui/sources/completedWebMembership.ts');
   await writeFile(member, 'export const added = true;');
   const changed = await exportShared(options);
-  assert.notEqual(changed.uiDir, repaired.uiDir, 'new authored membership invalidates a completed export');
+  assert.equal(changed.uiDir, repaired.uiDir, 'moving source must adopt the latest completed capture without a QA compiler');
+  assert.equal(await exports(), 6);
+  const sourceCapturedAfter = new Date().toISOString();
+  const refreshed = await exportShared({ ...options, sourceCapturedAfter });
+  assert.notEqual(refreshed.uiDir, repaired.uiDir, 'an explicit freshness request waits for a newer producer capture');
+  assert.ok(Date.parse(refreshed.sourceCapture.capturedAt) >= Date.parse(sourceCapturedAfter));
   assert.equal(await exports(), 7);
   await rm(member);
-  assert.equal((await exportShared(options)).uiDir, repaired.uiDir, 'Undo adopts matching captured bytes');
+  assert.equal((await exportShared(options)).uiDir, refreshed.uiDir, 'Undo still adopts the latest completed capture');
   assert.equal(await exports(), 7);
   const fault = fixture.path('completion-fault.mjs');
   // Fail only the real output-completion rename; no cache/publication logic
@@ -304,7 +510,7 @@ await writeFile(join(web,'app.js'),'globalThis.debug = '+JSON.stringify(process.
   await assert.rejects(exportShared({ ...options, env: { ...options.env, EXPO_PUBLIC_FEATURES: 'publication-failure',
     NODE_OPTIONS: [options.env.NODE_OPTIONS, `--import=${pathToFileURL(fault).href}`].filter(Boolean).join(' ') } }), /ENOSPC at web completion/);
   assert.equal(await readFile(join(firstServing, 'app.js'), 'utf8'), servingBytes);
-  assert.equal((await exportShared(options)).uiDir, repaired.uiDir, 'failed completion keeps reusable incumbent bytes');
+  assert.equal((await exportShared(options)).uiDir, refreshed.uiDir, 'failed completion keeps reusable incumbent bytes');
   assert.equal(await exports(), 8);
 
   const privateExport = await exportShared({ ...options, stackBaseDir: undefined, pending: undefined,
@@ -321,8 +527,7 @@ await writeFile(join(web,'app.js'),'globalThis.debug = '+JSON.stringify(process.
     env: { ...env, HAPPIER_STACK_REPO_DIR: repoDir, HAPPIER_STACK_HOME_DIR: fixture.path('home') },
     // Installation is the package-manager boundary. Capture, SDK preparation,
     // finite admission, Expo execution and artifact publication remain real.
-    ensureDepsInstalledImpl: async (_dir, _label, options) => await options.onDependenciesReady(),
-    runUiPostinstallImpl: () => {} });
+    ensureDepsInstalledImpl: async () => {} });
   assert.equal(await exports(), 10);
   assert.match(await readFile(join(artifact.artifactDir, 'payload/app.js'), 'utf8'), /"0"/);
   assert.deepEqual(await readdir(fixture.path('artifacts/web')), ['finite']);
@@ -507,7 +712,9 @@ test('source exports reuse transforms across captures and refresh changed module
         delete requireFromCapture.cache[configPath];
         const config = requireFromCapture(configPath);
         config.cacheStores = [new ObservedFileStore({ root: fixture.path('transforms') })];
-        config.maxWorkers = 1;
+        // Real exports own a fresh compiler process. Metro's single-worker
+        // in-process adapter retains Babel configuration from earlier fixtures.
+        config.maxWorkers = 2;
         const transformer = new Transformer(config, { getOrComputeSha1: async file => {
           const content = await readFile(file);
           return { sha1: createHash('sha1').update(content).digest('hex'), content };
@@ -646,6 +853,19 @@ test('cold Expo source preparation needs no workspace dist build or materializat
   const sharedInventory = join(repoDir, 'apps/ui/sources/sync/domains/plugins/availability/generatedBundledPluginUiArtifacts.js');
   await writeFile(sharedInventory, '// another consumer owns this inventory\n');
   const env = { ...process.env, HAPPIER_UI_PLUGIN_ARTIFACT_INVENTORY: fixture.path('consumer-a/inventory.js') };
+  // A copied checkout must enter through its real source-tool authority, just
+  // like live Expo. Importing its preflight into this unrelated test process
+  // bypasses that entry and asks an intentionally absent dist to own imports.
+  const preflight = join(repoDir, 'apps/stack/scripts/cold_preflight.mjs');
+  await writeFile(preflight, String.raw`
+  import assert from 'node:assert/strict';
+  import { access, readFile, rm } from 'node:fs/promises';
+  import { join } from 'node:path';
+  import { ensureExpoWorkspacePrepared, hasUsableExpoWorkspaceLastGreen, withExpoPreparationEnv }
+    from ${JSON.stringify(pathToFileURL(join(repoDir, 'apps/stack/scripts/utils/expo/command.mjs')).href)};
+  const repoDir = ${JSON.stringify(repoDir)};
+  const sharedInventory = ${JSON.stringify(sharedInventory)};
+  const env = process.env;
   const result = await withExpoPreparationEnv(env, async preparationEnv => {
     const result = await ensureExpoWorkspacePrepared({ projectDir: join(repoDir, 'apps/ui'), env: preparationEnv });
     assert.equal(preparationEnv.HAPPIER_UI_PLUGIN_ARTIFACT_INVENTORY, result.outputPath);
@@ -658,7 +878,7 @@ test('cold Expo source preparation needs no workspace dist build or materializat
   assert.match(inventory, /happier\.triage/);
   for (const [, assetPath] of inventory.matchAll(/require\(("(?:[^"\\]|\\.)*")\)/g)) await access(JSON.parse(assetPath));
   const other = await ensureExpoWorkspacePrepared({ projectDir: join(repoDir, 'apps/ui'),
-    env: { ...env, HAPPIER_UI_PLUGIN_ARTIFACT_INVENTORY: fixture.path('consumer-b/inventory.js') } });
+    env: { ...env, HAPPIER_UI_PLUGIN_ARTIFACT_INVENTORY: ${JSON.stringify(fixture.path('consumer-b/inventory.js'))} } });
   assert.notEqual(other.outputPath, result.outputPath);
   assert.equal(await readFile(result.outputPath, 'utf8'), inventory);
   for (const [, assetPath] of inventory.matchAll(/require\(("(?:[^"\\]|\\.)*")\)/g)) await access(JSON.parse(assetPath));
@@ -670,6 +890,9 @@ test('cold Expo source preparation needs no workspace dist build or materializat
     'real source inventory admission includes its published assets');
   await assert.rejects(access(join(repoDir, 'packages/plugin-sdk/dist')), { code: 'ENOENT' });
   await assert.rejects(access(join(repoDir, '.project/tmp/cli-source-dev-shared-deps-sync.json')), { code: 'ENOENT' });
+  `);
+  const result = await runNodeCapture(sourceBuildNodeArgs({ repoDir, scriptPath: preflight }), { cwd: repoDir, env });
+  assert.equal(result.code, 0, result.stderr);
 });
 
 test('source web export retains captured UI and workspace inputs across live additions, removals and edits', async context => {
@@ -708,6 +931,50 @@ test('source web export retains captured UI and workspace inputs across live add
       await writeFile(join(web, 'app.js'), 'globalThis.captured = true;');
     } });
   assert.equal(await readFile(join(result.uiDir, 'app.js'), 'utf8'), 'globalThis.captured = true;');
+  assert.match(result.sourceCapture?.inputIdentity ?? '', /^[a-f0-9]{64}$/);
+  assert.ok(Number.isFinite(Date.parse(result.sourceCapture?.capturedAt)));
+});
+
+test('finite source export retains reused plugin assets inside its private Metro root', async context => {
+  const fixture = await createTempFixture(context, { prefix: 'happier-web-retained-crawl-root-' });
+  const repoDir = fixture.path('source');
+  const { pluginInput } = await prepareFiniteSourceWebFixture({
+    sourceRepo: fileURLToPath(new URL('../../../../', import.meta.url)), repoDir,
+  });
+  let producerInventory;
+  const finishExport = async args => {
+    const web = args[args.indexOf('--output-dir') + 1];
+    await mkdir(web);
+    await writeFile(join(web, 'index.html'), '<script src="./app.js"></script>');
+    await writeFile(join(web, 'app.js'), 'globalThis.ready = true;');
+  };
+  await exportSourceWebUi({ repoDir, baseDir: fixture.path('producer'), outputDir: fixture.path('first'),
+    env: { ...process.env, EXPO_PUBLIC_DEBUG: '0' },
+    runImpl: async (_command, args, { env }) => {
+      producerInventory = await readFile(env.HAPPIER_UI_PLUGIN_ARTIFACT_INVENTORY, 'utf8');
+      await finishExport(args);
+    } });
+  const projection = join(repoDir, 'apps/ui/sources/sync/domains/plugins/availability/generatedBundledPluginUiArtifacts.js');
+  await mkdir(dirname(projection), { recursive: true });
+  await writeFile(projection, producerInventory);
+  // An unavailable new compilation must retain the genuine last-green graph,
+  // but its producer's directory is not a private export's Metro watch root.
+  await writeFile(pluginInput, 'export const broken = ;');
+  await exportSourceWebUi({ repoDir, baseDir: fixture.path('consumer'), outputDir: fixture.path('second'),
+    env: { ...process.env, EXPO_PUBLIC_DEBUG: '0' },
+    runImpl: async (_command, args, { env }) => {
+      const inventory = await readFile(env.HAPPIER_UI_PLUGIN_ARTIFACT_INVENTORY, 'utf8');
+      const artifacts = runInNewContext(`${inventory.replaceAll('export const ', 'const ')}\nBUNDLED_PLUGIN_UI_APP_ARTIFACTS`, { require: path => path });
+      const retained = artifacts.find(artifact => artifact.pluginId === 'happier.admission-fixture');
+      assert.ok(retained, 'last-green UI must remain admitted');
+      for (const file of retained.files) {
+        await access(file.asset);
+        const suffix = relative(dirname(env.HAPPIER_UI_PLUGIN_ARTIFACT_INVENTORY), file.asset);
+        assert.ok(!isAbsolute(suffix) && suffix !== '..' && !suffix.startsWith('../') && !suffix.startsWith('..\\'),
+          'retained assets must be inside the consumer inventory watch root');
+      }
+      await finishExport(args);
+    } });
 });
 
 test('source web export uses fresh private source projections and one-shot origin-relative Expo output', async (context) => {
@@ -814,6 +1081,7 @@ test('source web export admits its complete finite capture before consumption an
     const lowMemoryObserved = fixture.path('low-memory-observed');
     const executed = fixture.path('expo-executed');
     await writeFile(available, '5242880');
+    const pressure = await holdNativeAdmissionFixtureMemory(context, native, { totalKiB: 16777216, availableKiB: 5242880 });
     await mkdir(fixture.path('bin'));
     await writeFile(fixture.path('bin/awk'), `#!/bin/sh
 case "$*" in
@@ -911,9 +1179,10 @@ export async function resolveExpoBin() {
       'finite capture must wait for host memory before reading installed bytes');
     await observedPressure;
     await assert.rejects(access(executed), { code: 'ENOENT' });
-    assert.deepEqual(await readdir(join(native.admissionRoot, 'owners')), [], 'no capacity is reserved while queued');
+    assert.deepEqual(await readdir(join(native.admissionRoot, 'owners')), [pressure.ownerPath.split('/').at(-1)],
+      'the queued export has no reservation beyond the live pressure holder');
     await withDependencyRefreshLock({ installDir: repoDir, env, signal: context.signal }, async () => {});
-    await writeFile(available, '16777216');
+    await pressure.release(() => writeFile(available, '16777216'));
     await pending;
     const observed = JSON.parse(await readFile(executed, 'utf8'));
     assert.ok(resolveHeavyweightMemoryFloorKiB(observed.className) > resolveHeavyweightMemoryFloorKiB('validation'),

@@ -9,7 +9,7 @@ const componentGraphs = Object.freeze({ daemon: 'daemon', cli: 'cli', server: 's
 
 /** @typedef {{component?: string, entryGraph?: string, firstFailingModule?: string,
  * code?: string|number, phase?: string, retryable?: boolean, sourceStack?: string,
- * missingMigrations?: string[], failedMigration?: string}} SourceReloadRefusal */
+ * reason?: string, nextAction?: string, missingMigrations?: string[], failedMigration?: string}} SourceReloadRefusal */
 
 function publicIdentifier(value, env) {
   return typeof value === 'string' && value.length > 0 && !/[\r\n]/u.test(value)
@@ -21,7 +21,7 @@ export function readSourceReloadRefusal(error, env = process.env) {
   if (!error || typeof error !== 'object') return {};
   /** @type {SourceReloadRefusal} */
   const refusal = {};
-  for (const field of ['component', 'entryGraph', 'firstFailingModule', 'phase', 'sourceStack', 'failedMigration']) {
+  for (const field of ['component', 'entryGraph', 'firstFailingModule', 'phase', 'sourceStack', 'failedMigration', 'reason', 'nextAction']) {
     const value = publicIdentifier(error[field], env);
     if (value) refusal[field] = value;
   }
