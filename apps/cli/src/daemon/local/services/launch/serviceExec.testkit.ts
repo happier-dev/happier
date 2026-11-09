@@ -34,6 +34,7 @@ export async function withFiniteComposeFixture(run: (fixture: Readonly<{
     installationId?: string;
     installationPrivateSeed?: Uint8Array;
     applicationDockerHost?: string;
+    dockerOperatingSystem?: string;
     namedVolume?: true;
     runtimeSecrets?: Readonly<Record<string, string>>;
     serviceEnvironment?: Readonly<Record<string, string>>;
@@ -58,6 +59,7 @@ export async function withFiniteComposeFixture(run: (fixture: Readonly<{
         const docker = await createOwnServerDockerBoundary(join(root, 'tools'), {
             engineId: `finite-engine-${createHash('sha256').update(root).digest('hex')}`,
             expectedDockerHost: hostDockerEndpoint,
+            ...(options.dockerOperatingSystem === undefined ? {} : { operatingSystem: options.dockerOperatingSystem }),
         });
         const image = await docker.registerImage('worker', 'candidate-b');
         const document = JSON.stringify({ services: { worker: { image: image.registryReference,

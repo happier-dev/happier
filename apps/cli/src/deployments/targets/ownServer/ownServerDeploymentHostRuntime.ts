@@ -10,6 +10,7 @@ import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { isDeepStrictEqual } from 'node:util';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import type { ActionExecutorContext } from '@happier-dev/protocol';
+import { isDeploymentBackupActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import type { DeploymentOwnServerContentV1, DeploymentEnvironmentDetailV1, DeploymentReceiptHeaderV1, DeploymentSourceIntentV1 } from '@happier-dev/deployment-protocol';
 import { DeploymentOwnServerContentV1Schema } from '@happier-dev/deployment-protocol';
 import { decodeBase64 } from '@/api/encryption';
@@ -130,6 +131,8 @@ export function createOwnServerDeploymentRuntimeForHost(host: OwnServerDeploymen
             const materializationId = materialization.kind === 'review' ? materialization.contentArtifactId
                 : materialization.kind === 'restoration' ? materialization.sourceDeploymentId : materialization.deploymentId;
             const restorationForDeploymentId = materialization.kind === 'restoration' ? materialization.deploymentId : undefined;
+            const maintenanceOperationId = isDeploymentBackupActionIdV1(request.actionId)
+                ? request.context.operationAcceptance?.operationId ?? request.context.actionRequestId : undefined;
             const admission = await readSecretAdmission({ credentials: host.credentials,
                 serverId: host.serverId, serverHttpBaseUrl: host.serverHttpBaseUrl, machineId: host.machineId,
                 installationId: identity.installationId, environmentId: environment.environment.id,
@@ -163,6 +166,7 @@ export function createOwnServerDeploymentRuntimeForHost(host: OwnServerDeploymen
                 const releasePath = resolveDeploymentSourcePathForHost({ deploymentRoot,
                     environmentInstanceId, deploymentId: materializationId,
                     ...(build ? { materializationRole: 'build' } : {}),
+                    ...(maintenanceOperationId === undefined ? {} : { maintenanceOperationId }),
                     ...(restorationForDeploymentId === undefined ? {} : { restorationForDeploymentId }) });
                 if (build) {
                     const buildRoot = join(configuration.happyHomeDir, 'tmp', 'deployment-build');
@@ -204,6 +208,7 @@ export function createOwnServerDeploymentRuntimeForHost(host: OwnServerDeploymen
                     source: { environmentId: environment.environment.id, environmentInstanceId,
                         deploymentId: materializationId, machineId: host.machineId, installationId: identity.installationId,
                         ...(build ? { materializationRole: 'build' as const } : {}),
+                        ...(maintenanceOperationId === undefined ? {} : { maintenanceOperationId }),
                         ...(restorationForDeploymentId === undefined ? {} : { restorationForDeploymentId }),
                         ...(intent.kind === 'stored' ? { definition: intent } : { sourcePath: workspace!.rootPath, commitSha: intent.sha,
                             ...(intent.pullRequestHead ? { pullRequestHead: intent.pullRequestHead, repository: sourceRepository } : {}) }), deploymentRoot,

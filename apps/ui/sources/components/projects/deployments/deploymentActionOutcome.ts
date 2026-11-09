@@ -165,8 +165,10 @@ export function useDeploymentChangePress(
   const [running, setRunning] = React.useState(false);
   const [outcome, setOutcome] = React.useState<DeploymentActionOutcome | null>(null);
   const busy = React.useRef(false);
+  const lastPress = React.useRef<(() => Promise<SettledChange>) | null>(null);
   const press = React.useCallback(async (run: () => Promise<SettledChange>) => {
     if (busy.current) return false;
+    lastPress.current = run;
     busy.current = true;
     setRunning(true);
     setOutcome(null);
@@ -184,5 +186,10 @@ export function useDeploymentChangePress(
     if (next === null) onSettled();
     return next === null;
   }, [review, onSettled]);
-  return { running, outcome, press };
+  // A person can request a new review through the same Action entry point;
+  // the refused approval itself is never replayed or accepted here.
+  const retry = React.useCallback(async () => {
+    if (lastPress.current) await press(lastPress.current);
+  }, [press]);
+  return { running, outcome, press, retry };
 }

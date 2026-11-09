@@ -139,6 +139,8 @@ export type DeploymentSourceAdmissionForHost = Readonly<{
     materializationRole?: 'build';
     /** Existing parent receipt owns fresh compensation placement, never an overwrite of a serving release. */
     restorationForDeploymentId?: string;
+    /** Finite backup work borrows a generation without occupying its runtime source placement. */
+    maintenanceOperationId?: string;
     /** Retain the pinned operation log admitted on this exact installation. */
     operationLog?: boolean;
 }> & (Readonly<{ sourcePath: string; commitSha: string; definition?: never;

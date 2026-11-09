@@ -512,6 +512,30 @@ describe('exact deployment source through the public port', () => {
         });
     });
 
+    it('keeps overlapping backup source materializations independent for the same serving generation', async () => {
+        await withCommittedSource(async admitted => {
+            const materialize = (maintenanceOperationId: string) => createDeploymentSourceMaterializationPort({
+                registry: createDeploymentGitRegistry(), async admit() {
+                    return { ...admitted, restorationForDeploymentId: admitted.deploymentId, maintenanceOperationId };
+                },
+            }).materialize(request);
+            const testing = await materialize('destination-test');
+            try {
+                const backup = await materialize('backup-now');
+                try {
+                    expect(backup.deploymentId).toBe(testing.deploymentId);
+                    expect(backup.manifestFingerprint).toBe(testing.manifestFingerprint);
+                    expect(backup.rootPath).not.toBe(testing.rootPath);
+                    // Finishing Test cannot dispose the concurrent backup's source.
+                    await testing.abort();
+                    expect(await readFile(join(backup.rootPath, 'compose.yaml'), 'utf8')).toContain('example/commit-A');
+                    expect(readDeploymentSourceIdentityForHost({ deploymentRoot: admitted.deploymentRoot,
+                        sourcePath: backup.rootPath })).toBeNull();
+                } finally { await backup.abort(); }
+            } finally { await testing.abort(); }
+        });
+    });
+
     it('materializes a selected uniform release for compensation without replacing either committed release', async () => {
         await withCommittedSource(async admitted => {
             let parentDeploymentId: string | undefined;

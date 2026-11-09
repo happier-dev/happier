@@ -40,6 +40,21 @@ describe('deployment failure diagnostics', () => {
         expect(JSON.stringify(opaque)).not.toContain('private-secret-value');
     });
 
+    it('publishes the closed native backup network refusal with actionable recovery', () => {
+        const code = 'service_admission_unavailable';
+        const details = { reason: 'backup_destination_host_network_unavailable' };
+        const result = projectDeploymentFailure(code, new PluginError({ code,
+            message: 'private-native-endpoint', details }));
+        expect(ActionExecuteFailureSchema.parse(result)).toMatchObject({ ok: false, errorCode: code,
+            error: expect.stringMatching(/container-reachable/), details: { ...details,
+                requiredFact: 'nativeLinuxHostNetwork', remedy: expect.stringMatching(/container-reachable/) } });
+        expect(JSON.stringify(result)).not.toContain('private-native-endpoint');
+        const opaque = projectDeploymentFailure(code, new PluginError({ code,
+            details: { ...details, endpoint: 'private-native-endpoint' } }));
+        expect(opaque.details).not.toHaveProperty('reason');
+        expect(JSON.stringify(opaque)).not.toContain('private-native-endpoint');
+    });
+
     it('retains the incumbent native operation through the published failure envelope', async () => {
         const admission = createMachineNativeEffectAdmission();
         const keys = [{ kind: 'dockerEngine' as const, dockerEndpoint: 'engine' }];

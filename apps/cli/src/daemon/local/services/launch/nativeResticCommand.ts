@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { access, realpath } from 'node:fs/promises';
 import { constants } from 'node:fs';
+import { isIP } from 'node:net';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import type { DeploymentExecEnvAttachmentV1, ExecService } from '@happier-dev/plugin-sdk/exec';
 import type { DeploymentSourceMaterializationV1 } from '@happier-dev/plugin-sdk/services';
@@ -13,6 +14,7 @@ import { machineNativeEffectAdmission, type MachineNativeEffectContext } from '.
 import { normalizeNativeComposePlatform } from './nativeComposeImageIdentity';
 import type { createNativeComposeImageIdentity } from './nativeComposeImageIdentity';
 import type { NativeComposeProjectRender } from './nativeComposeLifecycle';
+import { refuseNativeResticHostNetwork } from './nativeResticFailure';
 
 export type NativeResticCommandInput = Readonly<{
     render: NativeComposeProjectRender; context: MachineNativeEffectContext;
@@ -42,11 +44,24 @@ export async function admitNativeResticCommand(input: NativeResticCommandInput, 
         await owner.assertCurrent();
         const { runtimeImage, request, selector } = input;
         const index = RESTIC_RUNTIME_V1.image.split('@')[1];
+        const platform = normalizeNativeComposePlatform(input.render.platform);
         if (request.runtime.image !== RESTIC_RUNTIME_V1.image || request.runtime.version !== RESTIC_RUNTIME_V1.version
             || request.runtime.repositoryVersion !== RESTIC_RUNTIME_V1.repositoryVersion
             || runtimeImage.indexDigest !== index && runtimeImage.manifestDigest !== index
-            || normalizeNativeComposePlatform(runtimeImage.platform) !== normalizeNativeComposePlatform(input.render.platform)
+            || normalizeNativeComposePlatform(runtimeImage.platform) !== platform
             || !runtimeImage.registryReference) return refuse();
+        // P45's request builder owns the fixed --repo pair. Only loopback S3
+        // endpoints need the selected Engine host's network namespace.
+        const repository = request.argv[1];
+        const hostname = repository && /^s3:https?:\/\//u.test(repository)
+            ? new URL(repository.slice(3)).hostname.replace(/^\[|\]$/gu, '') : undefined;
+        const hostNetwork = hostname === 'localhost' || hostname === 'localhost.' || hostname === '::1'
+            || hostname !== undefined && isIP(hostname) === 4 && hostname.startsWith('127.');
+        // Desktop host networking is opt-in and not represented by Engine facts.
+        // Do not silently assume it, or route private endpoints through a rewrite.
+        if (hostNetwork && (input.render.engine.kind !== 'native' || !platform.startsWith('linux/'))) {
+            return refuseNativeResticHostNetwork();
+        }
         const mounts: string[] = [];
         if (selector) {
             const definition = record(owner.model.services) ? owner.model.services[selector.service] : undefined;
@@ -83,7 +98,8 @@ export async function admitNativeResticCommand(input: NativeResticCommandInput, 
         const name = `happier-op-${createHash('sha256').update(JSON.stringify([
             owner.source.environmentInstanceId, input.context.operation.operationId, request.argv])).digest('hex')}`;
         const createArgs = ['create', '--interactive', '--pull', 'never', '--name', name,
-            '--label', `happier.operation=${name}`, ...mounts, '--env', `RESTIC_PASSWORD_FILE=${request.passwordFilePath}`,
+            '--label', `happier.operation=${name}`, ...(hostNetwork ? ['--network', 'host'] : []),
+            ...mounts, '--env', `RESTIC_PASSWORD_FILE=${request.passwordFilePath}`,
             ...request.environmentVariableNames.flatMap(value => ['--env', value]), runtimeImage.registryReference, ...request.argv];
         const tool = await owner.exec.systemTools.resolve({ toolId: 'docker', purpose: 'deployment-native-compose',
             cwd: owner.source.rootPath, ...(signal ? { signal } : {}) });

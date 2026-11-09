@@ -247,7 +247,8 @@ describe('admitted finite Compose command', () => {
             }
         });
     });
-    it.each(['complete', 'cancelBeforeCreate', 'metadataSequence', 'rawReadback'] as const)('admits P45 restic on the selected named volume through real source, image proof, P42 custody and the existing command owner: %s', async outcome => {
+    it.each(['complete', 'numericHostname', 'loopback', 'loopbackIpv6', 'loopbackLocalhost', 'loopbackDesktop', 'loopbackUnknown', 'cancelBeforeCreate', 'metadataSequence', 'rawReadback'] as const)('admits P45 restic on the selected named volume through real source, image proof, P42 custody and the existing command owner: %s', async outcome => {
+        const hostNetwork = outcome === 'loopback' || outcome === 'loopbackIpv6' || outcome === 'loopbackLocalhost';
         await withFiniteComposeFixture(async ({ project, docker, source, root, exec }) => {
             await docker.registerRecordedImage('restic', RESTIC_RUNTIME_V1.image, nativeRestic0191);
             // Native registry/process boundary is substituted; the actual
@@ -280,7 +281,10 @@ describe('admitted finite Compose command', () => {
             }));
             const controller = new AbortController();
             const destination = createDeploymentBackupEnvironmentForHost({ signal: controller.signal, isCurrent: () => true,
-                repository: 's3:https://fixture.invalid/backup',
+                repository: outcome === 'loopbackIpv6' ? 's3:http://[::1]:33025/backup'
+                    : outcome === 'loopbackLocalhost' ? 's3:http://localhost:33025/backup'
+                        : outcome.startsWith('loopback') ? 's3:http://127.0.0.1:33025/backup'
+                            : outcome === 'numericHostname' ? 's3:https://127.example.test/backup' : 's3:https://fixture.invalid/backup',
                 preparation: { environmentId: source.environmentId,
                     machineId: source.machineId, installationId: source.installationId, installationPrivateSeed: seed,
                     bindings: uses, backupDestinationUses: uses, grants, backupConfigBaseDir: root,
@@ -300,6 +304,15 @@ describe('admitted finite Compose command', () => {
                 expect(admit, 'the native owner must admit the third operation arm').toBeTypeOf('function');
                 await machineNativeEffectAdmission.run({ operation: { operationId: 'restic-existing-parent', kind: 'backup' },
                     keys: render.keys, settleNative: project.settleNative }, async context => {
+                    if (outcome === 'loopbackDesktop' || outcome === 'loopbackUnknown') {
+                        await expect(project.admitResticCommand({ render, context, runtimeImage,
+                            request: buildResticRequestV1({ environmentId: source.environmentId, access: resticAccess,
+                                command: { kind: 'config' } }), destinationAttachment: attachment }))
+                            .rejects.toMatchObject({ code: 'service_admission_unavailable',
+                                details: { reason: 'backup_destination_host_network_unavailable' } });
+                        expect((await docker.readInvocations()).filter(row => row.args[0] === 'create')).toEqual([]);
+                        return;
+                    }
                     if (outcome === 'metadataSequence' || outcome === 'rawReadback') {
                         const binary = Buffer.from([0, 255, 195, 40, 128, 10]);
                         if (outcome === 'rawReadback') await docker.setOperationStdout(binary);
@@ -360,14 +373,19 @@ describe('admitted finite Compose command', () => {
                         secretPresent: true, readOnlyData: true });
                     for (const value of values) expect(JSON.stringify(result)).not.toContain(value);
                 });
-                if (outcome !== 'complete') return;
+                if (outcome !== 'complete' && outcome !== 'numericHostname' && !hostNetwork) return;
                 const invocations = await docker.readInvocations();
                 expect(invocations.filter(row => row.args[0] === 'run')).toHaveLength(0);
                 expect(invocations.filter(row => row.args[0] === 'start')).toHaveLength(1);
                 const runs = invocations.filter(row => row.args[0] === 'create');
                 expect(runs).toHaveLength(1);
-                expect(runs[0].args).not.toContain('--network'); expect(runs[0].args).not.toContain('--net');
-                if (process.env.HAPPIER_TEST_NATIVE_BACKUP_NETWORK === '1') {
+                if (hostNetwork) {
+                    expect(runs[0].args.slice(runs[0].args.indexOf('--network'), runs[0].args.indexOf('--network') + 2),
+                        'a daemon-loopback S3 destination must use the native Docker host network').toEqual(['--network', 'host']);
+                } else {
+                    expect(runs[0].args).not.toContain('--network'); expect(runs[0].args).not.toContain('--net');
+                }
+                if (outcome === 'complete' && process.env.HAPPIER_TEST_NATIVE_BACKUP_NETWORK === '1') {
                     await qualifyNativeBackupNetworking(runs[0].args);
                 }
                 expect(runs[0].args).toContain(runtimeImage.registryReference);
@@ -378,7 +396,9 @@ describe('admitted finite Compose command', () => {
                 await expect(access(passwordPath)).rejects.toMatchObject({ code: 'ENOENT' });
                 await activated.dispose();
             }
-        }, { namedVolume: true, nativeExecutableIo: true });
+        }, { namedVolume: true, nativeExecutableIo: true,
+            ...(outcome === 'loopbackDesktop' ? { dockerOperatingSystem: 'Docker Desktop' }
+                : outcome === 'loopbackUnknown' ? { dockerOperatingSystem: '' } : {}) });
     });
     it('hands the actual mounted generation to its shell consumer and settles the session on observed client exit', async () => {
         await withFiniteComposeFixture(async ({ project, docker, source, io }) => {

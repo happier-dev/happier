@@ -710,15 +710,18 @@ describe('own-server installed host acquisition', () => {
             },
             async acquirePluginRuntimeRegistryLease() { return mounted.lease; } });
         try {
-            const acquired = await runtime.acquire({ ...request, ...(kind === 'restoration' ? {
+            const runtimeRequest = { ...request, ...(kind === 'restoration' ? {
+                actionId: 'deployments.backups.test',
                 materialization: { kind: 'restoration', deploymentId: 'deployment', sourceDeploymentId: 'uniform' },
-            } : {}) }, { deployment: receipt.deployment,
+            } : {}) } satisfies OwnServerDeploymentRuntimeRequest;
+            const snapshot = { deployment: receipt.deployment,
                 environment: { ...environment, content: { ...environment.content, definition, bindings: [registryUse] } },
                 content: { ...receipt.content, sourceIntent: definition, images: [archive.image], ownServer: { imageArchives: [archive],
                     approvedInputBasis: { v: 1, environmentId: 'environment', environmentRevision: 2, targetLinkId: 'link', targetLinkRevision: 1,
                         sourceIntent: definition, members: [{ machineId: 'machine', installationId: 'installation' }], bindings: [], images: [archive.image],
                         manifestFingerprint: definition.composeDigest, configInputDigests: [], physicalProjectName: 'physical', toolVersion: '2.40.1',
-                        services: ['web'], profiles: [] } } } });
+                        services: ['web'], profiles: [] } } } } satisfies Parameters<typeof runtime.acquire>[1];
+            const acquired = await runtime.acquire(runtimeRequest, snapshot);
             let registryDirectory: string | undefined;
             let neighboringDirectory: string | undefined;
             try {
@@ -729,6 +732,29 @@ describe('own-server installed host acquisition', () => {
                 expect(acquired.source).not.toHaveProperty('commitSha');
                 expect(acquired.source).not.toHaveProperty('sourcePath');
                 await acquired.assertCurrent();
+                if (kind === 'restoration') {
+                    // #105: a pending destination Test retains its source while Back up now
+                    // acquires the same serving generation under a different operation.
+                    const second = await runtime.acquire({ ...runtimeRequest, actionId: 'deployments.backups.run', context: { ...request.context,
+                        operationAcceptance: { operationId: 'backup-after-test', accept() {} } } }, snapshot);
+                    const materialize = (selected: typeof acquired) => createDeploymentSourceMaterializationPort({
+                        admit: async () => ({ ...selected.source, assertCurrent: selected.assertSourceCurrent }),
+                    }).materialize({ environmentId: selected.source.environmentId, deploymentId: selected.source.deploymentId });
+                    let firstSource: Awaited<ReturnType<typeof materialize>> | undefined;
+                    let secondSource: Awaited<ReturnType<typeof materialize>> | undefined;
+                    try {
+                        firstSource = await materialize(acquired);
+                        secondSource = await materialize(second);
+                        expect(secondSource.rootPath).not.toBe(firstSource.rootPath);
+                        await firstSource.abort();
+                        expect(await readFile(join(secondSource.rootPath, 'compose.yaml'), 'utf8')).toBe(document);
+                        expect(admissions).toEqual([{ kind: 'deployment', deploymentId: 'deployment' },
+                            { kind: 'deployment', deploymentId: 'deployment' }]);
+                    } finally {
+                        try { await secondSource?.abort(); }
+                        finally { try { await firstSource?.abort(); } finally { await second.release(); } }
+                    }
+                }
                 // A stored snapshot can run local/registry acquisition without a
                 // transport profile, but archive demand cannot borrow ambient credentials.
                 await expect(acquired.copyDeploymentImageArchive!({ archive, signal: new AbortController().signal,

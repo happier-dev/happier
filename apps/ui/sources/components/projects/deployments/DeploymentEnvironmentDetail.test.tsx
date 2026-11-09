@@ -70,6 +70,42 @@ const { ProjectDeploymentsView } = await import('./ProjectDeploymentsBody');
 const { DeploymentEnvironmentDetail } =
   await import('./DeploymentEnvironmentDetail');
 const { DeploymentReceiptDetail } = await import('./DeploymentReceiptDetail');
+const { DeployOutcomeBanner } = await import('./DeploymentEnvironmentDetail');
+const { useDeploymentChangePress } = await import('./deploymentActionOutcome');
+const { SectionActionButton } = await import('@/components/ui/lists/SectionActionButton');
+const { HappyError } = await import('@/utils/errors/errors');
+
+it('lets a refused backup press request a fresh review from its failure banner', async () => {
+  let attempts = 0;
+  const reviews: string[] = [];
+  const review = { request: (id: string) => { reviews.push(id); } };
+  const settled = () => {};
+  // The caller's Action boundary settles stale first, then returns a newly minted review.
+  const run = async () => {
+    attempts += 1;
+    if (attempts === 1) return { ok: false as const, error: 'approval_stale' };
+    throw new HappyError('approval_request_created', false, { code: 'approval_request_created', details: {
+      kind: 'approval_request_created', artifactId: 'fresh-backup-review', actionId: 'deployments.backups.run',
+    } });
+  };
+  function BackupRecovery() {
+    const change = useDeploymentChangePress(review, settled);
+    return <>
+      <SectionActionButton testID="backup.run" title="Back up now" onPress={() => change.press(run)} />
+      {change.outcome ? <DeployOutcomeBanner outcome={change.outcome} pending={change.outcome.kind === 'approval'}
+        machine="Backup machine" onOpenReview={() => {}} copy="setting" onRetry={change.retry} /> : null}
+    </>;
+  }
+  const screen = await renderScreen(<BackupRecovery />);
+  await screen.pressByTestIdAsync('backup.run');
+  expect(attempts).toBe(1);
+  expect(reviews).toEqual([]);
+  await screen.pressByTestIdAsync('project-deployments.outcome.refused.other.action');
+  expect(attempts).toBe(2);
+  expect(reviews).toEqual(['fresh-backup-review']);
+  expect(screen.findByTestId('project-deployments.outcome.approval')).not.toBeNull();
+});
+
 async function waitForContent(screen: Awaited<ReturnType<typeof renderScreen>>, testID: string) {
   await waitForHomeGovernance(async () => {
     await act(async () => {});

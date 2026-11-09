@@ -112,7 +112,7 @@ export function DeploymentBackupControls(props: Readonly<{
       {result ? <Item testID={`${props.testID}.result`} title={result} mode="info" /> : null}
       {change.outcome ? <DeployOutcomeBanner outcome={change.outcome}
         pending={change.outcome.kind === 'approval' && props.review.pendingId === change.outcome.artifactId}
-        machine={props.machineName(target.machineId)} onOpenReview={props.review.open} copy="setting" /> : null}
+        machine={props.machineName(target.machineId)} onOpenReview={props.review.open} onRetry={change.retry} copy="setting" /> : null}
       {open && snapshots?.length === 0 ? <Item title={t('projects.deployments.backupNoSnapshots')} mode="info" /> : null}
       {open ? snapshots?.map(snapshot => (
         <Item key={snapshot.snapshot.snapshotId} testID={`${props.testID}.snapshot.${snapshot.snapshot.snapshotId}`}
@@ -390,7 +390,7 @@ export function DeploymentBackupRetentionRows(props: Readonly<{
       ) : null}
       {prune.outcome && props.review && target ? <DeployOutcomeBanner outcome={prune.outcome}
         pending={prune.outcome.kind === 'approval' && props.review.pendingId === prune.outcome.artifactId}
-        machine={props.machineName(target.machineId)} onOpenReview={props.review.open} copy="setting" /> : null}
+        machine={props.machineName(target.machineId)} onOpenReview={props.review.open} onRetry={prune.retry} copy="setting" /> : null}
     </>
   );
 }
@@ -670,7 +670,7 @@ export function DeploymentBackupCredentialRows(props: Readonly<{
       {change.outcome && props.review ? <DeployOutcomeBanner outcome={change.outcome}
         pending={change.outcome.kind === 'approval' && props.review.pendingId === change.outcome.artifactId}
         machine={props.machineName(props.detail.environment.controllerMachineId)} onOpenReview={props.review.open}
-        copy="setting" /> : null}
+        onRetry={change.retry} copy="setting" /> : null}
     </>
   );
 }

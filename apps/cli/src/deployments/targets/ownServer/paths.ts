@@ -79,11 +79,20 @@ export async function resolveOwnServerDeploymentIdentityForHost(input: Readonly<
 export function resolveDeploymentSourcePathForHost(admitted: Readonly<{
     deploymentRoot: string; environmentInstanceId: string; deploymentId: string;
     restorationForDeploymentId?: string; materializationRole?: 'build';
+    maintenanceOperationId?: string;
 }>): string {
     const segments = [admitted.environmentInstanceId, admitted.deploymentId,
-        ...(admitted.restorationForDeploymentId === undefined ? [] : [admitted.restorationForDeploymentId])];
+        ...(admitted.restorationForDeploymentId === undefined ? [] : [admitted.restorationForDeploymentId]),
+        ...(admitted.maintenanceOperationId === undefined ? [] : [admitted.maintenanceOperationId])];
     for (const id of segments) assertDeploymentIdentitySegment(id);
     const environmentRoot = join(admitted.deploymentRoot, admitted.environmentInstanceId);
+    if (admitted.maintenanceOperationId !== undefined) {
+        if (admitted.materializationRole || admitted.restorationForDeploymentId === undefined) {
+            throw Object.assign(new Error('Invalid deployment source role'), { code: 'invalid_request' });
+        }
+        // This disposable source never becomes a serving release or a cold runtime routing hint.
+        return join(environmentRoot, 'maintenance', admitted.maintenanceOperationId);
+    }
     if (admitted.materializationRole === 'build') {
         if (admitted.restorationForDeploymentId !== undefined) throw Object.assign(new Error('Invalid deployment source role'), { code: 'invalid_request' });
         return join(environmentRoot, 'builds', admitted.deploymentId);

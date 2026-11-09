@@ -1084,6 +1084,8 @@ export function DeployOutcomeBanner(
     placement?: 'inline';
     /** Opens the typed recovery's destination; absent where the page has nowhere to send the person. */
     onOpenRecovery?: (destination: DeploymentFailureRecoveryDestinationV1) => void;
+    /** Requests a fresh review through the original press owner, after an explicit recovery press. */
+    onRetry?: () => void;
   }>,
 ) {
   const { outcome, placement } = props;
@@ -1175,8 +1177,10 @@ export function DeployOutcomeBanner(
                 })
               : recovery?.remedy ?? failure?.reason ?? refusalConsequence(outcome.code))
       }
-      {...(recovery && onOpenRecovery ? { action: { label: recovery.nextAction.label,
-        onPress: () => onOpenRecovery(recovery.nextAction.destination) } } : {})}
+      {...(recovery?.nextAction.destination === 'review' && props.onRetry
+        ? { action: { label: recovery.nextAction.label, onPress: props.onRetry } }
+        : recovery && onOpenRecovery ? { action: { label: recovery.nextAction.label,
+          onPress: () => onOpenRecovery(recovery.nextAction.destination) } } : {})}
       // The typed code is for support; the sentence says what it left.
       details={failure ? failure.technicalDetails.map(line => `${line.label}: ${line.value}`) : [outcome.code]}
     />

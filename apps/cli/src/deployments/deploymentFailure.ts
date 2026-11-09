@@ -3,6 +3,7 @@ import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/action
 import { logger } from '@/ui/logger';
 import { readDeploymentAuthorizationFailure } from './deploymentAuthorizationFailure';
 import { readDeploymentSystemToolFailure } from './deploymentSystemToolFailure';
+import { readDeploymentNativeResticFailure } from '@/daemon/local/services/launch/nativeResticFailure';
 import { readDeploymentOutputValidationFailure } from './outputValidation';
 import { MachineNativeEffectAdmissionError } from '@/daemon/local/services/launch/machineNativeEffectAdmission';
 import { readPluginActionError, readPluginActionFailureAuthorPayload } from '@happier-dev/protocol/plugins/actions/invocation';
@@ -42,6 +43,7 @@ function readAuthoredDeploymentFailure(errorCode: string, error: unknown, phase:
     }
     const known = (errorCode === 'action_forbidden' ? readDeploymentAuthorizationFailure(error) : null)
         ?? readDeploymentSystemToolFailure(errorCode, error)
+        ?? readDeploymentNativeResticFailure(errorCode, error)
         ?? readDeploymentOutputValidationFailure(errorCode, error);
     if (known) return known;
     const pluginError = readPluginActionError(error);
