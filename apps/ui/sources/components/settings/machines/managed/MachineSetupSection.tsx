@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { Pressable, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import type { MachineSetupV1 } from '@happier-dev/protocol/machines/managed/machineSetupV1';
+import type { MachinePresetItemV1, MachineSetupV1 } from '@happier-dev/protocol/machines/managed/machineSetupV1';
 import {
   listMachineSetupAdaptersV1,
   type BuiltinNativeToolchainAdapterV1,
@@ -204,12 +204,7 @@ export const MachineSetupSection = React.memo(
               <Item
                 key={`${item.kind}:${index}:${title}`}
                 testID={`${props.testID}.item.${index}`}
-                icon={<StoreItemMark size={20} facts={item.kind === 'app' ? { kind: 'app', title }
-                  : { kind: 'software', title, bundledPluginId: item.selection.ref.pluginId, iconToken: presented.icon ?? null }} />}
-                title={title}
-                subtitle={item.kind === 'app'
-                  ? item.definition.project.kind === 'create' ? t('machinePresets.setup.appNewProject') : t('machinePresets.setup.appExistingProject')
-                  : presented.offered === false ? t('machinePresets.setup.itemNotOffered') : presented.description}
+                {...machineSetupItemReadRow(item, presented)}
                 mode="info"
                 showChevron={false}
                 rightElementOutsidePressable
@@ -442,6 +437,19 @@ const ITEM_GROUP_TITLE = {
 } as const satisfies Record<MachineSetupItemKind, string>;
 
 /** The receipt's read-only environment lines: what each new machine is set up with. */
+/** How a Preset item reads as a row: its mark, name and what it is. The editor adds its actions; the creation review shows it as it is. */
+export function machineSetupItemReadRow(item: MachinePresetItemV1, presented: ReturnType<typeof machineSetupItemPresentation>) {
+  const title = presented.title;
+  return {
+    icon: <StoreItemMark size={20} facts={item.kind === 'app' ? { kind: 'app', title }
+      : { kind: 'software', title, bundledPluginId: item.selection.ref.pluginId, iconToken: presented.icon ?? null }} />,
+    title,
+    subtitle: item.kind === 'app'
+      ? item.definition.project.kind === 'create' ? t('machinePresets.setup.appNewProject') : t('machinePresets.setup.appExistingProject')
+      : presented.offered === false ? t('machinePresets.setup.itemNotOffered') : presented.description,
+  };
+}
+
 export function describeMachineSetup(
   setup: MachineSetupV1 | undefined,
 ): (ManagedReceiptFact & Readonly<{ value: string }>)[] {

@@ -372,7 +372,7 @@ describe('mounted managed configurator', () => {
       }
     } finally { await screen.unmount(); }
   });
-  it('reads Account options metadata and presentation without a controller or Machine RPC', async () => {
+  it.each([false, true])('reads Account options metadata and presentation without a controller or Machine RPC (preset: %s)', async presetOnly => {
     runtimeHost.current = 'native';
     const { PLUGIN } = await import('../../../../../../../packages/plugins/machine-vercel/src/manifest');
     const { PluginPortableReleaseManifestV1Schema } = await import('@happier-dev/protocol/plugins/availability');
@@ -445,11 +445,12 @@ describe('mounted managed configurator', () => {
       const { ManagedMachineConfigurationView } = await import('./ManagedMachineConfigurationView');
       const onUse = vi.fn();
       const screen = await renderScreen(<ManagedMachineConfigurationView serverId={serverId}
-        provisioner={buildQualifiedPluginContributionKey(selected.contribution)} onUse={onUse} />);
+        provisioner={buildQualifiedPluginContributionKey(selected.contribution)} onUse={onUse} presetOnly={presetOnly} />);
       try {
         const { t } = await import('@/text');
-        await waitForHomeGovernance(() => expect(screen.findByTestId('managed-config.use')?.props.disabled).toBe(true));
-        expect(screen.getTextContent()).toContain(t('managedMachines.credential.choose'));
+        await waitForHomeGovernance(() => expect(screen.findByTestId(presetOnly ? 'managed-config.create' : 'managed-config.use')?.props.disabled).toBe(true));
+        expect(screen.findByTestId('managed-config.controller-target:pool')).toBeNull();
+        if (!presetOnly) expect(screen.getTextContent()).toContain(t('managedMachines.credential.choose'));
         expect(onUse).not.toHaveBeenCalled();
         expect(nativeBoundary.rpc).not.toHaveBeenCalled();
         expect(harness.requestsFor('/v1/actions/machines.managed.acquire')).toHaveLength(0);
@@ -804,6 +805,53 @@ describe('mounted managed configurator', () => {
     await screen.unmount();
   });
 
+  it('saves a name edit on an existing Account creation preset exactly once at its revision', async () => {
+    const serverId = await harness.addHome({ name: 'Compute', serverUrl: 'https://account-preset-rename.example.test',
+      serverIdentityId: 'srv_add_server', accountId: 'owner', currentAccount: true });
+    const { storage } = await import('@/sync/domains/state/storage');
+    storage.setState({ profileScope: { serverId, accountId: 'owner' } });
+    storage.getState().applyMachines([createMachineFixture({ id: defaultController.machineId,
+      installationId: defaultController.installationId })], true, { sourceServerId: serverId, sourceAccountId: 'owner' });
+    storage.getState().markMachineListSettled(serverId);
+    for (const [actionId, result] of [
+      ['machines.provisioners.list', { controller: defaultController, provisioners: [provisioner] }],
+      ['machines.provisioners.check', { available: true }],
+      ['machines.provisioners.options', createManagedCpuOptionsFixture([{ id: 'small', title: 'Small server', cpu: 2 }])],
+    ] as const) harness.answer(serverId, `/v1/actions/${actionId}`, { select: value => {
+      const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
+      return { body: { v: 1, actionId, requestId: request.requestId, execution: { ok: true, result } } };
+    } });
+    const { ManagedMachinePresetV1Schema } = await import('@happier-dev/protocol/machines/managed/managedMachinePresetV1');
+    const preset = ManagedMachinePresetV1Schema.parse({ id: 'account-rename', homeId: 'srv_add_server', revision: 0,
+      name: 'Original preset', owner: { kind: 'account', accountId: 'owner' }, controller: defaultController,
+      launch: { provider: provisioner.contribution, schemaVersion: 1, name: 'Original preset', choices: { cpu: 2 } } });
+    harness.answer(serverId, '/v1/machines/presets/get', { body: { kind: 'found', preset } });
+    harness.answer(serverId, '/v1/machines/presets/update', { body: { kind: 'saved', preset: {
+      ...preset, name: 'Renamed preset', revision: 1, launch: { ...preset.launch, name: 'Renamed preset' },
+    } } });
+    const { ManagedMachineConfigurationView } = await import('./ManagedMachineConfigurationView');
+    const screen = await renderScreen(<ManagedMachineConfigurationView serverId={serverId}
+      provisioner={buildQualifiedPluginContributionKey(provisioner.contribution)} presetId={preset.id} presetOnly
+      initialController={defaultController} />);
+    await waitForHomeGovernance(() => expect(screen.findByTestId('managed-config.create')?.props.disabled).toBe(false));
+    // Native prompt is the platform input boundary; the mounted view owns every draft/save decision.
+    const { Modal } = await import('@/modal');
+    vi.mocked(Modal.prompt).mockResolvedValueOnce('Renamed preset');
+    const rename = screen.tree.findAll(node => typeof node.props.testID === 'string'
+      && node.props.testID.endsWith(':rename') && typeof node.props.onPress === 'function')[0];
+    expect(rename).toBeDefined();
+    await act(async () => rename!.props.onPress());
+    expect(screen.getTextContent()).toContain('Renamed preset');
+    await act(async () => screen.pressByTestId('managed-config.create'));
+    await waitForHomeGovernance(() => expect(harness.requestsFor('/v1/machines/presets/update')).toHaveLength(1));
+    expect(harness.requestsFor('/v1/machines/presets/update')[0]?.input).toMatchObject({
+      id: preset.id, expectedRevision: 0, patch: { name: 'Renamed preset', launch: { name: 'Renamed preset' } },
+    });
+    expect(harness.requestsFor('/v1/machines/presets/create')).toHaveLength(0);
+    await waitForHomeGovernance(() => expect(route.replace).toHaveBeenCalled());
+    await screen.unmount();
+  });
+
   it('edits a setup-only preset in the same editor and saves it without creating Machines', async () => {
     const initial = await mountAddRoute('setup-only-edit');
     const serverId = route.params.serverId!;
@@ -955,6 +1003,7 @@ describe('mounted managed configurator', () => {
     optionEnrollmentRole?: 'server' | 'personal' | 'sandbox',
     choose = true,
     imageChoice = false,
+    presets?: readonly Readonly<Record<string, unknown>>[],
   ) {
     const serverId = await harness.addHome({
       name: 'Compute',
@@ -1034,6 +1083,11 @@ describe('mounted managed configurator', () => {
       status: 403,
       body: { code: 'permission_denied' },
     });
+    if (presets) {
+      harness.answer(serverId, '/v1/machines/presets/list', { body: { kind: 'listed', presets } });
+      harness.answer(serverId, '/v1/machines/presets/get', { select: (input: unknown) => ({
+        body: { kind: 'found', preset: presets.find(preset => preset.id === (input as { id?: string }).id) } }) });
+    }
     const { WorkspaceRouteBody } =
       await import('@/app/(app)/settings/machines/add/[provisioner]');
     const screen = await renderScreen(<WorkspaceRouteBody />);
@@ -1233,6 +1287,43 @@ describe('mounted managed configurator', () => {
       ),
     );
     expect(errorCard()?.props.action).toBeUndefined();
+    await screen.unmount();
+  });
+  it('starts from a saved preset inline, reviews what it sets up and creates only after the confirm', async () => {
+    const launch = { provider: provisioner.contribution, schemaVersion: 1, name: 'web-2', choices: { cpu: 2 } };
+    const owner = { kind: 'account', accountId: 'owner' };
+    const setup = { items: [MachinePresetItemV1Schema.parse({ kind: 'softwareRecipe', selection: {
+      ref: { pluginId: 'tools.example', recipeId: 'editor', revision: 'pinned' }, inputs: {} } })] };
+    const screen = await mountAddRoute('start-from', 'server', 'linux', undefined, true, false, [
+      { id: 'hardened', homeId: 'srv_add_server', revision: 3, name: 'Hardened server', owner, controller: defaultController, launch, setup },
+      { id: 'other-provider', homeId: 'srv_add_server', revision: 1, name: 'Other provider', owner, controller: defaultController,
+        launch: { ...launch, provider: { pluginId: 'custom.compute', localId: 'other' } } },
+      { id: 'retired', homeId: 'srv_add_server', revision: 1, name: 'Retired', owner, controller: defaultController, launch, archivedAt: 1 },
+      { id: 'setup-only', homeId: 'srv_add_server', revision: 1, name: 'Setup only', owner, setup },
+    ]);
+    const checked = (id: string) => screen.findByTestId(`managed-config.start-from:${id}`)?.props.accessibilityState?.checked;
+    await waitForHomeGovernance(() => expect(screen.findByTestId('managed-config.start-from:hardened')).not.toBeNull());
+    expect(checked('hand')).toBe(true);
+    for (const hidden of ['other-provider', 'retired', 'setup-only'])
+      expect(screen.findByTestId(`managed-config.start-from:${hidden}`)).toBeNull();
+    await act(async () => screen.pressByTestIdAsync('managed-config.start-from:hardened'));
+    await waitForHomeGovernance(() => expect(checked('hardened')).toBe(true));
+    await waitForHomeGovernance(() => expect(createDisabled(screen)).toBe(false));
+    const { Modal } = await import('@/modal');
+    const show = vi.mocked(Modal.show);
+    show.mockClear();
+    await act(async () => screen.pressByTestIdAsync('managed-config.create'));
+    expect(harness.requestsFor('/v1/actions/machines.managed.acquire')).toHaveLength(0);
+    expect(show).toHaveBeenCalledTimes(1);
+    const shown = show.mock.calls[0]![0] as unknown as Readonly<{ component: React.ComponentType<Record<string, unknown>>; props: Record<string, unknown> }>;
+    const setChrome = vi.fn();
+    const review = await renderScreen(<shown.component {...shown.props} setChrome={setChrome} onClose={() => {}} />);
+    await waitForHomeGovernance(() => expect(review.getTextContent()).toContain('editor'));
+    const chrome = setChrome.mock.calls.at(-1)![0] as { footer: React.ReactElement<{ primary: { onPress(): void } }> };
+    await act(async () => chrome.footer.props.primary.onPress());
+    await waitForHomeGovernance(() => expect(harness.requestsFor('/v1/actions/machines.managed.acquire')).toHaveLength(1));
+    expect(acquiredIdentity()).toMatchObject({ selection: { kind: 'preset', homeId: 'srv_add_server', id: 'hardened', revision: 3 } });
+    await review.unmount();
     await screen.unmount();
   });
   it('makes a free-form host\u2019s own size fields its one Size choice instead of echoing them as a one-row table', async () => {

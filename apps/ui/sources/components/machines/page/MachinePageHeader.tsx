@@ -6,6 +6,7 @@ import Animated from 'react-native-reanimated';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
+import { MachineAttachedPresetsChip } from './MachineAttachedPresetsChip';
 import { beginMachinePageTabIntent } from './machinePageIntent';
 import { machinePageTabRouteParams } from './machinePageTabQuery';
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
@@ -205,6 +206,7 @@ export const MachinePageHeader = React.memo(function MachinePageHeader(props: Re
     // What the machine publishes (plan 20): its sentence under the name and, when it needs you, its one action.
     const daemonState: unknown = machine?.daemonState;
     const published = React.useMemo(() => readMachinePublishedResources(daemonState), [daemonState]);
+    const attachedPresets = machine?.daemonState?.setup?.attachedPresets;
     const headline = published && target.online && published.attention.level !== 'calm' ? selectHeadlineReason(published.attention) : null;
     const needsYouAction = headline ? resolveMachineReasonAction(headline) : null;
     // A row opened from the rail popover hands its mark + name rectangle over once (MPG-32): the header's mark and
@@ -307,6 +309,8 @@ export const MachinePageHeader = React.memo(function MachinePageHeader(props: Re
             meta={meta}
             actions={machine ? (
                 <View style={styles.actions}>
+                    {attachedPresets?.length ? <MachineAttachedPresetsChip serverId={target.serverId} attached={attachedPresets}
+                        onPress={() => router.setParams(machinePageTabRouteParams({ id: 'setup' }))} /> : null}
                     {/* A machine that needs you leads with its one action; Start session steps back (MPG-5). */}
                     {needsYouAction ? (
                         <RoundButton

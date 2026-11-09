@@ -20,6 +20,7 @@ import {
 } from '@/components/settings/machines/managed/MachineSetupPlanReview';
 import { describeMachineSetup } from '@/components/settings/machines/managed/MachineSetupSection';
 import { useMachinePresets } from '@/components/settings/machines/managed/useMachinePresets';
+import { machineSetupSourceName } from '@/components/machines/setup/machineSetupSourceName';
 import { buildStoreListingRoute } from '@/components/settings/plugins/model/pluginsSurfaceRoutes';
 import { useSoftwareOptions } from '@/components/store/catalog/storeSoftware';
 import { ManagedSectionCount } from '@/components/settings/machines/managed/ManagedSectionCount';
@@ -148,11 +149,7 @@ function MachineSetupRoot(
   const attachable = presetList.filter(
     (entry) => !attachedKeys.has(presetOriginKey(entry)),
   );
-  const nameOf = (source: AttachedSource) =>
-    source.kind === 'bundledPreset'
-      ? t('machinePresets.setup.tab.bundledPreset')
-      : (presetList.find((entry) => entry.id === source.presetId)?.name ??
-        t('machinePresets.setup.tab.presetUnreadable'));
+  const nameOf = (source: AttachedSource) => machineSetupSourceName(source, presetList);
   const nothingSetUp =
     setup.plan !== null && attached.length === 0 && recipes.length === 0;
   const firstLoad = setup.plan === null && setup.failure?.during !== 'check';
