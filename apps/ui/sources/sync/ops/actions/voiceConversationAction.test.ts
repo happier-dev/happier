@@ -30,6 +30,7 @@ vi.mock('react-native-reanimated', async () =>
 
 import { createVoiceSessionLifecycleController } from '@/voice/session/voiceSessionLifecycleController';
 import { SETTINGS_ROUTES } from '@/components/settings/catalog/routes';
+import { VOICE_CONVERSATIONS_SETTINGS } from '@/voice/settings/voiceSettingsDeclarations';
 import { publishCommittedAppShellPluginUiProjection } from '@/components/appShell/plugins/committedPluginUiProjection';
 import { setVoiceSessionLifecycleController } from '@/voice/session/voiceSessionLifecycleControllerStore';
 import { getVoiceSessionAttemptId, getVoiceSessionPresentedAttemptId, resetVoiceSessionRuntimeStateForTests, setVoiceSessionSnapshot } from '@/voice/session/voiceSessionStore';
@@ -48,7 +49,7 @@ import { createActionExecutorBoundaryFixture } from '@/dev/testkit/fixtures/acti
 import { primeServerFeaturesSnapshot, resetServerFeaturesClientForTests } from '@/sync/api/capabilities/serverFeaturesClient';
 import { executeVoiceConversationAction } from './voiceConversationAction';
 import { serveActionHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
-import { createDeferred, createSessionFixture, createSessionListRenderableSessionFixture, pressTestInstanceAsync, renderScreen, standardCleanup, type RenderScreenResult } from '@/dev/testkit';
+import { createDeferred, createMachineFixture, createSessionFixture, createSessionListRenderableSessionFixture, pressTestInstanceAsync, renderScreen, standardCleanup, type RenderScreenResult } from '@/dev/testkit';
 import { getFocusedSessionAddress, setFocusedSessionId } from '@/sync/domains/session/sessionSurfaceVisibility';
 import { createSessionActionTarget } from '@/components/sessions/actions/sessionActionContext';
 import { executeSessionAction } from '@/components/sessions/actions/sessionActionExecution';
@@ -98,7 +99,7 @@ afterEach(async () => { await standardCleanup(); await resetVoiceSessionRuntimeS
     for (const cleanup of runtimeCleanup.splice(0).reverse()) await cleanup();
     resetServerFeaturesClientForTests(); vi.restoreAllMocks(); });
 
-async function createHarness(start = true, featureEnabled = true, deferActivation = false) {
+async function createHarness(start = true, featureEnabled = true, deferActivation = false, options: Readonly<{ requesterPublication?: true }> = {}) {
     // Account settings persistence outlives a mounted fixture. Distinct external
     // Home inputs keep each case's versioned bootstrap independent.
     const fixtureOrdinal = ++homeFixtureOrdinal;
@@ -143,6 +144,7 @@ async function createHarness(start = true, featureEnabled = true, deferActivatio
             serverUrl: `https://voice-action-${key}-${fixtureOrdinal}.example.test`, accountId: 'voice-action-account',
             currentAccount: true, settings: servedSettings })),
         { key: 'voice', serverUrl: `https://voice-action-runtime-${fixtureOrdinal}.example.test`,
+            ...(options.requesterPublication ? { serverIdentityId: `srv_voice_action_requester_${fixtureOrdinal}` } : {}),
             accountId: 'voice-action-account', currentAccount: true, settings: servedSettings },
     ], route: createSessionReadBatchHttpBoundary(async request => {
             const artifactResponse = artifacts.handle(request.path, { method: request.method,
@@ -167,6 +169,12 @@ async function createHarness(start = true, featureEnabled = true, deferActivatio
     runtimeCleanup.push(async () => { await disconnect(); });
     const serverId = home.homes.voice!.id;
     const accountScope = { serverId, accountId: 'voice-action-account' };
+    if (deferActivation) {
+        // Plugin activation consumes the selected Home's Machine readiness before awaiting its runtime.
+        const machine = createMachineFixture({ id: 'voice-action-machine', activeAt: Date.now() });
+        storage.setState(state => ({ machines: { ...state.machines, [machine.id]: machine },
+            machineListByServerId: { ...state.machineListByServerId, [serverId]: [machine] } }));
+    }
     const deviceKey = await resolveDeviceLocalSettingsSecretsKey(accountScope);
     if (!deviceKey) throw new Error('Voice Action fixture could not initialize device-local secret custody');
     // This is a real post-bootstrap Settings transition, not a repeated v1 echo.
@@ -253,6 +261,7 @@ async function createHarness(start = true, featureEnabled = true, deferActivatio
     const invoke = (action: Parameters<typeof executeVoiceConversationAction>[0], input: unknown) => executeVoiceConversationAction(action, input, { navigate() {} });
     let event = 0;
     return { lifecycle, expectedAttempt, invoke, serverId, providerId: entry.providerId, artifacts, homeRequests: home.requests,
+        home, sessionsByHome,
         releaseActivation: () => activationRelease.resolve(undefined),
         activationEntered: activationEntered.promise,
         explicitServerId: home.homes.explicit!.id, focusedServerId: home.homes.focused!.id, competingServerId: home.homes.competing!.id,
@@ -611,18 +620,20 @@ describe('generated OpenAI conversation Actions through the lifecycle owner', ()
         const capture = vi.mocked(navigator.mediaDevices.getUserMedia);
         capture.mockClear();
         const executor = createDefaultActionExecutor();
-        const cancellation = new AbortController();
-        const pending = executor.execute('ui.voice_global.setup.microphone.permission.request', {}, { surface: 'agent', serverId,
-            defaultSessionId: 'session-original', actionRequestId: 'setup-microphone-request', signal: cancellation.signal,
-            actionCaller: { kind: 'session', sessionId: 'session-original', starterDepth: 0, turnDepth: 0 } });
         try {
-            await vi.waitFor(() => expect(artifacts.list()).toHaveLength(1));
+            const asked = await executor.execute('ui.voice_global.setup.microphone.permission.request', {}, { surface: 'agent', serverId,
+                defaultSessionId: 'session-original', actionRequestId: 'setup-microphone-request',
+                actionCaller: { kind: 'session', sessionId: 'session-original', starterDepth: 0, turnDepth: 0 } });
+            const request = ActionApprovalRequestCreatedResultSchema.parse(asked.ok ? asked.result : null);
+            expect(artifacts.list()).toHaveLength(1);
+            expect(JSON.parse(artifacts.readPlainBody(request.artifactId)!)).toMatchObject({ status: 'open',
+                actionId: 'ui.voice_global.setup.microphone.permission.request', actionArgs: {} });
             expect(capture).not.toHaveBeenCalled();
-            expect(await executor.execute('approval.request.decide', { artifactId: artifacts.list()[0]!.id, decision: 'cancel' }, { surface: 'ui', serverId }))
+            expect(await executor.execute('approval.request.decide', { artifactId: request.artifactId, decision: 'cancel' }, { surface: 'ui', serverId }))
                 .toMatchObject({ ok: true });
-            expect(await pending).toMatchObject({ ok: false, errorCode: 'approval_canceled' });
+            expect(JSON.parse(artifacts.readPlainBody(request.artifactId)!)).toMatchObject({ status: 'canceled' });
             expect(capture).not.toHaveBeenCalled();
-        } finally { cancellation.abort(); await pending; await lifecycle.dispose(); }
+        } finally { await lifecycle.dispose(); }
     });
     it('retains setup Done dismissal through a refused close and a later approved close', async () => {
         const { lifecycle, serverId, artifacts } = await createHarness(false);
@@ -633,7 +644,8 @@ describe('generated OpenAI conversation Actions through the lifecycle owner', ()
         const { getActiveServerSnapshot } = await import('@/sync/domains/server/serverRuntime');
         const { buildHomeHubArtifactIdV1, HomeHubLayoutV1Schema } = await import('@happier-dev/protocol/home');
         const { listHiddenHomeSetupSteps } = await import('@/components/hub/layout/homeHubLayout');
-        const { decideApprovalAsInbox } = await import('@/dev/testkit/harness/approvalInbox');
+        const { Modal } = await import('@/modal');
+        const confirmation = vi.mocked(Modal.confirm);
         const credentials = await TokenStorage.getCredentialsForServerUrl(getActiveServerSnapshot().serverUrl, { serverId });
         if (!credentials) throw new Error('Expected the served Home credential');
         function Setup() {
@@ -659,12 +671,22 @@ describe('generated OpenAI conversation Actions through the lifecycle owner', ()
                     'ui.voice_global.setup.close': { approvalRequiredSurfaces: ['ui'] },
                 } }),
             } })));
+            const refused = createDeferred<boolean>();
+            confirmation.mockClear();
+            confirmation.mockImplementationOnce(() => refused.promise);
             await act(async () => { done(); });
-            await vi.waitFor(() => expect(artifacts.list().some(row => JSON.parse(artifacts.readPlainBody(row.id) ?? '{}').status === 'open')).toBe(true));
-            const request = artifacts.list().find(row => JSON.parse(artifacts.readPlainBody(row.id) ?? '{}').status === 'open')!;
+            await vi.waitFor(() => expect(confirmation).toHaveBeenCalledTimes(1));
             expect(screen.findByTestId('hub-setup.voice:setup.close')).not.toBeNull();
             expect(artifacts.readPlainBody(homeId)).toBeNull();
-            expect(await decideApprovalAsInbox(serverId, request.id, 'approve')).toMatchObject({ ok: true });
+            await act(async () => { refused.resolve(false); });
+            const approved = createDeferred<boolean>();
+            confirmation.mockImplementationOnce(() => approved.promise);
+            await act(async () => { done(); });
+            await vi.waitFor(() => expect(confirmation).toHaveBeenCalledTimes(2));
+            expect(screen.findByTestId('hub-setup.voice:setup.close')).not.toBeNull();
+            expect(artifacts.readPlainBody(homeId)).toBeNull();
+            expect(artifacts.list()).toHaveLength(0);
+            await act(async () => { approved.resolve(true); });
             await vi.waitFor(() => {
                 const body = artifacts.readPlainBody(homeId);
                 expect(body).not.toBeNull();
@@ -672,9 +694,6 @@ describe('generated OpenAI conversation Actions through the lifecycle owner', ()
                 expect(screen.findByTestId('hub-setup.voice:setup')).toBeNull();
             });
         } finally {
-            for (const row of artifacts.list()) {
-                if (JSON.parse(artifacts.readPlainBody(row.id) ?? '{}').status === 'open') await decideApprovalAsInbox(serverId, row.id, 'cancel');
-            }
             await screen.unmount(); await lifecycle.dispose();
         }
     });
@@ -686,36 +705,32 @@ describe('generated OpenAI conversation Actions through the lifecycle owner', ()
         const input = { target: { kind: 'global' }, expectedAttempt: null };
         const person = { surface: 'ui' as const, authority: 'present_user' as const,
             actionCaller: { kind: 'host' as const }, serverId };
-        const cancellation = new AbortController();
-        const pending = executor.execute('ui.voice_global.start', input, { surface: 'agent', serverId,
-            defaultSessionId: 'session-original', defaultSessionMachineId: 'unreachable-origin-machine',
-            actionRequestId: 'voice-start-request', signal: cancellation.signal,
-            actionCaller: { kind: 'session', sessionId: 'session-original', starterDepth: 0, turnDepth: 0 } });
-        let settled: Awaited<typeof pending> | undefined;
-        void pending.then(result => { settled = result; });
         try {
-            await vi.waitFor(() => {
-                expect(settled).toBeUndefined();
-                expect(artifacts.list()).toHaveLength(1);
-            });
+            const asked = await executor.execute('ui.voice_global.start', input, { surface: 'agent', serverId,
+                defaultSessionId: 'session-original', defaultSessionMachineId: 'unreachable-origin-machine',
+                actionRequestId: 'voice-start-request',
+                actionCaller: { kind: 'session', sessionId: 'session-original', starterDepth: 0, turnDepth: 0 } });
+            const request = ActionApprovalRequestCreatedResultSchema.parse(asked.ok ? asked.result : null);
+            expect(artifacts.list()).toHaveLength(1);
             expect(lifecycle.getSnapshot().status).toBe('disconnected');
-            const artifactId = artifacts.list()[0]!.id;
-            expect(await executor.execute('approval.request.decide', { artifactId, decision: 'cancel' }, person))
+            expect(JSON.parse(artifacts.readPlainBody(request.artifactId)!)).toMatchObject({ status: 'open',
+                actionId: 'ui.voice_global.start', actionArgs: input });
+            expect(await executor.execute('approval.request.decide', { artifactId: request.artifactId, decision: 'cancel' }, person))
                 .toMatchObject({ ok: true });
-            expect(await pending).toMatchObject({ ok: false, errorCode: 'approval_canceled' });
+            expect(JSON.parse(artifacts.readPlainBody(request.artifactId)!)).toMatchObject({ status: 'canceled' });
             expect(confirmation).not.toHaveBeenCalled();
             storage.setState(state => ({ settings: { ...state.settings,
                 actionsSettingsV1: normalizeActionsSettingsV1({ v: 1, actions: {
                     'ui.voice_global.start': { approvalRequiredSurfaces: ['ui'] },
                 } }) } }));
-            const asked = await executor.execute('ui.voice_global.start', input, person);
-            const request = ActionApprovalRequestCreatedResultSchema.parse(asked.ok ? asked.result : null);
-            expect(artifacts.list()).toHaveLength(2);
+            expect(await executor.execute('ui.voice_global.start', input, person))
+                .toMatchObject({ ok: false, errorCode: 'approval_canceled' });
+            expect(confirmation).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+                actionId: 'ui.voice_global.start', input: expect.objectContaining(input),
+            }));
+            expect(artifacts.list()).toHaveLength(1);
             expect(lifecycle.getSnapshot().status).toBe('disconnected');
-            expect(await executor.execute('approval.request.decide', { artifactId: request.artifactId, decision: 'cancel' }, person))
-                .toMatchObject({ ok: true });
-            expect(confirmation).not.toHaveBeenCalled();
-        } finally { cancellation.abort(); await pending; await lifecycle.dispose(); }
+        } finally { await lifecycle.dispose(); }
     });
     it('admits a composer hold through Action policy and cancels an early gesture without committing', async () => {
         const { lifecycle, sent } = await createHarness();
@@ -747,7 +762,7 @@ describe('generated OpenAI conversation Actions through the lifecycle owner', ()
         } finally { await hook.unmount(); await lifecycle.dispose(); }
     });
     it('replays one tapped unmute Ask in the approving client while model decisions and End leave custody intact', async () => {
-        const { lifecycle, expectedAttempt, serverId, artifacts, homeRequests, micTrack } = await createHarness();
+        const { lifecycle, expectedAttempt, serverId, artifacts, homeRequests, micTrack, home, sessionsByHome } = await createHarness(true, true, false, { requesterPublication: true });
         const { createDefaultActionExecutor } = await import('./defaultActionExecutor');
         const { captureActionAccountContext } = await import('./actionAccountContext');
         const { useApprovalDecisionHandler } = await import('@/components/tools/shell/approvals/useApprovalDecisionHandler');
@@ -756,13 +771,40 @@ describe('generated OpenAI conversation Actions through the lifecycle owner', ()
             defaultSessionMachineId: 'unreachable-origin-machine', actionRequestId: 'voice-unmute-request',
             actionCaller: { kind: 'session' as const, sessionId: 'session-original', starterDepth: 0, turnDepth: 0 } };
         const account = await captureActionAccountContext(serverId);
+        const { createExternalActionAccountHttpBoundary } = await import('@/dev/testkit/harness/externalActionAccountHttpBoundary');
+        const { getActionSpec } = await import('@happier-dev/protocol/actions/actionSpecs');
+        const { actionSpecToActionDefinitionV1 } = await import('@happier-dev/protocol/actions/actionCatalog');
+        const { SessionInputAdmissionResultV1Schema } = await import('@happier-dev/protocol/sessions/messages/sessionInputAdmission');
+        const { setRuntimeFetch } = await import('@/utils/system/runtimeFetch');
+        const serverIdentityId = account.serverIdentityId;
+        if (!serverIdentityId) throw new Error('Requester result delivery requires an identified Home');
+        const machineId = 'voice-unmute-requester-machine';
+        const sourceSession = storage.getState().sessions['session-original']!;
+        storage.setState(state => ({ sessions: { ...state.sessions, 'session-original': { ...sourceSession,
+            metadata: { ...sourceSession.metadata, machineId } } } }));
+        sessionsByHome.get('voice')!.replaceSession('session-original');
+        const publications: unknown[] = [];
+        const discovery = await createExternalActionAccountHttpBoundary({ serverUrl: account.endpointUrl,
+            serverIdentityId, accountId: account.accountId, machineId, tokenEpoch: 0,
+            actionId: 'action.spec.get', requesterInvocation: 'required', execute: () => ({
+                actionSpec: actionSpecToActionDefinitionV1(getActionSpec('session.message.send'), { surface: 'mcp', includeOutputSchema: true }),
+            }) });
+        const publication = await createExternalActionAccountHttpBoundary({ serverUrl: account.endpointUrl,
+            serverIdentityId, accountId: account.accountId, machineId, tokenEpoch: 0,
+            actionId: 'session.message.send', requesterInvocation: 'required', execute: (input, context) => {
+                publications.push({ input, target: context.target, authority: context.invocation.authority });
+                const localId = typeof input === 'object' && input !== null && 'localId' in input ? input.localId : null;
+                return SessionInputAdmissionResultV1Schema.parse({ status: 'accepted', localId });
+            } });
+        setRuntimeFetch(async (url, init) => await publication.handle(new URL(String(url)), init)
+            ?? await discovery.handle(new URL(String(url)), init) ?? home.fetch(url, init));
         let unmountDecision = async () => {};
         try {
             expect(await executor.execute('ui.voice_global.set_muted', { expectedAttempt, muted: true }, agent))
                 .toMatchObject({ ok: true, result: { status: 'completed' } });
-            const pending = executor.execute('ui.voice_global.set_muted', { expectedAttempt, muted: false }, agent);
-            await vi.waitFor(() => expect(artifacts.list()).toHaveLength(1));
-            const artifactId = artifacts.list()[0]!.id;
+            const created = await executor.execute('ui.voice_global.set_muted', { expectedAttempt, muted: false }, agent);
+            const { artifactId } = ActionApprovalRequestCreatedResultSchema.parse(created.ok ? created.result : null);
+            expect(artifacts.list()).toHaveLength(1);
             const artifact = await account.fetchArtifact(artifactId);
             if (!artifact || typeof artifact.body !== 'string') throw new Error('Expected durable Ask');
             const parsed = approvalArtifactBodyMatchesHeaderV1(artifact.header ?? {}, artifact.body);
@@ -776,8 +818,10 @@ describe('generated OpenAI conversation Actions through the lifecycle owner', ()
             const hook = await renderHook(() => useApprovalDecisionHandler(artifact, parsed.request, 'session-original', serverId));
             unmountDecision = hook.unmount;
             expect(await hook.getCurrent()('approve')).toBe(true);
-            expect(await pending).toMatchObject({ ok: true, result: { status: 'completed', voice: { muted: false } } });
             expect(micTrack().enabled).toBe(true);
+            expect(publications).toEqual([{ input: expect.objectContaining({ sessionId: 'session-original',
+                localId: `approval-result:${artifactId}`, idempotencyKey: `approval-result:${artifactId}`, reply: 'none',
+                requestedAction: { v: 1, kind: 'enqueue' } }), target: { kind: 'machine', machineId }, authority: 'account_automation' }]);
             const settled = JSON.parse(artifacts.readPlainBody(artifactId)!);
             expect(approvalArtifactBodyMatchesHeaderV1((await account.fetchArtifact(artifactId))!.header ?? {}, JSON.stringify(settled)))
                 .toMatchObject({ family: 'built_in', request: { status: 'executed', execution: { ok: true } } });
@@ -785,14 +829,14 @@ describe('generated OpenAI conversation Actions through the lifecycle owner', ()
             await executor.execute('ui.voice_global.set_muted', { expectedAttempt, muted: true }, agent);
             expect(await hook.getCurrent()('approve')).toBe(true);
             expect(micTrack().enabled).toBe(false);
-            const next = executor.execute('ui.voice_global.set_muted', { expectedAttempt, muted: false },
+            const next = await executor.execute('ui.voice_global.set_muted', { expectedAttempt, muted: false },
                 { ...agent, actionRequestId: 'voice-unmute-after-end' });
-            await vi.waitFor(() => expect(artifacts.list()).toHaveLength(2));
-            const nextId = artifacts.list()[1]!.id;
+            const { artifactId: nextId } = ActionApprovalRequestCreatedResultSchema.parse(next.ok ? next.result : null);
+            expect(artifacts.list()).toHaveLength(2);
             await executor.execute('ui.voice_global.end', { expectedAttempt }, agent);
             expect(JSON.parse(artifacts.readPlainBody(nextId)!)).toMatchObject({ status: 'open' });
             await executor.execute('approval.request.decide', { artifactId: nextId, decision: 'cancel' }, { surface: 'ui', serverId });
-            expect(await next).toMatchObject({ ok: false, errorCode: 'approval_canceled' });
+            expect(JSON.parse(artifacts.readPlainBody(nextId)!)).toMatchObject({ status: 'canceled' });
             expect(homeRequests.filter(request => request.path.includes('/rpc'))).toEqual([]);
         } finally {
             for (const row of artifacts.list()) {
@@ -893,7 +937,8 @@ describe('generated OpenAI conversation Actions through the lifecycle owner', ()
             await screen.update(await createRealAppRouteElement(hosted, credentials));
             const destination = scenario === 'ended' ? `/session/saved-conversation?serverId=${serverId}`
                 : scenario === 'history' ? '/settings/voice/history'
-                : scenario === 'companion' ? hrefForDestinationRef(catalog, { kind: 'session', params: { serverId, id: 'session-original', mobileSurface: 'companion' } }) : '/settings/voice/conversations?focus=provider';
+                : scenario === 'companion' ? hrefForDestinationRef(catalog, { kind: 'session', params: { serverId, id: 'session-original', mobileSurface: 'companion' } })
+                : `${SETTINGS_ROUTES.voiceConversations}?setting=${encodeURIComponent(VOICE_CONVERSATIONS_SETTINGS.settings.provider.anchor)}`;
             expect(screen.findByTestId('voice-action-hosted-destination')?.props.children).toBe(destination);
             if (scenario !== 'companion') {
                 const stale = await createDefaultActionExecutor().execute(actionId, { expectedAttempt: 'previous-attempt' }, context);
