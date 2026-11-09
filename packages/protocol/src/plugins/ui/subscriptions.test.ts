@@ -21,6 +21,11 @@ describe('plugin UI resource subscriptions', () => {
     const resource = { hostRead: 'machines.services.list', input: { serverId: 'home-a', machineId: 'machine-a' } };
     expect(PluginUiResourceSubscriptionRequestV1Schema.safeParse({ resource, subscriptionId: 'services' }).success).toBe(true);
     expect(DaemonPluginUiResourceWatchOpenRequestSchema.safeParse({ machineId: 'machine-a', subscriptionId: 'services', resource }).success).toBe(true);
+    const selected = { ...resource, input: { ...resource.input, environmentId: 'environment-a', composeService: 'web' } };
+    expect(PluginUiResourceSubscriptionRequestV1Schema.safeParse({ resource: selected, subscriptionId: 'services' }).success).toBe(true);
+    expect(DaemonPluginUiResourceWatchOpenRequestSchema.safeParse({ machineId: 'machine-a', subscriptionId: 'services', resource: selected }).success).toBe(true);
+    expect(PluginUiResourceSubscriptionRequestV1Schema.safeParse({ resource: { ...resource,
+      input: { ...resource.input, composeService: 'web' } }, subscriptionId: 'services' }).success).toBe(false);
     for (const extra of [{ accountId: 'foreign' }, { serviceId: 'other' }]) {
       expect(PluginUiResourceSubscriptionRequestV1Schema.safeParse({ resource: { ...resource, input: { ...resource.input, ...extra } }, subscriptionId: 'services' }).success).toBe(false);
     }
@@ -39,13 +44,23 @@ describe('plugin UI resource subscriptions', () => {
     }
   });
   it('admits closed host read references through the incumbent subscription target', () => {
-    for (const hostRead of ['usage.query', 'connectedServices.quota.get', 'connectedServices.pools.selection.get']) {
+    for (const hostRead of ['usage.query', 'connectedServices.quota.get', 'connectedServices.pools.selection.get', 'discussion.get']) {
       const resource = { hostRead, input: { queries: [] } };
       expect(PluginUiResourceSubscriptionRequestV1Schema.safeParse({ resource, subscriptionId: 'host' }).success).toBe(true);
       expect(PluginUiResourceSubscriptionRequestV1Schema.safeParse({ resource: { ...resource, accountId: 'foreign' }, subscriptionId: 'host' }).success).toBe(false);
     }
     expect(PluginUiResourceSubscriptionRequestV1Schema.safeParse({ resource: { hostRead: 'settings.set', input: {} }, subscriptionId: 'host' }).success).toBe(false);
   });
+  it('admits only the exact active managed-inventory read through its closed Resource reference', () => {
+    const managed = { hostRead: 'machines.managed.list', input: { homeId: 'home-a' } };
+    expect(PluginUiResourceSubscriptionRequestV1Schema.safeParse({ resource: managed, subscriptionId: 'managed' }).success).toBe(true);
+    for (const extra of [{ accountId: 'foreign' }, { archived: true }, { presetId: 'unrequested' }]) {
+      expect(PluginUiResourceSubscriptionRequestV1Schema.safeParse({ resource: {
+        ...managed, input: { ...managed.input, ...extra },
+      }, subscriptionId: 'managed' }).success).toBe(false);
+    }
+  });
+
   it('uses subscription ids for events instead of request sequence correlation', () => {
     const request = PluginUiResourceSubscriptionRequestV1Schema.parse({
       resource: { pluginId: 'acme.preview', localId: 'live-status' },

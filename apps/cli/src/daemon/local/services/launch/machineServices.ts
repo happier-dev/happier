@@ -9,7 +9,7 @@ import {
     type MachineMetadataFieldPortV1, type MachineMetadataFieldReadV1, type MachineServiceWatchV1,
     type MachineServiceWatchesV1, type MachineServiceRowV1, type MachineServiceActionOutput,
     type MachineServiceDiscoveryCandidateV1, type MachineServicesDiscoveryResultV1,
-    type MachineServiceAccountingV1,
+    type MachineServiceAccountingV1, type MachineServicesListInputV1,
 } from '@happier-dev/protocol';
 import type { PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
 import type { ProjectManagedServiceHandle } from '@/plugins/runtime/invocation/services/managedServicesOwner';
@@ -23,6 +23,11 @@ import { selectVisibleMachineProjectServices, type MachineServiceDisclosureReque
 
 type Invocation = Parameters<NonNullable<ActionExecutorDeps['machineServiceAction']>>[0] & MachineServiceDisclosureRequest;
 type ServiceHandle = ProjectManagedServiceHandle | MachineManagedServiceHandle;
+type ServiceSelection = Pick<MachineServicesListInputV1, 'environmentId' | 'composeService'>;
+function matchesServiceSelection(handle: ServiceHandle, selection: ServiceSelection): boolean {
+    return !selection.environmentId || handle.kind === 'environment' && handle.environmentId === selection.environmentId
+        && (!selection.composeService || handle.composeService === selection.composeService);
+}
 const unavailable = (reason: 'admission_unavailable' | 'unavailable' | 'unsupported' | 'denied' | 'cancelled' = 'admission_unavailable') => (
     { kind: 'unavailable' as const, reason }
 );
@@ -166,9 +171,10 @@ export function createMachineServicesRuntime(input: Readonly<{
         try { await pending; }
         finally { if (reconciliation === pending) reconciliation = undefined; }
     }
-    async function projectServices(request: Invocation, serviceId?: string, environmentId?: string): Promise<Readonly<{
+    async function projectServices(request: Invocation, serviceId?: string, selection: ServiceSelection = {}): Promise<Readonly<{
         rows: MachineServiceRowV1[]; handles: ServiceHandle[];
     }> | null> {
+        const { environmentId } = selection;
         await ensureEnvironmentServices();
         if (!environmentId) await reconcile(serviceId);
         const intent = environmentId ? null : readIntent();
@@ -181,8 +187,8 @@ export function createMachineServicesRuntime(input: Readonly<{
             const owner = lease.registry.projectManagedServices;
             const handles: ServiceHandle[] = [];
             const projects = owner.listProjectServices();
-            handles.push(...await selectVisibleMachineProjectServices(target, environmentId
-                ? projects.filter(handle => handle.kind === 'environment' && handle.environmentId === environmentId) : projects, request, serviceId));
+            handles.push(...await selectVisibleMachineProjectServices(target,
+                environmentId ? projects.filter(handle => matchesServiceSelection(handle, selection)) : projects, request, serviceId));
             const readRow = async (handle: ServiceHandle) => {
                 // Explicit list demand samples accounting; Resource snapshots project retained facts.
                 if (request.actionId === 'machines.services.list' && !request.context.machineServicesListResource && handle.readAccounting) {
@@ -286,6 +292,8 @@ export function createMachineServicesRuntime(input: Readonly<{
             if (request.actionId === 'machines.services.list' || request.actionId === 'machines.services.detail') {
                 const serviceId = 'serviceId' in parsed.data ? parsed.data.serviceId : undefined;
                 const environmentId = 'environmentId' in parsed.data ? parsed.data.environmentId : undefined;
+                const composeService = 'composeService' in parsed.data ? parsed.data.composeService : undefined;
+                const selection = { environmentId, composeService };
                 const observation = request.actionId === 'machines.services.list' ? request.context.machineServicesListResource?.observation : undefined;
                 if (observation) {
                     const lease = tryAcquireAuthoritativePluginRuntimeRegistryLease();
@@ -298,9 +306,9 @@ export function createMachineServicesRuntime(input: Readonly<{
                         // Demand-time baseline only. Subscribe before the admitted read so creation/retirement cannot fall in a read→watch gap.
                         const initial = [...owner.listMachineServices(), ...owner.listProjectServices()].filter(handle =>
                             (handle.kind === 'workspace' ? handle.workspace.machineId : handle.machineId) === target.machineId
-                            && (!environmentId || handle.kind === 'environment' && handle.environmentId === environmentId));
+                            && matchesServiceSelection(handle, selection));
                         const subscription = owner.machineServiceRows.subscribe(target.machineId, initial, change => {
-                            if ((!environmentId || change.handle.kind === 'environment' && change.handle.environmentId === environmentId)
+                            if (matchesServiceSelection(change.handle, selection)
                                 && (target.serverId === change.serverId
                                     || homeServerIdentityId !== null && homeServerIdentityId === change.homeServerIdentityId)) {
                                 // The transport needs a digest hint, not another
@@ -342,7 +350,7 @@ export function createMachineServicesRuntime(input: Readonly<{
                         if (observation.signal.aborted) { await dispose(); return unavailable(); }
                     } finally { await lease.release(); }
                 }
-                const projection = await projectServices(request, serviceId, environmentId);
+                const projection = await projectServices(request, serviceId, selection);
                 if (!projection) return unavailable();
                 if (request.actionId === 'machines.services.list') result = { kind: 'snapshot', services: projection.rows };
                 else {

@@ -8,6 +8,7 @@ import { MachineServiceRowV1Schema, MachineServicesListResultV1Schema, ManagedSe
 import { ExternalActionExecutionAuthorizationRequestV1Schema, ExternalActionRequestEnvelopeV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import type { PluginUiHostReadReferenceV1 } from '@happier-dev/protocol/plugins/ui/client';
 import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { createDeploymentEnvironmentHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1 } from '@happier-dev/deployment-protocol/v1';
@@ -80,26 +81,30 @@ function answerAction(actionId: string, read: (envelope: Envelope, request: Requ
 }
 
 /** Emulate the daemon's Resource wire; the production Resource store owns demand and refresh. */
-function answerResource<T>(initial: T, actionId: 'machines.services.list' | 'machines.services.logs.read' = 'machines.services.list') {
+function answerResource<T>(initial: T, actionId: 'machines.services.list' | 'machines.services.logs.read' = 'machines.services.list',
+    select: (value: T, reference: PluginUiHostReadReferenceV1) => T = value => value) {
     let value = initial;
     let failed = false;
     let deliver: (() => void) | undefined;
     let reads = 0;
-    const content = () => {
-        const bytes = Buffer.from(JSON.stringify(value));
+    const readValues: T[] = [];
+    const content = (reference: PluginUiHostReadReferenceV1) => {
+        const bytes = Buffer.from(JSON.stringify(select(value, reference)));
         return { contentType: 'application/json', bytesBase64: bytes.toString('base64'),
             digest: `sha256:${createHash('sha256').update(bytes).digest('hex')}` };
     };
     answerAction(actionId, (envelope, request) => {
         const continuation = envelope.resourceContinuation;
         if (!continuation) return value;
+        const reference = continuation.params.resource;
         if (continuation.method === RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_READ) {
             reads++;
+            readValues.push(select(value, reference));
             return failed ? { ok: false, code: 'service_transport_unavailable', reason: 'unavailable' }
-                : { ok: true, resource: continuation.params.resource, ...content() };
+                : { ok: true, resource: reference, ...content(reference) };
         }
         if (continuation.method === RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_WATCH_OPEN)
-            return { ok: true, subscriptionId: continuation.params.subscriptionId, digest: content().digest };
+            return { ok: true, subscriptionId: continuation.params.subscriptionId, digest: content(reference).digest };
         if (continuation.method === RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_WATCH_CLOSE)
             return { ok: true, closed: true };
         return new Promise(resolve => {
@@ -110,7 +115,7 @@ function answerResource<T>(initial: T, actionId: 'machines.services.list' | 'mac
             };
             const abort = () => finish({ ok: true, status: 'idle' });
             deliver = () => finish({ ok: true, status: 'event', event: { version: 1, kind: 'invalidated',
-                subscriptionId: continuation.params.subscriptionId, digest: failed ? `sha256:${'0'.repeat(64)}` : content().digest } });
+                subscriptionId: continuation.params.subscriptionId, digest: failed ? `sha256:${'0'.repeat(64)}` : content(reference).digest } });
             request.signal?.addEventListener('abort', abort, { once: true });
             if (request.signal?.aborted) abort();
         });
@@ -123,8 +128,56 @@ function answerResource<T>(initial: T, actionId: 'machines.services.list' | 'mac
             await act(async () => { deliver?.(); });
         },
         get reads() { return reads; },
+        readValues,
     };
 }
+
+it.each([undefined, 'web'])('reads only the requested Environment services (composeService=%s) and follows genuine changes', async composeService => {
+    // QA-DEPLOY-PERF-1109 measured M7 / Environment S3 / selected log service S1.
+    const environmentId = 'serving-environment';
+    const rows = ['web', 'worker', 'database'].map(name => service(name, { authority: 'project', environmentId,
+        deployment: { deploymentId: 'deployment', installationId: 'installation', service: {
+            kind: 'deployment', machineId, environmentId, environmentInstanceId: 'instance', composeService: name,
+            serviceId: `instance/${name}` } }, serviceId: `instance/${name}` }));
+    const unrelated = Array.from({ length: 4 }, (_, index) => service(`unrelated-${index}`, { environmentId: 'other-environment' }));
+    const initial = MachineServicesListResultV1Schema.parse({ kind: 'snapshot', services: [...rows, ...unrelated] });
+    const resource = answerResource(initial, 'machines.services.list', (value, reference) => {
+        if (value.kind !== 'snapshot' || reference.hostRead !== 'machines.services.list') return value;
+        const selection = reference.input;
+        return { ...value, services: value.services.filter(row => (!selection.environmentId || row.environmentId === selection.environmentId)
+            && (!selection.composeService || row.deployment?.service.composeService === selection.composeService)) };
+    });
+    const { useMachineServicesList } = await import('./useMachineServicesList');
+    const input = { serverId, machineId, environmentId, composeService, active: true };
+    const publications: unknown[] = [];
+    const hook = await renderHook((selection: typeof input) => {
+        const list = useMachineServicesList(selection);
+        React.useEffect(() => { if (list.rows) publications.push(list.rows); }, [list.rows]);
+        return list;
+    }, { initialProps: input });
+    const shown = composeService ? 1 : 3;
+    try {
+        await vi.waitFor(async () => { await flushHookEffects(); expect(hook.getCurrent().pending).toBe(false); });
+        expect(resource.readValues.flatMap(value => value.kind === 'snapshot' ? value.services : [])).toHaveLength(shown);
+        expect(hook.getCurrent().rows).toHaveLength(shown);
+        const settled = hook.getCurrent().rows;
+        publications.length = 0;
+        await resource.publish(initial);
+        await flushHookEffects();
+        expect(resource.reads).toBe(1);
+        expect(publications).toHaveLength(0);
+        expect(hook.getCurrent().rows).toBe(settled);
+        await resource.publish({ ...initial, services: initial.services.map(row => row.serviceId === 'instance/web'
+            ? { ...row, state: 'stopped' } : row) });
+        await vi.waitFor(async () => { await flushHookEffects(); expect(hook.getCurrent().rows?.[0]?.state).toBe('stopped'); });
+        expect(resource.readValues.flatMap(value => value.kind === 'snapshot' ? value.services : [])).toHaveLength(shown * 2);
+        expect(publications).toHaveLength(1);
+        if (!composeService) expect(hook.getCurrent().rows?.[1]).toBe(settled?.[1]);
+        await hook.rerender({ ...input, composeService: 'worker' });
+        await vi.waitFor(async () => { await flushHookEffects(); expect(hook.getCurrent().rows?.map(row => row.serviceId)).toEqual(['instance/worker']); });
+        expect(resource.readValues.flatMap(value => value.kind === 'snapshot' ? value.services : [])).toHaveLength(shown * 2 + 1);
+    } finally { await hook.unmount(); }
+});
 
 it('retains settled Services during credential resolution, publishes changes once and retires another Account\'s rows', async () => {
     const row = service('Continuity');
@@ -540,6 +593,22 @@ describe('MachineServicesTab rendered production wiring', () => {
         await measureMountedCollections(screen);
         expect(setParams).toHaveBeenLastCalledWith({ id: 'services' });
         expect(screen.findHostByTestId('machine-service-postgres')).not.toBeNull();
+    });
+
+    it('says why a Can use person has no way to add a service, on the empty and the listed page', async () => {
+        await shareWith('use');
+        const list = answerResource(MachineServicesListResultV1Schema.parse({ kind: 'snapshot', services: [] }));
+        const { screen } = await mount();
+        await vi.waitFor(() => expect(screen.findHostByTestId('machine-services-empty')).not.toBeNull());
+        expect(screen.findHostByTestId('machine-services-deploy-here')).toBeNull();
+        expect(screen.findHostByTestId('machine-services-watch')).toBeNull();
+        expect(screen.findHostByTestId('machine-services-recipient')).not.toBeNull();
+        await list.publish(MachineServicesListResultV1Schema.parse({ kind: 'snapshot', services: [service('Web')] }));
+        await measureMountedCollections(screen);
+        await vi.waitFor(() => expect(screen.findHostByTestId('machine-service-web')).not.toBeNull());
+        expect(screen.findHostByTestId('machine-services-deploy-here')).toBeNull();
+        expect(screen.findHostByTestId('machine-services-watch')).toBeNull();
+        expect(screen.findHostByTestId('machine-services-recipient')).not.toBeNull();
     });
 
     it('offers Deploy an app here, opening New app with this Machine chosen, on the empty and the listed page', async () => {

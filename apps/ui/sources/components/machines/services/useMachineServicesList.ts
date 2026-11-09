@@ -8,12 +8,15 @@ import { machineServicesListProjection } from './machineServicesListProjection';
 type ListReference = Extract<PluginUiHostReadReferenceV1, { hostRead: 'machines.services.list' }>;
 
 /** Visible list demand uses the one admitted list Resource; no second Action effect or timer. */
-export function useMachineServicesList(input: Readonly<{ serverId: string; machineId: string; active: boolean }>):
+export function useMachineServicesList(input: Readonly<ListReference['input'] & { active: boolean }>):
     MachineServicesListState & Readonly<{ refresh(): Promise<void> }> {
     const { resolution, binding: lifetime } = useServerCredentialAccountScopeBinding(input.serverId);
     const resolving = resolution.kind === 'resolving' || resolution.kind === 'bound' && lifetime === null;
     const reference = React.useMemo<ListReference>(() => ({ hostRead: 'machines.services.list',
-        input: { serverId: input.serverId, machineId: input.machineId } }), [input.serverId, input.machineId]);
+        input: { serverId: input.serverId, machineId: input.machineId,
+            ...(input.environmentId ? { environmentId: input.environmentId } : {}),
+            ...(input.composeService ? { composeService: input.composeService } : {}) } }),
+        [input.serverId, input.machineId, input.environmentId, input.composeService]);
     const resource = useMachineServiceResource({ accountLifetime: lifetime, reference,
         resolving, active: input.active, follow: true, projection: machineServicesListProjection });
     const value = resource?.value;

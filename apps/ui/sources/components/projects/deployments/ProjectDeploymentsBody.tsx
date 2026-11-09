@@ -538,9 +538,7 @@ const ProjectDeploymentsPage = React.memo(
                 onSettings={openDefaults}
                 paging={{ hasPrevious: collection.hasPreviousPage, hasNext: collection.hasNextPage,
                   previous: collection.previousPage, next: collection.nextPage }}
-                onSelect={(id) =>
-                  setSelection({ environmentId: id, deploymentId: null })
-                }
+                onSelect={openEnvironmentTriggers}
               />
             </>
           )}

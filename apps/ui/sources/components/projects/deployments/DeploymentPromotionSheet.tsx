@@ -34,6 +34,9 @@ export type DeploymentPromotionSheetInput = Readonly<{
 /** Only this opened chooser demands a destination collection page. */
 function DeploymentPromotionSheet(props: DeploymentPromotionSheetInput & CustomModalInjectedProps) {
   const [destination, setDestination] = React.useState<string | null>(null);
+  const selectDestination = React.useCallback((row: DeploymentEnvironmentCollectionV1['items'][number]) => {
+    setDestination(row.environment.id);
+  }, []);
   const { onClose, review, onOpenReceipt } = props;
   const press = useDeploymentPress({ pendingId: review.pendingId, request: (artifactId) => {
     onClose();
@@ -74,7 +77,7 @@ function DeploymentPromotionSheet(props: DeploymentPromotionSheetInput & CustomM
         <Text style={deploymentSheetStyles.lead}>{t('projects.deployments.promotion.lead', { name: props.name, version: props.version })}</Text>
         <DeploymentEnvironmentChooser controller={props.controller} testID="project-deployments.promote.destination"
           title={t('projects.deployments.promotion.destination')} eligible={isDestination}
-          selectedId={destination} onSelect={(row) => setDestination(row.environment.id)} disabled={busy}
+          selectedId={destination} onSelect={selectDestination} disabled={busy}
           loadFailedTitle={t('projects.deployments.promotion.loadFailed')}
           emptyTitle={t('projects.deployments.promotion.emptyTitle')} emptyBody={t('projects.deployments.promotion.emptyBody')} />
         <ItemGroup header="none">

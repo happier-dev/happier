@@ -835,9 +835,7 @@ export const DeploymentEnvironmentDetail = React.memo(
                     mode="info"
                   />
                 )}
-                {!activeId && detail.content.definition.kind === 'repository' && !detail.content.definition.compose && runtime?.source.kind === 'host' ? (
-                  <DeploymentEnvironmentAgentActions serverId={props.serverId} environmentId={detail.environment.id} compact={props.phone} />
-                ) : null}
+                <DeploymentEnvironmentAgentActions serverId={props.serverId} environmentId={detail.environment.id} compact={props.phone} />
               </ItemGroup>
               </ItemGroupDefaultSurfaceProvider>
               {runtime && runtime.members.length > 1 ? (
@@ -1684,7 +1682,7 @@ function EnvironmentServiceRows(
   }>,
 ) {
   const list = useMachineServicesList({ serverId: props.serverId, machineId: props.machineId ?? '',
-    active: props.active && props.machineId !== null });
+    environmentId: props.environmentId, active: props.active && props.machineId !== null });
   const rows = props.machineId ? list.rows : null;
   return (
     <>
@@ -1692,8 +1690,7 @@ function EnvironmentServiceRows(
         <EnvironmentServiceRow
           key={service.name}
           service={service}
-          row={rows?.find((row) => row.environmentId === props.environmentId
-            && row.deployment?.service.composeService === service.name) ?? null}
+          row={rows?.find((row) => row.deployment?.service.composeService === service.name) ?? null}
           serverId={props.serverId}
           environmentId={props.environmentId}
           machineId={props.machineId}

@@ -151,20 +151,21 @@ describe('Machine Services exact demand cost', () => {
         }
     });
 
-    it('feeds exact Environment health rows from native pushes without unrelated reads or clock-only publications', async () => {
+    it.each([undefined, 'web'])('feeds only demanded Environment rows (composeService=%s) without unrelated reads or clock-only publications', async composeService => {
         const fixture = await createAdmittedPluginRuntimeFixture({ controller: pluginReloadController, runtimeOptions: { pluginIds: [] } });
         const target = { serverId: 'home', machineId: 'machine' };
         const runtime = createMachineServicesRuntime({ target, readMetadata: () => ({ status: 'ready', metadataVersion: 1,
             metadata: { serviceWatchesV1: { v: 1, watches: [] } } }),
             captureMetadataPort() { throw new Error('Health reads cannot write metadata'); } });
         const owner = fixture.registry.projectManagedServices;
-        const document = 'services:\n  web:\n    image: example/web\n  worker:\n    image: example/worker\n';
+        const composeServices = ['web', 'worker', 'database', 'extra'];
+        const document = `services:\n${composeServices.map(name => `  ${name}:\n    image: example/${name}\n`).join('')}`;
         const materializer = createDeploymentSourceMaterializationPort({ registry: createScmBackendRegistry([]), async admit(input) {
             return { environmentId: input.environmentId, environmentInstanceId: input.environmentId,
                 deploymentId: input.deploymentId, machineId: target.machineId, installationId: 'installation',
                 deploymentRoot: join(fixture.happyHomeDir, 'deployments'), artifactDirectory: join(fixture.happyHomeDir, 'artifacts'),
                 definition: { kind: 'stored' as const, contentRevision: 1, document,
-                    composeDigest: `sha256:${createHash('sha256').update(document).digest('hex')}`, profiles: [], services: ['web', 'worker'] },
+                    composeDigest: `sha256:${createHash('sha256').update(document).digest('hex')}`, profiles: [], services: composeServices },
                 async assertCurrent() {} };
         } });
         const states = new Map<string, { phase: 'running' | 'stopped'; readiness: 'ready' | 'not_ready'; observedAt: number }>();
@@ -193,13 +194,14 @@ describe('Machine Services exact demand cost', () => {
         };
         const demand = new AbortController();
         let retained: { dispose(): void | Promise<void> } | undefined;
+        let secondRetained: { dispose(): void | Promise<void> } | undefined;
         let publications = 0;
         let reads = 0;
         const context = { surface: 'cli' as const, authority: 'present_user' as const };
         const read = async (observe = false) => {
             reads++;
             return MachineServicesListResultV1Schema.parse(await runtime.execute({ actionId: 'machines.services.list',
-                input: { ...target, environmentId: 'environment' }, canReadEnvironments: async ids => new Set(ids),
+                input: { ...target, environmentId: 'environment', ...(composeService ? { composeService } : {}) }, canReadEnvironments: async ids => new Set(ids),
                 context: { ...context, ...(observe ? { machineServicesListResource: { observation: {
                     signal: demand.signal, invalidate() { publications++; }, retire() { demand.abort(); },
                     accept(subscription: { dispose(): void | Promise<void> }) { retained = subscription; },
@@ -209,37 +211,62 @@ describe('Machine Services exact demand cost', () => {
         try {
             const web = await supervise('environment', 'web');
             const worker = await supervise('environment', 'worker');
+            await supervise('environment', 'database');
             const unrelated = await supervise('another', 'web');
+            for (const name of ['worker', 'database', 'extra']) await supervise('another', name);
+            // QA-DEPLOY-PERF-1109: Machine M7, Environment S3, selected runtime log S1.
+            expect(owner.listProjectServices()).toHaveLength(7);
+            const rowReads = vi.spyOn(owner.machineServiceRows, 'read');
             const initial = await read(true);
+            const expectedRows = composeService ? 1 : 3;
+            expect(initial.kind === 'snapshot' ? initial.services : []).toHaveLength(expectedRows);
+            expect(rowReads, 'native projection reads are proportional to demanded rows').toHaveBeenCalledTimes(expectedRows);
             expect(initial).toMatchObject({ kind: 'snapshot', services: [
                 { serviceId: 'environment/web', state: 'healthy', health: { observedAtMs: 41, freshness: 'current' },
                     deployment: { deploymentId: 'environment-deployment', installationId: 'installation', service: { machineId: 'machine' } } },
-                { serviceId: 'environment/worker' },
+                ...(composeService ? [] : [{ serviceId: 'environment/worker' }, { serviceId: 'environment/database' }]),
             ] });
-            const sibling = owner.machineServiceRows.read(worker);
+            let secondPublications = 0;
+            await runtime.execute({ actionId: 'machines.services.list', input: { ...target, environmentId: 'another' },
+                canReadEnvironments: async ids => new Set(ids), context: { ...context, machineServicesListResource: { observation: {
+                    signal: demand.signal, invalidate() { secondPublications++; }, retire() { demand.abort(); },
+                    accept(subscription: { dispose(): void | Promise<void> }) { secondRetained = subscription; },
+                } } },
+            });
+            await unrelated.inspectCurrentOccurrence();
+            expect(secondPublications, 'a second scoped observer establishes its own unchanged baseline').toBe(0);
+            rowReads.mockClear();
             for (let index = 0; index < 8; index++) {
                 states.get('another/web')!.readiness = index % 2 ? 'ready' : 'not_ready';
                 await unrelated.inspectCurrentOccurrence();
                 states.get('environment/web')!.observedAt++;
                 await web.inspectCurrentOccurrence();
+                if (composeService) {
+                    states.get('environment/worker')!.readiness = index % 2 ? 'ready' : 'not_ready';
+                    await worker.inspectCurrentOccurrence();
+                }
             }
             expect({ publications, reads }, 'other Environment changes and equal native observations are quiet').toEqual({ publications: 0, reads: 1 });
+            expect(rowReads, 'unrelated pushes never project demanded rows').not.toHaveBeenCalled();
+            const sibling = owner.machineServiceRows.read(worker);
+            rowReads.mockClear();
             states.get('environment/web')!.readiness = 'not_ready';
             await web.inspectCurrentOccurrence();
             expect(publications, 'one selected native health change wakes one existing Resource').toBe(1);
             expect(await read()).toMatchObject({ kind: 'snapshot', services: [
                 { state: 'unhealthy', health: { observedAtMs: 49, freshness: 'current', reason: 'not_ready' } },
-                { serviceId: 'environment/worker' },
+                ...(composeService ? [] : [{ serviceId: 'environment/worker' }, { serviceId: 'environment/database' }]),
             ] });
+            expect(rowReads, 'one consumed change projects only demanded rows').toHaveBeenCalledTimes(expectedRows);
             expect(owner.machineServiceRows.read(worker)).toBe(sibling);
             await web.controlNative('stop', { operation: { operationId: 'stop-selected', kind: 'serviceControl' } });
             await web.inspectCurrentOccurrence();
             expect(await read()).toMatchObject({ kind: 'snapshot', services: [
                 { state: 'stopped', native: { phase: 'stopped' }, health: { expectedDown: 'stop' } },
-                { serviceId: 'environment/worker' },
+                ...(composeService ? [] : [{ serviceId: 'environment/worker' }, { serviceId: 'environment/database' }]),
             ] });
         } finally {
-            demand.abort(); await retained?.dispose();
+            demand.abort(); await retained?.dispose(); await secondRetained?.dispose();
             for (const handle of owned) await handle.dispose();
             await runtime.dispose(); await fixture.dispose();
         }

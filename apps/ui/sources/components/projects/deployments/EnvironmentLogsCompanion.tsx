@@ -140,9 +140,9 @@ export function EnvironmentLogsCompanion(
 function EnvironmentRuntimeLogs(
   props: Readonly<{ serverId: string; machineId: string; machineName: string; environmentId: string; service: string }>,
 ) {
-  const list = useMachineServicesList({ serverId: props.serverId, machineId: props.machineId, active: true });
-  const row = list.rows?.find((candidate) => candidate.environmentId === props.environmentId
-    && candidate.deployment?.service.composeService === props.service) ?? null;
+  const list = useMachineServicesList({ serverId: props.serverId, machineId: props.machineId,
+    environmentId: props.environmentId, composeService: props.service, active: true });
+  const row = list.rows?.[0] ?? null;
   if (!row) {
     return list.pending ? <PageLoadingRows testID="environment-logs.loading" /> : (
       <SurfaceStateCard

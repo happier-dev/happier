@@ -19,6 +19,7 @@ import { StatusDot } from '@/components/ui/status/StatusDot';
 import { SectionActionButton } from '@/components/ui/lists/SectionActionButton';
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import { useMachineDisplayNamesById } from '@/sync/store/hooks';
+import { retainKeyedRows, retainShallow } from '@/sync/domains/state/structuralSharing';
 import { t } from '@/text';
 import { formatRelativeTimeShort } from '@/utils/time/formatShortRelativeTime';
 import { WorkStatusGlyph } from '@/components/work/status/WorkStatusGlyph';
@@ -32,6 +33,25 @@ import { useDeploymentCollection } from './useDeploymentReads';
 import { currentStep, deploymentStepCaption } from './DeploymentStepStrip';
 
 type EnvironmentItem = DeploymentEnvironmentCollectionV1['items'][number];
+
+/** Selection belongs to the keyed row producer: unchanged rows keep their handler, changed rows select current data. */
+export function useDeploymentEnvironmentRowSelection<T extends object>(items: readonly T[],
+  keyOf: (item: T) => string, onSelect: (item: T) => void): Array<T & { onPress: () => void }> {
+  type Entry = { source: T; value: T & { onPress: () => void } };
+  const previous = React.useRef<{ entries: Map<string, Entry>; onSelect: typeof onSelect; rows: Entry['value'][] } | null>(null);
+  const entries = new Map<string, Entry>();
+  const rows = items.map(item => {
+    const key = keyOf(item);
+    const old = previous.current?.entries.get(key);
+    const entry = old?.source === item && previous.current?.onSelect === onSelect
+      ? old : { source: item, value: { ...item, onPress: () => onSelect(item) } };
+    entries.set(key, entry);
+    return entry.value;
+  });
+  const retained = retainShallow(previous.current?.rows, rows);
+  previous.current = { entries, onSelect, rows: retained };
+  return retained;
+}
 
 /**
  * The Environments rail (lab d1 `rail`): one row per Environment with its name, where it runs and how long ago
@@ -59,12 +79,15 @@ export const DeploymentEnvironmentCollection = React.memo(
   ) {
     const { theme } = useUnistyles();
     const draftTitle = useCollectionDraftTitle();
-    const mark = (
+    const mark = React.useMemo(() => (
       <HappierCollectionListMark>
         <Icon name="hard-drives" size={18} color={theme.colors.text.secondary} />
       </HappierCollectionListMark>
-    );
-    const rows = useDeploymentEnvironmentRowParts(props.items, 'project-deployments.rail.row', props.lifetime ?? null, 'rail');
+    ), [theme.colors.text.secondary]);
+    const parts = useDeploymentEnvironmentRowParts(props.items, 'project-deployments.rail.row', props.lifetime ?? null, 'rail');
+    const onSelect = props.onSelect;
+    const selectRow = React.useCallback((row: typeof parts[number]) => onSelect(row.environmentId), [onSelect]);
+    const rows = useDeploymentEnvironmentRowSelection(parts, row => row.environmentId, selectRow);
     return (
       <CollectionList
         testID="project-deployments.rail"
@@ -117,7 +140,7 @@ export const DeploymentEnvironmentCollection = React.memo(
             detail={row.detail}
             icon={mark}
             selected={!props.drafting && props.selectedId === row.environmentId}
-            onPress={() => props.onSelect(row.environmentId)}
+            onPress={row.onPress}
           />
         ))}
         {props.paging && (props.paging.hasPrevious || props.paging.hasNext) ? (
@@ -172,7 +195,7 @@ export function useDeploymentEnvironmentRowParts(items: readonly EnvironmentItem
   const anyPlatform = items.some((item) => item.runtimeTargetLink?.source.kind === 'plugin');
   const platformTitle = useDeploymentPlatformTargetTitles(lifetime, anyPlatform);
   const nowMs = Date.now();
-  return items.map(({ environment, title, currentDeployment, projectSourceName, liveVersionTitle, runtimeTargetLink }) => {
+  const incoming = items.map(({ environment, title, currentDeployment, projectSourceName, liveVersionTitle, runtimeTargetLink }) => {
     // An unknown Machine drops out of the line rather than reading "a machine".
     const name = machineNames[environment.controllerMachineId] ?? null;
     // Machine names wrap between words, never at their own hyphens (lab K12-5).
@@ -201,19 +224,31 @@ export function useDeploymentEnvironmentRowParts(items: readonly EnvironmentItem
         : latest ? (machine && presentation === 'row' ? `${latest.text} · ${machine}` : latest.text)
         // Healthy says where it runs and, with room, what is live there (lab d1 `d1r`: the rail leaves that to the detail).
         : liveVersionTitle && presentation === 'row' ? [machine, liveVersionTitle].filter(Boolean).join(' · ') : where,
-      subtitleLeading: step ? (
-        <WorkStatusGlyph status={deploymentStepWorkStatus(step)} testIDSuffix={`${testIDPrefix}.${environment.id}.step`} />
-      ) : latest?.tone ? (
-        <StatusDot
-          size={6}
-          color={latest.tone === 'danger'
+      leading: step ? { kind: 'step' as const, status: deploymentStepWorkStatus(step), testID: `${testIDPrefix}.${environment.id}.step` }
+        : latest?.tone ? { kind: 'dot' as const, color: latest.tone === 'danger'
             ? theme.colors.state.danger.foreground
-            : theme.colors.state.warning.foreground}
-        />
-      ) : undefined,
+            : theme.colors.state.warning.foreground } : null,
       detail: formatRelativeTimeShort(environment.updatedAtMs, nowMs),
     };
   });
+  type Fact = typeof incoming[number];
+  type Row = Omit<Fact, 'leading'> & { subtitleLeading: React.ReactNode };
+  const previous = React.useRef<{ facts: readonly Fact[]; rows: Row[] } | null>(null);
+  // Reconcile display facts before creating React elements, whose renderer-owned fields are not JSON data.
+  const facts = retainKeyedRows(previous.current?.facts, incoming, row => row.environmentId);
+  if (facts === previous.current?.facts) return previous.current.rows;
+  const byId = new Map(previous.current?.facts.map((fact, index) => [fact.environmentId, { fact, row: previous.current!.rows[index] }]));
+  const rows = facts.map(fact => {
+    const old = byId.get(fact.environmentId);
+    if (old?.fact === fact) return old.row;
+    const { leading, ...parts } = fact;
+    const subtitleLeading = old?.fact.leading === leading ? old.row.subtitleLeading
+      : leading?.kind === 'step' ? <WorkStatusGlyph status={leading.status} testIDSuffix={leading.testID} />
+      : leading?.kind === 'dot' ? <StatusDot size={6} color={leading.color} /> : undefined;
+    return { ...parts, subtitleLeading };
+  });
+  previous.current = { facts, rows };
+  return rows;
 }
 
 /**
@@ -234,13 +269,14 @@ export function DeploymentEnvironmentChooser(props: Readonly<{
   emptyBody: string;
 }>) {
   const collection = useDeploymentCollection(props.controller, { mounted: true, visible: true, focused: true });
-  const rows = (collection.snapshot.value?.items ?? []).filter(props.eligible);
+  const items = (collection.snapshot.value?.items ?? []).filter(props.eligible);
+  const rows = useDeploymentEnvironmentRowSelection(items, row => row.environment.id, props.onSelect);
   const failure = collection.snapshot.failure;
   return (
     <ItemGroup title={props.title}>
       {rows.map(row => <Item key={row.environment.id} testID={`${props.testID}:${row.environment.id}`}
         title={row.title} accessibilityRole="radio" selected={props.selectedId === row.environment.id} disabled={props.disabled}
-        showChevron={false} onPress={() => props.onSelect(row)} />)}
+        showChevron={false} onPress={row.onPress} />)}
       {collection.hasPreviousPage ? <SectionActionButton testID={`${props.testID}.previous`}
         icon="caret-left" title={t('common.previous')} disabled={props.disabled} onPress={collection.previousPage} /> : null}
       {collection.hasNextPage ? <SectionActionButton testID={`${props.testID}.next`}

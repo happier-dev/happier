@@ -1,5 +1,21 @@
 # Compatibility and version skew
 
+## Account Action confirmation continuity (unreleased 0.3)
+
+The existing closed private Account invocation confirmation also carries settled
+UI consent for a Plugin-origin `action.invoke`, without changing the Plugin caller
+or its automation authority. The receiver binds the same exact operand, Account,
+Home, request and Machine before its target gate consumes the confirmation.
+Host confirmation and reviewed-parent admission keep their existing restrictions.
+
+The private record shape, public Action input and persisted approval formats do
+not change. Earlier development readers reject the Plugin confirmation, so UI,
+Protocol and daemon reload together under the unpublished 0.3 direct cut.
+The inspected `../0.2` frontier at
+`7b37d65ca75e58560f8f3ca850958ac5407d2e75` has no private requester-invocation
+carrier at this source seam, including scoped staged and unstaged changes.
+No wire epoch, migration or predecessor adapter is introduced.
+
 ## Direct Machine RPC simplification (unreleased 0.3)
 
 Direct RPC request/response envelopes drop `commandReceipt`; route-policy rows
@@ -8677,6 +8693,16 @@ and subscription files are absent from immutable CLI 0.2.17/0.2.17-preview.1
 at `a2c45c86804b24e60ac0b76146a3ef36dfcaa15b` and UI
 0.2.19/0.2.19-preview.25 at `63829e3cd6a8f1f48b10891af0c8b2313e51ac7e`.
 Those contracts do not require an old reader to accept the new list arm.
+
+The same unreleased list input accepts optional `composeService` together with
+`environmentId`. The daemon selects those admitted Environment handles before
+projecting rows or subscribing to their changes; this narrows demand without
+changing disclosure authority. Omitted selectors retain the Machine-wide list.
+An older strict 0.3 development reader rejects the new selector, so UI and daemon
+load together under the existing direct-cut contract, without an adapter or new
+wire epoch. The inspected moving `../0.2` basis at
+`7b37d65ca75e58560f8f3ca850958ac5407d2e75` has no corresponding list schema,
+Resource reference or daemon owner in the scoped paths.
 
 ### Attached bounded Run recovery (0.3 development)
 

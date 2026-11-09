@@ -22,7 +22,7 @@ import { useDeploymentPresentationDemand } from './useDeploymentPresentationDema
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { t } from '@/text';
 
-import { useDeploymentEnvironmentRowParts } from './DeploymentEnvironmentCollection';
+import { useDeploymentEnvironmentRowParts, useDeploymentEnvironmentRowSelection } from './DeploymentEnvironmentCollection';
 import { deploymentEnvironmentRoute } from './deploymentNavigation';
 import { useDeploymentInventory } from './useDeploymentProject';
 
@@ -184,11 +184,18 @@ function AllDeploymentsGroups(
 ) {
   const { theme } = useUnistyles();
   const router = useRouter();
-  const rows = useDeploymentEnvironmentRowParts(
+  const parts = useDeploymentEnvironmentRowParts(
     props.items,
     'all-deployments.row',
     props.lifetime,
   );
+  const serverId = props.serverId;
+  const selectRow = React.useCallback((row: typeof parts[number]) => {
+    router.push(deploymentEnvironmentRoute({ serverId, projectSourceId: row.projectSourceId, environmentId: row.environmentId }));
+  }, [router, serverId]);
+  const rows = useDeploymentEnvironmentRowSelection(parts, row => row.environmentId, selectRow);
+  const icon = React.useMemo(() => <Icon name="hard-drives" size={18} color={theme.colors.text.secondary} />,
+    [theme.colors.text.secondary]);
   // Projects keep the page's own order: the first Environment of each Project places its group. The name is the
   // admitted Source name the read carries; Projects whose name is unavailable or withdrawn share one last group,
   // so one placeholder is never repeated down the page.
@@ -221,22 +228,8 @@ function AllDeploymentsGroups(
               subtitle={row.subtitle}
               subtitleLeading={row.subtitleLeading}
               detail={row.detail}
-              icon={
-                <Icon
-                  name="hard-drives"
-                  size={18}
-                  color={theme.colors.text.secondary}
-                />
-              }
-              onPress={() =>
-                router.push(
-                  deploymentEnvironmentRoute({
-                    serverId: props.serverId,
-                    projectSourceId: row.projectSourceId,
-                    environmentId: row.environmentId,
-                  }),
-                )
-              }
+              icon={icon}
+              onPress={row.onPress}
             />
           ))}
         </ItemGroup>

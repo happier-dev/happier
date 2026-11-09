@@ -74,7 +74,13 @@ export const MachineServiceDiscoveryCandidateV1Schema = lazyZodSchema(() => z.st
   observation: z.extend(ManagedServiceNativeStateV1Schema, { endpoint: z.nullable(z.string()) }),
 }));
 export type MachineServiceDiscoveryCandidateV1 = z.infer<typeof MachineServiceDiscoveryCandidateV1Schema>;
-export const MachineServicesListInputV1Schema = lazyZodSchema(() => z.strictObject({ ...machineTarget(), environmentId: z.optional(id()) }));
+export const MachineServicesListInputV1Schema = lazyZodSchema(() => z.strictObject({
+  ...machineTarget(), environmentId: z.optional(id()), composeService: z.optional(id()),
+}).check(z.superRefine((input, ctx) => {
+  if (input.composeService && !input.environmentId) {
+    ctx.addIssue({ code: 'custom', path: ['environmentId'], message: 'A Compose service selection belongs to an Environment.' });
+  }
+})));
 export const MachineServicesDiscoveryInputV1Schema = lazyZodSchema(() => z.strictObject({ ...machineTarget(), adapter: z.optional(MachineServiceWatchV1Schema.shape.adapter) }));
 export const MachineServicesDetailInputV1Schema = lazyZodSchema(() => z.strictObject({ ...machineTarget(), serviceId: id(), expectedGeneration: z.optional(id()) }));
 export const MachineServiceWatchInputV1Schema = lazyZodSchema(() => z.strictObject({

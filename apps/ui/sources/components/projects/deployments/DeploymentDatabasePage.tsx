@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
+import type { DeploymentEnvironmentCollectionV1 } from '@happier-dev/deployment-protocol/v1';
 import type {
   DeploymentEnvironmentDestinationV1,
   DeploymentEnvironmentReadDetailV1,
@@ -326,7 +327,10 @@ export function DeploymentDatabasePage(
   const openConnect = database.kind === 'selfHosted' && setBindings && controller ? () => showDeploymentSheet({
     component: DeploymentConnectSheet,
     props: { controller, sourceEnvironmentId: detail.environment.id, exports: connectExports,
-      setBindings, review: props.review },
+      setBindings, review: props.review,
+      ...(detail.environment.capabilities.manage ? {
+        onOpenSettings: () => props.onNavigate({ tab: 'settings', section: 'servers-build' }),
+      } : {}) },
     title: t('projects.deployments.databaseConnectTitle'),
     testID: 'project-deployments.connect.modal',
   }) : null;
@@ -778,8 +782,12 @@ function DeploymentConnectSheet(props: Readonly<{
   exports: readonly ConnectExport[];
   setBindings: DeploymentSetBindings;
   review: DeploymentReviewHandle;
+  onOpenSettings?: () => void;
 }> & CustomModalInjectedProps) {
   const [destination, setDestination] = React.useState<Readonly<{ id: string; revision: number; title: string }> | null>(null);
+  const selectDestination = React.useCallback((row: DeploymentEnvironmentCollectionV1['items'][number]) => {
+    setDestination({ id: row.environment.id, revision: row.environment.revision, title: row.title });
+  }, []);
   const [exportKey, setExportKey] = React.useState(props.exports[0]?.key ?? null);
   const [variable, setVariable] = React.useState('DATABASE_URL');
   const [done, setDone] = React.useState<string | null>(null);
@@ -815,7 +823,11 @@ function DeploymentConnectSheet(props: Readonly<{
             title={t('projects.deployments.databaseConnectDone', { variable, name: done })} />
         ) : props.exports.length === 0 ? (
           <SurfaceStateCard testID="project-deployments.connect.needsShare" size="line" kind="empty"
-            title={t('projects.deployments.databaseConnectNeedsShare')} />
+            title={t('projects.deployments.databaseConnectNeedsShare')}
+            {...(props.onOpenSettings ? { action: {
+              label: t('projects.deployments.sectionServersBuild'), testID: 'project-deployments.connect.openSettings',
+              onPress: () => { onClose(); props.onOpenSettings?.(); },
+            } } : {})} />
         ) : (
           <>
             <Text style={deploymentSheetStyles.lead}>{t('projects.deployments.databaseConnectLead')}</Text>
@@ -823,7 +835,7 @@ function DeploymentConnectSheet(props: Readonly<{
               title={t('projects.deployments.databaseConnectDestination')}
               eligible={(row) => row.environment.id !== props.sourceEnvironmentId && row.environment.capabilities.manage}
               selectedId={destination?.id ?? null} disabled={busy}
-              onSelect={(row) => setDestination({ id: row.environment.id, revision: row.environment.revision, title: row.title })}
+              onSelect={selectDestination}
               loadFailedTitle={t('projects.deployments.promotion.loadFailed')}
               emptyTitle={t('projects.deployments.databaseConnectEmptyTitle')}
               emptyBody={t('projects.deployments.databaseConnectEmptyBody')} />
