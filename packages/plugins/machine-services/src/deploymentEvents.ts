@@ -143,9 +143,7 @@ export function createDeploymentReceiptEventSourceAdapter(host: BackgroundServic
                 }
                 for (const id of state.observing) if (!state.pending.has(id)) state.pending.set(id, {});
                 for (const [id, entry] of state.pending) pending.set(id, entry);
-                for (const [id, entry] of pending) {
-                    if (state.pending.get(id) === entry) state.pending.delete(id);
-                }
+                for (const id of pending.keys()) state.pending.delete(id);
                 for (const [deploymentId, entry] of pending) {
                     if (entry.receipt === undefined) {
                         const read = await context.services.actions.execute('deployments.receipts.get', {
@@ -165,7 +163,6 @@ export function createDeploymentReceiptEventSourceAdapter(host: BackgroundServic
                 // Only the failed source drives finite platform observation. Its
                 // sibling outcome sources consume the receipt owner's invalidation.
                 if (source.targetLinkId && event === DEPLOYMENT_FAILED_EVENT) {
-                    if (fullRead) state.observing.clear();
                     for (const [index, receipt] of receipts.entries()) {
                         if (receipt.environmentId !== source.environmentId || receipt.targetLinkId !== source.targetLinkId
                             || receipt.operation === 'teardown' || !inProgressStates.has(receipt.state)) {

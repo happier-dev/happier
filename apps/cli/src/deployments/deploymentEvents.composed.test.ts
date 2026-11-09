@@ -84,7 +84,7 @@ function fixture(event: string | readonly string[] = 'deployment-failed', pageSi
 describe('deployment receipt Events through canonical admission', () => {
     it('keeps receipt reads separate across Homes and excludes sources assigned to another observer', async () => {
         const f = fixture('deployment-succeeded', 5);
-        f.rows.splice(0, f.rows.length, createDeploymentReceiptHeaderV1({ ...f.rows[0], state: 'succeeded', settledAtMs: 1 }));
+        f.rows.splice(0, f.rows.length, createDeploymentReceiptHeaderV1({ ...f.rows[0], state: 'succeeded', requestedAtMs: 0, startedAtMs: 0, settledAtMs: 1 }));
         f.sources([
             definition('deployment-succeeded'),
             { ...definition('rollback-completed'), sourceConfig: { ...config, serverId: 'other-home' } },
@@ -106,7 +106,7 @@ describe('deployment receipt Events through canonical admission', () => {
         const f = fixture(events, 5);
         const current = f.rows[0];
         f.rows.splice(0, f.rows.length, ...Array.from({ length: 15 }, (_, index) =>
-            createDeploymentReceiptHeaderV1({ ...current, id: `historical-${index}`, state: 'succeeded', settledAtMs: 1 })));
+            createDeploymentReceiptHeaderV1({ ...current, id: `historical-${index}`, state: 'succeeded', requestedAtMs: 0, startedAtMs: 0, settledAtMs: 1 })));
         const readCounts = () => ({
             list: f.execute.mock.calls.filter(([id]) => id === 'deployments.receipts.list').length,
             get: f.execute.mock.calls.filter(([id]) => id === 'deployments.receipts.get').length,
@@ -127,6 +127,24 @@ describe('deployment receipt Events through canonical admission', () => {
         await f.reconnect(); await f.cycle();
         expect(readCounts()).toEqual({ list: 3, get: 0 });
         expect(f.admissions.slice(2).map(row => row.occurrenceId)).toEqual(occurrences);
+    });
+    it('keeps a newer invalidation pending while sibling occurrence checkpoints await admission', async () => {
+        const f = fixture(['rollback-completed', 'deployment-succeeded']);
+        f.rows.splice(0, f.rows.length, createDeploymentReceiptHeaderV1({ ...f.rows[0], state: 'succeeded', operation: 'rollback' }));
+        f.safe(false);
+        await f.cycle();
+        const occurrences = f.admissions.map(row => row.occurrenceId);
+        expect(occurrences).toHaveLength(2);
+        f.rows[0] = createDeploymentReceiptHeaderV1({ ...f.rows[0], operation: 'promote', revision: 2, settledAtMs: 4 });
+        await f.wake('env', f.rows[0].id);
+        f.execute.mockClear(); f.safe(true);
+        await f.cycle();
+        expect(f.admissions.slice(2).map(row => row.occurrenceId)).toEqual(occurrences);
+        expect(f.execute.mock.calls.filter(([id]) => id === 'deployments.receipts.get')).toHaveLength(0);
+        await f.cycle();
+        expect(f.execute.mock.calls.filter(([id]) => id === 'deployments.receipts.get')).toHaveLength(1);
+        expect(f.admissions.at(-1)).toMatchObject({ eventRef: { localId: 'deployment-succeeded' },
+            payload: { state: 'succeeded', receiptRevision: 2, observedAt: 4 } });
     });
     it.each(['failed', 'succeeded'] as const)('produces exactly one generic %s Event for a Cloudflare receipt', async state => {
         const localId = state === 'failed' ? 'deployment-failed' : 'deployment-succeeded';
