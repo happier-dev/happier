@@ -28,7 +28,11 @@ const BODY_HEADERS = new Set(['content-encoding', 'content-language', 'content-l
 
 export function isCredentialRequestHeader(name: string, privateNames?: ReadonlySet<string>): boolean {
   const normalized = name.trim().toLowerCase();
-  return CREDENTIAL_HEADERS.has(normalized) || privateNames?.has(normalized) === true;
+  if (CREDENTIAL_HEADERS.has(normalized)) return true;
+  for (const privateName of privateNames ?? []) {
+    if (privateName.trim().toLowerCase() === normalized) return true;
+  }
+  return false;
 }
 
 /** Shared decision for fetch, Axios and plugin transports; no request data enters errors. */

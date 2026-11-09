@@ -1,11 +1,101 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { ActionIdSchema } from './actionIds.js';
 import { createActionExecutor, type ActionExecutorDeps } from './actionExecutor.js';
 import { getActionSpec } from './actionSpecs.js';
 import { listActionSpecsForCatalogSurface } from './actionCatalog.js';
+import { resolveActionApprovalRouting } from './actionApprovalPolicy.js';
+import { normalizeActionsSettingsV1 } from './actionSettings.js';
+import { createBlockingApprovalCoordinator } from './blockingApprovalCoordinator.js';
+import type { ApprovalRequest } from '../approvals/approvalRequestV1.js';
 
 describe('machine and Home connection Action parity', () => {
+  it('exposes managed installation questions on the answering client with automation Ask and exact prompt identity', () => {
+    const id = ActionIdSchema.parse('machines.managed.bootstrap.respond');
+    const spec = getActionSpec(id);
+    expect(spec).toMatchObject({ executionPlacement: 'client', safety: 'danger',
+      surfaces: { ui: true, agent: true, mcp: true, cli: true, voice: false, rpc: false } });
+    const input = { serverId: 'profile', homeId: 'home', managedId: 'managed', operationId: 'creation', taskId: 'install',
+      purpose: 'approve', prompt: { kind: 'auth.approveRemoteProvisioning', message: 'Sign in to Guest?' }, approved: false };
+    expect(spec.inputSchema.parse(input)).toEqual(input);
+    expect(spec.inputSchema.safeParse({ ...input, machineId: 'injected-controller' }).success).toBe(false);
+    expect(listActionSpecsForCatalogSurface({ surface: 'agent' }).map(action => action.id)).toContain(id);
+    expect(listActionSpecsForCatalogSurface({ surface: 'mcp' }).map(action => action.id)).toContain(id);
+    for (const surface of ['agent', 'mcp'] as const) {
+      const context = { surface, authority: 'account_automation' } as const;
+      expect(resolveActionApprovalRouting({ actionId: id, spec, context }).required).toBe(true);
+      const settings = normalizeActionsSettingsV1({ v: 1, approvalWaivedSurfaces: { [id]: [surface] } });
+      expect(resolveActionApprovalRouting({ actionId: id, spec, context, settings }).required).toBe(false);
+      expect(resolveActionApprovalRouting({ actionId: id, spec, context, settings: normalizeActionsSettingsV1({ ...settings,
+        actions: { [id]: { approvalRequiredSurfaces: [surface] } } }) }).required).toBe(true);
+    }
+  });
+  it('admits establishment only as an exact transient response and keeps its password out of previews and cold approval state', async () => {
+    const actionId = ActionIdSchema.parse('machines.managed.bootstrap.respond');
+    const spec = getActionSpec(actionId);
+    const input = { serverId: 'profile', homeId: 'home', managedId: 'managed', operationId: 'creation', taskId: 'install',
+      purpose: 'establish', promptId: 'administrator-1', password: 'private-establishment-password' };
+    expect(spec.inputSchema.safeParse(input).success).toBe(true);
+    for (const invalid of [{ ...input, approved: true }, { ...input, promptId: '' }, { ...input, password: '' },
+      { ...input, purpose: 'approve' }, { ...input, machineId: 'other-controller' }]) {
+      expect(spec.inputSchema.safeParse(invalid).success).toBe(false);
+    }
+    const coordinator = createBlockingApprovalCoordinator();
+    let stored: ApprovalRequest | null = null;
+    const retained: unknown[] = [];
+    const delivered: unknown[] = [];
+    const observations: unknown[] = [];
+    const previews: unknown[] = [];
+    // Approval persistence and the answering app transport are external boundaries.
+    const deps = { approvalsCreate: async ({ request }: { request: ApprovalRequest }) => {
+      stored = request; retained.push(JSON.parse(JSON.stringify(request))); return { artifactId: 'establish-approval' };
+    }, approvalsUpdate: async ({ request }: { request: ApprovalRequest }) => {
+      stored = request; retained.push(JSON.parse(JSON.stringify(request))); return { ok: true as const };
+    }, approvalsGet: async () => stored, approvalsWaitForDecision: coordinator.waitForDecision,
+    isApprovalExecutionOriginCurrent: async () => true,
+    buildApprovalPreview: async (review: Parameters<NonNullable<ActionExecutorDeps['buildApprovalPreview']>>[0]) => {
+      previews.push(review); return review.defaultPreview;
+    },
+    observeActionExecution: async (observation: unknown) => { observations.push(observation); },
+    machineManagedInstallationRespond: async (answer: unknown) => { delivered.push(answer); return { taskId: input.taskId }; },
+    } as unknown as ActionExecutorDeps;
+    const executor = createActionExecutor(deps);
+    const pending = executor.execute(actionId, input, { surface: 'agent', authority: 'account_automation',
+      actionCaller: { kind: 'host' }, serverId: 'profile', defaultSessionMachineId: 'controller', actionRequestId: 'establish-attempt' });
+    try {
+      await vi.waitFor(() => expect(coordinator.getLiveWaiterCount('establish-approval')).toBe(1));
+      const request = stored as ApprovalRequest | null;
+      if (!request) throw new Error('Expected establishment approval');
+      expect(JSON.stringify(request)).not.toContain(input.password);
+      expect(request.actionArgs).toMatchObject({ purpose: 'establish', promptId: input.promptId });
+      expect(request.actionArgs).not.toHaveProperty('password');
+      expect(delivered).toEqual([]);
+      await coordinator.resolveBlockingDecision({ artifactId: 'establish-approval', request, decision: 'approve', decisionAuthority: 'present_user' });
+      expect(await pending).toEqual({ ok: true, result: { taskId: input.taskId } });
+      expect(delivered).toEqual([input]);
+      expect(JSON.stringify([...retained, ...observations, ...previews])).not.toContain(input.password);
+      expect(observations).toHaveLength(1);
+    } finally { coordinator.dispose(); }
+  });
+  it('identifies the missing displayed question in a stale managed bootstrap answer before delivery', async () => {
+    // Rerun 50's QA caller omitted prompt. Keep actual admission and the
+    // Protocol schema; only the answering client is a system boundary.
+    const deliveries: unknown[] = [];
+    const executor = createActionExecutor({ machineManagedInstallationRespond: async input => {
+      deliveries.push(input);
+      return { taskId: input.taskId };
+    } } as ActionExecutorDeps);
+    const input = { serverId: 'home', homeId: 'home', managedId: 'managed', operationId: 'creation', taskId: 'install', purpose: 'approve', approved: true };
+    for (const surface of ['agent', 'mcp'] as const) {
+      const context = { surface, authority: 'account_automation', serverId: 'home', bypassApprovals: true } as const;
+      expect(await executor.execute('machines.managed.bootstrap.respond', input, context)).toMatchObject({
+        ok: false, errorCode: 'invalid_parameters', details: { issues: expect.arrayContaining([
+          expect.objectContaining({ path: ['prompt'] }),
+        ]) },
+      });
+    }
+    expect(deliveries).toEqual([]);
+  });
   it('publishes machine page operations with the same caller input on UI and CLI', async () => {
     for (const [id, input, result] of [
       ['machines.metadata.update', { serverId: 'home', machineId: 'machine', expectedVersion: 3, patch: { displayName: 'Desk' } }, { version: 4 }],
@@ -60,7 +150,7 @@ describe('machine and Home connection Action parity', () => {
     const respond = getActionSpec('machines.add.ssh.respond');
     expect(respond.inputSchema.safeParse({ taskId: 'task', answer: { kind: 'ssh.password' } }).success).toBe(true);
     expect(respond.inputSchema.safeParse({ taskId: 'task', answer: { kind: 'ssh.password', password: 'secret' } }).success).toBe(false);
-    expect(start.surfaces.cli).toBe(false);
+    expect(start.surfaces.cli).toBe(true);
   });
   it('admits an exact saved SSH host reference while refusing competing targets and secret material', () => {
     const schema = getActionSpec('machines.add.ssh.start').inputSchema;
@@ -88,7 +178,7 @@ describe('machine and Home connection Action parity', () => {
       .toMatchObject({ ok: false, errorCode: 'invalid_parameters' });
     expect(addresses).toEqual(['https://home.example']);
     expect(spec.outputSchema.safeParse({ kind: 'sign_in_service', endpointUrl: 'https://sign-in.example', name: 'Sign in' }).success).toBe(false);
-    expect(spec.surfaces).toMatchObject({ ui: true, agent: true, mcp: true, cli: false });
+    expect(spec.surfaces).toMatchObject({ ui: true, agent: true, mcp: true, cli: true });
     expect(listActionSpecsForCatalogSurface({ surface: 'agent' }).map((action) => action.id)).toContain(id);
   });
 
@@ -122,13 +212,30 @@ describe('machine and Home connection Action parity', () => {
     expect(schema.safeParse({ method: 'ssh', os: 'linux', serverId: 'home', host: 'host', port: 65536 }).success).toBe(false);
   });
 
-  it('issues a pairing link with the canonical expiry and no invented machine success', async () => {
+  it.each(['ui', 'cli'] as const)('issues a pairing link to the person on %s with the canonical expiry', async surface => {
     const id = ActionIdSchema.parse('machines.pairing.create');
     const executor = createActionExecutor({ machinePairingCreate: async () => ({
       pairId: 'pair', link: 'happier:///pair?payload=opaque', expiresAtMs: 1000,
     }) } as unknown as ActionExecutorDeps);
-    expect(await executor.execute(id, { serverId: 'home' }, { surface: 'ui', authority: 'present_user', bypassApprovals: true }))
+    expect(await executor.execute(id, { serverId: 'home' }, { surface, authority: 'present_user', bypassApprovals: true }))
       .toEqual({ ok: true, result: { pairId: 'pair', link: 'happier:///pair?payload=opaque', expiresAtMs: 1000 } });
     expect(getActionSpec(id).executionPlacement).toBe('client');
+  });
+
+  it.each(['agent', 'mcp'] as const)('never delivers a pairing credential to %s, even after person approval', async surface => {
+    let issued = false;
+    // Trusted device enrollment is the external credential boundary.
+    const executor = createActionExecutor({ machinePairingCreate: async () => {
+      issued = true;
+      return { pairId: 'pair', link: 'happier:///pair?payload=fixture', expiresAtMs: 1000 };
+    } });
+    const result = await executor.execute('machines.pairing.create', { serverId: 'home' }, {
+      surface, authority: 'present_user', bypassApprovals: true,
+    });
+    expect(result).toMatchObject({ ok: false, errorCode: 'action_disabled',
+      details: { surface, reason: 'unsupported_surface' } });
+    expect(issued).toBe(false);
+    expect(result).not.toHaveProperty('result.link');
+    expect(listActionSpecsForCatalogSurface({ surface }).map(action => action.id)).not.toContain('machines.pairing.create');
   });
 });

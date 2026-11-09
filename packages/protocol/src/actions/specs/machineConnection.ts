@@ -352,7 +352,8 @@ function createMachineConnectionActionSpecs() {
   {
     id: 'machines.pairing.create', approval: {result: 'required'}, title: 'Create link to add another computer',
     description: 'Issue a short-lived Home pairing link through the trusted device enrollment lifecycle. Keep this client running until the computer joins.',
-    safety: 'danger', sideEffectClass: 'danger', executionPlacement: 'client', placements: [], surfaces: clientSurfaces, cli: { commands: [] },
+    // Credential parity exception: live-only persistence does not redact the requesting model's return value.
+    safety: 'danger', sideEffectClass: 'danger', executionPlacement: 'client', placements: [], surfaces: { ...clientSurfaces, agent: false, mcp: false }, cli: { commands: [] },
     bindings: { mcpToolName: 'machines_pairing_create' }, inputSchema: MachinePairingCreateInputSchema, outputSchema: MachinePairingCreateOutputSchema,
     projectObservationOutput: () => ({ redacted: true }),
     approvalResultCustody: 'live_only',
