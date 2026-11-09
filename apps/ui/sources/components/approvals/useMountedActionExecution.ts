@@ -16,8 +16,8 @@ import type { SystemTaskRunner } from '@/components/systemTasks/types';
 import { randomUUID } from '@/platform/randomUUID';
 
 const onExecuted = () => {};
-const retired = (requestId = randomUUID()): ActionExecuteResult => ({ ok: false,
-    errorCode: 'action_account_scope_changed', error: 'action_account_scope_changed', requestId,
+const retired = (requestId?: string | null): ActionExecuteResult => ({ ok: false,
+    errorCode: 'action_account_scope_changed', error: 'action_account_scope_changed', requestId: requestId ?? randomUUID(),
     details: { reason: 'client_account_scope_changed' } });
 type MountedExecutorOptions = Omit<NonNullable<Parameters<typeof createFrontDoorActionExecute>[1]>, 'onBlockingApprovalPending'>;
 type MountedOperation = UiActionOperation & Readonly<{ retainInvocation?: true; executorOptions?: MountedExecutorOptions;
@@ -92,8 +92,8 @@ export function useMountedActionExecution(scopeOrHome: ServerAccountScope | stri
         // Retained approval custody requires a concrete signal even without a caller signal.
         const retirement = new AbortController();
         const subscription = accountWrite ? undefined : executionLifetime.onRetire(() => retirement.abort());
-        const cancellation = mergeAbortSignals([retainEffect ? undefined : lifetime.controller.signal,
-            retirement.signal, operation?.signal ?? callerContext?.signal]);
+        const cancellation = mergeAbortSignals([retirement.signal, retainEffect ? undefined : lifetime.controller.signal,
+            operation?.signal ?? callerContext?.signal]);
         const invocationCurrent = () => (accountWrite || capturedBinding.isCurrent()) && !cancellation.signal.aborted;
         if (!capturedBinding.isCurrent() || cancellation.signal.aborted) { subscription?.dispose(); cancellation.dispose(); return retired(requestId); }
         const frontDoorOptions = {

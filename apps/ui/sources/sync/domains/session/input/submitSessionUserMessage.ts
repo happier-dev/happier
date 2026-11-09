@@ -4,7 +4,11 @@ import { normalizeParticipantRecipientRoutingIdentityV1, withParticipantRecipien
 import { withSessionUserMessageDeliveryIntentMeta } from '@happier-dev/protocol/sessions/messages/sessionMessageMeta';
 import type { PendingRequestedActionV1 } from '@happier-dev/protocol/sessions/pending/pendingRequestedActionV1';
 import { SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol/spawnSession';
-import { readSessionAutoResumeRefusalV1 } from '@happier-dev/protocol/sessions/metadata/sessionExplicitStopV1';
+import {
+    readSessionAutoResumeRefusalV1,
+    resolveSessionExplicitControlIntent,
+    resolveSessionSendCrossesStopHoldV1,
+} from '@happier-dev/protocol/sessions/metadata/sessionExplicitStopV1';
 import { core } from 'zod/mini';
 
 import { getPendingQueueWakeResumeOptions } from '@/sync/domains/pending/pendingQueueWake';
@@ -30,6 +34,7 @@ import type {
 import { SESSION_INPUT_TARGET_UPDATE_REQUIRED_ERROR_CODE } from './types';
 import { SESSION_INPUT_ACCOUNT_SCOPE_RETIRED_ERROR_CODE } from './types';
 import { recordSessionMessageDeliveryDecision } from './sessionMessageDeliveryTelemetry';
+import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 import {
     canSendUserMessageToSession,
     SESSION_MESSAGE_SEND_NOT_RESUMABLE_ERROR_CODE,
@@ -47,17 +52,26 @@ function isSubmitAccountLifetimeCurrent(opts: SubmitSessionUserMessageOptions): 
     return opts.accountLifetime?.isCurrent() !== false;
 }
 
+/** The person's own Send resumes a Session they stopped; the existing Resume admission decides and clears the hold. */
+function isPersonSendCrossingStopHold(opts: SubmitSessionUserMessageOptions): boolean {
+    return resolveSessionSendCrossesStopHoldV1({
+        metadata: readSessionOwnerMetadataView(opts.session),
+        archivedAt: opts.session.archivedAt,
+        author: resolveSessionExplicitControlIntent({ rawSession: { id: opts.sessionId }, actionContext: opts.actionContext }),
+    });
+}
+
 async function blockPendingInputAfterWakeFailure(
     port: SessionSubmitPort,
     opts: SubmitSessionUserMessageOptions,
-    localId: string,
+    localId: string | undefined,
     errorCode?: string,
     errorDetail?: unknown,
 ): Promise<void> {
-    if (!isSubmitAccountLifetimeCurrent(opts) || opts.actionContext?.signal?.aborted) return;
-    // A person's Stop hold refuses automatic launch until that person resumes:
-    // the row stays queued so the composer offers "Stopped by you" + Resume.
-    if (readSessionAutoResumeRefusalV1(errorDetail) === 'held_by_person') return;
+    if (!localId || !isSubmitAccountLifetimeCurrent(opts) || opts.actionContext?.signal?.aborted) return;
+    // Input behind a person's Stop hold stays queued until a resume succeeds and
+    // clears the hold: the next Send or the composer's Resume delivers it in order.
+    if (isPersonSendCrossingStopHold(opts) || readSessionAutoResumeRefusalV1(errorDetail) === 'held_by_person') return;
     try {
         // Home alone decides whether this exact input is still unclaimed. A
         // late wake failure cannot overwrite delivery already owned by a runner.
@@ -421,6 +435,8 @@ async function shouldWakePendingInputFromUi(
     machineId: string,
 ): Promise<boolean> {
     if (!isSubmitAccountLifetimeCurrent(opts)) return false;
+    // Delegated daemon activation is automatic and refuses the hold; the person's Send resumes directly.
+    if (isPersonSendCrossingStopHold(opts)) return true;
     if (!port.shouldDelegatePendingActivationToDaemon) return true;
     const delegated = await port.shouldDelegatePendingActivationToDaemon(opts.session, opts.serverId, machineId);
     if (!isSubmitAccountLifetimeCurrent(opts)) return false;
@@ -652,6 +668,9 @@ async function enqueuePending(
 
     const resumeOptions = {
         ...wakeOpts,
+        ...(localId && isPersonSendCrossingStopHold(opts)
+            ? { executionAuthorization: { provenance: 'user_request' as const, requestId: localId } }
+            : {}),
         ...(opts.serverId ? { serverId: opts.serverId } : {}),
         ...(opts.accountLifetime ? { accountLifetime: opts.accountLifetime } : {}),
         ...(opts.actionContext ? { actionContext: opts.actionContext } : {}),
@@ -690,6 +709,7 @@ async function enqueuePending(
                 errorCode: wakeResult.errorCode,
                 errorMessage: wakeResult.errorMessage,
                 ...(wakeResult.errorDetail ? { errorDetail: wakeResult.errorDetail } : {}),
+                ...(isPersonSendCrossingStopHold(opts) ? { stopHoldResumeFailed: true as const } : {}),
                 localId,
             };
         }
@@ -708,6 +728,7 @@ async function enqueuePending(
                 errorMessage,
             },
             errorMessage,
+            ...(isPersonSendCrossingStopHold(opts) ? { stopHoldResumeFailed: true as const } : {}),
             localId,
         };
     }
