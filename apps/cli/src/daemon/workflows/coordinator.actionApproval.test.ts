@@ -12,6 +12,7 @@ import { createInMemoryWorkflowCoordinatorStore, createTestWorkflowCoordinator }
 import { readWorkflowActionApprovalSettlement } from './actionApproval';
 import { materializeWorkflowAcceptedSnapshotV1 } from '@happier-dev/protocol/workflows/materializeWorkflowAcceptedSnapshotV1';
 import { WorkflowDefinitionV1Schema } from '@happier-dev/protocol/workflows';
+import { WorkflowActionFailureV1Schema } from '@happier-dev/protocol/workflows/workflowProgressV1';
 import { actionSpecToActionDefinitionV1, freezeWorkflowActionContractV1 } from '@happier-dev/protocol/actions/actionCatalog';
 import { ActionIdSchema } from '@happier-dev/protocol/actions/actionIds';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
@@ -203,17 +204,19 @@ describe('workflow built-in Action approval holds', () => {
     // This is the persisted response from the separate approval execution owner,
     // not execution by the coordinator or evidence of a live confirmation replay.
     const uncertain = settlement === 'outcome_unknown' || settlement === 'failed_unknown';
+    const failure = WorkflowActionFailureV1Schema.parse({ ok: false, errorCode: 'workflow_http_error',
+      error: 'Receipt effect did not settle', details: { status: 503 },
+      failureCause: { phase: 'workflow.trigger.write', errorClass: 'HttpStatusError', errorCode: 'database_transaction_timeout', httpStatus: 503 } });
     stored = ApprovalRequestV2Schema.parse(settlement === 'executed' ? { ...stored, status: 'executed',
       execution: { executedAtMs: Date.now(), ok: true, result: output } }
       : settlement === 'rejected' ? { ...original, status: 'rejected', decision: { kind: 'reject', authority: 'present_user', decidedAtMs: Date.now() } }
-      : { ...stored, status: settlement === 'failed_unknown' ? 'failed' : settlement, execution: { executedAtMs: Date.now(), ok: false,
-        errorCode: uncertain ? 'approval_execution_outcome_unknown' : 'storage_unavailable',
-        error: 'Receipt effect did not settle', details: { operation: 'trigger-write' },
-        failureCause: { phase: 'workflow.trigger.write', errorClass: 'HttpStatusError', errorCode: 'database_transaction_timeout', httpStatus: 503 } } });
+      : { ...stored, status: settlement === 'failed_unknown' ? 'failed' : settlement, execution: { executedAtMs: Date.now(),
+        ...failure, ...(uncertain ? { errorCode: 'approval_execution_outcome_unknown',
+          details: { reasonCode: 'approval_execution_outcome_unknown' } } : {}) } });
     const expected = settlement === 'executed' ? { lifecycle: 'completed', result: output }
       : settlement === 'rejected' ? { lifecycle: 'failed', reason: 'approval_rejected' }
       : uncertain ? { lifecycle: 'outcome_uncertain', reason: 'approval_execution_outcome_unknown' }
-      : { lifecycle: 'failed', reason: 'storage_unavailable', result: { operation: 'trigger-write' },
+      : { lifecycle: 'failed', reason: 'workflow_http_error', result: { status: 503 },
         failureCause: { phase: 'workflow.trigger.write', errorClass: 'HttpStatusError', errorCode: 'database_transaction_timeout', httpStatus: 503 },
         reasonMessage: 'Receipt effect did not settle' };
     expect(await coordinator.run(input)).toMatchObject(settlement === 'executed'
