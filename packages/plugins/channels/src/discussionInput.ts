@@ -7,25 +7,8 @@ import type { SessionSendAttachment } from '@happier-dev/plugin-sdk/sessions';
 import type { ConversationObservationV1 } from '@happier-dev/channels-protocol/v1';
 import { readChannelFileInputs } from './channelAttachmentRuntime.js';
 
-/** The existing Discussion writer's retry identity also identifies the inbound binding. */
-export function createConversationDiscussionInputLocalId(bindingId: string, obligationId: string): string {
-  return `channels:${bindingId.length}:${bindingId}:${obligationId}`;
-}
-
-export function readConversationDiscussionInputOrigin(localId: string | null): Readonly<{ bindingId: string; obligationId: string }> | undefined {
-  if (localId === null) return undefined;
-  const frame = /^channels:([1-9][0-9]*):/u.exec(localId);
-  if (frame === null) return undefined;
-  const length = Number(frame[1]);
-  const bindingId = localId.slice(frame[0].length, frame[0].length + length);
-  const suffix = localId.slice(frame[0].length + length);
-  return bindingId.length === length && /^:[A-Za-z0-9_-]{43}$/u.test(suffix)
-    ? { bindingId, obligationId: suffix.slice(1) } : undefined;
-}
-
-export function readConversationDiscussionInputBindingId(localId: string | null): string | undefined {
-  return readConversationDiscussionInputOrigin(localId)?.bindingId;
-}
+export { createConversationDiscussionInputLocalId, readConversationDiscussionInputOrigin,
+  readConversationDiscussionInputBindingId } from './discussionInputIdentity.js';
 
 // Only unfinished publications are retained. The thread identity includes the
 // connection's Account-scoped routing HMAC, so unrelated threads remain free.
@@ -51,6 +34,7 @@ export async function postConversationDiscussionInput(input: Parameters<typeof p
 async function postDiscussionInput(input: Readonly<{
   discussionId: string; localId: string; threadRootLocalId?: string;
   providerPluginId: string; observation: ConversationObservationV1;
+  conversationDisplayName: string;
   attachments: readonly SessionSendAttachment[];
 }>, context: PluginInvocationContext) {
   let localId = input.localId;
@@ -75,7 +59,7 @@ async function postDiscussionInput(input: Readonly<{
     v: 1, parts: input.observation.message.text.trim().length
       ? [{ t: 'text', text: input.observation.message.text.normalize('NFC') }] : [],
     externalSource: { kind: 'channel', providerPluginId: input.providerPluginId,
-      conversationDisplayName: (input.observation.endpoint.label || 'External conversation').normalize('NFC'),
+      conversationDisplayName: input.conversationDisplayName.normalize('NFC'),
       ...(input.observation.actor.label ? { senderDisplayName: input.observation.actor.label.normalize('NFC') } : {}),
       ...(input.threadRootLocalId === undefined ? {} : { inputLocalId: input.localId }),
     },

@@ -11,3 +11,7 @@ const DISCUSSION_ACTION_ID_SET: ReadonlySet<string> = new Set(DISCUSSION_ACTION_
 export function isDiscussionActionIdV1(value: string): value is DiscussionActionIdV1 {
   return DISCUSSION_ACTION_ID_SET.has(value);
 }
+
+export function isDiscussionReplyActionIdV1(value: string): value is 'discussion.reply' {
+  return value === 'discussion.reply';
+}

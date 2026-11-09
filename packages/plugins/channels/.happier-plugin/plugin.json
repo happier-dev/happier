@@ -20501,6 +20501,101 @@
       },
       {
         "dangerLevel": "safe",
+        "description": "Names the Channel connection and conversation selected by a Discussion reply ancestor.",
+        "execution": {
+          "account": {
+            "artifactId": "channels-account-runtime",
+            "exportName": "activate"
+          },
+          "target": "account"
+        },
+        "hostAccess": [
+          "account-storage"
+        ],
+        "id": "discussion-reply-destination-v1",
+        "inputSchema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "additionalProperties": false,
+          "properties": {
+            "discussionId": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "messageId": {
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": [
+            "discussionId",
+            "messageId"
+          ],
+          "type": "object"
+        },
+        "placementBindings": [],
+        "readOnly": true,
+        "resultSchema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "anyOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "const": "none"
+                }
+              },
+              "required": [
+                "kind"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "connectionName": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "conversationName": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "kind": {
+                  "const": "channel"
+                }
+              },
+              "required": [
+                "kind",
+                "connectionName",
+                "conversationName"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "scopes": [
+          "global"
+        ],
+        "surfaces": [
+          "ui",
+          "plugin"
+        ],
+        "title": "Read discussion reply destination"
+      },
+      {
+        "dangerLevel": "safe",
         "description": "Reads retained pull request links from Account state without requiring a Machine.",
         "execution": {
           "account": {
@@ -46657,6 +46752,1005 @@
                             {
                               "additionalProperties": false,
                               "properties": {
+                                "admissionResult": {
+                                  "anyOf": [
+                                    {
+                                      "additionalProperties": false,
+                                      "properties": {
+                                        "localId": {
+                                          "type": "string"
+                                        },
+                                        "status": {
+                                          "const": "accepted",
+                                          "type": "string"
+                                        }
+                                      },
+                                      "required": [
+                                        "status",
+                                        "localId"
+                                      ],
+                                      "type": "object"
+                                    },
+                                    {
+                                      "additionalProperties": false,
+                                      "properties": {
+                                        "localId": {
+                                          "type": "string"
+                                        },
+                                        "status": {
+                                          "const": "alreadyAccepted",
+                                          "type": "string"
+                                        }
+                                      },
+                                      "required": [
+                                        "status",
+                                        "localId"
+                                      ],
+                                      "type": "object"
+                                    }
+                                  ]
+                                },
+                                "code": {
+                                  "const": "resume_failed",
+                                  "type": "string"
+                                },
+                                "errorDetail": {
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "agentIsolationRefusal": {
+                                      "additionalProperties": false,
+                                      "properties": {
+                                        "nativeFailure": {
+                                          "additionalProperties": false,
+                                          "properties": {
+                                            "kind": {
+                                              "enum": [
+                                                "native_protocol_invalid",
+                                                "native_check_unavailable",
+                                                "native_check_unsupported",
+                                                "native_effect_failed"
+                                              ],
+                                              "type": "string"
+                                            },
+                                            "phase": {
+                                              "enum": [
+                                                "check",
+                                                "apply"
+                                              ],
+                                              "type": "string"
+                                            },
+                                            "reason": {
+                                              "enum": [
+                                                "required_fact_unavailable",
+                                                "needs_admin_to_check",
+                                                "package_manager_busy",
+                                                "foreign_effect_conflict",
+                                                "private_scope_unenforceable",
+                                                "remove_unsupported",
+                                                "plan_changed",
+                                                "validation_failed",
+                                                "native_effect_failed",
+                                                "admin_access_unavailable"
+                                              ],
+                                              "type": "string"
+                                            }
+                                          },
+                                          "required": [
+                                            "kind"
+                                          ],
+                                          "type": "object"
+                                        },
+                                        "operationErrorCode": {
+                                          "const": "machine_setup_operation_unavailable",
+                                          "type": "string"
+                                        },
+                                        "phase": {
+                                          "enum": [
+                                            "native_identity_binding",
+                                            "native_execution_preparation"
+                                          ],
+                                          "type": "string"
+                                        },
+                                        "probeFailure": {
+                                          "anyOf": [
+                                            {
+                                              "additionalProperties": false,
+                                              "properties": {
+                                                "check": {
+                                                  "enum": [
+                                                    "uid",
+                                                    "home",
+                                                    "user",
+                                                    "groups",
+                                                    "umask",
+                                                    "managed_payload",
+                                                    "agent_payload",
+                                                    "root_sudo",
+                                                    "docker_socket",
+                                                    "private_path",
+                                                    "mcp_authentication",
+                                                    "mcp_anonymous",
+                                                    "workspace",
+                                                    "launch",
+                                                    "output"
+                                                  ],
+                                                  "type": "string"
+                                                },
+                                                "exitCode": {
+                                                  "maximum": 9007199254740991,
+                                                  "minimum": 0,
+                                                  "type": "integer"
+                                                },
+                                                "identity": {
+                                                  "additionalProperties": false,
+                                                  "properties": {
+                                                    "cwd": {
+                                                      "minLength": 1,
+                                                      "type": "string"
+                                                    },
+                                                    "gid": {
+                                                      "exclusiveMinimum": 0,
+                                                      "maximum": 9007199254740991,
+                                                      "type": "integer"
+                                                    },
+                                                    "home": {
+                                                      "minLength": 1,
+                                                      "type": "string"
+                                                    },
+                                                    "uid": {
+                                                      "exclusiveMinimum": 0,
+                                                      "maximum": 9007199254740991,
+                                                      "type": "integer"
+                                                    },
+                                                    "username": {
+                                                      "minLength": 1,
+                                                      "type": "string"
+                                                    }
+                                                  },
+                                                  "required": [
+                                                    "username",
+                                                    "uid",
+                                                    "gid",
+                                                    "home",
+                                                    "cwd"
+                                                  ],
+                                                  "type": "object"
+                                                }
+                                              },
+                                              "required": [
+                                                "check",
+                                                "identity",
+                                                "exitCode"
+                                              ],
+                                              "type": "object"
+                                            },
+                                            {
+                                              "additionalProperties": false,
+                                              "properties": {
+                                                "check": {
+                                                  "enum": [
+                                                    "uid",
+                                                    "home",
+                                                    "user",
+                                                    "groups",
+                                                    "umask",
+                                                    "managed_payload",
+                                                    "agent_payload",
+                                                    "root_sudo",
+                                                    "docker_socket",
+                                                    "private_path",
+                                                    "mcp_authentication",
+                                                    "mcp_anonymous",
+                                                    "workspace",
+                                                    "launch",
+                                                    "output"
+                                                  ],
+                                                  "type": "string"
+                                                },
+                                                "identity": {
+                                                  "additionalProperties": false,
+                                                  "properties": {
+                                                    "cwd": {
+                                                      "minLength": 1,
+                                                      "type": "string"
+                                                    },
+                                                    "gid": {
+                                                      "exclusiveMinimum": 0,
+                                                      "maximum": 9007199254740991,
+                                                      "type": "integer"
+                                                    },
+                                                    "home": {
+                                                      "minLength": 1,
+                                                      "type": "string"
+                                                    },
+                                                    "uid": {
+                                                      "exclusiveMinimum": 0,
+                                                      "maximum": 9007199254740991,
+                                                      "type": "integer"
+                                                    },
+                                                    "username": {
+                                                      "minLength": 1,
+                                                      "type": "string"
+                                                    }
+                                                  },
+                                                  "required": [
+                                                    "username",
+                                                    "uid",
+                                                    "gid",
+                                                    "home",
+                                                    "cwd"
+                                                  ],
+                                                  "type": "object"
+                                                },
+                                                "transportError": {
+                                                  "enum": [
+                                                    "spawn_failed",
+                                                    "signalled",
+                                                    "execution_failed"
+                                                  ],
+                                                  "type": "string"
+                                                }
+                                              },
+                                              "required": [
+                                                "check",
+                                                "identity",
+                                                "transportError"
+                                              ],
+                                              "type": "object"
+                                            }
+                                          ]
+                                        },
+                                        "readinessCode": {
+                                          "enum": [
+                                            "unsupported_platform",
+                                            "sudo_unavailable",
+                                            "sudoers_invalid",
+                                            "agent_user_missing",
+                                            "workspace_not_ready",
+                                            "payload_not_accessible",
+                                            "workspace_ancestor_not_traversable",
+                                            "agent_launch_kind_unavailable",
+                                            "provisioning_unavailable",
+                                            "launch_probe_failed",
+                                            "mcp_socket_access_unavailable",
+                                            "local_admin_api_accessible",
+                                            "metadata_unavailable"
+                                          ],
+                                          "type": "string"
+                                        },
+                                        "reason": {
+                                          "anyOf": [
+                                            {
+                                              "const": "member_setup_required",
+                                              "type": "string"
+                                            },
+                                            {
+                                              "enum": [
+                                                "unsupported_platform",
+                                                "sudo_unavailable",
+                                                "sudoers_invalid",
+                                                "agent_user_missing",
+                                                "workspace_not_ready",
+                                                "payload_not_accessible",
+                                                "workspace_ancestor_not_traversable",
+                                                "agent_launch_kind_unavailable",
+                                                "provisioning_unavailable",
+                                                "launch_probe_failed",
+                                                "mcp_socket_access_unavailable",
+                                                "local_admin_api_accessible",
+                                                "metadata_unavailable"
+                                              ],
+                                              "type": "string"
+                                            }
+                                          ]
+                                        },
+                                        "reasonCode": {
+                                          "anyOf": [
+                                            {
+                                              "enum": [
+                                                "mode_none",
+                                                "not_preauthorized",
+                                                "denied",
+                                                "platform_unsupported",
+                                                "plan_stale",
+                                                "cancelled",
+                                                "managed_cli_unavailable"
+                                              ],
+                                              "type": "string"
+                                            },
+                                            {
+                                              "enum": [
+                                                "native_protocol_invalid",
+                                                "native_check_unavailable",
+                                                "native_check_unsupported",
+                                                "native_effect_failed"
+                                              ],
+                                              "type": "string"
+                                            }
+                                          ]
+                                        },
+                                        "remedy": {
+                                          "oneOf": [
+                                            {
+                                              "additionalProperties": false,
+                                              "properties": {
+                                                "kind": {
+                                                  "const": "ask_machine_manager",
+                                                  "type": "string"
+                                                }
+                                              },
+                                              "required": [
+                                                "kind"
+                                              ],
+                                              "type": "object"
+                                            },
+                                            {
+                                              "additionalProperties": false,
+                                              "properties": {
+                                                "kind": {
+                                                  "const": "open_machine_security",
+                                                  "type": "string"
+                                                },
+                                                "target": {
+                                                  "additionalProperties": false,
+                                                  "properties": {
+                                                    "machineId": {
+                                                      "minLength": 1,
+                                                      "type": "string"
+                                                    },
+                                                    "serverId": {
+                                                      "minLength": 1,
+                                                      "type": "string"
+                                                    }
+                                                  },
+                                                  "required": [
+                                                    "serverId",
+                                                    "machineId"
+                                                  ],
+                                                  "type": "object"
+                                                }
+                                              },
+                                              "required": [
+                                                "kind",
+                                                "target"
+                                              ],
+                                              "type": "object"
+                                            }
+                                          ]
+                                        }
+                                      },
+                                      "required": [
+                                        "reason",
+                                        "phase"
+                                      ],
+                                      "type": "object"
+                                    },
+                                    "childExit": {
+                                      "additionalProperties": false,
+                                      "properties": {
+                                        "cause": {
+                                          "additionalProperties": false,
+                                          "properties": {
+                                            "kind": {
+                                              "const": "module_not_found",
+                                              "type": "string"
+                                            },
+                                            "specifierBasename": {
+                                              "pattern": "^[^/\\\\\\u0000-\\u001f\\u007f]+$",
+                                              "type": "string"
+                                            }
+                                          },
+                                          "required": [
+                                            "kind",
+                                            "specifierBasename"
+                                          ],
+                                          "type": "object"
+                                        },
+                                        "code": {
+                                          "anyOf": [
+                                            {
+                                              "maximum": 9007199254740991,
+                                              "minimum": -9007199254740991,
+                                              "type": "integer"
+                                            },
+                                            {
+                                              "type": "null"
+                                            }
+                                          ]
+                                        },
+                                        "signal": {
+                                          "anyOf": [
+                                            {
+                                              "pattern": "^SIG[A-Z0-9]+$",
+                                              "type": "string"
+                                            },
+                                            {
+                                              "type": "null"
+                                            }
+                                          ]
+                                        },
+                                        "stderrHead": {
+                                          "type": "string"
+                                        }
+                                      },
+                                      "required": [
+                                        "code",
+                                        "signal"
+                                      ],
+                                      "type": "object"
+                                    },
+                                    "code": {
+                                      "pattern": "^[A-Za-z][A-Za-z0-9_.:-]*$",
+                                      "type": "string"
+                                    },
+                                    "connectedAccountPool": {
+                                      "additionalProperties": false,
+                                      "properties": {
+                                        "excluded": {
+                                          "items": {
+                                            "additionalProperties": false,
+                                            "properties": {
+                                              "profileId": {
+                                                "maxLength": 256,
+                                                "minLength": 1,
+                                                "pattern": "^(?!\\s)[\\s\\S]*\\S$(?![\\s\\S])",
+                                                "type": "string"
+                                              },
+                                              "reason": {
+                                                "enum": [
+                                                  "current_active",
+                                                  "disabled",
+                                                  "cooldown",
+                                                  "quota_exhausted",
+                                                  "capacity_limited",
+                                                  "auth_invalid",
+                                                  "credential_unavailable",
+                                                  "plan_unavailable",
+                                                  "validation_blocked",
+                                                  "policy_wait_until_reset",
+                                                  "quota_probe_deferred",
+                                                  "quota_evidence_unavailable",
+                                                  "not_meaningfully_better"
+                                                ],
+                                                "type": "string"
+                                              },
+                                              "retryAtMs": {
+                                                "anyOf": [
+                                                  {
+                                                    "type": "number"
+                                                  },
+                                                  {
+                                                    "type": "null"
+                                                  }
+                                                ]
+                                              }
+                                            },
+                                            "required": [
+                                              "profileId",
+                                              "reason"
+                                            ],
+                                            "type": "object"
+                                          },
+                                          "type": "array"
+                                        },
+                                        "serviceId": {
+                                          "minLength": 1,
+                                          "type": "string"
+                                        }
+                                      },
+                                      "required": [
+                                        "serviceId",
+                                        "excluded"
+                                      ],
+                                      "type": "object"
+                                    },
+                                    "connectionPhase": {
+                                      "enum": [
+                                        "reachability-start",
+                                        "reachability-wait",
+                                        "socket-connect"
+                                      ],
+                                      "type": "string"
+                                    },
+                                    "currentnessFailure": {
+                                      "additionalProperties": false,
+                                      "properties": {
+                                        "reason": {
+                                          "enum": [
+                                            "timeout",
+                                            "network",
+                                            "http_error",
+                                            "invalid_response"
+                                          ],
+                                          "type": "string"
+                                        },
+                                        "retryable": {
+                                          "type": "boolean"
+                                        },
+                                        "statusCode": {
+                                          "maximum": 599,
+                                          "minimum": 100,
+                                          "type": "integer"
+                                        }
+                                      },
+                                      "required": [
+                                        "reason",
+                                        "retryable"
+                                      ],
+                                      "type": "object"
+                                    },
+                                    "failureCause": {
+                                      "additionalProperties": false,
+                                      "properties": {
+                                        "code": {
+                                          "maxLength": 256,
+                                          "minLength": 1,
+                                          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+                                          "type": "string"
+                                        },
+                                        "connectedServicesDefault": {
+                                          "additionalProperties": false,
+                                          "properties": {
+                                            "catalogReason": {
+                                              "enum": [
+                                                "account-not-found",
+                                                "account-inconsistent",
+                                                "account-mode-mismatch",
+                                                "encryption-material-unavailable",
+                                                "invalid-stored-content",
+                                                "invalid-reference",
+                                                "unauthorized",
+                                                "forbidden",
+                                                "unsupported",
+                                                "unreachable",
+                                                "database_transaction_conflict_exhausted",
+                                                "scope-retired",
+                                                "cancelled",
+                                                "source-version-conflict",
+                                                "authority-not-confirmed"
+                                              ],
+                                              "type": "string"
+                                            },
+                                            "phase": {
+                                              "const": "purpose_binding",
+                                              "type": "string"
+                                            },
+                                            "reason": {
+                                              "enum": [
+                                                "connected_services_default_settings_invalid",
+                                                "connected_account_purpose_catalog_unavailable"
+                                              ],
+                                              "type": "string"
+                                            },
+                                            "source": {
+                                              "const": "account_default",
+                                              "type": "string"
+                                            },
+                                            "v": {
+                                              "const": 1,
+                                              "type": "number"
+                                            }
+                                          },
+                                          "required": [
+                                            "v",
+                                            "source",
+                                            "reason",
+                                            "phase"
+                                          ],
+                                          "type": "object"
+                                        },
+                                        "failureReason": {
+                                          "enum": [
+                                            "usage_limit",
+                                            "rate_limit",
+                                            "temporary_throttle",
+                                            "capacity",
+                                            "auth_expired",
+                                            "account_changed",
+                                            "refresh_failed",
+                                            "permission_denied",
+                                            "plan",
+                                            "unknown",
+                                            "authentication_required",
+                                            "workspace_routing_unauthorized",
+                                            "context_window_exceeded",
+                                            "auth_account_changed",
+                                            "unclassified_provider_error",
+                                            "model_selection_required"
+                                          ],
+                                          "type": "string"
+                                        },
+                                        "httpStatus": {
+                                          "maximum": 599,
+                                          "minimum": 100,
+                                          "type": "integer"
+                                        },
+                                        "phase": {
+                                          "enum": [
+                                            "authentication",
+                                            "client_start",
+                                            "thread_open",
+                                            "turn_start",
+                                            "turn"
+                                          ],
+                                          "type": "string"
+                                        },
+                                        "preparationCause": {
+                                          "additionalProperties": false,
+                                          "properties": {
+                                            "code": {
+                                              "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,127}$",
+                                              "type": "string"
+                                            },
+                                            "requestId": {
+                                              "type": "string"
+                                            },
+                                            "stage": {
+                                              "enum": [
+                                                "dispatch",
+                                                "runner_authority",
+                                                "invocation_context",
+                                                "registry_acquisition",
+                                                "current_registration",
+                                                "turn_authority",
+                                                "managed_provider",
+                                                "retained_agent_services",
+                                                "invocation_projection"
+                                              ],
+                                              "type": "string"
+                                            }
+                                          },
+                                          "required": [
+                                            "code",
+                                            "stage"
+                                          ],
+                                          "type": "object"
+                                        },
+                                        "providerErrorCode": {
+                                          "anyOf": [
+                                            {
+                                              "enum": [
+                                                "ContextWindowExceeded",
+                                                "UsageLimitExceeded",
+                                                "Unauthorized",
+                                                "Other",
+                                                "HttpConnectionFailed",
+                                                "model_not_found"
+                                              ],
+                                              "type": "string"
+                                            },
+                                            {
+                                              "maximum": 9007199254740991,
+                                              "minimum": -9007199254740991,
+                                              "type": "integer"
+                                            }
+                                          ]
+                                        },
+                                        "providerErrorMessage": {
+                                          "minLength": 1,
+                                          "type": "string"
+                                        },
+                                        "reason": {
+                                          "enum": [
+                                            "refresh_bridge_unavailable",
+                                            "provider_account_identity_unavailable",
+                                            "experimental_api_unavailable",
+                                            "workspace_incompatible",
+                                            "credential_family_mismatch",
+                                            "live_hot_auth_failed"
+                                          ],
+                                          "type": "string"
+                                        },
+                                        "requestId": {
+                                          "type": "string"
+                                        },
+                                        "retryable": {
+                                          "type": "boolean"
+                                        }
+                                      },
+                                      "required": [
+                                        "phase",
+                                        "failureReason"
+                                      ],
+                                      "type": "object"
+                                    },
+                                    "kind": {
+                                      "const": "launch_error",
+                                      "type": "string"
+                                    },
+                                    "message": {
+                                      "type": "string"
+                                    },
+                                    "pluginCodeRefusal": {
+                                      "additionalProperties": false,
+                                      "properties": {
+                                        "remedy": {
+                                          "oneOf": [
+                                            {
+                                              "additionalProperties": false,
+                                              "properties": {
+                                                "kind": {
+                                                  "const": "ask_machine_manager",
+                                                  "type": "string"
+                                                }
+                                              },
+                                              "required": [
+                                                "kind"
+                                              ],
+                                              "type": "object"
+                                            },
+                                            {
+                                              "additionalProperties": false,
+                                              "properties": {
+                                                "kind": {
+                                                  "const": "open_machine_security",
+                                                  "type": "string"
+                                                },
+                                                "target": {
+                                                  "additionalProperties": false,
+                                                  "properties": {
+                                                    "machineId": {
+                                                      "minLength": 1,
+                                                      "type": "string"
+                                                    },
+                                                    "serverId": {
+                                                      "minLength": 1,
+                                                      "type": "string"
+                                                    }
+                                                  },
+                                                  "required": [
+                                                    "serverId",
+                                                    "machineId"
+                                                  ],
+                                                  "type": "object"
+                                                }
+                                              },
+                                              "required": [
+                                                "kind",
+                                                "target"
+                                              ],
+                                              "type": "object"
+                                            }
+                                          ]
+                                        }
+                                      },
+                                      "required": [
+                                        "remedy"
+                                      ],
+                                      "type": "object"
+                                    },
+                                    "profileRefusal": {
+                                      "additionalProperties": false,
+                                      "properties": {
+                                        "catalogStatus": {
+                                          "enum": [
+                                            "loading",
+                                            "partial",
+                                            "unavailable"
+                                          ],
+                                          "type": "string"
+                                        },
+                                        "profileId": {
+                                          "minLength": 1,
+                                          "type": "string"
+                                        },
+                                        "reason": {
+                                          "enum": [
+                                            "profile_catalog_unavailable",
+                                            "profile_overlay_mismatch",
+                                            "profile_resume_unavailable",
+                                            "profile_target_incompatible"
+                                          ],
+                                          "type": "string"
+                                        }
+                                      },
+                                      "required": [
+                                        "profileId",
+                                        "reason"
+                                      ],
+                                      "type": "object"
+                                    },
+                                    "rpcErrorCode": {
+                                      "enum": [
+                                        "MACHINE_RPC_TIMEOUT",
+                                        "RPC_OUTCOME_UNKNOWN",
+                                        "RPC_TRANSPORT_UNAVAILABLE"
+                                      ],
+                                      "type": "string"
+                                    },
+                                    "spawnFailure": {
+                                      "additionalProperties": false,
+                                      "properties": {
+                                        "cwd": {
+                                          "type": "string"
+                                        },
+                                        "errno": {
+                                          "pattern": "^E[A-Z0-9_]+$",
+                                          "type": "string"
+                                        },
+                                        "nativeErrno": {
+                                          "maximum": 9007199254740991,
+                                          "minimum": -9007199254740991,
+                                          "type": "integer"
+                                        },
+                                        "reason": {
+                                          "enum": [
+                                            "too_many_open_files",
+                                            "no_ptys",
+                                            "process_limit",
+                                            "out_of_memory",
+                                            "other"
+                                          ],
+                                          "type": "string"
+                                        }
+                                      },
+                                      "required": [
+                                        "reason"
+                                      ],
+                                      "type": "object"
+                                    },
+                                    "subtype": {
+                                      "enum": [
+                                        "writer_active",
+                                        "no_closure",
+                                        "closure_changed",
+                                        "check_failed"
+                                      ],
+                                      "type": "string"
+                                    },
+                                    "uxDiagnostic": {
+                                      "additionalProperties": false,
+                                      "properties": {
+                                        "agentId": {
+                                          "minLength": 1,
+                                          "type": "string"
+                                        },
+                                        "code": {
+                                          "enum": [
+                                            "provider_session_state_unavailable_for_resume",
+                                            "connected_service_materialization_identity_missing",
+                                            "resume_reachability_inputs_missing",
+                                            "metadata_update_failed",
+                                            "no_eligible_group_member",
+                                            "recovery_retry_scheduled",
+                                            "recovery_dead_lettered",
+                                            "provider_account_adoption_mismatch",
+                                            "post_switch_verification_failed",
+                                            "connected_service_credential_reconnect_required",
+                                            "connected_service_credential_refresh_unavailable",
+                                            "connected_service_credential_scope_missing",
+                                            "connected_service_native_auth_materialization_failed",
+                                            "connected_service_credential_mode_unsupported"
+                                          ],
+                                          "type": "string"
+                                        },
+                                        "diagnostics": {
+                                          "additionalProperties": {
+                                            "anyOf": [
+                                              {
+                                                "maxLength": 512,
+                                                "type": "string"
+                                              },
+                                              {
+                                                "type": "number"
+                                              },
+                                              {
+                                                "type": "boolean"
+                                              },
+                                              {
+                                                "type": "null"
+                                              }
+                                            ]
+                                          },
+                                          "propertyNames": {
+                                            "maxLength": 64,
+                                            "minLength": 1,
+                                            "type": "string"
+                                          },
+                                          "type": "object"
+                                        },
+                                        "failurePhase": {
+                                          "enum": [
+                                            "session_lookup",
+                                            "agent_validation",
+                                            "normalization",
+                                            "continuity",
+                                            "materialization",
+                                            "metadata",
+                                            "restart",
+                                            "hot_apply",
+                                            "rollback",
+                                            "post_switch_recovery",
+                                            "post_switch_verification",
+                                            "runtime_auth_recovery"
+                                          ],
+                                          "type": "string"
+                                        },
+                                        "groupId": {
+                                          "maxLength": 64,
+                                          "minLength": 1,
+                                          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$",
+                                          "type": "string"
+                                        },
+                                        "profileId": {
+                                          "maxLength": 64,
+                                          "minLength": 1,
+                                          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_:-]{0,63}$",
+                                          "type": "string"
+                                        },
+                                        "retryable": {
+                                          "type": "boolean"
+                                        },
+                                        "serviceId": {
+                                          "type": "string"
+                                        },
+                                        "source": {
+                                          "enum": [
+                                            "spawn_resume",
+                                            "new_session",
+                                            "inactive_resume",
+                                            "manual_auth_switch",
+                                            "runtime_auth_recovery",
+                                            "usage_limit_recovery",
+                                            "transcript_switch_attempt",
+                                            "session_view"
+                                          ],
+                                          "type": "string"
+                                        },
+                                        "suggestedActions": {
+                                          "default": [],
+                                          "items": {
+                                            "enum": [
+                                              "retry",
+                                              "start_fresh_under_selected_account",
+                                              "resume_current_account",
+                                              "open_connected_accounts",
+                                              "reconnect_profile",
+                                              "enable_state_sharing",
+                                              "view_latest_fork",
+                                              "view_native_fork",
+                                              "dismiss"
+                                            ],
+                                            "type": "string"
+                                          },
+                                          "type": "array"
+                                        }
+                                      },
+                                      "required": [
+                                        "code",
+                                        "failurePhase",
+                                        "source",
+                                        "retryable"
+                                      ],
+                                      "type": "object"
+                                    }
+                                  },
+                                  "required": [
+                                    "kind",
+                                    "code",
+                                    "message"
+                                  ],
+                                  "type": "object"
+                                },
+                                "localId": {
+                                  "type": "string"
+                                },
+                                "status": {
+                                  "const": "failed",
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "status",
+                                "localId",
+                                "code",
+                                "admissionResult"
+                              ],
+                              "type": "object"
+                            },
+                            {
+                              "additionalProperties": false,
+                              "properties": {
                                 "code": {
                                   "const": "session_input_turn_cancelled",
                                   "type": "string"
@@ -47140,6 +48234,1005 @@
                                               {
                                                 "additionalProperties": false,
                                                 "properties": {
+                                                  "admissionResult": {
+                                                    "anyOf": [
+                                                      {
+                                                        "additionalProperties": false,
+                                                        "properties": {
+                                                          "localId": {
+                                                            "type": "string"
+                                                          },
+                                                          "status": {
+                                                            "const": "accepted",
+                                                            "type": "string"
+                                                          }
+                                                        },
+                                                        "required": [
+                                                          "status",
+                                                          "localId"
+                                                        ],
+                                                        "type": "object"
+                                                      },
+                                                      {
+                                                        "additionalProperties": false,
+                                                        "properties": {
+                                                          "localId": {
+                                                            "type": "string"
+                                                          },
+                                                          "status": {
+                                                            "const": "alreadyAccepted",
+                                                            "type": "string"
+                                                          }
+                                                        },
+                                                        "required": [
+                                                          "status",
+                                                          "localId"
+                                                        ],
+                                                        "type": "object"
+                                                      }
+                                                    ]
+                                                  },
+                                                  "code": {
+                                                    "const": "resume_failed",
+                                                    "type": "string"
+                                                  },
+                                                  "errorDetail": {
+                                                    "additionalProperties": false,
+                                                    "properties": {
+                                                      "agentIsolationRefusal": {
+                                                        "additionalProperties": false,
+                                                        "properties": {
+                                                          "nativeFailure": {
+                                                            "additionalProperties": false,
+                                                            "properties": {
+                                                              "kind": {
+                                                                "enum": [
+                                                                  "native_protocol_invalid",
+                                                                  "native_check_unavailable",
+                                                                  "native_check_unsupported",
+                                                                  "native_effect_failed"
+                                                                ],
+                                                                "type": "string"
+                                                              },
+                                                              "phase": {
+                                                                "enum": [
+                                                                  "check",
+                                                                  "apply"
+                                                                ],
+                                                                "type": "string"
+                                                              },
+                                                              "reason": {
+                                                                "enum": [
+                                                                  "required_fact_unavailable",
+                                                                  "needs_admin_to_check",
+                                                                  "package_manager_busy",
+                                                                  "foreign_effect_conflict",
+                                                                  "private_scope_unenforceable",
+                                                                  "remove_unsupported",
+                                                                  "plan_changed",
+                                                                  "validation_failed",
+                                                                  "native_effect_failed",
+                                                                  "admin_access_unavailable"
+                                                                ],
+                                                                "type": "string"
+                                                              }
+                                                            },
+                                                            "required": [
+                                                              "kind"
+                                                            ],
+                                                            "type": "object"
+                                                          },
+                                                          "operationErrorCode": {
+                                                            "const": "machine_setup_operation_unavailable",
+                                                            "type": "string"
+                                                          },
+                                                          "phase": {
+                                                            "enum": [
+                                                              "native_identity_binding",
+                                                              "native_execution_preparation"
+                                                            ],
+                                                            "type": "string"
+                                                          },
+                                                          "probeFailure": {
+                                                            "anyOf": [
+                                                              {
+                                                                "additionalProperties": false,
+                                                                "properties": {
+                                                                  "check": {
+                                                                    "enum": [
+                                                                      "uid",
+                                                                      "home",
+                                                                      "user",
+                                                                      "groups",
+                                                                      "umask",
+                                                                      "managed_payload",
+                                                                      "agent_payload",
+                                                                      "root_sudo",
+                                                                      "docker_socket",
+                                                                      "private_path",
+                                                                      "mcp_authentication",
+                                                                      "mcp_anonymous",
+                                                                      "workspace",
+                                                                      "launch",
+                                                                      "output"
+                                                                    ],
+                                                                    "type": "string"
+                                                                  },
+                                                                  "exitCode": {
+                                                                    "maximum": 9007199254740991,
+                                                                    "minimum": 0,
+                                                                    "type": "integer"
+                                                                  },
+                                                                  "identity": {
+                                                                    "additionalProperties": false,
+                                                                    "properties": {
+                                                                      "cwd": {
+                                                                        "minLength": 1,
+                                                                        "type": "string"
+                                                                      },
+                                                                      "gid": {
+                                                                        "exclusiveMinimum": 0,
+                                                                        "maximum": 9007199254740991,
+                                                                        "type": "integer"
+                                                                      },
+                                                                      "home": {
+                                                                        "minLength": 1,
+                                                                        "type": "string"
+                                                                      },
+                                                                      "uid": {
+                                                                        "exclusiveMinimum": 0,
+                                                                        "maximum": 9007199254740991,
+                                                                        "type": "integer"
+                                                                      },
+                                                                      "username": {
+                                                                        "minLength": 1,
+                                                                        "type": "string"
+                                                                      }
+                                                                    },
+                                                                    "required": [
+                                                                      "username",
+                                                                      "uid",
+                                                                      "gid",
+                                                                      "home",
+                                                                      "cwd"
+                                                                    ],
+                                                                    "type": "object"
+                                                                  }
+                                                                },
+                                                                "required": [
+                                                                  "check",
+                                                                  "identity",
+                                                                  "exitCode"
+                                                                ],
+                                                                "type": "object"
+                                                              },
+                                                              {
+                                                                "additionalProperties": false,
+                                                                "properties": {
+                                                                  "check": {
+                                                                    "enum": [
+                                                                      "uid",
+                                                                      "home",
+                                                                      "user",
+                                                                      "groups",
+                                                                      "umask",
+                                                                      "managed_payload",
+                                                                      "agent_payload",
+                                                                      "root_sudo",
+                                                                      "docker_socket",
+                                                                      "private_path",
+                                                                      "mcp_authentication",
+                                                                      "mcp_anonymous",
+                                                                      "workspace",
+                                                                      "launch",
+                                                                      "output"
+                                                                    ],
+                                                                    "type": "string"
+                                                                  },
+                                                                  "identity": {
+                                                                    "additionalProperties": false,
+                                                                    "properties": {
+                                                                      "cwd": {
+                                                                        "minLength": 1,
+                                                                        "type": "string"
+                                                                      },
+                                                                      "gid": {
+                                                                        "exclusiveMinimum": 0,
+                                                                        "maximum": 9007199254740991,
+                                                                        "type": "integer"
+                                                                      },
+                                                                      "home": {
+                                                                        "minLength": 1,
+                                                                        "type": "string"
+                                                                      },
+                                                                      "uid": {
+                                                                        "exclusiveMinimum": 0,
+                                                                        "maximum": 9007199254740991,
+                                                                        "type": "integer"
+                                                                      },
+                                                                      "username": {
+                                                                        "minLength": 1,
+                                                                        "type": "string"
+                                                                      }
+                                                                    },
+                                                                    "required": [
+                                                                      "username",
+                                                                      "uid",
+                                                                      "gid",
+                                                                      "home",
+                                                                      "cwd"
+                                                                    ],
+                                                                    "type": "object"
+                                                                  },
+                                                                  "transportError": {
+                                                                    "enum": [
+                                                                      "spawn_failed",
+                                                                      "signalled",
+                                                                      "execution_failed"
+                                                                    ],
+                                                                    "type": "string"
+                                                                  }
+                                                                },
+                                                                "required": [
+                                                                  "check",
+                                                                  "identity",
+                                                                  "transportError"
+                                                                ],
+                                                                "type": "object"
+                                                              }
+                                                            ]
+                                                          },
+                                                          "readinessCode": {
+                                                            "enum": [
+                                                              "unsupported_platform",
+                                                              "sudo_unavailable",
+                                                              "sudoers_invalid",
+                                                              "agent_user_missing",
+                                                              "workspace_not_ready",
+                                                              "payload_not_accessible",
+                                                              "workspace_ancestor_not_traversable",
+                                                              "agent_launch_kind_unavailable",
+                                                              "provisioning_unavailable",
+                                                              "launch_probe_failed",
+                                                              "mcp_socket_access_unavailable",
+                                                              "local_admin_api_accessible",
+                                                              "metadata_unavailable"
+                                                            ],
+                                                            "type": "string"
+                                                          },
+                                                          "reason": {
+                                                            "anyOf": [
+                                                              {
+                                                                "const": "member_setup_required",
+                                                                "type": "string"
+                                                              },
+                                                              {
+                                                                "enum": [
+                                                                  "unsupported_platform",
+                                                                  "sudo_unavailable",
+                                                                  "sudoers_invalid",
+                                                                  "agent_user_missing",
+                                                                  "workspace_not_ready",
+                                                                  "payload_not_accessible",
+                                                                  "workspace_ancestor_not_traversable",
+                                                                  "agent_launch_kind_unavailable",
+                                                                  "provisioning_unavailable",
+                                                                  "launch_probe_failed",
+                                                                  "mcp_socket_access_unavailable",
+                                                                  "local_admin_api_accessible",
+                                                                  "metadata_unavailable"
+                                                                ],
+                                                                "type": "string"
+                                                              }
+                                                            ]
+                                                          },
+                                                          "reasonCode": {
+                                                            "anyOf": [
+                                                              {
+                                                                "enum": [
+                                                                  "mode_none",
+                                                                  "not_preauthorized",
+                                                                  "denied",
+                                                                  "platform_unsupported",
+                                                                  "plan_stale",
+                                                                  "cancelled",
+                                                                  "managed_cli_unavailable"
+                                                                ],
+                                                                "type": "string"
+                                                              },
+                                                              {
+                                                                "enum": [
+                                                                  "native_protocol_invalid",
+                                                                  "native_check_unavailable",
+                                                                  "native_check_unsupported",
+                                                                  "native_effect_failed"
+                                                                ],
+                                                                "type": "string"
+                                                              }
+                                                            ]
+                                                          },
+                                                          "remedy": {
+                                                            "oneOf": [
+                                                              {
+                                                                "additionalProperties": false,
+                                                                "properties": {
+                                                                  "kind": {
+                                                                    "const": "ask_machine_manager",
+                                                                    "type": "string"
+                                                                  }
+                                                                },
+                                                                "required": [
+                                                                  "kind"
+                                                                ],
+                                                                "type": "object"
+                                                              },
+                                                              {
+                                                                "additionalProperties": false,
+                                                                "properties": {
+                                                                  "kind": {
+                                                                    "const": "open_machine_security",
+                                                                    "type": "string"
+                                                                  },
+                                                                  "target": {
+                                                                    "additionalProperties": false,
+                                                                    "properties": {
+                                                                      "machineId": {
+                                                                        "minLength": 1,
+                                                                        "type": "string"
+                                                                      },
+                                                                      "serverId": {
+                                                                        "minLength": 1,
+                                                                        "type": "string"
+                                                                      }
+                                                                    },
+                                                                    "required": [
+                                                                      "serverId",
+                                                                      "machineId"
+                                                                    ],
+                                                                    "type": "object"
+                                                                  }
+                                                                },
+                                                                "required": [
+                                                                  "kind",
+                                                                  "target"
+                                                                ],
+                                                                "type": "object"
+                                                              }
+                                                            ]
+                                                          }
+                                                        },
+                                                        "required": [
+                                                          "reason",
+                                                          "phase"
+                                                        ],
+                                                        "type": "object"
+                                                      },
+                                                      "childExit": {
+                                                        "additionalProperties": false,
+                                                        "properties": {
+                                                          "cause": {
+                                                            "additionalProperties": false,
+                                                            "properties": {
+                                                              "kind": {
+                                                                "const": "module_not_found",
+                                                                "type": "string"
+                                                              },
+                                                              "specifierBasename": {
+                                                                "pattern": "^[^/\\\\\\u0000-\\u001f\\u007f]+$",
+                                                                "type": "string"
+                                                              }
+                                                            },
+                                                            "required": [
+                                                              "kind",
+                                                              "specifierBasename"
+                                                            ],
+                                                            "type": "object"
+                                                          },
+                                                          "code": {
+                                                            "anyOf": [
+                                                              {
+                                                                "maximum": 9007199254740991,
+                                                                "minimum": -9007199254740991,
+                                                                "type": "integer"
+                                                              },
+                                                              {
+                                                                "type": "null"
+                                                              }
+                                                            ]
+                                                          },
+                                                          "signal": {
+                                                            "anyOf": [
+                                                              {
+                                                                "pattern": "^SIG[A-Z0-9]+$",
+                                                                "type": "string"
+                                                              },
+                                                              {
+                                                                "type": "null"
+                                                              }
+                                                            ]
+                                                          },
+                                                          "stderrHead": {
+                                                            "type": "string"
+                                                          }
+                                                        },
+                                                        "required": [
+                                                          "code",
+                                                          "signal"
+                                                        ],
+                                                        "type": "object"
+                                                      },
+                                                      "code": {
+                                                        "pattern": "^[A-Za-z][A-Za-z0-9_.:-]*$",
+                                                        "type": "string"
+                                                      },
+                                                      "connectedAccountPool": {
+                                                        "additionalProperties": false,
+                                                        "properties": {
+                                                          "excluded": {
+                                                            "items": {
+                                                              "additionalProperties": false,
+                                                              "properties": {
+                                                                "profileId": {
+                                                                  "maxLength": 256,
+                                                                  "minLength": 1,
+                                                                  "pattern": "^(?!\\s)[\\s\\S]*\\S$(?![\\s\\S])",
+                                                                  "type": "string"
+                                                                },
+                                                                "reason": {
+                                                                  "enum": [
+                                                                    "current_active",
+                                                                    "disabled",
+                                                                    "cooldown",
+                                                                    "quota_exhausted",
+                                                                    "capacity_limited",
+                                                                    "auth_invalid",
+                                                                    "credential_unavailable",
+                                                                    "plan_unavailable",
+                                                                    "validation_blocked",
+                                                                    "policy_wait_until_reset",
+                                                                    "quota_probe_deferred",
+                                                                    "quota_evidence_unavailable",
+                                                                    "not_meaningfully_better"
+                                                                  ],
+                                                                  "type": "string"
+                                                                },
+                                                                "retryAtMs": {
+                                                                  "anyOf": [
+                                                                    {
+                                                                      "type": "number"
+                                                                    },
+                                                                    {
+                                                                      "type": "null"
+                                                                    }
+                                                                  ]
+                                                                }
+                                                              },
+                                                              "required": [
+                                                                "profileId",
+                                                                "reason"
+                                                              ],
+                                                              "type": "object"
+                                                            },
+                                                            "type": "array"
+                                                          },
+                                                          "serviceId": {
+                                                            "minLength": 1,
+                                                            "type": "string"
+                                                          }
+                                                        },
+                                                        "required": [
+                                                          "serviceId",
+                                                          "excluded"
+                                                        ],
+                                                        "type": "object"
+                                                      },
+                                                      "connectionPhase": {
+                                                        "enum": [
+                                                          "reachability-start",
+                                                          "reachability-wait",
+                                                          "socket-connect"
+                                                        ],
+                                                        "type": "string"
+                                                      },
+                                                      "currentnessFailure": {
+                                                        "additionalProperties": false,
+                                                        "properties": {
+                                                          "reason": {
+                                                            "enum": [
+                                                              "timeout",
+                                                              "network",
+                                                              "http_error",
+                                                              "invalid_response"
+                                                            ],
+                                                            "type": "string"
+                                                          },
+                                                          "retryable": {
+                                                            "type": "boolean"
+                                                          },
+                                                          "statusCode": {
+                                                            "maximum": 599,
+                                                            "minimum": 100,
+                                                            "type": "integer"
+                                                          }
+                                                        },
+                                                        "required": [
+                                                          "reason",
+                                                          "retryable"
+                                                        ],
+                                                        "type": "object"
+                                                      },
+                                                      "failureCause": {
+                                                        "additionalProperties": false,
+                                                        "properties": {
+                                                          "code": {
+                                                            "maxLength": 256,
+                                                            "minLength": 1,
+                                                            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+                                                            "type": "string"
+                                                          },
+                                                          "connectedServicesDefault": {
+                                                            "additionalProperties": false,
+                                                            "properties": {
+                                                              "catalogReason": {
+                                                                "enum": [
+                                                                  "account-not-found",
+                                                                  "account-inconsistent",
+                                                                  "account-mode-mismatch",
+                                                                  "encryption-material-unavailable",
+                                                                  "invalid-stored-content",
+                                                                  "invalid-reference",
+                                                                  "unauthorized",
+                                                                  "forbidden",
+                                                                  "unsupported",
+                                                                  "unreachable",
+                                                                  "database_transaction_conflict_exhausted",
+                                                                  "scope-retired",
+                                                                  "cancelled",
+                                                                  "source-version-conflict",
+                                                                  "authority-not-confirmed"
+                                                                ],
+                                                                "type": "string"
+                                                              },
+                                                              "phase": {
+                                                                "const": "purpose_binding",
+                                                                "type": "string"
+                                                              },
+                                                              "reason": {
+                                                                "enum": [
+                                                                  "connected_services_default_settings_invalid",
+                                                                  "connected_account_purpose_catalog_unavailable"
+                                                                ],
+                                                                "type": "string"
+                                                              },
+                                                              "source": {
+                                                                "const": "account_default",
+                                                                "type": "string"
+                                                              },
+                                                              "v": {
+                                                                "const": 1,
+                                                                "type": "number"
+                                                              }
+                                                            },
+                                                            "required": [
+                                                              "v",
+                                                              "source",
+                                                              "reason",
+                                                              "phase"
+                                                            ],
+                                                            "type": "object"
+                                                          },
+                                                          "failureReason": {
+                                                            "enum": [
+                                                              "usage_limit",
+                                                              "rate_limit",
+                                                              "temporary_throttle",
+                                                              "capacity",
+                                                              "auth_expired",
+                                                              "account_changed",
+                                                              "refresh_failed",
+                                                              "permission_denied",
+                                                              "plan",
+                                                              "unknown",
+                                                              "authentication_required",
+                                                              "workspace_routing_unauthorized",
+                                                              "context_window_exceeded",
+                                                              "auth_account_changed",
+                                                              "unclassified_provider_error",
+                                                              "model_selection_required"
+                                                            ],
+                                                            "type": "string"
+                                                          },
+                                                          "httpStatus": {
+                                                            "maximum": 599,
+                                                            "minimum": 100,
+                                                            "type": "integer"
+                                                          },
+                                                          "phase": {
+                                                            "enum": [
+                                                              "authentication",
+                                                              "client_start",
+                                                              "thread_open",
+                                                              "turn_start",
+                                                              "turn"
+                                                            ],
+                                                            "type": "string"
+                                                          },
+                                                          "preparationCause": {
+                                                            "additionalProperties": false,
+                                                            "properties": {
+                                                              "code": {
+                                                                "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,127}$",
+                                                                "type": "string"
+                                                              },
+                                                              "requestId": {
+                                                                "type": "string"
+                                                              },
+                                                              "stage": {
+                                                                "enum": [
+                                                                  "dispatch",
+                                                                  "runner_authority",
+                                                                  "invocation_context",
+                                                                  "registry_acquisition",
+                                                                  "current_registration",
+                                                                  "turn_authority",
+                                                                  "managed_provider",
+                                                                  "retained_agent_services",
+                                                                  "invocation_projection"
+                                                                ],
+                                                                "type": "string"
+                                                              }
+                                                            },
+                                                            "required": [
+                                                              "code",
+                                                              "stage"
+                                                            ],
+                                                            "type": "object"
+                                                          },
+                                                          "providerErrorCode": {
+                                                            "anyOf": [
+                                                              {
+                                                                "enum": [
+                                                                  "ContextWindowExceeded",
+                                                                  "UsageLimitExceeded",
+                                                                  "Unauthorized",
+                                                                  "Other",
+                                                                  "HttpConnectionFailed",
+                                                                  "model_not_found"
+                                                                ],
+                                                                "type": "string"
+                                                              },
+                                                              {
+                                                                "maximum": 9007199254740991,
+                                                                "minimum": -9007199254740991,
+                                                                "type": "integer"
+                                                              }
+                                                            ]
+                                                          },
+                                                          "providerErrorMessage": {
+                                                            "minLength": 1,
+                                                            "type": "string"
+                                                          },
+                                                          "reason": {
+                                                            "enum": [
+                                                              "refresh_bridge_unavailable",
+                                                              "provider_account_identity_unavailable",
+                                                              "experimental_api_unavailable",
+                                                              "workspace_incompatible",
+                                                              "credential_family_mismatch",
+                                                              "live_hot_auth_failed"
+                                                            ],
+                                                            "type": "string"
+                                                          },
+                                                          "requestId": {
+                                                            "type": "string"
+                                                          },
+                                                          "retryable": {
+                                                            "type": "boolean"
+                                                          }
+                                                        },
+                                                        "required": [
+                                                          "phase",
+                                                          "failureReason"
+                                                        ],
+                                                        "type": "object"
+                                                      },
+                                                      "kind": {
+                                                        "const": "launch_error",
+                                                        "type": "string"
+                                                      },
+                                                      "message": {
+                                                        "type": "string"
+                                                      },
+                                                      "pluginCodeRefusal": {
+                                                        "additionalProperties": false,
+                                                        "properties": {
+                                                          "remedy": {
+                                                            "oneOf": [
+                                                              {
+                                                                "additionalProperties": false,
+                                                                "properties": {
+                                                                  "kind": {
+                                                                    "const": "ask_machine_manager",
+                                                                    "type": "string"
+                                                                  }
+                                                                },
+                                                                "required": [
+                                                                  "kind"
+                                                                ],
+                                                                "type": "object"
+                                                              },
+                                                              {
+                                                                "additionalProperties": false,
+                                                                "properties": {
+                                                                  "kind": {
+                                                                    "const": "open_machine_security",
+                                                                    "type": "string"
+                                                                  },
+                                                                  "target": {
+                                                                    "additionalProperties": false,
+                                                                    "properties": {
+                                                                      "machineId": {
+                                                                        "minLength": 1,
+                                                                        "type": "string"
+                                                                      },
+                                                                      "serverId": {
+                                                                        "minLength": 1,
+                                                                        "type": "string"
+                                                                      }
+                                                                    },
+                                                                    "required": [
+                                                                      "serverId",
+                                                                      "machineId"
+                                                                    ],
+                                                                    "type": "object"
+                                                                  }
+                                                                },
+                                                                "required": [
+                                                                  "kind",
+                                                                  "target"
+                                                                ],
+                                                                "type": "object"
+                                                              }
+                                                            ]
+                                                          }
+                                                        },
+                                                        "required": [
+                                                          "remedy"
+                                                        ],
+                                                        "type": "object"
+                                                      },
+                                                      "profileRefusal": {
+                                                        "additionalProperties": false,
+                                                        "properties": {
+                                                          "catalogStatus": {
+                                                            "enum": [
+                                                              "loading",
+                                                              "partial",
+                                                              "unavailable"
+                                                            ],
+                                                            "type": "string"
+                                                          },
+                                                          "profileId": {
+                                                            "minLength": 1,
+                                                            "type": "string"
+                                                          },
+                                                          "reason": {
+                                                            "enum": [
+                                                              "profile_catalog_unavailable",
+                                                              "profile_overlay_mismatch",
+                                                              "profile_resume_unavailable",
+                                                              "profile_target_incompatible"
+                                                            ],
+                                                            "type": "string"
+                                                          }
+                                                        },
+                                                        "required": [
+                                                          "profileId",
+                                                          "reason"
+                                                        ],
+                                                        "type": "object"
+                                                      },
+                                                      "rpcErrorCode": {
+                                                        "enum": [
+                                                          "MACHINE_RPC_TIMEOUT",
+                                                          "RPC_OUTCOME_UNKNOWN",
+                                                          "RPC_TRANSPORT_UNAVAILABLE"
+                                                        ],
+                                                        "type": "string"
+                                                      },
+                                                      "spawnFailure": {
+                                                        "additionalProperties": false,
+                                                        "properties": {
+                                                          "cwd": {
+                                                            "type": "string"
+                                                          },
+                                                          "errno": {
+                                                            "pattern": "^E[A-Z0-9_]+$",
+                                                            "type": "string"
+                                                          },
+                                                          "nativeErrno": {
+                                                            "maximum": 9007199254740991,
+                                                            "minimum": -9007199254740991,
+                                                            "type": "integer"
+                                                          },
+                                                          "reason": {
+                                                            "enum": [
+                                                              "too_many_open_files",
+                                                              "no_ptys",
+                                                              "process_limit",
+                                                              "out_of_memory",
+                                                              "other"
+                                                            ],
+                                                            "type": "string"
+                                                          }
+                                                        },
+                                                        "required": [
+                                                          "reason"
+                                                        ],
+                                                        "type": "object"
+                                                      },
+                                                      "subtype": {
+                                                        "enum": [
+                                                          "writer_active",
+                                                          "no_closure",
+                                                          "closure_changed",
+                                                          "check_failed"
+                                                        ],
+                                                        "type": "string"
+                                                      },
+                                                      "uxDiagnostic": {
+                                                        "additionalProperties": false,
+                                                        "properties": {
+                                                          "agentId": {
+                                                            "minLength": 1,
+                                                            "type": "string"
+                                                          },
+                                                          "code": {
+                                                            "enum": [
+                                                              "provider_session_state_unavailable_for_resume",
+                                                              "connected_service_materialization_identity_missing",
+                                                              "resume_reachability_inputs_missing",
+                                                              "metadata_update_failed",
+                                                              "no_eligible_group_member",
+                                                              "recovery_retry_scheduled",
+                                                              "recovery_dead_lettered",
+                                                              "provider_account_adoption_mismatch",
+                                                              "post_switch_verification_failed",
+                                                              "connected_service_credential_reconnect_required",
+                                                              "connected_service_credential_refresh_unavailable",
+                                                              "connected_service_credential_scope_missing",
+                                                              "connected_service_native_auth_materialization_failed",
+                                                              "connected_service_credential_mode_unsupported"
+                                                            ],
+                                                            "type": "string"
+                                                          },
+                                                          "diagnostics": {
+                                                            "additionalProperties": {
+                                                              "anyOf": [
+                                                                {
+                                                                  "maxLength": 512,
+                                                                  "type": "string"
+                                                                },
+                                                                {
+                                                                  "type": "number"
+                                                                },
+                                                                {
+                                                                  "type": "boolean"
+                                                                },
+                                                                {
+                                                                  "type": "null"
+                                                                }
+                                                              ]
+                                                            },
+                                                            "propertyNames": {
+                                                              "maxLength": 64,
+                                                              "minLength": 1,
+                                                              "type": "string"
+                                                            },
+                                                            "type": "object"
+                                                          },
+                                                          "failurePhase": {
+                                                            "enum": [
+                                                              "session_lookup",
+                                                              "agent_validation",
+                                                              "normalization",
+                                                              "continuity",
+                                                              "materialization",
+                                                              "metadata",
+                                                              "restart",
+                                                              "hot_apply",
+                                                              "rollback",
+                                                              "post_switch_recovery",
+                                                              "post_switch_verification",
+                                                              "runtime_auth_recovery"
+                                                            ],
+                                                            "type": "string"
+                                                          },
+                                                          "groupId": {
+                                                            "maxLength": 64,
+                                                            "minLength": 1,
+                                                            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$",
+                                                            "type": "string"
+                                                          },
+                                                          "profileId": {
+                                                            "maxLength": 64,
+                                                            "minLength": 1,
+                                                            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_:-]{0,63}$",
+                                                            "type": "string"
+                                                          },
+                                                          "retryable": {
+                                                            "type": "boolean"
+                                                          },
+                                                          "serviceId": {
+                                                            "type": "string"
+                                                          },
+                                                          "source": {
+                                                            "enum": [
+                                                              "spawn_resume",
+                                                              "new_session",
+                                                              "inactive_resume",
+                                                              "manual_auth_switch",
+                                                              "runtime_auth_recovery",
+                                                              "usage_limit_recovery",
+                                                              "transcript_switch_attempt",
+                                                              "session_view"
+                                                            ],
+                                                            "type": "string"
+                                                          },
+                                                          "suggestedActions": {
+                                                            "default": [],
+                                                            "items": {
+                                                              "enum": [
+                                                                "retry",
+                                                                "start_fresh_under_selected_account",
+                                                                "resume_current_account",
+                                                                "open_connected_accounts",
+                                                                "reconnect_profile",
+                                                                "enable_state_sharing",
+                                                                "view_latest_fork",
+                                                                "view_native_fork",
+                                                                "dismiss"
+                                                              ],
+                                                              "type": "string"
+                                                            },
+                                                            "type": "array"
+                                                          }
+                                                        },
+                                                        "required": [
+                                                          "code",
+                                                          "failurePhase",
+                                                          "source",
+                                                          "retryable"
+                                                        ],
+                                                        "type": "object"
+                                                      }
+                                                    },
+                                                    "required": [
+                                                      "kind",
+                                                      "code",
+                                                      "message"
+                                                    ],
+                                                    "type": "object"
+                                                  },
+                                                  "localId": {
+                                                    "type": "string"
+                                                  },
+                                                  "status": {
+                                                    "const": "failed",
+                                                    "type": "string"
+                                                  }
+                                                },
+                                                "required": [
+                                                  "status",
+                                                  "localId",
+                                                  "code",
+                                                  "admissionResult"
+                                                ],
+                                                "type": "object"
+                                              },
+                                              {
+                                                "additionalProperties": false,
+                                                "properties": {
                                                   "code": {
                                                     "const": "session_input_turn_cancelled",
                                                     "type": "string"
@@ -47525,6 +49618,7 @@
                                                           "connectedServices.accounts.default.set",
                                                           "connectedServices.accounts.purposeDefault.set",
                                                           "connectedServices.purposes.default.set",
+                                                          "connectedServices.pools.get",
                                                           "connectedServices.pools.create",
                                                           "connectedServices.pools.patch",
                                                           "connectedServices.pools.delete",
@@ -47543,8 +49637,6 @@
                                                           "connectedServices.labels.set",
                                                           "connectedServices.labels.reset",
                                                           "connectedServices.acknowledgements.reset",
-                                                          "connectedServices.disclosure.set",
-                                                          "connectedServices.disclosure.reset",
                                                           "usage.sources.discover",
                                                           "usage.sources.get",
                                                           "usage.sources.dismiss",
@@ -48352,6 +50444,10 @@
                                                           "bugreport.collectDiagnostics",
                                                           "bugreport.getLogTail",
                                                           "bugreport.uploadArtifact",
+                                                          "browser.profile.list",
+                                                          "browser.profile.create",
+                                                          "browser.profile.select",
+                                                          "browser.profile.delete",
                                                           "browser.extensions.list",
                                                           "browser.extensions.install",
                                                           "browser.extensions.update",
@@ -48841,7 +50937,8 @@
                                                           "secrets.shared.grants.set",
                                                           "secrets.shared.update",
                                                           "secrets.shared.delete",
-                                                          "secrets.shared.reveal"
+                                                          "secrets.shared.reveal",
+                                                          "secrets.shared.repair"
                                                         ],
                                                         "type": "string"
                                                       },

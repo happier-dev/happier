@@ -39,6 +39,9 @@ export type ApprovalPresentationContext = Readonly<{
   formatDataBytes?: (bytes: number, options: Readonly<{ kind: 'memory' | 'storage' }>) => string;
   /** Available RAM from the resource-summary owner, scoped to the reviewed Machine. */
   machineMemory?: Readonly<{ machineId: string; availableBytes: number | null; totalBytes: number | null }>;
+  /** Channels' readable destination for this exact reply; display only, never executable routing. */
+  discussionReplyDestination?: Readonly<{ discussionId: string; messageId: string;
+    connectionName: string | null; conversationName: string | null }>;
   /** Localized presentation of the copy's already materialized source policy. */
   formatSessionVisualCopySummary?: (input: SessionVisualCopyApprovalSummaryInput) => string;
 }>;

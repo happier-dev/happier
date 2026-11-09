@@ -76,6 +76,27 @@ it('reads ceiling decision context in both approval anatomies without borrowing 
     }
 });
 
+it('keeps an unreadable reply destination visible in both approval anatomies without exposing routing ids', async () => {
+    const request = ApprovalRequestV2Schema.parse({ v: 2, status: 'open', createdAtMs: 1, updatedAtMs: 1,
+        createdBy: { surface: 'cli' }, actionId: 'discussion.reply', summary: 'Reply in a discussion',
+        actionArgs: { discussionId: 'opaque-discussion', replyTarget: { kind: 'message', messageId: 'opaque-message' },
+            content: { v: 1, parts: [{ t: 'text', text: 'Ready for review.' }] } },
+        executionOriginV1: { v: 1, authority: 'account_automation', surface: 'cli', caller: { kind: 'host' },
+            serverId: 'unknown-home', actionId: 'discussion.reply', requestId: 'reply-review' } });
+    for (const anatomy of ['page', 'card'] as const) {
+        const screen = await renderScreen(<ActionApprovalFieldsCard anatomy={anatomy} request={request}
+            serverId={null} presentation={describeApprovalActionFields(request)} />);
+        const text = screen.getTextContent();
+        expect(text).toContain('Connection');
+        expect(text).toContain('Conversation');
+        expect(text).toContain(t('common.unavailable'));
+        expect(text).toContain('Ready for review.');
+        expect(text).not.toContain('opaque-discussion');
+        expect(text).not.toContain('opaque-message');
+        await screen.unmount();
+    }
+});
+
 it('localizes declared enum options in both approval anatomies through the shared presentation', async () => {
     const presentation = describeApprovalActionFields({ actionId: 'machines.managed.power.set',
         actionArgs: { homeId: 'home', managedId: 'guest', when: 'now', intent: 'stop', expectedRevision: 1 } });

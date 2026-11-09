@@ -3,6 +3,9 @@ import type {
   PluginInvocationContext,
 } from '@happier-dev/plugin-sdk';
 import { definePlugin } from '@happier-dev/plugin-sdk';
+import { DISCUSSION_REPLY_DESTINATION_ACTION_ID_V1, DiscussionReplyDestinationInputV1Schema,
+  DiscussionReplyDestinationResultV1Schema } from '@happier-dev/channels-protocol/v1';
+import { readConversationDiscussionReplyDestinationForInvocation } from './discussionReplyDestination.js';
 import type { ActionHandler } from '@happier-dev/plugin-sdk/actions';
 import type { BackgroundServiceContext } from '@happier-dev/plugin-sdk/background-services';
 import {
@@ -660,6 +663,16 @@ function createChannelsPlugin() {
         },
         hostAccess: ['account-storage'],
         run: createConversationConnectionForInvocation,
+      },
+      [DISCUSSION_REPLY_DESTINATION_ACTION_ID_V1]: {
+        title: 'Read discussion reply destination',
+        description: 'Names the Channel connection and conversation selected by a Discussion reply ancestor.',
+        inputSchema: DiscussionReplyDestinationInputV1Schema,
+        resultSchema: DiscussionReplyDestinationResultV1Schema,
+        execution: { target: 'account', account: { artifactId: 'channels-account-runtime', exportName: 'activate' } },
+        surfaces: ['ui', 'plugin'], placementBindings: [], dangerLevel: 'safe', readOnly: true,
+        hostAccess: ['account-storage'],
+        run: readConversationDiscussionReplyDestinationForInvocation,
       },
       [SESSION_PULL_REQUEST_RELATIONS_ACTION_ID_V1]: {
         title: 'Read session pull request relationships',

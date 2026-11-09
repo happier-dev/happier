@@ -1,10 +1,22 @@
 import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
+import { z } from 'zod/mini';
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { defineActionSpecs } from './definition.js';
-import type { PreNormalizedActionSpec } from './definition.js';
+import type { ApprovalPresentationContext, PreNormalizedActionSpec } from './definition.js';
 import { DISCUSSION_ACTION_INPUT_SCHEMAS_V1, DISCUSSION_ACTION_OUTPUT_SCHEMAS_V1 } from '../../discussions/actions.js';
 import { DISCUSSION_HTTP_PATHS_V1 } from '../../discussions/api.js';
 import { DISCUSSION_ARCHIVE_CLI_PROJECTION, DISCUSSION_CREATE_CLI_PROJECTION, DISCUSSION_GET_CLI_PROJECTION, DISCUSSION_LIST_CLI_PROJECTION, DISCUSSION_POST_CLI_PROJECTION, DISCUSSION_READ_CLI_PROJECTION, DISCUSSION_READ_STATE_SET_CLI_PROJECTION, DISCUSSION_RENAME_CLI_PROJECTION, DISCUSSION_RESTORE_CLI_PROJECTION } from './discussionCli.js';
 
+function presentDiscussionReply(input: unknown, context?: ApprovalPresentationContext) {
+  const value = DISCUSSION_ACTION_INPUT_SCHEMAS_V1['discussion.reply'].parse(input);
+  const destination = context?.discussionReplyDestination;
+  const matching = destination?.discussionId === value.discussionId && value.replyTarget.kind === 'message'
+    && destination.messageId === value.replyTarget.messageId;
+  return { ...value, ...(matching ? {
+    deliveryConnection: destination.connectionName ?? undefined,
+    deliveryConversation: destination.conversationName ?? undefined,
+  } : {}) };
+}
 
 function createDiscussionActionSpecsV1() {
   const fromChannel = { op: 'eq', path: 'content.externalSource.kind', value: 'channel' } as const;
@@ -311,8 +323,14 @@ function createDiscussionActionSpecsV1() {
     inputSchema: DISCUSSION_ACTION_INPUT_SCHEMAS_V1['discussion.reply'],
     outputSchema: DISCUSSION_ACTION_OUTPUT_SCHEMAS_V1['discussion.reply'],
     approvalPresentation: { technicalInputPaths: ['discussionId', 'replyTarget', 'localId'],
+      projectInput: presentDiscussionReply,
+      inputSchema: lazyZodSchema(() => z.extend(DISCUSSION_ACTION_INPUT_SCHEMAS_V1['discussion.reply'], {
+        deliveryConnection: z.optional(z.string()), deliveryConversation: z.optional(z.string()),
+      })),
       inputHints: { title: 'Reply in a discussion', fields: [
         { path: 'discussionId', title: 'Discussion', widget: 'text', required: true },
+        { path: 'deliveryConnection', title: 'Connection', widget: 'text' },
+        { path: 'deliveryConversation', title: 'Conversation', widget: 'text' },
         ...messageContentFields('Reply'),
         { path: 'replyTarget', title: 'Reply target', widget: 'json', required: true },
         { path: 'localId', title: 'Durable message identity for retry', widget: 'text' },

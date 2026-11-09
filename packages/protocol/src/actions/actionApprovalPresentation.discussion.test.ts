@@ -5,6 +5,31 @@ import { describeApprovalActionFields } from './actionApprovalPresentation.js';
 import { getActionSpec } from './actionSpecs.js';
 
 describe('Discussion message approval', () => {
+  it('shows Channel delivery names for the exact reviewed reply while retaining opaque routing as technical details', () => {
+    const actionArgs = getActionSpec('discussion.reply').inputSchema.parse({
+      discussionId: 'discussion-id', replyTarget: { kind: 'message', messageId: 'message-id' },
+      content: { v: 1, parts: [{ t: 'text', text: 'Ready for review.' }] },
+    });
+    const context = { discussionReplyDestination: { discussionId: 'discussion-id', messageId: 'message-id',
+      connectionName: 'Team mailbox', conversationName: 'Release planning' } };
+    const presentation = describeApprovalActionFields({ actionId: 'discussion.reply', actionArgs, context });
+    expect(presentation.unrepresentable).toBeNull();
+    const visible = presentation.rows.filter(row => row.kind !== 'value' || !row.technical);
+    expect(visible).toEqual(expect.arrayContaining([
+      expect.objectContaining({ title: 'Connection', value: 'Team mailbox' }),
+      expect.objectContaining({ title: 'Conversation', value: 'Release planning' }),
+      expect.objectContaining({ title: 'Reply', value: 'Ready for review.' }),
+    ]));
+    expect(JSON.stringify(visible)).not.toContain('discussion-id');
+    expect(JSON.stringify(visible)).not.toContain('message-id');
+    const unrelated = describeApprovalActionFields({ actionId: 'discussion.reply', actionArgs,
+      context: { discussionReplyDestination: { ...context.discussionReplyDestination, messageId: 'different-message' } } });
+    expect(JSON.stringify(unrelated.rows)).not.toContain('Team mailbox');
+    const projected = getActionSpec('discussion.reply').approvalPresentation?.projectInput?.(actionArgs, context);
+    const reentered = describeApprovalActionFields({ actionId: 'discussion.reply', actionArgs: projected, context });
+    expect(reentered.unrepresentable?.reason).toBe('missing_required_context');
+    expect(JSON.stringify(reentered.rows)).not.toContain('Team mailbox');
+  });
   it.each(['discussion.post', 'discussion.reply'] as const)('keeps %s routing and retry identities out of the readable draft', actionId => {
     const actionArgs = getActionSpec(actionId).inputSchema.parse({
       discussionId: 'cmw71uacn00bvmc5wlr1nwuze',

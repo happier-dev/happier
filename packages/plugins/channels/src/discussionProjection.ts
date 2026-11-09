@@ -10,7 +10,8 @@ import { asChannelStateRow, isChannelStateJsonRecord, readConversationBindingPar
 import { createConversationSessionProjectionFrontierRowId, type ConversationSessionProjectionResult } from './sessionProjection.js';
 import { isConversationDeliveryAutomaticTerminal } from './deliveryCustody.js';
 import type { ConversationOutwardDeliveryResult, ConversationOutwardSourceV1 } from './outwardDelivery.js';
-import { readConversationDiscussionInputBindingId } from './discussionInput.js';
+import { readConversationDiscussionInputBindingId } from './discussionInputIdentity.js';
+import { readConversationDiscussionReplyInput } from './discussionReplyDestination.js';
 
 type DiscussionRead = PluginActionResultById['discussion.read'];
 type DiscussionMessage = DiscussionRead['messages'][number];
@@ -91,18 +92,17 @@ export async function projectConversationDiscussionPage(input: Readonly<{
       return message;
     };
     const readReplyContext = async (message: DiscussionMessage): Promise<ConversationDeliveryReplyContextV1 | undefined> => {
-      let descendant = message;
-      while (descendant.replyTarget?.kind === 'message') {
-        const ancestor = await getMessage(descendant.replyTarget.messageId);
-        const originBindingId = readConversationDiscussionInputBindingId(ancestor.localId);
-        if (originBindingId !== undefined) return originBindingId === binding.bindingId
+      const origin = message.replyTarget?.kind === 'message'
+        ? await readConversationDiscussionReplyInput({ messageId: message.replyTarget.messageId, readMessage: getMessage }) : undefined;
+      if (origin !== undefined) {
+        const ancestor = origin.message;
+        return origin.bindingId === binding.bindingId
           ? await readConversationDiscussionInputReplyContext({ stateCollection: input.stateCollection,
             bindingId: binding.bindingId, connectionId: binding.connectionId, discussionId: binding.target.discussionId,
             localId: ancestor.content !== null && 'externalSource' in ancestor.content
               ? ancestor.content.externalSource?.inputLocalId ?? ancestor.localId : ancestor.localId,
             signal: input.signal })
           : undefined;
-        descendant = ancestor;
       }
       return undefined;
     };

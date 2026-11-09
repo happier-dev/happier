@@ -34,6 +34,8 @@ import { useOptionalAuth } from '@/auth/context/AuthContext';
 import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
 import type { ApprovalRequest } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { MachineGuardCeilingApprovalFields } from './MachineGuardCeilingApprovalFields';
+import { DiscussionReplyApprovalFields } from './DiscussionReplyApprovalFields';
+import { isDiscussionReplyActionIdV1 } from '@happier-dev/protocol/discussions';
 
 const EXACT_READ = { exactRead: true } as const;
 /** The page's label column: wide enough for a short phrase ("Before it starts"), so every value shares one edge. */
@@ -94,6 +96,11 @@ export const ActionApprovalFieldsCard = React.memo(function ActionApprovalFields
 }>) {
     const [detailsOpen, setDetailsOpen] = React.useState(props.collapsed !== true);
     const reading = { ...props, detailsOpen, setDetailsOpen };
+    if (props.request && isDiscussionReplyActionIdV1(props.request.actionId) && (props.anatomy === 'page' || detailsOpen)) return (
+        <DiscussionReplyApprovalFields request={props.request} serverId={props.serverId ?? null}>
+            {presentation => <ApprovalFieldsReading {...reading} presentation={presentation} />}
+        </DiscussionReplyApprovalFields>
+    );
     if (props.request?.actionId === 'machines.guard.sessionCeiling.set' && (props.anatomy === 'page' || detailsOpen)) return (
         <MachineGuardCeilingApprovalFields request={props.request} serverId={props.serverId ?? null}>
             {presentation => <ApprovalFieldsReading {...reading} presentation={presentation} />}

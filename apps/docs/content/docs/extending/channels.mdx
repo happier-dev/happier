@@ -142,6 +142,13 @@ imported message or one of its replies so Happier can identify the external
 thread. Workflow bindings return a final result or no result, according to their
 supported result-delivery setting. Files cannot be sent back through Channels.
 
+In unreleased 0.3 source, a Discussion reply approval shows the Channel connection
+and external conversation by name alongside the reply. An unreadable destination
+appears as unavailable; technical routing identifiers stay in Technical details.
+New imported messages show the binding's readable conversation name in **Via**.
+Existing messages retain their stored attribution, including earlier UUID labels;
+0.3 does not migrate that attribution.
+
 Online binding controls can retarget an existing link to a Session, Discussion
 or Workflow, or unlink it. Routers expose route editing rather than that target
 picker; account-local editing offers Session target controls only.
