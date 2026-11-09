@@ -1,10 +1,10 @@
-import { ConversationProvidersContributionPointV1 } from '@happier-dev/channels-protocol/v1';
+import { ConversationProvidersContributionPointV1, ConversationProviderConnectionReadInputV1Schema } from '@happier-dev/channels-protocol/v1';
 import { assertEmailTransportContributionV1 } from '@happier-dev/email-transports-protocol/testing/v1';
-import { definePlugin, type JsonValue, type PluginInvocationContext, type PluginServices, type TargetedContributionSnapshot } from '@happier-dev/plugin-sdk';
+import { definePlugin, type JsonValue, type PluginInvocationContext, type PluginServices,  type TargetedContributionSnapshot } from '@happier-dev/plugin-sdk';
 import type { TargetedContributionPointRef } from '@happier-dev/plugin-sdk/contributions';
 import type { ActionHandler } from '@happier-dev/plugin-sdk/actions';
 import { createPluginTestkit, type PluginTestkit } from '@happier-dev/plugin-sdk/testing';
-import { createPluginActionHandlerNotStartedError } from '@happier-dev/plugin-sdk/host/registration';
+import { createPluginActionHandlerUnavailableFixture } from '@happier-dev/plugin-sdk/testing';
 import { defineProtocolJsonValue } from '@happier-dev/plugin-sdk/protocol';
 import { emailPlugin } from '../src/plugin.js';
 import { channelsOperationOnlyTargetedContributionsFixture } from '../../channels/src/testkit/operationOnlyTargetedContributionsFixture.js';
@@ -27,16 +27,19 @@ export const incoming = Buffer.from(['From: Alice <alice@example.com>', 'Message
   'Subject: Re: Question', 'Content-Type: text/plain; charset=utf-8', '', 'ANSWER',
   'On Monday, Alice wrote:', '> HISTORY'].join('\r\n'));
 
-export async function createEmailTransportFixture(options: { findSent?: boolean } = {}) {
+export async function createEmailTransportFixture(options: { findSent?: boolean; providerConfig?: typeof config } = {}) {
+  const configured = options.providerConfig ?? config;
   const sent = new Map<string, Uint8Array>();
   const submissions: EmailTransportSubmitRawInputV1[] = [];
   const messages = new Map<string, Uint8Array>([['opaque-incoming', incoming], ['<incoming@example.com>', incoming]]);
   const facts: ConversationTransportFactReportInputV1[] = [];
+  const connectionReadRequests: string[] = [];
   let refs = ['opaque-incoming'];
   let forceNotFound = false;
   let retainedCatalog: ReturnType<PluginTestkit['readTargetedContributionFixture']> | undefined;
   let ambiguous = false;
   let lookupOverride: Uint8Array | undefined;
+  let fetchFailure: unknown;
   let invokedAtMs = Date.now();
   const receivedAtMs = 1_792_000_000_000;
   function transportAction(role: keyof typeof protocol.operations, run: ActionHandler) {
@@ -47,6 +50,7 @@ export async function createEmailTransportFixture(options: { findSent?: boolean 
   const transportPlugin = definePlugin({ id: 'acme.email.fixture', version: '0.0.0', actions: {
     list: transportAction('listSince', async () => ({ kind: 'batch', refs, checkpointAfterBatch: { position: refs.length === 0 ? 0 : 1 } })),
     fetch: transportAction('fetchRaw', async (input): Promise<JsonValue> => {
+      if (fetchFailure !== undefined) throw fetchFailure;
       const { ref } = EmailTransportFetchRawInputV1Schema.parse(input);
       const raw = lookupOverride ?? messages.get(ref) ?? sent.get(ref);
       return raw ? { kind: 'raw', mimeBase64: Buffer.from(raw).toString('base64'), receivedAtMs } : { kind: 'notReady', reason: 'unsupported' };
@@ -86,9 +90,9 @@ export async function createEmailTransportFixture(options: { findSent?: boolean 
   const materializationRef = { pluginId: emailPlugin.manifest.id, machineId: 'fixture-machine', materializationId: 'fixture-email' };
   await state.put(createCurrentConversationConnectionFixture({ connectionId: connection.connectionId, authority: {
     providerPluginId: emailPlugin.manifest.id, providerContributionSelection: { contributionId: 'email-provider' },
-    providerSetupInput: { ...config, credentialRef: null }, credentialRef: null, providerConfig: config,
-    providerConnectionKey: connection.providerConnectionKey, routingIdentityKey: 'e'.repeat(43),
-    transportOrigin: { serverIdentityId: 'srv_plugin_testkit', materializationRef }, integrationPrincipal: { id: mailbox }, authorityEpoch: 1,
+    providerSetupInput: { ...configured, credentialRef: null }, credentialRef: null, providerConfig: configured,
+    providerConnectionKey: `email:${configured.mailbox}`, routingIdentityKey: 'e'.repeat(43),
+    transportOrigin: { serverIdentityId: 'srv_plugin_testkit', materializationRef }, integrationPrincipal: { id: configured.mailbox }, authorityEpoch: 1,
   } }), { expectedRevision: 'absent' });
   await state.put({ id: 'fixture-binding', 'record-kind': 'binding', 'binding-id': 'fixture-binding', 'connection-id': connection.connectionId,
     v: 1, 'created-at': 1, 'updated-at': 1, payload: { endpoint: thread,
@@ -104,6 +108,9 @@ export async function createEmailTransportFixture(options: { findSent?: boolean 
   const coreFacts = await createPluginTestkit({ manifest: CHANNELS_PLUGIN.manifest, services: { storage },
     module: { activate(api) { return CHANNELS_PLUGIN.activate({ ...api, actions: { ...api.actions, register(id, run) {
       return api.actions.register(id, async (input: Parameters<typeof run>[0], context) => {
+        if (id === 'provider/connection-read-v1') {
+          connectionReadRequests.push(ConversationProviderConnectionReadInputV1Schema.parse(input).connectionId);
+        }
         const result = await run(input, context);
         if (id === 'provider/transport-fact-report-v1' && result !== null && typeof result === 'object'
           && 'kind' in result && (result.kind === 'recorded' || result.kind === 'rejoined')) {
@@ -146,7 +153,7 @@ export async function createEmailTransportFixture(options: { findSent?: boolean 
           routeAuthority: { connectionAuthorityEpoch: 1, bindingRevision: 1, bindingAuthorityEpoch: 1 },
           source: { kind: 'sessionProjection', sessionId: 'fixture-session', semanticItemId: input.item },
           endpoint: thread, content: { text: 'Reply' }, deliveryKey: `fixture-reply:${input.item}`,
-          replyContext: { replyToMessageId: '<incoming@example.com>' }, linkPreviewPolicy: 'suppress',
+          replyContext: { replyToMessageId: '<incoming@example.com>' },  linkPreviewPolicy: 'suppress',
         };
         const store = createConversationOutwardDeliveryCollectionStore({ stateCollection: state,
           deliveriesCollection: deliveries as unknown as Parameters<typeof createConversationOutwardDeliveryCollectionStore>[0]['deliveriesCollection'],
@@ -157,7 +164,7 @@ export async function createEmailTransportFixture(options: { findSent?: boolean 
           if (property !== 'executeAdmittedTargetedOperationWithExecutionOrigin') return Reflect.get(target, property, receiver);
           return (...args: Parameters<typeof target.executeAdmittedTargetedOperationWithExecutionOrigin>) => {
             if (reconciliationHandlerMissing && args[0].identity.role === 'deliveryReconcile') {
-              throw createPluginActionHandlerNotStartedError({ code: 'plugin_action_handler_missing', message: 'Recovery handler unavailable' });
+              throw createPluginActionHandlerUnavailableFixture();
             }
             return target.executeAdmittedTargetedOperationWithExecutionOrigin(...args);
           };
@@ -187,8 +194,9 @@ export async function createEmailTransportFixture(options: { findSent?: boolean 
   } });
   channels = await createPluginTestkit({ manifest: channelsPlugin.manifest, module: channelsPlugin, actionTargets: [email],
     targetedContributionContributors: [email] });
-  return { sent, submissions, facts, receivedAtMs, email, state, materializationRef, setInvocationTime(value: number) { invokedAtMs = value; },
+  return { sent, submissions, facts, connectionReadRequests, receivedAtMs, email, state, materializationRef, setInvocationTime(value: number) { invokedAtMs = value; },
     setAmbiguous(value: boolean) { ambiguous = value; }, replaceFetched(raw: Uint8Array) { lookupOverride = raw; },
+    setFetchFailure(error: unknown) { fetchFailure = error; },
     setMessages(values: readonly (readonly [string, Uint8Array])[]) { for (const [ref, raw] of values) messages.set(ref, raw); refs = values.map(([ref]) => ref); },
     addMessage(ref: string, raw: Uint8Array) { messages.set(ref, raw); },
     setNotFound() { forceNotFound = true; },
@@ -208,4 +216,4 @@ export const connection = { v: 1, connectionId: 'email-fixture', providerConnect
   providerConfigVersion: 1, providerConfig: config, credentialRef: null };
 export const thread = { kind: 'thread', audience: 'direct', id: '<root@example.com>', parentId: mailbox } satisfies ConversationResolvedEndpointV1;
 export const delivery = { ...connection, endpoint: thread, content: { text: 'Reply' }, deliveryKey: 'fixture-reply',
-  replyContext: { replyToMessageId: '<incoming@example.com>' }, linkPreviewPolicy: 'providerDefault' };
+  replyContext: { replyToMessageId: '<incoming@example.com>' },  linkPreviewPolicy: 'providerDefault' };

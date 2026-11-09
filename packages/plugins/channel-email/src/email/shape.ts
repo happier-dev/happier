@@ -1,5 +1,9 @@
 import { load } from 'cheerio';
-import { generate, ident, parse, walk, type CssNode } from 'css-tree';
+import type { CssNode } from 'css-tree';
+import generate from 'css-tree/generator';
+import parse from 'css-tree/parser';
+import walk from 'css-tree/walker';
+import { ident } from 'css-tree/utils';
 import TurndownService from 'turndown';
 
 import type { EmailContentOptions } from './parse.js';

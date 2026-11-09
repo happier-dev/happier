@@ -28,6 +28,15 @@ describe('Email parser runtime recovery', () => {
     await expect(journey.poll()).resolves.toMatchObject({ kind: 'committed' });
   });
   afterEach(async () => { vi.doUnmock('mailparser'); vi.useRealTimers(); await journey?.dispose(); await f?.dispose(); });
+  it.each(['Mon, 12 Oct 2020 07:00:00 +0000', 'Mon, 12 Oct 2032 07:00:00 +0000'])(
+    'admits newly received mail once despite an authored Date outside the age window (%s)', async authoredDate => {
+      f.setMessages([['opaque-incoming', Buffer.from(`Date: ${authoredDate}\r\n${incoming.toString()}`)]]);
+      await expect(journey.poll()).resolves.toMatchObject({ kind: 'committed' });
+      expect(admitted).toHaveLength(1);
+      await expect(journey.poll()).resolves.toMatchObject({ kind: 'committed' });
+      expect(admitted).toHaveLength(1);
+    },
+  );
   it('retries the entire poll after a module-load failure without anonymous observations or checkpoint loss', async () => {
     const checkpoint = () => [...f.state.rows.values()].find(row => row.value['record-kind'] === 'checkpoint')!.value;
     const baseline = checkpoint();
@@ -61,5 +70,25 @@ describe('Email parser runtime recovery', () => {
     expect(checkpoint().payload).toMatchObject({ opaqueToken: { position: 1 } });
     await expect(journey.poll()).resolves.toMatchObject({ kind: 'committed' });
     expect(admitted).toHaveLength(2);
+  });
+  it('parks a missing parser module without advancing its checkpoint or repeatedly polling', async () => {
+    const checkpoint = () => [...f.state.rows.values()].find(row => row.value['record-kind'] === 'checkpoint')!.value;
+    const baseline = checkpoint();
+    // Fault the genuine module-loading boundary; keep Channels classification,
+    // persistence, admission and the provider Action path real.
+    vi.doMock('mailparser', () => ({ default: {}, get simpleParser() {
+      throw Object.assign(new Error('Private missing module path'), { code: 'MODULE_NOT_FOUND' });
+    } }));
+    f.setMessages([['opaque-incoming', incoming]]);
+    await expect(journey.poll()).resolves.toMatchObject({ kind: 'blocked' });
+    const failed = (await f.state.get(connection.connectionId))!.value;
+    expect(failed.payload).toMatchObject({ pollFailure: { phase: 'blocked', attemptCount: 1,
+      retryNotBeforeMs: null, evidence: { kind: 'action', code: 'email_parser_module_not_found' } } });
+    expect(JSON.stringify(failed.payload)).not.toContain('Private missing module path');
+    vi.setSystemTime(f.receivedAtMs + 60_000);
+    await journey.poll();
+    expect((await f.state.get(connection.connectionId))!.value).toEqual(failed);
+    expect(checkpoint()).toEqual(baseline);
+    expect(admitted).toEqual([]);
   });
 });

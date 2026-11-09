@@ -19,7 +19,7 @@ export interface ParsedEmail {
   text: string;
   forwarded: boolean;
   attachments: { attachmentId: string; name: string; mediaType: string; bytes: Uint8Array }[];
-  receivedAtMs: number | null;
+  authoredAtMs: number | null;
 }
 
 export type EmailThreadIdentity = Pick<ParsedEmail, 'references' | 'inReplyTo' | 'messageId'>;
@@ -34,19 +34,39 @@ function singleAddress(value: HeaderValue | undefined) {
 }
 
 export async function parseEmail(raw: Uint8Array, options: EmailContentOptions = {}): Promise<ParsedEmail> {
+  return (await prepareEmailForShaping(raw)).shape(options);
+}
+
+function parserContentRejection(error: unknown): ParsedEmail {
+  // Mailparser's MIME splitter explicitly tags content-limit rejections.
+  // Unknown exceptions are runtime failures, never invalid sender evidence.
+  if (error === null || typeof error !== 'object' || !('code' in error) || error.code !== 'EMAXLEN') throw error;
+  return { headers: new Map(), messageId: null, references: [], inReplyTo: null, from: null, sender: null,
+    subject: '', text: '', forwarded: false, attachments: [], authoredAtMs: null };
+}
+
+/** Decode once; the poll owner can resolve a batch's frozen context before shaping. */
+export async function prepareEmailForShaping(raw: Uint8Array): Promise<Readonly<{
+  identity: EmailThreadIdentity;
+  shape(options: EmailContentOptions): Promise<ParsedEmail>;
+}>> {
   try {
-    return await parseEmailParts(raw, options, []);
+    const parsed = await readEmailParts(raw);
+    return { identity: parsed.identity, async shape(options) {
+      try { return await shapeEmailParts(parsed, options, []); }
+      catch (error) { return parserContentRejection(error); }
+    } };
   } catch (error) {
-    // Mailparser's MIME splitter explicitly tags content-limit rejections.
-    // Unknown exceptions (including failed lazy imports) are runtime failures,
-    // never evidence that the sender or content was invalid.
-    if (error === null || typeof error !== 'object' || !('code' in error) || error.code !== 'EMAXLEN') throw error;
-    return { headers: new Map(), messageId: null, references: [], inReplyTo: null, from: null, sender: null,
-      subject: '', text: '', forwarded: false, attachments: [], receivedAtMs: null };
+    const rejected = parserContentRejection(error);
+    return { identity: rejected, shape: async () => rejected };
   }
 }
 
 async function parseEmailParts(raw: Uint8Array, options: EmailContentOptions, parentParts: readonly string[], inlinePartPrefix = ''): Promise<ParsedEmail> {
+  return shapeEmailParts(await readEmailParts(raw), options, parentParts, inlinePartPrefix);
+}
+
+async function readEmailParts(raw: Uint8Array) {
   const [mailparser, { shapeEmailBody }] = await Promise.all([
     import('mailparser'),
     import('./shape.js'),
@@ -67,6 +87,12 @@ async function parseEmailParts(raw: Uint8Array, options: EmailContentOptions, pa
     references: typeof mail.references === 'string' ? [mail.references] : mail.references ?? [],
     inReplyTo: mail.inReplyTo ?? null,
   };
+  return { mail, headers, identity, shapeEmailBody };
+}
+
+async function shapeEmailParts(parsed: Awaited<ReturnType<typeof readEmailParts>>, options: EmailContentOptions,
+  parentParts: readonly string[], inlinePartPrefix = ''): Promise<ParsedEmail> {
+  const { mail, headers, identity, shapeEmailBody } = parsed;
   const contentOptions = {
     ...options,
     knownThread: typeof options.knownThread === 'function' ? options.knownThread(identity) : options.knownThread,
@@ -108,6 +134,6 @@ async function parseEmailParts(raw: Uint8Array, options: EmailContentOptions, pa
     text,
     forwarded,
     attachments,
-    receivedAtMs: mail.date && Number.isFinite(mail.date.getTime()) ? mail.date.getTime() : null,
+    authoredAtMs: mail.date && Number.isFinite(mail.date.getTime()) ? mail.date.getTime() : null,
   };
 }
