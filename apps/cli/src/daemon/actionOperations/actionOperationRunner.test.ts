@@ -15,6 +15,58 @@ import { callSocketRpc, type SocketRpcContent } from '@happier-dev/sync-client';
 const scope = { accountId: 'account-1', machineId: 'machine-1' } as const;
 
 describe('action operation canonical execution observer', () => {
+  it.each([false, true, undefined] as const)('retries regenerated deployment candidates only after confirmed no effect (%s)', async effectAttempted => {
+    const store = createActionOperationStore();
+    const spec = getActionSpec('deployments.deploy');
+    let sequence = 0;
+    const runner = createActionOperationRunner({ store, generateOperationId: () => `deployment-attempt-${sequence++}`,
+      resolveAction: () => ({ actionId: spec.id, title: spec.title, operation: spec.operation,
+        operationReentry: snapshot => snapshot.state === 'failed' && snapshot.error?.effectAttempted === false ? 'fresh' : 'replay' }) });
+    const input = { serverId: 'home', environmentId: 'environment', expectedRevision: 2, requestKey: 'deploy-request',
+      targetLinkId: 'target', expectedTargetLinkRevision: 1, contentArtifactId: 'first-candidate',
+      contentHeaderVersion: 3, contentBodyVersion: 3 };
+    const request = { actionId: spec.id, scope, requestId: 'deploy-request', input,
+      deploymentChildIdentity: 'original-child',
+      execute: async () => ({ ok: false as const, errorCode: 'database_transaction_conflict_exhausted',
+        error: 'database_transaction_conflict_exhausted', ...(effectAttempted === undefined ? {} : { effectAttempted }) }) };
+    await runner.observe(request);
+    let effects = 0;
+    const retry = { ...request, input: { ...input, contentArtifactId: 'regenerated-candidate' },
+      execute: async () => { effects++; return { ok: true as const, result: { deploymentId: 'receipt' } }; } };
+    expect(await runner.observe({ ...retry, deploymentChildIdentity: 'different-child' }))
+      .toMatchObject({ ok: false, errorCode: 'action_request_input_conflict' });
+    expect(await runner.observe(retry)).toMatchObject(effectAttempted === false
+      ? { ok: true, result: { deploymentId: 'receipt' } }
+      : { ok: false, errorCode: 'action_request_input_conflict' });
+    expect(effects).toBe(effectAttempted === false ? 1 : 0);
+    if (effectAttempted === false) {
+      expect(store.get(scope, 'deployment-attempt-0')).toMatchObject({ state: 'failed', error: { effectAttempted: false } });
+      expect(await runner.observe(retry)).toMatchObject({ ok: true, result: { deploymentId: 'receipt' } });
+      expect(await runner.observe({ ...retry, input: { ...retry.input, contentArtifactId: 'third-candidate' } }))
+        .toMatchObject({ ok: false, errorCode: 'action_request_input_conflict' });
+      expect(effects).toBe(1);
+    }
+  });
+
+  it.each(['backup_failed', 'cancelled'] as const)('retains exact Test probe cleanup facts on settlement and replay (%s)', async code => {
+    const store = createActionOperationStore();
+    const spec = getActionSpec('deployments.backups.test');
+    const runner = createActionOperationRunner({ store, generateOperationId: () => 'probe-failure',
+      resolveAction: () => ({ actionId: spec.id, title: spec.title, operation: spec.operation! }) });
+    const probe = { key: 'happier-destination-probe-5c933c77-66a9-41c2-9a47-068b2b795ce9', cleanup: 'unknown' } as const;
+    const request = { actionId: spec.id, scope, requestId: 'test-destination', input: {},
+      execute: async () => ({ ok: false as const, errorCode: code, error: code,
+        details: { step: 'delete', code, probe, privateValue: 'native-secret-output' } }) };
+    await runner.observe(request);
+    const snapshot = store.get(scope, 'probe-failure');
+    expect(snapshot).toMatchObject({ state: code === 'cancelled' ? 'cancelled' : 'failed',
+      result: { step: 'delete', code, probe } });
+    expect(ActionOperationSnapshotV1Schema.safeParse(snapshot).success).toBe(true);
+    expect(JSON.stringify(snapshot)).not.toContain('native-secret-output');
+    expect(await runner.observe({ ...request, execute: async () => { throw new Error('Must replay the retained result'); } }))
+      .toMatchObject({ ok: false, details: { step: 'delete', code, probe } });
+  });
+
   it('settles a known Project Open checkout refusal as failed with its original failureCause and receipt', async () => {
     const store = createActionOperationStore();
     const spec = getActionSpec('projects.open');

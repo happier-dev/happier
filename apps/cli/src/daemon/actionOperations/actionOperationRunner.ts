@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { DEPLOYMENT_BACKUP_PRUNE_ACTION_ID_V1, DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1,
+import { DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1,
   isDeploymentBackupActionIdV1, isDeploymentDomainChildActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 
 import type {
@@ -70,8 +70,7 @@ function projectDeploymentBackupFailureResult(actionId: string, errorCode: strin
     return parsed.success ? parsed.data : undefined;
   }
   if (!isDeploymentBackupActionIdV1(actionId) || !('step' in details) || typeof details.step !== 'string') return undefined;
-  const partial = actionId === DEPLOYMENT_BACKUP_PRUNE_ACTION_ID_V1
-    ? readDeploymentBackupMaintenanceFailureEvidenceV1({ details }) : undefined;
+  const partial = readDeploymentBackupMaintenanceFailureEvidenceV1({ details });
   const parsed = DeploymentBackupFailureResultV1Schema.safeParse({ step: details.step, code: errorCode, ...partial });
   return parsed.success ? parsed.data : undefined;
 }

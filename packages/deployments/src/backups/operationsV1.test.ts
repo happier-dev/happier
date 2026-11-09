@@ -203,6 +203,14 @@ describe('selected repository backup operations', () => {
             { details: { removedSnapshotIds: [], uncertainSnapshotIds: ['repository-password'] } }]) expect(read(error)).toBeUndefined();
     });
 
+    it('retains only closed probe cleanup evidence and excludes native output', () => {
+        const read = operation('readDeploymentBackupMaintenanceFailureEvidenceV1');
+        const probe = { key: 'happier-destination-probe-5c933c77-66a9-41c2-9a47-068b2b795ce9', cleanup: 'failed' };
+        expect(read({ details: { probe, privateValue: 'never-return-native-payload' } })).toEqual({ probe });
+        expect(read({ details: { probe: { ...probe, privateValue: 'secret' } } })).toBeUndefined();
+        expect(read({ details: { probe: { ...probe, cleanup: 'eventually' } } })).toBeUndefined();
+    });
+
     it('distinguishes unavailable/truncated inventory from a successful empty inventory and honors local cancellation', async () => {
         const empty = boundary({ inventory: [] });
         expect(await operation('inventoryDeploymentBackupsV1')(input(empty))).toEqual({ kind: 'listed', repositoryId, entries: [] });

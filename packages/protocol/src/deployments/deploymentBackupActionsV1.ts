@@ -33,9 +33,13 @@ export const DeploymentBackupSnapshotV1Schema = lazyZodSchema(() => z.strictObje
 }));
 export type DeploymentBackupSnapshotV1 = z.infer<typeof DeploymentBackupSnapshotV1Schema>;
 /** Closed nonsecret facts retained when native maintenance fails or is cancelled. */
+const backupFailureFields = () => ({
+  step: z.string(), code: z.string(),
+  probe: z.optional(z.strictObject({ key: text, cleanup: z.enum(['deleted', 'failed', 'unknown']) })),
+});
 export const DeploymentBackupFailureResultV1Schema = lazyZodSchema(() => z.union([
-  z.strictObject({ step: z.string(), code: z.string() }),
-  z.strictObject({ step: z.string(), code: z.string(),
+  z.strictObject(backupFailureFields()),
+  z.strictObject({ ...backupFailureFields(),
     removedSnapshotIds: z.array(DeploymentBackupSnapshotV1Schema.shape.snapshotId),
     uncertainSnapshotIds: z.array(DeploymentBackupSnapshotV1Schema.shape.snapshotId) }),
 ]));
