@@ -1,7 +1,8 @@
 import { join } from 'node:path';
 import { PluginError } from '@happier-dev/plugin-sdk';
 import { createSecureTempDirectorySync, writeAtomicTextFile } from '@happier-dev/plugin-sdk/fs';
-import type { AgentConnectedAccountLaunchContributionV1, AgentRuntimeContext, AgentSessionOpenRequest } from '@happier-dev/plugin-sdk/agents/runtime';
+import type { AgentConnectedAccountLaunchContributionV1, AgentSessionOpenRequest } from '@happier-dev/plugin-sdk/agents/runtime';
+import type { ConnectedAccountsService } from '@happier-dev/plugin-sdk/connected-accounts';
 
 import { buildDroidModelSettings, DROID_PROVIDER_SECRET_ENV } from '../providerBinding/settings.js';
 
@@ -18,14 +19,14 @@ export type DroidConnectedAccountLaunch<Request extends LaunchRequest> = Readonl
 
 export async function prepareDroidConnectedAccount<Request extends LaunchRequest>(
   request: Request,
-  context: Pick<AgentRuntimeContext, 'services' | 'signal'>,
+  context: Readonly<{ services: { connectedAccounts: Pick<ConnectedAccountsService, 'getBinding' | 'materialize'> }; signal?: AbortSignal }>,
 ): Promise<DroidConnectedAccountLaunch<Request>> {
   const binding = await context.services.connectedAccounts.getBinding(DROID_CHATGPT_PURPOSE, { signal: context.signal });
   if (!binding) return { request, dispose() {} };
   if (request.providerBinding) throw new PluginError({ code: 'droid_connected_account_provider_conflict', message: 'Choose either a Droid Provider connection or a ChatGPT Connected Account.' });
   const model = request.configuration?.model;
   if (!model?.value?.trim() || model.selectionSource !== 'explicit') {
-    throw new PluginError({ code: 'droid_connected_account_model_required', message: 'Choose an explicit model for the Droid ChatGPT Connected Account.' });
+    throw new PluginError({ code: 'model_selection_required', message: 'Choose an explicit model for the Droid ChatGPT Connected Account.' });
   }
   const materialized = await context.services.connectedAccounts.materialize(DROID_CHATGPT_PURPOSE, REQUEST_AUTH, { signal: context.signal, expectedAccount: binding.account });
   const invalid = () => new PluginError({ code: 'droid_connected_account_materialization_invalid', message: 'Droid requires ChatGPT bearer access and account identity headers.' });

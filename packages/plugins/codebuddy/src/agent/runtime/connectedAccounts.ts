@@ -1,7 +1,7 @@
 import { PluginError } from '@happier-dev/plugin-sdk';
 import { createSecureTempDirectorySync, writeSecureTempTextFileSync } from '@happier-dev/plugin-sdk/fs';
-import type { ConnectedAccountMaterialization } from '@happier-dev/plugin-sdk/connected-accounts';
-import type { AgentAcpModelControls, AgentRuntimeContext, AgentSessionOpenRequest } from '@happier-dev/plugin-sdk/agents/runtime';
+import type { ConnectedAccountMaterialization, ConnectedAccountsService } from '@happier-dev/plugin-sdk/connected-accounts';
+import type { AgentAcpModelControls, AgentSessionOpenRequest } from '@happier-dev/plugin-sdk/agents/runtime';
 
 export const CODEBUDDY_CODEX_PURPOSE = 'openai-codex-model-request';
 
@@ -16,7 +16,7 @@ export function buildCodeBuddySubscriptionConfiguration(input: Readonly<{
   settings: Readonly<{ alwaysThinkingEnabled: true; env: Readonly<{ CODEBUDDY_CUSTOM_HEADERS: string }> }>;
   models: AgentAcpModelControls }> {
   const modelId = input.modelId?.trim();
-  if (!modelId) refuse('codebuddy_subscription_model_required', 'Select an explicit ChatGPT model before starting CodeBuddy.');
+  if (!modelId) refuse('model_selection_required', 'Select an explicit ChatGPT model before starting CodeBuddy.');
   if (input.materialized.kind !== 'httpHeaders') refuse('codebuddy_subscription_materialization_invalid', 'CodeBuddy requires access-only ChatGPT HTTP headers.');
   const headers = Object.fromEntries(Object.entries(input.materialized.headers).map(([key, value]) => [key.toLowerCase(), value]));
   const authorization = headers.authorization;
@@ -70,14 +70,14 @@ export function createCodeBuddySubscriptionLaunch(configuration: ReturnType<type
 
 export async function prepareCodeBuddyConnectedAccount(
   request: Pick<AgentSessionOpenRequest, 'configuration' | 'providerBinding'>,
-  context: Pick<AgentRuntimeContext, 'services' | 'signal'>,
+  context: Readonly<{ services: { connectedAccounts: Pick<ConnectedAccountsService, 'getBinding' | 'materialize'> }; signal?: AbortSignal }>,
 ): Promise<ReturnType<typeof createCodeBuddySubscriptionLaunch> | null> {
   const accounts = context.services.connectedAccounts;
   const binding = await accounts.getBinding(CODEBUDDY_CODEX_PURPOSE, { signal: context.signal });
   if (!binding) return null;
   if (request.providerBinding) refuse('codebuddy_subscription_provider_conflict', 'Select either a Connected ChatGPT account or a Provider connection for CodeBuddy.');
-  if (request.configuration?.model.selectionSource !== 'explicit') {
-    refuse('codebuddy_subscription_model_required', 'Select an explicit ChatGPT model before starting CodeBuddy.');
+  if (request.configuration?.model.selectionSource !== 'explicit' || !request.configuration.model.value?.trim()) {
+    refuse('model_selection_required', 'Select an explicit ChatGPT model before starting CodeBuddy.');
   }
   const materialized = await accounts.materialize(CODEBUDDY_CODEX_PURPOSE, {
     kind: 'httpHeaders', origin: 'https://chatgpt.com', headerNames: ['authorization', 'chatgpt-account-id'],

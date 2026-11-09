@@ -48,6 +48,22 @@ async function fixture(options: { bound?: boolean; materialization?: 'environmen
 }
 
 describe('Droid ChatGPT static access launch', () => {
+  it('uses the same model refusal for selected-account preflight before materialization', async () => {
+    const { registration, connectedAccounts } = await fixture();
+    const prepare = registration.preflightSessionControls?.prepareLaunchEnvironment;
+    expect(prepare).toBeTypeOf('function');
+    if (!prepare) throw new Error('Missing native account preparation');
+    const input = { environment: { FACTORY_API_KEY: 'ambient' }, connectedAccounts: {
+      ...connectedAccounts, watch: () => ({ dispose() {} }),
+    }, signal };
+    await expect(prepare(input)).rejects.toMatchObject({ code: 'model_selection_required' });
+    expect(connectedAccounts.materialize).not.toHaveBeenCalled();
+    connectedAccounts.getBinding.mockResolvedValueOnce(null);
+    const native = await prepare(input);
+    expect(native.environment).toEqual(input.environment);
+    await native.dispose();
+  });
+
   it('keeps negotiated runtime capabilities live after launch', async () => {
     const { runtime, context, enableSessionListing } = await fixture();
     const opened = await runtime.sessions!.open({ kind: 'create', sessionId: 'capabilities', cwd: '/workspace', configuration }, context);
@@ -104,7 +120,7 @@ describe('Droid ChatGPT static access launch', () => {
       ...(failure === 'provider-binding' ? { providerBinding: { connectionId: 'selected-provider', upstream: { protocol: 'openai-responses', normalizedUrl: 'https://provider.example/v1', credential: 'none' },
         model: { id: 'other', name: 'Other' }, materialization: { v: 1, kind: 'configFile', rootPath: '/private/provider', relativePaths: ['droid/settings.json'] } } } : {}) };
     await expect(runtime.sessions!.open(request, context)).rejects.toMatchObject({ code: failure === 'provider-binding' ? 'droid_connected_account_provider_conflict'
-      : failure === 'missing-model' || failure === 'inherited-model' ? 'droid_connected_account_model_required' : 'droid_connected_account_materialization_invalid' });
+      : failure === 'missing-model' || failure === 'inherited-model' ? 'model_selection_required' : 'droid_connected_account_materialization_invalid' });
     expect(open).not.toHaveBeenCalled();
     expect(connectedAccounts.materialize).toHaveBeenCalledTimes(failure === 'wrong-materialization' || failure === 'missing-account' ? 1 : 0);
   });

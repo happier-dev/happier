@@ -4,7 +4,7 @@ import { AGENT_DEFINITION } from './agent/definition.js';
 import { CODEBUDDY_ACP_COMMAND } from './agent/acp/preflight.js';
 import { CODEBUDDY_ACP_RUNTIME_DECLARATION } from './agent/acp/runtimeDeclaration.js';
 import { createCodeBuddyAgentRuntime } from './agent/runtime/factory.js';
-import { CODEBUDDY_CODEX_PURPOSE } from './agent/runtime/connectedAccounts.js';
+import { CODEBUDDY_CODEX_PURPOSE, prepareCodeBuddyConnectedAccount } from './agent/runtime/connectedAccounts.js';
 import { CODEBUDDY_CONNECTED_ACCOUNT_LAUNCH } from './agent/runtime/continuity.js';
 import { CODEBUDDY_AGENT_SETTINGS_CONTRIBUTION } from './agentSettings/definition.js';
 
@@ -72,7 +72,15 @@ export const CODEBUDDY_PLUGIN = definePlugin({
     } satisfies PluginCustomAgentDeclaration,
     factory: createCodeBuddyAgentRuntime,
     sessionRunnerFactory: { module: './agent/runtime/factory', export: 'createCodeBuddyAgentRuntime', runtimeApiVersion: 1, externalSessionsExport: 'codeBuddyExternalSessionsContribution' },
-    preflightSessionControls: { catalogs: { kind: 'acp', command: CODEBUDDY_ACP_COMMAND } },
+    preflightSessionControls: {
+      async prepareLaunchEnvironment({ environment, connectedAccounts, signal }) {
+        // Catalog inspection has no selected model. Reuse launch preparation's
+        // actionable refusal rather than borrowing the native account catalog.
+        const prepared = await prepareCodeBuddyConnectedAccount({}, { services: { connectedAccounts }, signal });
+        return { environment, dispose() { prepared?.dispose(); } };
+      },
+      catalogs: { kind: 'acp', command: CODEBUDDY_ACP_COMMAND },
+    },
     connectedAccountLaunch: CODEBUDDY_CONNECTED_ACCOUNT_LAUNCH,
     externalSessions: codeBuddyExternalSessionsContribution,
   } },

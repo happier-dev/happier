@@ -72,7 +72,7 @@ describe('native Agent preflight home directory intent', () => {
             await rm(root, { recursive: true, force: true });
         }
     }, 60_000);
-    it.each(['files_ambient', 'files_explicit', 'environment', 'native'] as const)(
+    it.each(['files_ambient', 'files_explicit', 'environment', 'native', 'prepared'] as const)(
         'uses the selected materialization environment in a real catalog process (%s)', async (mode) => {
         const root = await realpath(await mkdtemp(join(tmpdir(), 'happier-preflight-account-env-')));
         const observed = join(root, 'observed.json');
@@ -98,8 +98,8 @@ describe('native Agent preflight home directory intent', () => {
         try {
             const account = createExternalConnectedAccountForegroundFixture({
                 service: { pluginId: 'acme.preflight-account', localId: 'credential' },
-                materializationKinds: ['files', 'environment'],
-                launch: {
+                materializationKinds: mode === 'prepared' ? ['httpHeaders'] : ['files', 'environment'],
+                launch: mode === 'prepared' ? undefined : {
                     stateSharingDescriptor: { providerSupportStatus: 'supported',
                         config: { supported: false, modes: [], entries: [] },
                         state: { supported: false, modes: [], entries: [], symlinkUnavailableDegradePolicy: 'degrade_to_isolated' },
@@ -108,17 +108,32 @@ describe('native Agent preflight home directory intent', () => {
                     environmentUses: [{ purpose: 'primary', environmentKey: 'ACME_TOKEN' }],
                     environmentUnsetUses: [{ purpose: 'primary', environmentKey: 'ACME_TOKEN' }],
                 },
-                materializeAccount: async ({ request }) => request.kind === 'environment'
+                materializeAccount: async ({ request }) => request.kind === 'httpHeaders'
+                    ? { kind: 'httpHeaders', headers: { authorization: 'Bearer fake-selected-token' } }
+                    : request.kind === 'environment'
                     ? { kind: 'environment', env: mode === 'environment' ? { ACME_TOKEN: 'fake-selected-token' } : {} }
                     : { kind: 'files', files: mode.startsWith('files_') ? { 'auth.json': auth } : {} },
             });
-            runtime = await createAuthoredAdmittedPluginRuntimeFixture({ plugins: account.plugins,
+            const plugins = account.plugins.map(plugin => mode !== 'prepared' ? plugin : {
+                ...plugin, files: { ...plugin.files,
+                'daemon.mjs': String(plugin.files['daemon.mjs']).replace('sessionRunnerFactory:', `preflightSessionControls: {
+                    prepareLaunchEnvironment: async ({ environment, connectedAccounts, signal }) => {
+                        const binding = await connectedAccounts.getBinding('primary', { signal });
+                        const materialized = await connectedAccounts.materialize('primary', {
+                            kind: 'httpHeaders', origin: 'https://preflight-account.example.test', headerNames: ['authorization'],
+                        }, { signal, expectedAccount: binding.account });
+                        return { environment: { ...environment, ACME_TOKEN: materialized.headers.authorization.slice(7) }, dispose() {} };
+                    },
+                }, sessionRunnerFactory:`) },
+            });
+            runtime = await createAuthoredAdmittedPluginRuntimeFixture({ plugins,
                 happyHomeDir: join(root, 'home'), controller: pluginReloadController, runtimeOptions: { connectedAccounts: account.owner },
                 resolveContributes: async happyHomeDir => createResolvedContributionRegistry(await resolvePluginContributes({ happyHomeDir })),
             });
             const { agentId } = account.requestFor(runtime.registry);
             const entry = runtime.registry.contributes.agentDefinitionsById.get(agentId)?.catalogEntry;
             if (!entry) throw new Error('Missing admitted preflight Agent');
+            if (mode === 'prepared') expect(entry.preparePreflightLaunchEnvironment).toBeTypeOf('function');
             const script = join(root, 'probe.cjs');
             await writeFile(script, `const fs = require('node:fs'); const home = process.env.ACME_NATIVE_HOME; const auth = home && require('node:path').join(home, 'auth.json'); fs.writeFileSync(${JSON.stringify(observed)}, JSON.stringify({ key: process.env.ACME_TOKEN ?? null, home: home ?? null, cwd: process.cwd(), auth: auth && fs.existsSync(auth) ? [...fs.readFileSync(auth)] : null }));`);
             const quote = (value: string) => `'${value.replace(/'/g, `'\\''`)}'`;
@@ -145,8 +160,10 @@ describe('native Agent preflight home directory intent', () => {
                 // The API is an external transport; the real purpose owner supplies the selected Account.
                 createApiClient: async () => ({} as ApiClient), connectedAccountsOwner: account.owner,
                 activatePurposeBindings: account.owner.activatePurposeBindings, isAgentRegistryCurrent: () => true,
+                createAgentInvocationServices: runtime.registry.createAgentInvocationServices,
+                agentRuntimeCacheKey: runtime.registry.readPluginOccurrenceId?.('acme.foreground') ?? undefined,
             }, {}));
-            expect(response).toMatchObject({ ok: true });
+            expect(response, JSON.stringify(response)).toMatchObject({ ok: true });
             const environment = JSON.parse(await readFile(observed, 'utf8')) as { key: string | null; home: string | null; cwd: string; auth: number[] | null };
             expect(environment.cwd).toBe(root);
             if (mode.startsWith('files_')) {
@@ -154,8 +171,8 @@ describe('native Agent preflight home directory intent', () => {
                 expect(environment.home).not.toBe(nativeHome);
                 expect(environment.auth).toEqual([...auth]);
             } else {
-                expect(environment.key).toBe(mode === 'environment' ? 'fake-selected-token' : 'fake-explicit-token');
-                expect(environment.home).toBe(nativeHome);
+                expect(environment.key).toBe(mode === 'environment' || mode === 'prepared' ? 'fake-selected-token' : 'fake-explicit-token');
+                expect(environment.home).toBe(mode === 'prepared' ? null : nativeHome);
             }
         } finally {
             await runtime?.dispose();

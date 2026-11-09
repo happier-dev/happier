@@ -168,7 +168,8 @@ async function resolveConnectedServiceProbeEnvironment(params: Readonly<{
             });
             if (params.nativeCatalog && snapshot) {
                 // A purpose declaration alone does not put credentials in a native process.
-                // Admit only the launch destinations consumed by the existing materializer.
+                // The Agent's native preparation hook is also a credential
+                // destination and runs below with this exact admitted purpose.
                 for (const binding of snapshot.bindings) {
                     const key = qualifiedPurposeKey(binding.purpose);
                     const hasEnvironment = snapshot.environmentUses?.some(use => qualifiedPurposeKey(use.purpose) === key);
@@ -177,7 +178,8 @@ async function resolveConnectedServiceProbeEnvironment(params: Readonly<{
                         && stateSharing.nativeHome
                         && stateSharing.authIsolation.secretEntries.length > 0
                         && snapshot.fileMaterializationPurposes?.some(scope => qualifiedPurposeKey(scope.purpose) === key);
-                    if (!hasEnvironment && !hasFileEnvironment && !hasNativeHome) {
+                    if (!hasEnvironment && !hasFileEnvironment && !hasNativeHome
+                        && !params.dependencies.agentCatalogEntry?.preparePreflightLaunchEnvironment) {
                         throw new Error('Selected Connected Account has no declared native catalog credential destination');
                     }
                 }

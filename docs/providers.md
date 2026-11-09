@@ -1057,6 +1057,10 @@ model IDs use the Agent's ordinary freeform model selector. The upstream remains
 the authority on entitlement, and the host retains its existing known model
 eligibility blockers for account groups. These routes do not discover a new
 per-account model catalog.
+CodeBuddy, Droid and Kilo reuse their launch preparation for selected-account preflight.
+Without an explicit model, preparation returns `model_selection_required` before
+native startup; choose a model and retry the launch. Kilo uses its existing OpenAI
+model namespace policy for both initial and later model choices.
 
 OpenCode's native model inventory likewise does not establish ChatGPT account
 entitlement. In 0.3 development, its native route decoder and shared catalog

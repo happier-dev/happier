@@ -6,7 +6,7 @@ import { DROID_ACP_COMMAND } from './agent/preflight.js';
 import { droidExternalSessionsContribution } from './agent/externalSessions/contribution.js';
 import { DROID_PROVIDER_BINDING_ADAPTER, DROID_PROVIDER_OWNED_ENV_KEYS } from './agent/providerBinding/adapter.js';
 import { createDroidAgentRuntime } from './agent/runtime/factory.js';
-import { DROID_CHATGPT_PURPOSE, DROID_CHATGPT_SERVICE, DROID_CONNECTED_ACCOUNT_LAUNCH } from './agent/runtime/connectedAccount.js';
+import { DROID_CHATGPT_PURPOSE, DROID_CHATGPT_SERVICE, DROID_CONNECTED_ACCOUNT_LAUNCH, prepareDroidConnectedAccount } from './agent/runtime/connectedAccount.js';
 
 
 export const DROID_PLUGIN = definePlugin({
@@ -97,7 +97,15 @@ export const DROID_PLUGIN = definePlugin({
     connectedAccountLaunch: DROID_CONNECTED_ACCOUNT_LAUNCH,
     providerBinding: DROID_PROVIDER_BINDING_ADAPTER,
     sessionRunnerFactory: { module: './agent/runtime/factory', export: 'createDroidAgentRuntime', runtimeApiVersion: 1, externalSessionsExport: 'droidExternalSessionsContribution' },
-    preflightSessionControls: { catalogs: { kind: 'acp', command: DROID_ACP_COMMAND } },
+    preflightSessionControls: {
+      async prepareLaunchEnvironment({ environment, connectedAccounts, signal }) {
+        // The account overlay requires an explicit model; catalog inspection
+        // consumes the same launch policy before any native process starts.
+        const prepared = await prepareDroidConnectedAccount({}, { services: { connectedAccounts }, signal });
+        return { environment, dispose: prepared.dispose };
+      },
+      catalogs: { kind: 'acp', command: DROID_ACP_COMMAND },
+    },
     externalSessions: droidExternalSessionsContribution,
   } },
   systemTools: { 'droid-cli': { title: 'Factory Droid CLI', executableNames: ['droid'] } },
