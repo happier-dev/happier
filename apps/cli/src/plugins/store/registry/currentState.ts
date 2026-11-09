@@ -6,6 +6,7 @@ import { snapshotPluginReleaseFactsV1, projectPluginMachineUiArtifactV1 } from '
 import type { PluginAvailabilityReleasePublishActionInputV1, PluginMachineMaterializationV1, PluginInstallReviewPrincipalDigest, PluginInstallReviewPrincipalPresentationV1, PluginUpdatePolicyV1 } from '@happier-dev/protocol';
 import { PluginInstallReviewPrincipalDigestSchema, PluginInstallReviewPrincipalPresentationV1Schema } from '@happier-dev/protocol/plugins/permissions/grants';
 import { PluginManifestV2Schema } from '@happier-dev/protocol/plugins/manifest/v2';
+import { admitDecodedPluginManifestV2 } from '@happier-dev/protocol/plugins/manifest/ingest';
 import { pluginInstallReviewPrincipalPresentationMatchesDigest } from '../../daemon/installReviewPrincipal';
 
 import type { PluginAccessSelection } from '../install/accessScopeRegistry';
@@ -48,10 +49,7 @@ import {
   type PluginInstallationStateRevision,
   PluginInstallationAvailabilityProjectionSchema,
 } from './generationStore';
-import {
-  reconcilePluginGenerationCustodyRetirement,
-  type PluginGenerationCustodyRetirementRemoteDependencies,
-} from './generationCustodyRetirement';
+import type { PluginGenerationCustodyRetirementRemoteDependencies } from './generationCustodyRetirement';
 import {
   createPluginRegistryReconciler,
   type PluginRegistryReconcileSurface,
@@ -76,6 +74,15 @@ function createPluginMaterializationId(): string {
 }
 
 export { resolveBundledPluginMachineEnablement } from './admittedState';
+
+function selectRetainedRuntimeCatalog(
+  catalog: PluginInstallationStateRevision['retainedRuntimeCatalog'],
+  retention: ReadonlyArray<PluginInstallationStateRevision['rollbackRetention'][number]>,
+): Record<string, PluginStateRecord> {
+  const retainedIds = new Set(retention.map((entry) => entry.immutableGenerationId));
+  return Object.fromEntries(Object.entries(catalog ?? {})
+    .filter(([generationId]) => retainedIds.has(generationId)));
+}
 
 function createRevision(params: Readonly<{
   revisionId: string;
@@ -430,6 +437,7 @@ export function createPluginRegistryStateStore(params?: Readonly<{
       {
         name: 'generationCleanup',
         apply: async ({ commit, isCurrent }) => {
+          const { reconcilePluginGenerationCustodyRetirement } = await import('./generationCustodyRetirement');
           const cleanup = await reconcilePluginGenerationCustodyRetirement({
             paths,
             commit,
@@ -1168,8 +1176,9 @@ export function createPluginRegistryStateStore(params?: Readonly<{
         const retainsPriorLineage = priorInstallation !== undefined
           && pluginDistributionRollbackLineagesEqual(priorInstallation.source.distribution, input.trust.distribution);
         const retainedForOtherPlugins = current.revision.rollbackRetention.filter((entry) => entry.pluginId !== input.pluginId);
-        const retainedCatalogForOtherPlugins = Object.fromEntries(Object.entries(current.revision.retainedRuntimeCatalog ?? {})
-          .filter(([generationId]) => retainedForOtherPlugins.some((entry) => entry.immutableGenerationId === generationId)));
+        const retainedCatalogForOtherPlugins = selectRetainedRuntimeCatalog(
+          current.revision.retainedRuntimeCatalog, retainedForOtherPlugins,
+        );
         const rollbackRetention = [...retainedForOtherPlugins];
         const retainedRuntimeCatalog: Record<string, PluginStateRecord> = { ...retainedCatalogForOtherPlugins };
         if (priorReference && retainsPriorLineage) {
@@ -1471,6 +1480,10 @@ export function createPluginRegistryStateStore(params?: Readonly<{
           [input.pluginId]: nextCatalogRecord,
         },
       });
+      const rollbackRetention = current.revision.rollbackRetention.filter((entry) => (
+        entry.pluginId !== input.pluginId
+        || pluginDistributionRollbackLineagesEqual(entry.distribution, input.trust.distribution)
+      ));
       const revision: PluginInstallationStateRevision = {
         ...current.revision,
         revisionId: `state-${randomUUID()}`,
@@ -1495,11 +1508,21 @@ export function createPluginRegistryStateStore(params?: Readonly<{
           },
         },
         runtimeCatalog,
+        rollbackRetention,
+        retainedRuntimeCatalog: selectRetainedRuntimeCatalog(current.revision.retainedRuntimeCatalog, rollbackRetention),
       };
+      // A source-in-place transition resolves the registered source on restart,
+      // not the former managed package. Manifest-authority-only approvals keep
+      // managed custody. The serving occurrence retains its own immutable
+      // custody until the prepared development runtime is adopted.
+      const pluginOccurrenceIds = { ...current.commit.pluginOccurrenceIds };
+      if (nextCatalogRecord.source.kind === 'path' && nextCatalogRecord.source.devWatch === true) {
+        delete pluginOccurrenceIds[input.pluginId];
+      }
       const committed = await commitRevision({
         current,
         revision,
-        pluginOccurrenceIds: current.commit.pluginOccurrenceIds,
+        pluginOccurrenceIds,
         transactionId: `development-authority-${randomUUID()}`,
         createdAtMs,
         mutationKind: 'state',
@@ -1797,9 +1820,7 @@ export function createPluginRegistryStateStore(params?: Readonly<{
       const { [pluginId]: _installation, ...plugins } = current.revision.plugins;
       const { [pluginId]: _generation, ...pluginOccurrenceIds } = current.commit.pluginOccurrenceIds;
       const rollbackRetention = current.revision.rollbackRetention.filter((entry) => entry.pluginId !== pluginId);
-      const retainedIds = new Set(rollbackRetention.map((entry) => entry.immutableGenerationId));
-      const retainedRuntimeCatalog = Object.fromEntries(Object.entries(current.revision.retainedRuntimeCatalog ?? {})
-        .filter(([generationId]) => retainedIds.has(generationId)));
+      const retainedRuntimeCatalog = selectRetainedRuntimeCatalog(current.revision.retainedRuntimeCatalog, rollbackRetention);
       const runtimeCatalog = PluginStateFileV1Schema.parse({ ...current.catalog, plugins: catalogPlugins });
       const createdAtMs = nowMs();
       const revision: PluginInstallationStateRevision = {
@@ -1937,11 +1958,11 @@ export function createPluginRegistryStateStore(params?: Readonly<{
           )),
         )),
         approvedAuthorityManifestsByPluginId: Object.freeze(Object.fromEntries(
-          Object.entries(current.revision.plugins).flatMap(([pluginId, installation]) => (
-            installation.approvedAuthorityManifest
-              ? [[pluginId, installation.approvedAuthorityManifest] as const]
-              : []
-          )),
+          Object.entries(current.revision.plugins).flatMap(([pluginId, installation]) => {
+            if (!installation.approvedAuthorityManifest) return [];
+            const admitted = admitDecodedPluginManifestV2(installation.approvedAuthorityManifest, { mode: 'load' });
+            return admitted.ok ? [[pluginId, admitted.manifest] as const] : [];
+          }),
         )),
       });
     },

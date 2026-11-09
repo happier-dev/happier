@@ -41,8 +41,12 @@ A saved offline pin remains selected and unavailable until it
 recovers or you explicitly change it. Invocation checks the exact target again,
 including after approval.
 
-Installation administration remains machine-specific: install, installation settings,
-Secrets and Browse operate on the named administration machine. Appearing in the
+Installation administration remains machine-specific: install, installation settings
+and Secrets operate on the named administration machine. Catalog browsing is
+Account-scoped and works without choosing a Machine. In 0.3 development source,
+**Settings → Plugins → Add** opens the shared catalog picker; Review continues
+to the exact listing and its existing Install and Trust operation. A separate
+Browse entry opens app-host discovery. Appearing in the
 Account's installed list does not mean a plugin is enabled, trusted or executable.
 
 For local authoring, use `hdev plugins dev`. The daemon owns replacement and
@@ -154,6 +158,11 @@ contributions or ships a new executable realm (for example a new React
 Native surface) applies without asking. What an update can ask about is the
 reach you granted: widened required host access, new Connected Account
 purposes, wider request-interceptor reach, or wider raw-credential access.
+In 0.3 development, host schema or SDK projection changes retain your approval,
+including for rollback versions. Compatibility can withdraw an unsupported
+contribution with a diagnostic while healthy plugins keep working. Changing an
+interceptor's priority alone does not ask again. If a withdrawn contribution
+carried access declarations, its next update can ask once for that access.
 **Settings -> Plugins -> Update review** decides what happens then:
 
 - **Confirm access changes** (the default) opens a delta-only decision.
@@ -162,7 +171,8 @@ purposes, wider request-interceptor reach, or wider raw-credential access.
   it; anything wider is dropped and stays off until you turn it on again.
 
 The preference belongs to your Account, so it applies to every machine you
-sign in on. It covers marketplace, npm, archive, and local path installs.
+sign in on and remains available with no administration Machine selected or
+while that Machine is offline. It covers marketplace, npm, archive, and local path installs.
 Development plugins never ask on change. The per-plugin update policy
 (`allowed` or `pinned`) still decides whether an update is allowed at all.
 
@@ -176,13 +186,36 @@ stops before anything is downloaded or reviewed and reports
 `plugin_registry_profile_required` with the exact registry origin and package,
 and the existing profile for that registry when there is one.
 
-In **Settings -> Plugins -> Discover**, such a listing is marked as needing a
-registry profile for its registry, and Install asks in place. The dialog opens the
+In the exact Plugin listing's install continuation, the daemon reports a missing
+registry profile and Install asks in place. The dialog opens the
 registry profiles for that one listing: add a profile (prefilled with the
 registry's address and the package's scope), sign in to it, and bind it to the
 listing's marketplace source. **Continue** asks the daemon again, which prepares
 the Install and Trust review or names what is still missing. **Cancel** ends the
 install with nothing downloaded.
+
+In 0.3 development, npm profiles also appear in Credentials and use the same
+Connect sheet as the publisher. Select the machine and registry profile first,
+then choose how to sign in:
+
+- **Use this Machine's npm login** uses the registry's existing token from that
+  machine's npm configuration, including the project, user, and global config
+  chain. The profile retains a reference to that configuration; it does not copy
+  the token into your Happier Account. If that machine has no matching login,
+  sign in there or choose another method.
+- **Sign in with browser** provides npm's own sign-in link. Open it, complete
+  sign-in in the browser, and keep the private Connect flow open while npm finishes.
+  Cancelling ends this attempt. The resulting credential stays with the selected
+  machine's npm profile.
+- Paste a token into the secure credential field to use an existing npm access
+  token. Do not put it in an Agent conversation or public Action input.
+
+Read the shared-machine visibility disclosure before signing in: its owner can
+inspect credentials delivered to that machine. These are machine-local npm
+profiles, with the same sign-in choices in Credentials, Connect, and the
+publication workflow. They do not create an Account-wide npm Connected Account.
+Successful sign-in does not establish permission to publish every package or to
+publish directly instead of staging for npm approval.
 
 From the terminal, add or sign in to that profile with
 `hdev plugins registry add|login`, bind it to the marketplace source when the

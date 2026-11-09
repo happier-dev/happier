@@ -33,15 +33,21 @@ govern changed plugins.
 An unpublished composition records its own exclusion without changing a borrowed
 incumbent activation component; existing component leases own its cleanup.
 
-The installation-state reader isolates a stored `approvedAuthorityManifest` that
-fails the current manifest schema. It withdraws that installation's trust and
-projects `plugin_trust_approval_required` with `details.reason: needs_reapproval`
-through the existing unavailable-plugin catalog; healthy peers still load.
-Stale rollback approvals become source-ineligible. Reads do not rewrite stored
-bytes, and publication still validates the current schema strictly. A reviewed
-install restores approval; loading or enabling the plugin cannot grant it.
-Unreadable JSON, mismatched revision identity, or invalid registry framing that
-cannot be attributed to an approval remain whole-registry failures.
+Stored `approvedAuthorityManifest` values retain the person's consent across host
+schema and SDK projection changes, including rollback and ordinary publication.
+The installation-state owner validates their object framing and matching plugin
+identity, preserving the historical bytes. New installation and development
+approval candidates still pass strict current-manifest admission.
+Consumers use Protocol load admission for the usable declaration projection;
+unsupported contributions are withdrawn with diagnostics, without withdrawing
+trust or affecting healthy peers. The update comparator consumes that projection
+only as a baseline, never as a new grant. A withdrawn authority-bearing contribution
+can therefore cause an extra delta prompt on the next update. Plugin-wide baseline
+failure keeps consent but refuses updates with `plugin_update_trust_unavailable`;
+a reviewed install repairs it. Baseline admission does not enforce engine ranges,
+so an update can repair an older engine requirement. Runtime admission retains
+its compatibility checks. Unreadable JSON, mismatched revision/plugin identity,
+or invalid registry framing remain whole-registry failures.
 
 Registry-wide integrity failures remain errors: inconsistent or duplicate
 contribution identities are rejected by `createResolvedContributionRegistry.ts`;
@@ -1138,8 +1144,10 @@ their runtime Agent declarations still follow Agent manifest exclusion. This des
 
 Local CLI read-only help, Agent listing and static completion instead consume
 the installation writer's existing `approvedAuthorityManifest`. The canonical
-registry pointer and revision readers validate their supported framing once,
-without re-admitting each stored declaration or reopening a live plugin source.
+registry pointer and revision readers validate their supported framing once.
+Protocol load admission projects each accepted declaration for the current host,
+with contribution diagnostics, without reopening a live plugin source or
+reconsidering consent.
 A supported installation without that accepted manifest retains its installation
 identity and `plugin_manifest_missing` diagnostic, but contributes no read-only
 metadata; there is no live-source fallback or new persisted projection. These

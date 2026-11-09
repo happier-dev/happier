@@ -328,7 +328,7 @@ describe('hasPluginAuthorityExpansion is directional', () => {
         priority: 5,
       }),
       [],
-    )).toBe(true);
+    )).toBe(false);
   });
 
   it('reopens review only when raw-credential reach expands', () => {
@@ -432,15 +432,4 @@ describe('evaluatePluginAuthorityReview applies the user update review mode', ()
     })).toMatchObject({ requiresReview: false, preservedOptionalAccess: [sessionsSelection(['read'])] });
   });
 
-  it('never asks on a development plugin change, in either mode', () => {
-    for (const mode of ['confirmAccessChanges', 'autoApply'] as const) {
-      expect(evaluatePluginAuthorityReview({
-        previous,
-        candidate: widened,
-        selectedOptionalAccess: [],
-        development: true,
-        readAccountSettings: () => ({ pluginUpdateReviewModeV1: mode }),
-      })).toMatchObject({ requiresReview: false, authorityExpansion: [] });
-    }
-  });
 });

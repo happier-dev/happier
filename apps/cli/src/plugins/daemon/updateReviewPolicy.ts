@@ -30,18 +30,9 @@ type RawCredentialAccessFact = PluginInstallationReview['rawCredentialAccess'][n
 
 /**
  * An update expands authority only when the candidate can reach further than
- * the incumbent grant. `exact` and `narrower`
- * are both admissible; every other relation — including a scope whose
- * direction the canonical registry cannot rank — reopens review.
+ * the incumbent grant; the access-scope registry owns that covering relation.
  */
-function isWithinGrantedScope(
-  capability: string,
-  candidateScope: unknown,
-  grantedScope: unknown,
-): boolean {
-  const relation = accessScopeRegistry.compare(capability, candidateScope, grantedScope).relation;
-  return relation === 'exact' || relation === 'narrower';
-}
+const isWithinGrantedScope = accessScopeRegistry.isWithinGrantedScope;
 
 function qualifyNetworkTargetReference(
   ownerPluginId: string,
@@ -238,8 +229,6 @@ function isStringSetContained(
  * A request interceptor reaches exactly the origin/method pairs it declares —
  * `contributionAllowsRequest` treats an absent `methods` list as every method —
  * and it may only rewrite a request back inside that same declared reach.
- * `priority` is the ascending chain-order key, so a lower number moves the
- * interceptor ahead of interceptors that previously ran before it.
  */
 function isRequestInterceptorWithinGrant(
   candidate: PluginInstallationReviewRequestInterceptor,
@@ -247,8 +236,7 @@ function isRequestInterceptorWithinGrant(
 ): boolean {
   return isStringSetContained(candidate.origins, granted.origins)
     && (granted.methods === undefined
-      || (candidate.methods !== undefined && isStringSetContained(candidate.methods, granted.methods)))
-    && candidate.priority >= granted.priority;
+      || (candidate.methods !== undefined && isStringSetContained(candidate.methods, granted.methods)));
 }
 
 function hasRequestInterceptorExpansion(
@@ -421,8 +409,6 @@ export function evaluatePluginAuthorityReview(params: Readonly<{
   previous: CanonicalPluginManifest;
   candidate: CanonicalPluginManifest;
   selectedOptionalAccess: readonly PluginAccessSelection[];
-  /** A change to a trusted development source never asks, in either review mode. */
-  development?: boolean;
   /** Test seam over the active Account settings snapshot. */
   readAccountSettings?: () => Readonly<{ pluginUpdateReviewModeV1?: unknown }> | null;
 }>): PluginAuthorityReviewEvaluation {
@@ -436,7 +422,7 @@ export function evaluatePluginAuthorityReview(params: Readonly<{
     params.candidate,
     params.selectedOptionalAccess,
   );
-  if (params.development === true || readPluginUpdateReviewMode(params.readAccountSettings) === 'autoApply') {
+  if (readPluginUpdateReviewMode(params.readAccountSettings) === 'autoApply') {
     // Applying without review keeps every optional grant that still fits its
     // declaration; a grant the candidate widened beyond is dropped, not widened.
     return Object.freeze({

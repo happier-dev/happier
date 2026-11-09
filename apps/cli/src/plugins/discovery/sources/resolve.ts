@@ -1,6 +1,6 @@
 import { resolve } from 'node:path';
 
-import type { CanonicalPluginManifest } from '@/plugins/manifest/types';
+import type { StoredApprovedPluginManifest } from '@/plugins/store/registry/generationStore';
 import { PLUGIN_MANIFEST_RELATIVE_PATH } from '@/plugins/store/paths';
 import type { PluginStateRecord } from '@/plugins/store/state';
 import type { PluginCompatibilityDiagnostic } from '@/plugins/validation/diagnostics/types';
@@ -18,7 +18,7 @@ export type ResolvedPluginSource =
 
 export async function resolveInstalledPluginSource(params: Readonly<{
   record: PluginStateRecord;
-  approvedAuthorityManifest?: CanonicalPluginManifest;
+  approvedAuthorityManifest?: StoredApprovedPluginManifest;
 }>): Promise<ResolvedPluginSource> {
   const { record, approvedAuthorityManifest } = params;
   const sourceDiagnostic = readInstalledPluginSourceDiagnostic(record);
@@ -46,7 +46,7 @@ export async function resolveInstalledPluginSource(params: Readonly<{
       manifestAuthority: 'external',
       manifest: admission.manifest,
       ...(admission.diagnostics?.length ? { diagnostics: admission.diagnostics.map(projectPluginManifestCompatibilityDiagnostic) } : {}),
-      sourceSpec: { ...record.source, resolvedVersion: approvedAuthorityManifest.version },
+      sourceSpec: { ...record.source, resolvedVersion: admission.manifest.version },
     };
   }
 

@@ -11,9 +11,8 @@ import { PluginReleaseFactsV1Schema } from '@happier-dev/protocol/plugins/availa
 import { PluginIdSchema } from '@happier-dev/protocol/plugins/plugin-id';
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
 import { PluginInstallReviewPrincipalDigestSchema, PluginInstallReviewPrincipalPresentationV1Schema } from '@happier-dev/protocol/plugins/permissions/grants';
-import { PluginManifestV2Schema } from '@happier-dev/protocol/plugins/manifest/v2';
 import { ManagedPluginSourceCustodyV1Schema } from '@happier-dev/protocol/plugins/runtime/sourceCustody';
-import type { PluginId, ParsedPluginManifestV2, PluginUpdatePolicyV1 } from '@happier-dev/protocol';
+import type { PluginId, PluginUpdatePolicyV1 } from '@happier-dev/protocol';
 import { PluginUpdatePolicyV1Schema } from '@happier-dev/protocol/marketplace/pluginUpdatePolicyV1';
 
 import { writeFileAtomically, writeJsonAtomic } from '@/utils/fs/writeJsonAtomic';
@@ -46,7 +45,7 @@ import type { PluginStorePaths } from '../paths';
 import { ensurePluginGenerationDirectories } from '../generationDirectories';
 import { readInstallationStateRevisionValue, stateRevisionPath } from './installationStateRevisionFile';
 import { installationStateRevisionEnvelopeShape } from './installationStateRevisionSchema';
-import { isolateInstallationApprovalFailures } from './installationApprovalFailures';
+import { isRegistryObject } from './commitRecordSchema';
 export { readAdmittedPluginRegistryState } from './admittedState';
 import {
   pluginRegistryCommitRecordsEqual,
@@ -291,33 +290,43 @@ export function createDefaultPluginInstallationAvailabilityProjection(
   });
 }
 
+// Strict candidate admission owns these bytes. Historical consent is preserved
+// losslessly; the Protocol load ingester owns its current usable projection.
+export type StoredApprovedPluginManifest = Readonly<{ id: PluginId; [key: string]: unknown }>;
+const StoredApprovedPluginManifestSchema = z.custom<StoredApprovedPluginManifest>(value => (
+  isRegistryObject(value) && PluginIdSchema.safeParse(value.id).success
+));
+
 export type PluginRollbackRetentionRecord = {
   pluginId: PluginId;
   immutableGenerationId: z.infer<typeof PortableStorageIdSchema>;
   retainedAtMs: number;
-  byteAvailability: 'available' | 'missing' | 'corrupt' | 'evicted' | 'sourceIneligible';
+  byteAvailability: 'available' | 'missing' | 'corrupt' | 'evicted';
   pluginVersion: string;
   distribution: PluginDistributionIdentity;
   admittedIntegrity?: z.infer<typeof AlgorithmQualifiedIntegritySchema>;
   availability?: PluginInstallationAvailabilityProjection;
   installReviewPrincipalDigest?: z.infer<typeof PluginInstallReviewPrincipalDigestSchema>;
   installReviewPrincipalPresentation?: z.infer<typeof PluginInstallReviewPrincipalPresentationV1Schema>;
-  approvedAuthorityManifest?: ParsedPluginManifestV2;
+  approvedAuthorityManifest?: StoredApprovedPluginManifest;
 };
 
 export const PluginRollbackRetentionRecordSchema: z.ZodMiniType<PluginRollbackRetentionRecord> = z.strictObject({
   pluginId: asHostProtocolZod(PluginIdSchema),
   immutableGenerationId: PortableStorageIdSchema,
   retainedAtMs: z.number().check(z.int(), z.nonnegative()),
-  byteAvailability: z.enum(['available', 'missing', 'corrupt', 'evicted', 'sourceIneligible']),
+  byteAvailability: z.enum(['available', 'missing', 'corrupt', 'evicted']),
   pluginVersion: z.string().check(z.minLength(1), z.maxLength(256)),
   distribution: PluginDistributionIdentitySchema,
   admittedIntegrity: z.optional(AlgorithmQualifiedIntegritySchema),
   availability: z.optional(PluginInstallationAvailabilityProjectionSchema),
   installReviewPrincipalDigest: z.optional(asHostProtocolZod(PluginInstallReviewPrincipalDigestSchema)),
   installReviewPrincipalPresentation: z.optional(asHostProtocolZod(PluginInstallReviewPrincipalPresentationV1Schema)),
-  approvedAuthorityManifest: z.optional(asHostProtocolZod(PluginManifestV2Schema)),
+  approvedAuthorityManifest: z.optional(StoredApprovedPluginManifestSchema),
 }).check(z.superRefine((record, context) => {
+  if (record.approvedAuthorityManifest && record.approvedAuthorityManifest.id !== record.pluginId) {
+    context.addIssue({ code: 'custom', path: ['approvedAuthorityManifest', 'id'], message: 'Approved manifest identity must match its installation' });
+  }
   if (record.distribution.kind === 'localPath' && record.admittedIntegrity) {
     context.addIssue({ code: 'custom', path: ['admittedIntegrity'], message: 'Local path rollback retention cannot declare acquisition integrity' });
   }
@@ -344,7 +353,7 @@ export type PluginInstallationStateRecord = {
   availability?: PluginInstallationAvailabilityProjection;
   installReviewPrincipalDigest?: z.infer<typeof PluginInstallReviewPrincipalDigestSchema>;
   installReviewPrincipalPresentation?: z.infer<typeof PluginInstallReviewPrincipalPresentationV1Schema>;
-  approvedAuthorityManifest?: ParsedPluginManifestV2;
+  approvedAuthorityManifest?: StoredApprovedPluginManifest;
 };
 
 const PluginInstallationStateRecordSchema: z.ZodMiniType<PluginInstallationStateRecord> = z.strictObject({
@@ -361,7 +370,7 @@ const PluginInstallationStateRecordSchema: z.ZodMiniType<PluginInstallationState
   availability: z.optional(PluginInstallationAvailabilityProjectionSchema),
   installReviewPrincipalDigest: z.optional(asHostProtocolZod(PluginInstallReviewPrincipalDigestSchema)),
   installReviewPrincipalPresentation: z.optional(asHostProtocolZod(PluginInstallReviewPrincipalPresentationV1Schema)),
-  approvedAuthorityManifest: z.optional(asHostProtocolZod(PluginManifestV2Schema)),
+  approvedAuthorityManifest: z.optional(StoredApprovedPluginManifestSchema),
 }).check(z.superRefine((record, context) => {
   if (record.source.distribution.kind === 'localPath' && record.source.admittedIntegrity) {
     context.addIssue({ code: 'custom', path: ['source', 'admittedIntegrity'], message: 'Local path installation cannot declare acquisition integrity' });
@@ -408,6 +417,9 @@ const CanonicalPluginInstallationStateRevisionSchema: z.ZodMiniType<PluginInstal
   const retainedGenerationIds = new Set<string>();
   const materializationIds = new Set<string>();
   for (const [pluginId, plugin] of Object.entries(state.plugins)) {
+    if (plugin.approvedAuthorityManifest && plugin.approvedAuthorityManifest.id !== pluginId) {
+      context.addIssue({ code: 'custom', path: ['plugins', pluginId, 'approvedAuthorityManifest', 'id'], message: 'Approved manifest identity must match its installation' });
+    }
     if (
       plugin.trust
       && (
@@ -1570,8 +1582,7 @@ export async function readInstallationStateRevision(input: Readonly<{
 }>): Promise<PluginInstallationStateRevision> {
   const value = await readInstallationStateRevisionValue(input);
   const schema = createStoredReadSchema(PluginInstallationStateRevisionSchema);
-  const initial = schema.safeParse(value);
-  const parsed = initial.success ? initial : schema.safeParse(isolateInstallationApprovalFailures(value, initial.error.issues));
+  const parsed = schema.safeParse(value);
   if (!parsed.success || parsed.data.revisionId !== input.reference.revisionId) {
     throw new Error('Invalid installation state revision');
   }

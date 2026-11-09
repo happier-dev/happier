@@ -10,6 +10,7 @@ import {
   shouldResolvePluginDevelopmentEntrypoint,
 } from '@/plugins/manifest/daemonEntry';
 import type { CanonicalPluginManifest } from '@/plugins/manifest/types';
+import type { StoredApprovedPluginManifest } from '@/plugins/store/registry/generationStore';
 import type { ResolvedLocalPathPluginSourceSuccess } from '@/plugins/discovery/sources/localPath';
 import { resolveInstalledPluginSource } from '@/plugins/discovery/sources/resolve';
 import { readGeneratedPluginUiArtifactsManifest, readGeneratedPluginCompiledManifestSync } from '@/plugins/install/ui/generatedArtifacts';
@@ -50,7 +51,7 @@ function mergeLoadedPluginSourceSpec(params: Readonly<{
 export async function loadPluginsFromState(
   state: PluginStateFileV1,
   materializationIdsByPluginId: Readonly<Record<string, string>> = {},
-  approvedAuthorityManifestsByPluginId: Readonly<Record<string, CanonicalPluginManifest>> = {},
+  approvedAuthorityManifestsByPluginId: Readonly<Record<string, StoredApprovedPluginManifest>> = {},
 ): Promise<LoadInstalledPluginsResult> {
   const loadedPlugins: LoadedPlugin[] = [];
   const diagnosticsByPluginId: Record<string, readonly PluginCompatibilityDiagnostic[]> = {};

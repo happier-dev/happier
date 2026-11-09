@@ -1,4 +1,6 @@
 import type { LoadedPlugin } from './installed';
+import { admitDecodedPluginManifestV2 } from '@happier-dev/protocol/plugins/manifest/ingest';
+import { projectPluginManifestCompatibilityDiagnostic } from '@/plugins/manifest/diagnostics';
 import type { PluginStateFileV1 } from '@/plugins/store/state';
 import type { PluginCompatibilityDiagnostic } from '@/plugins/validation/diagnostics/types';
 import { readAdmittedPluginRegistryState } from '@/plugins/store/registry/admittedState';
@@ -35,11 +37,16 @@ export async function loadAdmittedInstalledPluginDeclarations(happyHomeDir: stri
       }];
       continue;
     }
+    const admission = admitDecodedPluginManifestV2(manifest, { mode: 'load' });
+    if (admission.diagnostics?.length) {
+      diagnosticsByPluginId[pluginId] = admission.diagnostics.map(projectPluginManifestCompatibilityDiagnostic);
+    }
+    if (!admission.ok) continue;
     loadedPlugins.push({
       pluginId,
       pluginRootPath: record.source.resolvedPath,
       manifestPath: record.source.manifestPath,
-      manifest,
+      manifest: admission.manifest,
       sourceSpec: record.source,
     });
   }
