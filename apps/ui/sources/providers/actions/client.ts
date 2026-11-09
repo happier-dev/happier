@@ -1,3 +1,4 @@
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { safeParse, type z } from 'zod/mini';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
@@ -87,7 +88,7 @@ async function invoke<TSchema extends z.core.$ZodType>(actionId: ActionId, input
 function actionFailure(result: ActionExecuteFailure): unknown {
     const provider = ProviderErrorV1Schema.safeParse(result.details);
     return provider.success ? providerErrorFromRpcFailure(result)
-        : Object.assign(new Error(result.error), { ...result, code: result.errorCode });
+        : createActionExecuteFailureError(result);
 }
 
 // UI callers supply schema inputs; the Action executor owns parsing and branded output.

@@ -359,6 +359,12 @@ export function projectActionExecuteFailure(result: ActionExecuteFailure, reques
   return requestId ? { ...projected, requestId } : projected;
 }
 
+/** Preserve the public failure contract when a Promise consumer uses thrown Errors. */
+export function createActionExecuteFailureError(result: ActionExecuteFailure): Error & ActionExecuteFailure & Readonly<{ code: string }> {
+  const failure = projectActionExecuteFailure(result);
+  return Object.assign(new Error(failure.error), failure, { code: failure.errorCode });
+}
+
 /**
  * A present person (or their approver) answered an Action's confirmation or approval with "no":
  * `approval_rejected` is an explicit rejection, `approval_canceled` is the dialog or request being

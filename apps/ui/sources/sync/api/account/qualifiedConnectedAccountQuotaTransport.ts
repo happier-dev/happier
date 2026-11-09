@@ -1,3 +1,4 @@
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import {
     isTokenOnlyAuthCredentials,
     type AuthCredentials,
@@ -20,6 +21,7 @@ import { MACHINE_ADMINISTRATION_SELECTION_KEYS_V1 } from '@/sync/domains/machine
 import { doesMachineAdministrationTargetMatchActiveAccount, resolveFreshMachineAdministrationExecutionTarget } from '@/sync/domains/machines/administration/useTargetSelection';
 import { storage } from '@/sync/domains/state/storageStore';
 import { parseToken } from '@/utils/auth/parseToken';
+import { resolveConnectedServicePlanLabel } from '@/sync/domains/connectedServices/connectedServiceRegistry';
 
 export type QualifiedConnectedAccountQuotaTransportContext = Readonly<{
     credentials: AuthCredentials;
@@ -82,7 +84,9 @@ export async function readQualifiedConnectedAccountQuota(
     // V4's numeric quota projection uses zero before any provider observation.
     // Keep its record binding and failures, but do not publish an epoch-dated
     // snapshot or infer quota support from that placeholder.
-    return { snapshot: opened.fetchedAt === 0 ? null : opened, recordId: response.sourceResolution.recordId, status: response.metadata.status,
+    const planLabel = resolveConnectedServicePlanLabel(context.ref.service, opened.planLabel);
+    const snapshot = planLabel === opened.planLabel ? opened : { ...opened, planLabel };
+    return { snapshot: opened.fetchedAt === 0 ? null : snapshot, recordId: response.sourceResolution.recordId, status: response.metadata.status,
         ...(opened.diagnostics ? { diagnostics: opened.diagnostics } : {}),
         ...(response.metadata.refreshRequestedAt === undefined ? {} : { refreshRequestedAt: response.metadata.refreshRequestedAt }) };
 }
@@ -112,7 +116,7 @@ export async function refreshQualifiedConnectedAccountQuota(
         account: context.ref, machineId: target.machine.id,
     }, { surface: 'ui', authority: 'present_user', serverId: context.serverBasis.serverId,
         expectedAccountId: parseToken(context.credentials.token) });
-    if (!result.ok) throw Object.assign(new Error(result.error), { code: result.errorCode });
+    if (!result.ok) throw createActionExecuteFailureError(result);
     if (!CONNECTED_SERVICE_CONFIGURATION_ACTION_OUTPUT_SCHEMAS_V1['connectedServices.quota.refresh'].safeParse(result.result).success) {
         throw Object.assign(new Error('connected_account_quota_refresh_unavailable'), { code: 'connected_account_quota_refresh_unavailable' });
     }

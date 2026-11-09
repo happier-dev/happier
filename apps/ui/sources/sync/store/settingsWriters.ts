@@ -1,3 +1,4 @@
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import React from 'react';
 import { useShallow } from 'zustand/react/shallow';
 
@@ -22,35 +23,16 @@ import type { AuthoringMemoryDelta } from '@/sync/engine/authoringMemory/authori
 import { PROFILE_ACTION_OUTPUT_SCHEMAS_V1, type ProfileActionRequestV1 } from '@happier-dev/protocol/profiles/profileActionsV1';
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
 import type { ActionApprovalContinuation } from '@/components/approvals/actionApprovalContinuation';
-import {
-  applySessionReminderPresetIntentToAccountSettings,
-  type SessionReminderPresetIntent,
-} from '../domains/session/organization/sessionReminderPreset';
+import type { SessionReminderPresetIntent } from '@happier-dev/protocol/account/settings/sessionReminderPresetsV1';
 import { getSyncSingleton } from '@/sync/runtime/getSyncSingleton';
 import type { SettingsAnalyticsSource } from '@/track/settingsAnalytics/types';
 import { getStorage } from '@/sync/domains/state/storageStore';
-import { requireOneShotAccountSettingsMutationApplied } from '@/sync/engine/settings/syncSettings';
 import { areAccountSettingsScopesEqual, type AccountSettingsScope } from '@/sync/domains/settings/scope/accountSettingsScope';
 import { BUILT_IN_SETTINGS_DECLARATIONS_V1 } from '@happier-dev/protocol/actions/settings/settingsDeclarations';
 import { SettingsDeclarationValueV1Schema } from '@happier-dev/protocol/actions/settingsDeclarationActionFamily';
 import { useSettingActionWriter } from '@/components/settings/catalog/useSettingActionWriter';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { requireActionSuccess } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
-
-async function persistAccountSettingsOnce(
-  expectedSettingsScope: AccountSettingsScope | null,
-  expectedSettingsVersion: number | null,
-  mutate: (raw: Readonly<Record<string, unknown>>) => Record<string, unknown>,
-): Promise<void> {
-  requireOneShotAccountSettingsMutationApplied(
-    await getSyncSingleton().mutateAccountSettingsOnce({
-      expectedSettingsScope,
-      expectedSettingsVersion,
-      rebaseOnConflict: true,
-      mutate: (raw) => ({ settings: mutate(raw), value: undefined }),
-    }),
-  );
-}
 
 function applyLocalSettingsFromStore(delta: Partial<LocalSettings>, source: SettingsAnalyticsSource): void {
   getStorage().getState().applyLocalSettings(delta, { source });
@@ -156,23 +138,19 @@ export function useApplyAuthoringMemoryDelta(): (delta: AuthoringMemoryDelta) =>
 }
 
 /**
- * Reminder-preset edits apply as an intent through the existing one-shot Account-settings write, so
- * the list the user ends up with is the current one plus their change — never a whole array
- * captured before a modal and a network round trip.
+ * Both reminder menus submit the same semantic Settings intent. Admission and approval precede
+ * the portable preset reducer and the existing Account CAS writer.
  */
 export function useApplySessionReminderPresetIntent(): (intent: SessionReminderPresetIntent) => Promise<void> {
   const expectedScope = useAccountSettingsScope();
+  const { execute } = useMountedActionExecution(expectedScope);
   return React.useCallback(async (intent: SessionReminderPresetIntent) => {
-    // The modal retains its Account, not the revision from before it opened. The semantic intent
-    // is applied to the canonical writer's current raw settings; replacement guards its own baseline.
     const current = getStorage().getState();
     if (!expectedScope || !areAccountSettingsScopesEqual(expectedScope, current.settingsScope)) {
       throw new Error('Account settings scope changed before saving reminder presets');
     }
-    await persistAccountSettingsOnce(expectedScope, current.settingsVersion, (raw) => (
-      applySessionReminderPresetIntentToAccountSettings(raw, intent)
-    ));
-  }, [expectedScope]);
+    requireActionSuccess(await execute('settings.set', { anchor: 'session.reminderPresets', value: intent }));
+  }, [execute, expectedScope]);
 }
 
 export type ProfileActionExecutionOptions = Readonly<{
@@ -266,11 +244,11 @@ export function useApplyFavoriteModelSelectionReplacementIntent(): (
     const after = new Set(input.proposed.map(key));
     for (const selection of input.base.filter(value => !after.has(key(value)))) {
       const result = await execute('models.favorite.set', ModelFavoriteMutationV1Schema.parse({ selection, favorite: false }));
-      if (!result.ok) throw Object.assign(new Error(result.error), { code: result.errorCode });
+      if (!result.ok) throw createActionExecuteFailureError(result);
     }
     for (const selection of input.proposed.filter(value => !before.has(key(value)))) {
       const result = await execute('models.favorite.set', ModelFavoriteMutationV1Schema.parse({ selection, favorite: true }));
-      if (!result.ok) throw Object.assign(new Error(result.error), { code: result.errorCode });
+      if (!result.ok) throw createActionExecuteFailureError(result);
     }
   }, [execute]);
 }

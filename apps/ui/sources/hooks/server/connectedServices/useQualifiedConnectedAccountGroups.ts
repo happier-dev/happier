@@ -1,3 +1,4 @@
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import * as React from 'react';
 
 import { useAuth } from '@/auth/context/AuthContext';
@@ -8,21 +9,20 @@ import { useMountedActionExecution } from '@/components/approvals/useMountedActi
 import { useServerFeaturesSnapshotForServerId } from '@/sync/domains/features/featureDecisionRuntime';
 import { resolveConnectedAccountUiNegotiation } from '@/sync/domains/connectedServices/resolveConnectedAccountUiNegotiation';
 import { parseToken } from '@/utils/auth/parseToken';
+import { useActiveServerAccountScope, useProfile } from '@/sync/store/hooks';
+import { areServerAccountScopesEqual } from '@/sync/domains/scope/serverAccountScope';
+import { sync } from '@/sync/sync';
 import {
     readConnectedServiceSettingsErrorCode,
     resolveConnectedServiceSettingsErrorMessage,
 } from '@/components/settings/connectedServices/connectedServiceSettingsErrors';
 import {
     createQualifiedConnectedAccountGroupsClient,
-    isQualifiedConnectedAccountGroupRevisionCurrent as isCurrentGroupRevision,
+    fromQualifiedGroup,
     QualifiedConnectedAccountUiSourceError,
     type QualifiedConnectedAccountUiGroup,
     type QualifiedConnectedAccountUiSource,
 } from '@/sync/domains/connectedServices/qualifiedConnectedAccountUiSource';
-import {
-    invalidateConnectedServiceGroupsRefreshSignal,
-    useConnectedServiceGroupsRefreshSignal,
-} from '@/sync/domains/connectedServices/connectedServiceGroupsRefreshSignal';
 import { sameQualifiedConnectedAccountGroupRef } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
 import { CONNECTED_SERVICE_CONFIGURATION_ACTION_OUTPUT_SCHEMAS_V1 } from '@happier-dev/protocol/connect/configurationActionsV1';
 import { isActionApprovalDeclinedErrorCode } from '@happier-dev/protocol/actions/actionExecutionResult';
@@ -80,14 +80,6 @@ export type UseQualifiedConnectedAccountGroupsResult = Readonly<{
     }>): Promise<QualifiedConnectedAccountUiGroup | null>;
 }>;
 
-type State = Readonly<{
-    basis: LoadBasis | null;
-    status: QualifiedConnectedAccountGroupsStatus;
-    source: QualifiedConnectedAccountUiSource | null;
-    groups: readonly QualifiedConnectedAccountUiGroup[];
-    error: string | null;
-}>;
-
 type LoadBasis = Readonly<{
     credentials: AuthCredentials;
     serverId: string;
@@ -95,26 +87,7 @@ type LoadBasis = Readonly<{
     source: QualifiedConnectedAccountUiSource;
 }>;
 
-const EMPTY_STATE: State = {
-    basis: null,
-    status: 'idle',
-    source: null,
-    groups: [],
-    error: null,
-};
-
-function upsertGroup(
-    groups: readonly QualifiedConnectedAccountUiGroup[],
-    group: QualifiedConnectedAccountUiGroup,
-): readonly QualifiedConnectedAccountUiGroup[] {
-    const index = groups.findIndex((candidate) => (
-        sameQualifiedConnectedAccountGroupRef(candidate.ref, group.ref)
-    ));
-    if (index === -1) return [...groups, group];
-    const next = [...groups];
-    next[index] = group;
-    return next;
-}
+const EMPTY_GROUPS: readonly QualifiedConnectedAccountUiGroup[] = [];
 
 function isGroupRevisionConflict(error: unknown): boolean {
     const code = readConnectedServiceSettingsErrorCode(error);
@@ -138,8 +111,10 @@ export function useQualifiedConnectedAccountGroups(params: Readonly<{
         } catch { return null; }
     }, [credentials, params.serverId]);
     const execution = useMountedActionExecution(actionScope);
-    const refreshSignal = useConnectedServiceGroupsRefreshSignal();
-    const [state, setState] = React.useState<State>(EMPTY_STATE);
+    const profileScope = useActiveServerAccountScope();
+    const profileGroups = useProfile(profile => profile.connectedAccountGroupsV4);
+    const [failure, setFailure] = React.useState<Readonly<{ basis: LoadBasis; error: string }> | null>(null);
+    const [refreshing, setRefreshing] = React.useState<LoadBasis | null>(null);
     const [mutating, setMutating] = React.useState(false);
     const servicePluginId = params.service?.pluginId ?? '';
     const serviceLocalId = params.service?.localId ?? '';
@@ -167,110 +142,35 @@ export function useQualifiedConnectedAccountGroups(params: Readonly<{
     );
     const currentBasisRef = React.useRef(basis);
     currentBasisRef.current = basis;
-    const stateRef = React.useRef(state);
-    stateRef.current = state;
-    // List responses may arrive after a local group mutation under the same
-    // basis. Keep their request epoch with the hook state they are allowed to
-    // replace, rather than giving a consumer its own reconciliation path.
-    const groupsEpochRef = React.useRef(0);
-
-    const load = React.useCallback(async (
-        preserveGroups: readonly QualifiedConnectedAccountUiGroup[],
-    ) => {
-        if (!basis) {
-            setState(EMPTY_STATE);
-            return;
-        }
-        const listEpoch = ++groupsEpochRef.current;
-        // Last-known-good stays visible while the list reloads: only a CHANGED
-        // basis clears the previous groups.
-        setState((previous) => ({
-            basis,
-            status: 'loading',
-            source: basis.source,
-            groups: previous.basis === basis ? previous.groups : [],
-            error: null,
-        }));
+    const profileCurrent = Boolean(basis && areServerAccountScopesEqual(profileScope, actionScope));
+    const groups = React.useMemo(() => profileCurrent && service
+        ? (profileGroups ?? []).filter(group => group.ref.service.pluginId === service.pluginId
+            && group.ref.service.localId === service.localId).map(group => fromQualifiedGroup(group, service))
+        : EMPTY_GROUPS, [profileCurrent, profileGroups, service]);
+    const refresh = React.useCallback(async () => {
+        if (!basis) return;
+        setRefreshing(basis);
+        setFailure(null);
         try {
-            const client = createQualifiedConnectedAccountGroupsClient({
-                credentials: basis.credentials,
-                service: basis.service,
-                source: basis.source,
-            });
-            const groups = await client.list();
-            if (
-                currentBasisRef.current !== basis
-                || groupsEpochRef.current !== listEpoch
-            ) return;
-            setState({
-                basis,
-                status: 'loaded',
-                source: basis.source,
-                groups,
-                error: null,
-            });
+            await sync.refreshProfile();
         } catch (error) {
-            if (
-                currentBasisRef.current !== basis
-                || groupsEpochRef.current !== listEpoch
-            ) return;
-            setState({
-                basis,
-                status: 'error',
-                source: basis.source,
-                groups: preserveGroups,
-                error: resolveConnectedServiceSettingsErrorMessage(error),
-            });
+            if (currentBasisRef.current === basis) {
+                setFailure({ basis, error: resolveConnectedServiceSettingsErrorMessage(error) });
+            }
+        } finally {
+            setRefreshing(previous => previous === basis ? null : previous);
         }
     }, [basis]);
 
-    React.useEffect(() => {
-        if (!basis) {
-            setState({
-                basis: null,
-                status: negotiation === 'indeterminate' ? 'loading' : 'unsupported',
-                source: null,
-                groups: [],
-                error: null,
-            });
-            return;
-        }
-        // Groups from a DIFFERENT basis are never preserved through a failure;
-        // a reload under the same basis keeps what is already on screen.
-        void load(
-            stateRef.current.basis === basis ? stateRef.current.groups : [],
-        );
-    }, [basis, load, negotiation, refreshSignal]);
-
-    const visibleState: State = state.basis === basis
-        ? state
-        : basis
-            ? {
-                basis,
-                status: 'loading',
-                source: null,
-                groups: [],
-                error: null,
-            }
-            : {
-                basis: null,
-                status: negotiation === 'indeterminate' ? 'loading' : 'unsupported',
-                source: null,
-                groups: [],
-                error: null,
-            };
-
     const client = React.useMemo(
-        () => basis && visibleState.source
+        () => basis
             ? createQualifiedConnectedAccountGroupsClient({
-                credentials: basis.credentials,
                 service: basis.service,
-                source: visibleState.source,
                 mutation: {
                     execute: async (actionId, input) => {
                         if (currentBasisRef.current !== basis) throw Object.assign(new Error('action_account_scope_changed'), { code: 'action_account_scope_changed' });
                         const result = await execution.execute(actionId, input);
-                        if (!result.ok) throw Object.assign(new Error(result.error), { code: result.errorCode });
+                        if (!result.ok) throw createActionExecuteFailureError(result);
                         return result.result;
                     },
                     readGroup: async group => {
@@ -290,89 +190,54 @@ export function useQualifiedConnectedAccountGroups(params: Readonly<{
                 },
             })
             : null,
-        [basis, execution.execute, visibleState.source],
+        [basis, execution.execute],
     );
 
     const mutate = React.useCallback(async (
         operation: (
             client: ReturnType<typeof createQualifiedConnectedAccountGroupsClient>,
         ) => Promise<QualifiedConnectedAccountUiGroup>,
-        currentGroup: QualifiedConnectedAccountUiGroup | null,
+        throwOnError = false,
     ): Promise<QualifiedConnectedAccountUiGroup | null> => {
         if (!client) return null;
         const operationBasis = basis;
         setMutating(true);
         try {
             const group = await operation(client);
-            if (
-                currentBasisRef.current !== operationBasis
-                || (currentGroup && !isCurrentGroupRevision({
-                            state: stateRef.current,
-                            basis: operationBasis,
-                            group: currentGroup,
-                        }) && !isCurrentGroupRevision({
-                            state: stateRef.current,
-                            basis: operationBasis,
-                            // A same-Account refresh can already contain this exact acknowledged revision.
-                            group,
-                        }))
-            ) return null;
-            // A same-Account list refresh cannot revoke a successful create.
-            // Return its current revision so the draft can continue adding members.
-            const listedGroup = currentGroup ? undefined : stateRef.current.groups.find(candidate =>
-                sameQualifiedConnectedAccountGroupRef(candidate.ref, group.ref));
-            if (listedGroup && listedGroup.revision.incarnation !== group.revision.incarnation) {
-                throw Object.assign(new Error('connect_group_incarnation_conflict'), { code: 'connect_group_incarnation_conflict' });
-            }
-            const appliedGroup = listedGroup ?? group;
-            groupsEpochRef.current += 1;
-            const acknowledged: State = {
-                ...stateRef.current,
-                basis,
-                status: 'loaded',
-                groups: upsertGroup(stateRef.current.groups, appliedGroup),
-                error: null,
-            };
-            // A draft threads this acknowledged revision into its next member write before
-            // React necessarily commits another render. The existing ref is the same owner,
-            // not an older render's veto over an already acknowledged Account mutation.
-            stateRef.current = acknowledged;
-            setState(acknowledged);
-            invalidateConnectedServiceGroupsRefreshSignal();
-            return appliedGroup;
+            if (currentBasisRef.current !== operationBasis) return null;
+            // The caller threads this receipt into its next CAS; displayed groups
+            // remain owned by the Account profile push, not a second local list.
+            setFailure(null);
+            return group;
         } catch (error) {
             if (currentBasisRef.current !== operationBasis) return null;
             if (isActionApprovalDeclinedErrorCode(readConnectedServiceSettingsErrorCode(error))) return null;
             if (isGroupRevisionConflict(error)) {
-                await load([]);
+                await refresh();
             }
-            setState((previous) => ({
-                ...previous,
-                error: resolveConnectedServiceSettingsErrorMessage(error),
-            }));
+            if (operationBasis) setFailure({ basis: operationBasis, error: resolveConnectedServiceSettingsErrorMessage(error) });
+            if (throwOnError) throw error;
             return null;
         } finally {
             setMutating(false);
         }
-    }, [basis, client, load]);
+    }, [basis, client, refresh]);
 
     return {
-        status: visibleState.status,
-        source: visibleState.source,
-        groups: visibleState.groups,
-        error: visibleState.error,
+        status: !basis ? negotiation === 'indeterminate' ? 'loading' : 'unsupported'
+            : failure?.basis === basis ? 'error' : !profileCurrent || refreshing === basis ? 'loading' : 'loaded',
+        source: basis?.source ?? null,
+        groups,
+        error: failure?.basis === basis ? failure.error : null,
         mutating,
         execution,
-        refresh: React.useCallback(
-            () => load(visibleState.groups),
-            [load, visibleState.groups],
-        ),
+        refresh,
         create: React.useCallback(
-            (input) => mutate((activeClient) => activeClient.create(input), null),
+            (input) => mutate((activeClient) => activeClient.create(input)),
             [mutate],
         ),
         patch: React.useCallback(
-            (input) => mutate((activeClient) => activeClient.patch(input), input.group),
+            (input) => mutate((activeClient) => activeClient.patch(input)),
             [mutate],
         ),
         delete: React.useCallback(async (group) => {
@@ -395,94 +260,37 @@ export function useQualifiedConnectedAccountGroups(params: Readonly<{
                         expectedGeneration: group.revision.generation,
                         expectedRuntimeStateRevision: group.revision.runtimeStateRevision,
                     });
-                if (!result.ok) throw Object.assign(new Error(result.error), { code: result.errorCode });
+                if (!result.ok) throw createActionExecuteFailureError(result);
                 const receipt = CONNECTED_SERVICE_CONFIGURATION_ACTION_OUTPUT_SCHEMAS_V1['connectedServices.pools.delete'].parse(result.result);
-                if (
-                    currentBasisRef.current !== operationBasis
-                    || !isCurrentGroupRevision({
-                        state: stateRef.current,
-                        basis: operationBasis,
-                        group,
-                        allowAbsent: true,
-                    })
-                ) return receipt;
-                const remainingGroups = stateRef.current.groups.filter((candidate) => (
-                    !sameQualifiedConnectedAccountGroupRef(candidate.ref, group.ref)
-                ));
-                groupsEpochRef.current += 1;
-                setState((previous) => ({
-                    ...previous,
-                    basis,
-                    status: 'loaded',
-                    groups: remainingGroups,
-                    error: null,
-                }));
-                await load(remainingGroups);
+                if (currentBasisRef.current === operationBasis) setFailure(null);
                 return receipt;
             } catch (error) {
                 if (currentBasisRef.current !== operationBasis) return false;
                 if (isActionApprovalDeclinedErrorCode(readConnectedServiceSettingsErrorCode(error))) return false;
                 if (isGroupRevisionConflict(error)) {
-                    await load([]);
+                    await refresh();
                 }
-                setState((previous) => ({
-                    ...previous,
-                    error: resolveConnectedServiceSettingsErrorMessage(error),
-                }));
+                setFailure({ basis: operationBasis, error: resolveConnectedServiceSettingsErrorMessage(error) });
                 return false;
             } finally {
                 setMutating(false);
             }
-        }, [basis, client, execution.execute, load]),
+        }, [basis, client, execution.execute, refresh]),
         addMember: React.useCallback(
-            (input) => mutate((activeClient) => activeClient.addMember(input), input.group),
+            (input) => mutate((activeClient) => activeClient.addMember(input)),
             [mutate],
         ),
         patchMember: React.useCallback(
-            (input) => mutate((activeClient) => activeClient.patchMember(input), input.group),
+            (input) => mutate((activeClient) => activeClient.patchMember(input)),
             [mutate],
         ),
         removeMember: React.useCallback(
-            (input) => mutate((activeClient) => activeClient.removeMember(input), input.group),
+            (input) => mutate((activeClient) => activeClient.removeMember(input)),
             [mutate],
         ),
-        setActiveAccount: React.useCallback(async (input) => {
-            if (!client) return null;
-            const operationBasis = basis;
-            setMutating(true);
-            try {
-                const group = await client.setActiveAccount(input);
-                if (
-                    currentBasisRef.current !== operationBasis
-                    || !isCurrentGroupRevision({
-                        state: stateRef.current,
-                        basis: operationBasis,
-                        group: input.group,
-                    })
-                ) return null;
-                groupsEpochRef.current += 1;
-                setState((previous) => ({
-                    ...previous,
-                    basis,
-                    status: 'loaded',
-                    groups: upsertGroup(previous.groups, group),
-                    error: null,
-                }));
-                invalidateConnectedServiceGroupsRefreshSignal();
-                return group;
-            } catch (error) {
-                if (currentBasisRef.current !== operationBasis) return null;
-                if (isGroupRevisionConflict(error)) {
-                    await load([]);
-                }
-                setState((previous) => ({
-                    ...previous,
-                    error: resolveConnectedServiceSettingsErrorMessage(error),
-                }));
-                throw error;
-            } finally {
-                setMutating(false);
-            }
-        }, [basis, client, load]),
+        setActiveAccount: React.useCallback(
+            input => mutate(activeClient => activeClient.setActiveAccount(input), true),
+            [mutate],
+        ),
     };
 }

@@ -1,3 +1,4 @@
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import {
     CONNECTED_ACCOUNT_AUTHENTICATION_COMMAND_RPC_METHOD,
     CONNECTED_ACCOUNT_CONTROL_COMMAND_RPC_METHOD,
@@ -195,7 +196,7 @@ export async function runConnectedAccountAuthenticationAction(
             : await createDefaultActionExecutor().execute(actionId, actionInput, { surface: 'ui', authority: 'present_user', serverId: input.serverId,
                 expectedAccountId: input.expectedAccountId, actionRequestId: requestId,
                 ...(input.signal ? { signal: input.signal } : {}) });
-        if (!result.ok) throw Object.assign(new Error(result.error), { code: result.errorCode });
+        if (!result.ok) throw createActionExecuteFailureError(result);
         assertExpected?.();
         input.assertCurrent?.();
         // UI-local correlation is added after parsing the daemon/Action wire response.
@@ -227,7 +228,7 @@ export async function listPendingConnectedAccountAuthenticationActions(
             ? await input.executeAction('connectedServices.authentication.pending.list', actionInput, { signal: input.signal, actionRequestId: requestId })
             : await createDefaultActionExecutor().execute('connectedServices.authentication.pending.list', actionInput, { surface: 'ui', authority: 'present_user', serverId: input.serverId,
                 expectedAccountId: input.expectedAccountId, actionRequestId: requestId, ...(input.signal ? { signal: input.signal } : {}) });
-        if (!result.ok) throw Object.assign(new Error(result.error), { code: result.errorCode });
+        if (!result.ok) throw createActionExecuteFailureError(result);
         assertExpected?.();
         input.assertCurrent?.();
         // Keep UI invocation metadata outside the strict daemon/Action response.

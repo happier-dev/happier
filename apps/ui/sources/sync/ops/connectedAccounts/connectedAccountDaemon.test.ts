@@ -1,8 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as React from 'react';
 import { act } from 'react-test-renderer';
-import { MACHINE_PLAIN_DATA_KEY_MARKER, CONNECTED_ACCOUNT_AUTHENTICATION_COMMAND_RPC_METHOD,
-    CONNECTED_ACCOUNT_CONTROL_COMMAND_RPC_METHOD, type ConnectedAccountDaemonControlResponse } from '@happier-dev/protocol';
+import { MACHINE_PLAIN_DATA_KEY_MARKER} from '@happier-dev/protocol/machines/machineStoredContent';
+import { CONNECTED_ACCOUNT_AUTHENTICATION_COMMAND_RPC_METHOD,
+    CONNECTED_ACCOUNT_CONTROL_COMMAND_RPC_METHOD, type ConnectedAccountDaemonControlResponse } from '@happier-dev/protocol/connect/connectedAccountDaemonRpcV1';
 import type { SocketRpcRequestPayload } from '@happier-dev/protocol/socketRpc';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { configureConnectedServerSocketBoundary, installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
@@ -10,19 +11,39 @@ import { renderScreen } from '@/dev/testkit/render/renderScreen';
 import { createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { setActionApprovalOverride } from '@happier-dev/protocol/actions/actionSettings';
 
+// Native rendering/router and credentials are boundaries. Warm callback cases
+// retain the real mounted Action hook, executor and same-Account HTTP lookup.
+const callbackBoundary = vi.hoisted(() => ({ active: false }));
+vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
+vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
+vi.mock('@expo/vector-icons', async () => (await import('@/dev/testkit/mocks/icons')).createExpoVectorIconsMock());
+vi.mock('@/auth/context/AuthContext', () => ({ useAuth: () => ({ isAuthenticated: true }) }));
+vi.mock('expo-router', async () => {
+    const router = (await import('@/dev/testkit/mocks/router')).createExpoRouterMock();
+    const native = await import('@react-navigation/core');
+    return { ...router.module,
+        useNavigation: () => callbackBoundary.active ? native.useNavigation() : router.module.useNavigation(),
+        useLocalSearchParams: () => callbackBoundary.active ? native.useRoute().params ?? {} : router.module.useLocalSearchParams(),
+    };
+});
+
 const homes = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(homes);
 const outgoing: SocketRpcRequestPayload[] = [];
 const answers: unknown[] = [];
+const rpcFailures: unknown[] = [];
 installDisconnectedServerSocketBoundary((socket) => {
     configureConnectedServerSocketBoundary(socket);
     vi.spyOn(socket, 'timeout').mockReturnValue(socket);
     vi.spyOn(socket, 'emitWithAck').mockImplementation(async (_event: string, payload: SocketRpcRequestPayload) => {
         outgoing.push(payload);
+        if (rpcFailures.length) return rpcFailures.shift();
         if (!answers.length) throw new Error('Unexpected connected-account daemon request');
         return { ok: true, result: answers.shift() };
     });
 });
+// Compile the real Sync graph during module bootstrap, outside per-case lifecycle hooks.
+await import('@/sync/syncEngine');
 const service = { pluginId: 'acme.accounts', localId: 'work' } as const;
 const beginConnect = { operation: 'beginConnect', service, modeId: 'manual' } as const;
 const machineRow = { machine: createPlainMachineRowFixture({ id: 'machine-1', accountId: 'account-a' }) };
@@ -65,6 +86,7 @@ describe('connected-account daemon machine RPC', () => {
         connection = await restoreServerAccountForTest({ serverUrl: 'https://connected-accounts.test', accountId: 'account-a', request: homes.request });
         outgoing.length = 0;
         answers.length = 0;
+        rpcFailures.length = 0;
     });
     afterEach(async () => {
         restoreCallbackApproval?.();
@@ -143,6 +165,60 @@ describe('connected-account daemon machine RPC', () => {
             params: { v: 1, machineId: 'machine-1', command: beginConnect } }]);
         expect(homes.requestsFor('/v1/machines/read-batch')[0]?.serverId).toBe(serverId);
     });
+    it('recovers an addressed Machine attempt without reading the Machine inventory', async () => {
+        await waiveCallbackApproval();
+        const { completeConnectedAccountOAuthCallback } = await import('./connectedAccountOAuthCallback');
+        const { CONNECTED_ACCOUNT_OAUTH_CALLBACK_URL_V1 } = await import('@happier-dev/protocol/connect/oauthAuthorizationResponse');
+        const attemptId = 'addressed-attempt';
+        answerAddressedOAuthAttempt(attemptId, 'machine-1');
+        answers.push({ status: 'awaitingOAuth', attemptId, callbackUrl: CONNECTED_ACCOUNT_OAUTH_CALLBACK_URL_V1 },
+            { status: 'connected', attemptId, account: { service, accountId: 'addressed-account' } });
+        const readMachines = vi.fn(async () => []);
+        const account = { serverId, expectedAccountId: 'account-a', assertCurrent() {}, readMachines };
+        const outcome = await completeConnectedAccountOAuthCallback({
+            callbackUrl: `${CONNECTED_ACCOUNT_OAUTH_CALLBACK_URL_V1}?code=code&state=${attemptId}.nonce`,
+            account,
+        });
+        expect(outcome).toEqual({ kind: 'connected', returnTo: '/settings/connected-services' });
+        expect(readMachines).not.toHaveBeenCalled();
+        expect(homes.requestsFor('/v1/machines')).toEqual([]);
+        expect(outgoing.filter(request => request.method.endsWith(CONNECTED_ACCOUNT_CONTROL_COMMAND_RPC_METHOD))).toEqual([]);
+        expect(outgoing.filter(request => request.method.endsWith(CONNECTED_ACCOUNT_AUTHENTICATION_COMMAND_RPC_METHOD)))
+            .toHaveLength(2);
+    });
+    it('completes the MCP callback on its addressed Machine through the real Action and socket owners', async () => {
+        await waiveCallbackApproval();
+        const { completeMcpOAuthCallback } = await import('./mcpOAuthCallback');
+        const { MCP_OAUTH_CALLBACK_URL_V1, MCP_SIGN_IN_CONNECTED_SERVICE_REF_V1 } = await import('@happier-dev/protocol/mcp/oauth/mcpOAuthClientIdentityV1');
+        homes.answer(serverId, '/v1/machines/machine-2', { body: { machine: createPlainMachineRowFixture({ id: 'machine-2', accountId: 'account-a' }) } });
+        const attemptId = 'attempt.with.dots';
+        answerAddressedOAuthAttempt(attemptId, 'machine-2', MCP_SIGN_IN_CONNECTED_SERVICE_REF_V1);
+        answers.push(
+            { status: 'awaitingOAuth', attemptId, callbackUrl: MCP_OAUTH_CALLBACK_URL_V1 },
+            { status: 'connected', attemptId,
+                account: { service: { pluginId: 'happier', localId: 'mcp-sign-in' }, accountId: 'server-id' } },
+        );
+        let stripped = false;
+        const callbackUrl = `${MCP_OAUTH_CALLBACK_URL_V1}?code=code-1&state=attempt.with.dots.nonce&iss=https%3A%2F%2Fissuer.example`;
+        const outcome = await completeMcpOAuthCallback({ callbackUrl, browser: {
+            replaceUrl: path => { expect(path).toBe('/oauth/mcp/callback'); stripped = true; }, close() {},
+        }, account: { serverId, expectedAccountId: 'account-a', assertCurrent() {
+            expect(stripped).toBe(true);
+        }, returnTo: 'https://foreign.example' } });
+        expect(outcome).toEqual({ kind: 'connected', returnTo: '/settings/mcp/server-id' });
+        const issued = outgoing.filter(request => request.method.endsWith(CONNECTED_ACCOUNT_AUTHENTICATION_COMMAND_RPC_METHOD)
+            || request.method.endsWith(CONNECTED_ACCOUNT_CONTROL_COMMAND_RPC_METHOD));
+        expect(issued).toMatchObject([
+            { method: `machine-2:${CONNECTED_ACCOUNT_AUTHENTICATION_COMMAND_RPC_METHOD}`, params: { command: {
+                operation: 'read', attemptId: 'attempt.with.dots',
+            } } },
+            { method: `machine-2:${CONNECTED_ACCOUNT_AUTHENTICATION_COMMAND_RPC_METHOD}`, params: { command: {
+                operation: 'completeOAuth', attemptId: 'attempt.with.dots', completion: {
+                    code: 'code-1', state: 'attempt.with.dots.nonce', iss: 'https://issuer.example', callbackUrl: MCP_OAUTH_CALLBACK_URL_V1,
+                },
+            } } },
+        ]);
+    });
     it.each(['connected', 'alreadyConnected', 'wrongCallback', 'stale'] as const)('routes the generic exact attempt through the real Action/socket owners without a service catalog (%s)', async result => {
         await waiveCallbackApproval();
         const { completeConnectedAccountOAuthCallback } = await import('./connectedAccountOAuthCallback');
@@ -181,49 +257,11 @@ describe('connected-account daemon machine RPC', () => {
         expect(issued).toHaveLength(result === 'connected' ? 2 : 1);
         expect(answers).toEqual([]);
     });
-    it('completes the MCP callback on its exact pending machine through the real Action and socket owners', async () => {
-        await waiveCallbackApproval();
-        const { completeMcpOAuthCallback } = await import('./mcpOAuthCallback');
-        const { MCP_OAUTH_CALLBACK_URL_V1 } = await import('@happier-dev/protocol/mcp/oauth/mcpOAuthClientIdentityV1');
-        homes.answer(serverId, '/v1/machines/machine-2', { body: { machine: createPlainMachineRowFixture({ id: 'machine-2', accountId: 'account-a' }) } });
-        const attempt = { attemptId: 'attempt.with.dots', kind: 'oauth', modeId: 'oauth', intent: 'connect',
-            phase: 'awaitingOAuth', createdAtMs: 1, expiresAtMs: 100 };
-        answers.push(
-            { status: 'pendingAttempts', attempts: [{ ...attempt, attemptId: 'decoy' }] },
-            { status: 'pendingAttempts', attempts: [attempt] },
-            { status: 'awaitingOAuth', attemptId: attempt.attemptId, callbackUrl: MCP_OAUTH_CALLBACK_URL_V1 },
-            { status: 'connected', attemptId: attempt.attemptId,
-                account: { service: { pluginId: 'happier', localId: 'mcp-sign-in' }, accountId: 'server-id' } },
-        );
-        let stripped = false;
-        const callbackUrl = `${MCP_OAUTH_CALLBACK_URL_V1}?code=code-1&state=attempt.with.dots.nonce&iss=https%3A%2F%2Fissuer.example`;
-        const outcome = await completeMcpOAuthCallback({ callbackUrl, browser: {
-            replaceUrl: path => { expect(path).toBe('/oauth/mcp/callback'); stripped = true; }, close() {},
-        }, account: { serverId, expectedAccountId: 'account-a', assertCurrent() {
-            expect(stripped).toBe(true);
-        }, returnTo: 'https://foreign.example', readMachines: async () => [
-            { id: 'offline', active: false }, { id: 'machine-1', active: true }, { id: 'machine-2', active: true },
-        ] } });
-        expect(outcome).toEqual({ kind: 'connected', machineId: 'machine-2', returnTo: '/settings/mcp/server-id' });
-        const issued = outgoing.filter(request => request.method.endsWith(CONNECTED_ACCOUNT_AUTHENTICATION_COMMAND_RPC_METHOD)
-            || request.method.endsWith(CONNECTED_ACCOUNT_CONTROL_COMMAND_RPC_METHOD));
-        expect(issued).toMatchObject([
-            { method: `machine-1:${CONNECTED_ACCOUNT_CONTROL_COMMAND_RPC_METHOD}` },
-            { method: `machine-2:${CONNECTED_ACCOUNT_CONTROL_COMMAND_RPC_METHOD}` },
-            { method: `machine-2:${CONNECTED_ACCOUNT_AUTHENTICATION_COMMAND_RPC_METHOD}`, params: { command: {
-                operation: 'read', attemptId: 'attempt.with.dots', restoreKind: 'oauth',
-            } } },
-            { method: `machine-2:${CONNECTED_ACCOUNT_AUTHENTICATION_COMMAND_RPC_METHOD}`, params: { command: {
-                operation: 'completeOAuth', attemptId: 'attempt.with.dots', completion: {
-                    code: 'code-1', state: 'attempt.with.dots.nonce', iss: 'https://issuer.example', callbackUrl: MCP_OAUTH_CALLBACK_URL_V1,
-                },
-            } } },
-        ]);
-    });
-    it('uses the original attempt machine without rediscovery and preserves its internal return destination', async () => {
+    it('uses the addressed attempt Machine and preserves its internal return destination', async () => {
         await waiveCallbackApproval();
         const { completeMcpOAuthCallback } = await import('./mcpOAuthCallback');
         const { MCP_OAUTH_CALLBACK_URL_V1, MCP_SIGN_IN_CONNECTED_SERVICE_REF_V1 } = await import('@happier-dev/protocol/mcp/oauth/mcpOAuthClientIdentityV1');
+        answerAddressedOAuthAttempt('retained-attempt', 'machine-1', MCP_SIGN_IN_CONNECTED_SERVICE_REF_V1);
         answers.push(
             { status: 'awaitingOAuth', attemptId: 'retained-attempt', callbackUrl: MCP_OAUTH_CALLBACK_URL_V1 },
             { status: 'connected', attemptId: 'retained-attempt',
@@ -231,10 +269,9 @@ describe('connected-account daemon machine RPC', () => {
         );
         expect(await completeMcpOAuthCallback({
             callbackUrl: `${MCP_OAUTH_CALLBACK_URL_V1}?code=code&state=retained-attempt.nonce`,
-            account: { serverId, expectedAccountId: 'account-a', machineId: 'machine-1', assertCurrent() {},
-                returnTo: '/session/session-1?capabilities=open',
-                async readMachines() { throw new Error('retained_machine_must_not_rediscover'); } },
-        })).toEqual({ kind: 'connected', machineId: 'machine-1', returnTo: '/session/session-1?capabilities=open' });
+            account: { serverId, expectedAccountId: 'account-a', assertCurrent() {},
+                returnTo: '/session/session-1?capabilities=open' },
+        })).toEqual({ kind: 'connected', returnTo: '/session/session-1?capabilities=open' });
         const issued = outgoing.filter(request => request.method.endsWith(CONNECTED_ACCOUNT_AUTHENTICATION_COMMAND_RPC_METHOD)
             || request.method.endsWith(CONNECTED_ACCOUNT_CONTROL_COMMAND_RPC_METHOD));
         expect(issued).toHaveLength(2);
@@ -246,27 +283,92 @@ describe('connected-account daemon machine RPC', () => {
         const { completeMcpOAuthCallback } = await import('./mcpOAuthCallback');
         const { TokenStorage } = await import('@/auth/storage/tokenStorage');
         const { MCP_OAUTH_CALLBACK_URL_V1, MCP_SIGN_IN_CONNECTED_SERVICE_REF_V1 } = await import('@happier-dev/protocol/mcp/oauth/mcpOAuthClientIdentityV1');
+        answerAddressedOAuthAttempt('retained-attempt', 'machine-1', MCP_SIGN_IN_CONNECTED_SERVICE_REF_V1);
         expect(await TokenStorage.setPendingExternalConnect({ provider: matches ? 'mcp:retained-attempt' : 'mcp:other-attempt',
             serverId, serverUrl: 'https://connected-accounts.test', returnTo: '/session/session-1?capabilities=open' })).toBe(true);
         answers.push({ status: 'awaitingOAuth', attemptId: 'retained-attempt', callbackUrl: MCP_OAUTH_CALLBACK_URL_V1 },
             { status: 'connected', attemptId: 'retained-attempt', account: { service: MCP_SIGN_IN_CONNECTED_SERVICE_REF_V1, accountId: 'server-id' } });
         expect(await completeMcpOAuthCallback({ callbackUrl: `${MCP_OAUTH_CALLBACK_URL_V1}?code=code&state=retained-attempt.nonce`,
-            account: { serverId, expectedAccountId: 'account-a', machineId: 'machine-1', assertCurrent() {}, async readMachines() { return []; } } }))
+            account: { serverId, expectedAccountId: 'account-a', assertCurrent() {} } }))
             .toMatchObject({ kind: 'connected', returnTo: matches ? '/session/session-1?capabilities=open' : '/settings/mcp/server-id' });
         expect(await TokenStorage.getPendingExternalConnect()).toEqual(matches ? null : expect.objectContaining({ provider: 'mcp:other-attempt' }));
         await TokenStorage.clearPendingExternalConnect();
     });
 
-    it('keeps the full callback for paste when no machine owns the pending attempt', async () => {
-        const { completeMcpOAuthCallback } = await import('./mcpOAuthCallback');
-        const { MCP_OAUTH_CALLBACK_URL_V1 } = await import('@happier-dev/protocol/mcp/oauth/mcpOAuthClientIdentityV1');
-        const callbackUrl = `${MCP_OAUTH_CALLBACK_URL_V1}?code=code&state=missing-attempt.nonce&iss=https%3A%2F%2Fissuer.example`;
-        answers.push({ status: 'pendingAttempts', attempts: [] });
-        expect(await completeMcpOAuthCallback({ callbackUrl,
-            account: { serverId, expectedAccountId: 'account-a', assertCurrent() {},
-                async readMachines() { return [{ id: 'machine-1', active: true }]; } },
-        })).toEqual({ kind: 'paste', callbackUrl });
-        expect(outgoing.filter(request => request.method.endsWith(CONNECTED_ACCOUNT_AUTHENTICATION_COMMAND_RPC_METHOD))).toEqual([]);
+    it.each([
+        { path: '/oauth/connected-account/callback', prefix: 'connected-account-oauth-callback' },
+        { path: '/oauth/mcp/callback', prefix: 'mcp-oauth-callback' },
+    ])('warm callback $path offers Paste after the same-Account lookup finds no attempt', async ({ path, prefix }) => {
+        const { BaseNavigationContainer, createNavigationContainerRef, createNavigatorFactory,
+            getPathFromState, useNavigationBuilder } = await import('@react-navigation/core');
+        const { StackActions, StackRouter } = await import('@react-navigation/routers');
+        const { DestinationInstanceHost } = await import('@/components/appShell/workspace/DestinationInstanceHost');
+        const { resolveHref } = await import('expo-router/build/link/href');
+        const { default: Route } = path.includes('/mcp/')
+            ? await import('@/app/(app)/oauth/mcp/callback')
+            : await import('@/app/(app)/oauth/connected-account/callback');
+        const { storage } = await import('@/sync/domains/state/storage');
+        storage.setState({ settingsScope: { serverId, accountId: 'account-a' } });
+        homes.answer(serverId, '/v2/connect/connected-account-attempt-transactions/missing-attempt', {
+            status: 404, body: { error: 'connected_account_attempt_transaction_not_found' },
+        });
+        callbackBoundary.active = true;
+        const browser = globalThis as unknown as Record<string, unknown>;
+        const browserKeys = ['location', 'history', 'opener', 'navigator'];
+        const previous = Object.fromEntries(browserKeys.map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
+        browser.location = new URL('https://app.happier.dev/settings/connected-services');
+        browser.opener = null;
+        const copy = vi.fn(async (_value: string) => {});
+        Object.defineProperty(globalThis, 'navigator', { configurable: true, value: { clipboard: { writeText: copy } } });
+        browser.history = { state: null, replaceState(_state: unknown, _unused: string, href: string) {
+            browser.location = new URL(href, 'https://app.happier.dev');
+        } };
+        const native = createNavigationContainerRef();
+        const config = { screens: { credentials: 'settings/connected-services', callback: path.slice(1) } };
+        function Navigator({ children }: React.PropsWithChildren) {
+            const { state, descriptors, NavigationContent } = useNavigationBuilder(StackRouter, { children });
+            return React.createElement(NavigationContent, null, descriptors[state.routes[state.index]!.key]!.render());
+        }
+        const Stack = createNavigatorFactory(Navigator)();
+        const navigation = { push: (href: Parameters<typeof resolveHref>[0]) => {
+            const url = new URL(resolveHref(href), 'https://app.happier.dev');
+            native.dispatch(StackActions.push('callback', Object.fromEntries(url.searchParams)));
+        }, replace() {}, back() {} };
+        function Credentials() { return React.createElement(DestinationInstanceHost, {
+            tabId: 'warm-callback', ref: { kind: 'settings', params: { pageId: 'connected-services' } },
+            pathname: '/settings/connected-services', focused: true, visible: true, navigation,
+        }, React.createElement(React.Fragment)); }
+        const projectNavigation = () => { browser.location = new URL(getPathFromState(native.getRootState(), config), 'https://app.happier.dev'); };
+        const screen = await renderScreen(React.createElement(BaseNavigationContainer, { ref: native, onStateChange: projectNavigation },
+            React.createElement(Stack.Navigator, { initialRouteName: 'credentials' },
+                React.createElement(Stack.Screen, { name: 'credentials', component: Credentials }),
+                React.createElement(Stack.Screen, { name: 'callback', component: Route }))));
+        const query = '?code=code&state=missing-attempt.nonce&iss=https%3A%2F%2Fissuer.example';
+        try {
+            await act(async () => { navigation.push(`${path}${query}`); });
+            await vi.waitFor(async () => {
+                await act(async () => {});
+                const outcomes = ['paste', 'unfinished', 'invalid'].flatMap(kind => screen.findAllHostsByTestId(`${prefix}:${kind}`));
+                expect(outcomes.length).toBeGreaterThan(0);
+            });
+            expect(screen.findAllHostsByTestId(`${prefix}:paste`).length).toBeGreaterThan(0);
+            expect(screen.findAllHostsByTestId(`${prefix}:unfinished`)).toHaveLength(0);
+            await screen.pressByTestIdAsync(`${prefix}:copy`);
+            expect(copy).toHaveBeenCalledWith(`https://app.happier.dev${path}${query}`);
+            expect(homes.requestsFor('/v2/connect/connected-account-attempt-transactions/missing-attempt'))
+                .toEqual([expect.objectContaining({ serverId })]);
+            expect(outgoing.filter(request => request.method.endsWith(CONNECTED_ACCOUNT_AUTHENTICATION_COMMAND_RPC_METHOD))).toEqual([]);
+            await act(async () => { projectNavigation(); });
+            expect((browser.location as URL).pathname + (browser.location as URL).search).toBe(path);
+        } finally {
+            await screen.unmount();
+            callbackBoundary.active = false;
+            for (const key of browserKeys) {
+                const descriptor = previous[key];
+                if (descriptor) Object.defineProperty(globalThis, key, descriptor);
+                else delete browser[key];
+            }
+        }
     });
     it('approves live manual custody through the canonical human decision and sends the original private fields only to the daemon', async () => {
         const { runConnectedAccountAuthenticationAction } = await import('./connectedAccountDaemon');
@@ -277,9 +379,14 @@ describe('connected-account daemon machine RPC', () => {
         await homes.requireUiApproval(serverId, actionId);
         const command = { operation: 'submitManual' as const, attemptId: 'attempt-1', fields: { token: 'private-live-token' } };
         const response = { status: 'connected', attemptId: 'attempt-1', account: { service, accountId: 'personal' } };
+        homes.answer(serverId, '/v2/connect/connected-account-attempt-transactions/attempt-1', { body: {
+            kind: 'manual', revision: 1, content: { t: 'plain', v: {} }, expiresAtMs: Date.now() + 60_000,
+            scope: { machineId: 'machine-1', service, modeId: 'manual', intent: 'connect',
+                phase: 'awaitingManual', createdAtMs: Date.now() },
+        } });
         answers.push(response);
         const controller = new AbortController();
-        const operation = runConnectedAccountAuthenticationAction({ serverId, machineId: 'machine-1',
+        const operation = runConnectedAccountAuthenticationAction({ serverId,
             expectedAccountId: 'account-a', command, signal: controller.signal });
         const outcome = operation.then(result => ({ result }), error => ({ error }));
         try {
@@ -287,15 +394,17 @@ describe('connected-account daemon machine RPC', () => {
             const artifact = homes.artifacts(serverId).list()[0]!;
             const body = homes.artifacts(serverId).readPlainBody(artifact.id);
             const request = StoredApprovalRequestSchema.parse(JSON.parse(body ?? 'null'));
-            expect(request).toMatchObject({ actionId, actionArgs: { machineId: 'machine-1', attemptId: 'attempt-1' },
-                executionOriginV1: { machineId: 'machine-1', accountId: 'account-a' } });
+            expect(request).toMatchObject({ actionId, actionArgs: { attemptId: 'attempt-1' },
+                executionOriginV1: { serverId, accountId: 'account-a' } });
+            expect(request.actionArgs).not.toHaveProperty('machineId');
+            expect(request.executionOriginV1).not.toHaveProperty('machineId');
             expect(body).not.toContain('private-live-token');
             expect(outgoing.filter(value => value.method === `machine-1:${CONNECTED_ACCOUNT_AUTHENTICATION_COMMAND_RPC_METHOD}`)).toEqual([]);
             await act(async () => {
                 expect(await createDefaultActionExecutor().execute('approval.request.decide', { artifactId: artifact.id, decision: 'approve' },
                     { surface: 'ui', authority: 'present_user', serverId, expectedAccountId: 'account-a' })).toMatchObject({ ok: true });
             });
-            expect(await outcome).toEqual({ result: response });
+            expect(await outcome).toMatchObject({ result: { ...response, requestId: expect.any(String) } });
             expect(outgoing).toContainEqual(expect.objectContaining({ method: `machine-1:${CONNECTED_ACCOUNT_AUTHENTICATION_COMMAND_RPC_METHOD}`,
                 params: { v: 1, machineId: 'machine-1', command } }));
             expect(homes.artifacts(serverId).readPlainBody(artifact.id)).not.toContain('private-live-token');
@@ -377,6 +486,15 @@ describe('connected-account daemon machine RPC', () => {
         expect(issued?.requestId).toEqual(expect.any(String));
         expect(response).toMatchObject({ status: 'unavailable', code: 'connected_account_daemon_response_invalid',
             requestId: issued?.requestId });
+    });
+    it('retains the decoded transport cause when pending discovery fails at the real Action entry', async () => {
+        const failureCause = { phase: 'connected_account.authentication', errorClass: 'Error', errorCode: 'ECONNREFUSED', httpStatus: null } as const;
+        rpcFailures.push({ ok: false, error: 'Machine transport unavailable', errorCode: 'RPC_TRANSPORT_UNAVAILABLE', failureCause });
+        const { listPendingConnectedAccountAuthenticationActions } = await import('./connectedAccountDaemon');
+        await expect(listPendingConnectedAccountAuthenticationActions({ serverId, machineId: 'machine-1',
+            expectedAccountId: 'account-a', service })).rejects.toMatchObject({
+            code: 'RPC_TRANSPORT_UNAVAILABLE', failureCause, requestId: expect.any(String),
+        });
     });
     it('routes strict descriptor/config control through the same exact owner', async () => {
         const described = {

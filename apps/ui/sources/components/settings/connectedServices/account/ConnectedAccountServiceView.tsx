@@ -1,3 +1,4 @@
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import * as React from 'react';
 import { Redirect, useLocalSearchParams, useNavigation } from '@/components/appShell/workspace/destinationRoute';
 
@@ -528,7 +529,7 @@ const ConnectedAccountServiceController = React.memo(
         try {
             const result = await executeAction('connectedServices.accounts.rename', { account, label }, { signal: getAccountSignal() });
             if (!isAccountControllerCurrent()) return false;
-            if (!result.ok) throw Object.assign(new Error(result.error), { code: result.errorCode });
+            if (!result.ok) throw createActionExecuteFailureError(result);
             return CONNECTED_SERVICE_CONFIGURATION_ACTION_OUTPUT_SCHEMAS_V1['connectedServices.accounts.rename'].safeParse(result.result).success;
         } catch (error) {
             if (isAccountControllerCurrent()) await Modal.alert(t('common.error'), resolveConnectedServiceSettingsErrorMessage(error));
@@ -583,7 +584,7 @@ const ConnectedAccountServiceController = React.memo(
                 ...(target.expectedCredentialRevision ? { expectedCredentialRevision: target.expectedCredentialRevision } : {}),
             }, { signal: getAccountSignal() });
             if (!isAccountControllerCurrent() || draftEpoch !== setupAttemptEpochRef.current) return false;
-            if (!result.ok) throw Object.assign(new Error(result.error), { code: result.errorCode });
+            if (!result.ok) throw createActionExecuteFailureError(result);
             const saved = CONNECTED_SERVICE_CONFIGURATION_ACTION_OUTPUT_SCHEMAS_V1['connectedServices.accounts.credentials.save'].parse(result.result).account;
             // A personal label is a secondary presentation write. Its existing
             // visible error must not erase an acknowledged credential creation.
@@ -1360,7 +1361,7 @@ const ConnectedAccountServiceController = React.memo(
                 ...(managedResourceDispositions ? { managedResourceDispositions } : {}),
             }, { signal: getLifecycleSignal(), confirmed: true });
             if (!isControllerCurrent()) return null;
-            if (!result.ok) throw Object.assign(new Error(result.error), { code: result.errorCode });
+            if (!result.ok) throw createActionExecuteFailureError(result);
             const reply = CONNECTED_SERVICE_CONFIGURATION_ACTION_OUTPUT_SCHEMAS_V1['connectedServices.accounts.revoke'].safeParse(result.result);
             // Approval receipts are not native settlement and must not remove the detail.
             return reply.success ? reply.data : null;

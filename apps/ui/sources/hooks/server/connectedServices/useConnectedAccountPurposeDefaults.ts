@@ -1,3 +1,4 @@
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import * as React from 'react';
 import type { QualifiedConnectedAccountPurposeBindingTargetV1 } from '@happier-dev/protocol/connect/connected-account-purpose-bindings';
 import { CONNECTED_SERVICE_CONFIGURATION_ACTION_INPUT_SCHEMAS_V1 } from '@happier-dev/protocol/connect/configurationActionsV1';
@@ -35,7 +36,7 @@ export function useConnectedAccountPurposeDefaults(serverId?: string, options?: 
                     input: { group: { service: intent.target.service, groupId: intent.target.groupId }, agentId: intent.agentId, makeDefault: intent.makeDefault,
                         ...(intent.machineId ? { machineId: intent.machineId } : {}) } };
         const result = await execution.execute(action.actionId, action.input);
-        if (!result.ok) throw Object.assign(new Error(result.error), { code: result.errorCode, requestId: result.requestId });
+        if (!result.ok) throw createActionExecuteFailureError(result);
         // The Action keeps its durable receipt; a retired mounted presentation
         // must not dismiss or advance the successor Home on that receipt.
         if (!execution.isCurrent()) return false;

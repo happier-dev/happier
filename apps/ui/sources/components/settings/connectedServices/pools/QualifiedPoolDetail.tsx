@@ -1,15 +1,22 @@
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import * as React from 'react';
+import { Modal } from '@/modal';
+import { t } from '@/text';
+import { CONNECTED_SERVICE_CONFIGURATION_ACTION_OUTPUT_SCHEMAS_V1 } from '@happier-dev/protocol/connect/configurationActionsV1';
+import { resolveConnectedServiceSettingsErrorMessage } from '../connectedServiceSettingsErrors';
+import { resolveAgentUiBehavior } from '@/agents/registry/registryUiBehavior';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 
 import { useConnectedServiceQuotaSnapshots } from '@/hooks/server/connectedServices/useConnectedServiceQuotaSnapshots';
 import { useConnectedAccountIdentityPrivacy } from '@/hooks/ui/useConnectedAccountIdentityPrivacy';
 import { buildConnectedAccountSettingsRoute } from '@/sync/domains/connectedServices/connectedAccountSettingsRoute';
-import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import type { QualifiedConnectedAccountPurposeBindingTargetV1 } from '@happier-dev/protocol/connect/connected-account-purpose-bindings';
 import type { QualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
 import { presentConnectSheet } from '../setup/ConnectedServiceSetupModal';
 import { ConnectedAccountSettled } from '../setup/ConnectedAccountSettled';
 import { useConnectedServicesIndex } from '../model/useConnectedServicesIndex';
+import { useConnectedServicesAgents } from '../model/useConnectedServicesAgents';
 import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
 import { getQualifiedConnectedServiceRegistryEntry } from '@/sync/domains/connectedServices/connectedServiceRegistry';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
@@ -37,7 +44,7 @@ import {
  * `useQualifiedConnectedAccountGroups`.
  */
 export const QualifiedPoolDetail = React.memo(function QualifiedPoolDetail(
-    props: Omit<QualifiedPoolDetailViewProps, 'memberQuotaByAccountId' | 'presentIdentity' | 'agentDefaults' | 'gatewayUsage' | 'presentGatewayTarget' | 'onOpenGateway' | 'onOpenAccount' | 'now' | 'onCheckStale'>,
+    props: Omit<QualifiedPoolDetailViewProps, 'poolSettings' | 'memberQuotaByAccountId' | 'presentIdentity' | 'agentDefaults' | 'gatewayUsage' | 'presentGatewayTarget' | 'onOpenGateway' | 'onOpenGatewayDraft' | 'onOpenAccount' | 'now' | 'onResetLabel' | 'onSetLabel' | 'onCheckStale'>,
 ) {
     const router = useRouter();
     const scope = useActiveServerAccountScope();
@@ -71,6 +78,10 @@ export const QualifiedPoolDetail = React.memo(function QualifiedPoolDetail(
         groupId: group.ref.groupId,
     }), [group.ref.groupId, group.ref.service]);
     const agentDefaults = useAgentDefaultChoices(target);
+    const { agentEntries, appShellProjection } = useConnectedServicesAgents({ agents: 'cached' });
+    const poolSettings = React.useMemo(() => agentEntries.flatMap((agent) =>
+        resolveAgentUiBehavior(agent.agentId, appShellProjection.machineId, scope).connectedServices?.poolSettings ?? [],
+    ), [agentEntries, appShellProjection.machineId, scope]);
     const providersEnabled = useFeatureEnabled('providers');
     const providerTarget = useProviderSettingsTarget();
     const gatewayUsage = usePoolGatewayChoices({ target, enabled: providersEnabled, resolveTarget: providerTarget.resolveCurrentTarget,
@@ -96,13 +107,26 @@ export const QualifiedPoolDetail = React.memo(function QualifiedPoolDetail(
 
     const service = group.ref.service;
     const labelExecution = useMountedActionExecution(scope);
+    const setLabel = React.useCallback(async (label: string): Promise<boolean> => {
+        try {
+            const subject = { kind: 'group' as const, service, groupId: group.ref.groupId };
+            const result = label ? await labelExecution.execute('connectedServices.labels.set', { subject, label })
+                : await labelExecution.execute('connectedServices.labels.reset', { subject });
+            if (!result.ok) throw createActionExecuteFailureError(result);
+            return CONNECTED_SERVICE_CONFIGURATION_ACTION_OUTPUT_SCHEMAS_V1['connectedServices.labels.set'].safeParse(result.result).success;
+        } catch (error) {
+            await Modal.alert(t('common.error'), resolveConnectedServiceSettingsErrorMessage(error));
+            return false;
+        }
+    }, [group.ref.groupId, labelExecution.execute, service]);
     const resetLabel = React.useCallback(() => {
         fireAndForget(labelExecution.execute('connectedServices.labels.reset', {
             subject: { kind: 'group', service, groupId: group.ref.groupId },
         }), { tag: 'QualifiedPoolDetail.resetLabel' });
     }, [group.ref.groupId, labelExecution.execute, service]);
     const openAccount = React.useCallback((account: QualifiedConnectedAccountRef) => {
-        router.push(buildConnectedAccountSettingsRoute(service, { kind: 'account', accountId: account.accountId }));
+        const route = buildConnectedAccountSettingsRoute(service, { kind: 'account', accountId: account.accountId });
+        if (route) router.push(route);
     }, [router, service]);
 
     return (
@@ -111,6 +135,7 @@ export const QualifiedPoolDetail = React.memo(function QualifiedPoolDetail(
         <ConnectedAccountActionApprovalNotice execution={labelExecution} testID="connected-pool-label-approval-pending" />
         <QualifiedPoolDetailView
             {...props}
+            poolSettings={poolSettings}
             settled={settled ? <PoolConnectedAccountSettled account={settled} onDismiss={() => setSettled(null)} /> : null}
             memberQuotaByAccountId={memberQuotaByAccountId}
             presentIdentity={present}
@@ -118,12 +143,17 @@ export const QualifiedPoolDetail = React.memo(function QualifiedPoolDetail(
             gatewayUsage={gatewayUsage}
             presentGatewayTarget={presentGatewayTarget}
             onOpenGateway={openGateway}
+            onOpenGatewayDraft={route => {
+                const result = runGuardedNavigation(() => router.push(route as never));
+                if (result !== true) fireAndForget(result, { tag: 'QualifiedPoolDetail.openGatewayDraft' });
+            }}
             onOpenAccount={openAccount}
             onCheckStale={checkStale}
             onResetLabel={resetLabel}
+            onSetLabel={setLabel}
             legacyServiceId={getQualifiedConnectedServiceRegistryEntry(service)?.legacyServiceId ?? null}
-            onConnectAccount={() => {
-                fireAndForget(presentConnectSheet({ scope, service }).then(result => {
+            onConnectAccount={(anchor) => {
+                fireAndForget(presentConnectSheet({ scope, service, ...(anchor ? { anchor } : {}) }).then(result => {
                     if (result.kind !== 'dismissed') setSettled(result.account);
                 }), { tag: 'QualifiedPoolDetail.connect' });
             }}

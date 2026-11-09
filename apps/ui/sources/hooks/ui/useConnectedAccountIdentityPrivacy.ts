@@ -1,3 +1,4 @@
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import * as React from 'react';
 
 import { presentConnectedAccountIdentity, type ConnectedAccountIdentityPresenter } from '@/sync/domains/connectedServices/maskAccountEmail';
@@ -35,7 +36,7 @@ export function useConnectedAccountIdentityPrivacy(options?: Readonly<{ mutation
         try {
             const result = await execution.execute('connectedServices.identityPrivacy.set', { hidden });
             if (!result.ok && result.errorCode === 'action_account_scope_changed') return;
-            if (!result.ok) throw Object.assign(new Error(result.error), { code: result.errorCode });
+            if (!result.ok) throw createActionExecuteFailureError(result);
         } catch (error) {
             Modal.alert(t('common.error'), resolveConnectedServiceSettingsErrorMessage(error));
         }

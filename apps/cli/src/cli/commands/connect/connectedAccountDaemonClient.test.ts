@@ -6,6 +6,9 @@ import { isApprovalRequiredByActionsSettings } from '@happier-dev/protocol/actio
 import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
 import { createCliConnectedServiceAction } from '@/session/actions/connectedServiceActionDeps';
+import { RpcError } from '@happier-dev/protocol/rpc/errors';
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import axios from '@/api/client/credentialAxios';
 
 import {
   createConnectedAccountDaemonClient,
@@ -18,6 +21,51 @@ const credentials: StoredCredentials = {
 const service = Object.freeze({ pluginId: 'acme.accounts', localId: 'work' });
 
 describe('createConnectedAccountDaemonClient', () => {
+  it('retains the transport cause, recovery details and no-effect fact through the real Action executor', async () => {
+    const failureCause = projectActionFailureCauseV1(Object.assign(new Error('private'), { code: 'ECONNREFUSED' }), 'connected_account.authentication');
+    const details = { requiredFact: 'connected_account_machine_online' };
+    // HTTP and Machine RPC are transport boundaries; keep registry/executor logic real.
+    const previousAdapter = axios.defaults.adapter;
+    axios.defaults.adapter = async () => {
+      throw Object.assign(new RpcError('Transport unavailable', 'RPC_TRANSPORT_UNAVAILABLE', failureCause), { details, effectAttempted: false });
+    };
+    const callMachineRpc = vi.fn(async () => {
+      throw Object.assign(new RpcError('Transport unavailable', 'RPC_TRANSPORT_UNAVAILABLE', failureCause), { details, effectAttempted: false });
+    });
+    const client = createConnectedAccountDaemonClient({ credentials, machineId: 'machine-1', callMachineRpc,
+      actionExecutor: createActionExecutor({
+        ...createUnavailableActionTransportDeps(),
+        isActionApprovalRequired: () => false,
+        connectedServiceAction: createCliConnectedServiceAction({ credentials,
+          resolveHeaders: () => ({ Authorization: `Bearer ${credentials.token}` }),
+          callMachineAction: async () => callMachineRpc(),
+        }),
+      }),
+    });
+    try {
+      await expect(client.control({ operation: 'listPendingAttempts', service })).rejects.toMatchObject({
+        code: 'RPC_TRANSPORT_UNAVAILABLE', failureCause, details, effectAttempted: false,
+      });
+    } finally { await client.dispose(); axios.defaults.adapter = previousAdapter; }
+  });
+
+  it('admits new credential input through the same Action policy without a Machine', async () => {
+    const callMachineRpc = vi.fn(async () => { throw new Error('Account admission must not call a Machine'); });
+    const actionExecutor = createActionExecutor({
+      ...createUnavailableActionTransportDeps(),
+      isActionApprovalRequired: (id, context) => isApprovalRequiredByActionsSettings(id, normalizeActionsSettingsV1({}), context),
+      connectedServiceAction: createCliConnectedServiceAction({ credentials,
+        resolveHeaders: () => ({ Authorization: `Bearer ${credentials.token}` }),
+        callMachineAction: callMachineRpc,
+      }),
+    });
+    const client = createConnectedAccountDaemonClient({ credentials, callMachineRpc, actionExecutor });
+    await expect(client.authenticate({ operation: 'submitManual', attemptId: 'attempt-account',
+      fields: { token: 'private-token' },
+    })).rejects.toMatchObject({ code: 'approvals_not_supported' });
+    expect(callMachineRpc).not.toHaveBeenCalled();
+  });
+
   it('requires canonical Action approval before revoking a connected account', async () => {
     const callMachineRpc = vi.fn(async () => ({ status: 'outcomeUnknown' as const,
       account: { service, accountId: 'account-1' } }));

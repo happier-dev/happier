@@ -1,3 +1,4 @@
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type {
   ConnectedAccountDaemonControlCommand,
   ConnectedAccountDaemonControlResponse,
@@ -118,7 +119,7 @@ export function createConnectedAccountDaemonClient(params: Readonly<{
   };
   const execute = async (actionId: ActionId, input: unknown) => {
     const result = await executeAction(actionId, input);
-    if (!result.ok) throw Object.assign(new Error(result.error), { code: result.errorCode, details: result.details });
+    if (!result.ok) throw createActionExecuteFailureError(result);
     const approval = ActionApprovalRequestCreatedResultSchema.safeParse(result.result);
     if (approval.success) throw Object.assign(new Error('Approval requested'), { code: 'approval_required', details: approval.data });
     return result.result;

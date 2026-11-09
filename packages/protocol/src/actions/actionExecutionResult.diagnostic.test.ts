@@ -4,6 +4,24 @@ import { ActionOperationFailureV1Schema } from './operations/v1.js';
 import { ActionFailureCauseV1Schema, projectActionFailureCauseV1, readUnexpectedActionErrorDiagnosticV1 } from './actionExecutionResult.js';
 import * as actionResults from './actionExecutionResult.js';
 
+describe('Action failure error adapter', () => {
+  it.each([false, true, undefined])('preserves public cause and effect disposition when throwing a failure (%s)', effectAttempted => {
+    const failure = {
+      ok: false as const, errorCode: 'RPC_TRANSPORT_UNAVAILABLE', error: 'Transport unavailable',
+      requestId: 'request-1', details: { requiredFact: 'connected_account_machine_online' },
+      failureCause: projectActionFailureCauseV1(Object.assign(new Error('private'), { code: 'ECONNREFUSED' }), 'connected_account.authentication'),
+      ...(effectAttempted === undefined ? {} : { effectAttempted }),
+      bridgePrivate: 'must-not-cross',
+    };
+    const error = actionResults.createActionExecuteFailureError(failure);
+    expect(error).toBeInstanceOf(Error);
+    expect(error.message).toBe(failure.error);
+    expect(error).toMatchObject({ ...actionResults.projectActionExecuteFailure(failure), code: failure.errorCode });
+    expect(error).not.toHaveProperty('bridgePrivate');
+    if (effectAttempted === undefined) expect(error).not.toHaveProperty('effectAttempted');
+  });
+});
+
 describe('Action failure cause projection', () => {
   it('retains the Home execution authorization phase without disclosing exception text', () => {
     const cause = projectActionFailureCauseV1(new Error('PRIVATE_MINT_CAUSE'), 'execution_authorization');
