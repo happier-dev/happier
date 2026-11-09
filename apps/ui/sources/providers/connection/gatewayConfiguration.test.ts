@@ -2,18 +2,61 @@ import { describe, expect, it } from 'vitest';
 import { createProviderConnectionViewFixture } from '@/dev/testkit/harness/providerSettingsHarness';
 import { ProviderConnectionV1Schema, type ProviderConnectionV1 } from '@happier-dev/protocol/providers/connections/v1';
 import { ProviderConnectionIdSchema } from '@happier-dev/protocol/providers/ids';
-import { buildProviderGatewayConfigurationMutation, buildProviderGatewaySlotMutation, chooseProviderGatewayContributionV1, readProviderGatewayContributionPurposes } from './gatewayConfiguration';
-import { readAccountProviderDeclarations } from '@/providers/catalog/accountProviderDeclarations';
+import { buildProviderGatewayConfigurationMutation, buildProviderGatewaySlotMutation, chooseProviderGatewayContributionV1, readProviderGatewayContributionPurposes, readProviderGatewayModelRoles, presentProviderGatewayFamilyFacts } from './gatewayConfiguration';
+import { readAccountAgentProviderRequirements, readAccountProviderDeclarations } from '@/providers/catalog/accountProviderDeclarations';
+import { PluginProjectionV2Schema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import { ProviderContributionV1Schema } from '@happier-dev/protocol/providers/contributions/v1';
+import { createPluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n';
 
 const gateway = () => createProviderConnectionViewFixture({ connectionId: 'pc_gateway', revision: 7,
     contributionKey: 'happier.provider.cliproxyapi/cliproxyapi',
     deployment: { kind: 'managedLocal', targetMachineId: 'machine-a', effects: null } });
 
 describe('gateway configuration Action request', () => {
+    it('presents only declared family restrictions through their contributing plugin translations', () => {
+        const declaration = readAccountProviderDeclarations({ kind: 'account' }).find(entry => entry.definition.managedRuntime?.connectedAccounts?.length);
+        if (!declaration?.definition.managedRuntime) throw new Error('Expected the admitted gateway declaration');
+        const operationRestriction = {
+            summary: { key: 'vendor.summary', fallback: 'Chat only' },
+            sentence: { key: 'vendor.sentence', fallback: 'This vendor supports chat only.' },
+        };
+        const contributionKey = 'example.gateway/gateway';
+        const definition = ProviderContributionV1Schema.parse({ ...declaration.definition, managedRuntime: {
+            ...declaration.definition.managedRuntime, requestAuthUses: [], connectedAccounts: [
+                { purpose: 'restricted-upstream', service: 'subscription', operationRestriction },
+                { purpose: 'ordinary-upstream', service: 'subscription' },
+            ],
+        } });
+        const purposes = readProviderGatewayContributionPurposes(contributionKey, [{ ...declaration, contributionKey, definition }])!;
+        const localize = createPluginLocalizedTextResolver({ locale: 'fr', projection: { translationsByPluginId: {
+            'example.gateway': { id: 'translations:example.gateway', pluginId: 'example.gateway', contributionKind: 'translations',
+                locales: ['fr'], bundles: { fr: { 'vendor.summary': 'Discussion uniquement' } } },
+        } } });
+        expect(presentProviderGatewayFamilyFacts({ contributionKey, purposes, localize })).toEqual({
+            'restricted-upstream': { restriction: { summary: 'Discussion uniquement', sentence: 'This vendor supports chat only.' } },
+        });
+    });
+
+    it('projects contributed roles once per connection role and preserves their declared labels', () => {
+        const requirements = readAccountAgentProviderRequirements('agent:happier.agent.codex/codex', { kind: 'account' })!;
+        const projection = PluginProjectionV2Schema.parse({ v: 2, generation: 1, agentsById: {
+            first: { id: 'first', identity: { pluginId: 'acme.agent', localId: 'first' }, providerRequirements: {
+                ...requirements, modelRoles: [{ id: 'reviewer', title: 'Code reviewer' }],
+            } },
+            second: { id: 'second', identity: { pluginId: 'acme.agent', localId: 'second' }, providerRequirements: {
+                ...requirements, modelRoles: [{ id: 'reviewer', title: 'Code reviewer' }, { id: 'planner', title: 'Planner' }],
+            } },
+        } });
+        expect(readProviderGatewayModelRoles({ kind: 'machine', projection })).toEqual([
+            { id: 'reviewer', title: 'Code reviewer' }, { id: 'planner', title: 'Planner' },
+        ]);
+        expect(readProviderGatewayModelRoles({ kind: 'machine', projection: null })).toEqual([]);
+    });
+
     it('builds Account configuration and slot edits without a machine target', () => {
         expect(buildProviderGatewayConfigurationMutation({ connection: gateway(), machineId: null,
-            patch: { claudeHelperModels: null },
-        })).toEqual({ action: 'update', connectionId: 'pc_gateway', expectedRevision: 7, claudeHelperModels: null });
+            patch: { roleModels: null },
+        })).toEqual({ action: 'update', connectionId: 'pc_gateway', expectedRevision: 7, roleModels: null });
         expect(buildProviderGatewaySlotMutation({ connectionId: ProviderConnectionIdSchema.parse('pc_gateway'), expectedRevision: 7,
             machineId: null, purposeBindingDefaults: {}, purpose: 'vendor', target: null,
         })).toEqual({ action: 'update', connectionId: 'pc_gateway', expectedRevision: 7,
@@ -69,7 +112,7 @@ describe('gateway configuration Action request', () => {
         const saved = ProviderConnectionV1Schema.parse({ v: 1, id: 'pc_gateway',
             source: { kind: 'contribution', contributionKey: 'happier.provider.cliproxyapi/cliproxyapi' },
             role: 'named', displayName: 'Subscriptions', displayNameMode: 'custom', deployment: { kind: 'managedLocal' },
-            gatewayPlacement: { kind: 'machine', machineId: 'hub-a' }, claudeHelperModels: { fast: 'haiku' },
+            gatewayPlacement: { kind: 'machine', machineId: 'hub-a' }, roleModels: { fast: 'haiku' },
             revision: 7, createdAt: 1, updatedAt: 1 });
         expect(buildProviderGatewayConfigurationMutation({ connection: saved, machineId: 'machine-a',
             patch: { gatewayPlacement: null },
@@ -77,14 +120,14 @@ describe('gateway configuration Action request', () => {
     });
     it('pins the saved revision and changes only the requested configuration', () => {
         expect(buildProviderGatewayConfigurationMutation({ connection: gateway(), machineId: 'machine-a',
-            patch: { gatewayPlacement: { kind: 'machine', machineId: 'hub-a' }, claudeHelperModels: { fast: 'haiku' } },
+            patch: { gatewayPlacement: { kind: 'machine', machineId: 'hub-a' }, roleModels: { fast: 'haiku' } },
         })).toEqual({ action: 'update', machineId: 'machine-a', connectionId: 'pc_gateway', expectedRevision: 7,
-            gatewayPlacement: { kind: 'machine', machineId: 'hub-a' }, claudeHelperModels: { fast: 'haiku' } });
+            gatewayPlacement: { kind: 'machine', machineId: 'hub-a' }, roleModels: { fast: 'haiku' } });
     });
     it('supports reset without sending a deployment or resetting vendor slots', () => {
         expect(buildProviderGatewayConfigurationMutation({ connection: gateway(), machineId: 'machine-a',
-            patch: { claudeHelperModels: null },
-        })).toEqual({ action: 'update', machineId: 'machine-a', connectionId: 'pc_gateway', expectedRevision: 7, claudeHelperModels: null });
+            patch: { roleModels: null },
+        })).toEqual({ action: 'update', machineId: 'machine-a', connectionId: 'pc_gateway', expectedRevision: 7, roleModels: null });
     });
     it('refuses external connections before constructing a managed mutation', () => {
         expect(() => buildProviderGatewayConfigurationMutation({ connection: createProviderConnectionViewFixture(),

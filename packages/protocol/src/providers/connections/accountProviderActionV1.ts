@@ -133,7 +133,7 @@ export function describeAccountProviderConnectionV1(settings: ProviderSettingsV1
           .map(({ endpointTemplateIds: _endpoints, staticModels: _models, ...declaration }) => ({ ...declaration, target: connection.purposeBindingDefaults?.[declaration.purpose] })),
         ...(managed.connectedAccountPurposeBindingPolicy ? { connectedAccountPurposeBindingPolicy: managed.connectedAccountPurposeBindingPolicy } : {}) } : null } : { kind: 'external' },
     ...(connection.gatewayPlacement ? { gatewayPlacement: connection.gatewayPlacement } : {}),
-    ...(connection.claudeHelperModels ? { claudeHelperModels: connection.claudeHelperModels } : {}),
+    ...(connection.roleModels ? { roleModels: connection.roleModels } : {}),
     managedLocalOption: managed ? { targetMachineId: null, connectedAccountPurposes: managed.connectedAccounts.map(({ endpointTemplateIds: _endpoints, staticModels: _models, ...declaration }) => declaration),
       ...(managed.connectedAccountPurposeBindingPolicy ? { connectedAccountPurposeBindingPolicy: managed.connectedAccountPurposeBindingPolicy } : {}) } : null,
     endpoints: source ? accountEndpoints(connection, source).map(({ ready: _ready, reason: _reason, ...endpoint }) => endpoint) : [],
@@ -205,7 +205,7 @@ export function createAccountProviderActionExecuteV1(host: Readonly<{
       const previous = find(input.connectionId); requireRevision(previous, input.expectedRevision);
       if (input.template && previous.source.kind !== 'custom') refuse('provider_connection_invalid', previous.id);
       const source = sourceFor(previous, definitions); const deployment = input.deployment ?? previous.deployment;
-      if (deployment.kind === 'external' && (input.gatewayPlacement != null || input.claudeHelperModels != null)) refuse('provider_connection_invalid', previous.id);
+      if (deployment.kind === 'external' && (input.gatewayPlacement != null || input.roleModels != null)) refuse('provider_connection_invalid', previous.id);
       const changedMode = deployment.kind !== previous.deployment.kind;
       const candidate = { ...previous, ...(input.template ? { source: { kind: 'custom' as const, template: input.template } } : {}),
         ...(input.displayName ? { displayName: input.displayName, displayNameMode: 'custom' as const } : {}),
@@ -225,8 +225,8 @@ export function createAccountProviderActionExecuteV1(host: Readonly<{
         delete candidate.endpointOverrides; delete candidate.endpointOverridesByMachineId;
         if (input.deployment?.kind === 'managedLocal') candidate.purposeBindingDefaults = input.deployment.purposeBindingDefaults;
         if (input.gatewayPlacement !== undefined) { if (input.gatewayPlacement === null) delete candidate.gatewayPlacement; else candidate.gatewayPlacement = input.gatewayPlacement; }
-        if (input.claudeHelperModels !== undefined) { if (input.claudeHelperModels === null) delete candidate.claudeHelperModels; else candidate.claudeHelperModels = input.claudeHelperModels; }
-      } else { delete candidate.purposeBindingDefaults; delete candidate.gatewayPlacement; delete candidate.claudeHelperModels; }
+        if (input.roleModels !== undefined) { if (input.roleModels === null) delete candidate.roleModels; else candidate.roleModels = input.roleModels; }
+      } else { delete candidate.purposeBindingDefaults; delete candidate.gatewayPlacement; delete candidate.roleModels; }
       if (input.template) {
         const declared = new Set(input.template.endpointTemplates.map(endpoint => endpoint.id));
         if (candidate.endpointOverrides) candidate.endpointOverrides = candidate.endpointOverrides.filter(override => declared.has(override.endpointTemplateId));
@@ -301,7 +301,7 @@ export function createAccountProviderActionExecuteV1(host: Readonly<{
         case 'providers.connections.create_custom': {
           const input = request.input;
           const managedCreate = input.action === 'createContribution' && input.deployment?.kind === 'managedLocal';
-          if (input.action === 'createContribution' && !managedCreate && (input.gatewayPlacement != null || input.claudeHelperModels != null)) {
+          if (input.action === 'createContribution' && !managedCreate && (input.gatewayPlacement != null || input.roleModels != null)) {
             refuse('provider_connection_invalid', input.connectionId);
           }
           let retained: ProviderConnectionV1 | undefined;
@@ -319,8 +319,8 @@ export function createAccountProviderActionExecuteV1(host: Readonly<{
                   === JSON.stringify(canonicalizeFingerprintValue(input.deployment?.kind === 'managedLocal' ? input.deployment.purposeBindingDefaults : {}))
                 && JSON.stringify(canonicalizeFingerprintValue(exact.gatewayPlacement ?? null))
                   === JSON.stringify(canonicalizeFingerprintValue(input.gatewayPlacement ?? null))
-                && JSON.stringify(canonicalizeFingerprintValue(exact.claudeHelperModels ?? null))
-                  === JSON.stringify(canonicalizeFingerprintValue(input.claudeHelperModels ?? null));
+                && JSON.stringify(canonicalizeFingerprintValue(exact.roleModels ?? null))
+                  === JSON.stringify(canonicalizeFingerprintValue(input.roleModels ?? null));
               if (!sameSlots) refuse('provider_connection_changed', exact.id);
               retained = exact;
             }
@@ -350,7 +350,7 @@ export function createAccountProviderActionExecuteV1(host: Readonly<{
             connection = updateConnection({ action: 'update', connectionId: connection.id,
               expectedRevision: connection.revision, deployment: input.deployment,
               ...(input.gatewayPlacement !== undefined ? { gatewayPlacement: input.gatewayPlacement } : {}),
-              ...(input.claudeHelperModels !== undefined ? { claudeHelperModels: input.claudeHelperModels } : {}) });
+              ...(input.roleModels !== undefined ? { roleModels: input.roleModels } : {}) });
           }
           if (input.enable) enable(connection, true);
           output = { status: 'success', action: input.action, connection: describeAccountProviderConnectionV1(settings, connection, definitions), created };
@@ -383,7 +383,7 @@ export function createAccountProviderActionExecuteV1(host: Readonly<{
           const connection = ProviderConnectionV1Schema.parse({ ...previous, id: input.newConnectionId, role: 'named', displayName: input.displayName,
             displayNameMode: 'custom', revision: 0, createdAt: now, updatedAt: now,
             ...(template ? { source: { kind: 'custom', template }, deployment: { kind: 'external' }, purposeBindingDefaults: undefined,
-              gatewayPlacement: undefined, claudeHelperModels: undefined, endpointOverrides: undefined, endpointOverridesByMachineId: undefined } : {}) });
+              gatewayPlacement: undefined, roleModels: undefined, endpointOverrides: undefined, endpointOverridesByMachineId: undefined } : {}) });
           settings = addProviderConnectionV1(settings, connection);
           const manual = settings.manualModelsByConnectionId[previous.id]; if (manual) settings = { ...settings, manualModelsByConnectionId: { ...settings.manualModelsByConnectionId, [connection.id]: manual } };
           const visibility = settings.modelPickerVisibilityByConnectionId?.[previous.id]; if (visibility !== undefined) settings = setProviderModelPickerVisibilityV1(settings, { connectionId: connection.id, shown: visibility });

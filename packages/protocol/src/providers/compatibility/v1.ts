@@ -93,6 +93,8 @@ export const AgentProviderRequirementsV1Schema = lazyZodSchema(() => z.strictObj
   }),
   materialization: z.enum(['spawnEnv', 'engineConfig', 'configFile']),
   applyPolicy: ModelSelectionApplyPolicySchema,
+  /** Additional model selections consumed by this Agent's Provider binding adapter. */
+  modelRoles: z.optional(z.array(z.strictObject({ id: z.string(), title: z.string() }))),
   supportsFreeformModelIds: z.boolean(),
   /** Applies the selected Provider model's canonical reasoning_effort option. */
   supportsReasoningEffort: z.optional(z.literal(true)),

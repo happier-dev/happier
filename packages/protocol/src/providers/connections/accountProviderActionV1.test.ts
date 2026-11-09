@@ -550,16 +550,16 @@ describe('shared Provider Account Action producer', () => {
       const input = { action: 'createContribution', connectionId: 'pc_new', contributionKey: 'happier.provider.cliproxyapi/cliproxyapi',
         displayName: 'Main gateway', savedSecretId: null, enable: true,
         gatewayPlacement: { kind: 'machine', machineId: 'offline-hub' },
-        claudeHelperModels: { fast: 'fast-helper' },
+        roleModels: { reviewer: 'fast-helper' },
         deployment: { kind: 'managedLocal', purposeBindingDefaults: { 'openai-upstream': pool } } };
       expect(PROVIDER_ACTION_INPUT_SCHEMAS_V1['providers.connections.create_contribution'].safeParse(input).success).toBe(true);
       const result = await row.execute(parseProviderActionRequestV1('providers.connections.create_contribution', input), {});
-      expect(result).toMatchObject({ ok: true, result: { connection: { deployment: { kind: 'managedLocal', targetMachineId: 'offline-hub' },
+      expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { connection: { deployment: { kind: 'managedLocal', targetMachineId: 'offline-hub' },
         gatewayPlacement: input.gatewayPlacement, grants: { accountEnabled: true } } } });
       expect(row.writes).toBe(1);
       expect(row.catalog.connections).toEqual([...connections, expect.objectContaining({ id: 'pc_new',
         deployment: { kind: 'managedLocal' }, gatewayPlacement: input.gatewayPlacement,
-        claudeHelperModels: input.claudeHelperModels, purposeBindingDefaults: { 'openai-upstream': pool } })]);
+        roleModels: input.roleModels, purposeBindingDefaults: { 'openai-upstream': pool } })]);
       expect(row.catalog.accountGrants.map(grant => grant.connectionId)).toEqual(['pc_new']);
       const retry = input;
       expect(await row.execute(parseProviderActionRequestV1('providers.connections.create_contribution', retry), {})).toMatchObject({ ok: true });

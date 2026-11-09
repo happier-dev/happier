@@ -11,6 +11,12 @@ const requirements = {
 } as const;
 
 describe('provider compatibility contracts', () => {
+  it('preserves contributed model roles for runtime admission and portable editors', () => {
+    const modelRoles = [{ id: 'reviewer', title: 'Code reviewer' }];
+    expect(AgentProviderRequirementsV1Schema.parse({ ...requirements, modelRoles }))
+      .toMatchObject({ modelRoles });
+  });
+
   it('admits optional environment ownership without weakening or overlapping required ownership', () => {
     const withOptionalKeys = (keys: readonly string[]) => ({
       ...requirements,

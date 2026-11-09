@@ -1003,13 +1003,13 @@ describe('approval field presentation', () => {
     const purposeBindingDefaults = { upstream: { kind: 'group', service: { pluginId: 'example.auth', localId: 'subscription' }, groupId: 'pool-new' } };
     const presentation = describeApprovalActionFields({ actionId: 'providers.connections.update', actionArgs: {
       action: 'update', connectionId: 'pc_gateway', expectedRevision: 2, displayName: 'Shared gateway',
-      deployment: { kind: 'managedLocal', purposeBindingDefaults }, gatewayPlacement: null, claudeHelperModels: null,
+      deployment: { kind: 'managedLocal', purposeBindingDefaults }, gatewayPlacement: null, roleModels: null,
     } });
     expect(presentation.rows).toEqual(expect.arrayContaining([
       expect.objectContaining({ path: 'displayName', value: 'Shared gateway' }),
       expect.objectContaining({ path: 'deployment.purposeBindingDefaults', value: JSON.stringify(purposeBindingDefaults) }),
       expect.objectContaining({ path: 'gatewayPlacement', value: 'null' }),
-      expect.objectContaining({ path: 'claudeHelperModels', value: 'null' }),
+      expect.objectContaining({ path: 'roleModels', value: 'null' }),
     ]));
     expect(presentation.unrepresentable).toBeNull();
   });

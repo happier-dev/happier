@@ -96,12 +96,12 @@ describe('provider machine RPC contracts', () => {
     const request = {
       action: 'update', connectionId: 'pc_gateway', machineId: 'machine-a', expectedRevision: 2,
       gatewayPlacement: { kind: 'machine', machineId: 'hub-a' },
-      claudeHelperModels: { fast: 'fast-model', strongest: 'strong-model' },
+      roleModels: { fast: 'fast-model', strongest: 'strong-model' },
     } as const;
     expect(DaemonProviderConnectionMutationRequestV1Schema.parse(request)).toEqual(request);
     expect(DaemonProviderConnectionMutationRequestV1Schema.parse({
-      ...request, gatewayPlacement: null, claudeHelperModels: null,
-    })).toMatchObject({ gatewayPlacement: null, claudeHelperModels: null });
+      ...request, gatewayPlacement: null, roleModels: null,
+    })).toMatchObject({ gatewayPlacement: null, roleModels: null });
     expect(DaemonProviderConnectionMutationRequestV1Schema.safeParse({
       ...request, gatewayPlacement: { kind: 'machine', machineId: 'hub-a', port: 8317 },
     }).success).toBe(false);

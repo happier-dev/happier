@@ -2609,33 +2609,33 @@ describe('provider connection service', () => {
         },
       },
       gatewayPlacement: { kind: 'machine' as const, machineId: 'hub-a' },
-      claudeHelperModels: { fast: 'fast-model' },
+      roleModels: { reviewer: 'fast-model' },
     };
     await expect(createProviderConnectionRpcAdapter(h.service).mutateConnection(request)).resolves.toMatchObject({
       status: 'success', action: 'update', connection: {
-        revision: 1, gatewayPlacement: request.gatewayPlacement, claudeHelperModels: request.claudeHelperModels,
+        revision: 1, gatewayPlacement: request.gatewayPlacement, roleModels: request.roleModels,
       },
     });
     const saved = readRetainedProviderSettingsFixture(h.getRaw()).settings.connections[0];
-    expect(saved).toMatchObject({ gatewayPlacement: request.gatewayPlacement, claudeHelperModels: request.claudeHelperModels });
+    expect(saved).toMatchObject({ gatewayPlacement: request.gatewayPlacement, roleModels: request.roleModels });
     await expect(h.service.update({ ...request, expectedRevision: 0, gatewayPlacement: null })).resolves.toMatchObject({
       status: 'error', error: { code: 'provider_connection_changed' },
     });
     expect(readRetainedProviderSettingsFixture(h.getRaw()).settings.connections[0]).toEqual(saved);
     await expect(h.service.update({
       action: 'update', machineId: 'machine-a', connectionId: ProviderConnectionIdSchema.parse('pc_managed'), expectedRevision: 1,
-      claudeHelperModels: null,
+      roleModels: null,
     })).resolves.toMatchObject({ status: 'success', revision: 2, gatewayPlacement: request.gatewayPlacement });
-    expect(readRetainedProviderSettingsFixture(h.getRaw()).settings.connections[0]?.claudeHelperModels).toBeUndefined();
+    expect(readRetainedProviderSettingsFixture(h.getRaw()).settings.connections[0]?.roleModels).toBeUndefined();
     await expect(h.service.update({ ...request, expectedRevision: 2 })).resolves.toMatchObject({ status: 'success', revision: 3 });
     await expect(h.service.update({
       action: 'update', machineId: 'machine-a', connectionId: ProviderConnectionIdSchema.parse('pc_managed'), expectedRevision: 3, deployment: { kind: 'external' },
     })).resolves.toMatchObject({ status: 'success', revision: 4 });
     const external = readRetainedProviderSettingsFixture(h.getRaw()).settings.connections[0];
     expect(external?.gatewayPlacement).toBeUndefined();
-    expect(external?.claudeHelperModels).toBeUndefined();
+    expect(external?.roleModels).toBeUndefined();
     await expect(h.service.update({
-      action: 'update', machineId: 'machine-a', connectionId: ProviderConnectionIdSchema.parse('pc_managed'), expectedRevision: 4, claudeHelperModels: request.claudeHelperModels,
+      action: 'update', machineId: 'machine-a', connectionId: ProviderConnectionIdSchema.parse('pc_managed'), expectedRevision: 4, roleModels: request.roleModels,
     })).resolves.toMatchObject({ status: 'error', error: { code: 'provider_connection_invalid' } });
   });
 

@@ -883,7 +883,7 @@ describe('ProviderConnectionDetailScreen', () => {
         await waitForHomeGovernance(() => expect(catalog.connections[0]?.gatewayPlacement).toEqual({ kind: 'sessionMachine' }));
         await waitForHomeGovernance(() => expect(controls()!.props.placement).toEqual({ kind: 'sessionMachine' }));
         await act(async () => { await controls()!.props.onChangeHelperModels({ fast: 'private-fast' }); });
-        await waitForHomeGovernance(() => expect(catalog.connections[0]?.claudeHelperModels).toEqual({ fast: 'private-fast' }));
+        await waitForHomeGovernance(() => expect(catalog.connections[0]?.roleModels).toEqual({ fast: 'private-fast' }));
         expect(providerHarness.state.requests.filter(request => request.method === RPC_METHODS.DAEMON_PROVIDERS_CONNECTION_MUTATE)).toEqual([]);
     });
 

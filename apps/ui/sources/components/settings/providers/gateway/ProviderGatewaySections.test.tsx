@@ -27,6 +27,7 @@ function render(overrides: Partial<ProviderGatewaySectionsProps> = {}) {
         reachability: 'not_checked',
         onChangePlacement: vi.fn(),
         helperModels: undefined,
+        modelRoles: [],
         models: [{ id: 'gpt-6.1-luna', name: 'GPT-6.1 Luna' }],
         onChangeHelperModels: vi.fn(),
         disabled: false,
@@ -38,6 +39,13 @@ function render(overrides: Partial<ProviderGatewaySectionsProps> = {}) {
 }
 
 describe('ProviderGatewaySections (lab rgateway GW1/GW2)', () => {
+    it('renders contributed model roles without substituting a host role list', async () => {
+        const screen = await render({ modelRoles: [{ id: 'reviewer', title: 'Code reviewer' }] });
+        expect(screen.findByTestId('provider-gateway-helper:reviewer')).toBeTruthy();
+        expect(screen.findByTestId('provider-gateway-helper:fast')).toBeNull();
+        expect(screen.getTextContent()).toContain('Code reviewer');
+    });
+
     it('leads to connecting an account for a vendor that has none, instead of an empty chooser', async () => {
         const onConnectService = vi.fn();
         const onChangeSlot = vi.fn();

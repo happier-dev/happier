@@ -9,7 +9,7 @@ import { ProviderEndpointOverrideV1Schema } from '../../providers/connections/v1
 import { ProviderErrorV1Schema } from '../../providers/errors.js';
 import { ProviderModelConfirmationSourceKeyV1Schema } from '../../providers/compatibility/sourceFacts.js';
 import { CustomProviderTemplateV1Schema } from '../../providers/connections/customTemplateV1.js';
-import { ProviderClaudeHelperModelsV1Schema, ProviderConnectionModelSettingsUpdateV1Schema, ProviderConnectionPurposeBindingDefaultsV1Schema,
+import { ProviderRoleModelsV1Schema, ProviderConnectionModelSettingsUpdateV1Schema, ProviderConnectionPurposeBindingDefaultsV1Schema,
   ProviderGatewayPlacementV1Schema } from '../../providers/connections/v1.js';
 
 /** Outputs never disclose credentials, templates, endpoints or model inventories. */
@@ -63,7 +63,7 @@ function projectProviderInputObservation(input: unknown): unknown {
     if (defaults.success) projected.deployment = { kind: 'managedLocal', purposeBindingDefaults: defaults.data };
   }
   for (const [key, schema] of [['gatewayPlacement', ProviderGatewayPlacementV1Schema],
-    ['claudeHelperModels', ProviderClaudeHelperModelsV1Schema]] as const) {
+    ['roleModels', ProviderRoleModelsV1Schema]] as const) {
     if (value[key] === null) projected[key] = null;
     else {
       const parsed = schema.safeParse(value[key]);
@@ -143,7 +143,7 @@ function providerFields(id: ProviderActionIdV1): readonly ActionInputFieldHint[]
       { path: 'displayName', title: 'Connection name', widget: 'text' }, { path: 'expectedRevision', title: 'Connection revision', widget: 'text' },
       ...templateFields('template'), deploymentKindField,
       { path: 'deployment.purposeBindingDefaults', title: 'Subscription slots', widget: 'json' },
-      { path: 'gatewayPlacement', title: 'Gateway runs on', widget: 'json' }, { path: 'claudeHelperModels', title: 'Claude Code helper models', widget: 'json' },
+      { path: 'gatewayPlacement', title: 'Gateway runs on', widget: 'json' }, { path: 'roleModels', title: 'Additional models', widget: 'json' },
       { path: 'modelSettings', title: 'Model generation settings', widget: 'json' },
     ],
     'providers.connections.endpoint.set': [

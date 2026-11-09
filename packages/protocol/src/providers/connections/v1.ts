@@ -40,12 +40,8 @@ export const ProviderGatewayPlacementV1Schema = lazyZodSchema(() => z.discrimina
 ]));
 export type ProviderGatewayPlacementV1 = z.infer<typeof ProviderGatewayPlacementV1Schema>;
 
-export const ProviderClaudeHelperModelsV1Schema = lazyZodSchema(() => z.strictObject({
-  fast: z.optional(ProviderModelIdSchema),
-  default: z.optional(ProviderModelIdSchema),
-  strongest: z.optional(ProviderModelIdSchema),
-}));
-export type ProviderClaudeHelperModelsV1 = z.infer<typeof ProviderClaudeHelperModelsV1Schema>;
+export const ProviderRoleModelsV1Schema = lazyZodSchema(() => z.record(z.string(), ProviderModelIdSchema));
+export type ProviderRoleModelsV1 = z.infer<typeof ProviderRoleModelsV1Schema>;
 
 export const ProviderConnectionPurposeBindingDefaultsV1Schema = lazyZodSchema(() => z.record(
   ConnectedAccountPurposeIdSchema,
@@ -98,7 +94,7 @@ export const ProviderConnectionV1Schema = lazyZodSchema(() => z.strictObject({
   )),
   purposeBindingDefaults: z.optional(ProviderConnectionPurposeBindingDefaultsV1Schema),
   gatewayPlacement: z.optional(ProviderGatewayPlacementV1Schema),
-  claudeHelperModels: z.optional(ProviderClaudeHelperModelsV1Schema),
+  roleModels: z.optional(ProviderRoleModelsV1Schema),
   modelSettings: z.optional(z.record(ProviderModelIdSchema, ProviderModelGenerationSettingsV1Schema)),
   revision: z.number().check(z.int(), z.nonnegative()),
   createdAt: z.number().check(z.nonnegative()),
@@ -118,7 +114,7 @@ export const ProviderConnectionV1Schema = lazyZodSchema(() => z.strictObject({
       ctx.addIssue({ code: 'custom', path: ['deployment'], message: 'Managed deployment does not accept endpoint overrides' });
     }
   } else {
-    for (const field of ['purposeBindingDefaults', 'gatewayPlacement', 'claudeHelperModels'] as const) {
+    for (const field of ['purposeBindingDefaults', 'gatewayPlacement', 'roleModels'] as const) {
       if (value[field] !== undefined) ctx.addIssue({
         code: 'custom', path: [field], message: 'External deployment does not accept managed gateway configuration',
       });

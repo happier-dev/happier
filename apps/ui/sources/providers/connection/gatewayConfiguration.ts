@@ -1,5 +1,5 @@
 import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
-import type { ProviderGatewayPlacementV1, ProviderClaudeHelperModelsV1, ProviderConnectionV1,
+import type { ProviderGatewayPlacementV1, ProviderRoleModelsV1, ProviderConnectionV1,
     ProviderConnectionPurposeBindingDefaultsV1 } from '@happier-dev/protocol/providers/connections/v1';
 import type { QualifiedConnectedAccountPurposeBindingTargetV1 } from '@happier-dev/protocol/connect/connected-account-purpose-bindings';
 import type { DaemonProviderConnectionViewV1 } from '@happier-dev/protocol/rpc';
@@ -8,14 +8,27 @@ import type { AccountProviderDeclarationV1 } from '@happier-dev/protocol/provide
 import { readProviderGatewayContributionPurposesV1,
     type ProviderGatewayContributionV1 } from '@happier-dev/protocol/providers/gatewayContributionsV1';
 export { listProviderGatewayContributionsV1, chooseProviderGatewayContributionV1 } from '@happier-dev/protocol/providers/gatewayContributionsV1';
-import { readAccountProviderDeclarations } from '@/providers/catalog/accountProviderDeclarations';
+import { readAccountAgentProviderDeclarations, readAccountProviderDeclarations,
+    type ProviderDeclarationContext } from '@/providers/catalog/accountProviderDeclarations';
+import type { AgentProviderRequirementsV1 } from '@happier-dev/protocol/providers/binding-compatibility';
 import type { useProviderConnectionMutation } from '@/providers/hooks/useProviderConnectionMutation';
 
 export type ProviderGatewayConfigurationPatch = Readonly<{
     gatewayPlacement?: ProviderGatewayPlacementV1 | null;
-    claudeHelperModels?: ProviderClaudeHelperModelsV1 | null;
+    roleModels?: ProviderRoleModelsV1 | null;
 }>;
 export type ProviderGatewayConfigurationConnection = ProviderConnectionV1 | DaemonProviderConnectionViewV1;
+
+/** Role selections belong to the connection, including roles shared by several Agents. */
+export function readProviderGatewayModelRoles(context: ProviderDeclarationContext): NonNullable<AgentProviderRequirementsV1['modelRoles']> {
+    const roles = new Map<string, NonNullable<AgentProviderRequirementsV1['modelRoles']>[number]>();
+    for (const declaration of readAccountAgentProviderDeclarations(context)) {
+        for (const role of declaration.requirements.modelRoles ?? []) {
+            if (!roles.has(role.id)) roles.set(role.id, role);
+        }
+    }
+    return [...roles.values()];
+}
 
 /** Vendor slots and unedited configuration stay at the connection's existing update owner. */
 export function buildProviderGatewayConfigurationMutation(input: Readonly<{
@@ -62,7 +75,7 @@ export function buildProviderGatewaySlotMutation(input: Readonly<{
 
 export type ProviderGatewayContribution = ProviderGatewayContributionV1;
 export type ProviderGatewayDraftConfiguration = Extract<NonNullable<ProviderActionInputByIdV1['providers.connections.create_contribution']['deployment']>, { kind: 'managedLocal' }>
-    & Pick<ProviderActionInputByIdV1['providers.connections.create_contribution'], 'gatewayPlacement' | 'claudeHelperModels'>;
+    & Pick<ProviderActionInputByIdV1['providers.connections.create_contribution'], 'gatewayPlacement' | 'roleModels'>;
 
 /** The caller supplies its admitted declarations; Account-only callers use bundled identity. */
 export function readProviderGatewayContributionPurposes(contributionKey: string,
@@ -90,7 +103,7 @@ export async function createProviderGateway(input: Readonly<{
         contributionKey: input.contribution.contributionKey, displayName: input.displayName,
         savedSecretId: null, enable: true, deployment: { kind: 'managedLocal', purposeBindingDefaults: configuration.purposeBindingDefaults },
         ...(configuration.gatewayPlacement !== undefined ? { gatewayPlacement: configuration.gatewayPlacement } : {}),
-        ...(configuration.claudeHelperModels !== undefined ? { claudeHelperModels: configuration.claudeHelperModels } : {}),
+        ...(configuration.roleModels !== undefined ? { roleModels: configuration.roleModels } : {}),
     }, input.key);
     if (created?.status !== 'success' || !('connection' in created)) return null;
     return created.connection.connectionId;

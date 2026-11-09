@@ -355,8 +355,8 @@ export async function describeProviderConnections(
         ...(connection.gatewayPlacement !== undefined
           ? { gatewayPlacement: connection.gatewayPlacement }
           : {}),
-        ...(connection.claudeHelperModels !== undefined
-          ? { claudeHelperModels: connection.claudeHelperModels }
+        ...(connection.roleModels !== undefined
+          ? { roleModels: connection.roleModels }
           : {}),
         managedLocalOption,
         endpoints,

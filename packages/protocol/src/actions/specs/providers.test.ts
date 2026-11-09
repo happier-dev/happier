@@ -86,7 +86,7 @@ describe('Provider Action placement declarations', () => {
     const spec = PROVIDER_ACTION_SPECS_V1.find(spec => spec.id === 'providers.connections.update')!;
     const rename = { action: 'update', connectionId: 'connection', expectedRevision: 1, displayName: 'Gateway' };
     expect(spec.safetyForInput?.(rename) ?? spec.safety).toBe('safe');
-    for (const input of [undefined, { ...rename, gatewayPlacement: null }, { ...rename, claudeHelperModels: {} },
+    for (const input of [undefined, { ...rename, gatewayPlacement: null }, { ...rename, roleModels: {} },
       { ...rename, template: {} }, { ...rename, unknown: true }]) {
       expect(spec.safetyForInput?.(input) ?? spec.safety).toBe('danger');
     }

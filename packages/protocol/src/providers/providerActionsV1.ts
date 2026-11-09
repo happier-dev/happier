@@ -31,7 +31,7 @@ function connectionInput<A extends ConnectionAction>(action: A): ConnectionOptio
   });
 }
 type AccountOperand<T> = { [K in keyof (Omit<T, 'machineId'> & { machineId?: string })]: (Omit<T, 'machineId'> & { machineId?: string })[K] };
-type AccountCreationConfiguration = Pick<z.output<ConnectionOption<'update'>>, 'deployment' | 'gatewayPlacement' | 'claudeHelperModels'>;
+type AccountCreationConfiguration = Pick<z.output<ConnectionOption<'update'>>, 'deployment' | 'gatewayPlacement' | 'roleModels'>;
 type AccountCreationOperand<T extends { authoringReview: unknown }> = {
   [K in keyof (Omit<AccountOperand<T>, 'authoringReview'> & { authoringReview?: T['authoringReview'] } & AccountCreationConfiguration)]:
     (Omit<AccountOperand<T>, 'authoringReview'> & { authoringReview?: T['authoringReview'] } & AccountCreationConfiguration)[K]
@@ -85,12 +85,12 @@ export const PROVIDER_ACTION_INPUT_SCHEMAS_V1 = {
     const input = connectionInput('createContribution');
     const extend = z.safeExtend.bind(null, input) as unknown as (shape: { machineId: z.ZodMiniOptional<typeof ProviderMachineIdSchema>;
       authoringReview: z.ZodMiniOptional<typeof input.shape.authoringReview>; deployment: ConnectionOption<'update'>['shape']['deployment'];
-      gatewayPlacement: ConnectionOption<'update'>['shape']['gatewayPlacement']; claudeHelperModels: ConnectionOption<'update'>['shape']['claudeHelperModels'] }) =>
+      gatewayPlacement: ConnectionOption<'update'>['shape']['gatewayPlacement']; roleModels: ConnectionOption<'update'>['shape']['roleModels'] }) =>
         z.ZodMiniType<AccountCreationOperand<z.output<typeof input>>, AccountCreationOperand<z.input<typeof input>>>;
     return extend({ machineId: z.optional(ProviderMachineIdSchema), authoringReview: z.optional(input.shape.authoringReview),
       deployment: connectionInput('update').shape.deployment,
       gatewayPlacement: connectionInput('update').shape.gatewayPlacement,
-      claudeHelperModels: connectionInput('update').shape.claudeHelperModels });
+      roleModels: connectionInput('update').shape.roleModels });
   }),
   'providers.connections.create_custom': lazyZodSchema(() => accountInput(connectionInput('createCustom'))),
   'providers.connections.enable_detected': connectionInput('enableDetected'),

@@ -121,7 +121,7 @@ describe('Provider mutation deferred approval', () => {
                 ? await current.mutation.run({ action: 'delete', connectionId: 'pc_a' }, 'delete', { confirmed: true })
                 : kind === 'endpoint'
                     ? await current.endpoint.patch({ scope: 'account', endpointTemplateId, publicHeaders: { 'x-policy': 'confirmed' } }, { confirmed: true })
-                    : await current.gateway.save({ claudeHelperModels: null }, { confirmed: true });
+                    : await current.gateway.save({ roleModels: null }, { confirmed: true });
         });
         expect(result).toEqual(kind === 'connection' ? expect.objectContaining({ status: 'success' }) : true);
         expect(catalog.writes).toBe(1);

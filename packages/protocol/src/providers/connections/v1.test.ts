@@ -4,6 +4,19 @@ import { PROVIDER_WIRE_PROTOCOL_LIMITS_V1 } from '../capabilities/v1.js';
 import { ProviderConnectionV1Schema } from './v1.js';
 
 describe('ProviderConnectionV1Schema endpoint overrides', () => {
+  it('retains declared model-role selections without a host-owned role vocabulary', () => {
+    const base = {
+      v: 1, id: 'pc_gateway', source: { kind: 'contribution', contributionKey: 'plugin/gateway' },
+      role: 'named', displayName: 'Gateway', displayNameMode: 'custom', revision: 0, createdAt: 1, updatedAt: 1,
+      deployment: { kind: 'managedLocal' },
+    } as const;
+    const roleModels = { fast: 'quick-model', default: 'default-model', strongest: 'strong-model', reviewer: 'review-model' };
+    expect(ProviderConnectionV1Schema.parse({ ...base, roleModels })).toMatchObject({ roleModels });
+    expect(ProviderConnectionV1Schema.parse({ ...base, roleModels: {} })).toMatchObject({ roleModels: {} });
+    expect(ProviderConnectionV1Schema.safeParse({ ...base, roleModels: { reviewer: 'invalid model' } }).success).toBe(false);
+    expect(ProviderConnectionV1Schema.safeParse({ ...base, roleModels: { reviewer: true } }).success).toBe(false);
+  });
+
   it('retains managed gateway placement and helper pins, refusing external configuration and unknown fields', () => {
     const base = {
       v: 1, id: 'pc_gateway', source: { kind: 'contribution', contributionKey: 'plugin/gateway' },
@@ -11,19 +24,19 @@ describe('ProviderConnectionV1Schema endpoint overrides', () => {
       deployment: { kind: 'managedLocal' },
     } as const;
     const gatewayPlacement = { kind: 'machine', machineId: 'hub-a' } as const;
-    const claudeHelperModels = { fast: 'fast-model', default: 'session-default', strongest: 'strong-model' };
-    expect(ProviderConnectionV1Schema.parse({ ...base, gatewayPlacement, claudeHelperModels })).toMatchObject({
-      gatewayPlacement, claudeHelperModels,
+    const roleModels = { fast: 'fast-model', default: 'session-default', strongest: 'strong-model' };
+    expect(ProviderConnectionV1Schema.parse({ ...base, gatewayPlacement, roleModels })).toMatchObject({
+      gatewayPlacement, roleModels,
     });
     expect(ProviderConnectionV1Schema.parse({ ...base, gatewayPlacement: { kind: 'sessionMachine' } }).gatewayPlacement)
       .toEqual({ kind: 'sessionMachine' });
     expect(ProviderConnectionV1Schema.parse(base).gatewayPlacement).toBeUndefined();
-    for (const field of [{ gatewayPlacement }, { claudeHelperModels }]) {
+    for (const field of [{ gatewayPlacement }, { roleModels }]) {
       expect(ProviderConnectionV1Schema.safeParse({ ...base, deployment: { kind: 'external' }, ...field }).success).toBe(false);
     }
     expect(ProviderConnectionV1Schema.safeParse({ ...base, gatewayPlacement: { kind: 'machine', machineId: ' hub-a ' } }).success).toBe(false);
-    expect(ProviderConnectionV1Schema.safeParse({ ...base, claudeHelperModels: { fast: 'not a model' } }).success).toBe(false);
-    expect(ProviderConnectionV1Schema.safeParse({ ...base, claudeHelperModels: { fast: 'fast-model', force: true } }).success).toBe(false);
+    expect(ProviderConnectionV1Schema.safeParse({ ...base, roleModels: { fast: 'not a model' } }).success).toBe(false);
+    expect(ProviderConnectionV1Schema.safeParse({ ...base, roleModels: { fast: 'fast-model', force: true } }).success).toBe(false);
   });
 
   it('defaults legacy connections to external deployment and bounds managed deployment to contribution-backed connections without endpoint overrides', () => {

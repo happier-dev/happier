@@ -61,7 +61,7 @@ export function ConnectedServiceGatewayPage(props: GatewayPageProps = {}) {
         onDiscard={props.onDiscard ?? (() => router.replace(slot
             ? buildConnectedAccountSettingsRoute(slot.target.service, { kind: 'group', groupId: slot.target.groupId }) ?? '/(app)/settings/connected-services'
             : '/(app)/settings/connected-services'))}
-        renderManagedDeployment={({ scope, deployment, declarations, machines, onChange, disabled }) => <ProviderGatewaySections
+        renderManagedDeployment={({ scope, deployment, declarations, modelRoles, machines, onChange, disabled }) => <ProviderGatewaySections
             localizedTextPluginId={contributionIdentity.pluginId}
             declarations={declarations} slots={deployment.purposeBindingDefaults}
             onChangeSlot={(slotPurpose, target) => {
@@ -77,8 +77,8 @@ export function ConnectedServiceGatewayPage(props: GatewayPageProps = {}) {
             machines={machines.map(row => ({ machineId: row.target.machineId, displayName: row.displayName, online: row.online }))}
             reachability="not_checked"
             onChangePlacement={gatewayPlacement => onChange({ ...deployment, gatewayPlacement })}
-            helperModels={deployment.claudeHelperModels ?? undefined} models={[]}
-            onChangeHelperModels={claudeHelperModels => onChange({ ...deployment, claudeHelperModels })}
+            helperModels={deployment.roleModels ?? undefined} modelRoles={modelRoles} models={[]}
+            onChangeHelperModels={roleModels => onChange({ ...deployment, roleModels })}
             disabled={disabled} nameRow={null} pickerRows={null}
         />}
     />;

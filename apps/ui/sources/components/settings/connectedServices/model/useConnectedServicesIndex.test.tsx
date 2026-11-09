@@ -65,7 +65,7 @@ const source = { connectedServicesDefaultAuthByAgentIdV1: { v: 1, bindingsByAgen
 const gateway = ProviderConnectionV1Schema.parse({ v: 1, id: 'pc_gateway',
     source: { kind: 'contribution', contributionKey: 'happier.provider.cliproxyapi/cliproxyapi' },
     role: 'named', displayName: 'Subscriptions', displayNameMode: 'custom', deployment: { kind: 'managedLocal' },
-    gatewayPlacement: { kind: 'machine', machineId: 'hub-a' }, claudeHelperModels: { fast: 'haiku' },
+    gatewayPlacement: { kind: 'machine', machineId: 'hub-a' }, roleModels: { fast: 'haiku' },
     revision: 3, createdAt: 1, updatedAt: 1 });
 const mutations: ConnectedAccountCatalogRowMutationV1[] = [];
 const providerRowHomes: string[] = [];
@@ -845,7 +845,7 @@ describe('Connected Services index purpose source admission', () => {
         } finally { await hook.unmount(); }
     });
     it('knows external-only Account connections contain no gateways without requesting a Machine', async () => {
-        const { gatewayPlacement: _placement, claudeHelperModels: _helpers, ...base } = gateway;
+        const { gatewayPlacement: _placement, roleModels: _helpers, ...base } = gateway;
         savedConnections = [ProviderConnectionV1Schema.parse({ ...base, deployment: { kind: 'external' } })];
         const hook = await mount('cached', null, false, true);
         try {

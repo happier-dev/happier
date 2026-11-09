@@ -159,7 +159,7 @@ describe('Provider Settings present-user approval policy', () => {
     for (const surface of ['agent', 'ui', 'cli', 'mcp'] as const) {
       const context = { surface, authority: 'account_automation' } as const;
       expect(resolveActionApprovalRouting({ actionId, spec, input: rename, context }).required).toBe(false);
-      for (const input of [undefined, { ...rename, gatewayPlacement: null }, { ...rename, claudeHelperModels: {} },
+      for (const input of [undefined, { ...rename, gatewayPlacement: null }, { ...rename, roleModels: {} },
         { ...rename, template: {} }, { ...rename, unexpected: true }]) {
         expect(resolveActionApprovalRouting({ actionId, spec, input, context }).required).toBe(true);
       }
@@ -208,7 +208,7 @@ describe('Provider Settings present-user approval policy', () => {
     const input = spec.inputSchema.parse({ action: 'update', connectionId: 'pc_gateway', expectedRevision: 2,
       deployment: { kind: 'managedLocal', purposeBindingDefaults: {
         upstream: { kind: 'group', service: { pluginId: 'example.auth', localId: 'subscription' }, groupId: 'pool' },
-      } }, gatewayPlacement: { kind: 'machine', machineId: 'hub' }, claudeHelperModels: { fast: 'fast-model' } });
+      } }, gatewayPlacement: { kind: 'machine', machineId: 'hub' }, roleModels: { fast: 'fast-model' } });
     const context = { surface: 'agent', authority: 'account_automation' } as const;
     expect(resolveActionApprovalRouting({ actionId, spec, input, context }).required).toBe(true);
     expect(resolveActionApprovalRouting({ actionId, spec, input,

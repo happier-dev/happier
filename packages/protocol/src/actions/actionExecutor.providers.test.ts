@@ -294,7 +294,7 @@ describe('Provider Settings Actions', () => {
       ['providers.connections.update', { action: 'update', connectionId: 'pc_gateway', expectedRevision: 1,
         gatewayPlacement: { kind: 'machine', machineId: 'hub' } }, 'account'],
       ['providers.connections.update', { action: 'update', machineId: 'machine', connectionId: 'pc_gateway', expectedRevision: 1,
-        claudeHelperModels: { fast: 'model' } }, 'account'],
+        roleModels: { fast: 'model' } }, 'account'],
       ['providers.connections.enabled.set', { action: 'setEnabled', connectionId: 'pc_gateway', enabled: true, scope: 'account' }, 'account'],
       ['providers.connections.enabled.set', { action: 'setEnabled', machineId: 'machine', connectionId: 'pc_gateway', enabled: true, scope: 'machine' }, 'machine'],
       ['providers.models.list', { connectionId: 'pc_gateway' }, 'account'],

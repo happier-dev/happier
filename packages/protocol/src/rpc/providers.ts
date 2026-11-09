@@ -7,7 +7,7 @@ import { ProviderConnectionIdSchema, ProviderContributionKeySchema, ProviderLoca
 import { BackendTargetKeyV2Schema } from '../backends/targets/backendTargetRefV2.js';
 import { CustomProviderTemplateV1Schema } from '../providers/connections/customTemplateV1.js';
 import {
-  ProviderClaudeHelperModelsV1Schema,
+  ProviderRoleModelsV1Schema,
   ProviderConnectionModelSettingsUpdateV1Schema,
   ProviderConnectionPurposeBindingDefaultsV1Schema,
   ProviderEndpointOverrideV1Schema,
@@ -502,7 +502,7 @@ export const DaemonProviderConnectionViewV1Schema = lazyZodSchema(() => z.strict
   })), null),
   deployment: z._default(DaemonProviderConnectionDeploymentV1Schema, { kind: 'external' }),
   gatewayPlacement: z.optional(ProviderGatewayPlacementV1Schema),
-  claudeHelperModels: z.optional(ProviderClaudeHelperModelsV1Schema),
+  roleModels: z.optional(ProviderRoleModelsV1Schema),
   managedLocalOption: z._default(z.nullable(z.strictObject({
     targetMachineId: z.nullable(ProviderMachineIdSchema),
     connectedAccountPurposes: z.array(
@@ -519,7 +519,7 @@ export const DaemonProviderConnectionViewV1Schema = lazyZodSchema(() => z.strict
   probeObservationIdentity: z._default(z.nullable(ProviderProbeObservationIdentityV1Schema), null),
   runtime: ProviderConnectionRpcRuntimeSummaryV1Schema,
 }).check(z.superRefine((value, context) => {
-  for (const field of ['gatewayPlacement', 'claudeHelperModels'] as const) {
+  for (const field of ['gatewayPlacement', 'roleModels'] as const) {
     if (value[field] !== undefined && (value.deployment.kind !== 'managedLocal' || value.contributionKey === null)) {
       context.addIssue({
         code: 'custom', path: [field], message: 'Gateway configuration requires a managed contribution connection',
@@ -617,7 +617,7 @@ export const DaemonProviderConnectionMutationRequestV1Schema = lazyZodSchema(() 
     modelSettings: z.optional(ProviderConnectionModelSettingsUpdateV1Schema),
     deployment: z.optional(DaemonProviderConnectionDeploymentUpdateV1Schema),
     gatewayPlacement: z.optional(z.nullable(ProviderGatewayPlacementV1Schema)),
-    claudeHelperModels: z.optional(z.nullable(ProviderClaudeHelperModelsV1Schema)),
+    roleModels: z.optional(z.nullable(ProviderRoleModelsV1Schema)),
   })),
   (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(ProviderConnectionMutationBaseV1Schema, {
     action: z.literal('setEndpointOverride'),

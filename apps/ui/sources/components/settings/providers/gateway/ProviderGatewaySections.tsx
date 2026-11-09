@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { SettingAnchor } from '@/components/settings/shell/SettingRow';
+import { RowArrivalReveal, SettingAnchor } from '@/components/settings/shell/SettingRow';
 import { PROVIDER_GATEWAY_SETTINGS } from '../providersSettings';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -7,11 +7,12 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import type { QualifiedConnectedAccountPurposeBindingTargetV1 } from '@happier-dev/protocol/connect/connected-account-purpose-bindings';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import type {
-  ProviderClaudeHelperModelsV1,
+  ProviderRoleModelsV1,
   ProviderConnectionPurposeBindingDefaultsV1,
   ProviderGatewayPlacementV1,
 } from '@happier-dev/protocol/providers/connections/v1';
 import type { DaemonProviderConnectionViewV1 } from '@happier-dev/protocol/rpc';
+import type { AgentProviderRequirementsV1 } from '@happier-dev/protocol/providers/binding-compatibility';
 import { happierPageTextMetrics } from '@happier-dev/plugin-ui/presentation';
 
 import {
@@ -19,7 +20,7 @@ import {
   useProjectedPluginLocalizedTextResolver,
 } from '@/components/appShell/plugins/AppShellPluginUiProjection';
 import { ConnectedAccountPurposeTargetChooser } from '@/components/settings/connectedServices/account/ConnectedAccountPurposeTargetChooser';
-import { ConnectedServiceMark } from '@/components/settings/connectedServices/ConnectedServiceMark';
+import { ConnectedServiceMark, formatAgentNames } from '@/components/settings/connectedServices/ConnectedServiceMark';
 import { resolveQualifiedConnectedServiceRegistryDisplayName } from '@/components/settings/connectedServices/model/resolveConnectedServiceDisplayName';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import type { PopoverAnchor } from '@/components/ui/popover/_types';
@@ -40,15 +41,9 @@ import { t } from '@/text';
 type PurposeDeclaration = NonNullable<
   DaemonProviderConnectionViewV1['managedLocalOption']
 >['connectedAccountPurposes'][number];
-type HelperRole = keyof ProviderClaudeHelperModelsV1;
+type HelperRole = keyof ProviderRoleModelsV1;
 type PlacementMode = ProviderGatewayPlacementV1['kind'];
 
-const HELPER_ROLES: readonly HelperRole[] = ['fast', 'default', 'strongest'];
-const HELPER_ROLE_TITLE_KEY = {
-  fast: 'settingsProvidersCollection.gateway.helperFast',
-  default: 'settingsProvidersCollection.gateway.helperDefault',
-  strongest: 'settingsProvidersCollection.gateway.helperStrongest',
-} as const;
 /** The menu id for "no pin": the helper follows the session's model. */
 const SAME_AS_SESSION = 'happier:same-as-session';
 
@@ -97,11 +92,12 @@ export type ProviderGatewaySectionsProps = Readonly<{
   reachability: ProviderGatewayHubReachability;
   /** `null` returns the gateway to each session's computer. */
   onChangePlacement: (placement: ProviderGatewayPlacementV1 | null) => void;
-  helperModels: ProviderClaudeHelperModelsV1 | undefined;
+  helperModels: ProviderRoleModelsV1 | undefined;
+  modelRoles: NonNullable<AgentProviderRequirementsV1['modelRoles']>;
   models: readonly Readonly<{ id: string; name: string }>[];
   /** `null` clears every pin. */
   onChangeHelperModels: (
-    helperModels: ProviderClaudeHelperModelsV1 | null,
+    helperModels: ProviderRoleModelsV1 | null,
   ) => void;
   /** The captured Account catalog is not writable or the selected target belongs to another Account. */
   disabled: boolean;
@@ -112,7 +108,47 @@ export type ProviderGatewaySectionsProps = Readonly<{
   nameRow: React.ReactNode;
   /** A saved gateway's Used by section, owned by the page; a draft has none. */
   usedBy?: React.ReactNode;
+  /** What each family (by purpose) can serve here, from the gateway's family rows (seam 04-A/B). */
+  familyFacts?: Readonly<Record<string, ProviderGatewayFamilyFacts>>;
 }>;
+
+/**
+ * A family's facts on this gateway, already in words: the declaring plugin says what a restricted family
+ * serves, and the typed owner of a "can't serve" reason maps it to copy. This page never parses either.
+ */
+export type ProviderGatewayFamilyFacts = Readonly<{
+  /** `summary` ends the slot's line 2 ("chat requests only"); `sentence` opens its chooser. */
+  restriction?: Readonly<{ summary: string; sentence: string }>;
+  /** Why this family's account can't serve the gateway now; replaces what it needs on its Add more row. */
+  unavailableReason?: string;
+}>;
+
+const NO_FAMILY_FACTS: Readonly<Record<string, ProviderGatewayFamilyFacts>> = Object.freeze({});
+const NO_PURPOSES: ReadonlySet<string> = new Set();
+
+function selectConnectedServiceKeys(profile: Readonly<{ connectedAccountsV4?: readonly Readonly<{ ref: Readonly<{ service: Parameters<typeof buildQualifiedPluginContributionKey>[0] }> }>[] | null }>): string {
+  return Array.from(new Set((profile.connectedAccountsV4 ?? []).map((account) => buildQualifiedPluginContributionKey(account.ref.service)))).sort().join('\n');
+}
+
+/**
+ * Which families show as slots and which fold into "Add more" (lab `muse-accounts` C1): a family with an
+ * account, or with a saved slot, is a slot; the rest fold. With nothing connected yet every family shows,
+ * each with its Connect.
+ */
+export function partitionProviderGatewayFamilies<Declaration extends Readonly<{ purpose: string; service: Parameters<typeof buildQualifiedPluginContributionKey>[0] }>>(
+  declarations: readonly Declaration[],
+  slots: Readonly<Record<string, unknown>>,
+  connectedServiceKeys: ReadonlySet<string>,
+): Readonly<{ shown: readonly Declaration[]; folded: readonly Declaration[] }> {
+  const shown: Declaration[] = [];
+  const folded: Declaration[] = [];
+  for (const declaration of declarations) {
+    const connected = connectedServiceKeys.has(buildQualifiedPluginContributionKey(declaration.service))
+      || (slots[declaration.purpose] ?? null) !== null;
+    (connected ? shown : folded).push(declaration);
+  }
+  return shown.length === 0 ? { shown: folded, folded: [] } : { shown, folded };
+}
 
 /**
  * A gateway's configuration (lab `rgateway` GW1/GW2): which subscription each vendor draws on, where
@@ -134,6 +170,29 @@ export const ProviderGatewaySections = React.memo(
     const [helperMenuOpen, setHelperMenuOpen] =
       React.useState<HelperRole | null>(null);
     const [knowOpen, setKnowOpen] = React.useState(false);
+    const connectedServiceKeyList = useProfile(selectConnectedServiceKeys);
+    const connectedServiceKeys = React.useMemo(
+      () => new Set(connectedServiceKeyList ? connectedServiceKeyList.split('\n') : []),
+      [connectedServiceKeyList],
+    );
+    const families = React.useMemo(
+      () => partitionProviderGatewayFamilies(props.declarations, props.slots, connectedServiceKeys),
+      [connectedServiceKeys, props.declarations, props.slots],
+    );
+    const familyFacts = props.familyFacts ?? NO_FAMILY_FACTS;
+    // A family connected from Add more moves into the slots and takes the reveal pulse once.
+    const foldedKey = families.folded.map((declaration) => declaration.purpose).join('\n');
+    const previousFoldedRef = React.useRef<ReadonlySet<string> | null>(null);
+    const [arrived, setArrived] = React.useState<ReadonlySet<string>>(NO_PURPOSES);
+    React.useEffect(() => {
+      const previous = previousFoldedRef.current;
+      previousFoldedRef.current = new Set(foldedKey ? foldedKey.split('\n') : []);
+      if (!previous) return;
+      const moved = families.shown.filter((declaration) => previous.has(declaration.purpose));
+      if (moved.length > 0) setArrived(new Set(moved.map((declaration) => declaration.purpose)));
+      // `families.shown` changes with `foldedKey`; the key alone decides an arrival.
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [foldedKey]);
 
     const selectMode = (next: PlacementMode) => {
       if (next === mode) return;
@@ -203,7 +262,7 @@ export const ProviderGatewaySections = React.memo(
       [props.models],
     );
     const setHelper = (role: HelperRole, modelId: string) => {
-      const next: { -readonly [Role in HelperRole]?: string } = {
+      const next: ProviderRoleModelsV1 = {
         ...props.helperModels,
       };
       if (modelId === SAME_AS_SESSION) delete next[role];
@@ -219,18 +278,36 @@ export const ProviderGatewaySections = React.memo(
             'settingsProvidersCollection.gateway.modelsFromDescription',
           )}
         >
-          <SettingAnchor setting={PROVIDER_GATEWAY_SETTINGS.settings.slots}><>{props.declarations.map((declaration) => (
-            <GatewaySlotRow
+          <SettingAnchor setting={PROVIDER_GATEWAY_SETTINGS.settings.slots}><>{families.shown.map((declaration) => (
+            <RowArrivalReveal
               key={`${buildQualifiedPluginContributionKey(declaration.service)}/${declaration.purpose}`}
-              declaration={declaration}
+              active={arrived.has(declaration.purpose)}
+              testID={`provider-gateway-slot:${declaration.purpose}:arrived`}
+            >
+              <GatewaySlotRow
+                declaration={declaration}
+                localizedTextPluginId={props.localizedTextPluginId}
+                value={props.slots[declaration.purpose] ?? null}
+                hasAccount={connectedServiceKeys.has(buildQualifiedPluginContributionKey(declaration.service))}
+                facts={familyFacts[declaration.purpose]}
+                disabled={props.disabled}
+                disabledReason={props.disabledReason}
+                onChange={props.onChangeSlot}
+                onConnect={props.onConnectService}
+              />
+            </RowArrivalReveal>
+          ))}
+          {families.folded.length > 0 ? (
+            <GatewayAddMoreRow
+              declarations={families.folded}
               localizedTextPluginId={props.localizedTextPluginId}
-              value={props.slots[declaration.purpose] ?? null}
+              familyFacts={familyFacts}
               disabled={props.disabled}
               disabledReason={props.disabledReason}
               onChange={props.onChangeSlot}
               onConnect={props.onConnectService}
             />
-          ))}</></SettingAnchor>
+          ) : null}</></SettingAnchor>
         </ItemGroup>
 
         <ItemGroup
@@ -336,7 +413,7 @@ export const ProviderGatewaySections = React.memo(
             'settingsProvidersCollection.gateway.helperDescription',
           )}
         >
-          <SettingAnchor setting={PROVIDER_GATEWAY_SETTINGS.settings.helpers}><>{HELPER_ROLES.map((role) => {
+          <SettingAnchor setting={PROVIDER_GATEWAY_SETTINGS.settings.helpers}><>{props.modelRoles.map(({ id: role, title }) => {
             const pinned = props.helperModels?.[role] ?? SAME_AS_SESSION;
             return (
               <DropdownMenu
@@ -352,7 +429,7 @@ export const ProviderGatewaySections = React.memo(
                 rowKind="item"
                 popoverPortalWebTarget="body"
                 itemTrigger={{
-                  title: t(HELPER_ROLE_TITLE_KEY[role]),
+                  title,
                   // A pin whose model left the gateway still says which model it names.
                   detailFormatter: (selected) => selected?.title ?? pinned,
                   field: { quietValue: pinned === SAME_AS_SESSION },
@@ -414,6 +491,8 @@ const GatewaySlotRow = React.memo(function GatewaySlotRow(
     declaration: PurposeDeclaration;
     localizedTextPluginId: string;
     value: QualifiedConnectedAccountPurposeBindingTargetV1 | null;
+    hasAccount: boolean;
+    facts?: ProviderGatewayFamilyFacts;
     disabled: boolean;
     disabledReason?: string;
     onChange: ProviderGatewaySectionsProps['onChangeSlot'];
@@ -421,7 +500,6 @@ const GatewaySlotRow = React.memo(function GatewaySlotRow(
   }>,
 ) {
   const { declaration } = props;
-  const profile = useProfile();
   const registry = useProjectedConnectedServicesRegistry();
   const localizePluginText = useProjectedPluginLocalizedTextResolver();
   const serviceKey = buildQualifiedPluginContributionKey(declaration.service);
@@ -433,19 +511,9 @@ const GatewaySlotRow = React.memo(function GatewaySlotRow(
     t,
     localizePluginText,
   );
-  const hasAccount = (profile.connectedAccountsV4 ?? []).some(
-    (account) =>
-      buildQualifiedPluginContributionKey(account.ref.service) === serviceKey,
-  );
-  const mark = (
-    <ConnectedServiceMark
-      legacyServiceId={
-        getQualifiedConnectedServiceRegistryEntry(declaration.service)
-          ?.legacyServiceId ?? null
-      }
-      size="inline"
-    />
-  );
+  const hasAccount = props.hasAccount;
+  const restriction = props.facts?.restriction;
+  const mark = <GatewayFamilyMark service={declaration.service} />;
   // Same name on the chooser row and its popover: the service, not the purpose title.
   const serviceDeclaration = React.useMemo(
     () => ({ ...declaration, title: undefined }),
@@ -467,9 +535,11 @@ const GatewaySlotRow = React.memo(function GatewaySlotRow(
         testID={testID}
         icon={mark}
         title={title}
-        subtitle={t('settingsProvidersCollection.gateway.slotConnect', {
-          service: title,
-        })}
+        // What it needs (or why its account can't serve here), then what a restricted family serves.
+        subtitle={[
+          props.facts?.unavailableReason ?? t('settingsProvidersCollection.gateway.slotConnect', { service: title }),
+          restriction?.summary ?? null,
+        ].filter(Boolean).join(' · ')}
         subtitleLines={0}
         showChevron={false}
         rightElement={
@@ -503,10 +573,83 @@ const GatewaySlotRow = React.memo(function GatewaySlotRow(
             })
           : undefined
       }
+      restriction={restriction}
       disabled={props.disabled}
       disabledReason={props.disabledReason}
       onChange={change}
     />
+  );
+});
+
+/** A family's mark: its built-in mark, or the brand its plugin declares. */
+const GatewayFamilyMark = React.memo(function GatewayFamilyMark(props: Readonly<{ service: PurposeDeclaration['service'] }>) {
+  return (
+    <ConnectedServiceMark
+      legacyServiceId={getQualifiedConnectedServiceRegistryEntry(props.service)?.legacyServiceId ?? null}
+      pluginId={props.service.pluginId}
+      size="inline"
+    />
+  );
+});
+
+/**
+ * The families with no account, folded into one row (lab `muse-accounts` C1): their marks and names,
+ * opening in place onto each family's Connect. Closed, its rows are not mounted, so it reads nothing.
+ */
+const GatewayAddMoreRow = React.memo(function GatewayAddMoreRow(
+  props: Readonly<{
+    declarations: readonly PurposeDeclaration[];
+    localizedTextPluginId: string;
+    familyFacts: Readonly<Record<string, ProviderGatewayFamilyFacts>>;
+    disabled: boolean;
+    disabledReason?: string;
+    onChange: ProviderGatewaySectionsProps['onChangeSlot'];
+    onConnect: ProviderGatewaySectionsProps['onConnectService'];
+  }>,
+) {
+  const { theme } = useUnistyles();
+  const [open, setOpen] = React.useState(false);
+  const registry = useProjectedConnectedServicesRegistry();
+  const localizePluginText = useProjectedPluginLocalizedTextResolver();
+  const names = formatAgentNames(props.declarations.map((declaration) =>
+    resolveQualifiedConnectedServiceRegistryDisplayName(registry, declaration.service, t, localizePluginText)));
+  return (
+    <ExpandableItem
+      testID="provider-gateway-add-more"
+      expanded={open}
+      onExpandedChange={setOpen}
+      header={(state) => (
+        <Item
+          testID="provider-gateway-add-more:header"
+          {...state.headerProps}
+          icon={<Icon name="plus" size={17} color={theme.colors.text.secondary} />}
+          title={t('settingsProvidersCollection.gateway.addMoreFamilies')}
+          subtitle={names}
+          subtitleLeading={(
+            <View style={styles.marks}>
+              {props.declarations.map((declaration) => (
+                <GatewayFamilyMark key={`${buildQualifiedPluginContributionKey(declaration.service)}/${declaration.purpose}`} service={declaration.service} />
+              ))}
+            </View>
+          )}
+        />
+      )}
+    >
+      {props.declarations.map((declaration) => (
+        <GatewaySlotRow
+          key={`${buildQualifiedPluginContributionKey(declaration.service)}/${declaration.purpose}`}
+          declaration={declaration}
+          localizedTextPluginId={props.localizedTextPluginId}
+          value={null}
+          hasAccount={false}
+          facts={props.familyFacts[declaration.purpose]}
+          disabled={props.disabled}
+          disabledReason={props.disabledReason}
+          onChange={props.onChange}
+          onConnect={props.onConnect}
+        />
+      ))}
+    </ExpandableItem>
   );
 });
 
@@ -523,5 +666,10 @@ const styles = StyleSheet.create((theme) => ({
     ...Typography.default(),
     ...happierPageTextMetrics('rowDescription'),
     color: theme.colors.text.secondary,
+  },
+  marks: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: theme.space.s4,
   },
 }));
