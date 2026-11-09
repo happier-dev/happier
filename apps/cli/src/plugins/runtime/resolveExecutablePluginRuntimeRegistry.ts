@@ -1612,7 +1612,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
     const resolveCurrentPluginApprovalReplayPlacement = async (
         pluginId: string,
         signal?: AbortSignal,
-    ): Promise<TargetActionApprovalReplayPlacementV1 | null> => {
+    ): ReturnType<NonNullable<ResolvedExecutablePluginRuntimeRegistry['resolveCurrentPluginApprovalReplayPlacement']>> => {
         signal?.throwIfAborted();
         if (!params?.resolveCurrentMachineExecutionOriginContext) return null;
         const captured = captureCurrentPluginOccurrence(pluginId);
@@ -1632,11 +1632,12 @@ export async function resolveExecutablePluginRuntimeRegistry(
             })
         ) return null;
         const placement = TargetActionApprovalReplayPlacementV1Schema.safeParse({
-            // Replay addresses the configured Home profile, not its cryptographic identity.
+            // Replay uses the local profile; its portable Home identity travels
+            // separately to the approval origin writer, never into placement.
             serverId: configuration.activeServerId,
             machineId: context.machineId,
         });
-        return placement.success ? Object.freeze({ ...placement.data }) : null;
+        return placement.success ? Object.freeze({ ...placement.data, serverIdentityId: context.serverIdentityId }) : null;
     };
     const collectionContractMatchesRef = (
         contract: NormalizedPluginAccountCollectionContractV1,
@@ -4406,8 +4407,6 @@ export async function resolveExecutablePluginRuntimeRegistry(
             const binding = invocationServiceOwners.createOrdinaryServiceBinding(
                 seed.occurrenceId,
                 `${seed.contribution.qualifiedId}:${seed.correlationId}:binding`,
-                [],
-                seed.contribution.qualifiedId,
             );
             const transport = createGlobalFetchRuntime();
             const validateRecipient = async (requestUrl: string) => {

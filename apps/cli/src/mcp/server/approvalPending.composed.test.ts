@@ -1,12 +1,15 @@
-import { readFile, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import fastify from 'fastify';
+import { z } from 'zod/mini';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
-import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import { buildApprovalExecutionOriginV1, createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { TargetActionApprovalRequestV1Schema } from '@happier-dev/protocol/approvals/targetActionApprovalRequestV1';
+import { FeaturesResponseSchema, decodePlainArtifactStoredContent } from '@happier-dev/protocol';
+import { approvalArtifactBodyMatchesHeaderV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
 import { createAuthoredAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
 import { createPluginManifestV2Fixture } from '@/plugins/testkit/manifestV2Fixture';
 import { executeContributedAction } from '@/plugins/runtime/invocation/actions/executeContributedAction';
@@ -19,6 +22,13 @@ import { projectExecutablePluginToolCatalog } from '@/plugins/runtime/toolCatalo
 import { createActionToolExecutorBridge } from '@/agent/tools/happierTools/createActionToolExecutorBridge';
 import { createHappierToolInventory } from '@/agent/tools/happierTools/listBuiltInHappierTools';
 import { prepareHappierMcpToolInventory, registerHappierMcpBuiltInTools } from './registerHappierMcpBuiltInTools';
+import { createCliApprovalsArtifactStore } from '@/session/actions/approvals/artifactStore';
+import { artifactReadResponse } from '@/testkit/http/artifactHome';
+import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
+import { configuration } from '@/configuration';
+import { resolveApprovalReplayRoute } from '../../../../ui/sources/sync/ops/actions/approvalReplayRoute';
+import { buildApprovalHref } from '../../../../ui/sources/components/approvals/approvalNavigation';
+import { getServerProfileById, removeServerProfile, setServerProfileIdentityForUrl, upsertServerProfile } from '../../../../ui/sources/sync/domains/server/serverProfiles';
 
 describe('pending approval through real MCP and the shared native/plugin Action bridge', () => {
   const pluginId = 'acme.pending';
@@ -26,38 +36,86 @@ describe('pending approval through real MCP and the shared native/plugin Action 
   let fixture: Awaited<ReturnType<typeof createAuthoredAdmittedPluginRuntimeFixture>> | null = null;
   let executor: ReturnType<typeof createPluginActionExecutor> | null = null;
   let pluginToolCatalog: ReturnType<typeof projectExecutablePluginToolCatalog> = [];
+  const home = fastify();
+  const serverIdentityId = 'srv_pending_home';
+  const artifacts = new Map<string, { id: string; header: string; body: string; dataEncryptionKey: string;
+    ownerAccountId: string; access: 'owner'; encryptionMode: 'plain'; headerVersion: number; bodyVersion: number;
+    seq: number; createdAt: number; updatedAt: number }>();
+  let store: ReturnType<typeof createCliApprovalsArtifactStore>;
+  let serverHttpBaseUrl: string;
+  let savedHomeId: string;
+  let requestCurrentIntent: ReturnType<typeof createTargetActionCurrentIntentAdapter>;
+  let originReads = 0;
   let created = 0;
+  const unavailableReasons: string[] = [];
   beforeAll(async () => {
+    const features = FeaturesResponseSchema.parse({ features: {}, capabilities: { serverIdentity: { serverIdentityId } } });
+    home.get('/v1/features', async () => features);
+    home.get('/v1/features/authenticated', async () => features);
+    home.get('/v1/account/encryption', async () => ({ mode: 'plain', updatedAt: 1 }));
+    home.get('/v1/account/encryption/currentness', async () => ({ mode: 'plain', updatedAt: 1,
+      version: 1, settingsVersion: 1, signingKeyFingerprint: null, contentKeyFingerprint: null,
+      recipientEnvelopeReadiness: { status: 'unavailable', reason: 'plain_account' } }));
+    home.get('/v1/account/profile', async () => ({ id: 'pending-account' }));
+    home.get<{ Params: { id: string } }>('/v1/artifacts/:id', async (request, reply) => {
+      const artifact = artifacts.get(request.params.id);
+      return artifact ? { publicAudience: 'none', ...artifact } : reply.code(404).send({ error: 'artifact_not_found' });
+    });
+    home.post('/v1/artifacts/read', async request => artifactReadResponse(request.body, id => artifacts.get(id) ?? null).data);
+    home.post<{ Body: { id: string; header: string; body: string; dataEncryptionKey: string } }>('/v1/artifacts', async request => {
+      const artifact = { ...request.body, ownerAccountId: 'pending-account', access: 'owner' as const,
+        encryptionMode: 'plain' as const, headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 };
+      artifacts.set(artifact.id, artifact);
+      return artifact;
+    });
+    await home.listen({ host: '127.0.0.1', port: 0 });
+    const address = home.server.address();
+    if (!address || typeof address === 'string') throw new Error('Expected fixture Home address');
+    serverHttpBaseUrl = `http://127.0.0.1:${address.port}`;
+    const credentials = { token: `fixture.${Buffer.from(JSON.stringify({ sub: 'pending-account' })).toString('base64url')}.signature`, encryption: null };
+    store = createCliApprovalsArtifactStore({ credentials, serverId: configuration.activeServerId, serverHttpBaseUrl });
+    await upsertServerProfile({ serverUrl: serverHttpBaseUrl, source: 'manual' });
+    const savedHome = await setServerProfileIdentityForUrl(serverHttpBaseUrl, serverIdentityId);
+    if (!savedHome) throw new Error('Expected saved fixture Home identity');
+    savedHomeId = savedHome.id;
     const inputSchema = { type: 'object', properties: { label: { type: 'string' } }, required: ['label'], additionalProperties: false };
     const admitted = await createAuthoredAdmittedPluginRuntimeFixture({ controller: pluginReloadController,
       // Home/Machine identity is an external environment boundary. The runtime
       // still derives and validates replay placement from its admitted occurrence.
-      runtimeOptions: { resolveCurrentMachineExecutionOriginContext: async () => ({
-        serverIdentityId: 'pending-home', machineId: 'pending-machine',
-      }) },
+      runtimeOptions: { resolveCurrentMachineExecutionOriginContext: async () => {
+        originReads++;
+        return { serverIdentityId, machineId: 'pending-machine' };
+      } },
       plugins: [{
         manifest: createPluginManifestV2Fixture({ id: pluginId, contributes: {
           actions: [{ id: 'publish', title: 'Publish label', scopes: ['global'], surfaces: ['agent', 'mcp', 'cli'],
-            execution: { target: 'daemon' }, dangerLevel: 'writesRemote', confirmation: { title: 'Publish label' }, inputSchema }],
-          tools: [{ id: 'other-tool', name: 'qa_pending_other', title: 'Other binding', action: 'publish',
-            surfaces: ['mcp'], inputSchema, outputSchema: inputSchema },
-          ...surfaces.map(surface => ({ id: `publish-${surface}`, name: `qa_pending_publish_${surface}`, title: 'Publish label', action: 'publish',
-            surfaces: [surface], inputSchema, outputSchema: inputSchema }))],
+            execution: { target: 'daemon' }, dangerLevel: 'writesRemote', confirmation: { title: 'Publish label' }, inputSchema,
+            resultSchema: inputSchema, tool: { name: 'qa_pending_publish' },
+            toolExposure: { agent: 'direct', mcp: 'direct', cli: 'direct' } },
+          { id: 'other', title: 'Other binding', scopes: ['global'], surfaces: ['mcp'],
+            execution: { target: 'daemon' }, dangerLevel: 'safe', inputSchema,
+            tool: { name: 'qa_pending_other' }, toolExposure: { mcp: 'direct' } }],
         } }),
-        files: { 'daemon.mjs': 'export function activate(api) { api.actions.register("publish", async () => { throw new Error("Unapproved handler must not run"); }); }' },
+        files: { 'daemon.mjs': 'export function activate(api) { api.actions.register("publish", async () => { throw new Error("Unapproved handler must not run"); }); api.actions.register("other", async input => input); }' },
       }] });
     fixture = admitted;
     const runtime = admitted.registry;
     await runtime.activateContributionsOnDemand([{ pluginId, family: 'actions', localId: 'publish' }]);
-    // The Artifact storage adapter uses a real temporary file. Subject creation,
-    // policy, admission, activation, dispatch and MCP serialization stay real.
-    const requestCurrentIntent = createTargetActionCurrentIntentAdapter({
+    // The Home HTTP routes are the persistence boundary. The real Artifact
+    // writer produces both header and body from the actual admitted subject.
+    requestCurrentIntent = createTargetActionCurrentIntentAdapter({
       create: async request => {
-        const artifactId = `pending-${++created}`;
-        await writeFile(join(admitted.happyHomeDir, `${artifactId}.json`), JSON.stringify(TargetActionApprovalRequestV1Schema.parse(request)));
-        return { artifactId };
+        const result = await runWithServerHttpBaseUrl(serverHttpBaseUrl, () => store.targetActionApprovalsCreate({ request }))
+          .catch(error => {
+            unavailableReasons.push(error instanceof Error ? error.name : 'non_error');
+            if (error && typeof error === 'object' && 'code' in error && typeof error.code === 'string') unavailableReasons.push(error.code);
+            if (error && typeof error === 'object' && 'details' in error) unavailableReasons.push(JSON.stringify(error.details));
+            throw error;
+          });
+        created++;
+        return result;
       },
-      read: async artifactId => TargetActionApprovalRequestV1Schema.parse(JSON.parse(await readFile(join(admitted.happyHomeDir, `${artifactId}.json`), 'utf8'))),
+      read: async artifactId => runWithServerHttpBaseUrl(serverHttpBaseUrl, () => store.targetActionApprovalsGet({ artifactId })),
     });
     // Match the retained-runtime MCP host: the plugin adapter admits dynamic
     // qualified ids before the built-in executor, and owns their result mapping.
@@ -73,7 +131,9 @@ describe('pending approval through real MCP and the shared native/plugin Action 
         readContributedActionSchemas: createCommittedContributedActionSchemaReader(listContributedActionDefinitions),
       }),
       requestPluginActionExecution: async (request, options) => executeContributedAction({
-        runtimeRegistry: runtime, actionId: request.actionId, input: request.input, requestCurrentIntent,
+        runtimeRegistry: runtime, actionId: request.actionId, input: request.input,
+        requestCurrentIntent: request => requestCurrentIntent({ ...request,
+          reportUnavailable: reason => unavailableReasons.push(reason) }),
         context: { surface: request.surface,
           ...(request.defaultSessionId ? { defaultSessionId: request.defaultSessionId } : {}),
           ...(options?.signal ? { signal: options.signal } : {}),
@@ -82,16 +142,23 @@ describe('pending approval through real MCP and the shared native/plugin Action 
     });
     pluginToolCatalog = projectExecutablePluginToolCatalog(runtime);
   });
-  afterAll(async () => { await fixture?.dispose(); });
+  afterAll(async () => {
+    await fixture?.dispose();
+    const profile = getServerProfileById(serverIdentityId);
+    if (profile) await removeServerProfile(profile.id);
+    await home.close();
+  });
 
   it.each(surfaces)('keeps the exact %s binding executable and its pending approval typed', async surface => {
       if (!fixture || !executor) throw new Error('Expected admitted plugin runtime');
       const runtime = fixture.registry;
+      unavailableReasons.length = 0;
       const before = created;
+      const originReadsBefore = originReads;
       const server = new McpServer({ name: 'pending-approval-test', version: '1.0.0' });
       const client = new Client({ name: 'pending-agent', version: '1.0.0' });
       try {
-        const toolName = `qa_pending_publish_${surface}`;
+        const toolName = 'qa_pending_publish';
         const bridge = createActionToolExecutorBridge({ surface, executor, registry: runtime.contributes, pluginToolCatalog });
         const inventory = createHappierToolInventory({ surface, registry: runtime.contributes, pluginToolCatalog });
         const expectedToolNames = (surface === 'mcp' ? ['qa_pending_other', toolName] : [toolName]).sort();
@@ -123,12 +190,32 @@ describe('pending approval through real MCP and the shared native/plugin Action 
           if (!Array.isArray(content) || content[0]?.type !== 'text') throw new Error('Expected MCP text result');
           const payload: unknown = JSON.parse(content[0].text);
           const errorCode = payload && typeof payload === 'object' && 'errorCode' in payload ? payload.errorCode : null;
-          expect.soft({ isError: response.isError, errorCode }, name).toEqual({ isError: false, errorCode: null });
+          expect.soft({ isError: response.isError, errorCode }, `${name}: ${unavailableReasons.join(',')}`).toEqual({ isError: false, errorCode: null });
           if (response.isError) continue;
           const pending = ActionApprovalRequestCreatedResultSchema.parse(payload);
-          expect(pending).toMatchObject({ kind: 'approval_request_created', artifactId: `pending-${created}` });
-          const stored = TargetActionApprovalRequestV1Schema.parse(JSON.parse(await readFile(join(fixture.happyHomeDir, `${pending.artifactId}.json`), 'utf8')));
+          expect(pending).toMatchObject({ kind: 'approval_request_created' });
+          const artifact = artifacts.get(pending.artifactId);
+          if (!artifact) throw new Error('Expected persisted approval Artifact');
+          const header = z.record(z.string(), z.unknown()).parse(decodePlainArtifactStoredContent(artifact.header));
+          const { body } = z.object({ body: z.string() }).parse(decodePlainArtifactStoredContent(artifact.body));
+          const parsed = approvalArtifactBodyMatchesHeaderV1(header, body);
+          if (parsed?.family !== 'target_action') throw new Error('Expected matching target approval header and body');
+          const stored = TargetActionApprovalRequestV1Schema.parse(parsed.request);
           expect({ status: stored.status, actionId: stored.qualifiedActionId }).toEqual({ status: 'open', actionId });
+          expect.soft(header).toMatchObject({ serverIdentityId, machineId: 'pending-machine' });
+          expect.soft(stored.executionOriginV1).toMatchObject({ serverId: configuration.activeServerId, serverIdentityId });
+          const route = resolveApprovalReplayRoute(stored);
+          expect.soft(route).toEqual({ serverId: savedHomeId, serverIdentityId, originServerId: configuration.activeServerId });
+          expect.soft(buildApprovalHref(pending.artifactId, String(header.serverIdentityId)))
+            .toBe(`/inbox/approvals/${pending.artifactId}?serverId=${serverIdentityId}`);
+          if (surface === 'agent' && name === 'action_execute') {
+            const profile = getServerProfileById(serverIdentityId);
+            if (!profile) throw new Error('Expected saved fixture Home');
+            await removeServerProfile(profile.id);
+            expect(resolveApprovalReplayRoute(stored)).toBeNull();
+            await upsertServerProfile({ serverUrl: serverHttpBaseUrl, source: 'manual' });
+            await setServerProfileIdentityForUrl(serverHttpBaseUrl, serverIdentityId);
+          }
           if (name === toolName) expect(response.structuredContent).toEqual(pending);
         }
         const native = await bridge.executeActionByToolName(toolName, input, 'requesting-session');
@@ -137,5 +224,26 @@ describe('pending approval through real MCP and the shared native/plugin Action 
         expect(ActionApprovalRequestCreatedResultSchema.safeParse(native.result).success).toBe(true);
       } finally { await client.close(); await server.close(); }
       expect(created).toBe(before + 3);
+      expect(originReads - originReadsBefore).toBe(created - before);
+  });
+
+  it('preserves a captured requester Home instead of replacing it with the target Home', async () => {
+    if (!fixture) throw new Error('Expected admitted plugin runtime');
+    const action = { pluginId, localId: 'publish' };
+    const input = { label: 'Captured requester' };
+    const approvalExecutionOrigin = buildApprovalExecutionOriginV1({ actionId: 'action.invoke', input: { action, input },
+      targetSessionId: 'requesting-session', context: { surface: 'agent', serverId: configuration.activeServerId,
+        serverIdentityId: 'srv_original_requester', actionRequestId: 'captured-request',
+        executionRunTargetMachineId: 'pending-machine', actionCaller: { kind: 'host' } } });
+    if (!approvalExecutionOrigin) throw new Error('Expected captured requester origin');
+    const result = await executeContributedAction({ runtimeRegistry: fixture.registry,
+      actionId: buildQualifiedPluginContributionKey(action), input, requestCurrentIntent, approvalExecutionOrigin,
+      context: { surface: 'agent', defaultSessionId: 'requesting-session' } });
+    expect(result).toMatchObject({ matched: true, result: { ok: true } });
+    if (!result.matched || !result.result.ok) throw new Error('Expected pending approval');
+    const pending = ActionApprovalRequestCreatedResultSchema.parse(result.result.result);
+    const stored = await runWithServerHttpBaseUrl(serverHttpBaseUrl, () => store.targetActionApprovalsGet({ artifactId: pending.artifactId }));
+    expect(stored?.executionOriginV1).toEqual(approvalExecutionOrigin);
+    expect(resolveApprovalReplayRoute(stored)).toBeNull();
   });
 });

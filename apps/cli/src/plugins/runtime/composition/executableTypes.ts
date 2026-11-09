@@ -100,9 +100,9 @@ export type ResolvedExecutablePluginRuntimeRegistry = Readonly<{
     ): Promise<ResolvedPluginExecutable>;
     /** Host-private service supervision/control; the SDK remains plugin-scoped. */
     projectManagedServices: Pick<ReturnType<typeof createManagedServicesOwner>,
-        'superviseProject' | 'resolveProjectService' | 'listProjectServices' | 'resolveEnvironmentService' | 'machineServiceRows' | 'bindWorkloads'
+        'superviseProject' | 'resolveProjectService' | 'listProjectServices' | 'resolveEnvironmentService' | 'readEnvironmentServiceLogRedactionLease' | 'machineServiceRows' | 'bindWorkloads'
         | 'superviseMachine' | 'listMachineServices' | 'retireMachineServices' | 'resolveNativeService'
-        | 'activity' | 'readProcessRoots' | 'readResourceTargets' | 'readNativeContainerSources' | 'readMachineRebootServices'>;
+        | 'activity' | 'readProcessRoots' | 'readResourceTargets' | 'readNativeContainerSources' | 'readMachineRebootServices' | 'resolveSetupScriptServiceEffects'>;
     /** Reads the retained daemon custody owner without activating a contribution. */
     readSharedProviderGatewayRuntime?: ReturnType<typeof createManagedServicesOwner>['readSharedProviderGatewayRuntime'];
     /** Transfers the same generic Project/shared Provider custody at publication. */
@@ -186,12 +186,13 @@ export type ResolvedExecutablePluginRuntimeRegistry = Readonly<{
     /**
      * The same runtime owner resolves the exact daemon placement required by
      * a durable API Action approval. Unlike an SDK execution origin, this
-     * placement deliberately has no plugin materialization component.
+     * placement deliberately has no plugin materialization component. The
+     * observed Home identity stays host-private for the approval origin writer.
      */
     resolveCurrentPluginApprovalReplayPlacement?(
         pluginId: string,
         signal?: AbortSignal,
-    ): Promise<TargetActionApprovalReplayPlacementV1 | null>;
+    ): Promise<(TargetActionApprovalReplayPlacementV1 & Readonly<{ serverIdentityId?: string }>) | null>;
     /**
      * Host-private exact candidate preparation. It reuses the committed
      * module loader and Account Data stage host; it neither activates a
