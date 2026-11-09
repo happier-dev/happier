@@ -1,3 +1,4 @@
+import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createDaemonControlApp } from './controlServer';
 import { SPAWN_SESSION_ERROR_CODES, type SpawnSessionErrorDetail } from '@/rpc/handlers/registerSessionHandlers';
@@ -237,7 +238,10 @@ describe('daemon control server: /spawn-session', () => {
 
   it('expands ~/ in session directories before forwarding control-server spawn requests', async () => {
     const previousHome = process.env.HOME;
-    process.env.HOME = '/Users/tester';
+    const previousUserProfile = process.env.USERPROFILE;
+    const testHome = join(process.cwd(), 'test-home');
+    process.env.HOME = testHome;
+    process.env.USERPROFILE = testHome;
     let observed: any = null;
 
     const app = createDaemonControlApp({
@@ -267,7 +271,7 @@ describe('daemon control server: /spawn-session', () => {
 
       expect(res.statusCode).toBe(200);
       expect(observed).toEqual({
-        directory: '/Users/tester/Documents',
+        directory: join(testHome, 'Documents'),
         backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
       });
     } finally {
@@ -275,6 +279,11 @@ describe('daemon control server: /spawn-session', () => {
         delete process.env.HOME;
       } else {
         process.env.HOME = previousHome;
+      }
+      if (previousUserProfile === undefined) {
+        delete process.env.USERPROFILE;
+      } else {
+        process.env.USERPROFILE = previousUserProfile;
       }
       await app.close();
     }
