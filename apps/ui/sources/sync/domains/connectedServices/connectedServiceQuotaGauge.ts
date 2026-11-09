@@ -514,7 +514,7 @@ function resolveRuntimeIssueQuotaServiceId(issue: SessionRuntimeIssueV1): Connec
 
     const agentId = resolveAgentIdFromFlavor(issue.agentId);
     if (!agentId) return null;
-    return getAgentCore(agentId).connectedServices?.supportedServiceIds[0] ?? null;
+    return readReleasedQuotaServiceId(getAgentCore(agentId).connectedServices?.supportedServiceIds[0]);
 }
 
 function resolveRuntimeIssueQuotaProfileId(issue: SessionRuntimeIssueV1): string {

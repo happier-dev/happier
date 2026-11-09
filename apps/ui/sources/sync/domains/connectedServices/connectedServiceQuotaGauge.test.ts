@@ -770,6 +770,30 @@ describe('computeConnectedServiceQuotaGaugeViewModel', () => {
         expect(viewModel?.badgeLabel).toBe('12% left');
     });
 
+    it('does not emit a released scalar quota snapshot for a bundled service without a released identity', () => {
+        const quotaSnapshot = deriveConnectedServiceQuotaSnapshotFromRuntimeIssue({
+            v: 1,
+            scope: 'primary_session',
+            status: 'failed',
+            code: 'usage_limit',
+            source: 'usage_limit',
+            occurredAt: 1_000,
+            agentId: 'kimi',
+            usageLimit: {
+                v: 1,
+                resetAtMs: 8_200_000,
+                retryAfterMs: null,
+                quotaScope: 'account',
+                recoverability: 'wait',
+                limitCategory: 'usage_limit',
+                effectiveMeterId: 'weekly',
+                effectiveRemainingPct: 7,
+            },
+        });
+
+        expect(quotaSnapshot).toBeNull();
+    });
+
     it('resolves runtime issue provider aliases through the agent registry', () => {
         const quotaSnapshot = deriveConnectedServiceQuotaSnapshotFromRuntimeIssue({
             v: 1,
