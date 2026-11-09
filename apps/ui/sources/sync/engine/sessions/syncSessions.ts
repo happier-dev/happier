@@ -4,6 +4,8 @@ import type { NormalizedMessage } from "@happier-dev/session-core/raw";
 import { computeNextSessionSeqFromUpdate } from '@/sync/domains/session/sequence/realtimeSessionSeq';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import type { AgentState, Metadata } from '@happier-dev/session-core/state';
+import { readSessionPresentationAgentId, readSessionRowPresentationAgentId } from '@/sync/domains/session/presentation/readSessionPresentationAgentId';
+import { readSessionRequestCoverage } from '@/sync/domains/session/pending/readSessionRequestCoverage';
 import type { AgentStateOpenResult } from '@/sync/encryption/sessionEncryption';
 import { SESSION_LIST_DOCUMENT_ADMISSION, observeSessionListDocumentVersions,
     admitOpenedSessionListAgentState, admitOpenedSessionListDisplayMetadata } from '@/sync/domains/session/sessionDocumentAdmission';
@@ -360,7 +362,10 @@ export async function buildNewSessionFromSocketUpdate(params: {
 
     const active = typeof updateBody.active === 'boolean' ? updateBody.active : true;
     const activeAt = readTimestamp(updateBody.activeAt, params.updateCreatedAt);
-    const pendingFlags = derivePendingRequestFlagsFromAgentState(decryptedState.agentState);
+    const pendingFlags = derivePendingRequestFlagsFromAgentState(decryptedState.agentState,
+        readSessionRequestCoverage({ serverId: params.sourceServerId,
+            metadata: decryptedState.metadata, metadataLayoutVersion,
+        }));
     const currentStorageState = readExternalSessionStorageState(updateBody.currentStorageState);
 
     return {
@@ -945,7 +950,14 @@ export async function buildUpdatedSessionListRenderablePatchFromSocketUpdate(par
                 hasPendingUserActionRequests: (updateBody.pendingUserActionRequestCount ?? 0) > 0,
             }
             : parsedAgentState !== undefined
-                ? derivePendingRequestFlagsFromAgentState(parsedAgentState)
+                ? derivePendingRequestFlagsFromAgentState(parsedAgentState,
+                    readSessionRequestCoverage({ serverId: renderable.serverId,
+                        metadata: parsedMetadata ?? renderable.metadata, metadataLayoutVersion: nextMetadataLayoutVersion,
+                        ownerMetadataView: storedMetadataLayoutVersion === nextMetadataLayoutVersion
+                            ? readSessionListRenderableOwnerMetadataView(renderable) : undefined,
+                    }, parsedMetadata === undefined
+                        ? readSessionRowPresentationAgentId(renderable)
+                        : readSessionPresentationAgentId({ metadata: parsedMetadata, metadataLayoutVersion: nextMetadataLayoutVersion })))
                 : {
                     hasPendingPermissionRequests: renderable.hasPendingPermissionRequests === true,
                     hasPendingUserActionRequests: renderable.hasPendingUserActionRequests === true,

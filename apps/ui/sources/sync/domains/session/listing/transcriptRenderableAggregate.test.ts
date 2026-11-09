@@ -97,6 +97,25 @@ function expectAggregatesEquivalent(
 }
 
 describe('buildTranscriptRenderableAggregate', () => {
+    it('folds and incrementally preserves selected request coverage', () => {
+        const pending = toolCall({ createdAt: 10_500, permissionId: 'pending' });
+        if (pending.kind !== 'tool-call' || !pending.tool.permission) throw new Error('Expected permission fixture');
+        pending.tool.permission.source = 'custom_bridge';
+        const requestCoverage = {
+            equivalentSources: ['custom_bridge'], equivalentCompletedStatuses: ['canceled'],
+            equivalentCompletedReasons: ['Custom bridge stopped'],
+        };
+        const completedRequests = { pending: {
+            tool: pending.tool.name, arguments: pending.tool.input, source: 'custom_bridge',
+            createdAt: 1_000, completedAt: 10_000, status: 'canceled', reason: 'Custom bridge stopped',
+        } };
+        const input = { messages: [] as Message[], completedRequests, requestCoverage };
+        const aggregate = buildTranscriptRenderableAggregate(input);
+        applyMessageChangeToTranscriptRenderableAggregate({ aggregate, previous: null, next: pending });
+        expect(Array.from(aggregate.requestStates.values())).toEqual([]);
+        expect(Array.from(buildTranscriptRenderableAggregate({ ...input, messages: [pending] }).requestStates.values())).toEqual([]);
+    });
+
     it('folds attention, unread, first-user-text, and transcript request state over all messages', () => {
         const messages = [
             userText({ id: 'u1', createdAt: 500, seq: 5 }),
@@ -299,6 +318,14 @@ describe('applyMessageChangeToTranscriptRenderableAggregate', () => {
 });
 
 describe('canReuseTranscriptRenderableAggregateRequestStates', () => {
+    it('invalidates cached request states when selected request coverage changes', () => {
+        const requestCoverage = { equivalentSources: ['custom_bridge'] };
+        const input = { messages: [] as Message[], completedRequests: null, requestCoverage };
+        const aggregate = buildTranscriptRenderableAggregate(input);
+        expect(canReuseTranscriptRenderableAggregateRequestStates(aggregate, null, requestCoverage)).toBe(true);
+        expect(canReuseTranscriptRenderableAggregateRequestStates(aggregate, null)).toBe(false);
+    });
+
     it('requires the same completedRequests identity used to build the aggregate', () => {
         const completedRequests = { done: { createdAt: 1 } };
         const aggregate = buildTranscriptRenderableAggregate({

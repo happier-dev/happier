@@ -1,6 +1,7 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { defineProtocolNumber, defineProtocolObject, defineProtocolString } from '@happier-dev/protocol/plugins/actions/protocol-composable-schema';
 import type { ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
+import type { AgentStateRequestCoverageOptions } from '@happier-dev/agents';
 import type { DaemonProjectionSectionDemand } from './loadDaemonMergedProjectionInputs';
 import { createDeferred, createMachineFixture } from '@/dev/testkit';
 import { createPluginDeclarativeModelFixture } from '@/dev/testkit/fixtures/pluginDeclarativeModelFixture';
@@ -175,6 +176,49 @@ const composerSurfaceCatalog = [{
 }] as const;
 
 describe('loadDaemonMergedProjectionCacheEntry', () => {
+    it.each([
+        ['contributed', 0], ['contributed', 1], ['bundled', 0], ['bundled', 1],
+    ] as const)('uses selected contributed request coverage from the owning Machine projection (%s, layout %s)', async (selection, metadataLayoutVersion) => {
+        const { createSessionFixture } = await import('@/dev/testkit/fixtures/sessionFixtures');
+        const { listPendingSessionRequests } = await import('@/sync/domains/session/pending/listPendingSessionRequests');
+        const { loadDaemonMergedProjectionCacheEntry } = await import('./loadDaemonMergedProjectionInputs');
+        const { BUNDLED_AGENT_CONTRIBUTION_IDENTITIES } = await import('@happier-dev/agents/agent-ids');
+        const account = createAccountLifetime('account-a');
+        onTestFinished(() => account.retire());
+        storage.getState().applyMachines([createMachineFixture({ id: projectionScope.machineId })],
+            true, { sourceServerId: projectionScope.serverId });
+        const identity = selection === 'bundled' ? BUNDLED_AGENT_CONTRIBUTION_IDENTITIES.claude
+            : { pluginId: 'acme.coverage', localId: 'agent' };
+        const qualifiedId = buildQualifiedPluginContributionKey(identity);
+        const agentId = selection === 'bundled' ? 'claude' : qualifiedId;
+        const requestCoverage = { equivalentSources: ['acme_bridge'], equivalentCompletedReasons: ['acme_cancel'],
+            equivalentCompletedStatuses: ['canceled' as const] } satisfies AgentStateRequestCoverageOptions;
+        const projection = { ...daemonProjection(7), agentsById: { [qualifiedId]: {
+            id: qualifiedId, identity, title: 'Contributed Agent', requestCoverage,
+        } } };
+        projectionDescribeMock.mockResolvedValue({ supported: true, projection });
+        const loaded = await loadDaemonMergedProjectionCacheEntry({ ...projectionScope,
+            accountLifetime: account.lifetime, sections: ['agentsById'] });
+        expect(loaded?.kind).toBe('ready');
+        const request = { tool: 'Shell', arguments: { command: 'pwd' }, createdAt: 10_500, source: 'acme_bridge' };
+        const ownerMetadata = { flavor: agentId, runtimeDescriptorV1: { v: 1, agentId, agent: {} },
+            machineId: projectionScope.machineId } as import('@happier-dev/session-core/state').Metadata;
+        const session = createSessionFixture({ serverId: projectionScope.serverId, active: true, metadataLayoutVersion,
+            metadata: metadataLayoutVersion === 1
+                ? { v: 1, agentPresentation: { agentId } } as import('@happier-dev/session-core/state').Metadata
+                : ownerMetadata,
+            ...(metadataLayoutVersion === 1 ? { ownerMetadataView: ownerMetadata } : {}),
+            agentState: { requests: { pending: request }, completedRequests: { pending: {
+                ...request, createdAt: 1_000, completedAt: 10_000, status: 'canceled', reason: 'acme_cancel',
+            } } },
+        });
+        expect(listPendingSessionRequests(session, [])).toEqual([]);
+        expect(listPendingSessionRequests({ ...session, ...(metadataLayoutVersion === 1
+            ? { ownerMetadataView: { ...ownerMetadata, machineId: 'other-machine' } }
+            : { metadata: { ...ownerMetadata, machineId: 'other-machine' } }) }, [])
+            .map(request => request.id)).toEqual(['pending']);
+    });
+
     it('shares one admission and boundary parse across presented section consumers in a 20-Machine fleet', async () => {
         const { loadDaemonMergedProjectionCacheEntry } = await import('./loadDaemonMergedProjectionInputs');
         const { PluginProjectionV2Schema } = await import('@happier-dev/protocol/daemon/contributionRegistryProjection');

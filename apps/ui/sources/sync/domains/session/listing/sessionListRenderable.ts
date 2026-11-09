@@ -59,6 +59,7 @@ import { resolveSessionProjectGroupingKeyParts } from './sessionListProjectGroup
 import { readSessionPresentationCompletedRequests } from '../presentation/readSessionPresentationCompletedRequests';
 import { readSessionPresentationAgentId } from '../presentation/readSessionPresentationAgentId';
 import { resolveAgentExecutionTargetFromSessionMetadata } from '@happier-dev/agents';
+import { readSessionRequestCoverage } from '../pending/readSessionRequestCoverage';
 import { buildBackendTargetKeyV2, type BackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import {
     areSessionListRenderableExternalSessionIdentitiesEqual,
@@ -559,12 +560,13 @@ export function buildSessionListRenderableFromSession(
     // Hot callers (store streaming refresh) pass an incrementally-maintained
     // aggregate; cold callers pass messages and pay one full walk here.
     const completedRequests = readSessionPresentationCompletedRequests(session);
+    const requestCoverage = readSessionRequestCoverage(session);
     const aggregate = (() => {
-        if (transcriptAggregate && canReuseTranscriptRenderableAggregateRequestStates(transcriptAggregate, completedRequests)) {
+        if (transcriptAggregate && canReuseTranscriptRenderableAggregateRequestStates(transcriptAggregate, completedRequests, requestCoverage)) {
             return transcriptAggregate;
         }
         if (messages) {
-            return buildTranscriptRenderableAggregate({ messages, completedRequests });
+            return buildTranscriptRenderableAggregate({ messages, completedRequests, requestCoverage });
         }
         return null;
     })();

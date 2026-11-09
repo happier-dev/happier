@@ -1,4 +1,5 @@
 import type { Message } from "@happier-dev/session-core/messages";
+import type { AgentStateRequestCoverageOptions } from '@happier-dev/agents';
 import { compareTranscriptMessagesOldestFirst, hasTranscriptMessageOrderChanged } from "@happier-dev/session-core/messages";
 import {
     collectTranscriptRequestStates,
@@ -53,6 +54,7 @@ export type TranscriptRenderableAggregate = {
      * `canReuseTranscriptRenderableAggregateRequestStates`.
      */
     completedRequestsRef: Record<string, unknown> | null;
+    requestCoverageRef?: AgentStateRequestCoverageOptions;
 };
 
 type CompletedRequests = Record<string, unknown> | null;
@@ -69,9 +71,10 @@ function readableActivityContribution(message: Message): {
 function collectMessageRequestStates(
     message: Message,
     completedRequests: CompletedRequests,
+    requestCoverage?: AgentStateRequestCoverageOptions,
 ): Map<string, TranscriptRequestState> {
     const states = new Map<string, TranscriptRequestState>();
-    collectTranscriptRequestStates([message], completedRequests, states);
+    collectTranscriptRequestStates([message], completedRequests, states, requestCoverage);
     return states;
 }
 
@@ -86,6 +89,7 @@ function isUserTextMessage(message: Message | null): boolean {
 export function buildTranscriptRenderableAggregate(params: Readonly<{
     messages: ReadonlyArray<Message>;
     completedRequests: CompletedRequests;
+    requestCoverage?: AgentStateRequestCoverageOptions;
 }>): TranscriptRenderableAggregate {
     const readableActivity = createSessionListReadableActivityAccumulator();
     let firstUserTextMessage: Message | null = null;
@@ -97,7 +101,7 @@ export function buildTranscriptRenderableAggregate(params: Readonly<{
     }
 
     const requestStates = new Map<string, TranscriptRequestState>();
-    collectTranscriptRequestStates(params.messages, params.completedRequests, requestStates);
+    collectTranscriptRequestStates(params.messages, params.completedRequests, requestStates, params.requestCoverage);
 
     return {
         latestCommittedMessageSeq: readableActivity.latestCommittedMessageSeq,
@@ -106,6 +110,7 @@ export function buildTranscriptRenderableAggregate(params: Readonly<{
         messageCount: params.messages.length,
         requestStates,
         completedRequestsRef: params.completedRequests,
+        requestCoverageRef: params.requestCoverage,
     };
 }
 
@@ -192,9 +197,9 @@ export function applyMessageChangeToTranscriptRenderableAggregate(params: Readon
         return true;
     }
     const previousStates = previous
-        ? collectMessageRequestStates(previous, aggregate.completedRequestsRef)
+        ? collectMessageRequestStates(previous, aggregate.completedRequestsRef, aggregate.requestCoverageRef)
         : null;
-    const nextStates = collectMessageRequestStates(next, aggregate.completedRequestsRef);
+    const nextStates = collectMessageRequestStates(next, aggregate.completedRequestsRef, aggregate.requestCoverageRef);
 
     if (previousStates) {
         for (const [requestId, previousState] of previousStates) {
@@ -228,8 +233,9 @@ export function applyMessageChangeToTranscriptRenderableAggregate(params: Readon
 export function canReuseTranscriptRenderableAggregateRequestStates(
     aggregate: TranscriptRenderableAggregate,
     completedRequests: CompletedRequests,
+    requestCoverage?: AgentStateRequestCoverageOptions,
 ): boolean {
-    return aggregate.completedRequestsRef === completedRequests;
+    return aggregate.completedRequestsRef === completedRequests && aggregate.requestCoverageRef === requestCoverage;
 }
 
 export function isTranscriptRenderableAggregate(value: unknown): value is TranscriptRenderableAggregate {

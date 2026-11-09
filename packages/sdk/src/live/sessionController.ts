@@ -8,7 +8,8 @@ import {
 import { readSharedMetadataActionConfirmationState, readSharedMetadataPresentationCompletedRequests } from '@happier-dev/session-core/pending';
 import { buildChangesReadRequest, ChangesResponseSchema, CurrentCursorResponseSchema, readSessionUpdatedMessageChangeHintV1 } from '@happier-dev/protocol/changes';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
-import { SESSION_METADATA_LAYOUT_VERSION_V1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
+import { SESSION_METADATA_LAYOUT_VERSION_V1, StoredSessionSharedMetadataV1Schema } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
+import { resolveAgentStateRequestCoverageOptions } from '@happier-dev/agents/runtime/agent-state-request-coverage';
 import { SessionEffectiveAccessV1Schema } from '@happier-dev/protocol/sessions/access/sessionEffectiveAccessV1';
 import { buildAccountStoredContentCompatibilitySocketAuthV1, CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION } from '@happier-dev/protocol/clientCompatibility/accountStoredContentCompatibilityV1';
 import { TranscriptOpenedFollowOutputV1Schema } from '@happier-dev/protocol/actions/actionSpecs';
@@ -121,7 +122,7 @@ export async function createSessionController(params: LiveParams): Promise<Happi
     } });
   };
   const reduce = (messages: NormalizedMessage[]) => {
-    const changed = reducer(reducerState, messages, facts.agentState);
+    const changed = reducer(reducerState, messages, facts.agentState, [], { requestCoverage: facts.requestCoverage });
     // The canonical read model preserves prior snapshots and unchanged
     // Message/order references.
     const transcript = applyReducedMessages(snapshot.transcript, changed.messages);
@@ -175,7 +176,12 @@ export async function createSessionController(params: LiveParams): Promise<Happi
     const parsed = value === null ? null : MetadataSchema.safeParse(value);
     if (parsed && !parsed.success) throw new HappierTransportError('Invalid opened Session metadata.', { code: 'invalid_session_snapshot' });
     metadataVersion = version;
+    const sharedMetadata = metadataLayoutVersion === SESSION_METADATA_LAYOUT_VERSION_V1
+      ? StoredSessionSharedMetadataV1Schema.safeParse(value) : null;
     facts = { ...facts, actionConfirmations: readSharedMetadataActionConfirmationState(value, metadataLayoutVersion),
+      requestCoverage: resolveAgentStateRequestCoverageOptions(metadataLayoutVersion === SESSION_METADATA_LAYOUT_VERSION_V1
+        ? { agentId: sharedMetadata?.success ? sharedMetadata.data.agentPresentation?.agentId : null }
+        : { metadata: value }),
       presentationCompletedRequests: readSharedMetadataPresentationCompletedRequests(value, metadataLayoutVersion) };
     publish({ metadata: parsed?.success ? parsed.data : null });
     refreshPending();
@@ -237,7 +243,7 @@ export async function createSessionController(params: LiveParams): Promise<Happi
     rawState = createRawMessageNormalizationSequenceState(); reducerState = createReducer();
     assembler = createTranscriptStreamSegmentAssembler(); received = new Map();
     lastSeq = 0; firstSeq = undefined; metadataVersion = -1; agentStateVersion = -1;
-    facts = { ...facts, agentState: null, actionConfirmations: null, presentationCompletedRequests: null };
+    facts = { ...facts, agentState: null, requestCoverage: undefined, actionConfirmations: null, presentationCompletedRequests: null };
     publish({ transcript: emptyTranscript(), metadata: null, agentState: null, pendingRequests: [], history: { loading: true, hasMoreOlder: false } });
   };
   const readChanges = async (captured: AbortSignal): Promise<Readonly<{ targets: readonly { messageId: string; seq: number }[]; cursor: number; reset: boolean; changed: boolean }>> => {

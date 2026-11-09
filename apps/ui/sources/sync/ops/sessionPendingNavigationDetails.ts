@@ -3,7 +3,7 @@ import { createReducer, reducer } from '@happier-dev/session-core/reducer';
 import { buildSessionMessagesPath } from '@happier-dev/protocol/sessions/messages/sessionMessagesPageV1';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { normalizeSessionAddress, type SessionAddress } from '@/sync/domains/session/sessionAddress';
-import { listPendingSessionRequests, type SessionPendingRequest } from '@/sync/domains/session/pending/listPendingSessionRequests';
+import { listPendingSessionRequests, readPendingRequestFactsFromSession, type SessionPendingRequest } from '@/sync/domains/session/pending/listPendingSessionRequests';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { captureActiveServerAccountScopeCurrentness } from '@/sync/domains/scope/activeServerAccountScope';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
@@ -44,6 +44,7 @@ export async function readPendingNavigationDetailsForAuthority(
         return { kind: 'available', session, messages: [], requests: stateRequests };
     }
     const reduction = createReducer();
+    const requestCoverage = readPendingRequestFactsFromSession(session).requestCoverage;
     const messagesById = new Map<string, Message>();
     const received = new Map<string, Map<string, number>>();
     let requests = stateRequests;
@@ -69,7 +70,7 @@ export async function readPendingNavigationDetailsForAuthority(
             log: { log: () => {} },
         });
         if (!isCurrent()) return { kind: 'unavailable', reason: unavailableReason() };
-        for (const message of reducer(reduction, [...page.normalizedMessages], session.agentState).messages) {
+        for (const message of reducer(reduction, [...page.normalizedMessages], session.agentState, [], { requestCoverage }).messages) {
             messagesById.set(message.id, message);
         }
         requests = listPendingSessionRequests(session, Array.from(messagesById.values()));

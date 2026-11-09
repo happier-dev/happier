@@ -1,11 +1,13 @@
 import type { Message } from '@happier-dev/session-core/messages';
 import { readStoredSessionMessages } from '@happier-dev/session-core/messages';
 import type { AgentState } from '@happier-dev/session-core/state';
+import { readAccountNameFromLegacyProfileV1, resolveAccountDisplayLabelV1 } from '@happier-dev/protocol/account/accountDisplayProfileV1';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { readSessionFullPublicationUpdatedAt } from '../sessionRuntimeObservation';
 import { readRegisteredStorageState } from '@/sync/domains/state/storageStateReaderBridge';
 import { buildStableJsonSignature } from '@/sync/domains/session/metadata/sessionMetadataStability';
 import { readSessionPresentationCompletedRequests } from '@/sync/domains/session/presentation/readSessionPresentationCompletedRequests';
+import { readSessionRequestCoverage } from './readSessionRequestCoverage';
 import {
     derivePendingRequestFlags,
     deriveLatestPendingRequestObservedAt,
@@ -37,11 +39,17 @@ export {
     type TranscriptRequestStatesCache,
 } from '@happier-dev/session-core/pending';
 
-export function readPendingRequestFactsFromSession(session: Session): PendingRequestFacts {
+export function readPendingRequestFactsFromSession(session: Omit<Session, 'presence'>): PendingRequestFacts {
+    const permissionOwnerLabel = session.ownerProfile ? resolveAccountDisplayLabelV1({
+        name: readAccountNameFromLegacyProfileV1(session.ownerProfile), username: session.ownerProfile.username,
+    }) : null;
     return {
         sessionId: session.id,
         active: session.active === true,
         agentState: session.agentState ?? null,
+        permissionRelationship: session.access?.level === 'owner' ? 'owner' : session.access ? 'sharedApprover' : null,
+        ...(permissionOwnerLabel ? { permissionOwnerLabel } : {}),
+        requestCoverage: readSessionRequestCoverage(session),
         actionConfirmations: readSharedMetadataActionConfirmationState(session.metadata, session.metadataLayoutVersion),
         presentationCompletedRequests: readSessionPresentationCompletedRequests(session),
         projected: {
@@ -144,8 +152,11 @@ export function buildPendingSessionRequestsSourceSignature(session: Session): st
     );
     return buildStableJsonSignature({
         active: session.active === true,
+        requestCoverage: readSessionRequestCoverage(session),
         presentationCompletedRequests: readSessionPresentationCompletedRequests(session),
         agentStateRequests: session.agentState?.requests ?? null,
+        permissionRelationship: session.access?.level === 'owner' ? 'owner' : session.access ? 'sharedApprover' : null,
+        ownerProfile: session.ownerProfile ?? null,
         sharedActionRequests: sharedActionState?.requests ?? null,
         pendingPermissionRequestCount: buildProjectedPendingRequestCountSignature(session.pendingPermissionRequestCount),
         pendingRequestObservedAt: readProjectedPendingRequestObservedAt(session),

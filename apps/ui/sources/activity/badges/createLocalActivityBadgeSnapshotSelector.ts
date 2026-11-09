@@ -1,5 +1,6 @@
 import { readSessionViewerAttentionSignature } from '@/sync/domains/session/readState/sessionViewerAttention';
 import type { AccountSettings } from '@happier-dev/protocol/account/settings/accountSettings';
+import { readSessionRequestCoverage } from '@/sync/domains/session/pending/readSessionRequestCoverage';
 
 import { buildActivityOverviewSummaryFromSource } from '@/activity/source/buildActivityOverviewFromSource';
 import { createActivityAttentionStoreSourceSelector } from '@/activity/source/createActivityAttentionStoreSourceSelector';
@@ -116,7 +117,8 @@ function hasProjectedPendingRequestCounts(session: Session): boolean {
 }
 
 function hasPendingAgentRequests(session: Session): boolean {
-    const flags = derivePendingRequestFlagsFromAgentState(session.agentState);
+    const flags = derivePendingRequestFlagsFromAgentState(session.agentState,
+        readSessionRequestCoverage(session));
     return flags.hasPendingPermissionRequests || flags.hasPendingUserActionRequests;
 }
 
@@ -130,6 +132,7 @@ function buildSessionActivitySignature(session: Session): string {
     const agentState = session.agentState;
     return joinSignatureParts([
         session.id,
+        JSON.stringify(readSessionRequestCoverage(session)),
         readSessionViewerAttentionSignature(session),
         session.active === true ? 1 : 0,
         readNumber(session.activeAt) ?? '',

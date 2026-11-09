@@ -17,6 +17,7 @@ import type { HappierSessionController } from './types.js';
 import { rawRecordSchema, type AgentState } from '@happier-dev/session-core';
 import { socketRpcCodec, type SocketRpcContent } from '@happier-dev/sync-client';
 import { createSessionContentEncryption } from './openSessionDataKey.js';
+import { resolveAgentStateRequestCoverageOptions } from '@happier-dev/agents/runtime/agent-state-request-coverage';
 
 const TOKEN_ID = '123e4567-e89b-42d3-a456-426614174000';
 const TOKEN = `hap_v1_${TOKEN_ID}_${encodeBase64(new Uint8Array(32).fill(8), 'base64url')}`;
@@ -46,9 +47,10 @@ function durableIds(controller: HappierSessionController) {
   return durableRows(controller).map((message) => message.realID);
 }
 
-async function fixture(encryptionMode: 'plain' | 'e2ee' = 'plain', contentCredential = false) {
+async function fixture(encryptionMode: 'plain' | 'e2ee' = 'plain', contentCredential = false,
+  initial?: Readonly<{ metadata: unknown; agentState: AgentState }>) {
   let rows = [row(1, 'first')];
-  let state: AgentState = { requests: { permission: { tool: 'Bash', arguments: { command: 'echo hi' }, createdAt: 1 } } };
+  let state: AgentState = initial?.agentState ?? { requests: { permission: { tool: 'Bash', arguments: { command: 'echo hi' }, createdAt: 1 } } };
   let stateVersion = 1;
   let revision = 0;
   let unrelatedChangePage = false;
@@ -107,7 +109,7 @@ async function fixture(encryptionMode: 'plain' | 'e2ee' = 'plain', contentCreden
         seq: rows.at(-1)?.seq ?? 0, createdAt: 1, updatedAt: 1, activeAt: 1,
         dataEncryptionKey: encryptionMode === 'e2ee' ? dataEncryptionKey : null,
         metadata: sharedMetadata ? encodeBase64(await sealSessionDataKeyBundleV0(sharedMetadata, dataKey), 'base64')
-          : await storedState({ path: '/work', host: 'test' }), metadataVersion: sharedMetadataVersion,
+          : await storedState(initial?.metadata ?? { path: '/work', host: 'test' }), metadataVersion: sharedMetadataVersion,
         ...(sharedMetadata ? { metadataLayoutVersion: 1, share: { accessLevel: 'edit', canApprovePermissions: true } } : {}),
         agentState: sharedMetadata ? null : await storedState(state), agentStateVersion: stateVersion,
         effectiveAccess: { v: 1, level: sharedMetadata ? 'edit' : 'owner',
@@ -269,6 +271,22 @@ async function fixture(encryptionMode: 'plain' | 'e2ee' = 'plain', contentCreden
 }
 
 describe('SDK live Session over real HTTP and Socket.IO', () => {
+  it.each(['claude', 'codex'])('uses the selected %s declaration when reconciling equivalent pending requests', async (agentId) => {
+    const coverage = resolveAgentStateRequestCoverageOptions({ agentId: 'claude' });
+    const request = { tool: 'Shell', arguments: { command: 'pwd' }, createdAt: 10_500,
+      source: coverage?.equivalentSources?.[0] };
+    const server = await fixture('plain', false, {
+      metadata: { path: '/work', host: 'test', flavor: agentId },
+      agentState: { requests: { pending: request }, completedRequests: { pending: {
+        ...request, createdAt: 1_000, completedAt: 10_000, status: 'canceled',
+        reason: coverage?.equivalentCompletedReasons?.[0],
+      } } },
+    });
+    const controller = await server.client.sessions.get('session-1').live();
+    await expect.poll(() => controller.getSnapshot().history.loading).toBe(false);
+    expect(controller.getSnapshot().pendingRequests.map(request => request.id)).toEqual(agentId === 'claude' ? [] : ['pending']);
+  });
+
   it.each(['plain', 'e2ee'] as const)('rejoins a gapped live chain from a durable revision and consumes buffered deltas (%s)', async (mode) => {
     const server = await fixture(mode, mode === 'e2ee');
     await server.persistStream('Hello', 1);

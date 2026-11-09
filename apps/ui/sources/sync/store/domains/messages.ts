@@ -3,6 +3,7 @@ import type { PermissionMode } from '@/sync/domains/permissions/permissionTypes'
 import {
     inferLatestUserPermissionModeIntent,
     readPermissionModeIntentFromMetadata,
+    type AgentStateRequestCoverageOptions,
 } from '@happier-dev/agents';
 
 import { createReducer, reducer, type ReducerState } from "@happier-dev/session-core/reducer";
@@ -11,6 +12,7 @@ import { messageAttentionImpact } from "@happier-dev/session-core/messages";
 import type { NormalizedMessage } from "@happier-dev/session-core/raw";
 import type { Session } from '../../domains/state/storageTypes';
 import { readSessionPresentationCompletedRequests } from '../../domains/session/presentation/readSessionPresentationCompletedRequests';
+import { readSessionRequestCoverage } from '../../domains/session/pending/readSessionRequestCoverage';
 import {
     loadSessionPermissionModeUpdatedAts,
     loadSessionPermissionModes,
@@ -98,6 +100,7 @@ export type SessionMessages = {
     latestThinkingMessageId: string | null;
     latestThinkingMessageActivityAtMs: number | null;
     latestReadyEventSeq?: number | null;
+    latestNonRenderableMessageSeq?: number | null;
     latestReadyEventAt?: number | null;
     messagesVersion: number;
     /** List structure excludes assistant text/tick updates, which live in row subscriptions. */
@@ -266,6 +269,7 @@ function coerceSessionMessages(input: unknown): SessionMessages {
         latestThinkingMessageId,
         latestThinkingMessageActivityAtMs,
         latestReadyEventSeq,
+        latestNonRenderableMessageSeq: normalizeTranscriptSeq(raw?.latestNonRenderableMessageSeq),
         latestReadyEventAt,
         messagesVersion,
         transcriptStructureVersion: typeof raw.transcriptStructureVersion === 'number'
@@ -365,6 +369,7 @@ function buildPinRouteHydrationFacts(messages: ReadonlyArray<Message>): readonly
 export function applyAgentStateUpdateToSessionMessages(params: Readonly<{
     existing: SessionMessages;
     agentState: Session['agentState'] | null;
+    requestCoverage?: AgentStateRequestCoverageOptions;
     mainHistoryStartLoaded?: boolean;
 }>): {
     sessionMessages: SessionMessages;
@@ -375,6 +380,7 @@ export function applyAgentStateUpdateToSessionMessages(params: Readonly<{
     const existing = coerceSessionMessages(params.existing);
     const reducerResult = reducer(existing.reducerState, [], params.agentState, undefined, {
         mainHistoryStartLoaded: params.mainHistoryStartLoaded,
+        requestCoverage: params.requestCoverage,
     });
     const processedMessages = reducerResult.messages;
 
@@ -499,6 +505,7 @@ function createEmptySessionMessages(): SessionMessages {
         latestThinkingMessageId: null,
         latestThinkingMessageActivityAtMs: null,
         latestReadyEventSeq: null,
+        latestNonRenderableMessageSeq: null,
         latestReadyEventAt: null,
         messagesVersion: 0,
         transcriptStructureVersion: 0,
@@ -639,7 +646,10 @@ export function createMessagesDomain<S extends MessagesDomain & MessagesDomainDe
                         normalizedMessages,
                         shouldApplyAgentState ? agentState : null,
                         options?.metadataUpdates,
-                        { mainHistoryStartLoaded: state.sessionMessagesHistoryStartLoaded?.[sessionId] === true },
+                        {
+                            mainHistoryStartLoaded: state.sessionMessagesHistoryStartLoaded?.[sessionId] === true,
+                            requestCoverage: readSessionRequestCoverage(session ?? {}),
+                        },
                     ),
                 );
                 const processedMessages = reducerResult.messages;
@@ -827,6 +837,10 @@ export function createMessagesDomain<S extends MessagesDomain & MessagesDomainDe
                     existingSession.latestReadyEventAt,
                     reducerResult.latestReadyEventAt ?? null,
                 );
+                const nextLatestNonRenderableMessageSeq = mergeLatestNumber(
+                    existingSession.latestNonRenderableMessageSeq,
+                    reducerResult.latestNonRenderableMessageSeq ?? null,
+                );
                 const didReadyMetadataChange =
                     nextLatestReadyEventSeq !== existingSession.latestReadyEventSeq
                     || nextLatestReadyEventAt !== existingSession.latestReadyEventAt;
@@ -934,9 +948,10 @@ export function createMessagesDomain<S extends MessagesDomain & MessagesDomainDe
                 if (previousRenderable && nextSessionForRenderable && shouldRefreshSessionListRenderable) {
                     const renderableCompletedRequests =
                         readSessionPresentationCompletedRequests(nextSessionForRenderable);
+                    const requestCoverage = readSessionRequestCoverage(nextSessionForRenderable);
                     const canReuseAggregate =
                         renderableAggregate != null
-                        && canReuseTranscriptRenderableAggregateRequestStates(renderableAggregate, renderableCompletedRequests);
+                        && canReuseTranscriptRenderableAggregateRequestStates(renderableAggregate, renderableCompletedRequests, requestCoverage);
                     telemetryFields.aggregateReused = canReuseAggregate ? 1 : 0;
                     if (!canReuseAggregate) {
                         // Cold start / fallback: one full transcript walk, then
@@ -947,6 +962,7 @@ export function createMessagesDomain<S extends MessagesDomain & MessagesDomainDe
                         renderableAggregate = buildTranscriptRenderableAggregate({
                             messages: renderableMessages,
                             completedRequests: renderableCompletedRequests,
+                            requestCoverage,
                         });
                     }
                     // Quiet transcript arrivals advance the Session's transport cursor,
@@ -988,6 +1004,7 @@ export function createMessagesDomain<S extends MessagesDomain & MessagesDomainDe
                     || needsExecutionRunSignals
                     || needsUserMessageHistory
                     || didReadyMetadataChange
+                    || nextLatestNonRenderableMessageSeq !== (existingSession.latestNonRenderableMessageSeq ?? null)
                     || didApplyNewAgentStateVersion;
                 telemetryFields.agentStateVersionChanged = didApplyNewAgentStateVersion ? 1 : 0;
                 telemetryFields.messageStateChanged = didSessionMessagesChange ? 1 : 0;
@@ -1040,6 +1057,7 @@ export function createMessagesDomain<S extends MessagesDomain & MessagesDomainDe
                             latestThinkingMessageId,
                             latestThinkingMessageActivityAtMs,
                             latestReadyEventSeq: nextLatestReadyEventSeq,
+                            latestNonRenderableMessageSeq: nextLatestNonRenderableMessageSeq,
                             latestReadyEventAt: nextLatestReadyEventAt,
                             // Replacements start a fresh reducer, but not a fresh subscription
                             // version: equal-width authority swaps must invalidate cached views.
@@ -1133,6 +1151,7 @@ export function createMessagesDomain<S extends MessagesDomain & MessagesDomainDe
                     // Process AgentState through reducer to get initial permission messages
                     const reducerResult = reducer(reducerState, [], agentState, undefined, {
                         mainHistoryStartLoaded: state.sessionMessagesHistoryStartLoaded?.[sessionId] === true,
+                        requestCoverage: readSessionRequestCoverage(session ?? {}),
                     });
                     const processedMessages = reducerResult.messages;
 

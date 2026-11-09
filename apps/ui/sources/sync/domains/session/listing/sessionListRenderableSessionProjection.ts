@@ -11,6 +11,7 @@ import type { AccountEncryptionIdentity } from '@happier-dev/sync-client';
 
 import type { SessionListRenderableSession } from './sessionListRenderable';
 import type { Message } from '@happier-dev/session-core/messages';
+import { readSessionRequestCoverage } from '../pending/readSessionRequestCoverage';
 import { derivePendingRequestFlags, deriveLatestPendingRequestObservedAt, listPendingRequests,
     readSharedMetadataActionConfirmationState, listPendingPermissionRequests as listCorePermissionRequests,
     listPendingUserActionRequests as listCoreUserActionRequests, type PendingRequestFacts } from '@happier-dev/session-core/pending';
@@ -264,6 +265,10 @@ export function createSessionListPresentationSource(
     const hasPendingSummary = typeof row.hasPendingPermissionRequests === 'boolean' || typeof row.hasPendingUserActionRequests === 'boolean';
     const pending: PendingRequestFacts = {
         sessionId: row.id, active: lifecycle.active,
+        requestCoverage: readSessionRequestCoverage({ serverId,
+            metadata: metadata.metadata, metadataLayoutVersion: metadata.metadataLayoutVersion,
+            ownerMetadataView: metadata.ownerMetadataView,
+        }),
         agentState: baseSession && classifySessionTupleApplyCurrentness(row, baseSession).agentStateCurrent ? baseSession.agentState : null,
         actionConfirmations: readSharedMetadataActionConfirmationState({
             actionConfirmationsV1: readMetadataField(metadata.metadata, metadata.metadataFallback, 'actionConfirmationsV1'),
