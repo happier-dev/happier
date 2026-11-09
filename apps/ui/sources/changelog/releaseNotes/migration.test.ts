@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import Constants from 'expo-constants';
+import { MMKV } from 'react-native-mmkv';
 
 import { setLastViewedReleaseId } from '@/changelog/storage';
 import { resetMmkvStoresForTests } from '@/dev/reactNativeMmkvStub';
@@ -77,6 +78,14 @@ describe('runReleaseNotesMigrationSeeding (dev release-id model)', () => {
     it('marks the current release as seen for legacy string users who already viewed changelog updates', () => {
         admitRelease();
         setLastViewedReleaseId('ui-v0.5.0');
+        runReleaseNotesMigrationSeeding();
+        expect(getLastSeenReleaseId()).toBe('v1.0.0');
+        expect(getMigrationSeededReleaseId()).toBe('v1.0.0');
+    });
+
+    it('preserves acknowledgements when upgrading from released numeric 0.2 history', () => {
+        admitRelease();
+        new MMKV().set('changelog-last-viewed-version', 1);
         runReleaseNotesMigrationSeeding();
         expect(getLastSeenReleaseId()).toBe('v1.0.0');
         expect(getMigrationSeededReleaseId()).toBe('v1.0.0');

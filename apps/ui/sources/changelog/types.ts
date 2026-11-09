@@ -1,6 +1,7 @@
 export interface ChangelogEntry {
     id: string;
     versionLabel: string;
+    title: string;
     date: string;
     markdown: string;
 }
