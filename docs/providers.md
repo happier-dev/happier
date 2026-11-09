@@ -140,6 +140,12 @@ stages share the admitted launch material. Neither integration receives refresh
 tokens. These static credentials are rematerialized on a new or restarted run;
 they do not renew inside an already-running native process.
 
+FX's Codex route has no built-in default model. Select an explicit model for a
+ChatGPT Connected Account; otherwise its shared Session, terminal, finite-run
+and preflight preparation returns the typed `model_selection_required` startup
+failure reason before acquiring credentials or launching FX. Native-unbound
+launches keep their native model preferences.
+
 FX uses the host-prepared native home and shared session state. Its released
 0.0.14 parser requires an auth file containing account identity, expiry and a
 nonempty refresh field, so the codec writes the access token with an unusable
@@ -1061,13 +1067,13 @@ model IDs use the Agent's ordinary freeform model selector. The upstream remains
 the authority on entitlement, and the host retains its existing known model
 eligibility blockers for account groups. These routes do not discover a new
 per-account model catalog.
-CodeBuddy and Droid's generated selected-account overlays and Kilo's native catalog
+Copilot, CodeBuddy and Droid's generated selected-account overlays and Kilo's native catalog
 remain unverified inventory. The shared Session publication owner withholds their
 model choices and ACP model-option choices while retaining the active model and
 explicit native model controls.
-CodeBuddy, Droid and Kilo reuse their launch preparation for selected-account preflight.
+Copilot, CodeBuddy, Droid and Kilo reuse their launch preparation for selected-account preflight.
 Without an explicit model, preparation refuses before native startup; choose a
-model and retry the launch. CodeBuddy, Droid and Kilo retain `model_selection_required`
+model and retry the launch. Copilot, CodeBuddy, Droid and Kilo retain `model_selection_required`
 as the typed startup failure reason through Session status and launch recovery.
 Kilo uses its existing OpenAI model namespace policy for both initial and later
 model choices.

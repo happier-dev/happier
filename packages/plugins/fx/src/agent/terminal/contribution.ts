@@ -9,7 +9,7 @@ import { prepareFxConnectedAccount } from '../auth/connectedAccount.js';
  */
 export const FX_TERMINAL_CONTRIBUTION: AgentTerminalSurface = Object.freeze({
   async resolveLaunch(request: Parameters<AgentTerminalSurface['resolveLaunch']>[0]) {
-    const environment = await prepareFxConnectedAccount(request.launchEnvironment);
+    const environment = await prepareFxConnectedAccount(request.launchEnvironment, undefined, request.configuration?.model);
     return {
       argv: [],
       ...(environment ? { environment } : {}),

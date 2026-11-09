@@ -4,7 +4,7 @@ import { isRecord, PluginError } from '@happier-dev/plugin-sdk';
 import { CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_PATH_ENV, type RequestAuthHeadersV1 } from '@happier-dev/plugin-sdk/connected-accounts';
 import { createConnectedAccountRequestAuthClient } from '@happier-dev/plugin-sdk/connected-accounts/request-auth';
 import { writeAtomicJsonFile } from '@happier-dev/plugin-sdk/fs';
-import type { AgentLaunchEnvironment, AgentConnectedAccountNativeAuthCodecV1, AgentConnectedAccountStateSharingDescriptorV1, AgentConnectedAccountResumeReachabilityInputV1, AgentConnectedAccountRuntimeAuthAdapterV1 } from '@happier-dev/plugin-sdk/agents/runtime';
+import type { AgentSessionConfigurationSnapshot, AgentLaunchEnvironment, AgentConnectedAccountNativeAuthCodecV1, AgentConnectedAccountStateSharingDescriptorV1, AgentConnectedAccountResumeReachabilityInputV1, AgentConnectedAccountRuntimeAuthAdapterV1 } from '@happier-dev/plugin-sdk/agents/runtime';
 import { isFxSessionId } from '../externalSessions/source.js';
 
 export const FX_CODEX_PURPOSE = 'openai-codex';
@@ -75,10 +75,17 @@ export const FX_RUNTIME_AUTH_ADAPTER = {
   async refreshActiveProfile() { return { status: 'unsupported', recovery: 'restart_rematerialize' }; },
 } satisfies AgentConnectedAccountRuntimeAuthAdapterV1;
 
-export async function prepareFxConnectedAccount(environment?: AgentLaunchEnvironment, signal?: AbortSignal): Promise<AgentLaunchEnvironment | undefined> {
+export async function prepareFxConnectedAccount(environment?: AgentLaunchEnvironment, signal?: AbortSignal, model?: AgentSessionConfigurationSnapshot['model']): Promise<AgentLaunchEnvironment | undefined> {
   if (!environment) return environment;
   const capabilityFile = environment.values[CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_PATH_ENV];
   if (!capabilityFile) return environment;
+  // FX's Codex provider has no compiled default (selectProviderModel). A copied
+  // native preference or ambient FX_MODEL is not the selected Account's choice.
+  const selectedModel = model?.selectionSource === 'explicit' ? model.value?.trim() : null;
+  if (!selectedModel) throw new PluginError({ code: 'agent_startup_model_reconciliation_failed', retryable: false,
+    message: 'Choose an explicit model for the FX ChatGPT Connected Account.',
+    details: { failureCause: { code: 'agent_startup_model_reconciliation_failed',
+      phase: 'client_start', failureReason: 'model_selection_required', retryable: false } } });
   const home = environment.values.HOME;
   if (!home) throw new PluginError({ code: 'fx_connected_account_home_unavailable', message: 'FX requires its host-prepared native home.' });
   const client = await createConnectedAccountRequestAuthClient({ capabilityFile });
@@ -91,7 +98,7 @@ export async function prepareFxConnectedAccount(environment?: AgentLaunchEnviron
   await chmod(join(home, '.fx'), 0o700);
   await writeAtomicJsonFile({ path: join(home, authFile), value: auth, mode: 0o600 });
   const remove = ['AI_GATEWAY_API_KEY', 'VERCEL_OIDC_TOKEN', 'FX_HOME'];
-  const values = { ...Object.fromEntries(Object.entries(environment.values).filter(([key]) => !remove.includes(key))), FX_PROVIDER: 'codex', FX_AUTH_MODE: 'local' };
+  const values = { ...Object.fromEntries(Object.entries(environment.values).filter(([key]) => !remove.includes(key))), FX_PROVIDER: 'codex', FX_AUTH_MODE: 'local', FX_MODEL: selectedModel };
   return { values, unset: [...new Set([...(environment.unset ?? []), ...remove])].filter(key => !(key in values)) };
 }
 

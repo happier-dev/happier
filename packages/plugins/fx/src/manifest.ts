@@ -8,7 +8,7 @@ import { fxExternalSessionsContribution } from './agent/externalSessions/contrib
 import { FX_CLI_AUTH } from './agent/auth/status.js';
 import { FX_PROVIDER_BINDING_ADAPTER, FX_PROVIDER_OWNED_ENV_KEYS } from './agent/providerBinding/adapter.js';
 import { createFxAgentRuntime } from './agent/runtime/factory.js';
-import { FX_CODEX_PURPOSE, FX_CODEX_SERVICE, FX_NATIVE_AUTH_CODEC, FX_REQUEST_AUTH_USE, FX_RUNTIME_AUTH_ADAPTER, FX_STATE_SHARING, verifyFxResumeReachable } from './agent/auth/connectedAccount.js';
+import { FX_CODEX_PURPOSE, FX_CODEX_SERVICE, FX_NATIVE_AUTH_CODEC, FX_REQUEST_AUTH_USE, prepareFxConnectedAccount, FX_RUNTIME_AUTH_ADAPTER, FX_STATE_SHARING, verifyFxResumeReachable } from './agent/auth/connectedAccount.js';
 
 
 export const FX_PLUGIN = definePlugin({
@@ -16,7 +16,7 @@ export const FX_PLUGIN = definePlugin({
   entrypoints: { daemon: './.happier-plugin/daemon.js' },
   hostAccess: { required: [{
     id: 'fx-process', capability: 'process', reason: 'Run the declared FX CLI executable.',
-    scope: { executables: [{ kind: 'systemTool', id: FX_ACP_COMMAND.toolId }], envKeys: ['HOME', 'FX_PROVIDER', 'FX_AUTH_MODE', 'FX_HOME'] },
+    scope: { executables: [{ kind: 'systemTool', id: FX_ACP_COMMAND.toolId }], envKeys: ['HOME', 'FX_PROVIDER', 'FX_AUTH_MODE', 'FX_HOME', 'FX_MODEL'] },
   }], optional: [] },
   agents: { fx: {
     declaration: {
@@ -76,7 +76,13 @@ export const FX_PLUGIN = definePlugin({
     providerBinding: FX_PROVIDER_BINDING_ADAPTER,
     cliAuth: FX_CLI_AUTH,
     sessionRunnerFactory: { module: './agent/runtime/factory', export: 'createFxAgentRuntime', runtimeApiVersion: 1, externalSessionsExport: 'fxExternalSessionsContribution' },
-    preflightSessionControls: { catalogs: { kind: 'acp', command: FX_ACP_COMMAND } },
+    preflightSessionControls: {
+      catalogs: { kind: 'acp', command: FX_ACP_COMMAND },
+      async prepareLaunchEnvironment({ environment, signal }) {
+        const prepared = await prepareFxConnectedAccount({ values: environment, unset: [] }, signal);
+        return { environment: prepared?.values ?? environment, unset: prepared?.unset, dispose() {} };
+      },
+    },
     externalSessions: fxExternalSessionsContribution,
   } },
   systemTools: { 'fx-cli': { title: 'FX CLI', executableNames: ['fx'] } },

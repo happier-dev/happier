@@ -55,19 +55,19 @@ async function verifyProviderBinding(
 export const createFxAgentRuntime: AgentRuntimeFactory = () => ({ surfaces: { terminal: FX_TERMINAL_CONTRIBUTION }, sessions: {
   async open(request, context) {
     await verifyProviderBinding(request, context);
-    const launchEnvironment = await prepareFxConnectedAccount(request.launchEnvironment, context.signal);
+    const launchEnvironment = await prepareFxConnectedAccount(request.launchEnvironment, context.signal, request.configuration?.model);
     return context.protocols.acp.open({ ...request, ...(launchEnvironment ? { launchEnvironment } : {}) }, options);
   },
   executionRunContextV1: {
     async open(request, context) {
       await verifyProviderBinding(request, context);
-      const launchEnvironment = await prepareFxConnectedAccount(request.launchEnvironment, context.signal);
+      const launchEnvironment = await prepareFxConnectedAccount(request.launchEnvironment, context.signal, request.configuration?.model);
       return context.protocols.acp.openExecutionRunV1({ ...request, ...(launchEnvironment ? { launchEnvironment } : {}) }, options);
     },
     async openConversation(request, context) {
       if (!context.protocols.acp.openExecutionRunConversationV1) throw new PluginError({ code: 'execution_run_protocol_unsupported', message: 'This host does not support retained detached ACP conversations.' });
       await verifyProviderBinding(request, context);
-      const launchEnvironment = await prepareFxConnectedAccount(request.launchEnvironment, context.signal);
+      const launchEnvironment = await prepareFxConnectedAccount(request.launchEnvironment, context.signal, request.configuration?.model);
       return context.protocols.acp.openExecutionRunConversationV1({ ...request, ...(launchEnvironment ? { launchEnvironment } : {}) }, options);
     },
   },
