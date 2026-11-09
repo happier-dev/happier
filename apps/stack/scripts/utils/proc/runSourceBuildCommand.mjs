@@ -23,7 +23,8 @@ export function sourceBuildNodeArgs({ repoDir, scriptPath, args = [] }) {
  * their measured class; preparation-only callers retain validation.
  */
 export async function runSourceBuildCommand({ repoDir, scriptPath, command, cwd = repoDir, args = [], env = process.env,
-  signal, captureStdout = true, captureStderr = false, admissionClass = 'validation', stdoutStream = process.stdout, devStartup = false }) {
+  signal, captureStdout = true, captureStderr = false, admissionClass = 'validation', stdoutStream = process.stdout,
+  stderrStream = process.stderr, devStartup = false }) {
   const launcher = fileURLToPath(new URL('../../../bin/hstack-exec', import.meta.url));
   const payloadCommand = command ?? process.execPath;
   const payloadArgs = command ? args : sourceBuildNodeArgs({ repoDir, scriptPath, args });
@@ -44,7 +45,7 @@ export async function runSourceBuildCommand({ repoDir, scriptPath, command, cwd 
     command: payloadCommand, args: payloadArgs, cwd, env, signal,
     admissionClass, devStartup, stdio: ['ignore', 'pipe', 'pipe'], captureStdout, captureStderr,
     onStdout: value => { observeStdout(value); if (!captureStdout) stdoutStream.write(value); },
-    onStderr: value => { observeStderr(value); process.stderr.write(value); } });
+    onStderr: value => { observeStderr(value); stderrStream.write(value); } });
   if (result.error) throw result.error;
   if (result.status === 0) return captureStdout ? result.stdout : '';
   const stderr = captureStderr ? result.stderr : '';

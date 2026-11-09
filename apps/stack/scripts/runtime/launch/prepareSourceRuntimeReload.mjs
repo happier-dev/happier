@@ -2,6 +2,8 @@ import { appendFile, mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createInterface } from 'node:readline';
+import { PassThrough } from 'node:stream';
+import { format } from 'node:util';
 
 import { buildSourceRuntimeBundle, admitSourceRuntimeReload, captureSourceRuntimeSharedInputs } from '../../build/build_source_runtime.mjs';
 import { exportSourceWebUi } from '../../build/build_source_web_ui.mjs';
@@ -16,6 +18,7 @@ import { writeJsonAtomic } from '../../utils/fs/json.mjs';
 import { getServerComponentName } from '../../utils/server/server.mjs';
 import { resolveDevServerConnection } from '../../utils/dev/resolveDevServerConnection.mjs';
 import { resolveStackServerEndpoint } from '../../utils/server/urls.mjs';
+import { redactFailureDiagnostic } from '../../utils/proc/proc.mjs';
 
 /** Called by the existing restart owner before any incumbent retirement. */
 export async function prepareSourceRuntimeReload({ stackName, stackBaseDir, repoDir, args, env,
@@ -38,7 +41,22 @@ export async function prepareSourceRuntimeReload({ stackName, stackBaseDir, repo
   const statusPath = join(sourceRoot, 'reload.json');
   const logDir = join(stackBaseDir, 'logs');
   const logPath = join(logDir, `run.reload.${Date.now()}.log`);
-  const log = async message => { console.log(message); await appendFile(logPath, `${message}\n`); };
+  let logWrites = Promise.resolve();
+  const retainLog = text => {
+    const write = logWrites.then(() => appendFile(logPath, text));
+    logWrites = write.catch(error => console.error('[reload] log publication failed:', error));
+    return write;
+  };
+  const log = async message => { console.log(message); await retainLog(`${message}\n`); };
+  const diagnosticInput = new PassThrough();
+  const diagnosticLines = createInterface({ input: diagnosticInput });
+  const diagnosticsClosed = new Promise(resolve => diagnosticLines.once('close', resolve));
+  diagnosticLines.on('line', line => { retainLog(`${redactFailureDiagnostic(line, env)}\n`); });
+  const stderrStream = { write: chunk => {
+    process.stderr.write(chunk);
+    return diagnosticInput.write(chunk);
+  } };
+  const logger = { ...console, error: (...values) => stderrStream.write(`${format(...values)}\n`) };
   try {
     await mkdir(logDir, { recursive: true });
     // The live pending marker owns preparation, including a failed attempt
@@ -70,7 +88,8 @@ export async function prepareSourceRuntimeReload({ stackName, stackBaseDir, repo
               HAPPIER_SERVER_URL: connection.startServer
                 ? (await resolveStackServerEndpoint({ env, stackName })).internalServerUrl : connection.internalServerUrl },
             sourceStartRequestId: pending.requestId,
-            signal: pending.signal, onPhase: (target, phase) => pending.setPhase(phase, target) });
+            signal: pending.signal, onPhase: (target, phase) => pending.setPhase(phase, target),
+            onLog: message => { retainLog(`${message}\n`); } });
         }
         return remote;
       })();
@@ -84,10 +103,10 @@ export async function prepareSourceRuntimeReload({ stackName, stackBaseDir, repo
       // coordinator holds no capacity while the independent preparations run.
       const serverPreparation = sharedSourceInputs.then(shared => connection.startServer && !placement?.target
         ? buildSourceRuntimeBundle({ repoDir, stackBaseDir, pending, component: 'server', serverComponent,
-          dbProvider, env: serverEnv, signal: pending.signal, sharedSourceInputs: shared }) : null);
+          dbProvider, env: serverEnv, signal: pending.signal, sharedSourceInputs: shared, logger, stderrStream }) : null);
       const daemonPreparation = sharedSourceInputs.then(shared => daemonRequested
         ? buildSourceRuntimeBundle({ repoDir, stackBaseDir, pending, component: 'daemon',
-          env, signal: pending.signal, sharedSourceInputs: shared }) : null);
+          env, signal: pending.signal, sharedSourceInputs: shared, logger, stderrStream }) : null);
       preparations = [serverPreparation, daemonPreparation, remotePreparation];
       const [server, daemon] = await Promise.all(preparations);
       if (server) components.server = server;
@@ -126,6 +145,9 @@ export async function prepareSourceRuntimeReload({ stackName, stackBaseDir, repo
       .catch(diagnostic => console.error('[reload] failure log publication failed:', diagnostic));
     throw error;
   } finally {
+    diagnosticInput.end();
+    await diagnosticsClosed;
+    await logWrites;
     process.removeListener('SIGINT', cancel);
     process.removeListener('SIGTERM', cancel);
     await pending.dispose();

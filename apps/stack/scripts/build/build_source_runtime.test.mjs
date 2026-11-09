@@ -1621,6 +1621,12 @@ test(`source reload preparation ${activate ? 'selects only after activation' : '
       const selected = JSON.parse(await readFile(graph.selectedPath, 'utf8'));
       assert.notEqual(selected.entrypoint, graph.old.entrypoint);
       assert.equal(await runCaptureSourceEntrypoint(selected.entrypoint), 0);
+      const reload = JSON.parse(await readFile(join(graph.stackBaseDir, 'source-runtime/reload.json'), 'utf8'));
+      const log = await readFile(reload.logPath, 'utf8');
+      for (const phase of ['entry-preparation', 'esbuild-main', 'publication']) {
+        assert.match(log, new RegExp(`^\\[source-bundle\\] phase=${phase} .*component=daemon`, 'm'),
+          `the reload log retains the daemon producer's ${phase} diagnostic`);
+      }
     } else {
       await assert.rejects(preparation, /cancelled before selection/);
       assert.deepEqual(JSON.parse(await readFile(graph.selectedPath, 'utf8')), graph.old);

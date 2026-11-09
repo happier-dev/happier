@@ -8,7 +8,7 @@ import { generateBundledPluginUiArtifacts, resolveBundledPluginUiArtifactsRetain
 import { createBundledPluginPublicationFailure } from '../../../scripts/workspaces/bundledPluginPublicationFailure.mjs';
 import { readWorkspacePackages, SOURCE_CONDITION } from '../../../packages/cli-common/sourceRuntimeEntries.mjs';
 import { sourcePluginUiBuildOptions, SOURCE_PLUGIN_UI_IMPORT_CONDITIONS } from '../../../scripts/workspaces/sourcePluginUiBuildOptions.mjs';
-import { readSourcePluginUiBuildInputs } from '../../stack/scripts/utils/fs/workspaceBuildInputs.mjs';
+import { readSourcePluginUiBuildInputs, readSourcePluginUiBuildInputRecord } from '../../stack/scripts/utils/fs/workspaceBuildInputs.mjs';
 import { readBuildInputIdentity } from '../../../scripts/workspaces/buildInputConvergence.mjs';
 import { WORKSPACE_PACKAGE_BUILD_INPUT_RECORD } from '../../../packages/cli-common/packageBuildOutputTargets.mjs';
 import { readJsonIfExists, writeJsonAtomic } from '../../stack/scripts/utils/fs/json.mjs';
@@ -24,8 +24,19 @@ export async function prepareSourcePluginUiArtifacts({ repoRoot, outputDir, plug
   const compilationFailures = [];
   const retainedRoots = resolveBundledPluginUiArtifactsRetainedRoots(retainedInventoryPath);
   const producerRoots = resolveBundledPluginUiArtifactsRetainedRoots(resolveBundledPluginUiArtifactsOutputPath(repoRoot));
+  const retainedRecords = new Map();
+  for (const root of new Set([...retainedRoots.values(), ...producerRoots.values(), ...Object.values(artifactOutputDirs),
+    ...plugins.map(({ directory }) => join(repoRoot, 'packages/plugins', directory, 'dist/happier-plugin-ui'))])) {
+    retainedRecords.set(root, await readJsonIfExists(join(root, WORKSPACE_PACKAGE_BUILD_INPUT_RECORD)));
+  }
   const compilerRepo = fileURLToPath(new URL('../../../', import.meta.url));
-  const compilerFiles = await readSourcePluginUiBuildInputs({ repoDir: compilerRepo, compiler: true });
+  const compilerPackages = await readWorkspacePackages(compilerRepo);
+  const compilerPackageInputs = new Map();
+  const retainedCompilerInputs = [...retainedRecords.values()].find(record => record?.compilerInputs)?.compilerInputs;
+  const compilerFiles = await readSourcePluginUiBuildInputs({ repoDir: compilerRepo, compiler: true,
+    packages: compilerPackages, packageInputs: compilerPackageInputs, retainedInputs: retainedCompilerInputs });
+  const compilerInputs = await readSourcePluginUiBuildInputRecord({ repoDir: compilerRepo, files: compilerFiles,
+    packages: compilerPackages, packageInputs: compilerPackageInputs });
   const compilerIdentity = await readBuildInputIdentity({ sourceDir: compilerRepo, files: compilerFiles });
   const esbuildVersion = createRequire(join(compilerRepo, 'packages/plugin-sdk/package.json'))('esbuild/package.json').version;
   const dependencyInputs = await readJsonIfExists(resolveDependencyRefreshMarkerPath(compilerRepo));
@@ -60,8 +71,10 @@ export async function prepareSourcePluginUiArtifacts({ repoRoot, outputDir, plug
       }
       candidates = [...new Set([artifactOutputDir, retainedRoots.get(manifest.id),
         producerRoots.get(manifest.id), join(projectRoot, 'dist/happier-plugin-ui')].filter(Boolean))];
+      const retainedInputs = candidates.map(root => retainedRecords.get(root)?.sourceInputs).find(Boolean);
       const files = await readSourcePluginUiBuildInputs({ repoDir: repoRoot, pluginDirectory: directory, packages, packageInputs,
-        resolveSourceImport: buildOptions.resolveSourceImport });
+        resolveSourceImport: buildOptions.resolveSourceImport, retainedInputs, inputOptions: conditions });
+      const sourceInputs = await readSourcePluginUiBuildInputRecord({ repoDir: repoRoot, files, packages, packageInputs, inputOptions: conditions });
       const options = [manifest, compilerIdentity, esbuildVersion, dependencyInputs, conditions, SOURCE_CONDITION, process.version, process.platform, process.arch];
       const inputFingerprint = await readBuildInputIdentity({ sourceDir: repoRoot, files, options });
       for (const root of candidates) {
@@ -73,7 +86,7 @@ export async function prepareSourcePluginUiArtifacts({ repoRoot, outputDir, plug
         break;
       }
       if (artifactRoots[directory]) {
-        successfulInputs.set(directory, { options, inputFingerprint, reusedRoot: artifactRoots[directory] });
+        successfulInputs.set(directory, { options, inputFingerprint, sourceInputs, reusedRoot: artifactRoots[directory] });
         continue;
       }
       const manifestPath = join(outputDir, `${directory}.json`);
@@ -81,7 +94,7 @@ export async function prepareSourcePluginUiArtifacts({ repoRoot, outputDir, plug
       const { artifactsRoot } = await buildUniversalPluginUiArtifacts(projectRoot, manifestPath,
         { ...buildOptions, outputDir: artifactOutputDir });
       artifactRoots[directory] = artifactsRoot;
-      successfulInputs.set(directory, { options, inputFingerprint });
+      successfulInputs.set(directory, { options, inputFingerprint, sourceInputs });
     } catch (error) {
       const retained = retainedInputs.get(packageName);
       if (retained) {
@@ -112,21 +125,25 @@ export async function prepareSourcePluginUiArtifacts({ repoRoot, outputDir, plug
     // An interactive source edit during compilation does not make the served
     // graph unusable, but it cannot certify unchanged-input reuse next time.
     const files = await readSourcePluginUiBuildInputs({ repoDir: repoRoot, pluginDirectory: directory, packages,
-      packageInputs: publicationPackageInputs, resolveSourceImport: buildOptions.resolveSourceImport });
+      packageInputs: publicationPackageInputs, resolveSourceImport: buildOptions.resolveSourceImport,
+      retainedInputs: input.sourceInputs, inputOptions: conditions });
     if (await readBuildInputIdentity({ sourceDir: repoRoot, files, options: input.options }) !== input.inputFingerprint) continue;
     const root = result.artifactRoots[directory] ?? artifactOutputDirs[directory] ?? artifactRoots[directory];
     // Borrowed producer roots stay read-only. Consumer-owned graphs can retain
     // their admitted manifest even when identical bytes were reused.
     if (input.reusedRoot && resolve(root) === input.reusedRoot && !artifactStoreDir && !artifactOutputDirs[directory]) continue;
     const record = await readJsonIfExists(join(root, WORKSPACE_PACKAGE_BUILD_INPUT_RECORD));
-    if (record?.version === 2 && record.fingerprint === input.inputFingerprint && record.manifest && record.packageName) continue;
+    if (record?.version === 2 && record.fingerprint === input.inputFingerprint && record.manifest && record.packageName
+      && record.sourceInputs?.identity === input.sourceInputs.identity && record.compilerInputs?.identity === compilerInputs.identity) continue;
     await writeJsonAtomic(join(root, WORKSPACE_PACKAGE_BUILD_INPUT_RECORD), { version: 2, fingerprint: input.inputFingerprint,
-      packageName: `@happier-dev/plugins-${directory}`, manifest: pluginManifests[directory] });
+      packageName: `@happier-dev/plugins-${directory}`, manifest: pluginManifests[directory], sourceInputs: input.sourceInputs, compilerInputs });
   }
   for (const diagnostic of result.diagnostics) {
     const unavailable = result.pluginFailures.some((failure) => failure.pluginId === diagnostic.pluginId);
     console.error(`[plugin:${diagnostic.pluginId}] ${diagnostic.code}: ${diagnostic.message} (${unavailable ? 'UI unavailable' : 'serving last-green UI'})`);
   }
+  const reused = [...successfulInputs.values()].filter(input => input.reusedRoot).length;
+  console.error(`[source-ui] phase=plugin-ui-input-reuse visited=${plugins.length} compiled=${successfulInputs.size - reused} reused=${reused} failed=${compilationFailures.length}`);
   return result;
 }
 

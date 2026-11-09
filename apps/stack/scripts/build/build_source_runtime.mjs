@@ -33,6 +33,10 @@ import { buildSourceGuestPayload, readSourceGuestPayloadTargets } from './source
 
 const SHARED_SOURCE_INPUT_MANIFEST = '.source-runtime-shared-inputs.json';
 
+function logSourceRuntimePhase(component, phase, started, status, logger = console) {
+  logger.error(`[source-bundle] phase=${phase} elapsedMs=${Math.round(performance.now() - started)} component=${component}${status ? ` status=${status}` : ''}`);
+}
+
 /** Finite web builds reuse workspace capture, not a second snapshot engine.
  * Capture authored inputs only; installed third-party tools retain their owner.
  * Later source edits belong to the next explicit build, never this Metro crawl. */
@@ -730,7 +734,8 @@ export async function buildSourceRuntimeBundle(options) {
 }
 
 async function buildSourceRuntimeBundleOnce({ repoDir, outputDir, stackBaseDir, component, reuseSelected = false, serverComponent = 'happier-server-light', dbProvider,
-  pending, preparation = pending, env = process.env, signal = pending?.signal, devStartup = false, sharedSourceInputs }) {
+  pending, preparation = pending, env = process.env, signal = pending?.signal, devStartup = false, sharedSourceInputs,
+  logger = console, stderrStream = process.stderr }) {
   repoDir = resolve(repoDir);
   if (component === 'server') {
     const { ensureServerGeneratedProviderOutputs } = await import('../utils/proc/pm.mjs');
@@ -748,7 +753,9 @@ async function buildSourceRuntimeBundleOnce({ repoDir, outputDir, stackBaseDir, 
     // Completed lookup and adoption use the publication owner. A producer
     // lease would only serialize these immutable reads with cold compilation
     // and introduce another held resource before metadata acquisition.
+    const reuseStarted = performance.now();
     const cached = await adoptReusableSourceRuntimeBundle({stackBaseDir, bundleRoot, ...inputs, env, signal});
+    logSourceRuntimePhase(component, 'reuse-scan', reuseStarted, undefined, logger);
     if (cached) return cached;
     // Only a cold fingerprint enters compiler admission. Its canonical lease
     // coalesces identical producers; the native owner releases it before
@@ -758,7 +765,7 @@ async function buildSourceRuntimeBundleOnce({ repoDir, outputDir, stackBaseDir, 
       command:process.execPath, args:[fileURLToPath(import.meta.url), JSON.stringify({...inputs, stackBaseDir, fingerprint})],
       locks:[{path:lockPath, kind:'workspace', timeoutMs:null, errorLabel:'source-bundle build lock'}],
       cwd:repoDir, env, signal, devStartup, admissionClass:'source-bundle', stdio:['ignore','pipe','pipe'],
-      onStderr:chunk => process.stderr.write(chunk) });
+      onStderr:chunk => stderrStream.write(chunk) });
     let result = await prepare();
     if (!result.error && !result.signal && result.status === 1
         && /^HSTACK_WORKSPACE_ADMISSION_ORDER:/m.test(result.stderr)) {
@@ -779,18 +786,22 @@ async function buildSourceRuntimeBundleOnce({ repoDir, outputDir, stackBaseDir, 
       throw error;
     }
     const built = JSON.parse(result.stdout);
-    if (built.sourceInputsChanged) return await buildSourceRuntimeBundleOnce({ ...inputs, stackBaseDir, pending, preparation, env, signal });
+    if (built.sourceInputsChanged) return await buildSourceRuntimeBundleOnce({ ...inputs, stackBaseDir, pending, preparation, env, signal, logger, stderrStream });
     // The finite producer completed publication before releasing fingerprint
     // custody. No unselected completed graph crosses an unprotected handoff.
     return built;
   }
   outputDir = resolve(outputDir);
   const stdout = await runSourceBuildCommand({ repoDir, scriptPath: fileURLToPath(import.meta.url),
-    args: [JSON.stringify({ repoDir, outputDir, component, serverComponent, dbProvider, sharedSourceInputs })], env, signal, devStartup, captureStderr: true, admissionClass:'source-bundle' });
+    args: [JSON.stringify({ repoDir, outputDir, component, serverComponent, dbProvider, sharedSourceInputs })], env, signal, devStartup, captureStderr: true, stderrStream, admissionClass:'source-bundle' });
   const {sourceInputDigests, inputIdentity, ...built} = JSON.parse(stdout);
   signal?.throwIfAborted();
+  const probeStarted = performance.now();
   if (component === 'daemon') await probeCliDistRuntimeImport(built.entrypoint, { cwd: built.cliDir, env, signal });
+  logSourceRuntimePhase(component, 'probe', probeStarted, undefined, logger);
+  const publicationStarted = performance.now();
   await writeJsonAtomic(join(outputDir, 'source-bundle.json'), {...built, sourceInputDigests, inputIdentity});
+  logSourceRuntimePhase(component, 'publication', publicationStarted, undefined, logger);
   return built;
 }
 
@@ -825,8 +836,11 @@ async function prepareSharedSourceRuntimeBundle({repoDir, stackBaseDir, componen
     const {sourceInputDigests, inputIdentity, ...built} = await buildSourceRuntimeBundleInProcess({...inputs, outputDir, retainedPluginUiInventoryPath, retainedRuntime: incumbent, env, signal});
     signal?.throwIfAborted();
     if (component === 'daemon') await probeCliDistRuntimeImport(built.entrypoint, { cwd: built.cliDir, env, signal });
-    return await publishSourceRuntimeBundle({stackBaseDir, bundleRoot, component, built, signal, reuseSelected, pendingRequestId,
+    const publicationStarted = performance.now();
+    const published = await publishSourceRuntimeBundle({stackBaseDir, bundleRoot, component, built, signal, reuseSelected, pendingRequestId,
       record:{...built, sourceInputDigests, inputIdentity, reuseFingerprint:fingerprint}});
+    logSourceRuntimePhase(component, 'publication', publicationStarted);
+    return published;
   } catch (error) {
     if (existsSync(outputDir)) { await setBundleReadOnly(outputDir, false); await rm(outputDir, {recursive:true, force:true}); }
     throw error;
@@ -989,6 +1003,7 @@ async function emitSourceRuntimeBundle({ repoDir, sourceRepoDir, capturedFiles, 
   // Its metafile inventories paths/byte counts, not the consumed content digest.
   const build = options => esbuild.build({...options, plugins:[...(options.plugins ?? []), captureInputs]});
   const workspacePackages = await readWorkspacePackages(repoDir);
+  let phaseStarted = performance.now();
   const entries = {};
   let migrationSource;
   let sqliteMigration = false;
@@ -1025,6 +1040,8 @@ async function emitSourceRuntimeBundle({ repoDir, sourceRepoDir, capturedFiles, 
       entries[`${outputPrefix}/scripts/migrate`] = 'source-runtime:sqlite-migration';
     } else if (provider !== 'sqlite') throw new Error(`Unsupported source database provider: ${provider}`);
   }
+  logSourceRuntimePhase(component, 'entry-preparation', phaseStarted);
+  phaseStarted = performance.now();
   const plugin = {
     name: 'source-runtime-boundaries',
     setup(builder) {
@@ -1083,6 +1100,7 @@ async function emitSourceRuntimeBundle({ repoDir, sourceRepoDir, capturedFiles, 
       plugin, createWorkspaceSourceResolver({workspacePackages, requireFromProject}),
     ],
   });
+  logSourceRuntimePhase(component, 'esbuild-main', phaseStarted);
   const runtimeManifest = component === 'daemon' ? {
     ...manifest, type: 'module', main: './src/index.mjs', module: './src/index.mjs',
     exports: Object.fromEntries(Object.keys(manifest.exports ?? {}).map((key) => [
@@ -1107,6 +1125,7 @@ async function emitSourceRuntimeBundle({ repoDir, sourceRepoDir, capturedFiles, 
       retainedCodeFiles.push(destination);
     }
   }
+  phaseStarted = performance.now();
   if (pluginMetadata.some(item => item.manifest.contributes !== undefined)) {
     const preparationDir = await mkdtemp(join(runtimeDir, '.source-plugin-ui-'));
     const inventoryPath = join(runtimeDir, 'plugin-ui-inventory.js');
@@ -1141,6 +1160,7 @@ async function emitSourceRuntimeBundle({ repoDir, sourceRepoDir, capturedFiles, 
       await rm(preparationDir, { recursive: true, force: true });
     }
   }
+  logSourceRuntimePhase(component, 'plugin-ui', phaseStarted);
   for (const key of Object.keys(entries).filter((key) => key.startsWith(`${outputPrefix}/`))) {
     const target = join(outputDir, `${key}.mjs`);
     await writeFile(target, `export * from './${key.split('/').at(-1)}.js';\n`);

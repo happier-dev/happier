@@ -1261,7 +1261,9 @@ supersedes only that stack's previous pending start. The bundle owner retains li
 bundles plus the newest completed product (using its immutable completion record,
 not allocation-directory timestamps), and reclaims unreferenced bundles when process visibility is available
 (native Windows currently retains them). Emitted code remains unchanged between restarts. The existing
-server also serves a finite source web export by default. Same-host Stacks sharing
+server can also serve a finite source web export with `--ui=export`. Source QA
+defaults to borrowed Expo from its configured producer; `--no-ui` keeps a source
+worker headless. Same-host Stacks sharing
 the configured source-products store reuse completed read-only web bytes when authored
 captured inputs and effective build options match and the complete exported payload
 still validates. A hit performs no Plugin UI/SDK preparation, Metro export or
@@ -1272,10 +1274,12 @@ Explicit executable app-local configuration outside the authored capture uses pr
 finite preparation instead. Expo cache/state uses the stable Stack source root;
 Metro retains its physical-project-root cache partition for route correctness. The
 server reads through a Stack-owned serving link, so a web-only reload can select a new
-export without changing another Stack's shared bytes. No Metro process or hot reload remains. `--ui=borrowed`
-explicitly uses the configured moving Expo producer instead; its presence in the environment alone
-does not select it. `--no-ui` keeps a source worker headless. Code preparation precedes the UI export,
+export without changing another Stack's shared bytes. Export mode has no Metro
+process or hot reload. `--ui=borrowed` explicitly selects the default moving Expo
+producer. Code preparation precedes an explicit UI export,
 and one-shot bundlers release their services rather than retain idle heaps in the Stack lifecycle owner.
+Source reloads retain phase diagnostics, including author-package output and
+forwarded remote worker phases, in their existing `logs/run.reload.*.log`.
 For a running source Stack, `hstack stack daemon <name> restart --runtime=source`
 prepares current daemon/plugin code on its observed host and replaces only that daemon.
 In 0.3 development, `hstack stack daemon <name> start --runtime=source` also captures

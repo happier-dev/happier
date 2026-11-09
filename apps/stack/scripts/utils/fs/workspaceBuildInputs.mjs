@@ -6,6 +6,7 @@ import { readBundledPluginPackageNames } from '../../../../cli/scripts/build-own
 import { resolveBundledPluginUiProjectionInputPaths } from '../../../../cli/scripts/build-owned/bundledPlugins/projectionPaths.mjs';
 import { readSourcePluginUiGraph } from '../../../../ui/scripts/sourcePluginUiGraph.mjs';
 import { SOURCE_UI_ASSET_OUTPUT_PATHS, SOURCE_UI_ASSET_RECORD_FILENAME } from '../../../../ui/scripts/sourceUiAssetPaths.mjs';
+import { readBuildInputIdentity } from '../../../../../scripts/workspaces/buildInputConvergence.mjs';
 
 const SOURCE_ROOTS = ['src', 'sources', 'scripts'];
 const TEST_DIRECTORY_NAMES = new Set(['__fixtures__', '__snapshots__', '__tests__', 'fixtures', 'test', 'testkit', 'tests', 'test-support']);
@@ -23,12 +24,15 @@ export function resolveSourcePluginUiBuildInputPaths(repoDir) {
  * Host applications are not plugin source inputs; their test dependencies must
  * not make a CLI-only edit rebuild every UI artifact. */
 export async function readSourcePluginUiBuildInputs({ repoDir, pluginDirectory, compiler = false, packages, includeDirectories = false,
-  packageInputs = new Map(), resolveSourceImport }) {
+  packageInputs = new Map(), resolveSourceImport, retainedInputs, inputOptions = [] }) {
   packages ??= await readWorkspacePackages(repoDir);
   const graphKey = `plugin-ui-graph:${compiler ? 'compiler' : pluginDirectory}`;
   let graph = packageInputs.get(graphKey);
   if (!graph) {
-    graph = readSourcePluginUiGraph({ repoDir, compiler, pluginDirectory, packages, resolveSourceImport });
+    const unchanged = retainedInputs?.files && retainedInputs.identity === (await readSourcePluginUiBuildInputRecord({
+      repoDir, files: retainedInputs.files, packages, packageInputs, inputOptions,
+    })).identity;
+    graph = unchanged ? retainedInputs.files : readSourcePluginUiGraph({ repoDir, compiler, pluginDirectory, packages, resolveSourceImport });
     packageInputs.set(graphKey, graph);
   }
   const files = new Set((await graph).filter(path => !isWorkspaceBuildInputIgnoredPath(path)
@@ -76,6 +80,35 @@ export async function readSourcePluginUiBuildInputs({ repoDir, pluginDirectory, 
     'apps/ui/scripts/sourcePluginUiGraph.mjs',
   ]) files.add(path);
   return [...files].sort();
+}
+
+/** Retain the compiler's consumed graph in its existing publication record.
+ * Membership matters too: adding panel.ts can supersede panel/index.ts without
+ * editing an old input. Enumerate only consumed owners, once per preparation. */
+export async function readSourcePluginUiBuildInputRecord({ repoDir, files, packages, packageInputs = new Map(), inputOptions = [] }) {
+  packages ??= await readWorkspacePackages(repoDir);
+  const workspaceRoots = [...packages.values()].map(({ root }) => relative(repoDir, root).split(sep).join('/'))
+    .sort((left, right) => right.length - left.length);
+  const roots = new Set(files.map(path => workspaceRoots.find(root => path.startsWith(`${root}/`)) ?? ''));
+  const membership = [];
+  for (const root of [...roots].sort()) {
+    const prefix = root ? `${root}/` : '';
+    const sourceRoots = [...new Set(files.filter(path => existsSync(join(repoDir, path))
+      && (workspaceRoots.find(owner => path.startsWith(`${owner}/`)) ?? '') === root)
+      .map(path => path.slice(prefix.length)).filter(path => path.includes('/'))
+      .map(path => path.split('/')[0]))].sort();
+    const key = JSON.stringify(['plugin-ui-membership', root, sourceRoots]);
+    let inputs = packageInputs.get(key);
+    if (!inputs) {
+      inputs = readWorkspaceBuildInputs(join(repoDir, root), { excludeGeneratedPluginManifest: true,
+        excludeGeneratedPluginArtifacts: true, sourceRoots });
+      packageInputs.set(key, inputs);
+    }
+    membership.push([root, inputs]);
+  }
+  const workspaceMembership = [...packages].map(([name, { root }]) => [name, relative(repoDir, root).split(sep).join('/')])
+    .sort(([left], [right]) => left.localeCompare(right));
+  return { files, identity: await readBuildInputIdentity({ sourceDir: repoDir, files, options: [inputOptions, workspaceMembership, membership] }) };
 }
 
 /** Finite source consumers and their repair watchers share membership. Code

@@ -1122,19 +1122,25 @@ test('remote source reload preparation forwards source maps to the actual UI bui
   await mkdir(dirname(mutagen.projectFile), { recursive: true });
   await writeFile(mutagen.projectFile, renderMutagenProject({ sourceDir: repoDir, targets: [target], ownerId: 'producer' }));
   let remoteCommand;
+  const diagnostics = [];
   const prepared = await prepareStackDevTargetSourceReload({ stackName: 'agent-qa', stackBaseDir: join(root, 'consumer'), repoDir,
     placement: { authority: { producerStackBaseDir }, config: { targets: [target] }, targetPlans: [{ target, services: { server: true, daemon: false, expo: false } }] },
     args: ['--ui=export', '--no-daemon'], env, signal: new AbortController().signal, serverRequested: true, sourceStartRequestId: 'map-forward',
+    onLog: line => diagnostics.push(line),
   }, { runProcess: async () => readySyncResult(target), executorDependencies: {
     runCaptureResult: async () => ({ ok: true, out: readySyncResult(target).out, err: '', exitCode: 0 }),
     // SSH is the external boundary. The worker preserves the real readiness/control exchange.
     spawnProcess: input => {
       remoteCommand = input.args.at(-1);
-      return spawnProc(input.label, process.execPath, ['-e', 'console.log("HSTACK_SOURCE_RELOAD_PREPARED"); process.stdin.on("data", () => process.exit(0))'], input.env,
+      return spawnProc(input.label, process.execPath, ['-e', `console.error('[source-bundle] phase=esbuild component=server elapsedMs=12');
+        console.error('[source-author] phase=package package=fixture-author elapsedMs=4');
+        console.log("HSTACK_SOURCE_RELOAD_PREPARED"); process.stdin.on("data", () => process.exit(0))`], input.env,
         { onLine: input.onLine, stdio: ['pipe', 'pipe', 'pipe'], ownedProcessGroup: true, silent: true });
     },
   } });
   try {
+    assert.ok(diagnostics.includes('[reload:nl3] [source-bundle] phase=esbuild component=server elapsedMs=12'));
+    assert.ok(diagnostics.includes('[reload:nl3] [source-author] phase=package package=fixture-author elapsedMs=4'));
     assert.ok(remoteCommand.replace(/["']/g, '').includes('HAPPIER_UI_EXPORT_SOURCE_MAPS=1'), 'reload worker dropped source maps before Expo/reuse fingerprinting');
     assert.doesNotMatch(remoteCommand, /UNRELATED_SECRET|not-a-forwarded-setting/);
     await prepared.activate();

@@ -1,3 +1,4 @@
+import { redactFailureDiagnostic } from '../proc/proc.mjs';
 import { join } from 'node:path';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -51,7 +52,7 @@ const READINESS_RETRY_INTERVAL_MS = 5_000;
  * still serving. The existing executor/control pipe owns each preparation
  * worker; only the existing restart owner may subsequently retire services.
  */
-export async function prepareStackDevTargetSourceReload({ stackName, stackBaseDir, repoDir, placement, args, env, signal, serverRequested, onPhase, sourceStartRequestId },
+export async function prepareStackDevTargetSourceReload({ stackName, stackBaseDir, repoDir, placement, args, env, signal, serverRequested, onPhase, onLog, sourceStartRequestId },
   { runProcess = runDevTargetControlProcess, executorDependencies = {} } = {}) {
   env = { ...env, HAPPIER_STACK_SYNC_SOURCE_DIR: repoDir, HAPPIER_STACK_PROCESS_KIND: 'infra' };
   const daemonRequested = resolveStackDaemonStartRequested({ env, noDaemon: args.includes('--no-daemon') });
@@ -107,7 +108,11 @@ export async function prepareStackDevTargetSourceReload({ stackName, stackBaseDi
           if (preparation) phaseProjection = phaseProjection.then(() => onPhase?.(plan.target.name, preparation))
             .catch(error => { phaseError = error; });
           else if (stream === 'stdout' && line === 'HSTACK_SOURCE_RELOAD_PREPARED') prepared();
-          else (stream === 'stderr' ? process.stderr : process.stdout).write(`[reload:${plan.target.name}] ${line}\n`);
+          else {
+            const message = `[reload:${plan.target.name}] ${redactFailureDiagnostic(line, env)}`;
+            (stream === 'stderr' ? process.stderr : process.stdout).write(`${message}\n`);
+            onLog?.(message);
+          }
         },
       }, { ...executorDependencies, spawnProcess: input => {
         const { label, command, args, env: workerEnv, onLine } = input;
