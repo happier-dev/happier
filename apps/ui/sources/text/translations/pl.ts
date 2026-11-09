@@ -5665,7 +5665,7 @@ encryptedUnavailable: "Zaszyfrowane dane niedostępne",
     },
     push: {
       title: "Powiadomienia push",
-      footer: ({ home }: { home: string }) => `${home} powiadamia na telefonie i komputerach, gdy Happier jest zamknięty.`,
+      footer: ({ home }: { home: string }) => `Powiadomienia z ${home} docierają na telefon i komputery, gdy Happier jest zamknięty.`,
       enabledSubtitle: ({ home }: { home: string }) => `Wyłączenie zatrzymuje powiadomienia z ${home} i wszystkie typy poniżej.`,
       troubleshootTitle: "Rozwiązywanie problemów",
       troubleshootSubtitle: "Sprawdź uprawnienia i zarejestrowane urządzenia",

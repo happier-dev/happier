@@ -5525,7 +5525,7 @@ encryptedUnavailable: "Detalls xifrats no disponibles",
         },
         push: {
             title: 'Notificacions push',
-            footer: ({ home }: { home: string }) => `${home} t’avisa al telèfon i als ordinadors mentre Happier està tancat.`,
+            footer: ({ home }: { home: string }) => `Els avisos de ${home} arriben al telèfon i als ordinadors mentre Happier està tancat.`,
             enabledSubtitle: ({ home }: { home: string }) => `Desactivat, atura els avisos de ${home} i tots els tipus de sota.`,
             troubleshootTitle: 'Resolució de problemes',
             troubleshootSubtitle: 'Consulta els permisos i els dispositius registrats',

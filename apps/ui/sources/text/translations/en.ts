@@ -6381,7 +6381,7 @@ const enSettingsNotifications = {
   push: {
     title: 'Push notifications',
     footer: ({ home }: { home: string }) =>
-      `${home} reaches your phone and computers while Happier is closed.`,
+      `Alerts from ${home} reach your phone and computers while Happier is closed.`,
     enabledSubtitle: ({ home }: { home: string }) =>
       `Off stops alerts from ${home} and every type below.`,
     troubleshootTitle: 'Troubleshoot',

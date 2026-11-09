@@ -5819,7 +5819,7 @@ encryptedUnavailable: "Detalles cifrados no disponibles",
     },
     push: {
       title: "Notificaciones push",
-      footer: ({ home }: { home: string }) => `${home} te avisa en el teléfono y los ordenadores mientras Happier está cerrado.`,
+      footer: ({ home }: { home: string }) => `Los avisos de ${home} llegan al teléfono y los ordenadores mientras Happier está cerrado.`,
       enabledSubtitle: ({ home }: { home: string }) => `Desactivado, detiene los avisos de ${home} y todos los tipos de abajo.`,
       troubleshootTitle: "Solucionar problemas",
       troubleshootSubtitle: "Ver permisos y dispositivos registrados",

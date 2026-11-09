@@ -5655,7 +5655,7 @@ encryptedUnavailable: "Détails chiffrés indisponibles",
     },
     push: {
       title: "Notifications push",
-      footer: ({ home }: { home: string }) => `${home} te prévient sur ton téléphone et tes ordinateurs quand Happier est fermé.`,
+      footer: ({ home }: { home: string }) => `Les alertes de ${home} arrivent sur ton téléphone et tes ordinateurs quand Happier est fermé.`,
       enabledSubtitle: ({ home }: { home: string }) => `Désactivé, coupe les alertes de ${home} et tous les types ci-dessous.`,
       troubleshootTitle: "Diagnostic",
       troubleshootSubtitle: "Voir les permissions et les appareils enregistrés",

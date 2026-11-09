@@ -5485,7 +5485,7 @@ encryptedUnavailable: "Verschlüsselte Details nicht verfügbar",
         },
         push: {
             title: 'Push-Benachrichtigungen',
-            footer: ({ home }: { home: string }) => `${home} erreicht dein Telefon und deine Computer, während Happier geschlossen ist.`,
+            footer: ({ home }: { home: string }) => `Benachrichtigungen von ${home} erreichen dein Telefon und deine Computer, während Happier geschlossen ist.`,
             enabledSubtitle: ({ home }: { home: string }) => `Aus stoppt Benachrichtigungen von ${home} und alle Arten unten.`,
             troubleshootTitle: 'Fehlersuche',
             troubleshootSubtitle: 'Berechtigungen und registrierte Geräte ansehen',

@@ -5928,7 +5928,7 @@ encryptedUnavailable: "Detalhes encriptados indisponíveis",
     },
     push: {
       title: "Notificações push",
-      footer: ({ home }: { home: string }) => `${home} avisa você no telefone e nos computadores enquanto o Happier está fechado.`,
+      footer: ({ home }: { home: string }) => `Os avisos de ${home} chegam ao telefone e aos computadores enquanto o Happier está fechado.`,
       enabledSubtitle: ({ home }: { home: string }) => `Desativado, interrompe os avisos de ${home} e todos os tipos abaixo.`,
       troubleshootTitle: "Solucionar problemas",
       troubleshootSubtitle: "Ver permissões e dispositivos registrados",

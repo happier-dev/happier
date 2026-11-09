@@ -5511,7 +5511,7 @@ export const ru: TranslationStructure = {
         },
     push: {
       title: "Push-уведомления",
-      footer: ({ home }: { home: string }) => `${home} отправляет уведомления на телефон и компьютеры, пока Happier закрыт.`,
+      footer: ({ home }: { home: string }) => `Уведомления от ${home} приходят на телефон и компьютеры, пока Happier закрыт.`,
       enabledSubtitle: ({ home }: { home: string }) => `Если выключено, уведомления от ${home} и все типы ниже не приходят.`,
       troubleshootTitle: "Устранение неполадок",
       troubleshootSubtitle: "Проверить разрешения и зарегистрированные устройства",

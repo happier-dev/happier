@@ -6009,7 +6009,7 @@ encryptedUnavailable: "Dettagli crittografati non disponibili",
     },
     push: {
       title: "Notifiche push",
-      footer: ({ home }: { home: string }) => `${home} ti avvisa su telefono e computer mentre Happier è chiuso.`,
+      footer: ({ home }: { home: string }) => `Gli avvisi da ${home} arrivano su telefono e computer mentre Happier è chiuso.`,
       enabledSubtitle: ({ home }: { home: string }) => `Disattivato, ferma gli avvisi da ${home} e tutti i tipi qui sotto.`,
       troubleshootTitle: "Risoluzione problemi",
       troubleshootSubtitle: "Vedi permessi e dispositivi registrati",
