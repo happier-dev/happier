@@ -258,10 +258,17 @@ describe('Machine current access (real SQLite)', () => {
         expect(await call(RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE, ciphertext,
             { v: 1, machineId: f.machine.id, invocationKind: 'hostPresentedComposer', sessionIds: [ownersSession.id] }))
             .toHaveBeenCalledWith(expect.objectContaining({ ok: false, errorCode: RPC_ERROR_CODES.FORBIDDEN }));
-        expect(await call(RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE, composerRequest,
-            { v: 1, machineId: f.machine.id, invocationKind: 'hostPresentedComposer', sessionIds: [] }))
-            .toHaveBeenCalledWith(expect.objectContaining({ ok: false, errorCode: RPC_ERROR_CODES.FORBIDDEN }));
         expect(emitWithAck).not.toHaveBeenCalled();
+        // Plain input is Home's routing authority; a valid but inconsistent
+        // client header is discarded rather than imposing another decision.
+        expect(await call(RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE, composerRequest,
+            { v: 1, machineId: f.machine.id, invocationKind: 'clientPluginAction', sessionIds: [] }))
+            .toHaveBeenCalledWith(expect.objectContaining({ ok: true }));
+        expect(emitWithAck.mock.calls.at(-1)?.[1]).toMatchObject({ machineAdmission: {
+            actorAccountId: requester.id, role: 'use', structuredMessageRouting: {
+                v: 1, machineId: f.machine.id, invocationKind: 'hostPresentedComposer', sessionIds: [session.id] },
+        } });
+        emitWithAck.mockClear();
         expect(await call(RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE, ciphertext,
             { v: 1, machineId: f.machine.id, invocationKind: 'hostPresentedComposer', sessionIds: [session.id] }))
             .toHaveBeenCalledWith(expect.objectContaining({ ok: true }));
