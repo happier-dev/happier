@@ -18,6 +18,7 @@ import {
 } from '@happier-dev/deployment-protocol/testing/v1';
 import { act, standardCleanup, waitForTestEvent } from '@/dev/testkit';
 import { renderAccountScreen as renderScreen } from '@/dev/testkit/render/renderAccountScreen';
+import type { DeploymentReadLogs } from './useDeploymentStepLog';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
@@ -1484,6 +1485,31 @@ describe('Deployment receipt step logs', () => {
   };
   const settle = (screen: Awaited<ReturnType<typeof renderScreen>>, testID: string) => act(async () => {
     await waitForTestEvent(screen.subscribe, () => screen.findByTestId(testID), node => node !== null);
+  });
+
+  it.each([false, true])('shows the running deploy in Build logs with a serving deployment: %s', async (hasServing) => {
+    const base = environmentDetailForHome();
+    const detail = hasServing ? base : { ...base, targetLinks: base.targetLinks.map(row => ({ ...row,
+      targetLink: { ...row.targetLink, activeDeploymentId: undefined } })) };
+    const receipt = withStepLogs('running');
+    const { controller } = controllerFor({ detail, receipt, history: [receipt] });
+    const readLogs = vi.fn<DeploymentReadLogs>(async () => ({ ok: true as const, logs: page('current deploy output') }));
+    try {
+      const screen = await renderScreen(<DeploymentEnvironmentDetail controller={controller}
+        environmentId={detail.environment.id} demand={shown} accountId={scope.accountId} serverId={scope.serverId}
+        phone={false} deploy={null} review={noReview} onOpenReceipt={() => {}} readLogs={readLogs} />);
+      await waitForContent(screen, 'project-deployments.environment.menu');
+      expect(readLogs).not.toHaveBeenCalled();
+      await screen.pressByTestIdAsync('project-deployments.environment.menu');
+      await waitForContent(screen, 'project-deployments.environment.menu.logs');
+      await screen.pressByTestIdAsync('project-deployments.environment.menu.logs');
+      await waitForContent(screen, 'environment-logs.header');
+      await screen.pressByTestIdAsync('environment-logs.view:build');
+      await waitForContent(screen, 'environment-logs.build.steps.log.lines');
+      expect(screen.findByTestId('environment-logs.empty')).toBeNull();
+      expect(screen.getTextContent()).toContain('current deploy output');
+      expect(readLogs.mock.calls[0]?.[0]).toMatchObject({ deploymentId: receipt.deployment.id, ref: 'build', tail: true });
+    } finally { await act(async () => { controller.retire(); }); }
   });
 
   it.each(['succeeded', 'failed', 'cancelled'] as const)('stops retained step activity when the receipt is %s', async (state) => {

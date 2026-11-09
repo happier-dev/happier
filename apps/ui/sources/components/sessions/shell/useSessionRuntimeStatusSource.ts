@@ -15,6 +15,7 @@ import {
 type SessionRuntimeStatusFields = Pick<
     Session,
     | 'active'
+    | 'archivedAt'
     | 'presence'
     | 'thinking'
     | 'thinkingAt'
@@ -46,6 +47,7 @@ function selectSessionRuntimeStatusFields(
     const optimisticPendingUserMessageAt = readLatestLocalOutboundPendingUserMessageAt(pendingMessages);
     return {
         active: session.active,
+        archivedAt: session.archivedAt,
         presence: session.presence,
         thinking: session.thinking,
         thinkingAt: session.thinkingAt,
