@@ -13,6 +13,24 @@ import {
 } from './voiceMachineError';
 
 describe('createVoiceMachineError', () => {
+    it.each(['VOICE_AGENT_TARGET_SESSION_INACTIVE', 'VOICE_AGENT_TARGET_SESSION_OFFLINE'])(
+        'retains %s as a Session refusal with no futile provider retry', code => {
+            const failure = classifyVoiceMachineError(createVoiceTextTurnRejectedBeforeEffectError(
+                Object.assign(new Error('Private transport text'), { code }), 'provider_unavailable_before_acceptance',
+            ), { kind: 'provider_error' });
+            expect(failure).toMatchObject({ kind: 'session_unavailable', reason: code,
+                retryPolicy: 'never', recoveryAction: 'none', presentation: 'error' });
+            expect(resolveVoiceMachineErrorTranslationKey(failure.kind, failure.reason))
+                .toBe(code.endsWith('INACTIVE') ? 'settingsVoice.local.machineErrors.target_session_inactive'
+                    : 'settingsVoice.local.machineErrors.target_session_offline');
+        },
+    );
+    it('uses the Provider owner remedy when a model refusal arrives as a code without its optional envelope', () => {
+        const failure = classifyVoiceMachineError(Object.assign(new Error('Private provider text'), { code: 'provider_model_not_found' }));
+        expect(failure).toMatchObject({ reason: 'provider_model_not_found', retryPolicy: 'never',
+            recoveryAction: 'open_settings', presentation: 'error',
+            providerError: { code: 'provider_model_not_found', action: 'choose_model', retryable: false } });
+    });
     it('presents a directory-preflight Machine content refusal with the Machine remedy', () => {
         const refusal = createRpcCallError({ error: 'private Machine content details', errorCode: 'MACHINE_ENCRYPTION_UNAVAILABLE' });
         const failure = classifyVoiceMachineError(refusal, { kind: 'provider_error' });

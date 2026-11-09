@@ -909,7 +909,8 @@ function startNativePermissionInput(admission: LocalVoiceCaptureAdmission, captu
     readOut: (text, listen, isCurrent, onReady) => readNativeTurnMessage(admission, captureAttempt, text, listen, isCurrent, onReady),
     commitTranscript: (text, localId) => voiceAgentSessions.commitUserTranscript(sessionId, text, localId),
     onResponding: () => voiceConversationRuntimeMachine.transitionToThinking({ controlSessionId: sessionId }),
-    onResponseSettled: async failure => {
+    onResponseSettled: async result => {
+      const failure = !result.ok ? result.error : null;
       const pendingTurn = activeTurnAbortSessionId === sessionId ? inFlight : null;
       if (failure && pendingTurn) {
         activeTurnAbortController?.abort();
@@ -920,6 +921,10 @@ function startNativePermissionInput(admission: LocalVoiceCaptureAdmission, captu
         recordVoiceRuntimeFailure('local_conversation', 'provider_error', 'provider_error', readSafeVoiceRuntimeFailureCode(failure));
         await readNativeTurnMessage(admission, captureAttempt,
           `${t('approvals.decisionError')} ${t('voice.readiness.permissionTapRequired')}`, false, () => true, () => {});
+      } else if (result.ok && !pendingTurn) {
+        await readNativeTurnMessage(admission, captureAttempt,
+          t(result.decision === 'approved' ? 'approvals.status.approved' : 'approvals.status.rejected'),
+          false, () => true, () => {});
       }
       if (failure || !pendingTurn) {
         if (!isCaptureAttemptCurrent(admission, captureAttempt)) return;
@@ -958,12 +963,12 @@ async function runVoiceTurnWithSendFailureHandling(
       const code = readSafeVoiceRuntimeFailureCode(error);
       if (code === 'usage_limit' && binding?.transcriptMode === 'native_session' && admission && captureAttempt) {
         if (!isCaptureAttemptCurrent(admission, captureAttempt)) return;
-        // A settled native provider refusal ends this turn, while the call
-        // stays available for the person's next input or End.
+        // Read the same localized refusal that remains in the compact surface.
+        // The native Run owns any retained recovery; Voice retires only capture.
         await readNativeTurnMessage(admission, captureAttempt,
           t(resolveVoiceMachineErrorTranslationKey('provider_error', code)), false, () => true, () => {});
         if (!isCaptureAttemptCurrent(admission, captureAttempt)) return;
-        transitionVoiceRuntimeToIdle({ controlSessionId: sessionId });
+        throw error;
       } else if (code !== 'claude_error_during_execution'
         || await permissionInput?.waitForResponseSettlement() !== 'denied') throw error;
       recordVoiceRuntimeFailure('local_conversation', 'provider_error', 'provider_error', code);

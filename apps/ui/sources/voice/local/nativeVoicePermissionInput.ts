@@ -9,6 +9,7 @@ import { createFrontDoorActionExecute, requireActionSuccess } from '@/sync/ops/a
 import { resolveVoiceContextSessionFromState } from '@/voice/context/resolveVoiceContextSession';
 import { getVoiceContextFormatterPrefs } from '@/voice/context/voiceContextPrefs';
 import { summarizeAgentRequestForVoiceHuman } from '@/voice/context/contextFormatters';
+import { resolveVoiceSessionLabel } from '@/voice/context/resolveVoiceSessionLabel';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { voiceConversationBindingResolver } from '@/voice/binding/VoiceConversationBindingResolver';
 import { voiceSessionBindingStore } from '@/voice/binding/voiceConversationBindingStore';
@@ -25,6 +26,14 @@ export type NativeVoicePermissionInput = Readonly<{
 
 type NativePermissionPrompt = { address: SessionAddress; request: SessionPendingRequest; ready: boolean; needsReadout: boolean };
 
+function resolveSpokenPermissionDecision(text: string): 'approved' | 'denied' | null {
+  const normalize = (value: string) => value.trim().toLocaleLowerCase().replace(/[,.!?。！？]+/gu, ' ').replace(/\s+/gu, ' ').trim();
+  const answer = normalize(text);
+  if (answer === normalize(t('common.yes')) || /^(?:(?:yes|yeah|yep|okay|ok)(?: please)?(?: (?:allow|approve)(?: it| that)?)?|(?:please )?(?:allow|approve)(?: it| that)?)(?: please)?$/u.test(answer)) return 'approved';
+  if (answer === normalize(t('common.no')) || /^(?:(?:no|nope)(?: thanks| thank you)?(?: (?:deny|decline|reject)(?: it| that)?)?|(?:please )?(?:deny|decline|reject)(?: it| that)?|(?:don't|do not) allow(?: it| that)?)(?: please)?$/u.test(answer)) return 'denied';
+  return null;
+}
+
 /** Input for a read-out native request; the existing permission Action owns settlement. */
 export function createNativeVoicePermissionInput(params: Readonly<{
   controlSessionId: string;
@@ -32,7 +41,7 @@ export function createNativeVoicePermissionInput(params: Readonly<{
   readOut: (text: string, listen: boolean, isCurrent: () => boolean, onReady: () => void) => Promise<void>;
   commitTranscript: (text: string, localId: string) => Promise<void>;
   onResponding: () => void;
-  onResponseSettled: (failure: unknown | null) => Promise<void>;
+  onResponseSettled: (result: Readonly<{ ok: true; decision: 'approved' | 'denied' }> | Readonly<{ ok: false; error: unknown }>) => Promise<void>;
 }>): NativeVoicePermissionInput {
   const execute = createFrontDoorActionExecute();
   let disposed = false;
@@ -64,7 +73,8 @@ export function createNativeVoicePermissionInput(params: Readonly<{
     const prefs = getVoiceContextFormatterPrefs({ settings: storage.getState().settings, sessionAddress: selected.address,
       sessionId: selected.address.sessionId, isCurrentAttemptTarget: true });
     const request = selected.request;
-    const summary = summarizeAgentRequestForVoiceHuman(request.kind, request.id, request.tool, request.arguments, prefs);
+    const summary = summarizeAgentRequestForVoiceHuman(request.kind, request.id, request.tool, request.arguments, prefs,
+      resolveVoiceSessionLabel(selected.address, prefs, { fallbackLabel: t('voice.readiness.requestingSession') }));
     await readPrompt(selected, `${summary} ${prefs.voiceCanApproveRequests ? question() : t('voice.readiness.permissionTapRequired')}`,
       prefs.voiceCanApproveRequests);
   };
@@ -143,14 +153,11 @@ export function createNativeVoicePermissionInput(params: Readonly<{
       if (disposed || params.signal.aborted || !selected?.ready) return null;
       selected.ready = false;
       return async (text: string): Promise<void> => {
+        const decision = resolveSpokenPermissionDecision(text);
         try {
           if (disposed || params.signal.aborted || prompt !== selected) return;
           if (text.trim()) await params.commitTranscript(text, randomUUID());
           if (disposed || params.signal.aborted || prompt !== selected) return;
-          const normalize = (value: string) => value.trim().toLocaleLowerCase().replace(/[.!?。！？]+$/u, '').trim();
-          const answer = normalize(text);
-          const decision = answer === normalize(t('common.yes')) || answer === 'yes'
-            ? 'approved' : answer === normalize(t('common.no')) || answer === 'no' ? 'denied' : null;
           if (!decision) {
             await readPrompt(selected, question(), true);
             return;
@@ -165,10 +172,10 @@ export function createNativeVoicePermissionInput(params: Readonly<{
           responseSettlement = responding.then(result => result.ok ? decision : null, () => null);
           requireActionSuccess(await responding);
         } catch (error) {
-          if (!disposed && !params.signal.aborted) await params.onResponseSettled(error);
+          if (!disposed && !params.signal.aborted) await params.onResponseSettled({ ok: false, error });
           return;
         }
-        if (!disposed && !params.signal.aborted) await params.onResponseSettled(null);
+        if (!disposed && !params.signal.aborted && decision) await params.onResponseSettled({ ok: true, decision });
       };
     },
     waitForResponseSettlement: () => responseSettlement,

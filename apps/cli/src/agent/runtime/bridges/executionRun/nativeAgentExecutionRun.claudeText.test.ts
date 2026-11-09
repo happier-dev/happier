@@ -133,20 +133,11 @@ it.each(['off', 'standard'] as const)('settles consecutive Claude SDK quota fail
                 if (read.done) initialSettled = read;
                 expect(read.done).toBe(true);
             });
-            if (resumeMode === 'off') {
-                expect(initialSettled!.events).toContainEqual(expect.objectContaining({ t: 'error', errorCode: 'usage_limit' }));
-            } else {
-                const speech = initialSettled!.events.filter(event => event.t === 'voice_output' && event.output.kind === 'speech_segment');
-                expect(speech).toHaveLength(1);
-                expect(initialSettled!.terminalEvent).toMatchObject({ t: 'voice_output', output: { kind: 'turn_final',
-                    text: expect.stringContaining('Happier will retry automatically at') } });
-            }
+            expect(initialSettled!.events).toContainEqual(expect.objectContaining({ t: 'error', errorCode: 'usage_limit' }));
+            expect(initialSettled!.events.some(event => event.t === 'done' || event.t === 'voice_output')).toBe(false);
             if (resumeMode === 'standard') {
                 const waiting = temporaryThrottleScheduler.read('run:claude-consecutive-quota');
                 expect(waiting).toMatchObject({ status: 'waiting', attemptCount: 0 });
-                expect(initialSettled!.terminalEvent).toMatchObject({ output: {
-                    text: expect.stringContaining(new Date(waiting!.nextRetryAtMs!).toLocaleString()),
-                } });
                 expect(manager.readCurrentRuntimeAuthority(voiceAgentId)?.runtimeState).toBe('active_turn');
                 expect(recoveryDecisions).toHaveLength(attempt - 1);
                 // A second spoken commit must consume the retained waiting fact,
@@ -160,15 +151,8 @@ it.each(['off', 'standard'] as const)('settles consecutive Claude SDK quota fail
                     if (read.done) settled = read;
                     expect(read.done).toBe(true);
                 });
-                expect(settled!.events.filter(event => event.t === 'error')).toEqual([]);
-                expect(settled!.terminalEvent).toMatchObject({ t: 'voice_output', output: { kind: 'turn_final',
-                    text: expect.stringContaining('Happier will retry automatically at') } });
-                expect(settled!.terminalEvent).toMatchObject({ output: {
-                    text: initialSettled!.terminalEvent?.t === 'voice_output'
-                        && initialSettled!.terminalEvent.output.kind === 'turn_final'
-                        ? initialSettled!.terminalEvent.output.text : undefined,
-                } });
-                expect(settled!.events.filter(event => event.t === 'voice_output' && event.output.kind === 'speech_segment')).toHaveLength(1);
+                expect(settled!.events).toContainEqual(expect.objectContaining({ t: 'error', errorCode: 'usage_limit' }));
+                expect(settled!.events.some(event => event.t === 'done' || event.t === 'voice_output')).toBe(false);
                 expect(sdk.processes).toHaveLength(expectedProcesses);
                 expect(readNativePromptCount()).toBe(nativePromptsBeforeRepeat);
                 expect(temporaryThrottleScheduler.read('run:claude-consecutive-quota')).toMatchObject({ status: 'waiting', attemptCount: 0 });

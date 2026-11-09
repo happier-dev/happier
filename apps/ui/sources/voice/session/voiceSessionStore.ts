@@ -213,7 +213,6 @@ function normalizeVoiceSessionSnapshot(snapshot: VoiceSessionSnapshot): VoiceSes
     // Zustand merges snapshots: omitted capability facts must retire with their owner.
     canCommitInput: snapshot.canCommitInput,
     inputEndsOnSilence: snapshot.inputEndsOnSilence,
-    inputEndsOnSilence: snapshot.inputEndsOnSilence,
     canHoldToTalk: snapshot.canHoldToTalk,
     micMuted: snapshot.micMuted === true ? true : undefined,
     // Ensure optional error fields clear when omitted from a later snapshot.

@@ -78,8 +78,6 @@ export type VoiceSessionSnapshot = Readonly<{
   canCommitInput?: boolean;
   /** The capture finishes the turn itself on silence; Send is only an early finish. */
   inputEndsOnSilence?: boolean;
-  /** The capture finishes the turn itself on silence; Send is only an early finish. */
-  inputEndsOnSilence?: boolean;
   canHoldToTalk?: boolean;
   micMuted?: boolean;
   errorCode?: string;

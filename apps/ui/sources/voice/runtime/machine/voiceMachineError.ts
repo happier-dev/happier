@@ -4,6 +4,8 @@ import { readVoiceProviderCredentialRemediationCode } from '@happier-dev/protoco
 import { CONNECTED_SERVICE_UX_DIAGNOSTIC_ACTIONS, readConnectedServiceUxDiagnosticFromError, type ConnectedServiceUxDiagnosticV1 } from '@happier-dev/protocol/connect/connectedServiceUxDiagnostics';
 import { readSafeVoiceRuntimeFailureCode } from '@/voice/runtime/voiceRuntimeFailureCode';
 import { readSafeVoiceProviderFailureMessage } from './voiceMachineErrorCopy';
+import { createProviderErrorV1, ProviderErrorCodeV1Schema, ProviderErrorV1Schema } from '@happier-dev/protocol/providers/errors';
+import { isVoiceTextTurnRejectedBeforeEffectError } from '@/voice/session/types';
 
 import type {
     VoiceMachineError,
@@ -69,7 +71,8 @@ export function isVoiceMachineErrorKind(value: unknown): value is VoiceMachineEr
 /** Shared typed-refusal and retained reason classification for Local Voice and unknown-error ingress. */
 export function resolveVoiceMachineErrorKind(reason: string, preferredKind?: VoiceMachineErrorKind): VoiceMachineErrorKind {
     if (reason === 'agent_signed_out') return 'authentication_required';
-    if (reason === 'held_by_person') return 'session_unavailable';
+    if (reason === 'held_by_person' || reason === 'VOICE_AGENT_TARGET_SESSION_INACTIVE'
+        || reason === 'VOICE_AGENT_TARGET_SESSION_OFFLINE') return 'session_unavailable';
     if (reason === 'provider_setup_required' || reason === 'realtime_byo_not_configured' || reason === 'realtime_agent_update_required'
         || reason === 'VOICE_AGENT_STARTUP_INSTRUCTIONS_UNSUPPORTED'
         || reason === 'execution_run_protocol_unsupported'
@@ -103,15 +106,22 @@ export function createVoiceMachineError(params: Readonly<{
 }>): VoiceMachineError {
     const policy = POLICY_BY_KIND[params.kind];
     const uxDiagnostic = params.uxDiagnostic;
+    const cause = isVoiceTextTurnRejectedBeforeEffectError(params.cause) ? params.cause.cause : params.cause;
+    const providerErrorResult = ProviderErrorV1Schema.safeParse(
+        cause && typeof cause === 'object' && 'providerError' in cause ? cause.providerError : undefined,
+    );
+    const providerCode = ProviderErrorCodeV1Schema.safeParse(readSafeVoiceRuntimeFailureCode(params.cause));
+    const providerError = providerErrorResult.success ? providerErrorResult.data
+        : providerCode.success ? createProviderErrorV1(providerCode.data) : null;
     const providerMessage = readSafeVoiceProviderFailureMessage(params.reason, params.cause);
     return {
         kind: params.kind,
-        reason: uxDiagnostic?.code ?? params.reason,
+        reason: providerError?.code ?? uxDiagnostic?.code ?? params.reason,
         ...(providerMessage ? { providerMessage } : {}),
         ...policy,
         // A quota refusal requires choosing another account in Voice settings or waiting for reset.
         ...(params.kind === 'provider_error' && params.reason === 'usage_limit'
-            ? { recoveryAction: 'open_settings' as const } : {}),
+            ? { recoveryAction: 'open_settings' as const, presentation: 'error' as const, retryPolicy: 'never' as const } : {}),
         // Connected Services owns retryability; its refusal stays visible until dismissed.
         ...(uxDiagnostic ? {
             uxDiagnostic,
@@ -122,9 +132,15 @@ export function createVoiceMachineError(params: Readonly<{
                     ? 'retry' as const : 'none' as const,
             presentation: 'error' as const,
         } : {}),
+        ...(providerError ? {
+            providerError,
+            retryPolicy: providerError.retryable ? 'user_action' as const : 'never' as const,
+            recoveryAction: providerError.action === 'retry' ? 'retry' as const : 'open_settings' as const,
+            presentation: 'error' as const,
+        } : {}),
         // Only a notice ends gracefully. A blocked microphone stays on screen ("Microphone blocked"
         // with Allow, lab ST): projected as a graceful disconnect it was drawn as plain rest.
-        recoverable: !uxDiagnostic && policy.presentation === 'notice',
+        recoverable: !providerError && !uxDiagnostic && params.reason !== 'usage_limit' && policy.presentation === 'notice',
     };
 }
 

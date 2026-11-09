@@ -1,7 +1,4 @@
-import {
-    buildAgentRequestSemanticSummary,
-    formatPermissionRequestSummary,
-} from "@happier-dev/protocol/activity/agentRequestSummary";
+import { buildAgentRequestSemanticSummary } from "@happier-dev/protocol/activity/agentRequestSummary";
 import { Session } from "@/sync/domains/state/storageTypes";
 import { prepareTranscriptMessageBody } from '@/components/sessions/transcript/messageDisplayText';
 import { Message } from "@happier-dev/session-core/messages";
@@ -161,15 +158,10 @@ function resolveToolResultVoiceSummary(
         || resultStatus === 'failed'
         || resultStatus === 'timeout'
         || resultStatus === 'error';
-    const completed = resultStatus === 'succeeded' || resultStatus === 'completed' || toolState === 'completed';
     const toolLabel = resolveVoiceToolLabel(toolName, toolInput);
 
     if (failed) {
         return `${toolLabel} failed: ${summary}`;
-    }
-
-    if (completed) {
-        return `${toolLabel} completed: ${summary}`;
     }
 
     return summary;
@@ -181,16 +173,26 @@ export function summarizeAgentRequestForVoiceHuman(
     toolName: string,
     toolArgs: unknown,
     prefs?: VoiceContextFormatterPrefs,
+    sessionLabel?: string,
 ): string {
     const resolved = resolvePrefs(prefs);
     const sharedToolName = resolved.voiceShareToolNames ? toolName : t('voice.readiness.requestedTool');
 
     if (requestKind === 'permission') {
-        const summarized = formatPermissionRequestSummary({
+        const semantic = buildAgentRequestSemanticSummary({
+            kind: 'permission',
             toolName: sharedToolName,
-            toolInput: resolved.voiceShareFilePaths ? toolArgs : redactVoicePathLikeData(toolArgs ?? null),
-        }).replace(/^Permission required:\s*/i, '').trim();
-        return t('voice.readiness.permissionAnnouncement', { summary: summarized });
+            toolInput: !resolved.voiceShareToolArgs ? null
+                : resolved.voiceShareFilePaths ? toolArgs : redactVoicePathLikeData(toolArgs ?? null),
+        });
+        const summary = semantic.shellCommand ? t('voice.readiness.permissionRunCommand')
+            : semantic.filePath ? t('voice.readiness.permissionAccessFile', { path: semantic.filePath })
+                : t('voice.readiness.permissionUseTool', { tool: sharedToolName });
+        const sharedSessionLabel = resolved.voiceShareSessionSummary && sessionLabel?.trim();
+        const session = sharedSessionLabel
+            ? resolved.voiceShareFilePaths ? sharedSessionLabel : redactVoicePathLikeString(sharedSessionLabel)
+            : t('voice.readiness.requestingSession');
+        return t('voice.readiness.permissionAnnouncement', { session, summary });
     }
 
     const summary = collectUserActionSummary(toolName, toolArgs, resolved);

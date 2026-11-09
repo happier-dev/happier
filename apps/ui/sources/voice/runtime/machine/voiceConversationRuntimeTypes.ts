@@ -19,6 +19,7 @@ export type VoiceMachineError = Readonly<{
     reason: string;
     /** Sanitized provider prose admitted by the shared error-copy owner. */
     providerMessage?: string;
+    providerError?: import('@happier-dev/protocol/providers/errors').ProviderErrorV1;
     phase: VoiceMachineErrorPhase;
     retryPolicy: VoiceMachineRetryPolicy;
     recoveryAction: VoiceMachineRecoveryAction;

@@ -87,6 +87,15 @@ beforeEach(() => {
 });
 
 describe('VoiceAnnouncer transcript announcements', () => {
+    it('joins a punctuated failure with its microphone state without repeating sentence stops', async () => {
+        const screen = await renderScreen(<VoiceAnnouncerSurface {...LISTENING} transcriptEntries={[]} />);
+        await screen.update(<VoiceAnnouncerSurface {...LISTENING}
+            statusAnnouncement="Voice provider failed." statusTransitionKey="voice-status:error"
+            stateAnnouncements={[{ id: 'microphone', transitionKey: 'mic:inactive', text: 'Microphone inactive' }]}
+            transcriptEntries={[]} />);
+        expect(readAnnouncement(screen)).toBe('Voice provider failed. Microphone inactive');
+        await screen.unmount();
+    });
     it('stays silent on mount and announces the first new final entry', async () => {
         const seeded = [entry({ id: 'mount-seeded', text: 'Seeded on mount' })];
         const screen = await renderScreen(

@@ -47,6 +47,8 @@ export const VoiceBriefButton = React.memo(function VoiceBriefButton(props: Read
     // Setup's own open Action: in place where a host presents it (Home's Get set up), else Settings → Voice open.
     const setup = voice.primaryAction === 'setup' && voice.primaryActionLabel
         ? { label: voice.primaryActionLabel, onPress: openSetup }
+        : voice.primaryAction === 'recover' && voice.primaryActionLabel
+            ? { label: voice.live ? voice.primaryActionLabel : t('voicePresence.setUp'), onPress: () => { void voice.onPrimaryAction(); } }
         : undefined;
     return <VoiceBriefButtonView onOpen={request} block={props.block} disabled={!setup && !ready} setup={setup} />;
 });

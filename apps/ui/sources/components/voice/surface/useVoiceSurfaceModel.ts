@@ -1,7 +1,6 @@
 import * as React from 'react';
 
 import { usePathname } from '@/components/appShell/workspace/destinationRoute';
-import { Platform } from 'react-native';
 
 import { useSetting } from '@/sync/domains/state/storage';
 import { readVoicePrivacySettings } from '@/sync/domains/settings/readVoicePrivacySettings';
@@ -32,10 +31,6 @@ import {
 import { voiceSurfaceHaptics } from './voiceSurfaceHaptics';
 import { voiceOutputStatusStore } from '@/voice/runtime/outputStatus/voiceOutputStatusStore';
 import { normalizeNonEmptyString } from '@/voice/shared/normalizeNonEmptyString';
-import {
-    resolveCurrentVoiceRuntimePlatform,
-    resolveVoiceStartAdmission,
-} from './resolveVoiceStartAdmission';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 import { createFrontDoorUiActionExecutor } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { fireAndForget } from '@/utils/system/fireAndForget';
@@ -124,7 +119,6 @@ export function useVoiceSurfaceModel(props: VoiceSurfaceProps): VoiceSurfaceView
         canonicalVoice,
         voiceProviderRegistry,
     ) ?? 'off';
-    const providerEntry = voiceProviderRegistry.get(providerId);
     const providerTitleKey = resolveSelectedVoiceProviderTitleKey(canonicalVoice, voiceProviderRegistry);
     const providerLabel = providerTitleKey ? tLoose(providerTitleKey) : null;
     /*
@@ -199,20 +193,6 @@ export function useVoiceSurfaceModel(props: VoiceSurfaceProps): VoiceSurfaceView
         providerId !== 'off'
         && !(props.variant === 'session' && isHiddenSystemSession({ metadata: currentSessionOwnerMetadata }));
 
-    const globalStartAuthorized = bindingScope === 'global';
-    // Admission has one owner, shared with every other surface that can start a conversation
-    // (§5.6). The shared idle policy resolves scope before admission; placement decides nothing.
-    const startAdmission = resolveVoiceStartAdmission({
-        bindingScope,
-        daemonLocalVoiceUnavailable,
-        globalStartAuthorized,
-        platform: resolveCurrentVoiceRuntimePlatform(Platform.OS),
-        providerId,
-        providerSettings: providerEntry?.providerSettings ?? null,
-        registry: voiceProviderRegistry,
-        startSessionId,
-        voiceSettings: canonicalVoice,
-    });
     const surfaceState = baseAttemptControl.surfaceState;
     const canStart = baseAttemptControl.canStart;
     const canStop = baseAttemptControl.canStop;
@@ -236,8 +216,8 @@ export function useVoiceSurfaceModel(props: VoiceSurfaceProps): VoiceSurfaceView
                 ? (
                     daemonLocalVoiceUnavailable
                         ? t('settingsVoice.local.conversation.resumability.disabledVoiceAgent')
-                        : !startAdmission.connectedServicesBindingReady
-                            ? t('settingsVoice.realtimeProviders.authentication.referenceRequired')
+                        : baseAttemptControl.primaryAction === 'setup' || (baseAttemptControl.primaryAction === 'recover' && !baseAttemptControl.live)
+                            ? t('voice.readiness.settings_missing_required_setting', { service: baseAttemptControl.serviceTitle ?? providerLabel ?? t('settingsVoice.title') })
                             : targetLabel ?? t('voiceSurface.selectSessionToStart')
                 )
                 : (targetLabel ? `${t('voiceSurface.targetSession')}: ${targetLabel}` : null)

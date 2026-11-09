@@ -14498,7 +14498,9 @@ settingsSession: {
         tts_failed: "La síntesis de voz falló.",
         turn_aborted: "Se canceló el turno de voz.",
         authentication_required: "Conecta el agente seleccionado para usar Voz.",
-        agent_signed_out: ({ agent, machine }: { agent: string; machine: string }) => `${agent} no tiene una cuenta conectada predeterminada y no ha iniciado sesión en ${machine}.`,
+        agent_signed_out: ({ agent }: { agent: string; machine: string }) => `Conecta una cuenta para ${agent} o inicia sesión en el ordenador que ejecuta Voice.`,
+        target_session_inactive: "La sesión seleccionada ha terminado. Ábrela y reanúdala antes de iniciar Voice.",
+        target_session_offline: "La sesión seleccionada está sin conexión. Vuelve a conectarla antes de iniciar Voice.",
         session_unavailable: "La sesión seleccionada ya no está disponible para Voz.",
         unsupported_runtime: "Instala el entorno del agente seleccionado para usar Voz.",
         update_required: "Actualiza el entorno del agente seleccionado para usar Voz.",
@@ -16076,7 +16078,6 @@ settingsSession: {
     countSingular: "1 artefacto",
     countPlural: ({ count }: { count: number }) => `${count} artefactos`,
     new: "Nuevo artefacto",
-    edit: "Editar artefacto",
     delete: "Eliminar",
     updateError:
       "No se pudo actualizar el artefacto. Por favor, intenta de nuevo.",

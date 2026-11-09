@@ -14328,7 +14328,9 @@ settingsSession: {
         tts_failed: "Nie udało się wygenerować mowy.",
         turn_aborted: "Anulowano turę głosową.",
         authentication_required: "Połącz wybranego agenta, aby korzystać z funkcji głosowych.",
-        agent_signed_out: ({ agent, machine }: { agent: string; machine: string }) => `${agent} nie ma domyślnego połączonego konta i nie jest zalogowany na ${machine}.`,
+        agent_signed_out: ({ agent }: { agent: string; machine: string }) => `Połącz konto dla ${agent} lub zaloguj się na komputerze, na którym działa Voice.`,
+        target_session_inactive: "Wybrana sesja została zakończona. Otwórz ją i wznów przed uruchomieniem Voice.",
+        target_session_offline: "Wybrana sesja jest offline. Połącz ją ponownie przed uruchomieniem Voice.",
         session_unavailable: "Wybrana sesja nie jest już dostępna dla funkcji głosowych.",
         unsupported_runtime: "Zainstaluj środowisko wybranego agenta, aby korzystać z funkcji głosowych.",
         update_required: "Uaktualnij środowisko wybranego agenta, aby korzystać z funkcji głosowych.",
@@ -15917,7 +15919,6 @@ settingsSession: {
       return `${count} artefaktów`;
     },
     new: "Nowy artefakt",
-    edit: "Edytuj artefakt",
     delete: "Usuń",
     updateError: "Nie udało się zaktualizować artefaktu. Spróbuj ponownie.",
     deleteError: "Nie udało się usunąć artefaktu. Spróbuj ponownie.",

@@ -14777,7 +14777,9 @@ settingsSession: {
         tts_failed: "音声合成に失敗しました。",
         turn_aborted: "音声ターンが中止されました。",
         authentication_required: "音声を使用するには、選択したエージェントを接続してください。",
-        agent_signed_out: ({ agent, machine }: { agent: string; machine: string }) => `${agent} にはデフォルトの接続済みアカウントがなく、${machine} でもサインインしていません。`,
+        agent_signed_out: ({ agent }: { agent: string; machine: string }) => `${agent} のアカウントを接続するか、Voice を実行しているコンピューターでサインインしてください。`,
+        target_session_inactive: "選択したセッションは終了しています。Voice を開始する前に開いて再開してください。",
+        target_session_offline: "選択したセッションはオフラインです。Voice を開始する前に再接続してください。",
         session_unavailable: "選択したセッションは音声では利用できなくなりました。",
         unsupported_runtime: "音声を使用するには、選択したエージェントのランタイムをインストールしてください。",
         update_required: "音声を使用するには、選択したエージェントのランタイムを更新してください。",
@@ -16352,7 +16354,6 @@ settingsSession: {
     countPlural: ({ count }: { count: number }) =>
       `${count}件のアーティファクト`,
     new: "新規アーティファクト",
-    edit: "アーティファクトを編集",
     delete: "削除",
     updateError: "アーティファクトの更新に失敗しました。再試行してください。",
     deleteError:

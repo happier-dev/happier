@@ -56,7 +56,7 @@ export function projectVoiceAttemptPresentation(input: Readonly<{
         canStart: control.canStart, canStop: control.canStop, canMute: control.canMute,
         canCommitInput: control.canCommitInput === true, canDismissFailedAttempt: control.canDismissFailedAttempt === true,
         canDismissEnded: input.ended, failureKind, failureMessage,
-        ...(failureKind === 'execution_machine_unavailable' && failureMessage
+        ...((failureKind === 'execution_machine_unavailable' || failureKind === 'session_unavailable') && failureMessage
             ? { failureTitle: failureMessage }
             : {}),
         ...(failureKind === 'provider_error' && input.errorMessage?.toLowerCase() === 'usage_limit'

@@ -274,6 +274,29 @@ async function createHarness(start = true, featureEnabled = true, deferActivatio
 }
 
 describe('generated OpenAI conversation Actions through the lifecycle owner', () => {
+    it('reports setup and refuses Start for Grok without a selected credential', async () => {
+        const { lifecycle, invoke } = await createHarness(false);
+        const { createDefaultVoiceProviderRegistry } = await import('@/voice/registry/defaultRegistry');
+        const { settingsParse } = await import('@/sync/domains/settings/settings');
+        const providerId = 'happier.voice.xai/realtime-grok';
+        const entry = createDefaultVoiceProviderRegistry().get(providerId);
+        if (!entry?.providerSettings) throw new Error('Grok declaration unavailable');
+        const current = storage.getState().settings;
+        const voice = writeVoiceProviderSettingsConfig({ ...current.voice, providerId }, providerId,
+            entry.providerSettings.defaultConfig);
+        storage.setState({ settings: settingsParse({ ...current, ...normalizeVoiceSettingsLocalDelta({ voice }, current) }) });
+        const capture = vi.mocked(navigator.mediaDevices.getUserMedia);
+        capture.mockClear();
+        try {
+            expect(await invoke('ui.voice_global.get', { target: { kind: 'global' } })).toMatchObject({
+                status: 'completed', voice: { canStart: false, availability: 'recoverable' },
+            });
+            expect(await invoke('ui.voice_global.start', { target: { kind: 'global' }, expectedAttempt: null }))
+                .toMatchObject({ status: 'unavailable', code: 'voice_start_unavailable' });
+            expect(capture).not.toHaveBeenCalled();
+        } finally { await lifecycle.dispose(); }
+    });
+
     it('exposes the Provider compatibility reason and the shared review route to an agent', async () => {
         const { lifecycle, invoke } = await createHarness(false);
         const { createProviderErrorV1 } = await import('@happier-dev/protocol/providers/errors');

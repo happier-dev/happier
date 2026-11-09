@@ -197,6 +197,7 @@ export function deriveLocalVoiceSessionSnapshot(
                 errorCode: snapshot.error.kind,
                 errorMessage: snapshot.error.reason,
                 ...(snapshot.error.providerMessage ? { errorProviderMessage: snapshot.error.providerMessage } : {}),
+                ...(snapshot.error.providerError ? { errorProviderError: snapshot.error.providerError } : {}),
                 errorRecoveryAction: snapshot.error.recoveryAction,
                 errorPresentation: snapshot.error.presentation,
                 ...(snapshot.error.uxDiagnostic ? { errorConnectedServiceDiagnostic: snapshot.error.uxDiagnostic } : {}),

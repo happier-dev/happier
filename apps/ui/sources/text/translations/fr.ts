@@ -14372,7 +14372,9 @@ settingsSession: {
         tts_failed: "La synthèse vocale a échoué.",
         turn_aborted: "Tour vocal annulé.",
         authentication_required: "Connecte l’agent sélectionné pour utiliser la voix.",
-        agent_signed_out: ({ agent, machine }: { agent: string; machine: string }) => `${agent} n’a pas de compte connecté par défaut et n’est pas connecté sur ${machine}.`,
+        agent_signed_out: ({ agent }: { agent: string; machine: string }) => `Connectez un compte pour ${agent}, ou connectez-vous sur l’ordinateur qui exécute Voice.`,
+        target_session_inactive: "La session sélectionnée est terminée. Ouvrez-la et reprenez-la avant de démarrer Voice.",
+        target_session_offline: "La session sélectionnée est hors ligne. Reconnectez-la avant de démarrer Voice.",
         session_unavailable: "La session sélectionnée n’est plus disponible pour la voix.",
         unsupported_runtime: "Installe le runtime d’agent sélectionné pour utiliser la voix.",
         update_required: "Mets à jour le runtime d’agent sélectionné pour utiliser la voix.",
@@ -15950,7 +15952,6 @@ settingsSession: {
     countSingular: "1 artefact",
     countPlural: ({ count }: { count: number }) => `${count} artefacts`,
     new: "Nouvel artefact",
-    edit: "Modifier l’artefact",
     delete: "Supprimer",
     updateError:
       "Échec de la mise à jour de l’artefact. Réessaie.",

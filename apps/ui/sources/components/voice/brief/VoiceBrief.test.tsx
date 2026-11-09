@@ -42,6 +42,7 @@ import { buildVoiceTranscriptHistorySessionMetadata, VOICE_TRANSCRIPT_HISTORY_SY
 import { voiceConversationRuntimeMachine } from '@/voice/runtime/machine/VoiceConversationRuntimeMachine';
 import type { SessionAddress } from '@/sync/domains/session/sessionAddress';
 import { VoiceBriefBlock, VoiceBriefButton, VoiceBriefList } from './VoiceBrief';
+import { createDefaultVoiceProviderRegistry } from '@/voice/registry/defaultRegistry';
 import { buildVoiceBrief } from '@/voice/context/buildVoiceBrief';
 import { t } from '@/text';
 import { formatVoiceApprovalGuidance } from '@/voice/context/contextFormatters';
@@ -401,6 +402,22 @@ describe('mounted Voice Brief request', () => {
         expect(speech.starts).toHaveLength(0);
         await selectService();
         expect(screen.findByTestId('home-brief-me')?.props.accessibilityLabel).toBe(t('voiceMoments.briefMeA11y'));
+    });
+
+    it('keeps Home on setup when a declared Grok provider has no credential after hydration', async () => {
+        await installTransport();
+        const providerId = 'happier.voice.xai/realtime-grok';
+        const grok = createDefaultVoiceProviderRegistry().get(providerId);
+        if (!grok?.providerSettings) throw new Error('Grok declaration unavailable');
+        const current = storage.getState().settings;
+        const voice = voiceSettingsParse({ providerId, providers: { [providerId]: {
+            schemaVersion: grok.providerSettings.schemaVersion, config: grok.providerSettings.defaultConfig,
+        } } });
+        await act(async () => storage.setState({ settings: settingsParse({ ...current,
+            ...normalizeVoiceSettingsLocalDelta({ voice }, current) }) }));
+        screen = await renderScreen(renderHome());
+        expect(screen.findByTestId('home-brief-me')?.props.accessibilityLabel).toBe(t('voicePresence.setUp'));
+        expect(screen.findByTestId('voice-brief')).toBeNull();
     });
 
     it('admits the initial request and Retry through the real UI Action policy before starting audio', async () => {

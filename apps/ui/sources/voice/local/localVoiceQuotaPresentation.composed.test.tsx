@@ -29,7 +29,7 @@ describe('quota presentation from the local Agent controller', () => {
     registerLocalVoiceEngineHarnessHooks();
     afterEach(() => standardCleanup());
 
-    it('returns compact Voice status to Listening after a native quota refusal', async () => {
+    it('keeps the quota refusal visible in compact Voice status with account setup instead of Listening', async () => {
         const storage = await getStorage();
         const voice = storage.getState().settings.voice;
         const local = readLocalConversationVoiceSettings(voice);
@@ -69,11 +69,13 @@ describe('quota presentation from the local Agent controller', () => {
             localVoiceSpeechTranscription.mockResolvedValueOnce('SAY READY');
             await expect(executeVoiceConversationAction('ui.voice_global.turn_control', {
                 expectedAttempt: getVoiceSessionPresentedAttemptId(), control: 'commit_input',
-            }, { navigate() {} })).resolves.toMatchObject({ status: 'completed' });
-            expect(lifecycle.getSnapshot()).toMatchObject({ status: 'connected', mode: 'listening', canCommitInput: true });
+            }, { navigate() {} })).rejects.toMatchObject({ rpcErrorCode: 'usage_limit' });
+            expect(lifecycle.getSnapshot()).toMatchObject({ status: 'error', errorCode: 'provider_error',
+                errorMessage: 'usage_limit', errorRecoveryAction: 'open_settings' });
+            expect(lifecycle.getSnapshot().canCommitInput).not.toBe(true);
             const screen = await renderScreen(<CompactVoiceStatus />);
             expect(screen.findByTestId('voice-status-line')?.findAll(node =>
-                node.props.children === t('voiceAssistant.listening')).length).toBeGreaterThan(0);
+                node.props.children === t('session.usageLimitRecovery.banner.title')).length).toBeGreaterThan(0);
         } finally {
             unsubscribe();
             await lifecycle.stop();

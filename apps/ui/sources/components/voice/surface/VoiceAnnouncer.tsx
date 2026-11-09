@@ -196,7 +196,10 @@ export const VoiceAnnouncerSurface = React.memo(function VoiceAnnouncerSurface(p
             texts.push(entry.text);
         }
         if (texts.length > 0) {
-            setAnnouncement({ key: keys.join('|'), text: texts.join('. ') });
+            const text = texts.reduce((joined, next) => joined
+                ? `${joined}${/[.!?…。！？]$/u.test(joined) ? ' ' : '. '}${next.trim()}`
+                : next.trim(), '');
+            setAnnouncement({ key: keys.join('|'), text });
         }
     }, [
         props.announcementScopeKey,
