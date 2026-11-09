@@ -7638,7 +7638,7 @@ consume new codes. The inspected `../0.2` frontier
 including no scoped local changes, so their read compatibility remains.
 
 Unreleased 0.3 startup diagnostics add `model_selection_required` to the existing
-closed `SessionRuntimeFailureCauseV1.failureReason` vocabulary. Pi, CodeBuddy and Droid refusals of
+closed `SessionRuntimeFailureCauseV1.failureReason` vocabulary. Pi, Copilot, CodeBuddy, Droid and Kilo refusals of
 an unverified ChatGPT default keep the existing model reconciliation code and
 phase; matching host, runner decoder, launch Action and UI retain the precise
 reason and present model selection rather than retrying unchanged input. This is

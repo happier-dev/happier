@@ -4,7 +4,6 @@ import { PluginError } from '@happier-dev/plugin-sdk';
 import { createSecureTempDirectorySync, writeAtomicTextFile } from '@happier-dev/plugin-sdk/fs';
 import type {
   AgentAcpModelControls,
-  AgentExecutionRunOpenRequest,
   AgentRuntimeContext,
   AgentSessionOpenRequest,
 } from '@happier-dev/plugin-sdk/agents/runtime';
@@ -15,8 +14,9 @@ import { COPILOT_AUTH_ENV_VARS, COPILOT_GITHUB_TOKEN_ENV_VAR } from '../auth/ser
 import { COPILOT_PROVIDER_OWNED_ENV_KEYS } from '../providerBinding.js';
 
 const PROVIDER_NAME = 'happier-chatgpt';
+type CopilotAccountRequest = Pick<AgentSessionOpenRequest, 'configuration' | 'providerBinding' | 'connectedAccounts' | 'launchEnvironment'>;
 
-function withAccountEnvironment<T extends AgentSessionOpenRequest | AgentExecutionRunOpenRequest>(
+function withAccountEnvironment<T extends CopilotAccountRequest>(
   request: T, environment: Readonly<Record<string, string>>,
 ): T {
   const removed = new Set<string>([...COPILOT_AUTH_ENV_VARS, ...COPILOT_PROVIDER_OWNED_ENV_KEYS]);
@@ -31,7 +31,7 @@ function withAccountEnvironment<T extends AgentSessionOpenRequest | AgentExecuti
 }
 
 /** One static access-token snapshot per native process; the host owns renewal. */
-export async function prepareCopilotConnectedAccount<T extends AgentSessionOpenRequest | AgentExecutionRunOpenRequest>(
+export async function prepareCopilotConnectedAccount<T extends CopilotAccountRequest>(
   request: T,
   context: Pick<AgentRuntimeContext, 'services' | 'signal'>,
 ): Promise<Readonly<{ request: T; models?: AgentAcpModelControls; dispose(): void }>> {
@@ -43,7 +43,10 @@ export async function prepareCopilotConnectedAccount<T extends AgentSessionOpenR
     return binding ? { declaration, account: binding.account, admitted: admitted !== undefined } : null;
   }));
   const selected = selections.filter(selection => selection !== null);
-  if (selected.length === 0) return { request, dispose() {} };
+  if (selected.length === 0) return { request,
+    // Native BYOK choices also lack an exact-account catalog observation.
+    ...(request.providerBinding ? { models: { ...COPILOT_ACP_MODEL_CONTROLS, catalogConfidence: 'account_unverified' as const } } : {}),
+    dispose() {} };
   if (selected.length > 1 || request.providerBinding) throw new PluginError({
     code: 'copilot_account_provider_conflict',
     message: 'Choose one GitHub account, ChatGPT account or Provider connection for Copilot.',
@@ -65,8 +68,10 @@ export async function prepareCopilotConnectedAccount<T extends AgentSessionOpenR
   const selection = request.configuration?.model;
   const modelId = selection?.value;
   if (!modelId?.trim() || selection?.selectionSource !== 'explicit') throw new PluginError({
-    code: 'copilot_account_model_required',
+    code: 'agent_startup_model_reconciliation_failed', retryable: false,
     message: 'Choose an explicit model for the Copilot ChatGPT account.',
+    details: { failureCause: { code: 'agent_startup_model_reconciliation_failed',
+      phase: 'client_start', failureReason: 'model_selection_required', retryable: false } },
   });
   const materialized = await accounts.materialize(declaration.purpose, {
     kind: 'httpHeaders', origin: 'https://chatgpt.com', headerNames: ['Authorization', 'ChatGPT-Account-Id'],
@@ -103,6 +108,8 @@ export async function prepareCopilotConnectedAccount<T extends AgentSessionOpenR
     request: withAccountEnvironment(request, { COPILOT_PROVIDERS_CONFIG: configPath, COPILOT_MODEL: nativeModelId }),
     models: {
       ...COPILOT_ACP_MODEL_CONTROLS,
+      // The generated model row is configuration, not an account catalog observation.
+      catalogConfidence: 'account_unverified',
       projectModelState({ normalizedModelState }) {
         const model = normalizedModelState.availableModels.find(entry => entry.id === nativeModelId);
         if (!model) throw unavailable();

@@ -15,6 +15,8 @@ import { createCodeBuddyAgentRuntime } from '../../../../../packages/plugins/cod
 import { CODEBUDDY_CODEX_PURPOSE } from '../../../../../packages/plugins/codebuddy/src/agent/runtime/connectedAccounts.js';
 import { createDroidAgentRuntime } from '../../../../../packages/plugins/droid/src/agent/runtime/factory.js';
 import { DROID_CHATGPT_PURPOSE } from '../../../../../packages/plugins/droid/src/agent/runtime/connectedAccount.js';
+import { createCopilotAgentRuntime } from '../../../../../packages/plugins/copilot/src/agent/runtime/factory.js';
+import { COPILOT_OPENAI_CODEX_PURPOSE_ID } from '../../../../../packages/plugins/copilot/src/agent/auth/services/accountPurposes.js';
 import { PI_OPENAI_CODEX_REQUEST_AUTH_PURPOSE_ID } from '../../../../../packages/plugins/pi/src/agent/auth/services/requestAuth/purposes.js';
 import { sanitizeNativeAgentSessionBoundaryError } from '@/agent/runtime/registry/engineRegistry/nativeAgentSessionBoundaryError';
 import { classifyPrimarySessionRuntimeIssue, readSessionPreparationFailureDiagnostic } from '@/agent/runtime/session/errors/classifyPrimarySessionRuntimeIssue';
@@ -29,12 +31,12 @@ import { projectSessionSpawnFailure } from './projectSessionSpawnFailure';
 vi.mock('axios');
 
 describe('Connected Account default refusal', () => {
-  it.each(['pi', 'codebuddy', 'droid', 'kilo'] as const)('retains %s model-pick guidance through native startup, durable status and launch Action projection', async agentId => {
+  it.each(['pi', 'codebuddy', 'droid', 'kilo', 'copilot'] as const)('retains %s model-pick guidance through native startup, durable status and launch Action projection', async agentId => {
     const factories: Readonly<Record<typeof agentId, AgentRuntimeFactory>> = {
-      pi: createPiAgentRuntime, codebuddy: createCodeBuddyAgentRuntime, droid: createDroidAgentRuntime, kilo: createKiloAgentRuntime,
+      pi: createPiAgentRuntime, codebuddy: createCodeBuddyAgentRuntime, droid: createDroidAgentRuntime, kilo: createKiloAgentRuntime, copilot: createCopilotAgentRuntime,
     };
     const purpose = { pi: PI_OPENAI_CODEX_REQUEST_AUTH_PURPOSE_ID,
-      codebuddy: CODEBUDDY_CODEX_PURPOSE, droid: DROID_CHATGPT_PURPOSE, kilo: KILO_CODEX_PURPOSE }[agentId];
+      codebuddy: CODEBUDDY_CODEX_PURPOSE, droid: DROID_CHATGPT_PURPOSE, kilo: KILO_CODEX_PURPOSE, copilot: COPILOT_OPENAI_CODEX_PURPOSE_ID }[agentId];
     const service = { pluginId: 'happier.agent.codex', localId: 'openai-codex' };
     // The Connected Account and OS adapters are genuine host boundaries. Keep the
     // Agent preparation, refusal, host classifiers and persistence writer real.

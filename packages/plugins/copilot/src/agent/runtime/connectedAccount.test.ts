@@ -53,6 +53,22 @@ async function fixture(missingAccount = false) {
 }
 
 describe('Copilot ChatGPT static native launch', () => {
+  it('uses the same selected-account default refusal before preflight starts native ACP', async () => {
+    const { registration, connectedAccounts } = await fixture();
+    const prepare = registration.preflightSessionControls?.prepareLaunchEnvironment;
+    expect(prepare).toBeTypeOf('function');
+    if (!prepare) throw new Error('Missing native account preparation');
+    const input = { environment: { COPILOT_MODEL: 'ambient' }, connectedAccounts: {
+      ...connectedAccounts, watch: () => ({ dispose() {} }),
+    }, signal };
+    await expect(prepare(input)).rejects.toMatchObject({ code: 'agent_startup_model_reconciliation_failed',
+      details: { failureCause: { failureReason: 'model_selection_required', retryable: false } } });
+    expect(connectedAccounts.materialize).not.toHaveBeenCalled();
+    const native = await prepare({ ...input, connectedAccounts: { ...input.connectedAccounts, getBinding: async () => null } });
+    expect(native.environment).toEqual(input.environment);
+    await native.dispose();
+  });
+
   it.runIf(process.env.HAPPIER_COPILOT_NATIVE_PROBE_BINARY)('Copilot 1.0.107 consumes the generated config as a subscription-compatible Responses request', async () => {
     const { runtime, context, open } = await fixture();
     const opened = await runtime.sessions.open({ kind: 'create', sessionId: 'native-probe', cwd: '/workspace', configuration }, context);
@@ -147,7 +163,7 @@ describe('Copilot ChatGPT static native launch', () => {
     await expect(runtime.sessions.open({ kind: 'create', sessionId: 'refused', cwd: '/workspace',
       configuration: failure === 'missing-model' ? undefined : failure === 'inherited-model'
         ? { ...configuration, model: { ...configuration.model, selectionSource: 'inherited' } } : configuration,
-    }, context)).rejects.toMatchObject({ code: failure === 'missing-account' ? 'copilot_account_materialization_unavailable' : 'copilot_account_model_required' });
+    }, context)).rejects.toMatchObject({ code: failure === 'missing-account' ? 'copilot_account_materialization_unavailable' : 'agent_startup_model_reconciliation_failed' });
     expect(open).not.toHaveBeenCalled();
   });
 

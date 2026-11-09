@@ -1071,6 +1071,8 @@ Copilot, CodeBuddy and Droid's generated selected-account overlays and Kilo's na
 remain unverified inventory. The shared Session publication owner withholds their
 model choices and ACP model-option choices while retaining the active model and
 explicit native model controls.
+Copilot's Provider-bound native choices also remain unverified; the selected
+Provider model still controls the launched process.
 Copilot, CodeBuddy, Droid and Kilo reuse their launch preparation for selected-account preflight.
 Without an explicit model, preparation refuses before native startup; choose a
 model and retry the launch. Copilot, CodeBuddy, Droid and Kilo retain `model_selection_required`
