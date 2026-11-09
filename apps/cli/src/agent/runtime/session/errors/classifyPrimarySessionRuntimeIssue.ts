@@ -12,9 +12,10 @@ import { createProviderErrorV1, ProviderErrorCodeV1Schema } from '@happier-dev/p
 import { SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol/spawnSession';
 import { PromptStackPreparationError } from '@happier-dev/protocol/prompts/library/resolvePromptStackSystemAppendBlocksV1';
 import { HomeTargetResolutionError } from '@happier-dev/cli-common/homeTarget';
-import { AGENT_STARTUP_FAILURE_PREVIEWS, readAgentStartupFailureCode, readSessionPreparationFailureCode, readSessionRuntimeIssueNativeAuthAgentId, SESSION_PREPARATION_FAILURE_PREVIEWS, TEAM_CREDENTIAL_FAILURE_PREVIEW, SessionRuntimeIssueSourceV1Schema, SessionRuntimeTeamCredentialDenialDetailsV1Schema, SessionRuntimeUsageLimitDetailsV1Schema } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
+import { AGENT_STARTUP_FAILURE_PREVIEWS, readAgentStartupFailureCode, readSessionPreparationFailureCode, readSessionRuntimeIssueNativeAuthAgentId, SESSION_PREPARATION_FAILURE_PREVIEWS, SessionRuntimeIssueSourceV1Schema, SessionRuntimeTeamCredentialDenialDetailsV1Schema, SessionRuntimeUsageLimitDetailsV1Schema } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { sanitizeConnectedServiceRuntimeFailureClassification } from '@/daemon/connectedServices/runtimeAuth/sanitizeConnectedServiceRuntimeFailureClassification';
 import { hasConnectedServiceRuntimeAuthRecoveryContext } from './connectedServiceRuntimeAuthRecoveryContext';
+import { SESSION_RUNTIME_ISSUE_PREVIEW_BY_SOURCE } from './sessionRuntimeIssuePreview';
 import { resolveAgentDisplayTitle } from '@/agent/catalog/agentDisplayTitle';
 import { AGENT_CLI_MISSING_PREVIEW } from '@/packagedRuntime/managedTools/agentCliNotFoundError';
 import { inspectOwnErrorCodeDataProperty } from '@/agent/runtime/session/process/agentRuntimeBridgeError';
@@ -69,20 +70,6 @@ const causeSourceMap = {
   permission_blocked: 'permission_blocked',
   unknown: 'unknown',
 } as const satisfies Record<PrimarySessionRuntimeIssueCause, SessionRuntimeIssueSourceV1>;
-
-const sanitizedPreviewBySource = {
-  agent_status_error: 'Provider reported an error',
-  agent_process_exit: 'Provider process exited',
-  agent_process_exit_after_switch: 'Provider process exited after connected-service switch',
-  agent_session_error: 'Provider session failed',
-  usage_limit: 'Usage limit reached',
-  team_credential: TEAM_CREDENTIAL_FAILURE_PREVIEW,
-  auth_error: 'Authentication failed',
-  dependency_failure: 'Provider dependency failed',
-  stream_error: 'Provider stream failed',
-  permission_blocked: 'Permission blocked',
-  unknown: 'Session runtime failed',
-} as const satisfies Record<SessionRuntimeIssueSourceV1, string>;
 
 const startupAuthenticationFailures = {
   refresh_bridge_unavailable: { source: 'dependency_failure', preview: 'Agent authentication is unavailable on this machine. Reconnect the machine or update Happier.' },
@@ -714,7 +701,7 @@ export function classifyPrimarySessionRuntimeIssue(
       ?? (providerFailure ? presentProviderCliRefusal(providerFailure).slice(0, 2).join(' ') : null)
       ?? buildSafeModelNotFoundPreview(input.error)
       ?? (temporaryThrottle ? 'Provider is temporarily limiting requests'
-        : source === 'agent_session_error' ? nativeFailurePreview ?? diagnosticPreview ?? sanitizedPreviewBySource[source] : sanitizedPreviewBySource[source]),
+        : source === 'agent_session_error' ? nativeFailurePreview ?? diagnosticPreview ?? SESSION_RUNTIME_ISSUE_PREVIEW_BY_SOURCE[source] : SESSION_RUNTIME_ISSUE_PREVIEW_BY_SOURCE[source]),
     ...(usageLimit === null ? {} : { usageLimit }),
     ...(teamCredential === null ? {} : { teamCredential }),
     ...(temporaryThrottle === null ? {} : { temporaryThrottle }),

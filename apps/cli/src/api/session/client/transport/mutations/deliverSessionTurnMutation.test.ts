@@ -1,10 +1,15 @@
 import axios from 'axios';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { AUTHORITY_CEILING_HEADER_V1, type SessionTurnMutationV1 } from '@happier-dev/protocol';
+import { AUTHORITY_CEILING_HEADER_V1, SessionTurnMutationV1Schema, type SessionTurnMutationV1 } from '@happier-dev/protocol';
 
 import { configuration } from '@/configuration';
 import { deliverSessionTurnMutation } from './deliverSessionTurnMutation';
-import { createAccountEncryptionCurrentnessFixture } from '@/testkit/backends/sessionFixtures';
+import { createAccountEncryptionCurrentnessFixture, createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
+import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
+import { presentProviderCliRefusal } from '@/providers/lifecycle/presentProviderCliRefusal';
+import { classifyPrimarySessionRuntimeIssue } from '@/agent/runtime/session/errors/classifyPrimarySessionRuntimeIssue';
+import { AgentRuntimeDiagnosticDataV1Schema } from '@happier-dev/protocol/runtime/agentSessionV1';
+import { projectSessionSummaryV1, SessionStatusResultSchema } from '@happier-dev/protocol/sessions/control/contract';
 
 vi.mock('axios');
 
@@ -178,6 +183,44 @@ describe('deliverSessionTurnMutation Account diagnostic privacy', () => {
     beforeEach(() => {
         vi.mocked(axios.get).mockReset();
         vi.mocked(axios.post).mockReset();
+    });
+
+    it.each([
+        { code: 'usage_limit', source: 'usage_limit', causeCode: null, preview: 'Usage limit reached' },
+        { code: 'opencode_provider_session_error', source: 'agent_session_error', causeCode: null, preview: 'Provider session failed' },
+        { code: 'provider_model_not_found', source: 'agent_session_error', causeCode: null,
+            preview: presentProviderCliRefusal(createProviderErrorV1('provider_model_not_found')).slice(0, 2).join(' ') },
+        { code: 'agent_session_error', source: 'agent_session_error', causeCode: 'provider_endpoint_unauthorized',
+            preview: presentProviderCliRefusal(createProviderErrorV1('provider_endpoint_unauthorized')).slice(0, 2).join(' ') },
+    ] as const)('retains the typed $code cause without native diagnostics in E2EE status', async ({ code, source, causeCode, preview }) => {
+        vi.mocked(axios.get).mockResolvedValue({ status: 200, data: createAccountEncryptionCurrentnessFixture({ mode: 'e2ee' }) });
+        const issue = classifyPrimarySessionRuntimeIssue({ provider: 'opencode', cause: 'session_error', occurredAt: 100,
+            error: AgentRuntimeDiagnosticDataV1Schema.parse({ code, severity: 'error', details: { v: 1, source,
+                failureCause: { phase: 'turn', failureReason: source === 'usage_limit' ? 'usage_limit' : 'unclassified_provider_error',
+                    ...(causeCode ? { code: causeCode } : {}), providerErrorMessage: nativeMessage } } }),
+        });
+        const typedFailure = { ...failure, issue } satisfies SessionTurnMutationV1;
+        const sent: SessionTurnMutationV1[] = [];
+        const socket = { connected: true, emit: vi.fn(), emitWithAck: async (_event: string, payload: unknown) => {
+            sent.push(SessionTurnMutationV1Schema.parse(payload));
+            return { ok: true, receipt: ordinaryReceipt(typedFailure) };
+        } };
+
+        await expect(deliverSessionTurnMutation({ token: 'privacy-token', socket, mutation: typedFailure }))
+            .resolves.toEqual({ delivered: true, path: 'socket' });
+
+        expect(sent).toHaveLength(1);
+        const published = sent[0];
+        if (!published || published.action !== 'fail') throw new Error('Expected the published failure');
+        // Session status consumes the server's retained issue through this shared summary owner.
+        const status = SessionStatusResultSchema.parse({ session: projectSessionSummaryV1({
+            row: createSessionRecordFixture({ id: published.sessionId, lastRuntimeIssue: published.issue }),
+            metadata: null, encryption: null,
+        }) });
+        expect(status.session.lastRuntimeIssue).toMatchObject({ code, source, sanitizedPreview: preview });
+        expect(JSON.stringify(sent)).not.toContain(nativeMessage);
+        expect(JSON.stringify(sent)).not.toContain('/private/member');
+        expect(issue.failureCause?.providerErrorMessage).toBe(nativeMessage);
     });
 
     it.each([
