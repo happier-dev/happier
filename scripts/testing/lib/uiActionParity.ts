@@ -11,7 +11,10 @@ type Setting = Readonly<{ anchor: string; surfaces?: Surfaces; storage?: Readonl
 type Site = Readonly<{ filePath: string; line: number }>;
 export type UiParityFinding = Site & Readonly<{
   code: 'unregistered_action' | 'agent_unavailable' | 'mcp_unavailable' | 'cli_command_missing'
-    | 'dynamic_action' | 'setting_unmapped' | 'dynamic_setting' | 'direct_session_runner_restart';
+    | 'dynamic_action' | 'setting_unmapped' | 'dynamic_setting' | 'direct_settings_write' | 'direct_external_link' | 'direct_occurrence_write'
+    | 'direct_pending_content_write' | 'direct_external_follow_write' | 'direct_clipboard_write' | 'direct_reviewed_mark_write'
+    | 'direct_desktop_window_write' | 'direct_message_pin_write' | 'direct_view_control_write' | 'direct_session_runner_restart'
+    | 'direct_project_trust_write' | 'direct_saved_secret_repair';
   operation: string;
 }>;
 type Discovery = Readonly<{ agentIds?: ReadonlySet<string>; mcpIds?: ReadonlySet<string>;
@@ -21,7 +24,21 @@ type Discovery = Readonly<{ agentIds?: ReadonlySet<string>; mcpIds?: ReadonlySet
 
 // Owner-local exclusions apply to every census, including corridor checks. They
 // exempt presentation state or validated forwarding, never a new UI effect.
+// WorkflowBlockListEditor.onChange is controlled, unsaved document editing:
+// insert/remove/move/replace use workflowDefinitionEditV1's Protocol operations,
+// and WorkflowEditorHostScreen.changeSnapshot owns the same history/revision as
+// workflow.authoring.draft.edit (FIN AMEND-FIN-0.7, 04 §4.7). The Add adapter
+// supplies the person's chosen block and previous-result input; it never runs
+// an authored Action. Like typing, these local buffer edits need no Off/Ask
+// admission. Agent access to that buffer still uses draft.edit admission, and
+// Save/Run and all transport/settings/platform effects retain their Actions.
+// This is a semantic disposition, not a file-wide scanner suppression.
 const SOURCE_PARITY_EXCLUSIONS = [
+  {
+    filePath: 'apps/ui/sources/components/atmosphere/atmosphereSettings.ts',
+    operation: 'project:invokeAtmospherePictureOperation',
+    reason: 'Declared settings.invoke picture operation mutates the Project row only below Action admission',
+  },
   {
     filePath: 'apps/ui/sources/components/navigation/shell/appRail/AppRailMachines.tsx',
     operation: 'local:machinesRailSeenV1',
@@ -56,7 +73,8 @@ export function readUiActionParitySources(root: string): UiParitySource[] {
     for (const entry of readdirSync(directory, { withFileTypes: true })) {
       const path = join(directory, entry.name);
       if (entry.isDirectory()) walk(path);
-      else if (/\.[cm]?[jt]sx?$/.test(entry.name) && !/\.(test|spec|testHarness|testkit)\./.test(entry.name)
+      else if (/\.[cm]?[jt]sx?$/.test(entry.name) && !/\.(test|spec|testHarness|testkit|fixture)\./.test(entry.name)
+        && !/(?:TestHarness|Testkit)\.[cm]?[jt]sx?$/.test(entry.name)
         && !entry.name.endsWith('.d.ts') && !/[\\/]dev[\\/]testkit[\\/]|[\\/]__tests__[\\/]/.test(path)) {
         output.push({ filePath: relative(root, path).replaceAll('\\', '/'), content: readFileSync(path, 'utf8') });
       }
@@ -308,9 +326,13 @@ export function collectUiActionParity(files: readonly UiParitySource[], specs: r
     else if (spec.cli?.commands?.length && discovery.cliCommandIds && !discovery.cliCommandIds.has(actionId)) finding('cli_command_missing');
   }
 
-  function checkSetting(key: string, scope: string, site: Site): void {
+  function checkSetting(key: string, scope: string, site: Site, directWriter?: string): void {
     settings.push({ ...site, key, scope });
     if (exclude(`${scope}:${key}`, site)) return;
+    if (directWriter) {
+      findings.push({ ...site, code: 'direct_settings_write', operation: directWriter });
+      return;
+    }
     if (scope === 'account' && key === 'preferredLanguage'
       && declarations.some(declaration => declaration.anchor === 'language.appLanguage'
         && declaration.storage?.access === 'read_only')) {
@@ -380,6 +402,33 @@ export function collectUiActionParity(files: readonly UiParitySource[], specs: r
     function name(node: ts.Expression): string {
       if (ts.isIdentifier(node)) return aliases.get(node.text) ?? node.text;
       return ts.isPropertyAccessExpression(node) ? node.name.text : '';
+    }
+    // Contextually typed wrappers move operand checking to their callers. Only
+    // the unchanged operand on that same executor is a redundant inner site.
+    function executorAnnotation(node: ts.ArrowFunction | ts.FunctionExpression): ts.QualifiedName | undefined {
+      const parent = node.parent;
+      const type = ts.isVariableDeclaration(parent) ? parent.type
+        : ts.isCallExpression(parent) && /^(useCallback|useMemo)$/.test(name(parent.expression))
+          ? parent.typeArguments?.[0] : undefined;
+      if (!type || !ts.isTypeQueryNode(type) || !ts.isQualifiedName(type.exprName)) return undefined;
+      const target = type.exprName;
+      return target.right.text === 'execute' && ts.isIdentifier(target.left)
+        && /(?:[Aa]ction|executor)/.test(target.left.text) ? target : undefined;
+    }
+    function isExecutorForward(node: ts.CallExpression): boolean {
+      const callback = ts.findAncestor(node, ts.isFunctionLike);
+      if (!callback || !(ts.isArrowFunction(callback) || ts.isFunctionExpression(callback))) return false;
+      const target = executorAnnotation(callback);
+      const parameter = callback.parameters[0];
+      const operand = node.arguments[0] && unwrap(node.arguments[0]);
+      const callee = unwrap(node.expression);
+      return !!target && !!parameter && ts.isIdentifier(parameter.name) && !!operand && ts.isIdentifier(operand)
+        && operand.text === parameter.name.text && lookup(operand, operand.text)?.parameter === true
+        && lookup(operand, operand.text) === lookup(parameter.name, parameter.name.text)
+        && ts.isPropertyAccessExpression(callee) && ts.isIdentifier(callee.expression)
+        && ts.isIdentifier(target.left) && callee.expression.text === target.left.text
+        && callee.name.text === target.right.text
+        && lookup(callee.expression, callee.expression.text) === lookup(target, target.left.text);
     }
     function complete(parts: (string[] | undefined)[]): string[] | undefined {
       return parts.every(part => part !== undefined) ? [...new Set(parts.flat())] : undefined;
@@ -609,7 +658,12 @@ export function collectUiActionParity(files: readonly UiParitySource[], specs: r
         const writer = ts.isCallExpression(init) && /^(useApplySettings|useApplyLocalSettings)$/.test(name(init.expression))
           ? name(init.expression) === 'useApplyLocalSettings' ? 'local' : 'account'
           : ts.isCallExpression(init) && /^(useSettingActionWriter|useSettingActionFeedback)$/.test(name(init.expression)) ? 'anchor' : undefined;
-        const dispatch = ts.isCallExpression(init) && /(?:ActionExecutor|ActionExecute)$/.test(name(init.expression));
+        const callback = ts.isArrowFunction(init) || ts.isFunctionExpression(init) ? init
+          : ts.isCallExpression(init) && /^(useCallback|useMemo)$/.test(name(init.expression))
+            && init.arguments[0] && (ts.isArrowFunction(init.arguments[0]) || ts.isFunctionExpression(init.arguments[0]))
+            ? init.arguments[0] : undefined;
+        const dispatch = !!callback && !!executorAnnotation(callback)
+          || ts.isCallExpression(init) && /(?:ActionExecutor|ActionExecute)$/.test(name(init.expression));
         declare(node, node.name.text, { initializer: node.initializer, annotation: node.type, writer, dispatch });
       }
       if (ts.isCallExpression(node) && /^(createFrontDoorActionExecute|createFrontDoorUiActionExecutor)$/.test(name(node.expression))) {
@@ -653,21 +707,133 @@ export function collectUiActionParity(files: readonly UiParitySource[], specs: r
       ts.forEachChild(node, collect);
     }
     collect(source);
+    // Explicit link handlers must enter the Action front door. Scope this to
+    // synchronous user intents: authentication continuations that await their
+    // owning Action keep that Action's admission rather than becoming a second
+    // independent URL operation.
+    const externalOpenNames = new Set<string>();
+    const nativeLinkNames = new Set<string>();
+    const occurrenceSyncNames = new Set<string>();
+    const occurrenceWriters = new Set<string>();
+    const occurrenceNamespaces = new Set<string>();
+    const externalFollowWriterNames = new Set<string>();
+    const nativeWindowWriterNames = new Set<string>();
+    const nativeCaptureWriters = new Map<string, string>();
     const runnerRestartWriters = new Map<string, string>();
+    const nativePathInvokers = new Set<string>();
+    const localRuntimeExecutionHooks = new Set<string>();
+    const projectTrustWriters = new Set<string>();
+    const savedSecretRepairWriters = new Set<string>();
+    const clipboardWriters = new Map<string, string>();
+    const clipboardNamespaces = new Set<string>();
+    const reviewedPortFactories = new Set<string>();
+    const messagePinWriters = new Set<string>();
+    const messagePinNamespaces = new Set<string>();
     for (const statement of source.statements) {
       if (!ts.isImportDeclaration(statement) || !ts.isStringLiteral(statement.moduleSpecifier)) continue;
       const bindings = statement.importClause?.namedBindings;
+      const occurrenceApi = /(?:^|\/)apiAutomations(?:\.[cm]?[jt]s)?$/.test(statement.moduleSpecifier.text);
+      if (occurrenceApi && bindings && ts.isNamespaceImport(bindings)) occurrenceNamespaces.add(bindings.name.text);
+      if (statement.moduleSpecifier.text === '@/sync/domains/state/sessionMessagePinsPersistence'
+        && bindings && ts.isNamespaceImport(bindings)) messagePinNamespaces.add(bindings.name.text);
+      if (statement.moduleSpecifier.text === 'expo-clipboard' && bindings && ts.isNamespaceImport(bindings)) {
+        clipboardNamespaces.add(bindings.name.text);
+      }
       if (bindings && ts.isNamedImports(bindings)) for (const binding of bindings.elements) {
         const imported = binding.propertyName?.text ?? binding.name.text;
+        if (statement.moduleSpecifier.text === '@/utils/platform/desktopHost' && imported === 'invokeDesktopHost') {
+          nativePathInvokers.add(binding.name.text);
+        }
+        if (statement.moduleSpecifier.text === '@/components/approvals/useLocalRuntimeActionExecution'
+          && imported === 'useLocalRuntimeActionExecution') localRuntimeExecutionHooks.add(binding.name.text);
+        if (statement.moduleSpecifier.text === '@/sync/api/account/apiProjectTrust' && imported === 'rememberReviewedProjectEffect') {
+          projectTrustWriters.add(binding.name.text);
+        }
+        if (statement.moduleSpecifier.text === '@/sync/ops/settings/savedSecretResourceOperations'
+          && imported === 'repairApprovedSavedSecretResourceEnvelopesBestEffort') savedSecretRepairWriters.add(binding.name.text);
         if (statement.moduleSpecifier.text === '@/sync/ops/sessionRunnerRestart'
           && /^(restartSessionRunnerForProviderBindingChange|restartSessionRunnerOnCurrentRuntime)$/.test(imported)) {
           runnerRestartWriters.set(binding.name.text, imported);
         }
+        if (occurrenceApi && imported === 'mutateAutomationOccurrence') occurrenceWriters.add(binding.name.text);
+        if (statement.moduleSpecifier.text === '@/sync/domains/state/sessionMessagePinsPersistence'
+          && imported === 'savePersistedSessionMessagePins') messagePinWriters.add(binding.name.text);
+        if (statement.moduleSpecifier.text === '@/utils/platform/desktopWindowBridge' && imported === 'setDesktopNativeTitleBar') {
+          nativeWindowWriterNames.add(binding.name.text);
+        }
+        if (statement.moduleSpecifier.text === '@/desktop/capture/nativeCapture'
+          && /^(pauseNativeRecording|resumeNativeRecording|stopNativeRecording|writeNativeRecordingDocument)$/.test(imported)) {
+          nativeCaptureWriters.set(binding.name.text, imported);
+        }
+        if (statement.moduleSpecifier.text === '@/utils/ui/clipboard' && imported === 'setClipboardStringSafe'
+          || statement.moduleSpecifier.text === 'expo-clipboard' && /^(setString|setStringAsync)$/.test(imported)) {
+          clipboardWriters.set(binding.name.text, imported);
+        }
+        if (/^@happier-dev\/protocol(?:\/scm(?:\/reviewedMarks)?)?$/.test(statement.moduleSpecifier.text)
+          && imported === 'createScmReviewedMarksRecordPort') reviewedPortFactories.add(binding.name.text);
+        if (/(?:^|\/)openExternalUrl(?:\.[cm]?[jt]s)?$/.test(statement.moduleSpecifier.text)
+          && imported === 'openExternalUrl') externalOpenNames.add(binding.name.text);
+        if (statement.moduleSpecifier.text === 'react-native' && imported === 'Linking') nativeLinkNames.add(binding.name.text);
+        if (statement.moduleSpecifier.text === '@/sync/sync' && imported === 'sync') occurrenceSyncNames.add(binding.name.text);
+        if (statement.moduleSpecifier.text === '@/sync/ops/machineExternalSessions'
+          && imported === 'machineExternalSessionFollowPolicySet') externalFollowWriterNames.add(binding.name.text);
       }
+    }
+    const nativeLinkMethod = (node: ts.Expression, method: string) => ts.isPropertyAccessExpression(node)
+      && ts.isIdentifier(node.expression) && nativeLinkNames.has(node.expression.text) && node.name.text === method;
+    const isExternalOpen = (node: ts.Expression) => ts.isIdentifier(node) && externalOpenNames.has(node.text)
+      || nativeLinkMethod(node, 'openURL');
+    const checkedExternalOpens = new Set<number>();
+    function inspectExternalHandler(expression: ts.Expression, seen = new Set<ts.Node>()): void {
+      expression = unwrap(expression);
+      if (seen.has(expression)) return;
+      seen.add(expression);
+      if (ts.isIdentifier(expression)) {
+        const initializer = lookup(expression, expression.text)?.initializer;
+        if (initializer) inspectExternalHandler(initializer, seen);
+        return;
+      }
+      if (ts.isCallExpression(expression) && name(expression.expression) === 'useCallback' && expression.arguments[0]) {
+        inspectExternalHandler(expression.arguments[0], seen);
+        return;
+      }
+      if (!ts.isArrowFunction(expression) && !ts.isFunctionExpression(expression)) return;
+      let awaitedOwner = false;
+      const walk = (node: ts.Node): void => {
+        if (ts.isAwaitExpression(node) && ts.isCallExpression(node.expression)
+          && !isExternalOpen(node.expression.expression) && !nativeLinkMethod(node.expression.expression, 'canOpenURL')) awaitedOwner = true;
+        if (ts.isCallExpression(node) && isExternalOpen(node.expression)
+          && !awaitedOwner && !checkedExternalOpens.has(node.pos)) {
+          checkedExternalOpens.add(node.pos);
+          findings.push({ ...location(node), code: 'direct_external_link', operation: 'openExternalUrl' });
+        }
+        ts.forEachChild(node, walk);
+      };
+      walk(expression.body);
+    }
+    function collectExternalHandlers(node: ts.Node): void {
+      if (ts.isJsxAttribute(node) && /^(onPress|onOpenUrl|onOpenLink|onDecorationPress)$/.test(node.name.getText(source))
+        && node.initializer && ts.isJsxExpression(node.initializer) && node.initializer.expression) {
+        inspectExternalHandler(node.initializer.expression);
+      }
+      ts.forEachChild(node, collectExternalHandlers);
+    }
+    if (externalOpenNames.size || nativeLinkNames.size) collectExternalHandlers(source);
+    function isSignedOutRuntimeDraft(node: ts.Node): boolean {
+      for (let ancestor = node.parent; ancestor; ancestor = ancestor.parent) {
+        if (!ts.isArrowFunction(ancestor) && !ts.isFunctionExpression(ancestor)) continue;
+        const call = ancestor.parent;
+        if (!ts.isCallExpression(call) || !call.arguments.includes(ancestor)
+          || !ts.isPropertyAccessExpression(call.expression) || call.expression.name.text !== 'runSignedOutDraft') continue;
+        const owner = localValue(call.expression.expression);
+        if (ts.isCallExpression(owner) && ts.isIdentifier(owner.expression)
+          && localRuntimeExecutionHooks.has(owner.expression.text) && !lookup(owner.expression, owner.expression.text)) return true;
+      }
+      return false;
     }
     const checked = new Set<number>();
     const checkedSettings = new Set<ts.Expression>();
-    function delta(expression: ts.Expression, scope: string, seen = new Set<ts.Node>(), previous = new Set<Binding>()): void {
+    function delta(expression: ts.Expression, scope: string, directWriter?: string, seen = new Set<ts.Node>(), previous = new Set<Binding>()): void {
       expression = unwrap(expression);
       if (seen.has(expression)) {
         findings.push({ ...location(expression), code: 'dynamic_setting', operation: 'cyclic setting delta' });
@@ -676,24 +842,24 @@ export function collectUiActionParity(files: readonly UiParitySource[], specs: r
       seen.add(expression);
       const local = ts.isIdentifier(expression) ? lookup(expression, expression.text)?.initializer : undefined;
       const value = local ? unwrap(local) : resolve(expression);
-      if (value !== expression) { delta(value, scope, seen, previous); return; }
+      if (value !== expression) { delta(value, scope, directWriter, seen, previous); return; }
       if (ts.isConditionalExpression(value)) {
-        delta(value.whenTrue, scope, new Set(seen), previous); delta(value.whenFalse, scope, new Set(seen), previous);
+        delta(value.whenTrue, scope, directWriter, new Set(seen), previous); delta(value.whenFalse, scope, directWriter, new Set(seen), previous);
       } else if (ts.isArrowFunction(value) && !ts.isBlock(value.body)) {
         const parameter = value.parameters[0];
         const binding = parameter && ts.isIdentifier(parameter.name) ? lookup(parameter.name, parameter.name.text) : undefined;
-        delta(value.body, scope, seen, binding ? new Set([...previous, binding]) : previous);
+        delta(value.body, scope, directWriter, seen, binding ? new Set([...previous, binding]) : previous);
       }
       else if (ts.isObjectLiteralExpression(value)) {
         for (const field of value.properties) {
           if (ts.isPropertyAssignment(field) || ts.isShorthandPropertyAssignment(field)) {
             const keys = ts.isComputedPropertyName(field.name) ? strings(field.name.expression)
               : [field.name.getText(source).replaceAll(/['"]/g, '')];
-            for (const key of keys) checkSetting(key, scope, location(field));
+            for (const key of keys) checkSetting(key, scope, location(field), directWriter);
             if (!keys.length) findings.push({ ...location(field), code: 'dynamic_setting', operation: ts.SyntaxKind[field.kind] });
           } else if (ts.isSpreadAssignment(field)) {
             const prior = ts.isIdentifier(field.expression) ? lookup(field.expression, field.expression.text) : undefined;
-            if (!prior || !previous.has(prior)) delta(field.expression, scope, new Set(seen), previous);
+            if (!prior || !previous.has(prior)) delta(field.expression, scope, directWriter, new Set(seen), previous);
           }
           else findings.push({ ...location(field), code: 'dynamic_setting', operation: ts.SyntaxKind[field.kind] });
         }
@@ -739,15 +905,94 @@ export function collectUiActionParity(files: readonly UiParitySource[], specs: r
         const request = ts.isObjectLiteralExpression(node.parent) && ts.isCallExpression(node.parent.parent)
           && node.parent.parent.arguments[0] === node.parent
           && /^(execute|executeAction|invoke|dispatch)$/.test(name(node.parent.parent.expression));
+        const bridgeCall = ts.isObjectLiteralExpression(node.parent) && ts.isCallExpression(node.parent.parent)
+          && node.parent.parent.arguments[0] === node.parent ? node.parent.parent : undefined;
+        const bridge = bridgeCall && ts.isIdentifier(bridgeCall.expression) && !lookup(bridgeCall.expression, bridgeCall.expression.text)
+          ? module(file.filePath)?.imports.get(bridgeCall.expression.text) : undefined;
+        // Public Actions use the existing desktop transport alongside private navigation intents.
+        // Follow the consumed canonical bridge binding; an arbitrary metadata field is not dispatch.
+        const desktopAction = property === 'actionIdentifier'
+          && bridge?.path === 'apps/ui/sources/utils/platform/desktopWindowActionBridge.ts'
+          && bridge.name === 'executeDesktopWindowActionWithResult'
+          && strings(node.initializer, new Set(), false).some(id => catalog.has(id));
         if ((property === 'actionId' && (request || !rpcReference(node.initializer)
           && strings(node.initializer, new Set(), false).some(id => catalog.has(id))))
-          || (property === 'id' && registration)) dispatch(node.initializer);
+          || (property === 'id' && registration) || desktopAction) dispatch(node.initializer);
       }
       if (ts.isCallExpression(node)) {
         const called = name(node.expression);
         const effectOwner = file.filePath.startsWith('apps/ui/sources/sync/ops/actions/');
         const directRunnerRestart = !effectOwner && ts.isIdentifier(node.expression)
           && runnerRestartWriters.has(node.expression.text) && !lookup(node.expression, node.expression.text);
+        // Explicit view commands need admission even though their terminal state is local.
+        // Hydration, geometry and registered Action terminals remain direct writers.
+        const fileViewConsumer = file.filePath.startsWith('apps/ui/sources/components/workspaces/files/');
+        const viewIngress = ts.findAncestor(node, ancestor =>
+          fileViewConsumer && ts.isVariableDeclaration(ancestor) && ts.isIdentifier(ancestor.name)
+            && /^(onDisplayMode|onChangesScopeChange)$/.test(ancestor.name.text)
+          || ts.isPropertyAssignment(ancestor)
+            && (fileViewConsumer && ancestor.name.getText(source).replaceAll(/['"]/g, '') === 'toggleBlame'
+              || /^(panes\.main\.toggle|panes\.side\.toggle)$/.test(ancestor.name.getText(source).replaceAll(/['"]/g, '')))
+          || ts.isJsxAttribute(ancestor) && ancestor.name.getText(source) === 'onPress'
+            && file.filePath.includes('/panes/') && called === 'setHidden');
+        const directViewControlWrite = !effectOwner && viewIngress
+          && /^(setHidden|toggle|setSideVisible|patchFileView|setDisplayMode)$/.test(called);
+        const directClipboardWrite = !effectOwner && file.filePath !== 'apps/ui/sources/utils/ui/clipboard.ts'
+          && (ts.isIdentifier(node.expression) && clipboardWriters.has(node.expression.text) && !lookup(node.expression, node.expression.text)
+            || ts.isPropertyAccessExpression(node.expression) && ts.isIdentifier(node.expression.expression)
+              && clipboardNamespaces.has(node.expression.expression.text) && !lookup(node.expression.expression, node.expression.expression.text)
+              && /^(setString|setStringAsync)$/.test(called));
+        const reviewedReceiver = ts.isPropertyAccessExpression(node.expression) ? localValue(node.expression.expression) : null;
+        const directReviewedWrite = !effectOwner && reviewedReceiver && ts.isCallExpression(reviewedReceiver)
+          && ts.isIdentifier(reviewedReceiver.expression) && reviewedPortFactories.has(reviewedReceiver.expression.text)
+          && !lookup(reviewedReceiver.expression, reviewedReceiver.expression.text)
+          && /^(setReviewed|setReviewedKeys|clear)$/.test(called);
+        const directMessagePinWrite = !effectOwner && (ts.isIdentifier(node.expression)
+          && messagePinWriters.has(node.expression.text) && !lookup(node.expression, node.expression.text)
+          || ts.isPropertyAccessExpression(node.expression) && ts.isIdentifier(node.expression.expression)
+            && messagePinNamespaces.has(node.expression.expression.text) && !lookup(node.expression.expression, node.expression.expression.text)
+            && called === 'savePersistedSessionMessagePins');
+        // A matching setting declaration proves discoverability, never executor ingress.
+        // Raw writers belong below the Action boundary; rendered controls and hooks must
+        // use the declared writer even when their delta names a known storage key.
+        const consumer = /\/(?:components|hooks)\//.test(file.filePath) || /\/use[^/]*\.[cm]?[jt]sx?$/.test(file.filePath);
+        const importedWriter = ts.isIdentifier(node.expression)
+          ? module(file.filePath)?.imports.get(node.expression.text)?.name : undefined;
+        const directProjectWrite = consumer && (called === 'mutateProjectAtmosphereSetting'
+          || importedWriter === 'mutateProjectAtmosphereSetting');
+        const directSettingsWrite = consumer && ts.isPropertyAccessExpression(node.expression)
+          && /^(applySettings|applyLocalSettings|mutateAccountSettingsOnce)$/.test(called);
+        const occurrenceCallee = consumer && !effectOwner && (occurrenceWriters.size || occurrenceNamespaces.size)
+          ? localValue(node.expression) : node.expression;
+        const occurrenceReceiver = ts.isPropertyAccessExpression(occurrenceCallee) ? localValue(occurrenceCallee.expression) : null;
+        const rawOccurrenceWrite = ts.isIdentifier(occurrenceCallee)
+          && occurrenceWriters.has(occurrenceCallee.text) && !lookup(occurrenceCallee, occurrenceCallee.text)
+          || ts.isPropertyAccessExpression(occurrenceCallee) && occurrenceCallee.name.text === 'mutateAutomationOccurrence'
+            && occurrenceReceiver && ts.isIdentifier(occurrenceReceiver) && occurrenceNamespaces.has(occurrenceReceiver.text)
+            && !lookup(occurrenceReceiver, occurrenceReceiver.text);
+        const directOccurrenceWrite = !effectOwner && consumer && (rawOccurrenceWrite || ts.isPropertyAccessExpression(node.expression)
+          && ts.isIdentifier(node.expression.expression) && occurrenceSyncNames.has(node.expression.expression.text)
+          && /^(cancelAutomationRun|retryAutomationReplyHandoff|deliverAutomationResultAgain)$/.test(called));
+        const directPendingWrite = consumer && ts.isPropertyAccessExpression(node.expression)
+          && ts.isIdentifier(node.expression.expression) && occurrenceSyncNames.has(node.expression.expression.text)
+          && /^(updatePendingMessage|sendPendingMessageNow|deletePendingMessage|deleteDiscardedPendingMessage|restoreDiscardedPendingMessage)$/.test(called);
+        const directExternalFollowWrite = consumer && ts.isIdentifier(node.expression)
+          && externalFollowWriterNames.has(node.expression.text);
+        const directNativeWindowWrite = consumer
+          && file.filePath !== 'apps/ui/sources/components/settings/desktop/desktopWindowChromeBinding.ts'
+          && ts.isIdentifier(node.expression) && nativeWindowWriterNames.has(node.expression.text)
+          && !lookup(node.expression, node.expression.text);
+        const directCaptureWrite = consumer && ts.isIdentifier(node.expression)
+          && nativeCaptureWriters.has(node.expression.text) && !lookup(node.expression, node.expression.text);
+        const directNativePathWrite = consumer && ts.isIdentifier(node.expression)
+          && nativePathInvokers.has(node.expression.text) && !lookup(node.expression, node.expression.text)
+          && node.arguments[0] && ts.isStringLiteral(node.arguments[0])
+          && /^(system_tasks_open_log_path|system_tasks_reveal_output_path)$/.test(node.arguments[0].text)
+          && !isSignedOutRuntimeDraft(node);
+        const directProjectTrustWrite = consumer && ts.isIdentifier(node.expression)
+          && projectTrustWriters.has(node.expression.text) && !lookup(node.expression, node.expression.text);
+        const directSavedSecretRepair = consumer && ts.isIdentifier(node.expression)
+          && savedSecretRepairWriters.has(node.expression.text) && !lookup(node.expression, node.expression.text);
         const callable = ts.isIdentifier(node.expression) ? lookup(node.expression, node.expression.text)
           : ts.isPropertyAccessExpression(node.expression) && ts.isIdentifier(node.expression.expression)
             ? lookup(node.expression, node.expression.expression.text) : undefined;
@@ -756,9 +1001,47 @@ export function collectUiActionParity(files: readonly UiParitySource[], specs: r
         const first = node.arguments[adapterArgument ?? (/^executeOn(Machine|Session|Source)$/.test(called) ? 1 : 0)];
         const writer = callable?.writer ?? (ts.isPropertyAccessExpression(node.expression)
           && /^(applySettings|applyLocalSettings)$/.test(called) ? called === 'applyLocalSettings' ? 'local' : 'account' : undefined);
-        if (directRunnerRestart) {
+        if (directNativePathWrite) {
+          findings.push({ ...location(node), code: 'direct_desktop_window_write', operation: (node.arguments[0] as ts.StringLiteral).text });
+        } else if (directSavedSecretRepair) {
+          findings.push({ ...location(node), code: 'direct_saved_secret_repair', operation: 'repairApprovedSavedSecretResourceEnvelopesBestEffort' });
+        } else if (directProjectTrustWrite) {
+          findings.push({ ...location(node), code: 'direct_project_trust_write', operation: 'rememberReviewedProjectEffect' });
+        } else if (directRunnerRestart) {
           findings.push({ ...location(node), code: 'direct_session_runner_restart',
             operation: runnerRestartWriters.get((node.expression as ts.Identifier).text)! });
+        } else if (directViewControlWrite) {
+          findings.push({ ...location(node), code: 'direct_view_control_write', operation:
+            /^(patchFileView|setDisplayMode)$/.test(called) ? 'file.view.set' : 'shell.column.set' });
+        } else if (directMessagePinWrite) {
+          findings.push({ ...location(node), code: 'direct_message_pin_write', operation: 'savePersistedSessionMessagePins' });
+        } else if (directClipboardWrite) {
+          findings.push({ ...location(node), code: 'direct_clipboard_write', operation: ts.isIdentifier(node.expression)
+            ? clipboardWriters.get(node.expression.text)! : called });
+        } else if (directCaptureWrite) {
+          findings.push({ ...location(node), code: 'direct_desktop_window_write', operation:
+            nativeCaptureWriters.get(ts.isIdentifier(node.expression) ? node.expression.text : called)! });
+        } else if (directNativeWindowWrite) {
+          findings.push({ ...location(node), code: 'direct_desktop_window_write', operation: 'setDesktopNativeTitleBar' });
+        } else if (directReviewedWrite) {
+          findings.push({ ...location(node), code: 'direct_reviewed_mark_write', operation: called });
+        } else if (directPendingWrite) {
+          findings.push({ ...location(node), code: 'direct_pending_content_write', operation: called });
+        } else if (directExternalFollowWrite) {
+          findings.push({ ...location(node), code: 'direct_external_follow_write', operation: 'machineExternalSessionFollowPolicySet' });
+        } else if (directOccurrenceWrite) {
+          findings.push({ ...location(node), code: 'direct_occurrence_write', operation: rawOccurrenceWrite ? 'mutateAutomationOccurrence' : called });
+        } else if (directProjectWrite) {
+          const pictureOperation = ts.findAncestor(node, ancestor => ts.isFunctionDeclaration(ancestor)
+            && ancestor.name?.text === 'invokeAtmospherePictureOperation');
+          if (!pictureOperation || !exclude('project:invokeAtmospherePictureOperation', location(node))) {
+            findings.push({ ...location(node), code: 'direct_settings_write', operation: 'mutateProjectAtmosphereSetting' });
+          }
+        } else if (directSettingsWrite) {
+          // Resolve each key through the same exemption owner before rejecting raw
+          // ingress. An exempt local field cannot bless other fields in the delta.
+          if (first) delta(first, writer ?? 'account', called);
+          else findings.push({ ...location(node), code: 'direct_settings_write', operation: called });
         } else if (first && /^(useSettingMutable|useLocalSettingMutable)$/.test(called)) {
           // The tuple is also used as a reader. Its setter's live references above own mutation coverage.
         } else if (first && writer && (ts.isIdentifier(node.expression) || /^(setSetting|applySettings|applyLocalSettings)$/.test(called))) {
@@ -768,7 +1051,7 @@ export function collectUiActionParity(files: readonly UiParitySource[], specs: r
             if (values.length) for (const value of values) checkAnchor(value, location(first));
             else findings.push({ ...location(first), code: 'dynamic_setting', operation: ts.SyntaxKind[first.kind] });
           } else delta(operand, writer);
-        } else if (first && !isCurrentUiContextCommandInvoke(node.expression)
+        } else if (first && !isExecutorForward(node) && !isCurrentUiContextCommandInvoke(node.expression)
           && !/^(getActionSpec|isActionSpec|resolveAction|readAction)/.test(called)) {
           // The canonical mounted-command hook admits its own Action; its invoke operand is an opaque local key.
           // Literal ids also find thin family clients whose method is simply named `run`.

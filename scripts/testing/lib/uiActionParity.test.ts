@@ -1,11 +1,34 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { collectUiActionParity } from './uiActionParity.ts';
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { BUILT_IN_SETTINGS_METADATA_V1 } from '../../../packages/protocol/src/actions/settings/builtInSettingsMetadata.ts';
+import { SCREEN_CAPTURE_DELIVERY_ACTION_SPECS } from '../../../packages/protocol/src/actions/specs/screenCapture.ts';
+import { listActionSpecs } from '../../../packages/protocol/src/actions/actionSpecs.ts';
+import { collectUiActionParity, readUiActionParitySources } from './uiActionParity.ts';
 
 const specs = [
   { id: 'demo.edit', surfaces: { ui: true, agent: true, mcp: true, cli: false } },
   { id: 'settings.set', surfaces: { ui: true, agent: true, mcp: true, cli: true }, cli: { commands: [{ path: ['settings', 'set'] }] } },
 ];
+
+test('source discovery excludes test harnesses and composed fixtures while retaining product controls', () => {
+  const root = mkdtempSync(join(tmpdir(), 'ui-parity-sources-'));
+  try {
+    const sources = join(root, 'apps/ui/sources');
+    mkdirSync(sources, { recursive: true });
+    for (const file of ['Controls.tsx', 'TestHarnessControls.tsx', 'quotaTestHarness.ts', 'boardActionsTestkit.ts',
+      'catalog.testHarness.ts', 'origination.account.composed.fixture.ts', 'Controls.test.tsx']) {
+      writeFileSync(join(sources, file), "executor.execute('demo.edit', {});");
+    }
+    assert.deepEqual(readUiActionParitySources(root).map(file => file.filePath).sort(), [
+      'apps/ui/sources/Controls.tsx', 'apps/ui/sources/TestHarnessControls.tsx',
+    ]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
 
 test('current-context hook commands use opaque keys while arbitrary invoke calls remain Actions', () => {
   const report = collectUiActionParity([{ filePath: 'apps/ui/sources/components/Commands.tsx', content: `
@@ -58,6 +81,341 @@ test('declaration shadowing preserves typed local Action adapter argument positi
   ]);
 });
 
+test('typed executor forwarding checks callers and still reports rewritten or redirected operands', () => {
+  const report = collectUiActionParity([{ filePath: 'apps/ui/sources/components/Forward.tsx', content: `
+    const actions = useMountedActionExecution();
+    const forward: typeof actions.execute = (actionId, input) => actions.execute(actionId, input);
+    forward('demo.edit', {});
+    forward('missing.action', {});
+    forward(dynamicId, {});
+    const rewrite: typeof actions.execute = (actionId, input) => actions.execute(otherId, input);
+    const redirect: typeof actions.execute = (actionId, input) => otherActions.execute(actionId, input);
+    const memo = React.useCallback<typeof actions.execute>((actionId, input) => actions.execute(actionId, input), []);
+    memo('demo.edit', {});
+    memo('memo.missing', {});
+  ` }], specs, []);
+  assert.deepEqual(report.actions.map(site => site.actionId), ['demo.edit', 'missing.action', 'demo.edit', 'memo.missing']);
+  assert.deepEqual(report.findings.map(site => [site.code, site.operation]), [
+    ['unregistered_action', 'missing.action'],
+    ['dynamic_action', 'Identifier: dynamicId'],
+    ['dynamic_action', 'Identifier: otherId'],
+    ['dynamic_action', 'Identifier: actionId'],
+    ['unregistered_action', 'memo.missing'],
+  ]);
+});
+
+test('explicit Saved Secret repair requires Action admission while maintenance stays with its owner', () => {
+  const content = `import { repairApprovedSavedSecretResourceEnvelopesBestEffort as repair } from '@/sync/ops/settings/savedSecretResourceOperations';
+    repair(input);
+    function local(repair) { repair(); }`;
+  const report = collectUiActionParity([
+    { filePath: 'apps/ui/sources/components/secrets/SavedSecretAccessEditor.tsx', content },
+    { filePath: 'apps/ui/sources/sync/ops/settings/savedSecretResourceOperations.ts', content },
+  ], specs, []);
+  assert.deepEqual(report.findings.map(site => [site.code, site.operation]), [
+    ['direct_saved_secret_repair', 'repairApprovedSavedSecretResourceEnvelopesBestEffort'],
+  ]);
+});
+
+test('native reveal and remembered Trust UI effects require Action admission', () => {
+  const content = `import { invokeDesktopHost as native } from '@/utils/platform/desktopHost';
+    import { rememberReviewedProjectEffect as remember } from '@/sync/api/account/apiProjectTrust';
+    native('system_tasks_open_log_path', { path }); native('system_tasks_reveal_output_path', { path });
+    native('read_only_status'); remember(scope, input);
+    function local(native, remember) { native('system_tasks_open_log_path'); remember(); }`;
+  const report = collectUiActionParity([
+    { filePath: 'apps/ui/sources/components/workspaces/sync/Reveal.tsx', content },
+    { filePath: 'apps/ui/sources/sync/ops/actions/homeRuntimeActionDeps.ts', content },
+  ], specs, []);
+  assert.deepEqual(report.findings.map(site => [site.code, site.operation]), [
+    ['direct_desktop_window_write', 'system_tasks_open_log_path'],
+    ['direct_desktop_window_write', 'system_tasks_reveal_output_path'],
+    ['direct_project_trust_write', 'rememberReviewedProjectEffect'],
+  ]);
+});
+
+test('native path drafts consume only the canonical signed-out execution owner', () => {
+  const report = collectUiActionParity([{ filePath: 'apps/ui/sources/components/RuntimeControls.tsx', content: `
+    import { invokeDesktopHost as native } from '@/utils/platform/desktopHost';
+    import { useLocalRuntimeActionExecution as useRuntime } from '@/components/approvals/useLocalRuntimeActionExecution';
+    const runtime = useRuntime();
+    runtime.runSignedOutDraft(() => native('system_tasks_open_log_path', { path }));
+    const fake = { runSignedOutDraft: callback => callback() };
+    fake.runSignedOutDraft(() => native('system_tasks_open_log_path', { path }));
+    function shadow(useRuntime) {
+      const runtime = useRuntime();
+      runtime.runSignedOutDraft(() => native('system_tasks_reveal_output_path', { path }));
+    }
+  ` }], specs, []);
+  assert.deepEqual(report.findings.map(site => site.operation), ['system_tasks_open_log_path', 'system_tasks_reveal_output_path']);
+});
+
+test('runner restart UI effects require Action admission and preserve effect adapters', () => {
+  const content = `import { restartSessionRunnerForProviderBindingChange as recover,
+    restartSessionRunnerOnCurrentRuntime } from '@/sync/ops/sessionRunnerRestart';
+    recover(input); restartSessionRunnerOnCurrentRuntime(input);
+    function local(recover) { recover(); }`;
+  const report = collectUiActionParity([
+    { filePath: 'apps/ui/sources/components/sessions/composer/Controller.tsx', content },
+    { filePath: 'apps/ui/sources/sync/ops/actions/defaultActionExecutor.ts', content },
+  ], specs, []);
+  assert.deepEqual(report.findings.map(site => [site.code, site.operation]), [
+    ['direct_session_runner_restart', 'restartSessionRunnerForProviderBindingChange'],
+    ['direct_session_runner_restart', 'restartSessionRunnerOnCurrentRuntime'],
+  ]);
+});
+
+test('Environment navigation and shared placement controls enter agent-visible Actions', () => {
+  const files = [
+    'apps/ui/sources/components/projects/deployments/environmentNavigation.tsx',
+    'apps/ui/sources/components/projects/deployments/EnvironmentNavigationViews.tsx',
+    'apps/ui/sources/components/ui/navigation/useNavigationSurfacePlacement.ts',
+    'apps/ui/sources/components/ui/navigation/NavigationPlacementCustomizer.tsx',
+    'apps/ui/sources/components/navigation/mobile/chrome/bars/detailPhoneNavigation.tsx',
+  ].map(filePath => ({ filePath, content: readFileSync(filePath, 'utf8') }));
+  const report = collectUiActionParity(files, listActionSpecs(), BUILT_IN_SETTINGS_METADATA_V1, { sourceRoot: process.cwd() });
+  assert.deepEqual(report.findings, []);
+  for (const actionId of ['shell.column.set', 'settings.set']) {
+    assert.ok(report.actions.some(site => site.actionId === actionId), actionId);
+  }
+});
+
+test('recording UI mutations enter Actions while native adapters remain the effect owner', () => {
+  const content = `import { pauseNativeRecording as pause, resumeNativeRecording, stopNativeRecording,
+    writeNativeRecordingDocument } from '@/desktop/capture/nativeCapture';
+    pause(7); resumeNativeRecording(7); stopNativeRecording(7); writeNativeRecordingDocument('movie', next, options);
+    function local(pause) { pause(); }`;
+  const report = collectUiActionParity([
+    { filePath: 'apps/ui/sources/components/screenCapture/window/CaptureWindowRoute.tsx', content },
+    { filePath: 'apps/ui/sources/sync/ops/actions/screenCaptureNativeActions.ts', content },
+  ], specs, []);
+  assert.deepEqual(report.findings.map(site => [site.code, site.operation]), [
+    ['direct_desktop_window_write', 'pauseNativeRecording'],
+    ['direct_desktop_window_write', 'resumeNativeRecording'],
+    ['direct_desktop_window_write', 'stopNativeRecording'],
+    ['direct_desktop_window_write', 'writeNativeRecordingDocument'],
+  ]);
+});
+
+test('explicit pane and File view controls cannot call raw state writers', () => {
+  const report = collectUiActionParity([
+    { filePath: 'apps/ui/sources/components/appShell/panes/mainColumn/PaneMainColumnControls.tsx', content:
+      `const button = <Button onPress={() => main.setHidden(true)} />;` },
+    { filePath: 'apps/ui/sources/components/appShell/panes/AppPaneScopeHost.tsx', content:
+      `const keys = { 'panes.main.toggle': () => toggle(), 'panes.side.toggle': () => props.setSideVisible(true) };
+       const terminal = { setVisible: visible => props.setHidden(!visible) };` },
+    { filePath: 'apps/ui/sources/components/workspaces/files/details/WorkspaceFileDetailsView.tsx', content:
+      `const onDisplayMode = mode => { patchFileView({ mode }); setDisplayMode(mode); };
+       const onChangesScopeChange = changesScope => patchFileView({ changesScope });
+       const menu = { toggleBlame: () => patchFileView({ blame: true }) };
+       const terminal = { set: patch => { applyDisplayMode(patch.mode); patchFileView(patch); } };
+       useEffect(() => patchFileView({ mode: 'file' }), []);
+       const wrap = () => patchFileView({ wrap: true });` },
+    { filePath: 'apps/ui/sources/components/media/Gallery.tsx', content:
+      `const onDisplayMode = mode => setDisplayMode(mode);` },
+  ], specs, []);
+  assert.deepEqual(report.findings.filter(site => site.code === 'direct_view_control_write').map(site => site.operation), [
+    'shell.column.set', 'shell.column.set', 'shell.column.set',
+    'file.view.set', 'file.view.set', 'file.view.set', 'file.view.set',
+  ]);
+});
+
+test('current pane and File view UI ingress reaches the Action executor', () => {
+  const files = [
+    'apps/ui/sources/components/appShell/panes/mainColumn/PaneMainColumnControls.tsx',
+    'apps/ui/sources/components/appShell/panes/AppPaneScopeHost.tsx',
+    'apps/ui/sources/components/appShell/panes/AppPaneScopeControls.tsx',
+    'apps/ui/sources/components/workspaces/files/details/WorkspaceFileDetailsView.tsx',
+  ].map(filePath => ({ filePath, content: readFileSync(new URL(`../../../${filePath}`, import.meta.url), 'utf8') }));
+  const report = collectUiActionParity(files, specs, []);
+  assert.deepEqual(report.findings.filter(site => site.code === 'direct_view_control_write'), []);
+});
+
+test('device-local message pin UI writes enter Actions while the canonical pin adapter owns persistence', () => {
+  const content = `import { savePersistedSessionMessagePins as savePins } from '@/sync/domains/state/sessionMessagePinsPersistence';
+    import * as pinStore from '@/sync/domains/state/sessionMessagePinsPersistence';
+    savePins('session', pins, account); pinStore.savePersistedSessionMessagePins('session', pins, account);
+    function local(savePins, pinStore) { savePins(); pinStore.savePersistedSessionMessagePins(); }`;
+  const report = collectUiActionParity([
+    { filePath: 'apps/ui/sources/components/sessions/transcript/Pin.tsx', content },
+    { filePath: 'apps/ui/sources/sync/ops/actions/sessionMessagePinsAction.ts', content },
+  ], specs, []);
+  assert.deepEqual(report.findings.map(site => [site.code, site.operation]), [
+    ['direct_message_pin_write', 'savePersistedSessionMessagePins'],
+    ['direct_message_pin_write', 'savePersistedSessionMessagePins'],
+  ]);
+});
+
+test('picker and message pin controls retain their literal Action discovery', () => {
+  const ids = ['ui.prompts.picker.select', 'ui.prompts.picker.apply', 'session.messages.pins'];
+  const report = collectUiActionParity([{ filePath: 'apps/ui/sources/components/Picker.tsx',
+    content: ids.map(id => `executor.execute('${id}', input);`).join('\n') }],
+  ids.map(id => ({ id, surfaces: { ui: true, agent: true, mcp: true, cli: false } })), []);
+  assert.deepEqual(report.actions.map(site => site.actionId), ids);
+  assert.deepEqual(report.findings, []);
+});
+
+test('clipboard controls share Action admission except at the gesture-aware clipboard owner', () => {
+  const safe = `import { setClipboardStringSafe as rawCopy } from '@/utils/ui/clipboard'; rawCopy('path');`;
+  const native = `import * as Clipboard from 'expo-clipboard'; Clipboard.setStringAsync('selection');`;
+  const named = `import { setStringAsync as copy } from 'expo-clipboard'; copy('link'); function unrelated(copy) { copy('local'); }`;
+  const report = collectUiActionParity([
+    { filePath: 'apps/ui/sources/components/files/CopyPath.tsx', content: safe },
+    { filePath: 'apps/ui/sources/components/files/useCopySelection.ts', content: native },
+    { filePath: 'apps/ui/sources/components/git/CopyLink.tsx', content: named },
+    { filePath: 'apps/ui/sources/utils/ui/clipboard.ts', content: native },
+    { filePath: 'apps/ui/sources/sync/ops/actions/defaultActionExecutor.ts', content: safe },
+  ], specs, []);
+  assert.deepEqual(report.findings.map(site => [site.code, site.operation]), [
+    ['direct_clipboard_write', 'setClipboardStringSafe'],
+    ['direct_clipboard_write', 'setStringAsync'],
+    ['direct_clipboard_write', 'setStringAsync'],
+  ]);
+});
+
+test('reviewed-mark record writes stay below the Action boundary, including local port aliases', () => {
+  const content = `import { createScmReviewedMarksRecordPort as recordPort } from '@happier-dev/protocol/scm';
+    const port = recordPort(input); const retained = port;
+    retained.setReviewed(['ref'], true); port.setReviewedKeys(['key'], false); port.clear();
+    port.read(); unrelated.setReviewedKeys(['key'], true);
+    function local(recordPort) { const foreign = recordPort(input); foreign.clear(); }`;
+  const report = collectUiActionParity([
+    { filePath: 'apps/ui/sources/components/files/Marks.ts', content },
+    { filePath: 'apps/ui/sources/sync/ops/scmDiffSummary/reviewedMarks.ts', content },
+    { filePath: 'apps/ui/sources/sync/ops/actions/scmActionDeps.ts', content },
+  ], specs, []);
+  assert.deepEqual(report.findings.map(site => [site.code, site.operation]), [
+    ['direct_reviewed_mark_write', 'setReviewed'], ['direct_reviewed_mark_write', 'setReviewedKeys'], ['direct_reviewed_mark_write', 'clear'],
+    ['direct_reviewed_mark_write', 'setReviewed'], ['direct_reviewed_mark_write', 'setReviewedKeys'], ['direct_reviewed_mark_write', 'clear'],
+  ]);
+});
+
+test('Capture still/frame/text Copy and reveal consume the shared declared Action capabilities', () => {
+  const files = [
+    'apps/ui/sources/components/screenCapture/window/CaptureWindowRoute.tsx',
+    'apps/ui/sources/components/screenCapture/recording/VideoCaptureEditor.tsx',
+    'apps/ui/sources/components/screenCapture/window/CaptureEditorShell.tsx',
+    'apps/ui/sources/components/screenCapture/window/copyCaptureFromUi.ts',
+    'apps/ui/sources/components/screenCapture/window/useCaptureWindowActions.ts',
+    'apps/ui/sources/utils/platform/desktopWindowActionBridge.ts',
+  ].map(filePath => ({ filePath, content: readFileSync(new URL(`../../../${filePath}`, import.meta.url), 'utf8') }));
+  const ids = ['screenCapture.copy', 'screenCapture.showInFolder'];
+  const report = collectUiActionParity(files, SCREEN_CAPTURE_DELIVERY_ACTION_SPECS, []);
+  assert.deepEqual([...new Set(report.actions.map(site => site.actionId).filter(id => ids.includes(id)))].sort(), ids);
+  assert.deepEqual(report.findings, []);
+  assert.deepEqual(report.exclusions, []);
+});
+
+test('Pending content edits and External Session follow controls enter their canonical Actions', () => {
+  const pending = `import { sync as engine } from '@/sync/sync'; engine.updatePendingMessage('session', 'input', 'edit');
+    engine.sendPendingMessageNow('session', {}); engine.deletePendingMessage('session', 'input');
+    engine.deleteDiscardedPendingMessage('session', 'input'); engine.restoreDiscardedPendingMessage('session', 'input');
+    unrelated.updatePendingMessage('input');`;
+  const follow = `import { machineExternalSessionFollowPolicySet as writeFollow } from '@/sync/ops/machineExternalSessions'; writeFollow({ enabled: true });`;
+  const report = collectUiActionParity([
+    { filePath: 'apps/ui/sources/components/sessions/composer/Editor.tsx', content: pending },
+    { filePath: 'apps/ui/sources/sync/ops/actions/pendingEditAction.ts', content: pending },
+    { filePath: 'apps/ui/sources/components/sessions/external/follow/Toggle.ts', content: follow },
+    { filePath: 'apps/ui/sources/sync/ops/actions/externalSessionBrowseAction.ts', content: follow },
+  ], specs, []);
+  assert.deepEqual(report.findings.map(site => [site.code, site.operation]), [
+    ['direct_pending_content_write', 'updatePendingMessage'],
+    ['direct_pending_content_write', 'sendPendingMessageNow'],
+    ['direct_pending_content_write', 'deletePendingMessage'],
+    ['direct_pending_content_write', 'deleteDiscardedPendingMessage'],
+    ['direct_pending_content_write', 'restoreDiscardedPendingMessage'],
+    ['direct_external_follow_write', 'machineExternalSessionFollowPolicySet'],
+  ]);
+});
+
+test('occurrence UI mutations must enter Action admission, while the transport owner remains callable', () => {
+  const content = `import { sync as engine } from '@/sync/sync';
+    engine.cancelAutomationRun('run'); engine.retryAutomationReplyHandoff('run');
+    engine.deliverAutomationResultAgain({ runId: 'run', expectedRevision: 7 });
+    unrelated.cancelAutomationRun('run');`;
+  const report = collectUiActionParity([
+    { filePath: 'apps/ui/sources/components/workflows/run/Occurrence.tsx', content },
+    { filePath: 'apps/ui/sources/sync/ops/actions/occurrenceAction.ts', content },
+    { filePath: 'apps/ui/sources/sync/ops/actions/useOccurrenceAction.ts', content },
+  ], specs, []);
+  assert.deepEqual(report.findings.map(site => [site.code, site.operation]), [
+    ['direct_occurrence_write', 'cancelAutomationRun'],
+    ['direct_occurrence_write', 'retryAutomationReplyHandoff'],
+    ['direct_occurrence_write', 'deliverAutomationResultAgain'],
+  ]);
+});
+
+test('occurrence transport imports and retained aliases cannot bypass Action admission', () => {
+  const content = `import { mutateAutomationOccurrence as mutate } from '@/sync/api/automations/apiAutomations';
+    import * as api from '@/sync/api/automations/apiAutomations';
+    import { mutateAutomationOccurrence as unrelated } from './unrelated';
+    const retained = mutate; const transport = api; const member = api.mutateAutomationOccurrence;
+    mutate(credentials, id, input); retained(credentials, id, input);
+    api.mutateAutomationOccurrence(credentials, id, input); transport.mutateAutomationOccurrence(credentials, id, input);
+    member(credentials, id, input); unrelated(credentials, id, input);
+    function local(mutate, api) { mutate(); api.mutateAutomationOccurrence(); const retained = mutate; retained(); }
+    function shadow(retained, transport, member) { retained(); transport.mutateAutomationOccurrence(); member(); }`;
+  const report = collectUiActionParity([
+    { filePath: 'apps/ui/sources/components/workflows/run/Occurrence.tsx', content },
+    { filePath: 'apps/ui/sources/sync/ops/actions/occurrenceAction.ts', content },
+    { filePath: 'apps/ui/sources/sync/ops/actions/useOccurrenceAction.ts', content },
+  ], specs, []);
+  assert.deepEqual(report.findings.map(site => [site.code, site.operation]), Array.from({ length: 5 }, () =>
+    ['direct_occurrence_write', 'mutateAutomationOccurrence']));
+});
+
+test('rejects direct Project atmosphere writers from UI controls, including imported aliases', () => {
+  const report = collectUiActionParity([
+    { filePath: 'apps/ui/sources/components/atmosphere/look/useProjectAtmosphereEditor.ts', content: `
+      import { mutateProjectAtmosphereSetting as saveProject } from '../projectAtmosphereSettings';
+      saveProject({ edit });
+      mutateProjectAtmosphereSetting({ edit });
+    ` },
+    { filePath: 'apps/ui/sources/sync/ops/actions/settingsDeclarationAction.ts', content: `
+      mutateProjectAtmosphereSetting({ edit });
+    ` },
+    { filePath: 'apps/ui/sources/components/atmosphere/projectAtmosphereSettings.ts', content: `
+      export function mutateProjectAtmosphereSetting(context) { return context.rows.mutateOrganization(context); }
+    ` },
+    { filePath: 'apps/ui/sources/components/atmosphere/atmosphereSettings.ts', content: `
+      export async function invokeAtmospherePictureOperation(operation, context) {
+        return mutateProjectAtmosphereSetting({ rows: context.services.projectAccountRows });
+      }
+      function unadmittedNeighbor() { mutateProjectAtmosphereSetting({ edit }); }
+    ` },
+  ], specs, []);
+  assert.deepEqual(report.findings.map(site => [site.code, site.operation]), [
+    ['direct_settings_write', 'mutateProjectAtmosphereSetting'],
+    ['direct_settings_write', 'mutateProjectAtmosphereSetting'],
+    ['direct_settings_write', 'mutateProjectAtmosphereSetting'],
+  ]);
+  assert.equal(report.exclusions.length, 1);
+});
+
+test('explicit link handlers cannot bypass Action admission, including imported aliases and useCallback handlers', () => {
+  const report = collectUiActionParity([{ filePath: 'apps/ui/sources/components/settings/Links.tsx', content: `
+    import { openExternalUrl as rawOpen } from '@/utils/url/openExternalUrl';
+    const open = React.useCallback(async () => { await rawOpen('https://example.test'); }, []);
+    <Button onPress={open} />;
+    <Button onPress={() => rawOpen('https://example.test/help')} />;
+    async function authenticationContinuation() { await rawOpen(result.authorizationUrl); }
+  ` }, { filePath: 'apps/ui/sources/components/settings/NativeLinks.tsx', content: `
+    import { Linking as NativeLinks } from 'react-native';
+    <Button onPress={async () => { if (await NativeLinks.canOpenURL('https://example.test')) await NativeLinks.openURL('https://example.test'); }} />;
+  ` }], specs, []);
+  assert.deepEqual(report.findings.map(finding => finding.code), ['direct_external_link', 'direct_external_link', 'direct_external_link']);
+});
+
+test('a declared setting does not bless a direct UI write that bypasses Action admission', () => {
+  const report = collectUiActionParity([{ filePath: 'apps/ui/sources/components/settings/Example.tsx', content: `
+    sync.applySettings({ density: 'compact' });
+    sync.mutateAccountSettingsOnce({ mutate: raw => ({ settings: { ...raw, density: 'compact' } }) });
+    const write = useSettingActionWriter(); write({ anchor: 'appearance.density' }, 'compact');
+  ` }], specs, [{ anchor: 'appearance.density', storage: { scope: 'account', key: 'density', access: 'read_write' } }]);
+  assert.deepEqual(report.findings.map(finding => finding.code), ['direct_settings_write', 'direct_settings_write']);
+  assert.deepEqual(report.actions.map(site => site.actionId), ['settings.set']);
+});
+
 test('exempts machine presentation state and validated Action forwarding only at their canonical owners', () => {
   const sources = [
     { filePath: 'apps/ui/sources/components/navigation/shell/appRail/AppRailMachines.tsx',
@@ -83,6 +441,25 @@ test('exempts machine presentation state and validated Action forwarding only at
       .replace('machineVitalsRangeV1', 'unknownRange').replace('item.actionId', 'other.actionId')
       .replace('command.actionId', 'other.actionId') })), specs, []);
   assert.equal(unknown.findings.length, 4);
+});
+
+test('applies the same device-local exemptions to raw settings writes without exempting neighboring keys or owners', () => {
+  const filePath = 'apps/ui/sources/components/machines/vitals/MachineVitalsRangeBar.tsx';
+  const report = collectUiActionParity([
+    { filePath, content: `
+      sync.applyLocalSettings({ machineVitalsRangeV1: '7d' });
+      sync.applyLocalSettings({ machineVitalsRangeV1: '24h', unknownRange: true });
+      sync.applySettings({ machineVitalsRangeV1: '7d' });
+    ` },
+    { filePath: 'apps/ui/sources/components/machines/Other.tsx',
+      content: `sync.applyLocalSettings({ machineVitalsRangeV1: '7d' });` },
+  ], specs, []);
+  assert.deepEqual(report.exclusions.map(site => site.filePath), [filePath, filePath]);
+  assert.deepEqual(report.findings.map(site => [site.code, site.operation]), [
+    ['direct_settings_write', 'applyLocalSettings'],
+    ['direct_settings_write', 'applySettings'],
+    ['direct_settings_write', 'applyLocalSettings'],
+  ]);
 });
 
 test('walks aliases, conditional dispatch, registrations and settings instead of a fixed operation inventory', () => {
@@ -438,17 +815,28 @@ test('finite const-list callback operands resolve Actions and setting refs from 
   assert.deepEqual(report.findings.map(site => site.code), ['unregistered_action', 'setting_unmapped', 'dynamic_action', 'dynamic_action']);
 });
 
-test('runner restart UI effects require Action admission and preserve effect adapters', () => {
-  const content = `import { restartSessionRunnerForProviderBindingChange as recover,
-    restartSessionRunnerOnCurrentRuntime } from '@/sync/ops/sessionRunnerRestart';
-    recover(input); restartSessionRunnerOnCurrentRuntime(input);
-    function local(recover) { recover(); }`;
+
+test('native window preference writes enter Settings Actions while the native binding owns transport', () => {
+  const content = `import { setDesktopNativeTitleBar as applyFrame } from '@/utils/platform/desktopWindowBridge';
+    applyFrame(true); function unrelated(applyFrame) { applyFrame(false); }`;
   const report = collectUiActionParity([
-    { filePath: 'apps/ui/sources/components/sessions/composer/Controller.tsx', content },
-    { filePath: 'apps/ui/sources/sync/ops/actions/defaultActionExecutor.ts', content },
+    { filePath: 'apps/ui/sources/components/settings/desktop/DesktopWindowChromeSetting.tsx', content },
+    { filePath: 'apps/ui/sources/components/settings/desktop/desktopWindowChromeBinding.ts', content },
   ], specs, []);
   assert.deepEqual(report.findings.map(site => [site.code, site.operation]), [
-    ['direct_session_runner_restart', 'restartSessionRunnerForProviderBindingChange'],
-    ['direct_session_runner_restart', 'restartSessionRunnerOnCurrentRuntime'],
+    ['direct_desktop_window_write', 'setDesktopNativeTitleBar'],
   ]);
+});
+
+
+test('the mounted native title bar setting enters its real declared Settings Action binding', () => {
+  const files = [
+    'apps/ui/sources/components/settings/desktop/DesktopWindowChromeSetting.tsx',
+    'apps/ui/sources/components/settings/desktop/desktopSettings.ts',
+    'apps/ui/sources/components/settings/desktop/desktopWindowChromeBinding.ts',
+  ].map(filePath => ({ filePath, content: readFileSync(filePath, 'utf8') }));
+  const report = collectUiActionParity(files, specs, BUILT_IN_SETTINGS_METADATA_V1);
+  assert.deepEqual(report.findings, []);
+  assert.ok(report.settings.some(site => site.key === 'desktop.nativeTitleBar'));
+  assert.ok(report.actions.some(site => site.actionId === 'settings.set'));
 });

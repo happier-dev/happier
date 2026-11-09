@@ -7,11 +7,50 @@ import { buildGuardStopWarningPushDataV1, readGuardStopWarningPushActionV1 } fro
 
 const report = readCurrentUiActionParity();
 
+test('deployment receipt links use agent-visible Action admission', () => {
+  const receipt = 'apps/ui/sources/components/projects/deployments/DeploymentReceiptDetail.tsx';
+  assert.deepEqual(report.findings.filter(site => site.filePath === receipt), []);
+  for (const surface of ['agent', 'mcp', 'cli'] as const) {
+    assert.ok(listActionSpecsForCatalogSurface({ surface }).some(spec => spec.id === 'links.openExternal'));
+  }
+});
+
+test('Bot template entry doors use the shared agent-visible Action opener', () => {
+  const owns = (path: string) => path.startsWith('apps/ui/sources/components/sessions/bots/templates/')
+    || path === 'apps/ui/sources/components/sessions/access/sessionShareSheetAdapter.tsx'
+    || path === 'apps/ui/sources/components/sessions/access/SessionAccessEditor.tsx';
+  assert.deepEqual(report.findings.filter(site => owns(site.filePath)), []);
+  for (const actionId of ['prompt_doc.get', 'template.draft', 'template.open']) {
+    assert.ok(report.actions.some(site => site.filePath.endsWith('/openBotTemplate.ts') && site.actionId === actionId), actionId);
+    for (const surface of ['agent', 'mcp'] as const) {
+      assert.ok(listActionSpecsForCatalogSurface({ surface }).some(spec => spec.id === actionId));
+    }
+  }
+});
+
+test('Store controls and shared Add effects use agent-visible Action admission', () => {
+  const owns = (path: string) => /^apps\/ui\/sources\/components\/(store\/|capabilities\/add\/|settings\/(mcpServers\/add\/|skills\/add\/|agents\/add\/))/.test(path)
+    || path === 'apps/ui/sources/components/settings/plugins/PluginSettingsHomeScreen.tsx'
+    || path === 'apps/ui/sources/components/settings/plugins/PluginUpdateReviewSettingsEntry.tsx';
+  assert.deepEqual(report.findings.filter(site => owns(site.filePath)), []);
+  const sites = report.actions.filter(site => owns(site.filePath));
+  for (const actionId of ['mcp.servers.create', 'mcp.servers.import', 'skills.install', 'skills.create',
+    'skills.rules.set', 'agents.acp.backends.installFromRegistry', 'machines.setup.apply', 'settings.set']) {
+    assert.ok(sites.some(site => site.actionId === actionId), actionId);
+  }
+});
+
 // Filesystem/source analysis belongs to the Node tooling harness, not a loaded UI worker.
 test('maps current UI Action invocations, registrations and settings mutations to agent-visible canonical specs', () => {
   assert.ok(report.actions.length > 0);
   assert.ok(report.settings.length > 0);
   assert.deepEqual(report.findings.map(finding => `${finding.filePath}:${finding.line} ${finding.code}: ${finding.operation}`), []);
+});
+
+test('Artifact browser view controls use the declared settings Action ingress', () => {
+  const path = 'apps/ui/sources/components/artifacts/ArtifactsBrowserScreen.tsx';
+  assert.deepEqual(report.findings.filter(site => site.filePath === path), []);
+  assert.ok(report.settings.some(site => site.filePath === path && site.key === 'artifactsBrowserViewV1'));
 });
 
 test('machine resources UI intents map to canonical agent and MCP specs (AGW-1)', () => {
