@@ -162,10 +162,28 @@
             }
           }
         },
+        "connectedAccounts": [
+          {
+            "credentialKinds": [
+              "token"
+            ],
+            "materializationKinds": [
+              "environment"
+            ],
+            "purpose": "cursor-native",
+            "required": false,
+            "service": "cursor-account"
+          }
+        ],
         "id": "cursor",
         "primary": "sessions",
         "runtime": {
           "kind": "custom"
+        },
+        "sessionModeDescriptor": {
+          "runtimeSwitch": "acp-setSessionMode",
+          "semantics": "agent-modes",
+          "source": "acp"
         },
         "surfaces": {
           "externalSession": {
@@ -228,7 +246,55 @@
     "composerControls": [],
     "composerReferences": [],
     "composerRegions": [],
-    "connectedAccountDescriptors": [],
+    "connectedAccountDescriptors": [
+      {
+        "authentication": {
+          "account": {
+            "artifactId": "connected-account-authentication",
+            "exportName": "activate"
+          },
+          "defaultModeId": "api-key",
+          "modes": [
+            {
+              "accountDirectSave": {
+                "fieldKeys": {
+                  "token": "apiKey"
+                }
+              },
+              "apiKey": true,
+              "directExport": {
+                "contractVersion": "happier.team-credential-manual-connected-account-direct.v1"
+              },
+              "fields": [
+                {
+                  "id": "token",
+                  "schema": {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "secret": true,
+                  "title": "Cursor API key"
+                }
+              ],
+              "id": "api-key",
+              "kind": "manual",
+              "outcomeReconciliation": "none",
+              "setup": {
+                "checklist": [
+                  "Create a user or service API key in Cursor Dashboard → API Keys. Admin keys are not supported.",
+                  "Copy the key and paste it here."
+                ],
+                "createKeyTitle": "Open Cursor API keys",
+                "url": "https://cursor.com/dashboard"
+              },
+              "title": "User or service API key"
+            }
+          ]
+        },
+        "id": "cursor-account",
+        "title": "Cursor"
+      }
+    ],
     "daemonDatabases": [],
     "deploymentTargets": [],
     "dragSources": [],

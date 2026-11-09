@@ -3792,36 +3792,244 @@
                                       "type": "object"
                                     },
                                     {
-                                      "additionalProperties": false,
-                                      "properties": {
-                                        "exitStatus": {
-                                          "maximum": 9007199254740991,
-                                          "minimum": -9007199254740991,
-                                          "type": "integer"
-                                        },
-                                        "kind": {
-                                          "const": "managedService",
-                                          "type": "string"
-                                        },
-                                        "stderrTail": {
-                                          "type": "string"
-                                        },
-                                        "step": {
-                                          "enum": [
-                                            "install",
-                                            "restart",
-                                            "start"
+                                      "anyOf": [
+                                        {
+                                          "additionalProperties": false,
+                                          "properties": {
+                                            "cause": {
+                                              "anyOf": [
+                                                {
+                                                  "properties": {
+                                                    "command": {
+                                                      "properties": {
+                                                        "action": {
+                                                          "enum": [
+                                                            "daemon-reload",
+                                                            "show-environment",
+                                                            "reload",
+                                                            "restart",
+                                                            "try-restart",
+                                                            "start",
+                                                            "stop",
+                                                            "enable",
+                                                            "disable",
+                                                            "bootstrap",
+                                                            "bootout",
+                                                            "kickstart",
+                                                            "load",
+                                                            "unload",
+                                                            "/Run",
+                                                            "/End",
+                                                            "/Delete",
+                                                            "/Create",
+                                                            "/Change",
+                                                            "/Query"
+                                                          ],
+                                                          "type": "string"
+                                                        },
+                                                        "program": {
+                                                          "enum": [
+                                                            "systemctl",
+                                                            "launchctl",
+                                                            "schtasks",
+                                                            "powershell.exe"
+                                                          ],
+                                                          "type": "string"
+                                                        }
+                                                      },
+                                                      "required": [
+                                                        "program"
+                                                      ],
+                                                      "type": "object"
+                                                    },
+                                                    "guestCliCode": {
+                                                      "enum": [
+                                                        "service_manager_unavailable",
+                                                        "service_command_failed",
+                                                        "service_start_timeout",
+                                                        "service_ownership_failed",
+                                                        "service_preflight_failed",
+                                                        "service_invalid_arguments",
+                                                        "not_installed",
+                                                        "owner_conflict",
+                                                        "daemon_service_conflict",
+                                                        "service_inventory_unavailable",
+                                                        "foreign_home_service",
+                                                        "not_supported",
+                                                        "tail_not_found",
+                                                        "tail_failed",
+                                                        "invalid_subcommand"
+                                                      ],
+                                                      "type": "string"
+                                                    },
+                                                    "process": {
+                                                      "properties": {
+                                                        "errorCode": {
+                                                          "enum": [
+                                                            "ETIMEDOUT",
+                                                            "ENOENT",
+                                                            "EACCES",
+                                                            "EPERM",
+                                                            "EIO",
+                                                            "EBUSY",
+                                                            "ENOMEM",
+                                                            "EAGAIN",
+                                                            "ESRCH",
+                                                            "ENOSYS",
+                                                            "EINVAL",
+                                                            "ENOTSUP",
+                                                            "ENOBUFS",
+                                                            "EPIPE",
+                                                            "EMFILE",
+                                                            "ENFILE"
+                                                          ],
+                                                          "type": "string"
+                                                        },
+                                                        "exitStatus": {
+                                                          "anyOf": [
+                                                            {
+                                                              "maximum": 9007199254740991,
+                                                              "minimum": -9007199254740991,
+                                                              "type": "integer"
+                                                            },
+                                                            {
+                                                              "type": "null"
+                                                            }
+                                                          ]
+                                                        },
+                                                        "signal": {
+                                                          "enum": [
+                                                            "SIGTERM",
+                                                            "SIGKILL",
+                                                            "SIGINT",
+                                                            "SIGHUP",
+                                                            "SIGQUIT",
+                                                            "SIGABRT",
+                                                            "SIGSEGV",
+                                                            "SIGILL",
+                                                            "SIGFPE",
+                                                            "SIGBUS",
+                                                            "SIGPIPE",
+                                                            "SIGALRM",
+                                                            "SIGUSR1",
+                                                            "SIGUSR2",
+                                                            "SIGBREAK"
+                                                          ],
+                                                          "type": "string"
+                                                        }
+                                                      },
+                                                      "required": [
+                                                        "exitStatus"
+                                                      ],
+                                                      "type": "object"
+                                                    },
+                                                    "serviceReason": {
+                                                      "enum": [
+                                                        "launchctl_io_error",
+                                                        "launchctl_domain_unsupported",
+                                                        "launchctl_service_missing",
+                                                        "deadline_elapsed",
+                                                        "owner_conflict",
+                                                        "owner_not_service_managed",
+                                                        "owner_service_label_mismatch",
+                                                        "launcher_action_mismatch",
+                                                        "systemd_failed",
+                                                        "systemd_auto_restart_failed",
+                                                        "launchd_unloaded",
+                                                        "launchd_exited",
+                                                        "scheduled_task_missing",
+                                                        "scheduled_task_exited"
+                                                      ],
+                                                      "type": "string"
+                                                    },
+                                                    "serviceStep": {
+                                                      "enum": [
+                                                        "preflight",
+                                                        "cleanup_bootout",
+                                                        "bootstrap",
+                                                        "kickstart",
+                                                        "wait",
+                                                        "command"
+                                                      ],
+                                                      "type": "string"
+                                                    },
+                                                    "serviceStepStatus": {
+                                                      "enum": [
+                                                        "failed",
+                                                        "deadline_elapsed",
+                                                        "unavailable"
+                                                      ],
+                                                      "type": "string"
+                                                    }
+                                                  },
+                                                  "required": [
+                                                    "guestCliCode"
+                                                  ],
+                                                  "type": "object"
+                                                },
+                                                {
+                                                  "type": "null"
+                                                }
+                                              ]
+                                            },
+                                            "exitStatus": {
+                                              "maximum": 9007199254740991,
+                                              "minimum": -9007199254740991,
+                                              "type": "integer"
+                                            },
+                                            "kind": {
+                                              "const": "managedService",
+                                              "type": "string"
+                                            },
+                                            "step": {
+                                              "enum": [
+                                                "install",
+                                                "restart"
+                                              ],
+                                              "type": "string"
+                                            }
+                                          },
+                                          "required": [
+                                            "kind",
+                                            "step",
+                                            "exitStatus",
+                                            "cause"
                                           ],
-                                          "type": "string"
+                                          "type": "object"
+                                        },
+                                        {
+                                          "additionalProperties": false,
+                                          "properties": {
+                                            "exitStatus": {
+                                              "maximum": 9007199254740991,
+                                              "minimum": -9007199254740991,
+                                              "type": "integer"
+                                            },
+                                            "kind": {
+                                              "const": "managedService",
+                                              "type": "string"
+                                            },
+                                            "stderrTail": {
+                                              "type": "string"
+                                            },
+                                            "step": {
+                                              "enum": [
+                                                "install",
+                                                "restart",
+                                                "start"
+                                              ],
+                                              "type": "string"
+                                            }
+                                          },
+                                          "required": [
+                                            "kind",
+                                            "step",
+                                            "exitStatus",
+                                            "stderrTail"
+                                          ],
+                                          "type": "object"
                                         }
-                                      },
-                                      "required": [
-                                        "kind",
-                                        "step",
-                                        "exitStatus",
-                                        "stderrTail"
-                                      ],
-                                      "type": "object"
+                                      ]
                                     },
                                     {
                                       "anyOf": [
@@ -4317,6 +4525,25 @@
                                         "kind",
                                         "machineId",
                                         "agentId"
+                                      ],
+                                      "type": "object"
+                                    },
+                                    {
+                                      "additionalProperties": false,
+                                      "properties": {
+                                        "homeOrigin": {
+                                          "maxLength": 512,
+                                          "minLength": 1,
+                                          "type": "string"
+                                        },
+                                        "kind": {
+                                          "const": "managedGuestHome",
+                                          "type": "string"
+                                        }
+                                      },
+                                      "required": [
+                                        "kind",
+                                        "homeOrigin"
                                       ],
                                       "type": "object"
                                     }
@@ -5118,11 +5345,14 @@
                                                                         "type": "string"
                                                                       },
                                                                       "ref": {
+                                                                        "description": "Exact Saved Secret reference returned as secretRef by secrets.list or secrets.create; use it with the listed updatedAt as resourceRevision, not the bare secretId.",
+                                                                        "minLength": 26,
+                                                                        "pattern": "^happier:shared-secret:v1:.*",
                                                                         "type": "string"
                                                                       },
                                                                       "resourceRevision": {
+                                                                        "exclusiveMinimum": 0,
                                                                         "maximum": 9007199254740991,
-                                                                        "minimum": 1,
                                                                         "type": "integer"
                                                                       }
                                                                     },
@@ -5835,11 +6065,14 @@
                                                                         "type": "string"
                                                                       },
                                                                       "ref": {
+                                                                        "description": "Exact Saved Secret reference returned as secretRef by secrets.list or secrets.create; use it with the listed updatedAt as resourceRevision, not the bare secretId.",
+                                                                        "minLength": 26,
+                                                                        "pattern": "^happier:shared-secret:v1:.*",
                                                                         "type": "string"
                                                                       },
                                                                       "resourceRevision": {
+                                                                        "exclusiveMinimum": 0,
                                                                         "maximum": 9007199254740991,
-                                                                        "minimum": 1,
                                                                         "type": "integer"
                                                                       }
                                                                     },
@@ -5991,11 +6224,14 @@
                                                                     "type": "string"
                                                                   },
                                                                   "ref": {
+                                                                    "description": "Exact Saved Secret reference returned as secretRef by secrets.list or secrets.create; use it with the listed updatedAt as resourceRevision, not the bare secretId.",
+                                                                    "minLength": 26,
+                                                                    "pattern": "^happier:shared-secret:v1:.*",
                                                                     "type": "string"
                                                                   },
                                                                   "resourceRevision": {
+                                                                    "exclusiveMinimum": 0,
                                                                     "maximum": 9007199254740991,
-                                                                    "minimum": 1,
                                                                     "type": "integer"
                                                                   }
                                                                 },
@@ -6050,11 +6286,14 @@
                                                                     "type": "string"
                                                                   },
                                                                   "ref": {
+                                                                    "description": "Exact Saved Secret reference returned as secretRef by secrets.list or secrets.create; use it with the listed updatedAt as resourceRevision, not the bare secretId.",
+                                                                    "minLength": 26,
+                                                                    "pattern": "^happier:shared-secret:v1:.*",
                                                                     "type": "string"
                                                                   },
                                                                   "resourceRevision": {
+                                                                    "exclusiveMinimum": 0,
                                                                     "maximum": 9007199254740991,
-                                                                    "minimum": 1,
                                                                     "type": "integer"
                                                                   }
                                                                 },
@@ -6102,11 +6341,14 @@
                                                                     "type": "string"
                                                                   },
                                                                   "ref": {
+                                                                    "description": "Exact Saved Secret reference returned as secretRef by secrets.list or secrets.create; use it with the listed updatedAt as resourceRevision, not the bare secretId.",
+                                                                    "minLength": 26,
+                                                                    "pattern": "^happier:shared-secret:v1:.*",
                                                                     "type": "string"
                                                                   },
                                                                   "resourceRevision": {
+                                                                    "exclusiveMinimum": 0,
                                                                     "maximum": 9007199254740991,
-                                                                    "minimum": 1,
                                                                     "type": "integer"
                                                                   }
                                                                 },
@@ -6149,11 +6391,14 @@
                                                                     "type": "string"
                                                                   },
                                                                   "ref": {
+                                                                    "description": "Exact Saved Secret reference returned as secretRef by secrets.list or secrets.create; use it with the listed updatedAt as resourceRevision, not the bare secretId.",
+                                                                    "minLength": 26,
+                                                                    "pattern": "^happier:shared-secret:v1:.*",
                                                                     "type": "string"
                                                                   },
                                                                   "resourceRevision": {
+                                                                    "exclusiveMinimum": 0,
                                                                     "maximum": 9007199254740991,
-                                                                    "minimum": 1,
                                                                     "type": "integer"
                                                                   }
                                                                 },
@@ -6192,11 +6437,14 @@
                                                                     "type": "string"
                                                                   },
                                                                   "ref": {
+                                                                    "description": "Exact Saved Secret reference returned as secretRef by secrets.list or secrets.create; use it with the listed updatedAt as resourceRevision, not the bare secretId.",
+                                                                    "minLength": 26,
+                                                                    "pattern": "^happier:shared-secret:v1:.*",
                                                                     "type": "string"
                                                                   },
                                                                   "resourceRevision": {
+                                                                    "exclusiveMinimum": 0,
                                                                     "maximum": 9007199254740991,
-                                                                    "minimum": 1,
                                                                     "type": "integer"
                                                                   }
                                                                 },
@@ -6686,11 +6934,14 @@
                                                                         "type": "string"
                                                                       },
                                                                       "ref": {
+                                                                        "description": "Exact Saved Secret reference returned as secretRef by secrets.list or secrets.create; use it with the listed updatedAt as resourceRevision, not the bare secretId.",
+                                                                        "minLength": 26,
+                                                                        "pattern": "^happier:shared-secret:v1:.*",
                                                                         "type": "string"
                                                                       },
                                                                       "resourceRevision": {
+                                                                        "exclusiveMinimum": 0,
                                                                         "maximum": 9007199254740991,
-                                                                        "minimum": 1,
                                                                         "type": "integer"
                                                                       }
                                                                     },
@@ -6864,11 +7115,14 @@
                                                                     "type": "string"
                                                                   },
                                                                   "ref": {
+                                                                    "description": "Exact Saved Secret reference returned as secretRef by secrets.list or secrets.create; use it with the listed updatedAt as resourceRevision, not the bare secretId.",
+                                                                    "minLength": 26,
+                                                                    "pattern": "^happier:shared-secret:v1:.*",
                                                                     "type": "string"
                                                                   },
                                                                   "resourceRevision": {
+                                                                    "exclusiveMinimum": 0,
                                                                     "maximum": 9007199254740991,
-                                                                    "minimum": 1,
                                                                     "type": "integer"
                                                                   }
                                                                 },
@@ -6945,11 +7199,14 @@
                                                                     "type": "string"
                                                                   },
                                                                   "ref": {
+                                                                    "description": "Exact Saved Secret reference returned as secretRef by secrets.list or secrets.create; use it with the listed updatedAt as resourceRevision, not the bare secretId.",
+                                                                    "minLength": 26,
+                                                                    "pattern": "^happier:shared-secret:v1:.*",
                                                                     "type": "string"
                                                                   },
                                                                   "resourceRevision": {
+                                                                    "exclusiveMinimum": 0,
                                                                     "maximum": 9007199254740991,
-                                                                    "minimum": 1,
                                                                     "type": "integer"
                                                                   }
                                                                 },
@@ -7019,11 +7276,14 @@
                                                                     "type": "string"
                                                                   },
                                                                   "ref": {
+                                                                    "description": "Exact Saved Secret reference returned as secretRef by secrets.list or secrets.create; use it with the listed updatedAt as resourceRevision, not the bare secretId.",
+                                                                    "minLength": 26,
+                                                                    "pattern": "^happier:shared-secret:v1:.*",
                                                                     "type": "string"
                                                                   },
                                                                   "resourceRevision": {
+                                                                    "exclusiveMinimum": 0,
                                                                     "maximum": 9007199254740991,
-                                                                    "minimum": 1,
                                                                     "type": "integer"
                                                                   }
                                                                 },
@@ -7088,11 +7348,14 @@
                                                                     "type": "string"
                                                                   },
                                                                   "ref": {
+                                                                    "description": "Exact Saved Secret reference returned as secretRef by secrets.list or secrets.create; use it with the listed updatedAt as resourceRevision, not the bare secretId.",
+                                                                    "minLength": 26,
+                                                                    "pattern": "^happier:shared-secret:v1:.*",
                                                                     "type": "string"
                                                                   },
                                                                   "resourceRevision": {
+                                                                    "exclusiveMinimum": 0,
                                                                     "maximum": 9007199254740991,
-                                                                    "minimum": 1,
                                                                     "type": "integer"
                                                                   }
                                                                 },
@@ -7153,11 +7416,14 @@
                                                                     "type": "string"
                                                                   },
                                                                   "ref": {
+                                                                    "description": "Exact Saved Secret reference returned as secretRef by secrets.list or secrets.create; use it with the listed updatedAt as resourceRevision, not the bare secretId.",
+                                                                    "minLength": 26,
+                                                                    "pattern": "^happier:shared-secret:v1:.*",
                                                                     "type": "string"
                                                                   },
                                                                   "resourceRevision": {
+                                                                    "exclusiveMinimum": 0,
                                                                     "maximum": 9007199254740991,
-                                                                    "minimum": 1,
                                                                     "type": "integer"
                                                                   }
                                                                 },
@@ -7377,6 +7643,572 @@
                                       "minLength": 1,
                                       "type": "string"
                                     },
+                                    "failure": {
+                                      "anyOf": [
+                                        {
+                                          "additionalProperties": false,
+                                          "properties": {
+                                            "domainId": {
+                                              "maxLength": 2000,
+                                              "minLength": 1,
+                                              "type": "string"
+                                            },
+                                            "environmentId": {
+                                              "maxLength": 2000,
+                                              "minLength": 1,
+                                              "type": "string"
+                                            },
+                                            "operation": {
+                                              "additionalProperties": false,
+                                              "properties": {
+                                                "machineId": {
+                                                  "minLength": 1,
+                                                  "type": "string"
+                                                },
+                                                "operationId": {
+                                                  "maxLength": 2000,
+                                                  "minLength": 1,
+                                                  "type": "string"
+                                                },
+                                                "serverId": {
+                                                  "minLength": 1,
+                                                  "type": "string"
+                                                }
+                                              },
+                                              "required": [
+                                                "serverId",
+                                                "machineId",
+                                                "operationId"
+                                              ],
+                                              "type": "object"
+                                            },
+                                            "remedy": {
+                                              "minLength": 1,
+                                              "type": "string"
+                                            },
+                                            "requiredFact": {
+                                              "enum": [
+                                                "managedServiceDocker",
+                                                "nativeContainerIdentity",
+                                                "nativeServiceReplicas",
+                                                "routeUpstreams"
+                                              ],
+                                              "type": "string"
+                                            },
+                                            "step": {
+                                              "enum": [
+                                                "service_docker",
+                                                "container_identity",
+                                                "service_replicas",
+                                                "route_upstreams"
+                                              ],
+                                              "type": "string"
+                                            }
+                                          },
+                                          "required": [
+                                            "environmentId",
+                                            "domainId",
+                                            "step",
+                                            "requiredFact"
+                                          ],
+                                          "type": "object"
+                                        },
+                                        {
+                                          "additionalProperties": false,
+                                          "properties": {
+                                            "domainHostname": {
+                                              "maxLength": 2000,
+                                              "minLength": 1,
+                                              "type": "string"
+                                            },
+                                            "domainId": {
+                                              "maxLength": 2000,
+                                              "minLength": 1,
+                                              "type": "string"
+                                            },
+                                            "environmentId": {
+                                              "maxLength": 2000,
+                                              "minLength": 1,
+                                              "type": "string"
+                                            },
+                                            "partial": {
+                                              "const": true,
+                                              "type": "boolean"
+                                            },
+                                            "remedy": {
+                                              "minLength": 1,
+                                              "type": "string"
+                                            },
+                                            "requiredFact": {
+                                              "anyOf": [
+                                                {
+                                                  "anyOf": [
+                                                    {
+                                                      "enum": [
+                                                        "nativeExecutionResult",
+                                                        "networkExposure",
+                                                        "reachabilityPosture",
+                                                        "cloudflarePreparation",
+                                                        "activeDomainMembers",
+                                                        "domainIngress",
+                                                        "memberCaddyObservation",
+                                                        "privateCaddyListener",
+                                                        "sharedTunnelOrigin",
+                                                        "edgeCaddyMachine",
+                                                        "publicCaddyObservation",
+                                                        "publicCaddyListener",
+                                                        "caddyContainer",
+                                                        "caddyMountedSeed",
+                                                        "caddyAdminSocket",
+                                                        "caddyAdminConfig",
+                                                        "caddyPublishedBindings",
+                                                        "caddyListeners",
+                                                        "caddyRoutedNetworks"
+                                                      ],
+                                                      "type": "string"
+                                                    },
+                                                    {
+                                                      "const": "deploymentActionResult",
+                                                      "type": "string"
+                                                    }
+                                                  ]
+                                                },
+                                                {
+                                                  "enum": [
+                                                    "managedServiceDocker",
+                                                    "nativeContainerIdentity",
+                                                    "nativeServiceReplicas",
+                                                    "routeUpstreams"
+                                                  ],
+                                                  "type": "string"
+                                                },
+                                                {
+                                                  "enum": [
+                                                    "proof_shape",
+                                                    "authorization_token",
+                                                    "resolved_target",
+                                                    "original_target",
+                                                    "pending_reset_admission",
+                                                    "effect_family",
+                                                    "server_identity",
+                                                    "custody_purpose",
+                                                    "custody_before_principal",
+                                                    "source_before_principal",
+                                                    "machine_identity",
+                                                    "machine_admission_before_principal",
+                                                    "machine_signature",
+                                                    "principal",
+                                                    "machine_admission_after_principal",
+                                                    "source_after_principal",
+                                                    "outer_action",
+                                                    "verification_purpose",
+                                                    "credential_action_admission",
+                                                    "reviewed_child",
+                                                    "deployment_child_http",
+                                                    "deployment_preparation",
+                                                    "deployment_child_routing",
+                                                    "deployment_child_root_input",
+                                                    "deployment_child_signature",
+                                                    "deployment_child_admission",
+                                                    "deployment_child_destination",
+                                                    "deployment_setup_receiver_purpose",
+                                                    "deployment_publication_child_kind",
+                                                    "deployment_publication_purpose",
+                                                    "deployment_child_machine_path",
+                                                    "deployment_child_machine_request",
+                                                    "deployment_child_machine_admission",
+                                                    "deployment_child_machine_read",
+                                                    "deployment_child_peer_proof",
+                                                    "deployment_child_peer_admission",
+                                                    "deployment_child_peer_read",
+                                                    "deployment_child_archive_purpose",
+                                                    "deployment_registry_current",
+                                                    "deployment_registry_purpose",
+                                                    "deployment_restore_purpose",
+                                                    "deployment_restart_purpose",
+                                                    "deployment_native_read_purpose",
+                                                    "deployment_metadata_environment"
+                                                  ],
+                                                  "type": "string"
+                                                },
+                                                {
+                                                  "minLength": 1,
+                                                  "type": "string"
+                                                }
+                                              ]
+                                            },
+                                            "step": {
+                                              "const": "removeDomain",
+                                              "type": "string"
+                                            }
+                                          },
+                                          "required": [
+                                            "environmentId",
+                                            "domainId",
+                                            "step",
+                                            "partial",
+                                            "requiredFact",
+                                            "remedy"
+                                          ],
+                                          "type": "object"
+                                        },
+                                        {
+                                          "additionalProperties": false,
+                                          "properties": {
+                                            "domainId": {
+                                              "maxLength": 2000,
+                                              "minLength": 1,
+                                              "type": "string"
+                                            },
+                                            "environmentId": {
+                                              "maxLength": 2000,
+                                              "minLength": 1,
+                                              "type": "string"
+                                            },
+                                            "failure": {
+                                              "anyOf": [
+                                                {
+                                                  "additionalProperties": false,
+                                                  "properties": {
+                                                    "containerError": {
+                                                      "enum": [
+                                                        "port_in_use",
+                                                        "container_start_failed"
+                                                      ],
+                                                      "type": "string"
+                                                    },
+                                                    "containerExitCode": {
+                                                      "maximum": 9007199254740991,
+                                                      "minimum": -9007199254740991,
+                                                      "type": "integer"
+                                                    },
+                                                    "errorCode": {
+                                                      "pattern": "^(?:E[A-Z]+|HTTP_\\d{3})$",
+                                                      "type": "string"
+                                                    },
+                                                    "kind": {
+                                                      "enum": [
+                                                        "native_observation_unavailable",
+                                                        "native_effect_failed"
+                                                      ],
+                                                      "type": "string"
+                                                    },
+                                                    "nativeCommand": {
+                                                      "additionalProperties": false,
+                                                      "properties": {
+                                                        "command": {
+                                                          "const": "docker",
+                                                          "type": "string"
+                                                        },
+                                                        "exitCode": {
+                                                          "anyOf": [
+                                                            {
+                                                              "maximum": 9007199254740991,
+                                                              "minimum": -9007199254740991,
+                                                              "type": "integer"
+                                                            },
+                                                            {
+                                                              "type": "null"
+                                                            }
+                                                          ]
+                                                        },
+                                                        "phase": {
+                                                          "enum": [
+                                                            "create",
+                                                            "start",
+                                                            "stop",
+                                                            "rm",
+                                                            "wait",
+                                                            "network-connect"
+                                                          ],
+                                                          "type": "string"
+                                                        }
+                                                      },
+                                                      "required": [
+                                                        "command",
+                                                        "phase",
+                                                        "exitCode"
+                                                      ],
+                                                      "type": "object"
+                                                    },
+                                                    "port": {
+                                                      "maximum": 65535,
+                                                      "minimum": 1,
+                                                      "type": "integer"
+                                                    },
+                                                    "reason": {
+                                                      "enum": [
+                                                        "required_fact_unavailable",
+                                                        "native_effect_failed",
+                                                        "port_in_use"
+                                                      ],
+                                                      "type": "string"
+                                                    },
+                                                    "requiredFact": {
+                                                      "enum": [
+                                                        "caddyContainer",
+                                                        "caddyMountedSeed",
+                                                        "caddyAdminSocket",
+                                                        "caddyAdminConfig",
+                                                        "caddyPublishedBindings",
+                                                        "caddyListeners",
+                                                        "caddyRoutedNetworks"
+                                                      ],
+                                                      "type": "string"
+                                                    },
+                                                    "stepId": {
+                                                      "enum": [
+                                                        "caddy-public-port",
+                                                        "caddy-container-create",
+                                                        "caddy-container-start",
+                                                        "caddy-container-stop",
+                                                        "caddy-container-rm",
+                                                        "caddy-container-wait",
+                                                        "caddy-container-network-connect"
+                                                      ],
+                                                      "type": "string"
+                                                    }
+                                                  },
+                                                  "required": [
+                                                    "kind",
+                                                    "reason",
+                                                    "requiredFact"
+                                                  ],
+                                                  "type": "object"
+                                                },
+                                                {
+                                                  "additionalProperties": false,
+                                                  "properties": {
+                                                    "kind": {
+                                                      "enum": [
+                                                        "native_protocol_invalid",
+                                                        "native_check_unavailable",
+                                                        "native_check_unsupported",
+                                                        "native_effect_failed"
+                                                      ],
+                                                      "type": "string"
+                                                    },
+                                                    "nativeCommand": {
+                                                      "additionalProperties": false,
+                                                      "properties": {
+                                                        "category": {
+                                                          "enum": [
+                                                            "package_manager_busy",
+                                                            "package_unavailable",
+                                                            "package_configuration_failed",
+                                                            "command_failed"
+                                                          ],
+                                                          "type": "string"
+                                                        },
+                                                        "command": {
+                                                          "const": "apt-get",
+                                                          "type": "string"
+                                                        },
+                                                        "exitCode": {
+                                                          "anyOf": [
+                                                            {
+                                                              "maximum": 9007199254740991,
+                                                              "minimum": -9007199254740991,
+                                                              "type": "integer"
+                                                            },
+                                                            {
+                                                              "type": "null"
+                                                            }
+                                                          ]
+                                                        },
+                                                        "phase": {
+                                                          "enum": [
+                                                            "update",
+                                                            "install"
+                                                          ],
+                                                          "type": "string"
+                                                        }
+                                                      },
+                                                      "required": [
+                                                        "command",
+                                                        "phase",
+                                                        "exitCode",
+                                                        "category"
+                                                      ],
+                                                      "type": "object"
+                                                    },
+                                                    "phase": {
+                                                      "enum": [
+                                                        "check",
+                                                        "apply"
+                                                      ],
+                                                      "type": "string"
+                                                    },
+                                                    "reason": {
+                                                      "enum": [
+                                                        "required_fact_unavailable",
+                                                        "needs_admin_to_check",
+                                                        "package_manager_busy",
+                                                        "foreign_effect_conflict",
+                                                        "private_scope_unenforceable",
+                                                        "remove_unsupported",
+                                                        "plan_changed",
+                                                        "validation_failed",
+                                                        "native_effect_failed",
+                                                        "admin_access_unavailable"
+                                                      ],
+                                                      "type": "string"
+                                                    },
+                                                    "remedy": {
+                                                      "minLength": 1,
+                                                      "type": "string"
+                                                    },
+                                                    "requiredFact": {
+                                                      "minLength": 1,
+                                                      "type": "string"
+                                                    },
+                                                    "stepId": {
+                                                      "minLength": 1,
+                                                      "type": "string"
+                                                    }
+                                                  },
+                                                  "required": [
+                                                    "kind"
+                                                  ],
+                                                  "type": "object"
+                                                }
+                                              ]
+                                            },
+                                            "operation": {
+                                              "additionalProperties": false,
+                                              "properties": {
+                                                "machineId": {
+                                                  "minLength": 1,
+                                                  "type": "string"
+                                                },
+                                                "operationId": {
+                                                  "maxLength": 2000,
+                                                  "minLength": 1,
+                                                  "type": "string"
+                                                },
+                                                "serverId": {
+                                                  "minLength": 1,
+                                                  "type": "string"
+                                                }
+                                              },
+                                              "required": [
+                                                "serverId",
+                                                "machineId",
+                                                "operationId"
+                                              ],
+                                              "type": "object"
+                                            },
+                                            "providerOutput": {
+                                              "minLength": 1,
+                                              "type": "string"
+                                            },
+                                            "remedy": {
+                                              "minLength": 1,
+                                              "type": "string"
+                                            },
+                                            "requiredFact": {
+                                              "anyOf": [
+                                                {
+                                                  "anyOf": [
+                                                    {
+                                                      "enum": [
+                                                        "nativeExecutionResult",
+                                                        "networkExposure",
+                                                        "reachabilityPosture",
+                                                        "cloudflarePreparation",
+                                                        "activeDomainMembers",
+                                                        "domainIngress",
+                                                        "memberCaddyObservation",
+                                                        "privateCaddyListener",
+                                                        "sharedTunnelOrigin",
+                                                        "edgeCaddyMachine",
+                                                        "publicCaddyObservation",
+                                                        "publicCaddyListener",
+                                                        "caddyContainer",
+                                                        "caddyMountedSeed",
+                                                        "caddyAdminSocket",
+                                                        "caddyAdminConfig",
+                                                        "caddyPublishedBindings",
+                                                        "caddyListeners",
+                                                        "caddyRoutedNetworks"
+                                                      ],
+                                                      "type": "string"
+                                                    },
+                                                    {
+                                                      "const": "deploymentActionResult",
+                                                      "type": "string"
+                                                    }
+                                                  ]
+                                                },
+                                                {
+                                                  "enum": [
+                                                    "proof_shape",
+                                                    "authorization_token",
+                                                    "resolved_target",
+                                                    "original_target",
+                                                    "pending_reset_admission",
+                                                    "effect_family",
+                                                    "server_identity",
+                                                    "custody_purpose",
+                                                    "custody_before_principal",
+                                                    "source_before_principal",
+                                                    "machine_identity",
+                                                    "machine_admission_before_principal",
+                                                    "machine_signature",
+                                                    "principal",
+                                                    "machine_admission_after_principal",
+                                                    "source_after_principal",
+                                                    "outer_action",
+                                                    "verification_purpose",
+                                                    "credential_action_admission",
+                                                    "reviewed_child",
+                                                    "deployment_child_http",
+                                                    "deployment_preparation",
+                                                    "deployment_child_routing",
+                                                    "deployment_child_root_input",
+                                                    "deployment_child_signature",
+                                                    "deployment_child_admission",
+                                                    "deployment_child_destination",
+                                                    "deployment_setup_receiver_purpose",
+                                                    "deployment_publication_child_kind",
+                                                    "deployment_publication_purpose",
+                                                    "deployment_child_machine_path",
+                                                    "deployment_child_machine_request",
+                                                    "deployment_child_machine_admission",
+                                                    "deployment_child_machine_read",
+                                                    "deployment_child_peer_proof",
+                                                    "deployment_child_peer_admission",
+                                                    "deployment_child_peer_read",
+                                                    "deployment_child_archive_purpose",
+                                                    "deployment_registry_current",
+                                                    "deployment_registry_purpose",
+                                                    "deployment_restore_purpose",
+                                                    "deployment_restart_purpose",
+                                                    "deployment_native_read_purpose",
+                                                    "deployment_metadata_environment"
+                                                  ],
+                                                  "type": "string"
+                                                },
+                                                {
+                                                  "minLength": 1,
+                                                  "type": "string"
+                                                }
+                                              ]
+                                            },
+                                            "step": {
+                                              "const": "native_execution",
+                                              "type": "string"
+                                            }
+                                          },
+                                          "required": [
+                                            "environmentId",
+                                            "domainId",
+                                            "step"
+                                          ],
+                                          "type": "object"
+                                        }
+                                      ]
+                                    },
                                     "kind": {
                                       "const": "partial",
                                       "type": "string"
@@ -7391,6 +8223,12 @@
                                         "domains",
                                         "deploy"
                                       ],
+                                      "type": "string"
+                                    },
+                                    "remedy": {
+                                      "type": "string"
+                                    },
+                                    "requiredFact": {
                                       "type": "string"
                                     },
                                     "revision": {
@@ -7422,11 +8260,14 @@
                                                 "type": "string"
                                               },
                                               "ref": {
+                                                "description": "Exact Saved Secret reference returned as secretRef by secrets.list or secrets.create; use it with the listed updatedAt as resourceRevision, not the bare secretId.",
+                                                "minLength": 26,
+                                                "pattern": "^happier:shared-secret:v1:.*",
                                                 "type": "string"
                                               },
                                               "resourceRevision": {
+                                                "exclusiveMinimum": 0,
                                                 "maximum": 9007199254740991,
-                                                "minimum": 1,
                                                 "type": "integer"
                                               }
                                             },
@@ -7468,6 +8309,9 @@
                                           "type": "string"
                                         },
                                         "ref": {
+                                          "description": "Exact Saved Secret reference returned as secretRef by secrets.list or secrets.create; use it with the listed updatedAt as resourceRevision, not the bare secretId.",
+                                          "minLength": 26,
+                                          "pattern": "^happier:shared-secret:v1:.*",
                                           "type": "string"
                                         }
                                       },
@@ -7872,6 +8716,7 @@
                                                     "connectedServices.accounts.default.set",
                                                     "connectedServices.accounts.purposeDefault.set",
                                                     "connectedServices.purposes.default.set",
+                                                    "connectedServices.pools.get",
                                                     "connectedServices.pools.create",
                                                     "connectedServices.pools.patch",
                                                     "connectedServices.pools.delete",
@@ -7890,8 +8735,6 @@
                                                     "connectedServices.labels.set",
                                                     "connectedServices.labels.reset",
                                                     "connectedServices.acknowledgements.reset",
-                                                    "connectedServices.disclosure.set",
-                                                    "connectedServices.disclosure.reset",
                                                     "usage.sources.discover",
                                                     "usage.sources.get",
                                                     "usage.sources.dismiss",
@@ -8699,6 +9542,10 @@
                                                     "bugreport.collectDiagnostics",
                                                     "bugreport.getLogTail",
                                                     "bugreport.uploadArtifact",
+                                                    "browser.profile.list",
+                                                    "browser.profile.create",
+                                                    "browser.profile.select",
+                                                    "browser.profile.delete",
                                                     "browser.extensions.list",
                                                     "browser.extensions.install",
                                                     "browser.extensions.update",
@@ -9188,7 +10035,8 @@
                                                     "secrets.shared.grants.set",
                                                     "secrets.shared.update",
                                                     "secrets.shared.delete",
-                                                    "secrets.shared.reveal"
+                                                    "secrets.shared.reveal",
+                                                    "secrets.shared.repair"
                                                   ],
                                                   "type": "string"
                                                 },
@@ -10293,6 +11141,7 @@
                                                         "connectedServices.accounts.default.set",
                                                         "connectedServices.accounts.purposeDefault.set",
                                                         "connectedServices.purposes.default.set",
+                                                        "connectedServices.pools.get",
                                                         "connectedServices.pools.create",
                                                         "connectedServices.pools.patch",
                                                         "connectedServices.pools.delete",
@@ -10311,8 +11160,6 @@
                                                         "connectedServices.labels.set",
                                                         "connectedServices.labels.reset",
                                                         "connectedServices.acknowledgements.reset",
-                                                        "connectedServices.disclosure.set",
-                                                        "connectedServices.disclosure.reset",
                                                         "usage.sources.discover",
                                                         "usage.sources.get",
                                                         "usage.sources.dismiss",
@@ -11120,6 +11967,10 @@
                                                         "bugreport.collectDiagnostics",
                                                         "bugreport.getLogTail",
                                                         "bugreport.uploadArtifact",
+                                                        "browser.profile.list",
+                                                        "browser.profile.create",
+                                                        "browser.profile.select",
+                                                        "browser.profile.delete",
                                                         "browser.extensions.list",
                                                         "browser.extensions.install",
                                                         "browser.extensions.update",
@@ -11609,7 +12460,8 @@
                                                         "secrets.shared.grants.set",
                                                         "secrets.shared.update",
                                                         "secrets.shared.delete",
-                                                        "secrets.shared.reveal"
+                                                        "secrets.shared.reveal",
+                                                        "secrets.shared.repair"
                                                       ],
                                                       "type": "string"
                                                     },
@@ -12236,6 +13088,7 @@
                                                         "connectedServices.accounts.default.set",
                                                         "connectedServices.accounts.purposeDefault.set",
                                                         "connectedServices.purposes.default.set",
+                                                        "connectedServices.pools.get",
                                                         "connectedServices.pools.create",
                                                         "connectedServices.pools.patch",
                                                         "connectedServices.pools.delete",
@@ -12254,8 +13107,6 @@
                                                         "connectedServices.labels.set",
                                                         "connectedServices.labels.reset",
                                                         "connectedServices.acknowledgements.reset",
-                                                        "connectedServices.disclosure.set",
-                                                        "connectedServices.disclosure.reset",
                                                         "usage.sources.discover",
                                                         "usage.sources.get",
                                                         "usage.sources.dismiss",
@@ -13063,6 +13914,10 @@
                                                         "bugreport.collectDiagnostics",
                                                         "bugreport.getLogTail",
                                                         "bugreport.uploadArtifact",
+                                                        "browser.profile.list",
+                                                        "browser.profile.create",
+                                                        "browser.profile.select",
+                                                        "browser.profile.delete",
                                                         "browser.extensions.list",
                                                         "browser.extensions.install",
                                                         "browser.extensions.update",
@@ -13552,7 +14407,8 @@
                                                         "secrets.shared.grants.set",
                                                         "secrets.shared.update",
                                                         "secrets.shared.delete",
-                                                        "secrets.shared.reveal"
+                                                        "secrets.shared.reveal",
+                                                        "secrets.shared.repair"
                                                       ],
                                                       "type": "string"
                                                     },
@@ -14337,6 +15193,7 @@
                                             "connectedServices.accounts.default.set",
                                             "connectedServices.accounts.purposeDefault.set",
                                             "connectedServices.purposes.default.set",
+                                            "connectedServices.pools.get",
                                             "connectedServices.pools.create",
                                             "connectedServices.pools.patch",
                                             "connectedServices.pools.delete",
@@ -14355,8 +15212,6 @@
                                             "connectedServices.labels.set",
                                             "connectedServices.labels.reset",
                                             "connectedServices.acknowledgements.reset",
-                                            "connectedServices.disclosure.set",
-                                            "connectedServices.disclosure.reset",
                                             "usage.sources.discover",
                                             "usage.sources.get",
                                             "usage.sources.dismiss",
@@ -15164,6 +16019,10 @@
                                             "bugreport.collectDiagnostics",
                                             "bugreport.getLogTail",
                                             "bugreport.uploadArtifact",
+                                            "browser.profile.list",
+                                            "browser.profile.create",
+                                            "browser.profile.select",
+                                            "browser.profile.delete",
                                             "browser.extensions.list",
                                             "browser.extensions.install",
                                             "browser.extensions.update",
@@ -15653,7 +16512,8 @@
                                             "secrets.shared.grants.set",
                                             "secrets.shared.update",
                                             "secrets.shared.delete",
-                                            "secrets.shared.reveal"
+                                            "secrets.shared.reveal",
+                                            "secrets.shared.repair"
                                           ],
                                           "type": "string"
                                         },
@@ -21938,6 +22798,9 @@
                                     "type": "array",
                                     "uniqueItems": true
                                   },
+                                  "fieldChoices": {
+                                    "const": true
+                                  },
                                   "initialStatuses": {
                                     "items": {
                                       "additionalProperties": false,
@@ -23558,6 +24421,9 @@
                                     "type": "array",
                                     "uniqueItems": true
                                   },
+                                  "fieldChoices": {
+                                    "const": true
+                                  },
                                   "initialStatuses": {
                                     "items": {
                                       "additionalProperties": false,
@@ -24825,6 +25691,9 @@
           "$schema": "http://json-schema.org/draft-07/schema#",
           "additionalProperties": false,
           "properties": {
+            "includeTaskFieldChoices": {
+              "const": true
+            },
             "instance": {
               "additionalProperties": false,
               "properties": {
@@ -26458,6 +27327,9 @@
                           "type": "array",
                           "uniqueItems": true
                         },
+                        "fieldChoices": {
+                          "const": true
+                        },
                         "initialStatuses": {
                           "items": {
                             "additionalProperties": false,
@@ -26842,6 +27714,60 @@
                   "maximum": 9007199254740991,
                   "minimum": -9007199254740991,
                   "type": "integer"
+                },
+                "taskFieldChoices": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "assigneeIds": {
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "id": {
+                            "minLength": 1,
+                            "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                            "type": "string",
+                            "x-happier-max-utf8-bytes": 128
+                          },
+                          "label": {
+                            "minLength": 1,
+                            "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "label"
+                        ],
+                        "type": "object"
+                      },
+                      "type": "array"
+                    },
+                    "labelIds": {
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "id": {
+                            "minLength": 1,
+                            "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                            "type": "string",
+                            "x-happier-max-utf8-bytes": 128
+                          },
+                          "label": {
+                            "minLength": 1,
+                            "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "label"
+                        ],
+                        "type": "object"
+                      },
+                      "type": "array"
+                    }
+                  },
+                  "type": "object"
                 },
                 "taskFields": {
                   "additionalProperties": false,
@@ -27841,6 +28767,9 @@
           "$schema": "http://json-schema.org/draft-07/schema#",
           "additionalProperties": false,
           "properties": {
+            "includeTaskFieldChoices": {
+              "const": true
+            },
             "instance": {
               "additionalProperties": false,
               "properties": {
@@ -29008,6 +29937,9 @@
           "$schema": "http://json-schema.org/draft-07/schema#",
           "additionalProperties": false,
           "properties": {
+            "includeTaskFieldChoices": {
+              "const": true
+            },
             "instance": {
               "additionalProperties": false,
               "properties": {
@@ -32160,6 +33092,9 @@
                                   "type": "array",
                                   "uniqueItems": true
                                 },
+                                "fieldChoices": {
+                                  "const": true
+                                },
                                 "initialStatuses": {
                                   "items": {
                                     "additionalProperties": false,
@@ -33933,6 +34868,9 @@
                                   },
                                   "type": "array",
                                   "uniqueItems": true
+                                },
+                                "fieldChoices": {
+                                  "const": true
                                 },
                                 "initialStatuses": {
                                   "items": {
@@ -54092,6 +55030,9 @@
                                     "type": "array",
                                     "uniqueItems": true
                                   },
+                                  "fieldChoices": {
+                                    "const": true
+                                  },
                                   "initialStatuses": {
                                     "items": {
                                       "additionalProperties": false,
@@ -55712,6 +56653,9 @@
                                     "type": "array",
                                     "uniqueItems": true
                                   },
+                                  "fieldChoices": {
+                                    "const": true
+                                  },
                                   "initialStatuses": {
                                     "items": {
                                       "additionalProperties": false,
@@ -56972,6 +57916,9 @@
           "$schema": "http://json-schema.org/draft-07/schema#",
           "additionalProperties": false,
           "properties": {
+            "includeTaskFieldChoices": {
+              "const": true
+            },
             "instance": {
               "additionalProperties": false,
               "properties": {
@@ -58605,6 +59552,9 @@
                           "type": "array",
                           "uniqueItems": true
                         },
+                        "fieldChoices": {
+                          "const": true
+                        },
                         "initialStatuses": {
                           "items": {
                             "additionalProperties": false,
@@ -58989,6 +59939,60 @@
                   "maximum": 9007199254740991,
                   "minimum": -9007199254740991,
                   "type": "integer"
+                },
+                "taskFieldChoices": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "assigneeIds": {
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "id": {
+                            "minLength": 1,
+                            "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                            "type": "string",
+                            "x-happier-max-utf8-bytes": 128
+                          },
+                          "label": {
+                            "minLength": 1,
+                            "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "label"
+                        ],
+                        "type": "object"
+                      },
+                      "type": "array"
+                    },
+                    "labelIds": {
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "id": {
+                            "minLength": 1,
+                            "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                            "type": "string",
+                            "x-happier-max-utf8-bytes": 128
+                          },
+                          "label": {
+                            "minLength": 1,
+                            "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "label"
+                        ],
+                        "type": "object"
+                      },
+                      "type": "array"
+                    }
+                  },
+                  "type": "object"
                 },
                 "taskFields": {
                   "additionalProperties": false,
@@ -59978,6 +60982,9 @@
           "$schema": "http://json-schema.org/draft-07/schema#",
           "additionalProperties": false,
           "properties": {
+            "includeTaskFieldChoices": {
+              "const": true
+            },
             "instance": {
               "additionalProperties": false,
               "properties": {
@@ -61135,6 +62142,9 @@
           "$schema": "http://json-schema.org/draft-07/schema#",
           "additionalProperties": false,
           "properties": {
+            "includeTaskFieldChoices": {
+              "const": true
+            },
             "instance": {
               "additionalProperties": false,
               "properties": {
@@ -64282,6 +65292,9 @@
                                   "type": "array",
                                   "uniqueItems": true
                                 },
+                                "fieldChoices": {
+                                  "const": true
+                                },
                                 "initialStatuses": {
                                   "items": {
                                     "additionalProperties": false,
@@ -66055,6 +67068,9 @@
                                   },
                                   "type": "array",
                                   "uniqueItems": true
+                                },
+                                "fieldChoices": {
+                                  "const": true
                                 },
                                 "initialStatuses": {
                                   "items": {
@@ -82725,6 +83741,11 @@
                 "kind": {
                   "const": "value"
                 },
+                "refreshAfterMs": {
+                  "maximum": 9007199254740991,
+                  "minimum": 1,
+                  "type": "integer"
+                },
                 "validator": {
                   "type": "string"
                 },
@@ -83235,6 +84256,11 @@
                 "kind": {
                   "const": "notModified"
                 },
+                "refreshAfterMs": {
+                  "maximum": 9007199254740991,
+                  "minimum": 1,
+                  "type": "integer"
+                },
                 "validator": {
                   "type": "string"
                 }
@@ -83482,6 +84508,11 @@
               "properties": {
                 "kind": {
                   "const": "value"
+                },
+                "refreshAfterMs": {
+                  "maximum": 9007199254740991,
+                  "minimum": 1,
+                  "type": "integer"
                 },
                 "validator": {
                   "type": "string"
@@ -83934,6 +84965,11 @@
                 "kind": {
                   "const": "notModified"
                 },
+                "refreshAfterMs": {
+                  "maximum": 9007199254740991,
+                  "minimum": 1,
+                  "type": "integer"
+                },
                 "validator": {
                   "type": "string"
                 }
@@ -84185,6 +85221,11 @@
               "properties": {
                 "kind": {
                   "const": "value"
+                },
+                "refreshAfterMs": {
+                  "maximum": 9007199254740991,
+                  "minimum": 1,
+                  "type": "integer"
                 },
                 "validator": {
                   "type": "string"
@@ -84958,6 +85999,11 @@
                 "kind": {
                   "const": "notModified"
                 },
+                "refreshAfterMs": {
+                  "maximum": 9007199254740991,
+                  "minimum": 1,
+                  "type": "integer"
+                },
                 "validator": {
                   "type": "string"
                 }
@@ -85201,6 +86247,11 @@
               "properties": {
                 "kind": {
                   "const": "value"
+                },
+                "refreshAfterMs": {
+                  "maximum": 9007199254740991,
+                  "minimum": 1,
+                  "type": "integer"
                 },
                 "validator": {
                   "type": "string"
@@ -85914,6 +86965,11 @@
               "properties": {
                 "kind": {
                   "const": "notModified"
+                },
+                "refreshAfterMs": {
+                  "maximum": 9007199254740991,
+                  "minimum": 1,
+                  "type": "integer"
                 },
                 "validator": {
                   "type": "string"
@@ -104282,6 +105338,7 @@
       },
       {
         "dangerLevel": "safe",
+        "description": "Read a page of releases from the selected GitHub repository, preserving continuation and incomplete coverage.",
         "execution": {
           "target": "daemon"
         },
@@ -104827,6 +105884,7 @@
       },
       {
         "dangerLevel": "safe",
+        "description": "Read the release GitHub identifies as latest for the selected repository; this is not a local version or date ranking.",
         "execution": {
           "target": "daemon"
         },
@@ -105316,6 +106374,7 @@
       },
       {
         "dangerLevel": "safe",
+        "description": "Read one GitHub release by its native release ID, including its saved draft state and asset metadata.",
         "execution": {
           "target": "daemon"
         },
@@ -105803,6 +106862,7 @@
       },
       {
         "dangerLevel": "safe",
+        "description": "Read a page of asset metadata for an exact GitHub release without downloading asset contents.",
         "execution": {
           "target": "daemon"
         },
@@ -106125,6 +107185,7 @@
       },
       {
         "dangerLevel": "safe",
+        "description": "Ask GitHub to generate a release title and notes for the selected tag and target; this does not save or publish a release.",
         "execution": {
           "target": "daemon"
         },
@@ -106323,6 +107384,7 @@
       },
       {
         "dangerLevel": "safe",
+        "description": "Read notes context for a proposed tag and target or an exact saved draft; this does not send to a Session or change the draft.",
         "execution": {
           "target": "daemon"
         },
@@ -106653,6 +107715,7 @@
           "presentUserUi": false
         },
         "dangerLevel": "writesRemote",
+        "description": "Save the supplied tag, target and release fields as a new unpublished GitHub draft; publication is a separate Action.",
         "execution": {
           "target": "daemon"
         },
@@ -107538,6 +108601,7 @@
           "presentUserUi": false
         },
         "dangerLevel": "writesRemote",
+        "description": "Save supplied changes to an exact unpublished GitHub draft using its observed revision; changed drafts return a conflict.",
         "execution": {
           "target": "daemon"
         },
@@ -109680,6 +110744,7 @@
           "presentUserUi": false
         },
         "dangerLevel": "writesLocal",
+        "description": "Download one selected GitHub release asset to the receiving device’s admitted destination with its explicit overwrite choice.",
         "execution": {
           "target": "daemon"
         },
@@ -114811,7 +115876,15 @@
         ],
         "id": "triage/prepare-github-review-workspace",
         "inputHints": {
-          "fields": []
+          "fields": [
+            {
+              "connectedAccountOptions": true,
+              "path": "instance.binding.account",
+              "required": true,
+              "title": "GitHub account",
+              "widget": "select"
+            }
+          ]
         },
         "inputSchema": {
           "$schema": "http://json-schema.org/draft-07/schema#",
@@ -117168,6 +118241,9 @@
                                   "type": "array",
                                   "uniqueItems": true
                                 },
+                                "fieldChoices": {
+                                  "const": true
+                                },
                                 "initialStatuses": {
                                   "items": {
                                     "additionalProperties": false,
@@ -118711,6 +119787,9 @@
                                   },
                                   "type": "array",
                                   "uniqueItems": true
+                                },
+                                "fieldChoices": {
+                                  "const": true
                                 },
                                 "initialStatuses": {
                                   "items": {
@@ -120313,6 +121392,9 @@
                                   },
                                   "type": "array",
                                   "uniqueItems": true
+                                },
+                                "fieldChoices": {
+                                  "const": true
                                 },
                                 "initialStatuses": {
                                   "items": {
@@ -122257,6 +123339,9 @@
                                   "type": "array",
                                   "uniqueItems": true
                                 },
+                                "fieldChoices": {
+                                  "const": true
+                                },
                                 "initialStatuses": {
                                   "items": {
                                     "additionalProperties": false,
@@ -123800,6 +124885,9 @@
                                   },
                                   "type": "array",
                                   "uniqueItems": true
+                                },
+                                "fieldChoices": {
+                                  "const": true
                                 },
                                 "initialStatuses": {
                                   "items": {
@@ -125402,6 +126490,9 @@
                                   },
                                   "type": "array",
                                   "uniqueItems": true
+                                },
+                                "fieldChoices": {
+                                  "const": true
                                 },
                                 "initialStatuses": {
                                   "items": {
@@ -127366,6 +128457,9 @@
                                   "type": "array",
                                   "uniqueItems": true
                                 },
+                                "fieldChoices": {
+                                  "const": true
+                                },
                                 "initialStatuses": {
                                   "items": {
                                     "additionalProperties": false,
@@ -128909,6 +130003,9 @@
                                   },
                                   "type": "array",
                                   "uniqueItems": true
+                                },
+                                "fieldChoices": {
+                                  "const": true
                                 },
                                 "initialStatuses": {
                                   "items": {
@@ -130511,6 +131608,9 @@
                                   },
                                   "type": "array",
                                   "uniqueItems": true
+                                },
+                                "fieldChoices": {
+                                  "const": true
                                 },
                                 "initialStatuses": {
                                   "items": {
@@ -132455,6 +133555,9 @@
                                   "type": "array",
                                   "uniqueItems": true
                                 },
+                                "fieldChoices": {
+                                  "const": true
+                                },
                                 "initialStatuses": {
                                   "items": {
                                     "additionalProperties": false,
@@ -133998,6 +135101,9 @@
                                   },
                                   "type": "array",
                                   "uniqueItems": true
+                                },
+                                "fieldChoices": {
+                                  "const": true
                                 },
                                 "initialStatuses": {
                                   "items": {
@@ -135600,6 +136706,9 @@
                                   },
                                   "type": "array",
                                   "uniqueItems": true
+                                },
+                                "fieldChoices": {
+                                  "const": true
                                 },
                                 "initialStatuses": {
                                   "items": {
@@ -146483,6 +147592,9 @@
                                   "type": "array",
                                   "uniqueItems": true
                                 },
+                                "fieldChoices": {
+                                  "const": true
+                                },
                                 "initialStatuses": {
                                   "items": {
                                     "additionalProperties": false,
@@ -148026,6 +149138,9 @@
                                   },
                                   "type": "array",
                                   "uniqueItems": true
+                                },
+                                "fieldChoices": {
+                                  "const": true
                                 },
                                 "initialStatuses": {
                                   "items": {
@@ -149627,6 +150742,9 @@
                                   },
                                   "type": "array",
                                   "uniqueItems": true
+                                },
+                                "fieldChoices": {
+                                  "const": true
                                 },
                                 "initialStatuses": {
                                   "items": {
@@ -151583,6 +152701,9 @@
                                   "type": "array",
                                   "uniqueItems": true
                                 },
+                                "fieldChoices": {
+                                  "const": true
+                                },
                                 "initialStatuses": {
                                   "items": {
                                     "additionalProperties": false,
@@ -153181,6 +154302,9 @@
                                   },
                                   "type": "array",
                                   "uniqueItems": true
+                                },
+                                "fieldChoices": {
+                                  "const": true
                                 },
                                 "initialStatuses": {
                                   "items": {
@@ -155136,6 +156260,9 @@
                                   "type": "array",
                                   "uniqueItems": true
                                 },
+                                "fieldChoices": {
+                                  "const": true
+                                },
                                 "initialStatuses": {
                                   "items": {
                                     "additionalProperties": false,
@@ -156734,6 +157861,9 @@
                                   },
                                   "type": "array",
                                   "uniqueItems": true
+                                },
+                                "fieldChoices": {
+                                  "const": true
                                 },
                                 "initialStatuses": {
                                   "items": {
@@ -158693,6 +159823,9 @@
                                   "type": "array",
                                   "uniqueItems": true
                                 },
+                                "fieldChoices": {
+                                  "const": true
+                                },
                                 "initialStatuses": {
                                   "items": {
                                     "additionalProperties": false,
@@ -160291,6 +161424,9 @@
                                   },
                                   "type": "array",
                                   "uniqueItems": true
+                                },
+                                "fieldChoices": {
+                                  "const": true
                                 },
                                 "initialStatuses": {
                                   "items": {
@@ -162234,6 +163370,9 @@
                                   "type": "array",
                                   "uniqueItems": true
                                 },
+                                "fieldChoices": {
+                                  "const": true
+                                },
                                 "initialStatuses": {
                                   "items": {
                                     "additionalProperties": false,
@@ -163832,6 +164971,9 @@
                                   },
                                   "type": "array",
                                   "uniqueItems": true
+                                },
+                                "fieldChoices": {
+                                  "const": true
                                 },
                                 "initialStatuses": {
                                   "items": {
@@ -165780,6 +166922,9 @@
                                   "type": "array",
                                   "uniqueItems": true
                                 },
+                                "fieldChoices": {
+                                  "const": true
+                                },
                                 "initialStatuses": {
                                   "items": {
                                     "additionalProperties": false,
@@ -167323,6 +168468,9 @@
                                   },
                                   "type": "array",
                                   "uniqueItems": true
+                                },
+                                "fieldChoices": {
+                                  "const": true
                                 },
                                 "initialStatuses": {
                                   "items": {
@@ -168924,6 +170072,9 @@
                                   },
                                   "type": "array",
                                   "uniqueItems": true
+                                },
+                                "fieldChoices": {
+                                  "const": true
                                 },
                                 "initialStatuses": {
                                   "items": {
@@ -170971,6 +172122,9 @@
                                       "type": "array",
                                       "uniqueItems": true
                                     },
+                                    "fieldChoices": {
+                                      "const": true
+                                    },
                                     "initialStatuses": {
                                       "items": {
                                         "additionalProperties": false,
@@ -172569,6 +173723,9 @@
                                       },
                                       "type": "array",
                                       "uniqueItems": true
+                                    },
+                                    "fieldChoices": {
+                                      "const": true
                                     },
                                     "initialStatuses": {
                                       "items": {
@@ -174185,6 +175342,9 @@
                                   },
                                   "type": "array",
                                   "uniqueItems": true
+                                },
+                                "fieldChoices": {
+                                  "const": true
                                 },
                                 "initialStatuses": {
                                   "items": {
@@ -176169,6 +177329,9 @@
                                       "type": "array",
                                       "uniqueItems": true
                                     },
+                                    "fieldChoices": {
+                                      "const": true
+                                    },
                                     "initialStatuses": {
                                       "items": {
                                         "additionalProperties": false,
@@ -177767,6 +178930,9 @@
                                       },
                                       "type": "array",
                                       "uniqueItems": true
+                                    },
+                                    "fieldChoices": {
+                                      "const": true
                                     },
                                     "initialStatuses": {
                                       "items": {
@@ -179379,6 +180545,9 @@
                                   },
                                   "type": "array",
                                   "uniqueItems": true
+                                },
+                                "fieldChoices": {
+                                  "const": true
                                 },
                                 "initialStatuses": {
                                   "items": {
@@ -181370,6 +182539,9 @@
                                   "type": "array",
                                   "uniqueItems": true
                                 },
+                                "fieldChoices": {
+                                  "const": true
+                                },
                                 "initialStatuses": {
                                   "items": {
                                     "additionalProperties": false,
@@ -182968,6 +184140,9 @@
                                   },
                                   "type": "array",
                                   "uniqueItems": true
+                                },
+                                "fieldChoices": {
+                                  "const": true
                                 },
                                 "initialStatuses": {
                                   "items": {
@@ -185021,6 +186196,9 @@
                                   "type": "array",
                                   "uniqueItems": true
                                 },
+                                "fieldChoices": {
+                                  "const": true
+                                },
                                 "initialStatuses": {
                                   "items": {
                                     "additionalProperties": false,
@@ -186619,6 +187797,9 @@
                                   },
                                   "type": "array",
                                   "uniqueItems": true
+                                },
+                                "fieldChoices": {
+                                  "const": true
                                 },
                                 "initialStatuses": {
                                   "items": {
@@ -188657,6 +189838,9 @@
                                   "type": "array",
                                   "uniqueItems": true
                                 },
+                                "fieldChoices": {
+                                  "const": true
+                                },
                                 "initialStatuses": {
                                   "items": {
                                     "additionalProperties": false,
@@ -190255,6 +191439,9 @@
                                   },
                                   "type": "array",
                                   "uniqueItems": true
+                                },
+                                "fieldChoices": {
+                                  "const": true
                                 },
                                 "initialStatuses": {
                                   "items": {
@@ -192293,6 +193480,9 @@
                                   "type": "array",
                                   "uniqueItems": true
                                 },
+                                "fieldChoices": {
+                                  "const": true
+                                },
                                 "initialStatuses": {
                                   "items": {
                                     "additionalProperties": false,
@@ -193891,6 +195081,9 @@
                                   },
                                   "type": "array",
                                   "uniqueItems": true
+                                },
+                                "fieldChoices": {
+                                  "const": true
                                 },
                                 "initialStatuses": {
                                   "items": {
@@ -195929,6 +197122,9 @@
                                   "type": "array",
                                   "uniqueItems": true
                                 },
+                                "fieldChoices": {
+                                  "const": true
+                                },
                                 "initialStatuses": {
                                   "items": {
                                     "additionalProperties": false,
@@ -197527,6 +198723,9 @@
                                   },
                                   "type": "array",
                                   "uniqueItems": true
+                                },
+                                "fieldChoices": {
+                                  "const": true
                                 },
                                 "initialStatuses": {
                                   "items": {
@@ -199565,6 +200764,9 @@
                                   "type": "array",
                                   "uniqueItems": true
                                 },
+                                "fieldChoices": {
+                                  "const": true
+                                },
                                 "initialStatuses": {
                                   "items": {
                                     "additionalProperties": false,
@@ -201163,6 +202365,9 @@
                                   },
                                   "type": "array",
                                   "uniqueItems": true
+                                },
+                                "fieldChoices": {
+                                  "const": true
                                 },
                                 "initialStatuses": {
                                   "items": {
@@ -203201,6 +204406,9 @@
                                   "type": "array",
                                   "uniqueItems": true
                                 },
+                                "fieldChoices": {
+                                  "const": true
+                                },
                                 "initialStatuses": {
                                   "items": {
                                     "additionalProperties": false,
@@ -204799,6 +206007,9 @@
                                   },
                                   "type": "array",
                                   "uniqueItems": true
+                                },
+                                "fieldChoices": {
+                                  "const": true
                                 },
                                 "initialStatuses": {
                                   "items": {
@@ -206752,6 +207963,9 @@
                                   "type": "array",
                                   "uniqueItems": true
                                 },
+                                "fieldChoices": {
+                                  "const": true
+                                },
                                 "initialStatuses": {
                                   "items": {
                                     "additionalProperties": false,
@@ -208316,6 +209530,9 @@
                                   },
                                   "type": "array",
                                   "uniqueItems": true
+                                },
+                                "fieldChoices": {
+                                  "const": true
                                 },
                                 "initialStatuses": {
                                   "items": {
@@ -209924,6 +211141,9 @@
                                   },
                                   "type": "array",
                                   "uniqueItems": true
+                                },
+                                "fieldChoices": {
+                                  "const": true
                                 },
                                 "initialStatuses": {
                                   "items": {
@@ -211896,6 +213116,9 @@
                                   "type": "array",
                                   "uniqueItems": true
                                 },
+                                "fieldChoices": {
+                                  "const": true
+                                },
                                 "initialStatuses": {
                                   "items": {
                                     "additionalProperties": false,
@@ -213460,6 +214683,9 @@
                                   },
                                   "type": "array",
                                   "uniqueItems": true
+                                },
+                                "fieldChoices": {
+                                  "const": true
                                 },
                                 "initialStatuses": {
                                   "items": {
@@ -215068,6 +216294,9 @@
                                   },
                                   "type": "array",
                                   "uniqueItems": true
+                                },
+                                "fieldChoices": {
+                                  "const": true
                                 },
                                 "initialStatuses": {
                                   "items": {
@@ -217016,6 +218245,9 @@
                                   "type": "array",
                                   "uniqueItems": true
                                 },
+                                "fieldChoices": {
+                                  "const": true
+                                },
                                 "initialStatuses": {
                                   "items": {
                                     "additionalProperties": false,
@@ -218580,6 +219812,9 @@
                                   },
                                   "type": "array",
                                   "uniqueItems": true
+                                },
+                                "fieldChoices": {
+                                  "const": true
                                 },
                                 "initialStatuses": {
                                   "items": {
@@ -220188,6 +221423,9 @@
                                   },
                                   "type": "array",
                                   "uniqueItems": true
+                                },
+                                "fieldChoices": {
+                                  "const": true
                                 },
                                 "initialStatuses": {
                                   "items": {
@@ -222141,6 +223379,9 @@
                                   "type": "array",
                                   "uniqueItems": true
                                 },
+                                "fieldChoices": {
+                                  "const": true
+                                },
                                 "initialStatuses": {
                                   "items": {
                                     "additionalProperties": false,
@@ -223705,6 +224946,9 @@
                                   },
                                   "type": "array",
                                   "uniqueItems": true
+                                },
+                                "fieldChoices": {
+                                  "const": true
                                 },
                                 "initialStatuses": {
                                   "items": {
@@ -225313,6 +226557,9 @@
                                   },
                                   "type": "array",
                                   "uniqueItems": true
+                                },
+                                "fieldChoices": {
+                                  "const": true
                                 },
                                 "initialStatuses": {
                                   "items": {
@@ -227256,6 +228503,9 @@
                                   "type": "array",
                                   "uniqueItems": true
                                 },
+                                "fieldChoices": {
+                                  "const": true
+                                },
                                 "initialStatuses": {
                                   "items": {
                                     "additionalProperties": false,
@@ -228799,6 +230049,9 @@
                                   },
                                   "type": "array",
                                   "uniqueItems": true
+                                },
+                                "fieldChoices": {
+                                  "const": true
                                 },
                                 "initialStatuses": {
                                   "items": {
@@ -230400,6 +231653,9 @@
                                   },
                                   "type": "array",
                                   "uniqueItems": true
+                                },
+                                "fieldChoices": {
+                                  "const": true
                                 },
                                 "initialStatuses": {
                                   "items": {
@@ -232780,6 +234036,9 @@
                                   "type": "array",
                                   "uniqueItems": true
                                 },
+                                "fieldChoices": {
+                                  "const": true
+                                },
                                 "initialStatuses": {
                                   "items": {
                                     "additionalProperties": false,
@@ -234865,6 +236124,9 @@
                                   },
                                   "type": "array",
                                   "uniqueItems": true
+                                },
+                                "fieldChoices": {
+                                  "const": true
                                 },
                                 "initialStatuses": {
                                   "items": {
@@ -236972,6 +238234,9 @@
                                   },
                                   "type": "array",
                                   "uniqueItems": true
+                                },
+                                "fieldChoices": {
+                                  "const": true
                                 },
                                 "initialStatuses": {
                                   "items": {
@@ -239122,6 +240387,9 @@
                                   },
                                   "type": "array",
                                   "uniqueItems": true
+                                },
+                                "fieldChoices": {
+                                  "const": true
                                 },
                                 "initialStatuses": {
                                   "items": {
@@ -242158,6 +243426,9 @@
                                   "type": "array",
                                   "uniqueItems": true
                                 },
+                                "fieldChoices": {
+                                  "const": true
+                                },
                                 "initialStatuses": {
                                   "items": {
                                     "additionalProperties": false,
@@ -244243,6 +245514,9 @@
                                   },
                                   "type": "array",
                                   "uniqueItems": true
+                                },
+                                "fieldChoices": {
+                                  "const": true
                                 },
                                 "initialStatuses": {
                                   "items": {
@@ -246402,6 +247676,9 @@
                                   },
                                   "type": "array",
                                   "uniqueItems": true
+                                },
+                                "fieldChoices": {
+                                  "const": true
                                 },
                                 "initialStatuses": {
                                   "items": {
@@ -249430,6 +250707,9 @@
                                   "type": "array",
                                   "uniqueItems": true
                                 },
+                                "fieldChoices": {
+                                  "const": true
+                                },
                                 "initialStatuses": {
                                   "items": {
                                     "additionalProperties": false,
@@ -251515,6 +252795,9 @@
                                   },
                                   "type": "array",
                                   "uniqueItems": true
+                                },
+                                "fieldChoices": {
+                                  "const": true
                                 },
                                 "initialStatuses": {
                                   "items": {
@@ -253674,6 +254957,9 @@
                                   },
                                   "type": "array",
                                   "uniqueItems": true
+                                },
+                                "fieldChoices": {
+                                  "const": true
                                 },
                                 "initialStatuses": {
                                   "items": {
@@ -256739,6 +258025,9 @@
                                   "type": "array",
                                   "uniqueItems": true
                                 },
+                                "fieldChoices": {
+                                  "const": true
+                                },
                                 "initialStatuses": {
                                   "items": {
                                     "additionalProperties": false,
@@ -258824,6 +260113,9 @@
                                   },
                                   "type": "array",
                                   "uniqueItems": true
+                                },
+                                "fieldChoices": {
+                                  "const": true
                                 },
                                 "initialStatuses": {
                                   "items": {
@@ -260983,6 +262275,9 @@
                                   },
                                   "type": "array",
                                   "uniqueItems": true
+                                },
+                                "fieldChoices": {
+                                  "const": true
                                 },
                                 "initialStatuses": {
                                   "items": {
@@ -264019,6 +265314,9 @@
                                   "type": "array",
                                   "uniqueItems": true
                                 },
+                                "fieldChoices": {
+                                  "const": true
+                                },
                                 "initialStatuses": {
                                   "items": {
                                     "additionalProperties": false,
@@ -265562,6 +266860,9 @@
                                   },
                                   "type": "array",
                                   "uniqueItems": true
+                                },
+                                "fieldChoices": {
+                                  "const": true
                                 },
                                 "initialStatuses": {
                                   "items": {
@@ -267163,6 +268464,9 @@
                                   },
                                   "type": "array",
                                   "uniqueItems": true
+                                },
+                                "fieldChoices": {
+                                  "const": true
                                 },
                                 "initialStatuses": {
                                   "items": {
@@ -269115,6 +270419,9 @@
                                   "type": "array",
                                   "uniqueItems": true
                                 },
+                                "fieldChoices": {
+                                  "const": true
+                                },
                                 "initialStatuses": {
                                   "items": {
                                     "additionalProperties": false,
@@ -270658,6 +271965,9 @@
                                   },
                                   "type": "array",
                                   "uniqueItems": true
+                                },
+                                "fieldChoices": {
+                                  "const": true
                                 },
                                 "initialStatuses": {
                                   "items": {
@@ -272259,6 +273569,9 @@
                                   },
                                   "type": "array",
                                   "uniqueItems": true
+                                },
+                                "fieldChoices": {
+                                  "const": true
                                 },
                                 "initialStatuses": {
                                   "items": {
@@ -274217,6 +275530,9 @@
                                   },
                                   "type": "array",
                                   "uniqueItems": true
+                                },
+                                "fieldChoices": {
+                                  "const": true
                                 },
                                 "initialStatuses": {
                                   "items": {
@@ -276303,6 +277619,9 @@
                                   },
                                   "type": "array",
                                   "uniqueItems": true
+                                },
+                                "fieldChoices": {
+                                  "const": true
                                 },
                                 "initialStatuses": {
                                   "items": {
@@ -278453,6 +279772,9 @@
                                   },
                                   "type": "array",
                                   "uniqueItems": true
+                                },
+                                "fieldChoices": {
+                                  "const": true
                                 },
                                 "initialStatuses": {
                                   "items": {
@@ -283371,6 +284693,9 @@
                                   "type": "array",
                                   "uniqueItems": true
                                 },
+                                "fieldChoices": {
+                                  "const": true
+                                },
                                 "initialStatuses": {
                                   "items": {
                                     "additionalProperties": false,
@@ -285174,6 +286499,9 @@
                                   },
                                   "type": "array",
                                   "uniqueItems": true
+                                },
+                                "fieldChoices": {
+                                  "const": true
                                 },
                                 "initialStatuses": {
                                   "items": {
@@ -288023,6 +289351,9 @@
                                   "type": "array",
                                   "uniqueItems": true
                                 },
+                                "fieldChoices": {
+                                  "const": true
+                                },
                                 "initialStatuses": {
                                   "items": {
                                     "additionalProperties": false,
@@ -289826,6 +291157,9 @@
                                   },
                                   "type": "array",
                                   "uniqueItems": true
+                                },
+                                "fieldChoices": {
+                                  "const": true
                                 },
                                 "initialStatuses": {
                                   "items": {
@@ -292674,6 +294008,9 @@
                                   "type": "array",
                                   "uniqueItems": true
                                 },
+                                "fieldChoices": {
+                                  "const": true
+                                },
                                 "initialStatuses": {
                                   "items": {
                                     "additionalProperties": false,
@@ -294477,6 +295814,9 @@
                                   },
                                   "type": "array",
                                   "uniqueItems": true
+                                },
+                                "fieldChoices": {
+                                  "const": true
                                 },
                                 "initialStatuses": {
                                   "items": {
@@ -297320,6 +298660,9 @@
                                   "type": "array",
                                   "uniqueItems": true
                                 },
+                                "fieldChoices": {
+                                  "const": true
+                                },
                                 "initialStatuses": {
                                   "items": {
                                     "additionalProperties": false,
@@ -299123,6 +300466,9 @@
                                   },
                                   "type": "array",
                                   "uniqueItems": true
+                                },
+                                "fieldChoices": {
+                                  "const": true
                                 },
                                 "initialStatuses": {
                                   "items": {
@@ -301043,6 +302389,9 @@
                                   "type": "array",
                                   "uniqueItems": true
                                 },
+                                "fieldChoices": {
+                                  "const": true
+                                },
                                 "initialStatuses": {
                                   "items": {
                                     "additionalProperties": false,
@@ -302587,6 +303936,9 @@
                                   "type": "array",
                                   "uniqueItems": true
                                 },
+                                "fieldChoices": {
+                                  "const": true
+                                },
                                 "initialStatuses": {
                                   "items": {
                                     "additionalProperties": false,
@@ -304129,6 +305481,9 @@
                                   },
                                   "type": "array",
                                   "uniqueItems": true
+                                },
+                                "fieldChoices": {
+                                  "const": true
                                 },
                                 "initialStatuses": {
                                   "items": {
@@ -305737,6 +307092,9 @@
                                   },
                                   "type": "array",
                                   "uniqueItems": true
+                                },
+                                "fieldChoices": {
+                                  "const": true
                                 },
                                 "initialStatuses": {
                                   "items": {
@@ -310579,6 +311937,9 @@
                               "type": "array",
                               "uniqueItems": true
                             },
+                            "fieldChoices": {
+                              "const": true
+                            },
                             "initialStatuses": {
                               "items": {
                                 "additionalProperties": false,
@@ -311979,6 +313340,9 @@
                               },
                               "type": "array",
                               "uniqueItems": true
+                            },
+                            "fieldChoices": {
+                              "const": true
                             },
                             "initialStatuses": {
                               "items": {
@@ -313929,6 +315293,9 @@
                               "type": "array",
                               "uniqueItems": true
                             },
+                            "fieldChoices": {
+                              "const": true
+                            },
                             "initialStatuses": {
                               "items": {
                                 "additionalProperties": false,
@@ -315329,6 +316696,9 @@
                               },
                               "type": "array",
                               "uniqueItems": true
+                            },
+                            "fieldChoices": {
+                              "const": true
                             },
                             "initialStatuses": {
                               "items": {
@@ -317120,6 +318490,9 @@
                               "type": "array",
                               "uniqueItems": true
                             },
+                            "fieldChoices": {
+                              "const": true
+                            },
                             "initialStatuses": {
                               "items": {
                                 "additionalProperties": false,
@@ -318520,6 +319893,9 @@
                               },
                               "type": "array",
                               "uniqueItems": true
+                            },
+                            "fieldChoices": {
+                              "const": true
                             },
                             "initialStatuses": {
                               "items": {
@@ -320273,6 +321649,9 @@
                                   "type": "array",
                                   "uniqueItems": true
                                 },
+                                "fieldChoices": {
+                                  "const": true
+                                },
                                 "initialStatuses": {
                                   "items": {
                                     "additionalProperties": false,
@@ -321816,6 +323195,9 @@
                                   },
                                   "type": "array",
                                   "uniqueItems": true
+                                },
+                                "fieldChoices": {
+                                  "const": true
                                 },
                                 "initialStatuses": {
                                   "items": {
@@ -323417,6 +324799,9 @@
                                   },
                                   "type": "array",
                                   "uniqueItems": true
+                                },
+                                "fieldChoices": {
+                                  "const": true
                                 },
                                 "initialStatuses": {
                                   "items": {
@@ -325369,6 +326754,9 @@
                                   "type": "array",
                                   "uniqueItems": true
                                 },
+                                "fieldChoices": {
+                                  "const": true
+                                },
                                 "initialStatuses": {
                                   "items": {
                                     "additionalProperties": false,
@@ -326912,6 +328300,9 @@
                                   },
                                   "type": "array",
                                   "uniqueItems": true
+                                },
+                                "fieldChoices": {
+                                  "const": true
                                 },
                                 "initialStatuses": {
                                   "items": {
@@ -328513,6 +329904,9 @@
                                   },
                                   "type": "array",
                                   "uniqueItems": true
+                                },
+                                "fieldChoices": {
+                                  "const": true
                                 },
                                 "initialStatuses": {
                                   "items": {
@@ -330478,6 +331872,9 @@
                                   "type": "array",
                                   "uniqueItems": true
                                 },
+                                "fieldChoices": {
+                                  "const": true
+                                },
                                 "initialStatuses": {
                                   "items": {
                                     "additionalProperties": false,
@@ -332076,6 +333473,9 @@
                                   },
                                   "type": "array",
                                   "uniqueItems": true
+                                },
+                                "fieldChoices": {
+                                  "const": true
                                 },
                                 "initialStatuses": {
                                   "items": {
@@ -334041,6 +335441,9 @@
                                   "type": "array",
                                   "uniqueItems": true
                                 },
+                                "fieldChoices": {
+                                  "const": true
+                                },
                                 "initialStatuses": {
                                   "items": {
                                     "additionalProperties": false,
@@ -335639,6 +337042,9 @@
                                   },
                                   "type": "array",
                                   "uniqueItems": true
+                                },
+                                "fieldChoices": {
+                                  "const": true
                                 },
                                 "initialStatuses": {
                                   "items": {
@@ -337602,6 +339008,9 @@
                                   "type": "array",
                                   "uniqueItems": true
                                 },
+                                "fieldChoices": {
+                                  "const": true
+                                },
                                 "initialStatuses": {
                                   "items": {
                                     "additionalProperties": false,
@@ -339200,6 +340609,9 @@
                                   },
                                   "type": "array",
                                   "uniqueItems": true
+                                },
+                                "fieldChoices": {
+                                  "const": true
                                 },
                                 "initialStatuses": {
                                   "items": {
@@ -341158,6 +342570,9 @@
                                   "type": "array",
                                   "uniqueItems": true
                                 },
+                                "fieldChoices": {
+                                  "const": true
+                                },
                                 "initialStatuses": {
                                   "items": {
                                     "additionalProperties": false,
@@ -342756,6 +344171,9 @@
                                   },
                                   "type": "array",
                                   "uniqueItems": true
+                                },
+                                "fieldChoices": {
+                                  "const": true
                                 },
                                 "initialStatuses": {
                                   "items": {
@@ -353878,6 +355296,60 @@
           "defaultModeId": "fine-grained-pat",
           "modes": [
             {
+              "clientConfiguration": {
+                "clientIdFieldId": "clientId",
+                "scopesFieldId": "scopes"
+              },
+              "configuration": {
+                "changeBehavior": "reconnect",
+                "fields": [
+                  {
+                    "id": "clientId",
+                    "schema": {
+                      "type": "string"
+                    },
+                    "secret": false,
+                    "title": "OAuth client ID"
+                  },
+                  {
+                    "id": "scopes",
+                    "schema": {
+                      "type": "string"
+                    },
+                    "secret": false,
+                    "title": "OAuth scopes"
+                  }
+                ],
+                "scope": "account"
+              },
+              "id": "copilot-device",
+              "kind": "oauthDeviceCode",
+              "outcomeReconciliation": "none",
+              "title": "Copilot device sign-in"
+            },
+            {
+              "credentialOrigin": "authentication",
+              "directExport": {
+                "contractVersion": "happier.team-credential-manual-connected-account-direct.v1"
+              },
+              "fields": [
+                {
+                  "description": "A fine-grained personal token with Copilot Requests permission, OAuth token, or GitHub App user token.",
+                  "id": "token",
+                  "schema": {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "secret": true,
+                  "title": "GitHub token"
+                }
+              ],
+              "id": "copilot-token",
+              "kind": "manual",
+              "outcomeReconciliation": "none",
+              "title": "Copilot-compatible GitHub token"
+            },
+            {
               "credentialOrigin": "authentication",
               "directExport": {
                 "contractVersion": "happier.team-credential-manual-connected-account-direct.v1"
@@ -353960,7 +355432,10 @@
         ],
         "description": "GitHub account used for repository and pull-request operations.",
         "id": "github-account",
-        "title": "GitHub account"
+        "title": "GitHub account",
+        "ui": {
+          "iconResourceId": "service-mark"
+        }
       }
     ],
     "daemonDatabases": [],
@@ -355976,6 +357451,12 @@
     "requestInterceptors": [],
     "resources": [
       {
+        "contentType": "image/svg+xml",
+        "id": "service-mark",
+        "kind": "asset",
+        "path": "assets/service-mark.svg"
+      },
+      {
         "contentType": "application/json",
         "id": "ci-branch-counts",
         "kind": "config",
@@ -356170,6 +357651,7 @@
                   "assigneeIds",
                   "labelIds"
                 ],
+                "fieldChoices": true,
                 "transitions": [
                   {
                     "id": "open",
@@ -356851,6 +358333,10 @@
             {
               "kind": "fixedOrigin",
               "origin": "https://api.github.com"
+            },
+            {
+              "kind": "fixedOrigin",
+              "origin": "https://github.com"
             },
             {
               "kind": "scmProviderOrigin",

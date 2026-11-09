@@ -124,6 +124,20 @@
               "localId": "openai-codex",
               "pluginId": "happier.agent.codex"
             }
+          },
+          {
+            "credentialKinds": [
+              "token",
+              "oauth"
+            ],
+            "materializationKinds": [
+              "environment"
+            ],
+            "purpose": "github-copilot",
+            "service": {
+              "localId": "github-account",
+              "pluginId": "happier.scm.forge.github"
+            }
           }
         ],
         "id": "copilot",
@@ -201,6 +215,11 @@
         },
         "runtime": {
           "kind": "custom"
+        },
+        "sessionModeDescriptor": {
+          "runtimeSwitch": "acp-setSessionMode",
+          "semantics": "agent-modes",
+          "source": "acp"
         },
         "surfaces": {
           "externalSession": {
