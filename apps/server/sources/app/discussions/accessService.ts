@@ -237,7 +237,7 @@ export async function removeDiscussionGrantInTx(tx: Tx, input: DiscussionActorIn
     return mutationResultInTx(tx, input, context.ownerAccountId, changed);
 }
 
-/** Human invitations are grants; executable bindings require live custody and disclosure admission. */
+/** Human invitations are grants; writers may add executable bindings under their own custody and disclosure admission. */
 export async function inviteDiscussionParticipantInTx(tx: Tx, input: DiscussionActorInput & Readonly<{ request: DiscussionInviteRequestV1 }>): Promise<DiscussionResult<DiscussionInviteResponseV1>> {
     const parsed = DiscussionInviteRequestV1Schema.safeParse(input.request);
     if (!parsed.success) return discussionFailure("discussion_invalid_content");
@@ -249,7 +249,7 @@ export async function inviteDiscussionParticipantInTx(tx: Tx, input: DiscussionA
         additionalSessionIds: request.participant.kind === 'session' ? [request.participant.sessionId] : [] });
     const context = await resolveDiscussionContextInTx(tx, { discussionId: input.discussionId, accountId: input.actorAccountId, authentication: input.authentication });
     if (!context) return discussionFailure("discussion_not_found");
-    if (!mayManageResourceGrants(context.access)) return discussionFailure("discussion_access_forbidden");
+    if (context.access.level === "view") return discussionFailure("discussion_access_forbidden");
     if (!context.keyReadiness) return discussionFailure("discussion_content_unavailable");
     const discussion = await tx.discussion.findUnique({ where: { id: input.discussionId }, select: { archivedAt: true } });
     if (discussion?.archivedAt) return discussionFailure("discussion_archived");
@@ -441,7 +441,7 @@ export interface ValidatedDiscussionParticipantBirth {
     sessionId: string | null;
 }
 
-/** Ordinary Session birth consumes the reserved setup; the public ref alone grants no authority. */
+/** Ordinary Session birth consumes the writer's reserved setup; the public ref alone grants no authority. */
 export async function validateDiscussionParticipantBirthInTx(tx: Tx, input: DiscussionParticipantBirthInput): Promise<DiscussionResult<ValidatedDiscussionParticipantBirth>> {
     await acquireDiscussionMutationAccountsInTx(tx, { discussionId: input.discussionParticipant.discussionId, actorAccountId: input.accountId });
     return readDiscussionParticipantBirthAdmissionInTx(tx, input);
@@ -453,7 +453,7 @@ export async function readDiscussionParticipantBirthAdmissionInTx(tx: Tx, input:
     const context = await resolveDiscussionContextInTx(tx, { discussionId, accountId: input.accountId,
         authentication: input.authentication ?? backgroundDeliveryAuthentication() });
     if (!context) return discussionFailure("discussion_not_found");
-    if (!mayManageResourceGrants(context.access)) return discussionFailure("discussion_access_forbidden");
+    if (context.access.level === "view") return discussionFailure("discussion_access_forbidden");
     if (!context.keyReadiness) return discussionFailure("discussion_content_unavailable");
     const discussion = await tx.discussion.findUnique({ where: { id: discussionId }, select: { archivedAt: true } });
     if (discussion?.archivedAt) return discussionFailure("discussion_archived");

@@ -837,6 +837,11 @@ Protocol owns the contract under `packages/protocol/src/discussions/**`; the ser
 transactions under `apps/server/sources/app/discussions/**`. Human invitations are direct
 resource grants, with explicit Team/Group grants evaluated through the same shared grant
 policy used by Artifacts. View reads, edit posts, and owner/admin manages the resource.
+In unreleased 0.3 source, anyone with posting authority may add an executable
+participant, including to a teammate's Doc thread. Invitation and model Session
+birth use that same writer-level authority at the server participant owner;
+view-only access, unavailable content keys and archived threads do not admit an
+agent. Human invitations remain resource grants under management authority.
 Self-leave removes only the caller's direct grant; inherited Team/Group access can remain.
 The owner must transfer ownership or archive instead of leaving an ownerless resource.
 
@@ -1531,6 +1536,14 @@ resolved through that same owner on explicit Ask/Send, never through a composer-
 launcher; editing or opening/selecting a mention alone does not start it. Ordinary Session birth carries the strict `discussion`
 origin and exact Discussion/slot correspondence; the server validates the
 current reservation, creator and launch before committing its backing Session.
+The backing Session belongs to the person adding the model, who retains ordinary
+Session control; the thread owner does not acquire that control through Discussion
+administration. The ordinary launch uses the adding person's execution context and
+selected provider credentials, including an authorized Team credential binding.
+Provider charges therefore follow those credentials, rather than transferring to
+the Doc or thread owner. Inviting an existing Session retains its existing owner,
+credentials and billing; the inviter still needs Session input control and the
+existing source/audience disclosure admission.
 An authenticated creation-tag retry also revalidates current participation
 before acknowledging or restoring the same Session; immutable identity alone
 does not prove that a removed participant is still admitted.
@@ -1860,6 +1873,11 @@ quote and revision, or the root attachment for a plain reply, so a request to re
 the full Doc body and proposal replacement remain excluded. The same metadata names
 `doc.edit.propose` and its exact `discussionRef` as the suggestion path; the Action's
 description distinguishes a reviewable Doc suggestion from a conversational reply draft.
+In development source, passage capture records the paragraph prefix and suffix
+without expanding the person's highlight. The same passage owner supplies
+`suggestEdit.before`: the complete paragraph(s) to rewrite and replace with `after`.
+Older attachments without paragraph context require `doc.read` before composing
+the full-paragraph replacement. Intake still does not fetch the full Doc body.
 Both carry escaped content marked as data, not instructions.
 Quoted mentions or commands in those items do not become addressed requests.
 Workflow inputs and digests must consume this shared renderer when their
