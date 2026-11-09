@@ -125,7 +125,7 @@ describe('resolvePreferredBackendTargetFromSettings', () => {
         })).toEqual(CODEX_TARGET);
     });
 
-    it('still prefers a merged-projection configured backend target when the legacy customAcp carrier has no stored concrete backend target', () => {
+    it('does not turn a legacy customAcp carrier into a preference for a configured definition', () => {
         expect(resolvePreferredBackendTargetFromSettings({
             lastUsedAgent: 'customAcp',
             acpCatalogSnapshot: { status: 'ready', revision: 3, record: { v: 1, definitions: [REVIEW_BOT_ACP_BACKEND] } },
@@ -141,7 +141,7 @@ describe('resolvePreferredBackendTargetFromSettings', () => {
                     },
                 },
             } as any,
-        })).toEqual(REVIEW_BOT_TARGET);
+        })).toEqual(CLAUDE_TARGET);
     });
 
     it('preserves an explicit configured preference when the machine projection has no executable row', () => {
@@ -216,7 +216,7 @@ describe('resolvePreferredBackendTarget', () => {
         })).toEqual(REVIEW_BOT_TARGET);
     });
 
-    it('prefers an available configured backend target over built-in defaults when no explicit target is stored', () => {
+    it('keeps the remembered Agent ahead of unrelated configured catalog entries when no exact target is stored', () => {
         expect(resolvePreferredBackendTarget({
             availableBackendTargets: [
                 CODEX_TARGET,
@@ -224,7 +224,15 @@ describe('resolvePreferredBackendTarget', () => {
             ],
             lastUsedAgent: 'codex',
             lastUsedBackendTarget: null,
-        })).toEqual({ kind: 'backend', backendId: 'review-bot', configuredBackendId: 'review-bot' });
+        })).toEqual(CODEX_TARGET);
+    });
+
+    it('keeps a concrete Agent preference for repair when only unrelated configured definitions are available', () => {
+        for (const [lastUsedAgent, expected] of [['codex', CODEX_TARGET], ['custom-acp', CLAUDE_TARGET]] as const) {
+            expect(resolvePreferredBackendTarget({ lastUsedAgent, lastUsedBackendTarget: null,
+                availableBackendTargets: [REVIEW_BOT_TARGET],
+            })).toEqual(expected);
+        }
     });
 
     it('does not treat the legacy customAcp carrier as permission to select a discovered/plugin backend even when a caller requests legacy compat fallback', () => {

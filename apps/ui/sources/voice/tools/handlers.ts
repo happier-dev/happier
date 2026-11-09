@@ -4,6 +4,7 @@ import { PluginContributionIdentityV1Schema } from '@happier-dev/protocol/plugin
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 import { actionInputIssueFailure } from '@happier-dev/protocol/actions/executor/actionInputValidation';
 import type { SessionSpawnNewActionResultV1 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
+import type { AgentExecutionTargetV1 } from '@happier-dev/protocol/agents/executionTargetV1';
 import {
   PluginUiJsonValueV1Schema,
   type PluginUiJsonValueV1,
@@ -399,10 +400,12 @@ export function createVoiceToolHandlers(
     if (useAwareness && actionInput && typeof actionInput === 'object') {
       Reflect.deleteProperty(actionInput, 'includeLastMessagePreview');
     }
+    let spawnAgentTarget: AgentExecutionTargetV1 | undefined;
     if (actionId === 'session.spawn_new') {
       const bound = await bindVoiceSessionSpawnInput(actionInput, actionExecute, ctx?.signal);
       if (!bound.ok) return serializeVoiceActionExecuteResult(actionId, bound, { canonicalResult });
       actionInput = bound.input;
+      spawnAgentTarget = bound.input.agentTarget;
     }
     let res: Awaited<ReturnType<typeof actionExecute>>;
     try {
@@ -443,7 +446,8 @@ export function createVoiceToolHandlers(
         }).then(requireActionSuccess), { tag: 'VoiceTools.openCreatedSession' });
       }
     }
-    if (canonicalResult) return serializeVoiceActionExecuteResult(actionId, res, { canonicalResult: true });
+    const resultOptions = { canonicalResult, agentTarget: spawnAgentTarget };
+    if (canonicalResult) return serializeVoiceActionExecuteResult(actionId, res, resultOptions);
     if (res.ok && actionId === 'session.list') {
       const awareness = parseSessionAwarenessListResultV1(res.result);
       if (awareness) {
@@ -456,7 +460,7 @@ export function createVoiceToolHandlers(
         });
       }
     }
-    return serializeVoiceActionExecuteResult(actionId, res);
+    return serializeVoiceActionExecuteResult(actionId, res, resultOptions);
   };
 
   const answerUserActionRequest = async (

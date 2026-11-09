@@ -75,7 +75,7 @@ describe('Provider causes in Session-start failures', () => {
             firstTurn.present({ sessionId: 'session-a', firstTurnLocalId: 'first-turn-a' });
             firstTurn.observe({ ok: true, result });
             firstTurn.settle({ final: false });
-            expect(settlements).toEqual([{ state: 'failed', message, draftId: 'draft-a' }]);
+            expect(settlements).toEqual([{ state: 'failed', message, draftId: 'draft-a', failure: result }]);
         },
     );
 });

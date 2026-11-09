@@ -58,7 +58,7 @@ describe('resolvePreferredBackendTargetFromProjection', () => {
         })).toEqual(target);
         expect(resolvePreferredBackendTargetFromProjection({ ...inputs, lastUsedBackendTarget: null,
             acpCatalogSnapshot: { status: 'ready', revision: 3, record: { v: 1, definitions: [definition] } },
-        })).toEqual(target);
+        })).toEqual({ kind: 'agent', identity: BUNDLED_AGENT_CONTRIBUTION_IDENTITIES.codex });
         expect(resolvePreferredBackendTargetFromProjection({ ...inputs,
             acpCatalogSnapshot: { status: 'ready', revision: 4, record: { v: 1, definitions: [] } },
         })).toEqual(target);

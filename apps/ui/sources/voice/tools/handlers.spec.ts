@@ -1439,13 +1439,15 @@ describe('voice tool handlers', () => {
   it.each([
     ['s1', 'named', 'codex'], ['', 'named', 'codex'], ['s1', 'discovered', 'codex'], ['', 'discovered', 'codex'],
     ['', 'named', 'configured-default'], ['', 'discovered', 'configured-default'],
+    ['', 'named', 'remembered-default'], ['', 'discovered', 'remembered-default'],
   ] as const)('creates and opens a Session on the configured Voice Machine and admits its Voice follow-up (%s, %s, %s)', async (sourceSessionId, entry, agentChoice) => {
     state.settings.voice.canApproveRequests = false;
     const configuredDefault = agentChoice === 'configured-default';
     const selectedAgentTarget = configuredDefault
       ? { kind: 'agent' as const, identity: { pluginId: 'happier.agent.custom-acp', localId: 'custom-acp' }, definitionId: 'qa-c-exact-args' }
       : { kind: 'agent' as const, identity: { pluginId: 'happier.agent.codex', localId: 'codex' } };
-    if (configuredDefault) {
+    const rememberedDefault = agentChoice === 'remembered-default';
+    if (configuredDefault || rememberedDefault) {
       const { AcpBackendDefinitionV1Schema } = await import('@happier-dev/protocol/acp/catalog/settingsV1');
       const definition = AcpBackendDefinitionV1Schema.parse({ id: 'qa-c-exact-args', name: 'qa-c-exact-args', title: 'Configured default',
         launch: { kind: 'command', command: 'review', args: [] }, createdAt: 1, updatedAt: 1 });
@@ -1454,7 +1456,9 @@ describe('voice tool handlers', () => {
         ? Response.json({ status: 'present', revision: 2, content: { t: 'plain', v: { v: 1, definitions: [definition] } } })
         : previous(url, init));
       const { rememberLastUsedBackendSelection } = await import('@/sync/domains/state/newSessionTargetUiState');
-      rememberLastUsedBackendSelection(storage.getState().settingsScope, { lastUsedBackendTarget: selectedAgentTarget });
+      rememberLastUsedBackendSelection(storage.getState().settingsScope, {
+        lastUsedBackendTarget: configuredDefault ? selectedAgentTarget : null, lastUsedAgent: 'codex',
+      });
     }
     const { buildLocalVoiceAgentSystemPrompt } = await import('@happier-dev/agents');
     const { extractVoiceActionsFromAssistantText } = await import('@happier-dev/protocol/voice/actions');
@@ -1487,7 +1491,7 @@ describe('voice tool handlers', () => {
       creationKey: 'manual:voice-v2-contract',
       executionTarget,
       directory: { kind: 'path', path: '/tmp/s1' },
-      ...(!configuredDefault ? { agentTarget: selectedAgentTarget } : {}),
+      ...(!configuredDefault && !rememberedDefault ? { agentTarget: selectedAgentTarget } : {}),
       initialInput: {
         text: 'Inspect this project.',
       },
@@ -1530,7 +1534,7 @@ describe('voice tool handlers', () => {
 
     const { getActionSpec} = await import('@happier-dev/protocol/actions/actionSpecs');
     const parsedSpawnInput = getActionSpec('session.spawn_new').inputSchema.safeParse(spawnInput);
-    expect(parsedSpawnInput.success, JSON.stringify(parsedSpawnInput)).toBe(!configuredDefault);
+    expect(parsedSpawnInput.success, JSON.stringify(parsedSpawnInput)).toBe(!configuredDefault && !rememberedDefault);
     if (configuredDefault) {
       // RUN100: the catalog supplied the right default; the model nested its
       // definition inside identity. Never silently repair an explicit operand.
@@ -1563,9 +1567,9 @@ describe('voice tool handlers', () => {
     );
     expect(turn.actions).toHaveLength(1);
     const action = turn.actions[0]!;
-    const invokeCreate = (effectId: string) => (entry === 'discovered'
-      ? tools.action_execute!({ actionId: 'session.spawn_new', input: action.args }, { serverId: homeA, effectId })
-      : tools[action.t]!(action.args, { serverId: homeA, effectId }));
+    const invokeCreate = (effectId: string, input: unknown = action.args) => (entry === 'discovered'
+      ? tools.action_execute!({ actionId: 'session.spawn_new', input }, { serverId: homeA, effectId })
+      : tools[action.t]!(input, { serverId: homeA, effectId }));
     // A receiving host may accept work before it has a committed child. That
     // receipt cannot navigate to a guessed child or to the source Session.
     spawnSettlement = { type: 'pending', retryWithSameCreationKey: true, outcome: 'unknown' };
@@ -1650,6 +1654,21 @@ describe('voice tool handlers', () => {
     const refused = JSON.parse(await followupTools[followup.t]!(followup.args, { effectId: 'voice-maple-refused' }));
     expect(refused).toMatchObject({ ok: true, status: 'rejected', code: 'session_input_unauthorized' });
     expect(delivered).toHaveLength(1);
+    if (rememberedDefault) {
+      // A daemon startup refusal must retain its cause and name the selected Agent.
+      const { SessionSpawnNewResultV1Schema } = await import('@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1');
+      spawnSettlement = SessionSpawnNewResultV1Schema.parse({ type: 'error', code: 'spawn_failed', retryable: false,
+        launchError: { kind: 'launch_error', code: 'agent_startup_failed', message: 'Agent startup failed',
+          failureCause: { phase: 'client_start', failureReason: 'unclassified_provider_error',
+            providerErrorMessage: 'Cannot call write after a stream was destroyed' } } });
+      const failed = JSON.parse(await invokeCreate('voice-spawn-startup-failed', {
+        ...spawnInput, creationKey: 'manual:voice-startup-failure',
+      }));
+      expect(failed).toMatchObject({ agentTarget: selectedAgentTarget,
+        errorMessage: expect.stringContaining('codex') });
+      expect(failed.errorMessage).toContain('Cannot call write after a stream was destroyed');
+      expect(entry === 'discovered' ? failed.result : failed).toMatchObject(spawnSettlement);
+    }
   });
 
   it('rejects retired flat spawnSession arguments before dispatching', async () => {

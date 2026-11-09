@@ -2662,6 +2662,10 @@ review and admission. The inventory's existing preference owner selects the
 default; the Voice agent does not reconstruct it. Explicit selections remain
 strict: a configured Agent carries `definitionId` beside `identity`, never
 inside it. Deferred approval retains the fully bound target.
+Catalog order does not select a configured Agent: an exact saved target takes
+precedence, followed by the remembered Agent and the available built-in default.
+A Voice creation failure names the bound Agent and carries the existing typed,
+redacted startup cause; it does not copy raw process stderr into the conversation.
 
 In development source, ordinary `session.spawn_new` accepts optional
 `machineSetupPlanInput` with Home, Machine, sources and exclusions only; removal,

@@ -213,7 +213,7 @@ describe('useNewSessionBackendTargetState', () => {
         expect(hook.getCurrent().backendTarget).toBe(selected);
         await hook.unmount();
     });
-    it('follows an Account-purpose default from an implicit configured fallback while its catalog is loading', async () => {
+    it('follows an Account-purpose default without selecting an unrelated configured definition while loading', async () => {
         const home = await network.addHome('https://configured-default.test', 'configured-default-account');
         const scope = { serverId: home.id, accountId: 'configured-default-account' };
         rememberLastUsedBackendSelection(storage.getState().settingsScope, { lastUsedAgent: null, lastUsedBackendTarget: null });
@@ -222,7 +222,7 @@ describe('useNewSessionBackendTargetState', () => {
             machineTarget: { machineId: null, serverId: home.id, load: false },
         }));
         try {
-            expect(resolveBackendTargetKeyV2(hook.getCurrent().backendTarget)).toBe(entries[0]!.backendTargetKey);
+            expect(resolveBackendTargetKeyV2(hook.getCurrent().backendTarget)).toBe('agent:happier.agent.codex/codex');
             const { applyConnectedAccountCatalogSnapshot } = await import('@/sync/store/settings/connectedAccountCatalogSnapshot');
             await act(async () => applyConnectedAccountCatalogSnapshot(scope, 'purposes', {
                 status: 'ready', revision: 1, record: { key: 'purposes', value: { v: 1, bindings: [{
@@ -470,7 +470,7 @@ describe('useNewSessionBackendTargetState', () => {
         expect(resolveBackendTargetKeyV2(observed!.backendTarget)).toBe('agent:happier.agent.codex/codex');
     });
 
-    it('prefers an available configured backend target over built-in defaults when no explicit target is stored', async () => {
+    it('keeps the Account Agent default ahead of an unrelated configured definition', async () => {
         let observed: ReturnType<typeof useNewSessionBackendTargetState> | null = null;
 
         function Probe() {
@@ -483,8 +483,8 @@ describe('useNewSessionBackendTargetState', () => {
         await renderScreen(React.createElement(Probe));
 
         expect(observed).not.toBeNull();
-        expect(resolveBackendTargetKeyV2(observed!.backendTarget)).toBe('agent:happier.agent.custom-acp/custom-acp:definition:review-bot');
-        expect((observed as ReturnType<typeof useNewSessionBackendTargetState> | null)?.selectedCatalogAgentId).toBeNull();
+        expect(resolveBackendTargetKeyV2(observed!.backendTarget)).toBe('agent:happier.agent.codex/codex');
+        expect((observed as ReturnType<typeof useNewSessionBackendTargetState> | null)?.selectedCatalogAgentId).toBe('codex');
     });
 
     it('keeps an unbacked plugin Agent separate from bundled static policy', async () => {

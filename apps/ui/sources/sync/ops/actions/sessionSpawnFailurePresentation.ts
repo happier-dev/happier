@@ -183,7 +183,10 @@ function resolveSessionSpawnNewResultFailureBody(
             : t('errors.errorWithCode', { message: t(key), code: result.code }));
         const defaultFailure = result.code === 'spawn_failed'
             ? result.launchError?.failureCause?.connectedServicesDefault : undefined;
-        return defaultFailure ? `${presented}\n\n${defaultFailure.phase}${defaultFailure.catalogReason ? `: ${defaultFailure.catalogReason}` : ''}` : presented;
+        const providerMessage = result.code === 'spawn_failed'
+            ? result.launchError?.failureCause?.providerErrorMessage : undefined;
+        const withProviderMessage = providerMessage ? `${presented}\n\n${providerMessage}` : presented;
+        return defaultFailure ? `${withProviderMessage}\n\n${defaultFailure.phase}${defaultFailure.catalogReason ? `: ${defaultFailure.catalogReason}` : ''}` : withProviderMessage;
     }
     return t(key);
 }

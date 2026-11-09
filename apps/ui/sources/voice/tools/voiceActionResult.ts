@@ -1,8 +1,11 @@
 import { ActionApprovalRequestCreatedResultSchema, type ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
-import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
+import { isSessionSpawnNewActionIdV1, type ActionId } from '@happier-dev/protocol/actions/actionIds';
 import { isRecord } from '@happier-dev/protocol/common/records';
 import { normalizeSpawnSessionErrorDetail } from '@happier-dev/protocol/spawnSession';
 import { SessionMessageReplyMutationResultV1Schema } from '@happier-dev/protocol/sessions/messages/sessionMessageReplyV1';
+import type { AgentExecutionTargetV1 } from '@happier-dev/protocol/agents/executionTargetV1';
+import type { SessionSpawnNewActionResultV1 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
+import { resolveSessionSpawnNewResultFailureMessage } from '@/sync/ops/actions/sessionSpawnFailurePresentation';
 
 export function jsonOk(payload?: Record<string, unknown>): string {
   return JSON.stringify({ ok: true, ...(payload ?? {}) });
@@ -51,13 +54,16 @@ export function serializeVoiceActionExecuteResult(
     failurePayload?: Record<string, unknown>;
     executedPayload?: Record<string, unknown>;
     canonicalResult?: boolean;
+    agentTarget?: AgentExecutionTargetV1;
   }>,
 ): string {
   if (!result.ok) {
     const details = isRecord(result.details) ? result.details : {};
     const errorDetail = normalizeSpawnSessionErrorDetail(details.errorDetail);
-    return jsonError(result.errorCode, result.errorCode, {
+    return jsonError(result.errorCode, options?.agentTarget
+      ? `${options.agentTarget.identity.localId}: ${result.errorCode}` : result.errorCode, {
       actionId,
+      ...(options?.agentTarget ? { agentTarget: options.agentTarget } : {}),
       // The Action-input owner has already projected these content-free repair facts.
       ...(Array.isArray(details.issues) ? { details: { issues: details.issues } } : {}),
       ...(typeof details.sessionId === 'string' ? { sessionId: details.sessionId } : {}),
@@ -67,6 +73,14 @@ export function serializeVoiceActionExecuteResult(
   }
 
   const domainResult = isRecord(result.result) ? result.result : {};
+  if (isSessionSpawnNewActionIdV1(actionId) && domainResult.type === 'error' && options?.agentTarget) {
+    // The Action owner validated this settlement; presentation adds the bound
+    // Agent without changing the domain result or inferring a startup cause.
+    const failure = result.result as Extract<SessionSpawnNewActionResultV1, { type: 'error' }>;
+    const context = { agentTarget: options.agentTarget,
+      errorMessage: `${options.agentTarget.identity.localId}: ${resolveSessionSpawnNewResultFailureMessage(failure)}` };
+    return options.canonicalResult ? JSON.stringify({ ...result, ...context }) : jsonOk({ ...domainResult, ...context });
+  }
   if (domainResult.ok === false && domainResult.status === 'partial') {
     return JSON.stringify(options?.canonicalResult ? result : domainResult);
   }
