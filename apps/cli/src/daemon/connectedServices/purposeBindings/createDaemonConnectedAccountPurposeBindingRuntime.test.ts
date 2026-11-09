@@ -54,7 +54,7 @@ import {
   createQualifiedConnectedAccountEstablishedRuntimeOwner,
   type QualifiedConnectedAccountEstablishedRuntimeOwner,
 } from '../qualifiedConnectedAccountEstablishedRuntimeOwner';
-import { DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1 } from '../accountGroups/selection/selectConnectedServiceAuthGroupCandidate';
+import { DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V2 } from '../accountGroups/selection/selectConnectedServiceAuthGroupCandidate';
 import { materializeQualifiedConnectedAccountLaunchUses } from '../materialize/materializeQualifiedConnectedAccountLaunchUses';
 import type { ConnectedAccountPurposeBindingStore } from './ConnectedAccountPurposeBindingOwner';
 import {
@@ -162,7 +162,7 @@ function testQualifiedApi(input: Readonly<{
     ref: { service: openAiService, groupId: 'primary' },
     incarnation: 'qualified-group-row-primary',
     displayName: 'Primary upstreams',
-    policy: DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1,
+    policy: DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V2,
     activeConnectedAccountId: 'standard-openai',
     generation: 1,
     runtimeStateRevision: 0,
@@ -190,7 +190,7 @@ function testQualifiedApi(input: Readonly<{
     })),
     listAccounts,
     listGroups: vi.fn(async () => ({ groups: [group] })),
-    readGroup: vi.fn(async () => group),
+    readGroup: vi.fn(async (_input: Readonly<{ service: QualifiedConnectedAccountProfileV4['ref']['service']; groupId: string }>): Promise<QualifiedConnectedAccountGroupV4 | null> => group),
   };
 }
 
@@ -207,7 +207,7 @@ function testQualifiedGroup(input: Readonly<{
     ref: { service: openAiService, groupId: 'primary' },
     incarnation: 'qualified-group-row-primary',
     displayName: 'Primary upstreams',
-    policy: DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1,
+    policy: DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V2,
     activeConnectedAccountId: input.activeAccountId,
     generation: input.generation ?? 1,
     runtimeStateRevision: 0,
@@ -832,6 +832,43 @@ describe('createDaemonConnectedAccountPurposeBindingRuntime', () => {
     expect(scoped.searchParams.has('services')).toBe(false);
   });
 
+  it('shares demanded service inventory across quota groups and refreshes actual membership and revisions', async () => {
+    const { runtime, qualifiedApi, inventoryReads, inventoryBatchReads } = await coordinatorFixture();
+    const profiles = Array.from({ length: 40 }, (_, index) => testQualifiedProfile({ accountId: `account-${index}` }));
+    qualifiedApi.listAccounts.mockResolvedValue({ service: openAiService, accounts: profiles });
+    const groups = Array.from({ length: 4 }, (_, index) => ({
+      ...testQualifiedGroup({ activeAccountId: `account-${index}`, generation: 1,
+        members: [{ accountId: `account-${index}` }, { accountId: `account-${index + 4}` }] }),
+      ref: { service: openAiService, groupId: `group-${index}` },
+    }));
+    qualifiedApi.readGroup.mockImplementation(async input => groups.find(group => group.ref.groupId === input.groupId) ?? null);
+    const signal = new AbortController().signal;
+    await runtime.listCoordinatorAccounts(signal, openAiService);
+    for (const group of groups) {
+      const targets = await runtime.listGroupQuotaTargets({ service: openAiService, groupId: group.ref.groupId, signal });
+      expect(targets.map(target => target.profile.ref.accountId)).toEqual(group.members.map(member => member.connectedAccountId));
+    }
+    expect(inventoryBatchReads).toHaveBeenCalledTimes(1);
+    expect(inventoryBatchReads.mock.calls[0][0]).toEqual([openAiService]);
+    expect(inventoryReads).not.toHaveBeenCalled();
+
+    const revision = 'csr_zyxwvutsrqponmlkjihgfe';
+    const changedProfile = { ...profiles[8]!, credentialRevision: revision };
+    qualifiedApi.listAccounts.mockResolvedValue({ service: openAiService, accounts: [...profiles.slice(0, 8), changedProfile, ...profiles.slice(9)] });
+    groups[0] = { ...groups[0]!, generation: 2, members: [
+      { ...groups[0]!.members[0]!, connectedAccountId: changedProfile.ref.accountId },
+    ] };
+    runtime.invalidate({ services: [openAiService] });
+    expect(await runtime.listGroupQuotaTargets({ service: openAiService, groupId: 'group-0', signal })).toEqual([
+      { profile: changedProfile, groupGeneration: 2 },
+    ]);
+    expect(inventoryBatchReads).toHaveBeenCalledTimes(2);
+    expect(await runtime.listGroupQuotaTargets({ service: openAiService, groupId: 'group-0', accountIds: ['account-0'], signal })).toEqual([]);
+    qualifiedApi.readGroup.mockResolvedValue(null);
+    expect(await runtime.listGroupQuotaTargets({ service: openAiService, groupId: 'missing', signal })).toEqual([]);
+    expect(inventoryBatchReads).toHaveBeenCalledTimes(2);
+  });
+
   it('records payload-free inventory invalidation scope and reason at the inventory owner', async () => {
     const diagnostic = vi.spyOn(logger, 'debug');
     const { runtime } = await coordinatorFixture(true);
@@ -1116,7 +1153,7 @@ describe('createDaemonConnectedAccountPurposeBindingRuntime', () => {
   });
 
   it('refuses custodian native login for an isolated requester before invoking the OS credential owner', async () => {
-    const runGhCommand = vi.fn(async () => ({ ok: true as const, stdout: 'alice-token', stderr: '', exitCode: 0 }));
+    const acquireNativeCredentials = vi.fn(async () => ({ kind: 'httpHeaders' as const, headers: { Authorization: 'Bearer fixture-native-token' } }));
     const runtime = createDaemonConnectedAccountPurposeBindingRuntime({
       store: emptyStore(), allowNativeAccountCredentials: false,
       establishedRuntimeOwner: { invokeWithReceipt: async () => { throw new Error('Unexpected stored Account read'); },
@@ -1124,27 +1161,23 @@ describe('createDaemonConnectedAccountPurposeBindingRuntime', () => {
       resolveQualifiedConnectedAccountV4Support: () => 'advertised',
       runtimeRegistry: { subscribe: () => () => undefined, acquire: async () => ({
         isCurrent: () => true, resolveService: () => ({ service: githubService, availability: 'available' as const,
-          authentication: { ...testAuthentication, native: { systemTool: 'gh' as const } } }), release: async () => undefined,
+          authentication: { ...testAuthentication, native: { systemTool: 'gh' as const } } }), materializeNative: acquireNativeCredentials, release: async () => undefined,
       }) },
-      // Genuine OS/executable boundary; purpose authorization remains real.
-      ghDependencies: { resolveSystemGhBinPath: async () => '/fixture/gh', resolveManagedGhBinPath: async () => null, runGhCommand },
     });
     await expect(runtime.owner.materialize({ purpose, serviceRefs: [githubService], nativeService: githubService,
-      request: { kind: 'httpHeaders', origin: 'https://api.github.com', headerNames: ['authorization'] },
+      request: { kind: 'httpHeaders', origins: ['https://api.github.com'], headerNames: ['authorization'] },
       signal: new AbortController().signal })).rejects.toMatchObject({ code: 'plugin_connected_account_native_unavailable',
         remediation: { kind: 'selectAccount', service: githubService } });
-    expect(runGhCommand).not.toHaveBeenCalled();
+    expect(acquireNativeCredentials).not.toHaveBeenCalled();
   });
-  it.each([
-    { origin: 'https://api.github.com', hostname: 'github.com' },
-    { origin: 'https://github.example.test', hostname: 'github.example.test' },
-  ])('materializes machine GitHub login for $hostname without reading or writing server credentials', async ({ origin, hostname }) => {
+  it('materializes a contributed non-GitHub native login without reading or writing server credentials', async () => {
+    const service = { pluginId: 'acme.native', localId: 'work' };
+    const origin = 'https://acme.example.test';
     const store = emptyStore();
     let nativeToken = 'ephemeral-gh-token';
-    const runGhCommand = vi.fn(async ({ args }: { args: readonly string[] }) => {
-      expect(args).toEqual(['auth', args[1], '--hostname', hostname]);
-      return { ok: true as const, stdout: args[1] === 'token' ? `${nativeToken}\n` : '', stderr: '', exitCode: 0 };
-    });
+    // Native acquisition is the external credential boundary supplied by this test contribution.
+    const acquireNativeCredentials = vi.fn(async () => ({ kind: 'httpHeaders' as const,
+      headers: { Authorization: `Bearer ${nativeToken}` } }));
     const runtime = createDaemonConnectedAccountPurposeBindingRuntime({
       store,
       establishedRuntimeOwner: {
@@ -1157,22 +1190,17 @@ describe('createDaemonConnectedAccountPurposeBindingRuntime', () => {
         acquire: async () => ({
           isCurrent: () => true,
           resolveService: () => ({
-            service: githubService, availability: 'available' as const,
-            authentication: { ...testAuthentication, native: { systemTool: 'gh' as const } },
+            service: service, availability: 'available' as const,
+            authentication: { ...testAuthentication, native: { systemTool: 'acme-login' } },
           }),
+          materializeNative: acquireNativeCredentials,
           release: async () => undefined,
         }),
       },
-      // Only executable lookup and the OS command are faked; GH selection and purpose logic are real.
-      ghDependencies: {
-        resolveSystemGhBinPath: async () => '/fixture/gh',
-        resolveManagedGhBinPath: async () => null,
-        runGhCommand,
-      },
     });
     await expect(runtime.owner.materialize({
-      purpose, serviceRefs: [githubService], nativeService: githubService,
-      request: { kind: 'httpHeaders', origin, headerNames: ['authorization'] },
+      purpose, serviceRefs: [service], nativeService: service,
+      request: { kind: 'httpHeaders', origins: [origin], headerNames: ['authorization'] },
       signal: new AbortController().signal,
     })).resolves.toEqual({ kind: 'httpHeaders', headers: { Authorization: 'Bearer ephemeral-gh-token' } });
     expect(store.current()).toEqual({ v: 1, bindings: [] });
@@ -1183,12 +1211,12 @@ describe('createDaemonConnectedAccountPurposeBindingRuntime', () => {
       contribution: { id: purpose.consumer.localId, qualifiedId: `${purpose.consumer.pluginId}/agents/${purpose.consumer.localId}` },
       occurrenceId: 'native-read', correlationId: 'native-read', surface: 'agent',
       signal: controller.signal, isOccurrenceCurrent: () => !controller.signal.aborted, retireReadObservation: retire,
-    }, [{ purpose: purpose.purpose, serviceRefs: [githubService], operations: ['use'] }]);
+    }, [{ purpose: purpose.purpose, serviceRefs: [service], operations: ['use'] }]);
     const refresh = vi.fn();
     const watch = connectedAccounts.watch(purpose.purpose, refresh);
     try {
       await vi.waitFor(() => expect(refresh).toHaveBeenCalledOnce());
-      runGhCommand.mockClear();
+      acquireNativeCredentials.mockClear();
       for (let index = 0; index < 24; index++) {
         runtime.invalidate({ services: [openAiService] });
         await store.update(current => current);
@@ -1197,14 +1225,14 @@ describe('createDaemonConnectedAccountPurposeBindingRuntime', () => {
       expect(refresh).toHaveBeenCalledOnce();
       expect(retire).not.toHaveBeenCalled();
       nativeToken = 'rotated-native-token';
-      runtime.invalidate({ services: [githubService] }, 'credential-updated');
+      runtime.invalidate({ services: [service] }, 'credential-updated');
       await vi.waitFor(() => expect(retire).toHaveBeenCalledOnce());
       expect(refresh).toHaveBeenCalledOnce();
       // Currentness observes only the source invalidation, never credential material.
-      expect(runGhCommand).not.toHaveBeenCalled();
+      expect(acquireNativeCredentials).not.toHaveBeenCalled();
       await expect(connectedAccounts.getBinding(purpose.purpose)).resolves.toBeNull();
-      await expect(runtime.owner.materialize({ purpose, serviceRefs: [githubService], nativeService: githubService,
-        request: { kind: 'httpHeaders', origin, headerNames: ['authorization'] }, signal: controller.signal,
+      await expect(runtime.owner.materialize({ purpose, serviceRefs: [service], nativeService: service,
+        request: { kind: 'httpHeaders', origins: [origin], headerNames: ['authorization'] }, signal: controller.signal,
       })).resolves.toEqual({ kind: 'httpHeaders', headers: { Authorization: 'Bearer rotated-native-token' } });
       expect(store.current()).toEqual({ v: 1, bindings: [] });
     } finally {
@@ -1511,19 +1539,20 @@ describe('createDaemonConnectedAccountPurposeBindingRuntime', () => {
     })).toThrow('connected_account_operation_binding_direct_material_consumer_unsupported');
   });
 
-  it.each([true, false])('offers declared native services only when requester custody allows them (%s)', async allowNativeAccountCredentials => {
+  it.each([true, false])('offers non-GitHub declared native services only when requester custody allows them (%s)', async allowNativeAccountCredentials => {
+    const service = { pluginId: 'acme.native', localId: 'work' };
     const runtimeRegistry: DaemonConnectedAccountRuntimeRegistry = {
       subscribe: () => () => undefined, acquire: async () => ({ isCurrent: () => true,
-        resolveService: () => ({ service: githubService, availability: 'available' as const,
-          authentication: { ...testAuthentication, native: { systemTool: 'gh' as const } } }),
+        resolveService: () => ({ service, availability: 'available' as const,
+          authentication: PluginConnectedAccountAuthenticationV2Schema.parse({ ...testAuthentication, native: { systemTool: 'acme-login' } }) }),
         release: async () => undefined,
       }),
     };
-    const runtime = createActionFormRuntime({ allowNativeAccountCredentials, runtimeRegistry, qualifiedApi: testQualifiedApi({ resultService: githubService, accounts: [] }) });
-    await expect(runtime.listActionFormConnectedAccountOptions({ purpose, serviceRefs: [githubService],
+    const runtime = createActionFormRuntime({ allowNativeAccountCredentials, runtimeRegistry, qualifiedApi: testQualifiedApi({ resultService: service, accounts: [] }) });
+    await expect(runtime.listActionFormConnectedAccountOptions({ purpose, serviceRefs: [service],
       nativeServicePath: 'nativeService', signal: new AbortController().signal,
-    })).resolves.toEqual(allowNativeAccountCredentials ? [{ value: githubService, label: 'gh', nativeServicePath: 'nativeService' }] : []);
-    await expect(runtime.listActionFormConnectedAccountOptions({ purpose, serviceRefs: [githubService],
+    })).resolves.toEqual(allowNativeAccountCredentials ? [{ value: service, label: 'acme-login', nativeServicePath: 'nativeService' }] : []);
+    await expect(runtime.listActionFormConnectedAccountOptions({ purpose, serviceRefs: [service],
       signal: new AbortController().signal,
     })).resolves.toEqual([]);
   });
@@ -2123,7 +2152,7 @@ describe('createDaemonConnectedAccountPurposeBindingRuntime', () => {
     });
     const materializationRequest = {
       kind: 'httpHeaders' as const,
-      origin: 'https://github.com',
+      origins: ['https://github.com'],
       headerNames: ['authorization'],
     };
 
@@ -2258,7 +2287,7 @@ describe('createDaemonConnectedAccountPurposeBindingRuntime', () => {
         serviceRefs: [openAiService],
         request: {
           kind: 'httpHeaders',
-          origin: 'https://api.openai.com',
+          origins: ['https://api.openai.com'],
           headerNames: ['authorization'],
         },
         signal,
@@ -2271,7 +2300,7 @@ describe('createDaemonConnectedAccountPurposeBindingRuntime', () => {
         serviceRefs: [openAiService],
         request: {
           kind: 'httpHeaders',
-          origin: 'https://example.test',
+          origins: ['https://example.test'],
           headerNames: ['authorization'],
         },
         signal,
@@ -2873,7 +2902,7 @@ describe('createDaemonConnectedAccountPurposeBindingRuntime', () => {
       ref: { service: openAiService, groupId: 'primary' },
       incarnation: 'qualified-group-row-primary',
       displayName: 'Primary upstreams',
-      policy: DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1,
+      policy: DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V2,
       activeConnectedAccountId: 'standard-openai',
       generation: 1,
       runtimeStateRevision: 0,
@@ -3000,7 +3029,7 @@ describe('createDaemonConnectedAccountPurposeBindingRuntime', () => {
       purpose,
       serviceRefs: [openAiService],
       account: { service: openAiService, accountId: 'standard-openai' },
-      request: { kind: 'httpHeaders', origin: 'https://cloud.example.test', headerNames: ['authorization'] },
+      request: { kind: 'httpHeaders', origins: ['https://cloud.example.test'], headerNames: ['authorization'] },
       signal: new AbortController().signal,
     })).resolves.toEqual({ kind: 'httpHeaders', headers: { authorization: 'Bearer listed' } });
     expect(invokeWithReceipt).toHaveBeenCalledOnce();
@@ -3413,7 +3442,7 @@ describe('createDaemonConnectedAccountPurposeBindingRuntime', () => {
       ...listedAccount,
       request: {
         kind: 'httpHeaders',
-        origin: 'https://us.example.test',
+        origins: ['https://us.example.test'],
         headerNames: ['authorization'],
       },
     })).rejects.toMatchObject({
@@ -3425,7 +3454,7 @@ describe('createDaemonConnectedAccountPurposeBindingRuntime', () => {
       ...listedAccount,
       request: {
         kind: 'httpHeaders',
-        origin: 'https://eu.example.test',
+        origins: ['https://eu.example.test'],
         headerNames: ['authorization'],
       },
     })).resolves.toEqual({ kind: 'httpHeaders', headers: { authorization: 'Bearer listed' } });

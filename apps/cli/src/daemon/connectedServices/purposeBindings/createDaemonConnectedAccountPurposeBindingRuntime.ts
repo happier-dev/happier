@@ -5,7 +5,7 @@ import { createConnectedAccountPurposeMaterializer, readConnectedAccountPurposeI
   CONNECTED_ACCOUNT_AUTHORIZED_INVENTORY_BOUND, type ConnectedAccountPurposeInventoryEntry } from '@happier-dev/cli-common/connectedAccounts';
 import type { DaemonPluginActionFormConnectedAccountOption } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import type { RequesterConnectedAccountObservation } from '@/api/client/accountEncryptionCurrentnessObservation';
-import { ConnectedAccountHttpHeadersRequestSchema } from '@happier-dev/protocol/connect/connected-account-purposes';
+import { ConnectedAccountMaterializationRequestSchema } from '@happier-dev/protocol/connect/connected-account-purposes';
 import { MAX_INTERACTION_TRANSIENT_CHOICES_V1 } from '@happier-dev/protocol/plugins/interactions/transientV1';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { isQualifiedConnectedAccountProfileUsableV4, resolveQualifiedConnectedAccountGroupActiveAccountV4 } from '@happier-dev/protocol/connect/qualified-connected-account-projections';
@@ -20,7 +20,7 @@ import type {
   PluginContributionRef,
 } from '@happier-dev/plugin-sdk';
 
-import { resolveGhNativeToken } from '@/capabilities/deps/gh';
+import type { ConnectedAccountHostRuntimeInvoker } from '@/plugins/runtime/connectedAccounts/runtimeInvoker';
 import type { PermissionRequestOwner } from '@/agent/permissions/permissionRequestOwner';
 import { connectedAccountProjectionFamily } from '@/plugins/projection/registry/connectedAccounts';
 import type { ResolvedContributionRegistry } from '@/plugins/projection/registry/types';
@@ -90,6 +90,7 @@ type DaemonConnectedAccountRegistryLease = Readonly<{
   isCurrent(): boolean;
   resolveService(service: PluginContributionRef): ResolvedDaemonConnectedAccountService | null;
   listServices?(): readonly ResolvedDaemonConnectedAccountService[];
+  materializeNative?: ConnectedAccountHostRuntimeInvoker['invokeNative'];
   release(): Promise<void>;
 }>;
 
@@ -103,6 +104,7 @@ export type DaemonConnectedAccountActionFormOption = DaemonPluginActionFormConne
 
 export type DaemonConnectedAccountPurposeBindingRuntime = Readonly<{
   owner: StablePluginConnectedAccountsOwner;
+  readBindingObservation: ConnectedAccountPurposeBindingOwner['readBindingObservation'];
   readCredentialConfigurationRevision: ConnectedAccountPurposeBindingOwner['readCredentialConfigurationRevision'];
   activatePurposeBindings:
     ConnectedAccountPurposeBindingOwner['activatePurposeBindings'];
@@ -134,7 +136,8 @@ export type DaemonConnectedAccountPurposeBindingRuntime = Readonly<{
   listGroupQuotaTargets(input: Readonly<{
     service: QualifiedConnectedAccountRef['service'];
     groupId: string;
-    accountIds: ReadonlyArray<string>;
+    /** Omit to observe every actual member of the selected group. */
+    accountIds?: ReadonlyArray<string>;
     signal: AbortSignal;
   }>): Promise<readonly Readonly<{
     profile: QualifiedConnectedAccountProfileV4;
@@ -238,6 +241,7 @@ function createRuntimeRegistryAccess(
             })];
           })]);
         },
+        materializeNative: input => lease.registry.connectedAccountRuntimeInvoker.invokeNative(input),
         release: lease.release,
       });
     },
@@ -359,8 +363,6 @@ export function createDaemonConnectedAccountPurposeBindingRuntime(params: Readon
   >;
   runtimeRegistry?: DaemonConnectedAccountRuntimeRegistry;
   store?: ConnectedAccountPurposeBindingStore;
-  /** OS executable lookup/process boundary, shared with the canonical GitHub CLI owner. */
-  ghDependencies?: Parameters<typeof resolveGhNativeToken>[1];
   /** A foreign requester cannot borrow the host custodian's native sign-in. */
   allowNativeAccountCredentials?: boolean;
   /**
@@ -737,7 +739,7 @@ export function createDaemonConnectedAccountPurposeBindingRuntime(params: Readon
       if (input.nativeServicePath && params.allowNativeAccountCredentials !== false) {
         for (const serviceRef of input.serviceRefs) {
           const service = lease.resolveService(serviceRef);
-          if (service?.availability !== 'available' || service.authentication.native?.systemTool !== 'gh') continue;
+          if (service?.availability !== 'available' || !service.authentication.native) continue;
           if (nativeOptions.some(option => 'nativeServicePath' in option
             && option.value.pluginId === service.service.pluginId && option.value.localId === service.service.localId)) continue;
           nativeOptions.push(Object.freeze({ value: service.service, label: service.authentication.native.systemTool,
@@ -816,34 +818,24 @@ export function createDaemonConnectedAccountPurposeBindingRuntime(params: Readon
       });
       const unavailable = () => new PluginError({
         code: 'plugin_connected_account_native_unavailable',
-        message: 'sign in with gh CLI',
-        remediation: { kind: 'openUrl', url: 'https://cli.github.com/manual/gh_auth_login' },
+        message: 'The selected service does not provide native authentication',
+        remediation: { kind: 'selectAccount', service: input.service },
       });
       const lease = await runtimeRegistry.acquire();
       try {
         assertCurrentRegistry(lease, input.signal);
         const service = lease.resolveService(input.service);
-        if (service?.availability !== 'available' || service.authentication.native?.systemTool !== 'gh') {
+        if (service?.availability !== 'available' || !service.authentication.native || !lease.materializeNative) {
           throw unavailable();
         }
-        const request = ConnectedAccountHttpHeadersRequestSchema.safeParse(input.request);
+        const request = ConnectedAccountMaterializationRequestSchema.safeParse(input.request);
         if (!request.success) {
           throw new PluginError({
             code: 'plugin_connected_account_binding_out_of_scope',
-            message: 'Native GitHub credentials require an authorized HTTPS header request',
+            message: 'Native credentials require an authorized materialization request',
           });
         }
-        if (!request.data.headerNames.includes('authorization')) {
-          return { kind: 'httpHeaders', headers: {} };
-        }
-        const host = new URL(request.data.origin).host;
-        const result = await resolveGhNativeToken({
-          hostname: host === 'api.github.com' ? 'github.com' : host,
-          signal: input.signal,
-        }, params.ghDependencies);
-        assertCurrentRegistry(lease, input.signal);
-        if (!result.ok) throw unavailable();
-        return { kind: 'httpHeaders', headers: { Authorization: `Bearer ${result.token}` } };
+        return await lease.materializeNative({ service: input.service, request: request.data, signal: input.signal });
       } finally {
         await lease.release();
       }
@@ -975,6 +967,7 @@ export function createDaemonConnectedAccountPurposeBindingRuntime(params: Readon
 
   return Object.freeze({
     owner,
+    readBindingObservation: bindingOwner.readBindingObservation,
     readCredentialConfigurationRevision: bindingOwner.readCredentialConfigurationRevision,
     activatePurposeBindings: bindingOwner.activatePurposeBindings,
     activateSessionPurposeBindings: bindingOwner.activateSessionPurposeBindings,
@@ -1017,24 +1010,19 @@ export function createDaemonConnectedAccountPurposeBindingRuntime(params: Readon
         groupId: input.groupId,
       }, input.signal);
       input.signal.throwIfAborted();
-      const accountsResult = await params.qualifiedApi.listAccounts(input.service, input.signal);
-      input.signal.throwIfAborted();
       if (!group) return Object.freeze([]);
       if (
         group.ref.groupId !== input.groupId
         || group.ref.service.pluginId !== input.service.pluginId
         || group.ref.service.localId !== input.service.localId
-        || accountsResult.service.pluginId !== input.service.pluginId
-        || accountsResult.service.localId !== input.service.localId
       ) {
         throw new Error('Qualified Connected Account group quota target identity mismatch');
       }
+      const accounts = await listServiceAccounts(input.service, input.signal, true);
       const groupMemberIds = new Set(group.members.map((member) => member.connectedAccountId));
-      const requestedIds = new Set(input.accountIds);
-      return Object.freeze(accountsResult.accounts.filter((profile) => (
-        profile.ref.service.pluginId === input.service.pluginId
-        && profile.ref.service.localId === input.service.localId
-        && requestedIds.has(profile.ref.accountId)
+      const requestedIds = input.accountIds ? new Set(input.accountIds) : null;
+      return Object.freeze(accounts.filter((profile) => (
+        (!requestedIds || requestedIds.has(profile.ref.accountId))
         && groupMemberIds.has(profile.ref.accountId)
       )).map((profile) => Object.freeze({
         profile,

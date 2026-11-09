@@ -1972,6 +1972,7 @@ export async function startDaemon(
       revocation: {
         token: credentials.token,
         establishedRuntimeOwner: establishedConnectedAccountRuntimeOwner,
+        cleanupAccountHomes: account => connectedServiceGroupHomeCleanupScheduler.scheduleDeletedAccountCleanup({ account }),
         legacyCredentialApi: api,
         resolveV4Support: () =>
           resolveQualifiedConnectedAccountAtomicV4Negotiation(
@@ -2589,6 +2590,8 @@ export async function startDaemon(
         connectedAccountPurposeBindingRuntime.materializeRequestAuthBearer,
       activatePurposeBindings:
         connectedAccountPurposeBindingRuntime.activatePurposeBindings,
+      readBindingObservation:
+        connectedAccountPurposeBindingRuntime.readBindingObservation,
       isShuttingDown: isDaemonQuiescing,
       processEnv: process.env,
     });
@@ -3232,7 +3235,7 @@ export async function startDaemon(
         establishedConnectedAccountRuntimeOwner,
       resolveConnectedAccountUsageIdentity,
       listScheduledQualifiedConnectedAccounts:
-        service => connectedAccountPurposeBindingRuntime.listCoordinatorAccounts(undefined, service),
+        (service, signal) => connectedAccountPurposeBindingRuntime.listCoordinatorAccounts(signal, service),
       subscribeConnectedAccountInvalidations:
         connectedAccountPurposeBindingRuntime.subscribeInvalidations,
       listQualifiedConnectedAccountGroupQuotaTargets:

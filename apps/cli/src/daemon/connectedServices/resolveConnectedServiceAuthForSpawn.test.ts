@@ -10,7 +10,7 @@ import { afterAll, beforeAll, describe, expect, it, onTestFinished, vi } from 'v
 
 import {
   ConnectedServiceAuthGroupV1Schema,
-  ConnectedServiceAuthGroupPolicyV1Schema,
+  ConnectedServiceAuthGroupPolicyV2Schema,
   ConnectedServiceIdSchema,
   BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID,
   buildProviderAccountUsageRecordId,
@@ -528,7 +528,7 @@ async function createSpawnPreTurnSwitchScenario(input: Readonly<{
     groupId: 'codex-main',
     displayName: 'Codex main',
     policy: {
-      v: 1 as const,
+      v: 2 as const,
       strategy: 'priority' as const,
       autoSwitch: true,
       softSwitchRemainingPercent: 15,
@@ -677,7 +677,7 @@ async function createSpawnPreTurnSwitchScenario(input: Readonly<{
       readQuota: async () => null,
       writeProviderAccountUsage: async () => ({ success: true }),
       listGroupQuotaTargets: async request => qualifiedAccounts.accounts
-        .filter(profile => request.accountIds.includes(profile.ref.accountId))
+        .filter(profile => !request.accountIds || request.accountIds.includes(profile.ref.accountId))
         .map(profile => ({ profile, groupGeneration: qualifiedGroup.generation })),
     } } : {}),
   });
@@ -1135,7 +1135,7 @@ describe('resolveConnectedServiceAuthForSpawn V4 group ingress', () => {
       },
       incarnation: 'external-group-incarnation',
       displayName: 'External group',
-      policy: { v: 1, strategy: 'priority', autoSwitch: false },
+      policy: { v: 2, strategy: 'priority', autoSwitch: false },
       activeConnectedAccountId: 'external-active',
       generation: 7,
       runtimeStateRevision: 3,
@@ -1427,7 +1427,7 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
       .toEqual(expect.arrayContaining([expect.objectContaining({
         materialization: {
           kind: 'httpHeaders',
-          origin: 'https://chatgpt.com',
+          origins: ['https://chatgpt.com'],
           headerNames: ['authorization', 'chatgpt-account-id'],
         },
       })]));
@@ -1847,7 +1847,7 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
           serviceId: 'openai-codex',
           groupId: 'codex-main',
           displayName: 'Codex main',
-          policy: { v: 1 },
+          policy: { v: 2 },
           activeProfileId: 'backup',
           generation: 5,
           state: { status: 'ready', lastSwitchAt: 12 },
@@ -1939,7 +1939,7 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
         serviceId: 'openai-codex',
         groupId: 'codex-main',
         displayName: 'Codex main',
-        policy: { v: 1 },
+        policy: { v: 2 },
         activeProfileId: null,
         generation: 5,
         state: { status: 'ready', lastSwitchAt: 12 },
@@ -2011,7 +2011,7 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
       serviceId: 'openai-codex' as const,
       groupId: 'codex-main',
       displayName: 'Codex main',
-      policy: { v: 1 as const, strategy: 'least_limited' as const, autoSwitch: true },
+      policy: { v: 2 as const, strategy: 'least_limited' as const, autoSwitch: true },
       activeProfileId: 'primary',
       generation: 5,
       state: {},
@@ -2161,7 +2161,7 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
       groupId: 'codex-main',
       displayName: 'Codex main',
       policy: {
-        v: 1 as const,
+        v: 2 as const,
         strategy: 'priority' as const,
         autoSwitch: true,
         softSwitchRemainingPercent: 15,
@@ -2324,7 +2324,7 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
       groupId: 'codex-main',
       displayName: 'Codex main',
       policy: {
-        v: 1 as const,
+        v: 2 as const,
         strategy: 'priority' as const,
         autoSwitch: true,
         softSwitchRemainingPercent: 15,
@@ -2472,7 +2472,7 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
         groupId: 'codex-main',
         displayName: 'Codex main',
         policy: {
-          v: 1,
+          v: 2,
           strategy: 'priority',
           autoSwitch: true,
           softSwitchRemainingPercent: 15,
@@ -2895,7 +2895,7 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
       groupId: 'codex-main',
       displayName: 'Codex main',
       policy: {
-        v: 1 as const,
+        v: 2 as const,
         strategy: 'priority' as const,
         autoSwitch: true,
         softSwitchRemainingPercent: 15,
@@ -3163,7 +3163,7 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
       serviceId: 'openai-codex' as const,
       groupId: 'codex-main',
       displayName: 'Codex main',
-      policy: { v: 1 as const, strategy: 'priority' as const, autoSwitch: true },
+      policy: { v: 2 as const, strategy: 'priority' as const, autoSwitch: true },
       activeProfileId: 'primary',
       generation: 5,
       state: {},
@@ -3493,7 +3493,7 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
       serviceId: 'openai-codex' as const,
       groupId: 'codex-main',
       displayName: 'Codex main',
-      policy: { v: 1 as const, strategy: 'least_limited' as const, autoSwitch: true },
+      policy: { v: 2 as const, strategy: 'least_limited' as const, autoSwitch: true },
       activeProfileId: 'primary',
       generation: 5,
       state: {},
@@ -3714,7 +3714,7 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
       serviceId: 'openai-codex' as const,
       groupId: 'codex-main',
       displayName: 'Codex main',
-      policy: { v: 1 as const, strategy: 'least_limited' as const, autoSwitch: true },
+      policy: { v: 2 as const, strategy: 'least_limited' as const, autoSwitch: true },
       activeProfileId,
       generation,
       state: {},
@@ -3935,7 +3935,7 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
         serviceId: 'claude-subscription' as const,
         groupId: 'claude-main',
         displayName: 'Claude main',
-        policy: { v: 1 as const, strategy: 'priority' as const, autoSwitch: true },
+        policy: { v: 2 as const, strategy: 'priority' as const, autoSwitch: true },
         activeProfileId: 'narrow',
         generation: 5,
         state: {},
@@ -4119,7 +4119,7 @@ describe('resolveConnectedServiceAuthForSpawn', () => {
         serviceId: 'claude-subscription' as const,
         groupId: 'claude-main',
         displayName: 'Claude main',
-        policy: { v: 1 as const, strategy: 'priority' as const, autoSwitch: true },
+        policy: { v: 2 as const, strategy: 'priority' as const, autoSwitch: true },
         activeProfileId: 'narrow-one',
         generation: 5,
         state: {},

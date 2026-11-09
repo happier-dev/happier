@@ -6,6 +6,7 @@ import { createAuthoredAdmittedPluginRuntimeFixture } from '@/plugins/testkit/ad
 import { loadInstalledPlugins } from '@/plugins/discovery/load/installed';
 import { projectLoadedPluginContributes } from '@/plugins/projection/registry/fullProjection';
 import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
+import { createDaemonConnectedAccountPurposeBindingRuntime } from '@/daemon/connectedServices/purposeBindings/createDaemonConnectedAccountPurposeBindingRuntime';
 
 it('reuses the real GitHub activation for concurrent and repeated authentication demand', async () => {
     const packageRoot = new URL('../../../../../packages/plugins/scm-github/', import.meta.url);
@@ -32,6 +33,22 @@ it('reuses the real GitHub activation for concurrent and repeated authentication
         const { registry } = fixture;
         expect(registry.activatedPluginIds.has(github.manifest.id)).toBe(false);
         const service = { pluginId: github.manifest.id, localId: 'github-account' };
+        const unexpectedCredentialWork = async (): Promise<never> => { throw new Error('Unbound inventory must not acquire credentials or usage'); };
+        const inventory = createDaemonConnectedAccountPurposeBindingRuntime({
+            reloadController: fixture.controller,
+            resolveQualifiedConnectedAccountV4Support: () => 'advertised',
+            coordinatorInventoryIsObserved: () => true,
+            establishedRuntimeOwner: { invokeWithReceipt: unexpectedCredentialWork, invokeDirectMaterial: unexpectedCredentialWork },
+            qualifiedApi: {
+                listAccounts: async () => ({ service, accounts: [] }),
+                listAccountsForServices: async services => ({ services, accounts: [] }),
+                listGroups: async () => ({ groups: [] }), readGroup: async () => null,
+            },
+        });
+        expect(await inventory.listCoordinatorAccounts(undefined, service)).toEqual([]);
+        expect(await inventory.listGroupQuotaTargets({ service, groupId: 'absent', signal: new AbortController().signal })).toEqual([]);
+        expect(registry.activatedPluginIds.has(github.manifest.id)).toBe(false);
+        expect(registry.targetActivationFacts.filter(fact => fact.pluginId === service.pluginId)).toEqual([]);
         const resolve = registry.resolveConnectedAccountRuntime;
         if (!resolve) throw new Error('Missing connected account runtime resolver');
         const concurrent = await Promise.all([resolve(service), resolve(service)]);

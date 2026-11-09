@@ -1,4 +1,5 @@
 import type { ProviderAccountUsageUsageIdentityResolver } from '../accountUsage/hydration';
+import type { ConnectedAccountCompletionObservation } from '@happier-dev/cli-common/connectedAccounts';
 import type { ConnectedServiceRefreshCoordinator } from '../refresh/ConnectedServiceRefreshCoordinator';
 import type { ScheduledQualifiedAccountHealth } from '../refresh/ConnectedServiceRefreshCoordinator';
 import { isUsageQuotaNotificationEnabled } from '@happier-dev/protocol/account/settings/usagePacingPreferencesV1';
@@ -70,7 +71,6 @@ import {
   type ConnectedServiceAuthGroupAccountUsageView,
   type AccountUsageStoreForAuthGroupSwitchState,
 } from '../accountGroups/switching/buildConnectedServiceAuthGroupSwitchStateFromAccountUsage';
-import { normalizeConnectedServiceAuthGroupPolicy } from '../accountGroups/switching/buildConnectedServiceAuthGroupSwitchState';
 import {
   buildQuotaPersistenceKey as buildQuotaPersistenceKeyValue,
   resolveQuotaPersistenceAccountScope,
@@ -207,7 +207,8 @@ export type QualifiedConnectedAccountQuotaRuntime = Readonly<{
   listGroupQuotaTargets?(input: Readonly<{
     service: QualifiedConnectedAccountRef['service'];
     groupId: string;
-    accountIds: ReadonlyArray<string>;
+    /** Omit to observe every actual member of the selected group. */
+    accountIds?: ReadonlyArray<string>;
     signal: AbortSignal;
   }>): Promise<readonly Readonly<{
     profile: QualifiedConnectedAccountProfileV4;
@@ -1414,7 +1415,7 @@ export class ConnectedServiceQuotasCoordinator {
           const reconciled = reconcileMemberRuntimeStateWithFreshQuotaEvidence({
             state: member.state,
             quotaSnapshot: quotaEvidence,
-            policy: normalizeConnectedServiceAuthGroupPolicy(group.policy),
+            policy: group.policy,
             nowMs: input.now,
             authenticatedProbe:
               input.authenticatedProbe,
@@ -3794,12 +3795,13 @@ export class ConnectedServiceQuotasCoordinator {
     }), state: 'not_loaded' as const, confidence: 'unknown' as const };
   }
 
-  /** Make the first user Refresh addressable without invoking provider quota work. */
+  /** Publish completion usage or make the first Refresh addressable without provider quota work. */
   async initializeQualifiedAccountQuotaSource(input: Readonly<{
     account: QualifiedConnectedAccountRef;
     credentialRevision: string;
     configurationRevision: string | null;
     accountMode: 'plain' | 'e2ee';
+    completionObservation?: ConnectedAccountCompletionObservation;
   }>): Promise<void> {
     const runtime = this.qualifiedConnectedAccountRuntime;
     if (!runtime) return;
@@ -3814,8 +3816,28 @@ export class ConnectedServiceQuotasCoordinator {
     ));
     if (!profile || !this.shouldRunQualifiedQuotaOperation(profile, 'quota_read')
       || !this.shouldRunQualifiedQuotaOperation(profile, 'provider_account_usage_write')) return;
-    const basis = await runtime.establishedRuntimeOwner.readQuotaSourceSnapshot(input);
+    const basis = await runtime.establishedRuntimeOwner.readQuotaSourceSnapshot({ ...input,
+      operation: input.completionObservation ? 'completionPublication' : 'quotaFetch' });
     if (!basis || !await basis.isCurrent()) return;
+    if (input.completionObservation) {
+      const usageIdentity = await runtime.resolveUsageIdentity?.(profile.ref.service);
+      const owned = buildProviderAccountUsageSnapshotFromPluginConnectedAccountQuota({
+        profile, quota: { observedAtMs: input.completionObservation.observedAtMs, limits: [],
+          ...(profile.providerIdentity?.organizationId ? { providerOrganizationId: profile.providerIdentity.organizationId } : {}) },
+        staleAfterMs: this.polledQuotaStaleAfterMs,
+        usageIdentity: usageIdentity ?? undefined,
+      });
+      const snapshot: ProviderAccountUsageSnapshotV1 = { ...owned, ...input.completionObservation,
+        providerId: owned.providerId, recordId: owned.recordId, recordKey: owned.recordKey,
+        accountSubject: owned.accountSubject, staleAfterMs: owned.staleAfterMs };
+      if (!await this.persistQualifiedConnectedAccountQuota({ accountMode: input.accountMode, profile, snapshot, basis })) {
+        throw new Error('Qualified completion observation could not be published');
+      }
+      await this.recordQualifiedPolledAccountUsageLocally({ profile, snapshot,
+        sourceProviderAccountId: profile.providerIdentity?.accountId?.trim() ?? '',
+        groupContexts: [], qualifiedGroupTargets: [], switchEvaluationTargets: [], emitLiveLifecycle: true });
+      return;
+    }
     const existing = await this.readQualifiedAccountQuota(profile);
     if (existing.response && existing.snapshot) return;
     if (!await this.persistQualifiedConnectedAccountQuota({
@@ -4241,34 +4263,14 @@ export class ConnectedServiceQuotasCoordinator {
     // here — source links and group facts stay canonical end to end.
     const groupViewsByKey = new Map<string, {
       service: QualifiedConnectedAccountServiceRef;
-      serviceId: ConnectedAccountServiceKey;
       groupId: string;
-      accountIds: string[];
     }>();
     for (const target of input.qualifiedGroupTargets) {
       const service = parseQualifiedPluginContributionKey(target.serviceId);
       const groupId = target.groupId.trim();
       if (!service || !groupId) continue;
       const key = `${target.serviceId}\u0000${groupId}`;
-      let view = groupViewsByKey.get(key);
-      if (!view) {
-        view = { service, serviceId: target.serviceId, groupId, accountIds: [] };
-        groupViewsByKey.set(key, view);
-      }
-      if (!view.accountIds.includes(target.activeProfileId)) {
-        view.accountIds.push(target.activeProfileId);
-      }
-    }
-    // Scheduled accounts of a targeted service join the group probe so every current group
-    // member receives canonical source links, mirroring the legacy discovery-driven poll.
-    for (const profile of profiles) {
-      const accountId = profile.ref.accountId.trim();
-      const serviceId = buildQualifiedPluginContributionKey(profile.ref.service);
-      if (!accountId) continue;
-      for (const view of groupViewsByKey.values()) {
-        if (view.serviceId !== serviceId) continue;
-        if (!view.accountIds.includes(accountId)) view.accountIds.push(accountId);
-      }
+      if (!groupViewsByKey.has(key)) groupViewsByKey.set(key, { service, groupId });
     }
 
     // Resolve the canonical current (profile, groupGeneration) facts for each distinct current
@@ -4288,7 +4290,6 @@ export class ConnectedServiceQuotasCoordinator {
           const resolvedTargets = await listGroupQuotaTargets({
             service: view.service,
             groupId: view.groupId,
-            accountIds: view.accountIds,
             signal: input.signal ? AbortSignal.any([input.signal, controller.signal]) : controller.signal,
           });
           input.signal?.throwIfAborted();
