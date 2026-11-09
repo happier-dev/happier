@@ -27,6 +27,25 @@ async function activateMigrationHome(suffix: string, accountId = `account-migrat
     return { home, scope: { serverId: home.serverIdentityId, accountId } };
 }
 
+it('updates provider picker presence from the scoped activity owner without replacing machine records', async () => {
+    const { scope } = await activateMigrationHome('picker-presence');
+    const machines = ['first', 'second'].map(id => createMachineFixture({ id, active: true, activeAt: Date.now(), presenceProtocolVersion: 1 }));
+    const { publishMachineInventoryForTest } = await import('@/dev/testkit/harness/machinePresence');
+    await publishMachineInventoryForTest(scope, machines);
+    const { ProviderMachineSelector } = await import('@/components/settings/providers/ProviderMachineSelector');
+    const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
+    const { t } = await import('@/text');
+    const { publishMachineActivity } = await import('@/sync/domains/machines/machineActivity');
+    const screen = await renderScreen(<ProviderMachineSelector serverId={scope.serverId} machines={machines} selectedId={null} onSelect={() => {}} />);
+    const status = () => screen.findByType(DropdownMenu).props.items[0].subtitle;
+    await vi.waitFor(() => expect(status()).toBe(t('settingsProviders.detail.machineOnline')));
+    await act(async () => publishMachineActivity(machines[0]!, { active: false, activeAt: Date.now() }, []));
+    expect(machines[0]!.active).toBe(true);
+    expect(status()).toBe(t('settingsProviders.detail.machineOffline'));
+    await act(async () => publishMachineActivity(machines[0]!, { active: true, activeAt: Date.now() }, []));
+    expect(status()).toBe(t('settingsProviders.detail.machineOnline'));
+});
+
 it('offers only executable migration targets and withdraws a selected target after request failure', async () => {
     const { scope } = await activateMigrationHome('eligibility');
     const machines = [

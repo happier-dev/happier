@@ -680,9 +680,10 @@ function MachinePoolEditorContent(props: MachinePoolEditorContentProps) {
                     .map(({ member, label }) => {
                         const machine = machines.find((item) => item.id === member.machineId);
                         const savedMember = existing?.pool.members.find((item) => item.machineId === member.machineId);
+                        const presence = !savedMember && machine ? resolveMachinePickerPresence(machine, presenceNowMs, binding?.isCurrent() ? binding.scope : null) : null;
                         const memberStatus = savedMember
                             ? memberStatusPresentation(savedMember.state)
-                            : memberStatusPresentation(machine?.active ? 'connected' : 'offline');
+                            : memberStatusPresentation(presence?.status === 'online' ? 'connected' : presence?.status === 'offline' ? 'offline' : 'unavailable');
                         const ineligible = invalidMemberIds.has(member.machineId);
                         const statusLine = [
                             memberStatus.label,

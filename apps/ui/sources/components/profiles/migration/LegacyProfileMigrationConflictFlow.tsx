@@ -1,5 +1,5 @@
 import * as React from 'react';
-import type { ProviderSettingsMigrationPendingConflictV1 } from '@happier-dev/protocol';
+import type { ProviderSettingsMigrationPendingConflictV1 } from '@happier-dev/protocol/providers/settings/v1';
 
 import { ProviderMachineSelector } from '@/components/settings/providers/ProviderMachineSelector';
 import { Item } from '@/components/ui/lists/Item';
@@ -28,6 +28,7 @@ export const LegacyProfileMigrationConflictFlow = React.memo(function LegacyProf
         return <ItemList style={{ paddingTop: 0 }}>
             <ItemGroup>
                 {targetMachines.length > 0 ? <ProviderMachineSelector
+                    serverId={serverId}
                     machines={targetMachines}
                     selectedId={null}
                     onSelect={setPreferredMachineId}
@@ -40,6 +41,7 @@ export const LegacyProfileMigrationConflictFlow = React.memo(function LegacyProf
     return <>
         {targetMachines.length > 1 ? <ItemGroup title={t('settingsProviders.detail.targetMachine')}>
             <ProviderMachineSelector
+                serverId={serverId}
                 machines={targetMachines}
                 selectedId={machineId}
                 onSelect={setPreferredMachineId}

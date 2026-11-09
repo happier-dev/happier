@@ -15,6 +15,7 @@ describe('ProviderMachineSelector', () => {
         const { t } = await import('@/text');
         const screen = await renderScreen(
             <ProviderMachineSelector
+                serverId={null}
                 machines={[
                     { id: 'f98b860d-63e0', metadata: {} },
                     { id: 'a1b2c3d4-0000', metadata: { displayName: 'Build' } },

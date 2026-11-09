@@ -957,6 +957,27 @@ describe('MachinePoolEditorScreen', () => {
         expect(option).toMatchObject({ id: 'machine-offline', disabled: false });
     });
 
+    it('updates a newly added draft member from pushed activity without replacing its record', async () => {
+        const machine = createMachineFixture({ id: 'draft-member', active: true, activeAt: Date.now(), presenceProtocolVersion: 1, metadata: machineMetadata('Draft machine') });
+        boundaries.machines = [machine];
+        await publishBoundaryState();
+        const { observeMachinePresenceForTest } = await import('@/dev/testkit/harness/machinePresence');
+        observeMachinePresenceForTest({ serverId: boundaries.serverId, accountId: 'account-a' }, [machine.id]);
+        const { MachinePoolEditorScreen } = await import('./MachinePoolEditorScreen');
+        const { publishMachineActivity } = await import('@/sync/domains/machines/machineActivity');
+        const screen = await renderScreen(<MachinePoolEditorScreen serverId={boundaries.serverId} />);
+        await screen.pressByTestIdAsync('settings.machinePools.editor.addMachines');
+        const config = vi.mocked(Modal.show).mock.calls.at(-1)?.[0];
+        await act(async () => config?.props?.onSelect(machine.id));
+        const status = () => screen.findByTestId(`settings.machinePools.editor.member.${machine.id}.status`)?.props.accessibilityLabel;
+        expect(status()).toBe(t('status.online'));
+        await act(async () => publishMachineActivity(machine, { active: false, activeAt: Date.now() }, []));
+        expect(machine.active).toBe(true);
+        expect(status()).toBe(t('status.offline'));
+        await act(async () => publishMachineActivity(machine, { active: true, activeAt: Date.now() }, []));
+        expect(status()).toBe(t('status.online'));
+    });
+
     it('preserves the last observed candidate presence when the Home socket disconnects', async () => {
         boundaries.machines = [createMachineFixture({ id: 'unknown', activeAt: Date.now(), metadata: machineMetadata('Unknown machine') }),
             createMachineFixture({ id: 'offline', active: false, activeAt: 0, metadata: machineMetadata('Offline machine') })];
