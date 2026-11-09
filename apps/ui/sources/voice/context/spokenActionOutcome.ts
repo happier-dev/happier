@@ -1,13 +1,15 @@
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
-import { DECISION_ACTION_IDS, SESSION_MESSAGE_SEND_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
+import { DECISION_ACTION_IDS, SESSION_MESSAGE_SEND_ACTION_ID_V1, SESSION_SPAWN_NEW_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { SETTINGS_DECLARATION_ACTION_IDS_V1 } from '@happier-dev/protocol/actions/settingsDeclarationActionIdsV1';
 import { SettingsDeclarationActionOutputSchemasV1 } from '@happier-dev/protocol/actions/settingsDeclarationActionFamily';
 import { ActionApprovalRequestCreatedResultSchema, parseActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { ApprovalRequestStatusSchema } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { SessionMessageSendActionResultV1Schema } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
+import type { SessionSpawnNewResultV1 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 
 import { t } from '@/text';
 import { resolveActionExecutionFailureMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
+import { resolveSessionSpawnNewResultFailureMessage } from '@/sync/ops/actions/sessionSpawnFailurePresentation';
 import { VOICE_ACTION_EXECUTE_TOOL_NAME } from '@/voice/tools/voiceActionExecution';
 import type { LocalVoiceAgentToolResultEntry } from '@/voice/tools/localVoiceEffectOutcomeCustody';
 
@@ -22,7 +24,7 @@ function record(value: unknown): Record<string, unknown> | null {
 /** These Actions have an owner-produced disposition, rather than a model-authored answer. */
 export function readSpokenActionOutcomeOwner(toolName: string, input: unknown) {
   const requestedActionId = toolName === VOICE_ACTION_EXECUTE_TOOL_NAME ? record(input)?.actionId : null;
-  const owner = ([settingsSetActionId, approvalRequestDecideActionId, SESSION_MESSAGE_SEND_ACTION_ID_V1] as const).find(actionId =>
+  const owner = ([settingsSetActionId, approvalRequestDecideActionId, SESSION_MESSAGE_SEND_ACTION_ID_V1, SESSION_SPAWN_NEW_ACTION_ID_V1] as const).find(actionId =>
     requestedActionId === actionId || toolName === getActionSpec(actionId).bindings?.voiceClientToolName,
   ) ?? null;
   if (owner === SESSION_MESSAGE_SEND_ACTION_ID_V1) {
@@ -59,6 +61,20 @@ export function resolveSpokenActionOutcome(entry: LocalVoiceAgentToolResultEntry
   const { ok: _ok, summary: _summary, ...body } = record(envelope.result) ?? envelope;
   if (ActionApprovalRequestCreatedResultSchema.safeParse(body).success) {
     return t('approvals.status.open');
+  }
+  if (owner === SESSION_SPAWN_NEW_ACTION_ID_V1) {
+    // Creation is a validated domain settlement, not an Action { ok: false }
+    // envelope. The host's presentation retains its bound Agent and alternative.
+    switch (body.type) {
+      case 'success': return t('newSession.sessionStartedMessage');
+      case 'pending': return t('session.askRecord.unsure');
+      case 'error': {
+        if (body.code === 'cancelled') return t('voiceSurface.actionCanceled');
+        const message = typeof envelope.errorMessage === 'string' ? envelope.errorMessage.trim() : '';
+        return message || resolveSessionSpawnNewResultFailureMessage(body as Extract<SessionSpawnNewResultV1, { type: 'error' }>);
+      }
+    }
+    return null;
   }
   if (owner === SESSION_MESSAGE_SEND_ACTION_ID_V1) {
     const parsed = SessionMessageSendActionResultV1Schema.safeParse(body);

@@ -3,8 +3,29 @@ import { describe, expect, it } from 'vitest';
 import { t } from '@/text';
 
 import { resolveVoiceToolResultHumanSummary } from './resolveVoiceToolResultHumanSummary';
+import { serializeVoiceActionExecuteResult } from '@/voice/tools/voiceActionResult';
+import { SessionSpawnNewResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 
 describe('resolveVoiceToolResultHumanSummary', () => {
+    it.each([false, true])('speaks the configured default startup failure and its runnable alternative (envelope=%s)', canonicalResult => {
+        const agentTarget = { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } } as const;
+        const alternativeTarget = { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } } as const;
+        const failure = SessionSpawnNewResultV1Schema.parse({ type: 'error', code: 'spawn_failed', retryable: false,
+            launchError: { kind: 'launch_error', code: 'agent_startup_failed', message: 'Agent startup failed',
+                failureCause: { phase: 'client_start', failureReason: 'unclassified_provider_error',
+                    providerErrorMessage: 'Claude is signed out on the selected machine' } } });
+        const toolResult: unknown = JSON.parse(serializeVoiceActionExecuteResult('session.spawn_new', { ok: true, result: failure }, {
+            canonicalResult, agentTarget, alternativeAgent: { targetKey: 'agent:codex', label: 'Codex', agentTarget: alternativeTarget },
+        }));
+        const summary = resolveVoiceToolResultHumanSummary({
+            toolName: canonicalResult ? 'action_execute' : 'spawnSession',
+            toolInput: canonicalResult ? { actionId: 'session.spawn_new', input: {} } : {},
+            toolResult, shareFilePaths: false, shareSessionSummary: false, outcomeOnly: true,
+        });
+        expect(summary).toContain('Claude is signed out');
+        expect(summary).toContain('Codex');
+    });
+
     it('uses the creation owner result through the canonical Action envelope for speech', () => {
         expect(resolveVoiceToolResultHumanSummary({
             toolName: 'action_execute', toolInput: { actionId: 'session.spawn_new', input: {} },
@@ -31,11 +52,13 @@ describe('resolveVoiceToolResultHumanSummary', () => {
         expect(summarize({ type: 'success', disposition: 'created', sessionId: 'new-session',
             executionTarget: { serverId: 'home', machineId: 'machine' },
             organizationPlacement: { sectionId: null, tagIds: [] }, initialInput: { status: 'notRequested' },
-        })).toBe(t('common.done'));
+        })).toBe(t('newSession.sessionStartedMessage'));
         expect(summarize({ type: 'pending', retryWithSameCreationKey: true, outcome: 'unknown' }))
             .toBe(t('session.askRecord.unsure'));
         expect(summarize({ type: 'error', code: 'cancelled', retryable: false }))
             .toBe(t('voiceSurface.actionCanceled'));
+        expect(summarize({ type: 'error', code: 'machine_offline', retryable: true }))
+            .toBe(t('newSession.daemonRpcUnavailableBody'));
         expect(summarize({ kind: 'approval_request_created', artifactId: 'approval-1', actionId: 'session.spawn_new' }))
             .toBe(t('approvals.status.open'));
     });

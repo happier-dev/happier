@@ -6,6 +6,10 @@ import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { VOICE_AGENT_GLOBAL_SESSION_ID } from '@/voice/agent/voiceAgentGlobalSessionId';
 import { createDeferred, createSessionFixture, renderScreen } from '@/dev/testkit';
+import { createReadyMachineAgentInventoryFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { SessionSpawnNewInputV2Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
+import { SessionSpawnNewResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
+import { t } from '@/text';
 
 import {
     emitSpeechRecEvent,
@@ -1408,6 +1412,99 @@ describe('local voice engine agent behavior', () => {
             payload: { streamId: 'stream-1', runId: 'local-agent-run' },
         });
         expect(startTurnRpc).toHaveBeenCalledTimes(2);
+    });
+
+    it.each(['signed-out', 'created'] as const)('speaks the Session create outcome after an empty streamed follow-up (%s)', async outcome => {
+        const storage = await getStorage();
+        const settings = storage.getState().settings;
+        const config = readLocalConversationVoiceSettings(settings.voice);
+        storage.__setState({ settings: { ...settings, voice: { ...settings.voice,
+            providers: { ...settings.voice.providers, local_conversation: { schemaVersion: 1, config: {
+                ...config, conversationMode: 'agent',
+                agent: { ...config.agent, agentSource: 'session', prewarmOnConnect: false },
+                tts: { ...config.tts, autoSpeakReplies: true, provider: 'device' },
+                streaming: { ...config.streaming, enabled: true, ttsEnabled: true },
+            } } },
+        } } });
+        const { rememberLastUsedBackendSelection } = await import('@/sync/domains/state/newSessionTargetUiState');
+        rememberLastUsedBackendSelection(storage.getState().settingsScope, {
+            lastUsedBackendTarget: null, lastUsedAgent: 'claude',
+        });
+        expoSpeechSpeak.mockImplementation((_text, options) => {
+            options?.onStart?.();
+            queueMicrotask(() => options?.onDone?.());
+        });
+        localVoiceSpeechTranscription.mockResolvedValueOnce('Create a new Session in this project.');
+        // Let the real binding create its separate Voice conversation before
+        // replacing only the subsequent coding-Session daemon response.
+        await localVoiceEngine.toggleLocalVoiceTurn(VOICE_AGENT_GLOBAL_SESSION_ID);
+        const { resolveServerCredentialAccountScope, captureServerCredentialAccountScopeLifetime } =
+            await import('@/sync/domains/scope/serverCredentialAccountScope');
+        const { serverAccountScopedResourceKey } = await import('@/sync/domains/scope/serverAccountScope');
+        const { machineAgentInventoryStore } = await import('@/agents/machineAgents/machineAgentInventoryStore');
+        const scope = await resolveServerCredentialAccountScope(localVoiceHomeId);
+        if (scope.kind !== 'bound') throw new Error('Expected current Voice Account scope');
+        const lifetime = captureServerCredentialAccountScopeLifetime(scope);
+        const inventory = createReadyMachineAgentInventoryFixture([
+            { agentId: 'claude', title: 'Claude' }, { agentId: 'codex', title: 'Codex' },
+        ]);
+        const items = Object.values(inventory.capabilities.results).map(result => result.data);
+        machineAgentInventoryStore.publish(serverAccountScopedResourceKey(lifetime.scope, 'machine-agents', 'machine-1'), {
+            status: 'ready', lastCheckedAt: 1,
+            items: items.map(item => outcome === 'signed-out' && item.agentId === 'claude'
+                ? { ...item, signIn: { ...item.signIn, status: 'signedOut' } } : item),
+        });
+        const incumbent = machineRpcWithServerScope.getMockImplementation();
+        const creationInputs: Array<ReturnType<typeof SessionSpawnNewInputV2Schema.parse>> = [];
+        machineRpcWithServerScope.mockImplementation(async (request: MachineRequest) => {
+            if (request.method !== RPC_METHODS.SESSION_SPAWN_NEW) {
+                if (!incumbent) throw new Error('Expected Machine daemon boundary');
+                return incumbent(request);
+            }
+            const input = SessionSpawnNewInputV2Schema.parse(request.payload);
+            creationInputs.push(input);
+            if (outcome === 'signed-out') return SessionSpawnNewResultV1Schema.parse({
+                type: 'error', code: 'spawn_failed', retryable: false,
+                launchError: { kind: 'launch_error', code: 'agent_startup_failed', message: 'Agent startup failed',
+                    failureCause: { phase: 'client_start', failureReason: 'unclassified_provider_error',
+                        providerErrorMessage: 'Claude is signed out on the selected machine' } },
+            });
+            storage.getState().applySessions([createSessionFixture({ id: 'created-coding-session', serverId: localVoiceHomeId,
+                active: true, activeAt: Date.now(),
+                metadata: { machineId: 'machine-1', path: '/project', host: 'test', flavor: 'claude' },
+            })]);
+            return SessionSpawnNewResultV1Schema.parse({ type: 'success', disposition: 'created',
+                sessionId: 'created-coding-session', executionTarget: input.executionTarget,
+                organizationPlacement: { folderId: null, tagIds: [] }, initialInput: { status: 'notRequested' },
+            });
+        });
+        startTurnRpc.mockResolvedValueOnce({ streamId: 'create-session-action' })
+            .mockResolvedValueOnce({ streamId: 'create-session-followup' });
+        readTurnRpc.mockImplementation(async request => {
+            const { streamId } = ExecutionRunTurnStreamReadRequestSchema.parse(request.payload);
+            return ExecutionRunTurnStreamReadResponseSchema.parse({ streamId, events: streamId === 'create-session-action' ? [
+                { t: 'voice_output', output: { v: 1, kind: 'side_effect', turnId: streamId, seq: 0,
+                    effectId: 'create-session-outcome', action: { t: 'spawnSession', args: {
+                        executionTarget: { serverId: localVoiceHomeId, machineId: 'machine-1' },
+                        directory: { kind: 'path', path: '/project' },
+                    } } } },
+                { t: 'voice_output', output: { v: 1, kind: 'turn_final', turnId: streamId, seq: 1, text: '' } },
+            ] : [{ t: 'voice_output', output: { v: 1, kind: 'turn_final', turnId: streamId, seq: 0, text: '' } }],
+                nextCursor: streamId === 'create-session-action' ? 2 : 1, done: true });
+        });
+
+        await localVoiceEngine.toggleLocalVoiceTurn(VOICE_AGENT_GLOBAL_SESSION_ID);
+
+        expect(creationInputs).toHaveLength(1);
+        expect(creationInputs[0]?.agentTarget).toEqual({ kind: 'agent',
+            identity: { pluginId: 'happier.agent.claude', localId: 'claude' } });
+        const spoken = expoSpeechSpeak.mock.calls.map(([text]) => text).join(' ');
+        if (outcome === 'signed-out') {
+            expect(spoken).toMatch(/Claude.*signed out/i);
+            expect(spoken).toContain('Codex');
+        } else {
+            expect(spoken).toBe(t('newSession.sessionStartedMessage'));
+        }
     });
 
     it('streams agent deltas into chunked device TTS playback when enabled', async () => {

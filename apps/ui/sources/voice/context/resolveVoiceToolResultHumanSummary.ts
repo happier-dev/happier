@@ -1,9 +1,6 @@
 import { resolveSpokenActionOutcome } from './spokenActionOutcome';
 import { redactVoicePathLikeString } from '@/voice/shared/redactVoicePathLikeData';
 import { readBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
-import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { t } from '@/text';
-import { resolveActionExecutionFailureMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { resolveVoiceActionExecution, VOICE_ACTION_EXECUTE_TOOL_NAME } from '@/voice/tools/voiceActionExecution';
 
 function asObject(value: unknown): Record<string, unknown> | null {
@@ -183,23 +180,6 @@ export function resolveVoiceToolResultHumanSummary(params: Readonly<{
         resolveSentToLabel: params.resolveSentToLabel,
     });
     if (outcome) return maybeRedact(outcome, shareFilePaths);
-
-    if (toolName === 'spawnSession') {
-        if (envelope.ok === false) {
-            return resolveActionExecutionFailureMessage(envelope, t('entityDragDrop.preview.unknownDetail'));
-        }
-        const { ok: _ok, summary: _summary, ...creation } = result;
-        if (ActionApprovalRequestCreatedResultSchema.safeParse(creation).success) return t('approvals.status.open');
-        // The Action owner validated settlement before presentation. Retained
-        // outcomes may already have private target fields projected away.
-        switch (result.type) {
-            case 'success': return t('common.done');
-            case 'pending': return t('session.askRecord.unsure');
-            case 'error': return result.code === 'cancelled'
-                ? t('voiceSurface.actionCanceled')
-                : resolveActionExecutionFailureMessage(result, t('entityDragDrop.preview.unknownDetail'));
-        }
-    }
 
     if (params.outcomeOnly && toolName !== 'spawnSession' && toolName !== 'openSession'
         && toolName !== 'setPrimaryActionSession' && toolName !== 'setTrackedSessions') return null;

@@ -2678,6 +2678,10 @@ that the same Account's Machine inventory already knows is ready. The shared
 preference owner selects the offer; it neither changes the saved default nor
 launches a replacement without the person's choice. Stale or unknown readiness
 does not establish a runnable alternative.
+The local Voice spoken Action outcome owner presents creation settlement even
+when the model returns an empty follow-up. It speaks a brief created confirmation
+or the host's failure reason and available alternative; direct and discovered
+Action calls consume the same presentation.
 
 Voice leaves automatic Session naming to the coding Session's `change_title`
 owner unless the person supplies a name. Spoken Session labels use the canonical
@@ -4929,6 +4933,11 @@ Team and Team credential bindings. E2EE recipient envelopes are prepared through
 the existing Session envelope owner before copied content and the first Pending
 input are admitted.
 
+In 0.3 development, omitting `template.instantiate.face` inherits the released
+face; supplying `face:null` selects the ordinary default face. This additive
+closed-input extension requires matching development clients and Protocol runtime;
+it does not migrate stored template releases or Session metadata.
+
 Agent and MCP callers may omit `creation.executionTarget` and `creation.agentTarget`.
 The ordinary Session start owner resolves them from the authenticated calling
 Session's current Machine and Agent before review and strict creation admission;
@@ -4961,6 +4970,10 @@ check. Only after those writes and the private instance CAS succeed does the
 accepted version/base advance. A partial failure returns applied and remaining
 resources with recovery addresses; it neither rolls back successful writes nor
 announces the offered version as accepted. Memory remains unchanged.
+If Review again selects a newer release after resource creation succeeded but
+Session inclusion failed, Update reuses those addresses and reconciles explicitly
+taken skills and MCP definitions to the newly reviewed content through their
+ordinary revision-checked writers before inclusion and base acceptance.
 Apply ignores unrelated Session metadata changes while retaining the private
 instance CAS and the selected instruction/skill revisions. Software uses ordinary
 `machines.setup.plan` / `machines.setup.apply`; the ordinary setup/spawn admission

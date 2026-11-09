@@ -4,8 +4,12 @@ import {
   localVoicePendingEnqueue, sessionRpcWithServerScope, readLocalVoiceHttpRequests,
   localVoiceHomeId, acknowledgeLocalVoicePendingEnqueue, loadLocalVoiceEngineWithCompatState,
   setLocalVoiceHttpResponder,
+  machineRpcWithServerScope,
 } from './localVoiceEngine.testHarness';
-import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { SessionSpawnNewInputV2Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
+import { SessionSpawnNewResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
+import { createSessionFixture } from '@/dev/testkit';
 import { ExecutionRunTurnStreamStartV2RequestSchema, ExecutionRunTurnStreamStartResponseSchema,
   ExecutionRunTurnStreamReadRequestSchema, ExecutionRunTurnStreamReadResponseSchema,
   ExecutionRunTurnStreamCancelRequestSchema, ExecutionRunTurnStreamCancelResponseSchema,
@@ -135,8 +139,74 @@ describe('runVoiceAgentTurnWithTools local effect custody', () => {
     expect(result.toolResultBatches[0]?.[0]?.result, JSON.stringify(result.toolResultBatches))
       .toMatchObject({ ok: true, type: 'success' });
     expect(result.assistantTurns).toHaveLength(1);
-    expect(result.assistantTurns[0]).toBe(t('common.done'));
+    expect(result.assistantTurns[0]).toBe(t('newSession.sessionStartedMessage'));
     expect(result.assistantTurns[0]).not.toContain('creation action');
+  });
+
+  it('retains the created working Session through a cold Home continuation and sends the next implicit message there', async () => {
+    await prepareSession();
+    const storage = await getStorage();
+    const { voiceSessionBindingStore } = await import('@/voice/binding/voiceConversationBindingStore');
+    const { useVoiceTargetStore } = await import('@/voice/runtime/voiceTargetStore');
+    const originalBinding = await voiceSessionBindingManager.syncTargetSession({
+      controlSessionId: VOICE_AGENT_GLOBAL_SESSION_ID, targetSessionAddress: null,
+    });
+    if (!originalBinding) throw new Error('Expected Home conversation binding');
+    const target = { serverId: localVoiceHomeId, sessionId: 'created-coding-session' };
+    const incumbent = machineRpcWithServerScope.getMockImplementation();
+    let creationCount = 0;
+    machineRpcWithServerScope.mockImplementation(async request => {
+      if (request.method !== RPC_METHODS.SESSION_SPAWN_NEW) {
+        if (!incumbent) throw new Error('Expected Machine boundary');
+        return incumbent(request);
+      }
+      const input = SessionSpawnNewInputV2Schema.parse(request.payload);
+      creationCount += 1;
+      storage.getState().applySessions([createSessionFixture({ id: target.sessionId, serverId: target.serverId,
+        active: true, activeAt: Date.now(),
+        metadata: { machineId: input.executionTarget.machineId, path: '/project', host: 'test', flavor: 'claude' },
+      })]);
+      return SessionSpawnNewResultV1Schema.parse({ type: 'success', disposition: 'created', sessionId: target.sessionId,
+        executionTarget: input.executionTarget, organizationPlacement: { folderId: null, tagIds: [] },
+        initialInput: { status: 'notRequested' },
+      });
+    });
+    queueAction('create-working-session', { t: 'spawnSession', args: {
+      executionTarget: { serverId: localVoiceHomeId, machineId: 'machine-1' },
+      directory: { kind: 'path', path: '/project' },
+      agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } },
+    } });
+    queueFinal();
+    const created = await run('create a Session', { currentToolSessionAddress: null, currentToolSessionId: null });
+    expect(created.toolResultBatches[0]?.[0]?.result).toMatchObject({ ok: true, type: 'success', sessionId: target.sessionId });
+    await voiceAgentSessions.stop(VOICE_AGENT_GLOBAL_SESSION_ID);
+    clearRetainedLocalVoiceEffectOutcomes(VOICE_AGENT_GLOBAL_SESSION_ID);
+
+    // Reload discards every device-only target and binding. The next Start
+    // hydrates the same conversation from the real metadata HTTP owner.
+    voiceSessionBindingStore.setState({ bindingsByConversationSessionId: {}, runtimeBindingsByConversationSessionId: {},
+      persistedBindingsByConversationSessionId: {} });
+    useVoiceTargetStore.setState({ primaryActionSessionAddress: null, lastFocusedSessionAddress: null });
+    storage.setState(current => ({ sessions: Object.fromEntries(Object.entries(current.sessions)
+      .filter(([id]) => id !== originalBinding.conversationSessionId)), sessionListRowsByServerId: {} }));
+    const restored = await voiceSessionBindingManager.ensureBound({ adapterId: 'local_conversation',
+      controlSessionId: VOICE_AGENT_GLOBAL_SESSION_ID, requestedTargetServerId: localVoiceHomeId,
+      conversationSelection: { kind: 'continue', conversationSessionAddress: originalBinding.conversationSessionAddress },
+    });
+    expect(restored?.targetSessionAddress).toEqual(target);
+    expect(creationCount).toBe(1);
+
+    localVoicePendingEnqueue.mockImplementation(async request => acknowledgeLocalVoicePendingEnqueue(request));
+    queueSend('follow-up-current-session', 'create another file');
+    queueFinal();
+    const followUp = await run('ask it to create another file', {
+      currentToolSessionAddress: restored?.targetSessionAddress,
+      currentToolSessionId: restored?.targetSessionAddress?.sessionId ?? null,
+    });
+    expect(followUp.toolResultBatches[0]?.[0]?.result).toMatchObject({ ok: true });
+    expect(readLocalVoiceHttpRequests().filter(request => request.method === 'POST'
+      && request.path === `/v2/sessions/${target.sessionId}/pending`)).toHaveLength(1);
+    expect(creationCount).toBe(1);
   });
 
   it.each([
