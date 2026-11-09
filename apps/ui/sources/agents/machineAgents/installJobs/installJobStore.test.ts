@@ -8,6 +8,7 @@ import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { MACHINE_RPC_POLL_INTERVAL_MS } from '@/sync/ops/machineRpcPollInterval';
 import { machineAgentInventoryStore } from '../machineAgentInventoryStore';
 import { serverAccountScopedResourceKey } from '@/sync/domains/scope/serverAccountScope';
+import { resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
 import type { MachineAgentInventoryItem } from '@happier-dev/protocol/capabilities';
 import { buildMachineAgentInventoryKey, MachineAgentInventoryItemSchema } from '@happier-dev/protocol/capabilities';
 import { AgentInstallJobSchema, DaemonAgentInstallCancelRequestSchema, DaemonAgentInstallReadRequestSchema, DaemonAgentInstallStartRequestSchema } from '@happier-dev/protocol/daemon/agent-install-jobs';
@@ -44,9 +45,9 @@ import { cancelAgentInstallJob, ensureMachineAgentInstallJobs, readAgentInstallJ
 
 const homes = createHomeGovernanceHarness();
 async function addJobHome(options: { serverUrl: string; accountId?: string }) {
-    const id = await homes.addHome({ ...options, name: 'Install jobs', serverIdentityId: 'srv_install_jobs',
+    const id = await homes.addHome({ ...options, name: 'Install jobs', serverIdentityId: `srv_install_jobs_${new URL(options.serverUrl).hostname}`,
         accountId: options.accountId ?? 'store-account', currentAccount: true });
-    return { id };
+    return { id: resolveServerProfileScopeIdForIdentifier(id) };
 }
 beforeEach(async () => {
     await homes.reset();
