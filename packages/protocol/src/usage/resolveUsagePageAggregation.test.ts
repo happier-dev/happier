@@ -340,7 +340,7 @@ describe('resolveUsagePageAggregation', () => {
     expect(changed.results[0]!.coach!.findings.some(row => row.detectorId === 'outside_usage')).toBe(false);
     accountingVisits = intervalVisits = workVisits = 0;
     const configured = resolveUsagePageAggregation({ ...inputs, previous, coachPreferences: {
-      v: 1, suppressions: [], disabledChecks: ['outside_usage'], modelSuggestion: 'suggest_with_estimates',
+      v: 1, disabledChecks: ['outside_usage'], modelSuggestion: 'suggest_with_estimates',
     } });
     expect(configured.results[0]!.coach!.evaluations.find(row => row.detectorId === 'outside_usage')!.status).toBe('disabled');
     expect(configured.results[0]!.work).toBe(original.work);
@@ -1499,7 +1499,7 @@ describe('resolveUsagePageAggregation', () => {
       requestedAtMs: 120, decidedAtMs: 160, toolId: 'Bash', answeringClientCategory: null }], facts: [], acceptedInputs: [] };
     const previous = resolveUsagePageAggregation({ queries: [query], howYouWork: [{ query, detail, asOfMs: 200 }] });
     expect(previous.results[0]!.coach!.findings.some(finding => finding.detectorId === 'approval_friction')).toBe(true);
-    const coachPreferences = { v: 1 as const, suppressions: [], disabledChecks: ['approval_friction' as const], modelSuggestion: 'off' as const };
+    const coachPreferences = { v: 1 as const, disabledChecks: ['approval_friction' as const], modelSuggestion: 'off' as const };
     for (const source of [{ howYouWork: [{ query, detail, asOfMs: 200 }] },
       { previous, sources: [{ source: 'how_you_work', status: 'pending' as const }] }]) {
       const coach = resolveUsagePageAggregation({ queries: [query], ...source, coachPreferences }).results[0]!.coach!;
@@ -1693,7 +1693,7 @@ describe('resolveUsagePageAggregation', () => {
     expect(result.results[0]?.pending).toBe(true);
   });
 
-  it('admits unchanged repeated-name source coverage with linear fact visits', () => {
+  it.each(['unchanged', 'changed', 'reordered'] as const)('admits %s repeated-name source coverage with linear fact visits', mode => {
     const query = normalizeUsageQuery({ period: { startMs: 100, endMs: 200 }, includeSessionEvidence: false });
     const base = resolveUsagePageAggregation({ queries: [query], accounting: [] });
     const visitsFor = (size: number) => {
@@ -1703,17 +1703,20 @@ describe('resolveUsagePageAggregation', () => {
       }));
       const previous = { ...base, results: [{ ...base.results[0]!, sources }] };
       const current = { ...previous, results: [{ ...previous.results[0]!,
-        sources: sources.map(({ source, status, asOfMs }) => ({ source, status, asOfMs })),
+        sources: (mode === 'reordered' ? [...sources].reverse() : sources)
+          .map(({ source, status, asOfMs }) => ({ source, status, asOfMs: mode === 'changed' ? asOfMs! + size : asOfMs })),
       }] };
       visits = 0;
       const retained = retainUsageQueryResultReferences(current, previous);
-      expect(retained === previous).toBe(true);
+      expect(retained === previous).toBe(mode === 'unchanged');
+      expect(retained.results[0]!.sources.map(source => source.asOfMs)).toEqual(current.results[0]!.sources.map(source => source.asOfMs));
       return visits;
     };
-    const small = visitsFor(32);
-    const large = visitsFor(64);
-    console.info('[PERF-RENDER source-admission]', { rows: [32, 64], factVisits: [small, large] });
-    expect(large, 'doubling unchanged coverage must only double admission work').toBeLessThanOrEqual(small * 2);
+    // Captured Account coverage repeats one source name 80 times.
+    const small = visitsFor(80);
+    const large = visitsFor(160);
+    console.info('[PERF-RENDER source-admission]', { mode, rows: [80, 160], factVisits: [small, large] });
+    expect(large, 'doubling coverage must only double admission work').toBeLessThanOrEqual(small * 2);
   });
 
   it('retains reordered repeated-name source facts while admitting a changed refusal', () => {

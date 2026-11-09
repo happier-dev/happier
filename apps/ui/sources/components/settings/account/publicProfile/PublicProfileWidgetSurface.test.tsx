@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { act } from 'react-test-renderer';
 
@@ -9,8 +9,12 @@ import { t } from '@/text';
 import { DEFAULT_PUBLIC_PROFILE_POLICY_V1, PublicProfileSnapshotV1Schema } from '@happier-dev/protocol/account/publicProfile';
 import { WidgetDefinitionV1Schema } from '@happier-dev/protocol/widgets';
 import { describeAuthoredWidgetDefinitionV1 } from '@/components/widgets/widgetCatalog';
+import { HappierPublicProfile, HappierPublicProfileWidget, HappierPublicProfileDataProvider } from '@happier-dev/plugin-ui/components';
+import { publishHomeAccountChange, publishHomeAccountChangeWake, getHomeAccountChangeDemandedServerIds } from '@/sync/runtime/orchestration/homeAccountChange';
+import { projectPublicProfilePreview } from '@happier-dev/protocol/account/projectPublicProfile';
+import { CorePluginUiPresentationScope } from '@/components/plugins/surfaces/CorePluginUiPresentationScope';
 import {
-  PublicProfileWidgetPreviewContext,
+  PublicProfileWidgetPreviewProvider,
   PublicProfileWidgetSurface,
 } from './PublicProfileWidgetSurface';
 
@@ -22,10 +26,38 @@ const instance = {
 };
 
 describe('PublicProfileWidgetSurface', () => {
+  it('renders identical admitted project anchors through the public page and widget adapters after native layout, and strips both when off', async () => {
+    const labels = { identityLine: '', periodTitle: '', periodDetail: '', emptyLayout: '', footerNote: '', report: '', madeWith: '',
+      inert: { success: '', warning: '', error: '', incomplete: '' } };
+    const usage = { paint: { accent: '#aabbee', paper: '#111111', dark: true }, agent: (id: string) => ({ id, name: id, color: '#aabbee' }),
+      labels: { chartLabel: () => 'Projects', unavailable: 'Unavailable', projects: { empty: 'No projects' } } };
+    for (const projects of [true, false]) {
+      const view = projectPublicProfilePreview({ context: { handle: 'ada', identity: {}, service: null, urls: null },
+        snapshot: PublicProfileSnapshotV1Schema.parse({ v: 1, computedAtMs: 1, coverage: { status: 'partial', method: 'runtime' },
+          period: { startMs: 1, endMs: 9, timeZoneOffsetMinutes: 0 }, fieldCoverage: {}, facts: {} }),
+        metadata: { projects: [{ label: 'Public project', url: 'https://example.com/project' }] },
+        policy: { ...DEFAULT_PUBLIC_PROFILE_POLICY_V1, fields: { ...DEFAULT_PUBLIC_PROFILE_POLICY_V1.fields, projects } },
+        appearance: { theme: 'auto', atmosphere: { source: 'none' } }, layout: { v: 1, items: [{ kind: 'widget', id: 'projects',
+          size: 'wide', frameStyle: 'plain', presentation: { kind: 'usage', widgetId: 'usage_projects', inputs: {} } }] } })!;
+      const screen = await renderScreen(<CorePluginUiPresentationScope>
+        <HappierPublicProfileDataProvider view={view} usage={usage}>
+          <HappierPublicProfile view={view} labels={labels} usage={usage} />
+          <HappierPublicProfileWidget view={view} widgetId="projects" labels={labels} usage={usage} testID="standalone" />
+        </HappierPublicProfileDataProvider>
+      </CorePluginUiPresentationScope>);
+      // Native layout is an OS boundary. Deliver its real event; all adapters/models/bodies stay real.
+      await act(async () => {
+        for (const node of screen.findAll(node => typeof node.type === 'string' && typeof node.props.onLayout === 'function'))
+          node.props.onLayout({ nativeEvent: { layout: { x: 0, y: 0, width: 800, height: 400 } } });
+      });
+      expect(screen.findAll(node => typeof node.type === 'string' && node.props.href === 'https://example.com/project')).toHaveLength(projects ? 2 : 0);
+      await screen.unmount();
+    }
+  });
   it('admits 1000 duration facts once for twenty widgets and does no fact work on a Look/size edit', async () => {
     let visits = 0;
     const snapshot = PublicProfileSnapshotV1Schema.parse({ v: 1, computedAtMs: 10,
-      period: { startMs: 1, endMs: 9, timeZoneOffsetMinutes: 0 }, coverage: { status: 'partial', method: 'runtime' }, fieldCoverage: {}, facts: {} });
+      period: { startMs: 1, endMs: 9, timeZoneOffsetMinutes: 0 }, coverage: { status: 'partial', method: 'runtime' }, fieldCoverage: {}, facts: { activeDays: 3 } });
     snapshot.facts.sessionDurations = Array.from({ length: 1000 }, () => ({ agentId: 'codex', get durationMs() { visits++; return 100; } }));
     const definition = WidgetDefinitionV1Schema.parse({ v: 1, id: 'days', name: 'Days', sizeDeclaration: { sizes: ['medium', 'wide'], defaultSize: 'medium' },
       inputs: { fields: [] }, inputSchema: { type: 'object', additionalProperties: false }, provenance: { source: { kind: 'authored' } },
@@ -38,20 +70,26 @@ describe('PublicProfileWidgetSurface', () => {
       appearance: { theme: 'auto' as const, atmosphere: { source: 'none' as const } } };
     const labels = { identityLine: '', periodTitle: '', periodDetail: '', emptyLayout: '', footerNote: '', report: '', madeWith: '',
       inert: { success: '', warning: '', error: '', incomplete: '' } };
-    const tree = (size: 'medium' | 'wide') => <PublicProfileWidgetPreviewContext.Provider value={{ kind: 'ready', source, labels }}>
+    const tree = (size: 'medium' | 'wide', facts = snapshot) => <PublicProfileWidgetPreviewProvider value={{ kind: 'ready', source: {
+      ...source, snapshot: facts, appearance: { ...source.appearance, theme: size === 'medium' ? 'auto' : 'dark' },
+    }, labels }}>
       {Array.from({ length: 20 }, (_, i) => <PublicProfileWidgetSurface key={i} instance={{ ...instance, id: String(i) }}
         descriptor={descriptor} size={size} testID={`block-${i}`} />)}
-    </PublicProfileWidgetPreviewContext.Provider>;
+    </PublicProfileWidgetPreviewProvider>;
     const screen = await renderScreen(tree('medium'));
+    expect(screen.getTextContent()).toContain('3');
     expect(visits).toBe(1000);
     visits = 0;
-    await act(async () => { screen.update(tree('wide')); });
+    await screen.update(tree('wide'));
     expect(visits).toBe(0);
+    await screen.update(tree('wide', { ...snapshot, computedAtMs: 11, facts: { ...snapshot.facts, activeDays: 4 } }));
+    expect(screen.getTextContent()).toContain('4');
+    expect(visits).toBe(1000);
   });
   it('keeps a placed block’s slot quiet while the page’s Usage is unavailable, without inventing a per-block cause', async () => {
     const reason = t('publicIdentity.profile.reasons.usage_unavailable');
     const screen = await renderScreen(
-      <PublicProfileWidgetPreviewContext.Provider
+      <PublicProfileWidgetPreviewProvider
         value={{ kind: 'unavailable', reason }}
       >
         <PublicProfileWidgetSurface
@@ -59,7 +97,7 @@ describe('PublicProfileWidgetSurface', () => {
           descriptor={null}
           testID="block"
         />
-      </PublicProfileWidgetPreviewContext.Provider>,
+      </PublicProfileWidgetPreviewProvider>,
     );
     expect(screen.getTextContent()).not.toContain(
       t('publicIdentity.page.blockUnavailable'),
@@ -71,13 +109,44 @@ describe('PublicProfileWidgetSurface', () => {
 });
 
 describe('PublicProfileWidgetPreviewRead', () => {
+  it('wakes standalone setup on publication changes and failed-read reconnect, retiring demand on close', async () => {
+    const { PublicProfileWidgetPreviewRead } = await import('./PublicProfileWidgetSurface');
+    const scope = { serverId: 'standalone-profile-home', accountId: 'owner' };
+    const context = { handle: 'leeroy', identity: {}, service: null, urls: null };
+    // Only the Action transport is replaced; the standalone preview, read owner and Home bus stay real.
+    const executeValue = vi.fn(async (actionId: string) => actionId === 'account.public_profile.get'
+      ? { kind: 'absent', context } : { kind: 'unavailable', reason: 'usage_unavailable' });
+    const readCount = () => executeValue.mock.calls.filter(([id]) => id === 'account.public_profile.get').length;
+    const screen = await renderScreen(<PublicProfileWidgetPreviewRead execution={{ ready: true, executeValue }} scope={scope}>
+      <Text>Size</Text>
+    </PublicProfileWidgetPreviewRead>);
+    const reconnect = () => publishHomeAccountChange(scope.serverId, undefined, { source: 'connected', changesCatchUp: true });
+    const wake = (serverId: string, entityId: string) => publishHomeAccountChangeWake(serverId,
+      { t: 'account-change', changeKinds: ['account'], entityIds: [entityId], sessionSystemRecords: [] }, 'socket');
+    try {
+      await vi.waitFor(() => expect(readCount()).toBe(1));
+      await act(async () => { wake('other-home', 'public-profile'); wake(scope.serverId, 'workflow-run:other'); reconnect(); });
+      expect(readCount()).toBe(1);
+      await act(async () => { wake(scope.serverId, 'public-profile'); });
+      await vi.waitFor(() => expect(readCount()).toBe(2));
+      executeValue.mockRejectedValueOnce(new TypeError('offline'));
+      await act(async () => { wake(scope.serverId, 'public-profile'); });
+      expect(readCount()).toBe(3);
+      await act(async () => { reconnect(); });
+      await vi.waitFor(() => expect(readCount()).toBe(4));
+      await act(async () => { reconnect(); });
+      expect(readCount()).toBe(4);
+      expect(getHomeAccountChangeDemandedServerIds()).toContain(scope.serverId);
+    } finally { await screen.unmount(); }
+    expect(getHomeAccountChangeDemandedServerIds()).not.toContain(scope.serverId);
+  });
   it('keeps a standalone setup’s controls while the page preview is preparing or cannot be prepared', async () => {
     const { PublicProfileWidgetPreviewRead } = await import('./PublicProfileWidgetSurface');
     const context = { handle: 'leeroy', identity: {}, service: null, urls: null };
     const execution = { ready: true, isCurrent: () => true, executeValue: async (actionId: string) => actionId === 'account.public_profile.get'
       ? { kind: 'absent', context } : { kind: 'unavailable', reason: 'usage_unavailable' } } as never;
     const screen = await renderScreen(
-      <PublicProfileWidgetPreviewRead execution={execution} serverId="server">
+      <PublicProfileWidgetPreviewRead execution={execution} scope={{ serverId: 'server', accountId: 'owner' }}>
         <Text testID="size-selector">Size</Text>
       </PublicProfileWidgetPreviewRead>,
     );

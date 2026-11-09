@@ -18,6 +18,7 @@ import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
 import type { HomeAdministrationContext } from './homeAdministrationContext';
 import { HomeClaimSetup } from './HomeClaimSetup';
 import { HomeConsoleMenu, useHomeConsoleNavigation } from './HomeConsoleNavigation';
+import { isApprovalRequestV2InFlightStatus } from '@happier-dev/protocol/approvals/approvalRequestV1';
 
 /**
  * A condition that occupies the page because there is genuinely nothing else
@@ -61,6 +62,8 @@ export const HomeAdministrationSection = React.memo(function HomeAdministrationS
     title: string;
     /** The destination's purpose line. */
     description?: string;
+    /** Destination-specific explanation of a settled Home refusal. */
+    forbiddenBody?: string;
     /** An entity header rendered from the Home once it has answered (the Home overview). */
     renderHeader?: (context: HomeAdministrationContext) => React.ReactNode;
     /**
@@ -223,7 +226,7 @@ export const HomeAdministrationSection = React.memo(function HomeAdministrationS
                 kind={denied || unsupported ? 'unavailable' : 'error'}
                 title={denied ? t('homeGovernance.forbiddenTitle') : t('homeGovernance.unavailableTitle')}
                 body={denied
-                    ? t('homeGovernance.forbiddenBody')
+                    ? props.forbiddenBody ?? t('homeGovernance.forbiddenBody')
                     : unsupported
                         ? t('homeGovernance.unsupportedBody')
                         : t('homeGovernance.unavailableBody')}
@@ -258,7 +261,7 @@ export const HomeAdministrationSection = React.memo(function HomeAdministrationS
                     title={t('approvals.title')}
                     description={approvalError
                         ? t('approvals.loadError')
-                        : approvalLoading || approvalStatus === 'open' || approvalStatus === 'approved' || approvalStatus === 'executing'
+                        : approvalLoading || isApprovalRequestV2InFlightStatus(approvalStatus)
                             ? t('approvals.status.open')
                             : undefined}
                     accessibilityLiveRegion={approvalError ? 'assertive' : 'polite'}

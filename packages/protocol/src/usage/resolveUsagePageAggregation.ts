@@ -343,11 +343,16 @@ export function retainUsageQueryResultReferences(current: UsageQueryBatchResult,
     // Coverage can repeat a source name. Match the complete admitted state,
     // rather than treating its name as an immutable or unique source fact.
     if (slice.sources !== retained.sources) {
+      // Primitive fields narrow candidates; complete state still decides reuse.
+      const sourceBucketKey = (source: UsageQuerySourceState) => JSON.stringify([
+        source.source, source.status, source.asOfMs, source.errorCode,
+      ]);
       const priorSources = new Map<string, UsageQuerySourceState[]>();
       for (const source of retained.sources) {
-        const rows = priorSources.get(source.source) ?? [];
+        const key = sourceBucketKey(source);
+        const rows = priorSources.get(key) ?? [];
         rows.push(source);
-        priorSources.set(source.source, rows);
+        priorSources.set(key, rows);
       }
       const rows = slice.sources.map((source, index) => {
         const matches = (previous: UsageQuerySourceState | undefined) => previous !== undefined && (previous === source
@@ -355,7 +360,7 @@ export function retainUsageQueryResultReferences(current: UsageQueryBatchResult,
         // Source-only progress preserves coverage order. Admit that complete
         // fact once before searching repeated names for a reordered match.
         const atIndex = retained.sources[index];
-        return matches(atIndex) ? atIndex! : priorSources.get(source.source)?.find(matches) ?? source;
+        return matches(atIndex) ? atIndex! : priorSources.get(sourceBucketKey(source))?.find(matches) ?? source;
       });
       const sources = rows.length === retained.sources.length && rows.every((row, index) => row === retained.sources[index])
         ? retained.sources : rows;

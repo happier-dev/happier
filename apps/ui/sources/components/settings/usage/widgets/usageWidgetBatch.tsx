@@ -1,7 +1,7 @@
 import * as React from 'react';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import { WidgetFrameDemandContext, WidgetFrameInstanceIdContext, type WidgetFrameDemand } from '@/components/widgets/frame/widgetFrameDemand';
-import type { JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import { sameStrictJsonValue, type JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import type { UsageBuiltinWidgetIdV1 } from '@happier-dev/protocol/widgets';
 import { readBuiltinWidgetDescriptorV1, proposeWidgetInputDefaultBindingsV1 } from '@happier-dev/protocol/widgets';
 import { resolveEffectiveInputFields } from '@happier-dev/protocol/inputs/inputFieldRuntime';
@@ -462,18 +462,21 @@ export function useUsageWidgetBatchSlices(): readonly UsageQueryResultSlice[] {
 
 /**
  * The shown page's one history read: a displayed query that reads Sessions' activity (accounting and Session
- * evidence), preferring one that also reads transcripts, so Read now converts what every view omits.
+ * evidence), preferring the page period and then one that also reads transcripts.
  */
 export function useUsageWidgetBatchHistory(): UsageHistoryModel {
     const auth = useAuth();
-    const plan = React.useContext(UsageWidgetBatchContext)?.resource.plan;
+    const batch = React.useContext(UsageWidgetBatchContext);
+    const plan = batch?.resource.plan;
+    const pagePeriod = batch?.inventoryQuery?.period;
     const query = React.useMemo(() => {
         if (!plan) return null;
         const rows = [...plan.widgets.values()].flatMap(row => row.query && row.key && row.query.includeAccounting && row.query.includeSessionEvidence
             ? [{ query: row.query, key: row.key }] : [])
-            .sort((a, b) => Number(b.query.includeTranscriptEvidence) - Number(a.query.includeTranscriptEvidence) || a.key.localeCompare(b.key));
+            .sort((a, b) => Number(sameStrictJsonValue(b.query.period, pagePeriod)) - Number(sameStrictJsonValue(a.query.period, pagePeriod))
+                || Number(b.query.includeTranscriptEvidence) - Number(a.query.includeTranscriptEvidence) || a.key.localeCompare(b.key));
         return rows[0] ? { query: rows[0].query, authority: plan.scope } : null;
-    }, [plan]);
+    }, [plan, pagePeriod]);
     return useUsageHistory({ credentials: auth.credentials, query });
 }
 

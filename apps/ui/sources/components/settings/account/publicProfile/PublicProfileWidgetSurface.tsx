@@ -13,6 +13,7 @@ import { CorePluginUiPresentationScope } from '@/components/plugins/surfaces/Cor
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Text } from '@/components/ui/text/Text';
 import type { WidgetCandidate } from '@/components/widgets/widgetCatalog';
+import type { AccountSettingsScope } from '@/sync/domains/settings/scope/accountSettingsScope';
 import { t } from '@/text';
 import { publicProfilePageLabels, usePublicProfileUsageHost } from './publicProfilePresentation';
 import { usePublicProfileOwnerRead } from './usePublicProfileOwnerRead';
@@ -61,16 +62,16 @@ export function PublicProfileWidgetPreviewBoundary(props: Readonly<{ scope: Widg
 
 function ReadPublicProfileWidgetPreview(props: Readonly<{ scope: WidgetSurfaceRefV1; children: React.ReactNode }>) {
   const execution = useMountedActionExecution(props.scope);
-  return <PublicProfileWidgetPreviewRead execution={execution} serverId={props.scope.serverId}>{props.children}</PublicProfileWidgetPreviewRead>;
+  return <PublicProfileWidgetPreviewRead execution={execution} scope={props.scope}>{props.children}</PublicProfileWidgetPreviewRead>;
 }
 
 /** The standalone read for a setup opened outside the page: one owner read and, without a snapshot, one preview. */
 export function PublicProfileWidgetPreviewRead(props: Readonly<{
   execution: Pick<ReturnType<typeof useMountedActionExecution>, 'ready' | 'executeValue'>;
-  serverId: string; children: React.ReactNode;
+  scope: AccountSettingsScope; children: React.ReactNode;
 }>) {
   const { execution } = props;
-  const { state } = usePublicProfileOwnerRead(execution);
+  const { state } = usePublicProfileOwnerRead(execution, props.scope);
   const read = state.kind === 'ready' ? state.read : null;
   const record = read?.kind === 'ready' ? read.record : null;
   const [local, setLocal] = React.useState<PublicProfileSnapshotV1 | null>(null);
@@ -93,7 +94,7 @@ export function PublicProfileWidgetPreviewRead(props: Readonly<{
     return () => { current = false; };
   }, [read, record]);
   const snapshot = record?.snapshot ?? local;
-  const usage = usePublicProfileUsageHost(props.serverId, snapshot?.period ?? null);
+  const usage = usePublicProfileUsageHost(props.scope.serverId, snapshot?.period ?? null);
   const failed = state.kind === 'failed' ? t('publicIdentity.profile.reasons.preparation_unavailable') : reason;
   // The setup's own controls (size, inputs) never wait for the page: only its preview slot does.
   const preview = React.useMemo<PublicProfileWidgetPreview>(() => read && snapshot ? {

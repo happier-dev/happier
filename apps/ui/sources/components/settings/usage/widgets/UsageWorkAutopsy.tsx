@@ -69,7 +69,7 @@ export function UsageWorkAutopsy(
   const { theme: appTheme } = useUnistyles();
   const presentation = useWidgetPresentation();
   const rowMetrics = usePageRowMetrics('list');
-  const { format, cell, sessionLabel } = useUsageWork(props.slice, props.query, props.serverId);
+  const { format, cell, datum, sessionLabel } = useUsageWork(props.slice, props.query, props.serverId);
   const selected =
     typeof props.query.session === 'string'
       ? props.query.session
@@ -204,8 +204,8 @@ export function UsageWorkAutopsy(
               size="stat"
               showLabel
               label={t('usage.board.work.autopsyTitle')}
-              value={format(autopsy.amount, autopsy.moneyBasis)}
-              valueFormatter={format}
+              value={autopsy.amount ?? format(null, autopsy.moneyBasis)}
+              valueFormatter={value => format(value, autopsy.moneyBasis)}
               caption={sessionLabel(selected)}
             />
             <HappierDataMetric
@@ -318,6 +318,7 @@ export function UsageWorkAutopsy(
             showProportionShares={false}
             valueFormatter={format}
             rowIds={turns.map((turn) => turn.contributionId)}
+            rowDatums={turns.map(turn => datum(turn.turnId === null ? t('usage.board.work.reason_missing_turn') : turnLabel(turn.turnId), turn.amount, turn.moneyBasis))}
             columns={[
               { label: t('usage.board.work.turn') },
               { label: metricLabel, proportion: true },

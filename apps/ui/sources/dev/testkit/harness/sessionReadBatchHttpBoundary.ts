@@ -1,8 +1,14 @@
-import { SessionReadBatchRequestV1Schema } from '@happier-dev/protocol/sessions/read/sessionReadBatchV1';
+import { SessionReadBatchRequestV1Schema, SessionReadBatchResponseV1Schema } from '@happier-dev/protocol/sessions/read/sessionReadBatchV1';
 import { buildSessionMessagesPath } from '@happier-dev/protocol/sessions/messages/sessionMessagesPageV1';
+import { USAGE_SESSION_EVIDENCE_PATH, UsageSessionEvidenceRequestSchema, UsageSessionStateEvidenceSchema,
+    type UsageSessionEvidenceResponse } from '@happier-dev/protocol/usage/usageSessionEvidence';
+import { projectSessionUsageWorkEvidence, projectUsageSessionStateEvidence } from '@happier-dev/protocol/usage/usageWorkEvidence';
+import { projectSessionOwnerCompatibilityViewV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import type { ServedHomeRequest } from './actionHomesHttpHarness';
 import type { RuntimeFetch } from '@/utils/system/runtimeFetch';
 import { V2SessionListRowSchema, V2SessionRecordSchema, type V2SessionRecord, type V2SessionListRow } from '@happier-dev/protocol/sessions/control/contract';
+import { parsePlainSessionMetadata, parsePlainSessionAgentStateResult } from '@/sync/engine/sessions/parsePlainSessionPayload';
+import { readStoredSessionMessage } from '@/sync/runtime/readStoredSessionContent';
 
 /** Full external source facts, retained until the HTTP boundary projects the list wire. */
 export function createSessionListSourceFixture<T extends Readonly<{ sessions: readonly V2SessionRecord[] }>>(page: T): Omit<T, 'sessions'> & { sessions: V2SessionRecord[] } {
@@ -113,6 +119,72 @@ export function createSessionReadBatchHttpBoundary(route: (request: ServedHomeRe
                 return { sessionId, ...(detail ? { detail } : {}), ...(turns ? { turns } : {}), ...(messages ? { messages } : {}) };
             }));
             return Response.json({ results });
+        },
+    };
+}
+
+/** Project external Session fixtures onto Usage's content-free plain Account wire. */
+export function createUsageSessionEvidenceHttpBoundary(
+    route: (request: ServedHomeRequest) => Response | undefined | Promise<Response | undefined>,
+    readSessionIds: () => readonly string[],
+) {
+    const sessions = createSessionReadBatchHttpBoundary(route);
+    return {
+        componentRequests: sessions.componentRequests,
+        async handle(request: ServedHomeRequest): Promise<Response | undefined> {
+            if (request.path !== USAGE_SESSION_EVIDENCE_PATH) return sessions.handle(request);
+            const explicit = await route(request);
+            if (explicit) return explicit;
+            const input = UsageSessionEvidenceRequestSchema.parse(request.body);
+            const selections = input.requests.map(demand => ({ query: demand.query,
+                sessionIds: demand.sessionIds ?? (demand.query.session === null ? [...readSessionIds()]
+                    : typeof demand.query.session === 'string' ? [demand.query.session] : demand.query.session) }));
+            const results: UsageSessionEvidenceResponse['results'] = [];
+            for (const selection of selections) {
+                const response = (await sessions.handle({ ...request, path: '/v2/sessions/read-batch',
+                    url: new URL('/v2/sessions/read-batch', request.url), body: {
+                        sessionIds: selection.sessionIds, includeSnapshot: true, includeTurns: true,
+                        includeMessages: selection.query.includeTranscriptEvidence, accessProjectionVersion: 1,
+                    } }))!;
+                if (!response.ok) return response;
+                const payload: unknown = await response.json();
+                const parsed = SessionReadBatchResponseV1Schema.safeParse(payload);
+                if (!parsed.success) return Response.json({ requests: selections,
+                    results: payload && typeof payload === 'object' && 'results' in payload ? payload.results : null });
+                for (const row of parsed.data.results) {
+                    if (row.detail?.status !== 200 || row.detail.body.session.encryptionMode !== 'plain') {
+                        results.push(row);
+                        continue;
+                    }
+                    const record = row.detail.body.session;
+                    const metadata = record.metadataLayoutVersion === 1 && record.ownerMetadata?.t === 'plain'
+                        ? projectSessionOwnerCompatibilityViewV1({ sharedMetadata: JSON.parse(record.metadata), ownerMetadata: record.ownerMetadata.v })
+                        : parsePlainSessionMetadata(record.metadata, record.metadataLayoutVersion);
+                    const state = parsePlainSessionAgentStateResult(record.agentState);
+                    const stateEvidence = state.status === 'available' ? UsageSessionStateEvidenceSchema.parse(projectUsageSessionStateEvidence({
+                        id: row.sessionId, metadata: metadata ? { machineId: metadata.machineId ?? undefined,
+                            actionConfirmationsV1: metadata.actionConfirmationsV1 } : null,
+                        agentState: state.value, ...(row.turns?.status === 200 ? { sessionTurns: row.turns.body } : {}),
+                    })) : undefined;
+                    const { actionConfirmationsV1: _confirmations, ...safeMetadata } = record.metadataLayoutVersion === 1
+                        ? JSON.parse(record.metadata) : metadata ?? {};
+                    const projected = { ...row, detail: { ...row.detail, body: { ...row.detail.body,
+                        session: { ...record, agentState: null, metadata: JSON.stringify(safeMetadata) } } },
+                        ...(stateEvidence ? { stateEvidence } : {}) };
+                    if (row.messages?.status !== 200) { results.push(projected); continue; }
+                    const messages = await Promise.all(row.messages.body.messages.map(message =>
+                        readStoredSessionMessage({ message, sessionEncryptionMode: 'plain' })));
+                    const opened = messages.filter((message): message is NonNullable<typeof message> => message !== null && message.content !== null);
+                    const complete = !row.messages.body.hasMore && opened.length === messages.length;
+                    const { messages: _messages, ...parts } = projected;
+                    if (messages.length > 0 && opened.length === 0) { results.push(parts); continue; }
+                    const detail = projectSessionUsageWorkEvidence({ id: row.sessionId, metadata: null, agentState: null,
+                        ...(row.turns?.status === 200 ? { sessionTurns: row.turns.body } : {}) }, opened, { messagesComplete: complete });
+                    results.push({ ...parts, messageEvidence: { acceptedInputs: detail.acceptedInputs, phaseEvents: detail.phaseEvents,
+                        coach: detail.coach, collaboration: detail.collaboration }, messagesComplete: complete });
+                }
+            }
+            return Response.json({ requests: selections, results });
         },
     };
 }

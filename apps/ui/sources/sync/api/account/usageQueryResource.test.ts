@@ -1,7 +1,7 @@
 import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createServedHomeAccountToken, serveAccountHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
-import { createSessionReadBatchHttpBoundary } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
+import { createUsageSessionEvidenceHttpBoundary } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
 import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/accountBootstrapHttpBoundary';
 import { createAccountKvHttpFixture } from '@/dev/testkit/fixtures/accountKvHttpFixture';
 import { publishAppliedActiveServerSnapshot } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
@@ -87,12 +87,6 @@ import * as usageWorkEvidence from '@happier-dev/protocol/usage/usageWorkEvidenc
 import { projectUsageSessionInput } from '@/sync/domains/usage/usageWorkEvidence';
 import { USAGE_SESSION_EVIDENCE_PATH, UsageSessionEvidenceRequestSchema, UsageSessionStateEvidenceSchema,
   type UsageSessionEvidenceResponse } from '@happier-dev/protocol/usage/usageSessionEvidence';
-import { SessionReadBatchResponseV1Schema } from '@happier-dev/protocol/sessions/read/sessionReadBatchV1';
-import { projectSessionUsageWorkEvidence as projectOpenedSessionUsageWorkEvidence,
-  projectUsageSessionStateEvidence } from '@happier-dev/protocol/usage/usageWorkEvidence';
-import { projectSessionOwnerCompatibilityViewV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
-import { parsePlainSessionMetadata, parsePlainSessionAgentStateResult } from '@/sync/engine/sessions/parsePlainSessionPayload';
-import { readStoredSessionMessage } from '@/sync/runtime/readStoredSessionContent';
 import { createAccountEncryptionCurrentnessFixtureForCredentials } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import * as machineRpcBoundary from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
 import { buildUsageBreakdownList } from '@happier-dev/protocol/usage/usageLeaderProjection';
@@ -117,7 +111,7 @@ beforeEach(() => { vi.spyOn(machineRpcBoundary, 'machineRpcWithServerScope').moc
 
 let home: Awaited<ReturnType<typeof serveAccountHomes>> | undefined;
 let homeSequence = 0;
-let sessionBatchBoundary: ReturnType<typeof createSessionReadBatchHttpBoundary> | undefined;
+let sessionBatchBoundary: ReturnType<typeof createUsageSessionEvidenceHttpBoundary> | undefined;
 const sessionRequests = () => [...home!.requests.filter(request => request.path !== '/v2/sessions/read-batch'),
   ...(sessionBatchBoundary?.componentRequests ?? [])];
 afterEach(async () => { standardCleanup(); retireActiveServerAccountScopeLifetime(); clearMachineRequestReachabilityForTest(); await home?.dispose(); home = undefined;
@@ -154,63 +148,9 @@ async function context(route: Parameters<typeof serveAccountHomes>[0]['route'],
   // Plans projection remain in-process. Server admission has its SQLite suite.
   const projections = new Map<string, ReturnType<typeof ProviderAccountUsagePageProjectionWriteV1Schema.parse>>();
   const kv = createAccountKvHttpFixture();
-  sessionBatchBoundary = createSessionReadBatchHttpBoundary(route);
+  sessionBatchBoundary = createUsageSessionEvidenceHttpBoundary(route, () => Object.keys(storage.getState().sessions));
   home = await serveAccountHomes({ homes: [{ key: 'a', serverUrl: `https://usage-batch-${++homeSequence}.test`, accountId: 'account-a', profile, settings, ...homeOptions }],
     route: async request => {
-      if (request.path === USAGE_SESSION_EVIDENCE_PATH) {
-        const explicit = await route(request);
-        if (explicit) return explicit;
-        // Reuse external Session source fixtures behind the new Usage HTTP
-        // wire. Production still executes the actual parser, admission, cache
-        // and client E2EE opening; no internal reader is mocked.
-        const input = UsageSessionEvidenceRequestSchema.parse(request.body);
-        const selections = input.requests.map(demand => ({ query: demand.query,
-          sessionIds: demand.sessionIds ?? (demand.query.session === null ? Object.keys(storage.getState().sessions)
-            : typeof demand.query.session === 'string' ? [demand.query.session] : demand.query.session) }));
-        const results: UsageSessionEvidenceResponse['results'] = [];
-        for (const selection of selections) {
-          const batchRequest = { ...request, path: '/v2/sessions/read-batch', url: new URL('/v2/sessions/read-batch', request.url),
-            body: { sessionIds: selection.sessionIds, includeSnapshot: true, includeTurns: true,
-              includeMessages: selection.query.includeTranscriptEvidence, accessProjectionVersion: 1 } };
-          const response = (await sessionBatchBoundary!.handle(batchRequest))!;
-          if (!response.ok) return response;
-          const payload: unknown = await response.json();
-          const parsed = SessionReadBatchResponseV1Schema.safeParse(payload);
-          if (!parsed.success) return Response.json({ requests: selections,
-            results: payload && typeof payload === 'object' && 'results' in payload ? payload.results : null });
-          for (const row of parsed.data.results) {
-            if (row.detail?.status !== 200 || row.detail.body.session.encryptionMode !== 'plain') {
-              results.push(row);
-              continue;
-            }
-            const record = row.detail.body.session;
-            const metadata = record.metadataLayoutVersion === 1 && record.ownerMetadata?.t === 'plain'
-              ? projectSessionOwnerCompatibilityViewV1({ sharedMetadata: JSON.parse(record.metadata), ownerMetadata: record.ownerMetadata.v })
-              : parsePlainSessionMetadata(record.metadata, record.metadataLayoutVersion);
-            const state = parsePlainSessionAgentStateResult(record.agentState);
-            const stateEvidence = state.status === 'available' ? UsageSessionStateEvidenceSchema.parse(projectUsageSessionStateEvidence({ id: row.sessionId,
-              metadata: metadata ? { machineId: metadata.machineId ?? undefined, actionConfirmationsV1: metadata.actionConfirmationsV1 } : null,
-              agentState: state.value, ...(row.turns?.status === 200 ? { sessionTurns: row.turns.body } : {}) })) : undefined;
-            const { actionConfirmationsV1: _confirmations, ...safeMetadata } = record.metadataLayoutVersion === 1
-              ? JSON.parse(record.metadata) : metadata ?? {};
-            const projected = { ...row, detail: { ...row.detail, body: { ...row.detail.body,
-              session: { ...record, agentState: null, metadata: JSON.stringify(safeMetadata) } } },
-              ...(stateEvidence ? { stateEvidence } : {}) };
-            if (row.messages?.status !== 200) { results.push(projected); continue; }
-            const messages = await Promise.all(row.messages.body.messages.map(message => readStoredSessionMessage({ message, sessionEncryptionMode: 'plain' })));
-            const opened = messages.filter((message): message is NonNullable<typeof message> => message !== null && message.content !== null);
-            const complete = !row.messages.body.hasMore && opened.length === messages.length;
-            const { messages: _messages, ...parts } = projected;
-            if (messages.length > 0 && opened.length === 0) { results.push(parts); continue; }
-            const detail = projectOpenedSessionUsageWorkEvidence({ id: row.sessionId, metadata: null, agentState: null,
-              ...(row.turns?.status === 200 ? { sessionTurns: row.turns.body } : {}) }, opened,
-              { messagesComplete: complete });
-            results.push({ ...parts, messageEvidence: { acceptedInputs: detail.acceptedInputs, phaseEvents: detail.phaseEvents,
-              coach: detail.coach, collaboration: detail.collaboration }, messagesComplete: complete });
-          }
-        }
-        return Response.json({ requests: selections, results });
-      }
       if (request.path === '/v4/connect/qualified/provider-account-usage/history' && request.method === 'PUT') {
         const projection = ProviderAccountUsagePageProjectionWriteV1Schema.parse(request.body);
         projections.set(projection.recordId, projection);
@@ -3728,8 +3668,8 @@ describe('usage query captured Resource adapter', () => {
       if (request.path === '/v4/connect/qualified/quotas') {
         const index = refs.findIndex(ref => request.url.searchParams.get('ref')?.includes(ref.accountId));
         return Response.json({ ref: refs[index], sourceResolution: { source: sources[index], recordId: snapshots[index]!.recordId,
-          providerAccountId: refs[index]!.accountId, fetchedAt: now, staleAfterMs: 600_000 },
-          content: { t: 'plain', v: { v: 1, ref: refs[index], activeAccountId: refs[index]!.accountId,
+          providerAccountId: snapshots[index]!.recordKey.accountSubjectId, fetchedAt: now, staleAfterMs: 600_000 },
+          content: { t: 'plain', v: { v: 1, ref: refs[index], activeAccountId: snapshots[index]!.recordKey.accountSubjectId,
             fetchedAt: now, staleAfterMs: 600_000, planLabel: null, accountLabel: null, meters: [] } },
           metadata: { fetchedAt: now, staleAfterMs: 600_000, status: 'ok' } });
       }
@@ -3737,7 +3677,7 @@ describe('usage query captured Resource adapter', () => {
         const source = JSON.parse(request.url.searchParams.get('source')!);
         const index = refs.findIndex(ref => ref.accountId === source.ref.accountId);
         return Response.json({ source: sources[index], recordId: snapshots[index]!.recordId,
-          providerAccountId: refs[index]!.accountId, fetchedAt: now, staleAfterMs: 600_000 });
+          providerAccountId: snapshots[index]!.recordKey.accountSubjectId, fetchedAt: now, staleAfterMs: 600_000 });
       }
       if (request.path === '/v4/connect/qualified/provider-account-usage/record') {
         const index = snapshots.findIndex(snapshot => snapshot.recordId === request.url.searchParams.get('recordId'));

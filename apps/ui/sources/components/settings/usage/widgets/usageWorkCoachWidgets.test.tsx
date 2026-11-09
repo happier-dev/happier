@@ -615,6 +615,29 @@ describe('Work and Coach widget bodies', () => {
     expect(linkedRow[2]).toBe(t('usage.board.work.reason_missing_pr'));
     expect(String(linkedRow[linkedRow.length - 1])).toContain('checkpoint/s1/t1');
   });
+  it('retains exact Autopsy summary and mixed-basis turn amounts behind their compact values', async () => {
+    const sessionQuery = normalizeUsageQuery({ ...query, session: 's1', costBasis: 'auto' });
+    const reported = { ...contribution('eur-exact', 's1', 't1'),
+      cost: { reportedUsd: 1.23456, estimatedUsd: 0, currency: 'EUR' } };
+    const estimated = { ...contribution('usd-exact', 's1', 't2'),
+      cost: { reportedUsd: 0, estimatedUsd: 4.56789, currency: 'USD', costSource: 'pricing_estimate' as const } };
+    const body = (rows: readonly UsageWorkContribution[]) => <UsageSessionValueWidget {...props} query={sessionQuery}
+      slice={{ ...slice, shownQuery: sessionQuery,
+        work: UsageWorkProjectionSchema.parse(allocateUsageOutcomes({ contributions: [...rows], evidence: [] })) }}
+      id="usage_session_value" testID="value" />;
+    const screen = await renderScreen(body([reported]));
+    const summary = screen.findAllByType(ChartDatum).find(node => node.props.datum.label === t('usage.board.work.autopsyTitle'));
+    expect.soft(summary?.props.datum).toMatchObject({ value: '1.23456', subtitle: expect.stringMatching(/€1\.23.*reported/) });
+    expect(screen.getTextContent()).toContain('€1.23');
+    await screen.update(body([reported, estimated]));
+    const turnDatums = screen.findAllByType(ChartDatum)
+      .filter(node => String(node.props.testID).startsWith('value.autopsy.turns-datum-')).map(node => node.props.datum);
+    expect.soft(turnDatums).toEqual(expect.arrayContaining([
+      expect.objectContaining({ value: 'EUR 1.23456', subtitle: expect.stringContaining('reported') }),
+      expect.objectContaining({ value: 'USD 4.56789', subtitle: expect.stringContaining('estimated') }),
+    ]));
+    expect(screen.getTextContent()).toContain('$4.57');
+  });
   it('formats witnessed Autopsy git moments in the preferred language without changing their instants', async () => {
     const previous = getPreferredLanguage();
     const committedAtMs = 500;

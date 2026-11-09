@@ -732,7 +732,8 @@ export const TeamCredentialUsageScreen = React.memo(function TeamCredentialUsage
     | { subject: UsageSubject; teamId?: never; resourceId?: never })>) {
     const featureEnabled = useFeatureEnabled('teams.credentialResources', { scopeKind: 'spawn', serverId: props.serverId });
     if (props.subject?.kind === 'home') {
-        return <HomeAdministrationSection serverId={props.serverId} title={t('teams.credentials.usage.title')}>
+        return <HomeAdministrationSection serverId={props.serverId} title={t('teams.credentials.usage.title')}
+            forbiddenBody={t('teams.credentials.usage.homeAdminRequired')}>
             {(context) => <CredentialUsage scope={context.scope} address={null} target={{ subject: props.subject }}
                 featureEnabled={featureEnabled} displayName={context.homeName} />}
         </HomeAdministrationSection>;

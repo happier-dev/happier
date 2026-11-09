@@ -53,7 +53,8 @@ import { resourceStoredContentContext } from '@/sync/encryption/resourceStoredCo
 import { sealSessionStoredContent } from '@happier-dev/sync-client';
 import { executeDiscussionActionInAccountContext } from '@/sync/api/discussions/discussionActions';
 import { createArtifactActionsClient } from '@/components/artifacts/artifactActionsClient';
-import { createSessionReadBatchHttpBoundary } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
+import { createUsageSessionEvidenceHttpBoundary } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
+import { USAGE_SESSION_EVIDENCE_PATH } from '@happier-dev/protocol/usage/usageSessionEvidence';
 import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
 import { createArtifactListHttpResponse, createArtifactReadBatchHttpResponse, createPlainArtifactHttpFixture, projectArtifactStoredKind } from '@/dev/testkit/harness/artifactStoreBoundary';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
@@ -87,7 +88,9 @@ function installSessionBatchHttpFixture(accountId: string, route: (url: unknown,
     const usage = createUsageQueryBatchHttpBoundary(request => request.path === '/v2/usage/query-batch' ? undefined
         : route(request.url, { method: request.method, headers: request.headers, signal: request.signal,
             ...(request.body === undefined ? {} : { body: JSON.stringify(request.body) }) }), []);
-    const boundary = createSessionReadBatchHttpBoundary(request => request.path === '/v2/sessions/read-batch' ? undefined : usage(request));
+    const boundary = createUsageSessionEvidenceHttpBoundary(request =>
+        request.path === '/v2/sessions/read-batch' || request.path === USAGE_SESSION_EVIDENCE_PATH ? undefined : usage(request),
+        () => Object.keys(storage.getState().sessions));
     runtimeFetch.mockImplementation(async (input: unknown, init?: RequestInit) => {
         const url = new URL(String(input));
         return boundary.handle({ url, path: url.pathname, home: url.origin, accountId,

@@ -543,7 +543,7 @@ describe('installed Session proposal admission at the Home mint route', () => {
         }
     });
 
-    it('admits only captured setup app reads through the signed original root', async () => {
+    it('admits captured setup app reads and the installed connector grant lifecycle through the signed original root', async () => {
         const rows = storage.state.deploymentRead;
         rows.enabled = true;
         rows.sourceReadable = true;
@@ -1580,7 +1580,7 @@ describe('installed Session proposal admission at the Home mint route', () => {
             const coachRoot = actionId === 'usage.coach.dismiss' || actionId === 'usage.coach.snooze';
             expect(Boolean(await verify(`/v1/kv/${encodeURIComponent(key)}`, undefined))).toBe(coachRoot);
             expect(Boolean(await verify('/v1/kv', { mutations: [{ key, value: JSON.stringify({ t: 'plain', v: { v: 1, suppressions: [] } }), version: -1 }] }, 'POST'))).toBe(coachRoot);
-            expect(Boolean(await verify('/v2/account/settings', undefined))).toBe(true);
+            expect(Boolean(await verify('/v2/account/settings', undefined))).toBe(coachRoot);
             expect(await verify('/v1/kv/todo.index', undefined)).toBeNull();
             expect(await verify('/v1/kv/workspace%3Atabs%3Av1', undefined)).toBeNull();
             expect(await verify('/v1/kv', { mutations: [{ key: 'workspace:tabs:v1', value: '{}', version: -1 }] }, 'POST')).toBeNull();
