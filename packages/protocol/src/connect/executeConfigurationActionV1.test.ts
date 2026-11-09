@@ -103,7 +103,6 @@ describe('connected-service configuration Action owner', () => {
             ['read', { attemptId: 'attempt-1', waitForProviderStart: true }],
             ['pending.list', { service }],
         ] as const;
-        const safeContinuations = new Set(['continueConnect', 'pollDevice', 'resumeDevice', 'reconcile', 'cancel']);
         const settings = ActionsSettingsV1Schema.parse({ v: 1 });
         const discovery = createActionExecutor({});
         for (const [operation, input] of commands) {
@@ -118,13 +117,11 @@ describe('connected-service configuration Action owner', () => {
             const permitsMachine = operation === 'beginConnect' || operation === 'beginReconnect' || operation === 'pending.list';
             expect(spec.inputSchema.safeParse({ ...input, machineId: 'native-machine' }).success, operation).toBe(permitsMachine);
             expect(spec.inputHints?.fields.some(field => field.path === 'machineId' && field.required), operation).toBe(false);
-            expect(spec.approval.result, operation).toBe(safeContinuations.has(operation) ? 'none' : 'required');
-            if (safeContinuations.has(operation)) {
-                expect(isApprovalRequiredByActionsSettings(id, settings, { surface: 'agent', authority: 'account_automation' }), operation).toBe(false);
-                const explicitPolicy = setActionApprovalOverride({ settings, actionId: id, surface: 'agent', approvalRequired: true });
-                expect(isApprovalRequiredByActionsSettings(id, explicitPolicy, { surface: 'agent', authority: 'account_automation' }), operation).toBe(true);
-            }
-            if (safeContinuations.has(operation)) expect(spec.safety, operation).toBe('safe');
+            expect(spec.approval.result, operation).toBe('required');
+            const requiresApproval = operation !== 'read' && operation !== 'pending.list';
+            expect(isApprovalRequiredByActionsSettings(id, settings, { surface: 'agent', authority: 'account_automation' }), operation).toBe(requiresApproval);
+            const explicitPolicy = setActionApprovalOverride({ settings, actionId: id, surface: 'agent', approvalRequired: !requiresApproval });
+            expect(isApprovalRequiredByActionsSettings(id, explicitPolicy, { surface: 'agent', authority: 'account_automation' }), operation).toBe(!requiresApproval);
         }
         expect(getActionSpec('connectedServices.authentication.read').inputSchema.safeParse({
             attemptId: 'attempt-1', restoreKind: 'oauth',
@@ -567,7 +564,8 @@ describe('connected-service configuration Action owner', () => {
                     return { status: 'updated', revision: ++catalogRevision, cursor: catalogRevision };
                 },
             } };
-        const executor = createActionExecutor({ isActionApprovalRequired: () => false, connectedServiceAction: ({ actionId, input }) =>
+        const executor = createActionExecutor({ presentUserActionConfirmation: async () => true,
+            isActionApprovalRequired: () => false, connectedServiceAction: ({ actionId, input }) =>
             executeConnectedServiceConfigurationActionV1(host, actionId, input) });
         const context = { surface: 'ui' as const, authority: 'present_user' as const, actionCaller: { kind: 'host' as const } };
         const target = { service, modeId: 'manual' };
@@ -679,7 +677,8 @@ describe('connected-service configuration Action owner', () => {
         };
         const settings = ActionsSettingsV1Schema.parse({ v: 1,
             approvalWaivedSurfaces: { 'connectedServices.configuration.replace': ['ui'] } });
-        const executor = createActionExecutor({ isActionApprovalRequired: (id, context, admittedInput) =>
+        const executor = createActionExecutor({ presentUserActionConfirmation: async () => true,
+            isActionApprovalRequired: (id, context, admittedInput) =>
             isApprovalRequiredByActionsSettings(id, settings, context, undefined, undefined, admittedInput),
             connectedServiceAction: ({ actionId, input }) =>
             executeConnectedServiceConfigurationActionV1(host, actionId, input) } as unknown as ActionExecutorDeps);
@@ -999,6 +998,7 @@ describe('connected-service configuration Action owner', () => {
                 isApprovalRequiredByActionsSettings(id, settings, context, undefined, undefined, admittedInput),
         };
         const executor = createActionExecutor(deps as ActionExecutorDeps);
+        const reviewedExecutor = createActionExecutor({ ...deps, presentUserActionConfirmation: async () => true });
         await executeConnectedServiceConfigurationActionV1(host, 'connectedServices.accounts.default.set',
             { account, agentId: 'codex', makeDefault: true });
         const beforeReview = accountSettings;
@@ -1011,10 +1011,11 @@ describe('connected-service configuration Action owner', () => {
             const context = { surface, authority: surface === 'ui' ? 'present_user' as const : 'account_automation' as const,
                 actionCaller: { kind: 'host' as const }, serverId: 'home-work', actionRequestId: `revoke:${surface}` };
             const before = commands.length;
-            expect(await executor.execute(actionId, input, context)).toMatchObject({ ok: false, errorCode: 'approvals_not_supported' });
+            expect(await executor.execute(actionId, input, context)).toMatchObject({ ok: false,
+                errorCode: surface === 'ui' ? 'action_interactive_review_required' : 'approvals_not_supported' });
             expect(commands).toHaveLength(before);
             settings = ActionsSettingsV1Schema.parse({ v: 1, approvalWaivedSurfaces: { [actionId]: [surface] } });
-            expect(await executor.execute(actionId, input, context)).toEqual({ ok: true, result: response });
+            expect(await reviewedExecutor.execute(actionId, input, context)).toEqual({ ok: true, result: response });
             expect(commands.at(-1)).toEqual({ machineId: 'machine-work', command: { operation: 'revokeAccount', account, expectedCredentialRevision, cleanupGroupReferences: false } });
         }
         response = { status: 'outcomeUnknown', account };
@@ -1063,7 +1064,7 @@ describe('connected-service configuration Action owner', () => {
             ['outcome_unknown', 'outcome_unknown'],
             ['cancelled', 'cancelled'],
             ['ECONNREFUSED', 'server_unreachable'],
-            ['unknown_transport_code', 'action_failed'],
+            ['unknown_transport_code', 'unknown_transport_code'],
         ] as const) {
             code = transportCode;
             expect(await executor.execute('connectedServices.pools.create', { service, group: { groupId: 'work' } }, context))
@@ -1116,7 +1117,7 @@ describe('connected-service configuration Action owner', () => {
         deletionAcknowledged = false;
         const beforeRejectedDelete = settings;
         expect(await executor.execute('connectedServices.pools.delete', { group: pool.ref, ...revision }, context))
-            .toMatchObject({ ok: false, errorCode: 'approvals_not_supported' });
+            .toMatchObject({ ok: false, errorCode: 'action_interactive_review_required' });
         const confirmedDelete = { ...context, presentUserConfirmation: { actionId: 'connectedServices.pools.delete' as const } };
         expect(await executor.execute('connectedServices.pools.delete', { group: pool.ref, ...revision }, confirmedDelete)).toMatchObject({ ok: false });
         expect(settings).toBe(beforeRejectedDelete);

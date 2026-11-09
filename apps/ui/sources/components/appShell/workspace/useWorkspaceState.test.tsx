@@ -151,7 +151,7 @@ describe('useWorkspaceState', () => {
         expect(saveLayouts).not.toHaveBeenCalled();
         await hook.unmount();
     });
-    it.each(['restore', 'sync'] as const)('admits duplicate workflow details from %s without writing or changing unrelated tabs', async source => {
+    it.each(['restore', 'sync'] as const)('preserves explicit workflow details from %s without writing or changing unrelated tabs', async source => {
         storageState.ready = true;
         const first = { id: 'workflow-first', target: { kind: 'workflow', params: { id: 'workflow-1' } }, pinned: true, preview: false };
         const duplicate = { ...first, id: 'workflow-duplicate', pinned: false, preview: true };
@@ -165,13 +165,12 @@ describe('useWorkspaceState', () => {
             order: ['workflow-first', 'session-a', 'workflow-duplicate'], pairs: [], tabsById: {
                 'workflow-first': first, 'session-a': storedTab, 'workflow-duplicate': { id: duplicate.id, target: duplicate.target, pinned: duplicate.pinned },
             } }));
-        expect(Object.values(hook.getCurrent().state.tabs).filter(tab => tab.target.kind === 'workflow')).toHaveLength(1);
-        expect(hook.getCurrent().state.tabs['workflow-first']).toMatchObject({ pinned: source === 'restore', preview: false });
+        expect(Object.values(hook.getCurrent().state.tabs).filter(tab => tab.target.kind === 'workflow')).toHaveLength(2);
+        expect(hook.getCurrent().state.tabs['workflow-first']).toMatchObject({ pinned: true, preview: false });
+        expect(hook.getCurrent().state.tabs['workflow-duplicate']).toMatchObject({ pinned: false, preview: source === 'restore' });
         expect(hook.getCurrent().state.tabs['session-a']).toEqual(storedTab);
-        if (source === 'restore') {
-            const state = hook.getCurrent().state;
-            expect(state.groups[state.focusedGroupId].activeTabId).toBe('workflow-first');
-        }
+        const state = hook.getCurrent().state;
+        expect(state.groups[state.focusedGroupId].activeTabId).toBe(source === 'restore' ? 'workflow-duplicate' : initialTab.id);
         expect(saveLayouts).not.toHaveBeenCalled();
         await hook.unmount();
     });
