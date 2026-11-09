@@ -126,7 +126,7 @@ export function* projectUsageAnalyticsPopulationSteps(snapshot: UsageAnalyticsSn
     shouldYield: () => boolean = () => true): Generator<void, UsageAnalyticsPopulation, void> {
     const prepared = yield* prepareUsageAnalyticsSnapshotSteps(snapshot, request, shouldYield);
     const scopedRows = yield* normalizeUsageAnalyticsRowsSteps(prepared, shouldYield);
-    const resolved = yield* resolveScopedUsageContributionsSteps(scopedRows, request.dateRange, prepared.replayContext, shouldYield, prepared.subjectReplay);
+    const resolved = yield* resolveScopedUsageContributionsSteps(scopedRows, request.dateRange, prepared.replayContext, shouldYield);
     // Baselines remain until reconciliation; earlier filtering manufactures residuals.
     const publicPopulation = request.population === 'public_eligible_personal';
     const population = publicPopulation ? resolved.totalContributions.filter(isPublicEligibleUsageRow) : resolved.totalContributions;

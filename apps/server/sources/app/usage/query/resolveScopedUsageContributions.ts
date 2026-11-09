@@ -1,10 +1,9 @@
-import type { UsageAccountingCoverageReason, UsageAccountingMetadata, UsageAnalyticsContribution, UsageAnalyticsQueryRequest, UsageObservationCost, UsageObservationTokens } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
+import type { UsageAccountingCoverageReason, UsageAccountingMetadata, UsageAnalyticsQueryRequest, UsageObservationCost, UsageObservationTokens } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
 import type { UsageAnalyticsSourceContext } from "@happier-dev/protocol/usage/usageAnalyticsContracts";
 import { readScopedUsageAccountingEvidence, type ScopedUsageAccountingEvidence, type ScopedUsageEvidenceRow } from './scopedUsageEventRow';
 
 import { foldScopedUsageContributions } from "./scopedUsageContributionFold";
 import { canMatchUsageFilters } from './usageQueryFilters';
-import type { UsageActivitySubjectReplay } from './usageActivitySubjectReplay';
 
 export interface ScopedUsageEventRow {
     id: string;
@@ -47,7 +46,6 @@ export interface ResolvedScopedUsageContributions {
     totalContributions: ScopedUsageContribution[];
     bucketAttributions: ScopedUsageContribution[];
     coverageReasons: UsageAccountingCoverageReason[];
-    preparedContributions?: UsageAnalyticsContribution[];
 }
 
 /** Eligibility and global order decided from complete, inexpensive replay evidence. */
@@ -223,17 +221,12 @@ export function prepareScopedUsageReplayContext(rows: readonly (ScopedUsageEvide
     };
 }
 
-function resolveGroup(rows: readonly ScopedUsageEventRow[], ranks: Map<string, number>): ResolvedScopedUsageContributions {
-    return foldScopedUsageContributions(rows, ranks);
-}
-
 export function resolveScopedUsageContributions(
     rows: readonly ScopedUsageEventRow[],
     range?: Readonly<{ startMs?: number; endMs?: number }>,
     replayContext?: ScopedUsageReplayContext,
-    subjectReplay?: UsageActivitySubjectReplay,
 ): ResolvedScopedUsageContributions {
-    const steps = resolveScopedUsageContributionsSteps(rows, range, replayContext, () => false, subjectReplay);
+    const steps = resolveScopedUsageContributionsSteps(rows, range, replayContext, () => false);
     let next = steps.next();
     while (!next.done) next = steps.next();
     return next.value;
@@ -245,7 +238,6 @@ export function* resolveScopedUsageContributionsSteps(
     range?: Readonly<{ startMs?: number; endMs?: number }>,
     replayContext?: ScopedUsageReplayContext,
     shouldYield: () => boolean = () => true,
-    subjectReplay?: UsageActivitySubjectReplay,
 ): Generator<void, ResolvedScopedUsageContributions, void> {
     // DB rows arrive projected; in-memory callers share the same boundary once.
     rows = rows.map((row) => row.accountingEvidence ? row : { ...row, accountingEvidence: readScopedUsageAccountingEvidence(row) });
@@ -273,11 +265,9 @@ export function* resolveScopedUsageContributionsSteps(
     }
 
     const totalContributions: ScopedUsageContribution[] = [];
-    const preparedById = subjectReplay ? new Map<string, UsageAnalyticsContribution>() : undefined;
     const coverageReasons = new Set<UsageAccountingCoverageReason>();
-    for (const [subjectKey, group] of groups) {
-        const resolved = subjectReplay ? subjectReplay.resolve(subjectKey, group, ranks) : resolveGroup(group, ranks);
-        for (const row of resolved.preparedContributions ?? []) preparedById?.set(row.id, row);
+    for (const group of groups.values()) {
+        const resolved = foldScopedUsageContributions(group, ranks);
         const selected = resolved.totalContributions.filter((row) => (
             (range?.startMs === undefined || row.observedAt.getTime() >= range.startMs)
             && (range?.endMs === undefined || row.observedAt.getTime() < range.endMs)
@@ -292,6 +282,5 @@ export function* resolveScopedUsageContributionsSteps(
         totalContributions,
         bucketAttributions: totalContributions,
         coverageReasons: [...coverageReasons],
-        ...(preparedById ? { preparedContributions: totalContributions.map(row => preparedById.get(row.id)!) } : {}),
     };
 }

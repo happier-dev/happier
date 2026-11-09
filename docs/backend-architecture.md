@@ -113,7 +113,8 @@ routing keeps unrelated checkpoints out of the read. Canonical unpriced operands
 are retained by local day, alongside reduced calendar, membership and grouped
 pricing facts. Changed subjects replace their operands; only affected days run
 contribution projection. The response merges retained day facts without restoring
-unchanged contributions. Only changed containers are serialized and published. Matching requests and safe
+unchanged contributions. Changed chunks are published with a replacement head
+containing all retained day facts and pricing reuse. Matching requests and safe
 end-only movement within the terminal local hour reuse the already-priced compact
 projection when the money owner proves identical catalog content, overrides and
 pricing mode. A private read-owned checkpoint retains exact tariff operands and

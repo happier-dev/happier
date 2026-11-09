@@ -9,9 +9,9 @@ import type { Tx } from '@/storage/inTx';
 import type { UsageAnalyticsSnapshot } from '../usageQueryService';
 import { captureUsageModelPriceCatalogInTx } from '../usageModelPriceCatalog';
 import { toScopedUsageEventRow } from './scopedUsageEventRow';
-import { createUsageActivitySubjectReplay, type UsageActivitySubjectReplayStats } from './usageActivitySubjectReplay';
+import { foldScopedUsageContributions } from './scopedUsageContributionFold';
 import { mergeUsageCoverageEvidence } from './projectUsageCoverageEvidence';
-import { mergeUsageResultCoverageFacts, projectUsageResultCoverage, projectUsageResultCoverageFacts,
+import { mergeUsageResultCoverageFacts, projectScopedUsageContribution, projectUsageResultCoverage, projectUsageResultCoverageFacts,
     type UsageResultCoverageFacts } from './buildUsageResultProjection';
 import { captureUsageActivityRoutingInTx, MissingUsageActivityRoutingChunk, usageActivityFingerprint,
     usageActivityProjectionDayKey, usageActivitySubjectKey,
@@ -56,7 +56,10 @@ export interface CapturedUsageActivitySummary {
     updatedPricingReuse?: UsagePricingReuseCheckpoint;
     routing?: UsageActivityRoutingCapture;
     days: Map<number, ProjectionDay>;
-    stats: UsageActivitySubjectReplayStats & {
+    stats: {
+        subjectCount: number;
+        replayedSubjects: number;
+        replayedEvents: number;
         eventsRead: number;
         discoveryEventsRead: number;
         historyEventsRead: number;
@@ -132,6 +135,7 @@ export async function captureUsageActivitySummaryInTx(tx: Tx, accountId: string,
     stats.discoveryEventsRead = routing.discoveryEventsRead;
     stats.historyEventsRead = routing.historyEventsRead;
     stats.eventsRead = routing.discoveryEventsRead + routing.historyEventsRead;
+    // Changes the conditional head payload even when a source edit leaves the visible response unchanged.
     state.sourceDigest = usageActivityFingerprint(JSON.stringify([state.sourceDigest, query.dateRange?.endMs, changes]));
     return state;
 }
@@ -143,7 +147,6 @@ export function* projectUsageActivitySummarySteps(state: CapturedUsageActivitySu
     const routing = state.routing!;
     const rows = new Map(state.snapshot.rows.map(row => [row.id, toScopedUsageEventRow(row)]));
     for (const [id, row] of routing.reportRows) rows.set(id, row);
-    const replay = createUsageActivitySubjectReplay({ sourceFingerprints: routing.sourceFingerprints });
     const dirty = new Set(routing.dirtySubjects.map(subject => subject.subjectKey));
     const replacements = new Map<number, OrderedOperand[]>();
     const changedDays = new Set(routing.orderChangedProjectionDays);
@@ -157,13 +160,16 @@ export function* projectUsageActivitySummarySteps(state: CapturedUsageActivitySu
                 if (!row) throw new Error('Usage activity source changed within its admitted snapshot');
                 return row;
             });
-            const fold = () => replay.resolve(subject.subjectKey, sources, routing.ranks);
+            const fold = () => foldScopedUsageContributions(sources, routing.ranks);
             const resolved = timing ? timing.measure('fold', fold) : fold();
+            state.stats.replayedSubjects++;
+            state.stats.replayedEvents += sources.length;
             const sourceByRank = new Map(subject.eventIds.map(id => [routing.ranks.get(id), id]));
             const origins = new Map(resolved.totalContributions.map(row => [row.id, {
                 rankEventId: sourceByRank.get(routing.ranks.get(row.id))!, coverageReasons: row.coverageReasons ?? [],
             }]));
-            const selected = resolved.preparedContributions.filter(row => row.observedAtMs >= start && row.observedAtMs < end);
+            const selected = resolved.totalContributions.map(projectScopedUsageContribution)
+                .filter(row => row.observedAtMs >= start && row.observedAtMs < end);
             const parts = projectUsageActivitySubjectProjectionFacts(selected, state.query);
             subject.current.projectionDays = parts.map(part => part.dayStartMs);
             for (const part of parts) {
@@ -191,8 +197,6 @@ export function* projectUsageActivitySummarySteps(state: CapturedUsageActivitySu
             ? JSON.stringify(subject.current) : null);
         if (shouldYield()) yield;
     }
-    state.stats.replayedSubjects = replay.stats.replayedSubjects;
-    state.stats.replayedEvents = replay.stats.replayedEvents;
     for (const day of changedDays) {
         if (shouldYield()) yield;
         const raw = routing.operandChunks.get(day);

@@ -80,8 +80,6 @@ export async function queryUsageAnalytics(
 
 export interface UsageAnalyticsSnapshot {
     rows: UsageQueryEvent[];
-    /** Read-owned subject reuse; eligibility and reconciliation remain with their existing owners. */
-    subjectReplay?: import('./query/usageActivitySubjectReplay').UsageActivitySubjectReplay;
     /** PostgreSQL capture leaves historical metadata opaque until commit. */
     rawEvidenceRows?: readonly import('./query/scopedUsageEventRow').ScopedUsageEvidenceDbRow[];
     evidenceRows?: readonly ScopedUsageEvidenceRow[];

@@ -67,7 +67,6 @@ export interface UsageActivityRoutingCapture {
     legacyReports: UsageAnalyticsSnapshot['legacyReports'];
     dirtySubjects: UsageActivityDirtySubject[];
     ranks: Map<string, number>;
-    sourceFingerprints: Map<string, string>;
     rows: UsageAnalyticsSnapshot['rows'];
     reportRows: Map<string, ScopedUsageEventRow>;
     chunks: Map<string, string | null>;
@@ -202,8 +201,13 @@ export async function captureUsageActivityRoutingInTx(tx: Tx, accountId: string,
         for (const route of newRows) if (route.bridge) bridges.set(route.fact.id, route.bridge);
         const next = { eligibility, bridges: [...bridges].map(([id, value]) => ({ id, value })) };
         sessions.set(key, next);
-        sessionKeys.add(key);
-        chunks.set(sessionKey(key), JSON.stringify(next));
+        if (eligibility.nonLegacyCount > 0 || eligibility.legacyFacts.length > 0 || bridges.size > 0) {
+            sessionKeys.add(key);
+            chunks.set(sessionKey(key), JSON.stringify(next));
+        } else {
+            sessionKeys.delete(key);
+            chunks.set(sessionKey(key), null);
+        }
         if ((old?.eligibility.nonLegacyCount ?? 0) === 0 !== (eligibility.nonLegacyCount === 0)) {
             for (const fact of [...(old?.eligibility.legacyFacts ?? []), ...eligibility.legacyFacts]) legacyDays.add(usageActivityUtcDay(fact.observedAtMs));
         }
@@ -321,7 +325,6 @@ export async function captureUsageActivityRoutingInTx(tx: Tx, accountId: string,
     allRoutes = [...routes.values()].flat().concat(reportSources);
     const ordered = orderRuntimeObservations(allRoutes.filter(route => route.eligible).map(route => route.fact));
     const ranks = new Map(ordered.map((fact, index) => [fact.id, index]));
-    const sourceFingerprints = new Map(allRoutes.map(route => [route.fact.id, route.fingerprint]));
     for (const subject of dirtySubjects) subject.eventIds.sort((left, right) => ranks.get(left)! - ranks.get(right)! || left.localeCompare(right));
     const oldProjectionDays = new Set(head?.projectionDays);
     const dayChunks = head ? await readUsageActivitySummaryChunks(tx, accountId,
@@ -342,7 +345,7 @@ export async function captureUsageActivityRoutingInTx(tx: Tx, accountId: string,
         for (const row of resolveUsageLegacyReportRows(legacyReports.filter(report => missingReports.has(`legacy-report:${report.id}`)), [])) reportRows.set(row.id, row);
     }
     return { head, sourceDays, subjectKeys, sessionKeys, sourceCoverage, reportSources, legacyReports, dirtySubjects,
-        ranks, sourceFingerprints, rows: neededIds.map(id => {
+        ranks, rows: neededIds.map(id => {
             const row = loadedById.get(id);
             if (!row) throw new Error('Usage activity source changed within its admitted snapshot');
             return row;

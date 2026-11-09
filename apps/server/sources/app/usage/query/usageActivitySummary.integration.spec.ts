@@ -8,7 +8,7 @@ import { collectUsageAnalyticsBatchDelivery, projectUsageAnalyticsBatchDelivery 
 import { sameQualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualifiedConnectedAccountPersistence';
 import { readUsageActivityProjectionOperand, type UsageActivityProjectionOperand } from '@happier-dev/protocol/usage/usageActivityProjectionFacts';
 
-import { db } from '@/storage/db';
+import { db, initDbPostgres, shutdownDbClient } from '@/storage/db';
 import { inReadSnapshot } from '@/storage/inTx';
 import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lightSqliteHarness';
 import { recordLegacyUsageReport, recordUsageEvent, deleteNativeUsageHistory } from '../usageWriteService';
@@ -79,7 +79,7 @@ async function readWithChunkReads(accountId: string, query: UsageAnalyticsQueryR
     const chunkReads = { rows: 0, bytes: 0 };
     const captured = await inReadSnapshot(tx => {
         const projection = tx.usageAccountingProjection;
-        // Observe the real persistent boundary; every query executes unchanged against disposable SQLite.
+        // Observe the real persistent boundary; every query executes unchanged against the disposable database.
         const observedProjection = new Proxy(projection, { get(target, key) {
             if (key !== 'findMany') return Reflect.get(target, key);
             return async (args: Prisma.UsageAccountingProjectionFindManyArgs) => {
@@ -154,8 +154,19 @@ async function seed() {
 }
 
 describe('compact Usage activity summary read cache', () => {
-    let harness: LightSqliteHarness;
+    let harness: Pick<LightSqliteHarness, 'resetEnv' | 'resetDbTables' | 'close'>;
     beforeAll(async () => {
+        if (process.env.HAPPIER_DB_PROVIDER === 'postgres'
+            && process.env.HAPPIER_TEST_POSTGRES_DATABASE_URL
+            && process.env.DATABASE_URL === process.env.HAPPIER_TEST_POSTGRES_DATABASE_URL) {
+            // The caller supplies an isolated disposable PostgreSQL database, never the development stack.
+            initDbPostgres();
+            await db.$connect();
+            harness = { resetEnv: () => process.env, resetDbTables: async operations => {
+                for (const operation of operations) await operation();
+            }, close: shutdownDbClient };
+            return;
+        }
         harness = await createLightSqliteHarness({ tempDirPrefix: 'happier-activity-summary-', initAuth: false });
     }, 120_000);
     afterAll(async () => { await harness?.close(); });
@@ -165,6 +176,57 @@ describe('compact Usage activity summary read cache', () => {
             () => db.simpleCache.deleteMany({ where: { key: USAGE_MODEL_PRICE_CACHE_KEY } }),
             () => db.usageEvent.deleteMany(), () => db.usageReport.deleteMany(),
             () => db.session.deleteMany(), () => db.machine.deleteMany(), () => db.account.deleteMany(),
+        ]);
+    });
+
+    it('drops empty Session, subject, routing and day dependencies after their last source is deleted', async () => {
+        const { account } = await seed();
+        const query = compactQuery();
+        await expectControl(account.id, query);
+        await db.usageEvent.deleteMany({ where: { accountId: account.id } });
+        const empty = await expectControl(account.id, query);
+        expect(total(empty)).toBe(0);
+        expect((await readSummaryChunks(account.id)).size).toBe(0);
+        const head = await inReadSnapshot(tx => readUsageActivitySummaryHead(tx, account.id));
+        expect(JSON.parse(head!).sessionKeys).toEqual([]);
+        expect(await db.usageAccountingProjection.count({ where: { accountId: account.id,
+            kind: { startsWith: 'actChunk' } } })).toBe(0);
+    });
+
+    it('characterizes event, chunk and replay counts through an unchanged A to B to A range switch', async () => {
+        const account = await db.account.create({ data: { encryptionMode: 'plain' } });
+        // The observed heavy Account has 5,233 accounting subjects across 33 source days.
+        const sessions = Array.from({ length: 5_233 }, () => ({ id: randomUUID(), accountId: account.id,
+            tag: randomUUID(), encryptionMode: 'plain', metadata: '{}' }));
+        await db.session.createMany({ data: sessions });
+        for (let index = 0; index < sessions.length; index += 100) {
+            await db.usageEvent.createMany({ data: sessions.slice(index, index + 100).flatMap((session, offset) =>
+                [0, 1, 2].map(part => ({ accountId: account.id, sessionId: session.id,
+                    observedAt: new Date(startMs + ((index + offset + part * 11) % 33) * day + 1),
+                    agentId: 'codex', source: 'runtime', scope: 'turn_delta', totalTokens: 1, inputTokens: 1,
+                    metadata: { usageAccounting: { path: 'runtime', status: 'available', historyComplete: true } } }))) });
+        }
+        const wide = compactQuery({ startMs: startMs - 57 * day, endMs: startMs + 33 * day });
+        const narrow = compactQuery({ startMs: startMs + 26 * day, endMs: startMs + 33 * day });
+        const initial = await readWithChunkReads(account.id, wide);
+        const switched = await readWithChunkReads(account.id, narrow);
+        const returned = await readWithChunkReads(account.id, wide);
+        expectSameWire(switched.serialized, (await read(account.id, narrow, false)).serialized);
+        expectSameWire(returned.serialized, initial.serialized);
+        console.info(JSON.stringify({ boundary: 'activity-range-switch', provider: process.env.HAPPIER_DB_PROVIDER,
+            reads: [initial, switched, returned].map(result => ({ stats: result.capture.activitySummary?.stats,
+                chunks: result.chunkReads })) }));
+        // O2 is characterization only in this wave (Usage orchestrator, 2026-11-09).
+        // Canonical output remains the contract; counts inform the combined O2/O4 loaded measurement.
+        expect([initial, switched, returned].map(result => ({
+            eventsRead: result.capture.activitySummary?.stats.eventsRead,
+            replayedSubjects: result.capture.activitySummary?.stats.replayedSubjects,
+            replayedEvents: result.capture.activitySummary?.stats.replayedEvents,
+            chunksRead: result.chunkReads.rows,
+        }))).toEqual([
+            { eventsRead: 15_699, replayedSubjects: 5_233, replayedEvents: 15_699, chunksRead: 0 },
+            { eventsRead: 15_699, replayedSubjects: 3_329, replayedEvents: 9_987, chunksRead: 0 },
+            { eventsRead: 15_699, replayedSubjects: 5_233, replayedEvents: 15_699, chunksRead: 0 },
         ]);
     });
 
