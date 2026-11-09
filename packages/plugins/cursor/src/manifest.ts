@@ -1,5 +1,6 @@
 import { projectAgentCapabilitiesV2FromDefinition } from '@happier-dev/plugin-sdk/agents';
 import { definePlugin } from '@happier-dev/plugin-sdk';
+import { CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1 } from '@happier-dev/plugin-sdk/connected-accounts';
 
 import { AGENT_DEFINITION } from './agent/definition.js';
 import { interpretCursorCliAuthCommand } from './agent/auth/status.js';
@@ -7,6 +8,8 @@ import { CURSOR_PREFLIGHT_SESSION_CONTROLS } from './agent/preflight/models.js';
 import { createCursorAgentRuntime } from './agent/runtime/engine.js';
 import { CURSOR_AGENT_SETTINGS_CONTRIBUTION } from './agent/settings.js';
 import { cursorExternalSessionsContribution } from './agent/externalSessions/contribution.js';
+import { CURSOR_CONNECTED_ACCOUNT_LAUNCH, CURSOR_NATIVE_PURPOSE_ID } from './agent/connectedAccount.js';
+import { cursorConnectedAccountRuntime, cursorPortableAccountRuntime } from './connectedAccounts/runtime.js';
 
 const {
   id: CURSOR_AGENT_SETTINGS_CONTRIBUTION_ID,
@@ -37,6 +40,31 @@ export const CURSOR_PLUGIN = definePlugin({
       },
     }],
     optional: [],
+  },
+  connectedAccountDescriptors: {
+    'cursor-account': {
+      declaration: {
+        title: 'Cursor',
+        authentication: {
+          account: { artifactId: 'connected-account-authentication', exportName: 'activate' },
+          defaultModeId: 'api-key',
+          modes: [{
+            id: 'api-key', kind: 'manual', apiKey: true, title: 'User or service API key',
+            setup: {
+              url: 'https://cursor.com/dashboard',
+              checklist: ['Create a user or service API key in Cursor Dashboard → API Keys. Admin keys are not supported.', 'Copy the key and paste it here.'],
+              createKeyTitle: 'Open Cursor API keys',
+            },
+            accountDirectSave: { fieldKeys: { token: 'apiKey' } },
+            directExport: { contractVersion: CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1 },
+            outcomeReconciliation: 'none',
+            fields: [{ id: 'token', title: 'Cursor API key', schema: { type: 'string', minLength: 1 }, secret: true }],
+          }],
+        },
+      },
+      runtime: cursorConnectedAccountRuntime,
+      accountRuntime: cursorPortableAccountRuntime,
+    },
   },
   agents: {
     cursor: {
@@ -81,7 +109,12 @@ export const CURSOR_PLUGIN = definePlugin({
             loginLaunches: [],
           },
         },
+        sessionModeDescriptor: AGENT_DEFINITION.sessionModeDescriptor,
         primary: 'sessions',
+        connectedAccounts: [{
+          purpose: CURSOR_NATIVE_PURPOSE_ID, service: 'cursor-account', required: false,
+          credentialKinds: ['token'], materializationKinds: ['environment'],
+        }],
         catalog: {
           acpRegistryIds: [...AGENT_DEFINITION.acpRegistryIds],
           vendorResume: { support: AGENT_DEFINITION.core.resume.vendorResume },
@@ -118,6 +151,7 @@ export const CURSOR_PLUGIN = definePlugin({
         } },
       },
       factory: createCursorAgentRuntime,
+      connectedAccountLaunch: CURSOR_CONNECTED_ACCOUNT_LAUNCH,
       externalSessions: cursorExternalSessionsContribution,
       preflightSessionControls: CURSOR_PREFLIGHT_SESSION_CONTROLS,
       cliAuth: {

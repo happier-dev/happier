@@ -14,7 +14,7 @@ type CursorLegacyCommandRunner = Readonly<{
   }>>;
 }>;
 
-const CURSOR_API_KEY_ENV = 'CURSOR_API_KEY';
+export const CURSOR_API_KEY_ENV = 'CURSOR_API_KEY';
 const CURSOR_ABOUT_ARGS = Object.freeze(['about', '--format', 'json'] as const);
 
 export type CursorAuthStatus = Readonly<{
@@ -53,23 +53,15 @@ export function resolveCursorAuthStatus(params: Readonly<{
   exitCode?: number | null;
 }>): CursorAuthStatus {
   if (hasNonEmptyString(params.apiKey)) {
-    return { status: 'logged_in', source: 'api_key' };
+    return { status: 'unknown', source: 'api_key' };
   }
-  if (params.exitCode !== 0 || !hasNonEmptyString(params.aboutJson)) {
-    return { status: 'unknown', source: 'probe_failed' };
-  }
-
-  try {
-    const parsed = JSON.parse(params.aboutJson ?? '{}') as unknown;
-    const record = readUserLikeRecord(parsed);
-    const user = readUserLikeRecord(record?.user ?? record?.userInfo);
-    if (hasNonEmptyString(user?.email) || hasNonEmptyString(user?.id) || hasNonEmptyString(record?.email)) {
-      return { status: 'logged_in', source: 'about_json' };
-    }
-    return { status: 'logged_out', source: 'about_json' };
-  } catch {
-    return { status: 'unknown', source: 'probe_failed' };
-  }
+  const result = interpretCursorCliAuthCommand({
+    ok: params.exitCode === 0,
+    stdout: params.aboutJson ?? '',
+    stderr: '',
+    exitCode: params.exitCode ?? null,
+  });
+  return { status: result.state, source: result.state === 'unknown' ? 'probe_failed' : 'about_json' };
 }
 
 /** Interprets only the bounded result of the declared Cursor CLI tool. */
@@ -80,9 +72,7 @@ export function interpretCursorCliAuthCommand(params: Readonly<{
   exitCode: number | null;
 }>) {
   if (!params.ok) {
-    return params.exitCode === null
-      ? { state: 'unknown' as const, reason: 'probe_failed' as const, source: 'command' as const }
-      : { state: 'logged_out' as const, reason: 'missing_credentials' as const, source: 'command' as const };
+    return { state: 'unknown' as const, reason: 'probe_failed' as const, source: 'command' as const };
   }
 
   try {

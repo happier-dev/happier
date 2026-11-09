@@ -10,10 +10,25 @@ import type {
 } from '@happier-dev/plugin-sdk/agents/runtime';
 
 import { COPILOT_ACP_MODEL_CONTROLS } from '../acp/modelControls.js';
-import { COPILOT_OPENAI_CODEX_PURPOSE_ID } from '../auth/services/accountPurposes.js';
+import { COPILOT_CONNECTED_ACCOUNT_PURPOSES, COPILOT_GITHUB_PURPOSE_ID } from '../auth/services/accountPurposes.js';
+import { COPILOT_AUTH_ENV_VARS, COPILOT_GITHUB_TOKEN_ENV_VAR } from '../auth/services/copilotAuth.js';
 import { COPILOT_PROVIDER_OWNED_ENV_KEYS } from '../providerBinding.js';
 
 const PROVIDER_NAME = 'happier-chatgpt';
+
+function withAccountEnvironment<T extends AgentSessionOpenRequest | AgentExecutionRunOpenRequest>(
+  request: T, environment: Readonly<Record<string, string>>,
+): T {
+  const removed = new Set<string>([...COPILOT_AUTH_ENV_VARS, ...COPILOT_PROVIDER_OWNED_ENV_KEYS]);
+  const values = {
+    ...Object.fromEntries(Object.entries(request.launchEnvironment?.values ?? {}).filter(([key]) => !removed.has(key))),
+    ...environment,
+  };
+  return { ...request, launchEnvironment: { values,
+    unset: [...new Set([...(request.launchEnvironment?.unset ?? []), ...removed])]
+      .filter(key => !Object.hasOwn(values, key)),
+  } };
+}
 
 /** One static access-token snapshot per native process; the host owns renewal. */
 export async function prepareCopilotConnectedAccount<T extends AgentSessionOpenRequest | AgentExecutionRunOpenRequest>(
@@ -21,21 +36,41 @@ export async function prepareCopilotConnectedAccount<T extends AgentSessionOpenR
   context: Pick<AgentRuntimeContext, 'services' | 'signal'>,
 ): Promise<Readonly<{ request: T; models?: AgentAcpModelControls; dispose(): void }>> {
   const accounts = context.services.connectedAccounts;
-  const binding = await accounts.getBinding(COPILOT_OPENAI_CODEX_PURPOSE_ID, { signal: context.signal });
-  if (!binding) return { request, dispose() {} };
-  if (request.providerBinding) throw new PluginError({
+  const selections = await Promise.all(COPILOT_CONNECTED_ACCOUNT_PURPOSES.map(async declaration => {
+    // The host records this selection only after successful launch materialization.
+    const admitted = request.connectedAccounts?.find(selection => selection.purpose === declaration.purpose);
+    const binding = admitted ?? await accounts.getBinding(declaration.purpose, { signal: context.signal });
+    return binding ? { declaration, account: binding.account, admitted: admitted !== undefined } : null;
+  }));
+  const selected = selections.filter(selection => selection !== null);
+  if (selected.length === 0) return { request, dispose() {} };
+  if (selected.length > 1 || request.providerBinding) throw new PluginError({
     code: 'copilot_account_provider_conflict',
-    message: 'Choose either a Connected Account or a Provider connection for Copilot.',
+    message: 'Choose one GitHub account, ChatGPT account or Provider connection for Copilot.',
   });
+  const { declaration, account, admitted } = selected[0]!;
+  if (declaration.purpose === COPILOT_GITHUB_PURPOSE_ID) {
+    const materialized = admitted
+      ? { kind: 'environment' as const, env: request.launchEnvironment?.values ?? {} }
+      : await accounts.materialize(declaration.purpose, {
+        kind: 'environment', keys: [COPILOT_GITHUB_TOKEN_ENV_VAR],
+      }, { signal: context.signal, expectedAccount: account });
+    const token = materialized.kind === 'environment' ? materialized.env[COPILOT_GITHUB_TOKEN_ENV_VAR] : undefined;
+    if (typeof token !== 'string' || !token.trim()) throw new PluginError({
+      code: 'copilot_account_materialization_unavailable',
+      message: 'The Copilot GitHub account did not provide a native access token.',
+    });
+    return { request: withAccountEnvironment(request, { [COPILOT_GITHUB_TOKEN_ENV_VAR]: token }), dispose() {} };
+  }
   const selection = request.configuration?.model;
   const modelId = selection?.value;
   if (!modelId?.trim() || selection?.selectionSource !== 'explicit') throw new PluginError({
     code: 'copilot_account_model_required',
     message: 'Choose an explicit model for the Copilot ChatGPT account.',
   });
-  const materialized = await accounts.materialize(COPILOT_OPENAI_CODEX_PURPOSE_ID, {
+  const materialized = await accounts.materialize(declaration.purpose, {
     kind: 'httpHeaders', origin: 'https://chatgpt.com', headerNames: ['Authorization', 'ChatGPT-Account-Id'],
-  }, { signal: context.signal, expectedAccount: binding.account });
+  }, { signal: context.signal, expectedAccount: account });
   if (materialized.kind !== 'httpHeaders') throw new PluginError({
     code: 'copilot_account_materialization_unavailable',
     message: 'The Copilot ChatGPT account did not provide request headers.',
@@ -61,21 +96,11 @@ export async function prepareCopilotConnectedAccount<T extends AgentSessionOpenR
       models: [{ id: modelId, provider: PROVIDER_NAME, maxOutputTokens: 0 }],
     }) });
   } catch (error) { directory.cleanup(); throw error; }
-  const removed = new Set<string>(COPILOT_PROVIDER_OWNED_ENV_KEYS);
-  const values = {
-    ...Object.fromEntries(Object.entries(request.launchEnvironment?.values ?? {}).filter(([key]) => !removed.has(key))),
-    COPILOT_PROVIDERS_CONFIG: configPath,
-    COPILOT_MODEL: nativeModelId,
-  };
-  const materializedKeys = new Set(Object.keys(values));
   const unavailable = () => new PluginError({
     code: 'copilot_account_model_unavailable', message: 'Copilot did not advertise the selected ChatGPT model.',
   });
   return {
-    request: { ...request, launchEnvironment: { values,
-      unset: [...new Set([...(request.launchEnvironment?.unset ?? []), ...COPILOT_PROVIDER_OWNED_ENV_KEYS])]
-        .filter(key => !materializedKeys.has(key)),
-    } },
+    request: withAccountEnvironment(request, { COPILOT_PROVIDERS_CONFIG: configPath, COPILOT_MODEL: nativeModelId }),
     models: {
       ...COPILOT_ACP_MODEL_CONTROLS,
       projectModelState({ normalizedModelState }) {

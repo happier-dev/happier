@@ -34,12 +34,12 @@ describe('GitHub CLI login import', () => {
       // OS lookup/process is the boundary; native authentication has no saved-account context.
       const context = { signal, service: { pluginId: PLUGIN_MANIFEST.id, localId: 'github-account' } } as Parameters<NonNullable<PluginConnectedAccountRuntime['materializeNative']>>[1];
       await expect(githubConnectedAccountRuntime.materializeNative!(
-        { kind: 'httpHeaders', origins: [origin], headerNames: ['authorization'] }, context,
+        { kind: 'httpHeaders', origin: origin, headerNames: ['authorization'] }, context,
       )).resolves.toEqual({ kind: 'httpHeaders', headers: { Authorization: 'Bearer fixture-native-token' } });
       expect(command).toHaveBeenCalledOnce();
       command.mockClear();
       await expect(githubConnectedAccountRuntime.materializeNative!(
-        { kind: 'httpHeaders', origins: [origin], headerNames: ['x-request-id'] }, context,
+        { kind: 'httpHeaders', origin: origin, headerNames: ['x-request-id'] }, context,
       )).resolves.toEqual({ kind: 'httpHeaders', headers: {} });
       expect(command).not.toHaveBeenCalled();
     } finally {

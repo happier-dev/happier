@@ -33,6 +33,16 @@ Happier reads the login state safely in the background by running
 **Settings → Agents → Cursor** reflects reality without you pressing
 anything.
 
+### Connected keys (0.3 development)
+
+You can save a Cursor user or service API key as a named Connected Account and
+select it for a Cursor Session. Happier supplies that key through the child
+process's `CURSOR_API_KEY`, leaving the machine's existing login and home directory
+unchanged. Native credential import and Team Admin keys are outside this mode.
+Configured key presence is not verified account identity. Personal allowance is
+unavailable when Cursor exposes no supported account-level source; run spend is
+separate. Actual CLI acceptance and key precedence remain release checks.
+
 ## What Happier can drive
 
 - **Session modes** come from ACP and can be changed mid-session.

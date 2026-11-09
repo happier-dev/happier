@@ -17,13 +17,13 @@ type CursorAuthModuleWithProbe = typeof cursorAuthModule & Readonly<{
 }>;
 
 describe('resolveCursorAuthStatus', () => {
-  it('uses CURSOR_API_KEY as logged-in auth material', () => {
+  it('keeps configured API-key material distinct from a verified native account', () => {
     expect(resolveCursorAuthStatus({
       apiKey: ' cursor-key ',
       aboutJson: null,
       exitCode: null,
     })).toEqual({
-      status: 'logged_in',
+      status: 'unknown',
       source: 'api_key',
     });
   });
@@ -89,7 +89,7 @@ describe('resolveCursorAuthStatus', () => {
       executablePath: '/opt/cursor-agent',
     });
 
-    expect(status).toEqual({ status: 'logged_in', source: 'api_key' });
+    expect(status).toEqual({ status: 'unknown', source: 'api_key' });
     expect(launches).toEqual([
       {
         kind: 'binary',
@@ -98,5 +98,11 @@ describe('resolveCursorAuthStatus', () => {
         env: { CURSOR_API_KEY: 'cursor-key' },
       },
     ]);
+  });
+
+  it('does not classify unexpected command failure as rejected credentials', () => {
+    expect(interpretCursorCliAuthCommand({ ok: false, stdout: '', stderr: 'network unavailable', exitCode: 1 })).toEqual({
+      state: 'unknown', reason: 'probe_failed', source: 'command',
+    });
   });
 });

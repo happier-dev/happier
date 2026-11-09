@@ -52,6 +52,7 @@ async function stageTokenGrant(store: ConnectedAccountCredentialStore, grant: To
   await store.set('credentialKind', 'oauth', options);
   if (grant.refreshToken) await store.set(REFRESH_KEY, grant.refreshToken, options);
   if (grant.expiresAt !== undefined) await store.set('expiresAtMs', String(grant.expiresAt), options);
+  else await store.delete('expiresAtMs', options);
 }
 async function post(context: Pick<ConnectedAccountPortableAuthenticationContext, 'services'>, url: string,
   fields: Readonly<Record<string, string>>, signal: AbortSignal) {

@@ -10,12 +10,7 @@ import { copilotExternalSessionsContribution } from './agent/externalSessions/co
 import { COPILOT_PROVIDER_BINDING_ADAPTER_V1, COPILOT_PROVIDER_OWNED_ENV_KEYS } from './agent/providerBinding.js';
 import { COPILOT_CONNECTED_ACCOUNT_PURPOSES } from './agent/auth/services/accountPurposes.js';
 import { COPILOT_CONNECTED_ACCOUNT_LAUNCH } from './agent/auth/services/continuity.js';
-
-const COPILOT_AUTH_ENV_KEYS = [
-  'COPILOT_GITHUB_TOKEN',
-  'GH_TOKEN',
-  'GITHUB_TOKEN',
-] as const;
+import { COPILOT_AUTH_ENV_VARS } from './agent/auth/services/copilotAuth.js';
 
 const {
   id: COPILOT_AGENT_SETTINGS_CONTRIBUTION_ID,
@@ -36,7 +31,7 @@ export const COPILOT_PLUGIN = definePlugin({
         executables: [
           { kind: 'systemTool', id: 'copilot-cli' },
         ],
-        envKeys: [...COPILOT_AUTH_ENV_KEYS, ...COPILOT_PROVIDER_OWNED_ENV_KEYS],
+        envKeys: [...COPILOT_AUTH_ENV_VARS, ...COPILOT_PROVIDER_OWNED_ENV_KEYS],
       },
     }],
     optional: [],
@@ -83,12 +78,13 @@ export const COPILOT_PLUGIN = definePlugin({
           },
           auth: {
             support: 'login_terminal',
-            environmentVariables: [...COPILOT_AUTH_ENV_KEYS],
+            environmentVariables: [...COPILOT_AUTH_ENV_VARS],
             credentialPaths: ['~/.copilot/config.json'],
             missingCredentialState: 'unknown',
             loginLaunches: [{ kind: 'primary', args: ['login'] }],
           },
         },
+        sessionModeDescriptor: AGENT_DEFINITION.sessionModeDescriptor,
         primary: 'sessions',
         catalog: {
           agentCliSystemTool: { toolId: 'copilot-cli' },

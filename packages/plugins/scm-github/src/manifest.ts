@@ -483,6 +483,7 @@ function createGithubPlugin() {
       scope: {
         targets: [
           { kind: 'fixedOrigin', origin: 'https://api.github.com' },
+          { kind: 'fixedOrigin', origin: 'https://github.com' },
           { kind: 'scmProviderOrigin', provider: 'github' },
           { kind: 'connectedAccountOrigin', service: 'github-account' },
         ],
@@ -531,6 +532,8 @@ function createGithubPlugin() {
     [GITHUB_AUTOMATION_EVENT_CHECKPOINT_COLLECTION_ID]: GITHUB_AUTOMATION_EVENT_CHECKPOINT_COLLECTION,
   },
   resources: {
+    // Octicons mark-github, MIT-licensed by GitHub, sourced from svgl.app.
+    'service-mark': { kind: 'asset', path: 'assets/service-mark.svg', contentType: 'image/svg+xml' },
     'ci-branch-counts': {
       source: 'dynamic',
       scope: 'surface',
@@ -2025,12 +2028,33 @@ function createGithubPlugin() {
     [GITHUB_CONNECTED_ACCOUNT_ID]: {
       declaration: {
         title: 'GitHub account',
+        ui: { iconResourceId: 'service-mark' },
         description: 'GitHub account used for repository and pull-request operations.',
         authentication: {
           native: { systemTool: 'gh' },
           account: { artifactId: 'github-account-runtime', exportName: 'activate' },
           defaultModeId: 'fine-grained-pat',
           modes: [{
+            id: 'copilot-device',
+            kind: 'oauthDeviceCode',
+            title: 'Copilot device sign-in',
+            outcomeReconciliation: 'none',
+            clientConfiguration: { clientIdFieldId: 'clientId', scopesFieldId: 'scopes' },
+            configuration: { scope: 'account', changeBehavior: 'reconnect', fields: [
+              { id: 'clientId', title: 'OAuth client ID', schema: { type: 'string' } },
+              { id: 'scopes', title: 'OAuth scopes', schema: { type: 'string' } },
+            ] },
+          }, {
+            id: 'copilot-token',
+            kind: 'manual',
+            title: 'Copilot-compatible GitHub token',
+            outcomeReconciliation: 'none',
+            credentialOrigin: 'authentication',
+            directExport: { contractVersion: CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1 },
+            fields: [{ id: 'token', title: 'GitHub token', secret: true,
+              description: 'A fine-grained personal token with Copilot Requests permission, OAuth token, or GitHub App user token.',
+              schema: { type: 'string', minLength: 1 } }],
+          }, {
             id: 'fine-grained-pat',
             kind: 'manual',
             setup: {

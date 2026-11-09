@@ -29,7 +29,8 @@ async function fixture(missingAccount = false) {
     credentials: { async get(key: string) { return credentials.get(key) ?? null; } },
   } as Parameters<ConnectedAccountRuntime['materialize']>[1];
   const connectedAccounts = {
-    getBinding: async () => ({ purpose: 'openai-codex', service: account.service, account, target: { kind: 'account' as const, displayName: 'ChatGPT' } }),
+    getBinding: async (purpose: string) => purpose === 'openai-codex'
+      ? ({ purpose: 'openai-codex', service: account.service, account, target: { kind: 'account' as const, displayName: 'ChatGPT' } }) : null,
     materialize: vi.fn<ConnectedAccountsService['materialize']>(async (_purpose, request, options) => (
       openAiCodexConnectedAccountRuntime.materialize(request, materializationContext, options)
     )),
@@ -166,5 +167,7 @@ describe('Copilot ChatGPT static native launch', () => {
     expect(launch.stateSharingDescriptor).toBeUndefined();
     expect(launch.continuity!.runtimeAuthAdapter!.canHotApply({ target: { agentId: 'copilot' }, selection: {} })).toMatchObject({ supported: false, recovery: 'restart_resume' });
     expect(await launch.continuity!.runtimeAuthAdapter!.verifyActiveAccount!({ target: { agentId: 'copilot' }, selection: {} })).toMatchObject({ status: 'unavailable', retryable: false });
+    expect(await launch.continuity!.verifyResumeReachable!({ vendorResumeId: 'native-session' } as never))
+      .toEqual({ ok: false, reason: 'copilot_native_resume_home_unproven' });
   });
 });

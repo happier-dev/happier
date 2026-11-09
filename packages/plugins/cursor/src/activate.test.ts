@@ -14,6 +14,7 @@ describe('activate', () => {
   it('reexports the activation compiled by its canonical public plugin definition', async () => {
     expect(Object.keys(PLUGIN_MANIFEST.contributes).sort()).toEqual([
       'agents',
+      'connectedAccountDescriptors',
       'settings',
       'systemTools',
     ]);

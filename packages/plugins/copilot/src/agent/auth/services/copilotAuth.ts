@@ -1,5 +1,7 @@
+export const COPILOT_GITHUB_TOKEN_ENV_VAR = 'COPILOT_GITHUB_TOKEN' as const;
+
 export const COPILOT_AUTH_ENV_VARS = Object.freeze([
-  'COPILOT_GITHUB_TOKEN',
+  COPILOT_GITHUB_TOKEN_ENV_VAR,
   'GH_TOKEN',
   'GITHUB_TOKEN',
 ] as const);

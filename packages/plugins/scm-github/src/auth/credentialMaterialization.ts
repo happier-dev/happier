@@ -31,7 +31,7 @@ export const materializeGithubCredential: NonNullable<ConnectedAccountPortableRu
   if (request.kind !== 'httpHeaders') {
     throw new Error('GitHub connected accounts support HTTP headers and the declared Copilot environment destination');
   }
-  if (request.origins.some(origin => !isAllowedGithubOrigin(origin))) {
+  if (!isAllowedGithubOrigin(request.origin)) {
     throw new Error('GitHub connected accounts cannot materialize credentials for this origin');
   }
   if (!request.headerNames.some(name => name.toLowerCase() === 'authorization')) {

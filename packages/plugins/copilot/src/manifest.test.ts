@@ -7,12 +7,17 @@ import { COPILOT_PROVIDER_OWNED_ENV_KEYS } from './agent/providerBinding.js';
 import { COPILOT_PLUGIN, PLUGIN_MANIFEST } from './manifest.js';
 
 describe('Copilot plugin manifest', () => {
-  it('offers ChatGPT as an optional qualified access-only account purpose', () => {
+  it('offers distinct optional ChatGPT and native GitHub account purposes', () => {
     expect(PLUGIN_MANIFEST.contributes.agents?.[0]?.connectedAccounts).toEqual([{
       purpose: 'openai-codex',
       service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' },
       materializationKinds: ['httpHeaders'],
       credentialKinds: ['oauth'],
+    }, {
+      purpose: 'github-copilot',
+      service: { pluginId: 'happier.scm.forge.github', localId: 'github-account' },
+      materializationKinds: ['environment'],
+      credentialKinds: ['token', 'oauth'],
     }]);
   });
 

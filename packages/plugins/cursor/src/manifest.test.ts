@@ -24,6 +24,10 @@ describe('Cursor plugin manifest', () => {
       },
     });
     expect(PLUGIN_MANIFEST.contributes.agents[0]?.cli.auth.nonInteractiveStatusProbe).toBe(true);
+    expect(PLUGIN_MANIFEST.contributes.agents[0]?.connectedAccounts).toEqual([{
+      purpose: 'cursor-native', service: 'cursor-account', required: false,
+      credentialKinds: ['token'], materializationKinds: ['environment'],
+    }]);
     expect(PLUGIN_MANIFEST.hostAccess.required).toEqual(expect.arrayContaining([
       expect.objectContaining({ id: 'cursor-api-key', capability: 'environment', scope: { keys: ['CURSOR_API_KEY'] } }),
       expect.objectContaining({

@@ -1,4 +1,7 @@
 import type { AgentConnectedAccountLaunchContributionV1, AgentConnectedAccountRuntimeAuthAdapterV1 } from '@happier-dev/plugin-sdk/agents/runtime';
+import { COPILOT_GITHUB_PURPOSE_ID } from './accountPurposes.js';
+import { COPILOT_AUTH_ENV_VARS, COPILOT_GITHUB_TOKEN_ENV_VAR } from './copilotAuth.js';
+import { COPILOT_PROVIDER_OWNED_ENV_KEYS } from '../../providerBinding.js';
 
 const restartRequired = () => ({
   supported: false, supportsInTurnApply: false, applied: false,
@@ -20,6 +23,9 @@ export const COPILOT_CONNECTED_ACCOUNT_RUNTIME_AUTH: AgentConnectedAccountRuntim
 };
 
 export const COPILOT_CONNECTED_ACCOUNT_LAUNCH = {
+  environmentUses: [{ purpose: COPILOT_GITHUB_PURPOSE_ID, environmentKey: COPILOT_GITHUB_TOKEN_ENV_VAR }],
+  environmentUnsetUses: [...COPILOT_AUTH_ENV_VARS, ...COPILOT_PROVIDER_OWNED_ENV_KEYS]
+    .map(environmentKey => ({ purpose: COPILOT_GITHUB_PURPOSE_ID, environmentKey })),
   switchContinuity: { continuityMode: 'restart_same_home',
     supportedTransitions: ['native_to_connected', 'connected_to_native', 'connected_to_connected'] },
   continuity: {

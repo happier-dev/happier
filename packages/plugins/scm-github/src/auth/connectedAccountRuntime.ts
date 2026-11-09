@@ -117,12 +117,8 @@ const githubConnectedAccountRuntimeDefinition: PluginConnectedAccountRuntime = {
       message: 'Native GitHub credentials require an authorized HTTPS header request',
     });
     if (!request.headerNames.includes('authorization')) return { kind: 'httpHeaders', headers: {} };
-    const hostnames = new Set(request.origins.map(origin => {
-      const hostname = new URL(origin).host;
-      return hostname === 'api.github.com' ? 'github.com' : hostname;
-    }));
-    if (hostnames.size !== 1) throw new PluginError({ code: 'plugin_connected_account_binding_out_of_scope' });
-    const [hostname] = hostnames;
+    const originHostname = new URL(request.origin).host;
+    const hostname = originHostname === 'api.github.com' ? 'github.com' : originHostname;
     const native = await resolveGhNativeToken({
       hostname,
       signal: options?.signal ?? context.signal,
