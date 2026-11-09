@@ -5,6 +5,7 @@ import { applyAccountSettingMutationV1 } from '@happier-dev/protocol/account/set
 import { migrateAccountSettingsFeaturePreferences } from '@happier-dev/protocol/account/settings/accountSettings';
 
 import { settingsParse } from '../settings';
+import { normalizeAccountSettingsForServerStorage } from '../accountSettingsNormalization';
 import { mergePendingSettingsIntoRawBaseline } from '@/sync/engine/settings/writeback/accountSettingsRawDeltaMerge';
 import { migrateAccountFeatureToggles } from './accountSettingsFeatureToggleMigration';
 
@@ -51,7 +52,10 @@ describe('graduated Rich editor settings migration', () => {
         const persisted = mergePendingSettingsIntoRawBaseline({
             rawBaseline: predecessorV8Settings,
             pendingSettings,
-            normalizeForPersistedStorage: value => ({ value, changed: false }),
+            normalizeForPersistedStorage: raw => {
+                const normalized = normalizeAccountSettingsForServerStorage({ raw, mode: 'plain', settingsSecretsKey: null });
+                return { value: normalized.value, changed: normalized.secretsChanged };
+            },
         }).outgoingRaw;
 
         expect(persisted.schemaVersion).toBe(9);
