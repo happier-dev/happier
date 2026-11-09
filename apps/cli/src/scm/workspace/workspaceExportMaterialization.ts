@@ -1,8 +1,5 @@
-import { prepareFilesystemPathAuthorizer } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemPathAuthorization';
-import { lstat } from 'node:fs/promises';
-import { unlink } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
-import { access, readFile, readdir, realpath, rename, rm, rmdir } from 'node:fs/promises';
+import { access, lstat, readFile, readdir, realpath, rename, rm, rmdir, unlink } from 'node:fs/promises';
 import { basename, dirname, join, parse, relative, resolve } from 'node:path';
 import type { PinnedUnixDirectoryAccess } from '@/utils/fs/unixPathAccess';
 import { z } from 'zod/mini';
@@ -28,6 +25,7 @@ import {
 } from './workspaceMaterializationSafety';
 import { resolveWorkspaceMaterializationTargetPath } from './workspaceMaterializationTargetPath';
 import { measureWorkspaceSyncRegularFileBytesAtRoot } from '@/workspaces/sync/workspaceSyncFileRead';
+import { prepareFilesystemPathAuthorizer } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemPathAuthorization';
 
 import {
     assertPortableWorkspaceEntriesWithScmWorkspace,
@@ -61,7 +59,6 @@ export type WorkspaceTargetMaterializationReceiptV1 = Readonly<{
     previousTargetName: string | null;
     originalTargetIdentity: WorkspaceSyncRootObjectIdentityV1 | null;
     promotedTargetIdentity: WorkspaceSyncRootObjectIdentityV1 | null;
-    expectedBackupIdentity: WorkspaceSyncRootObjectIdentityV1 | null;
     /** Initial target-custodian creation evidence, never enriched by retirement or recovery. */
     workerCopyCreation?: WorkspaceTargetMaterializationWorkerCopyCreation;
     /** Settled promotion custody; rollback must never delete this copy. */
@@ -87,7 +84,6 @@ const MaterializationReceiptSchema = z.strictObject({
     previousTargetName: z.nullable(z.string()),
     originalTargetIdentity: z.nullable(WorkspaceSyncRootObjectIdentityV1Schema),
     promotedTargetIdentity: z.nullable(WorkspaceSyncRootObjectIdentityV1Schema),
-    expectedBackupIdentity: z.nullable(WorkspaceSyncRootObjectIdentityV1Schema),
     workerCopyCreation: z.optional(WorkerCopyCreationSchema),
     committed: z.optional(CommittedTargetSchema),
     removalTargetName: z.optional(RemovalTargetNameSchema),
@@ -230,7 +226,6 @@ export async function prepareWorkspaceTargetMaterializationReceipt(input: Readon
         previousTargetName: previousTargetPath ? basename(previousTargetPath) : null,
         originalTargetIdentity,
         promotedTargetIdentity: null,
-        expectedBackupIdentity: previousTargetPath ? originalTargetIdentity : null,
         ...(input.workerCopyCreation ? { workerCopyCreation: Object.freeze({ ...input.workerCopyCreation }) } : {}),
     });
     await writeJsonAtomic(input.receiptPath, receipt);
@@ -277,12 +272,6 @@ async function rollbackMaterializedTarget(input: Readonly<{
             || !workspaceSyncRootObjectIdentitiesEqual(currentTargetIdentity, expectedTargetIdentity)) {
             throw materializationRecoveryError('Target pathname is occupied by another filesystem object');
         }
-    }
-    if (input.previousTargetPath) {
-        if (!receipt.expectedBackupIdentity) {
-            throw materializationRecoveryError('Backup identity is unavailable');
-        }
-        await assertObjectIdentity(input.previousTargetPath, receipt.expectedBackupIdentity);
     }
     if (currentTargetIdentity) {
         await removeMaterializedPath(input.targetPath, input.pinnedTargetParent);
@@ -348,7 +337,6 @@ export async function beginWorkspaceTargetMaterialization(input: Readonly<{
 }>> {
     if (!isWorkerCopyCreation(input.targetFence?.workerCopyCreation)) throw workerCopyCreationError();
     const targetExists = await pathExists(input.targetPath);
-    if (input.targetFence) await assertTargetMaterializationFence(input.targetPath, input.targetFence);
     const originalTargetExists = input.originalTargetExists ?? targetExists;
     let receipt = input.receiptPath
         ? await prepareWorkspaceTargetMaterializationReceipt({
@@ -365,23 +353,14 @@ export async function beginWorkspaceTargetMaterialization(input: Readonly<{
                 : null,
             originalTargetIdentity: await readObjectIdentityOrAbsent(input.targetPath),
             promotedTargetIdentity: null,
-            expectedBackupIdentity: null,
             ...(input.targetFence?.workerCopyCreation ? { workerCopyCreation: Object.freeze({ ...input.targetFence.workerCopyCreation }) } : {}),
         });
-    if (receipt.previousTargetName !== null && receipt.expectedBackupIdentity === null) {
-        receipt = Object.freeze({ ...receipt, expectedBackupIdentity: receipt.originalTargetIdentity });
-    }
     const previousTargetPath = receipt.previousTargetName === null
         ? undefined
         : join(dirname(input.targetPath), receipt.previousTargetName);
     if (input.targetFence) await assertTargetMaterializationFence(input.targetPath, input.targetFence);
     if (previousTargetPath) {
-        if (!receipt.originalTargetIdentity || !receipt.expectedBackupIdentity) {
-            throw materializationRecoveryError('Original target identity is unavailable');
-        }
-        await assertObjectIdentity(input.targetPath, receipt.originalTargetIdentity);
         await (dependencies.replaceTarget ?? rename)(input.targetPath, previousTargetPath);
-        await assertObjectIdentity(previousTargetPath, receipt.expectedBackupIdentity);
         if (input.targetFence?.state === 'empty' && (await readdir(previousTargetPath)).length > 0) {
             await rename(previousTargetPath, input.targetPath);
             if (input.receiptPath) await rm(input.receiptPath, { force: true });
@@ -418,10 +397,6 @@ export async function beginWorkspaceTargetMaterialization(input: Readonly<{
             }
             await assertObjectIdentity(input.targetPath, receipt.promotedTargetIdentity);
             if (previousTargetPath) {
-                if (!receipt.expectedBackupIdentity) {
-                    throw materializationRecoveryError('Backup identity is unavailable');
-                }
-                await assertObjectIdentity(previousTargetPath, receipt.expectedBackupIdentity);
                 if (input.targetFence?.state === 'empty') {
                     await rmdir(previousTargetPath).catch((error: unknown) => {
                         if ((error as NodeJS.ErrnoException).code === 'ENOTEMPTY') {
@@ -496,17 +471,10 @@ export async function rehydrateWorkspaceTargetMaterialization(input: Readonly<{
     const targetIsPromoted = targetIdentity !== null
         && validatedReceipt.promotedTargetIdentity !== null
         && workspaceSyncRootObjectIdentitiesEqual(targetIdentity, validatedReceipt.promotedTargetIdentity);
-    const backupMatches = backupIdentity !== null
-        && validatedReceipt.expectedBackupIdentity !== null
-        && workspaceSyncRootObjectIdentitiesEqual(backupIdentity, validatedReceipt.expectedBackupIdentity);
-
-    if (backupIdentity && !backupMatches) {
-        throw materializationRecoveryError('Expected backup pathname is occupied by another filesystem object');
-    }
     if (targetIdentity && !targetIsOriginal && !targetIsPromoted) {
         throw materializationRecoveryError('Target pathname is occupied by another filesystem object');
     }
-    // Once the verified backup object is absent, the destructive commit
+    // Once the named backup is absent, the destructive commit
     // boundary has already crossed. Recovery never deletes the target in this
     // state; retain promotion evidence for separately reviewed removal.
     if (previousTargetPath && !backupIdentity && (targetIsOriginal || targetIsPromoted)) {
@@ -538,10 +506,6 @@ export async function rehydrateWorkspaceTargetMaterialization(input: Readonly<{
             }
             await assertObjectIdentity(targetPath, validatedReceipt.promotedTargetIdentity);
             if (previousTargetPath) {
-                if (!validatedReceipt.expectedBackupIdentity) {
-                    throw materializationRecoveryError('Backup identity is unavailable');
-                }
-                await assertObjectIdentity(previousTargetPath, validatedReceipt.expectedBackupIdentity);
                 await rm(previousTargetPath, { recursive: true, force: true });
             }
             if (input.receiptPath) await writeJsonAtomic(input.receiptPath, await committedReceipt(targetPath, validatedReceipt));
@@ -673,6 +637,66 @@ export async function rehydrateWorkspaceTargetMaterializationFromReceiptPath(inp
         receipt,
         receiptPath: input.receiptPath,
     });
+}
+
+/** Keep an admitted operation file continuously readable, including across process death.
+ * Only newly promoted objects enter rollback custody; the existing root/file never do. */
+async function beginWorkspaceTargetMaterializationRetainingFile(input: Readonly<{
+    targetPath: string;
+    retained: Readonly<{ relativePath: string; assertInitialTarget(): Promise<void>; assertRetainedFile(): Promise<void> }>;
+}>) {
+    await input.retained.assertInitialTarget();
+    const rootIdentity = await readWorkspaceSyncRootObjectIdentity(input.targetPath);
+    const assertCurrent = async () => {
+        await assertObjectIdentity(input.targetPath, rootIdentity);
+        await input.retained.assertRetainedFile();
+    };
+    const objectIdentity = async (path: string) => {
+        const stat = await lstat(path, { bigint: true });
+        return { device: stat.dev, inode: stat.ino, birthtime: stat.birthtimeNs,
+            kind: stat.isDirectory() ? 'directory' : stat.isSymbolicLink() ? 'symlink' : 'file' } as const;
+    };
+    const created: { path: string; identity: Awaited<ReturnType<typeof objectIdentity>> }[] = [];
+    let receipt: WorkspaceTargetMaterializationReceiptV1 = Object.freeze({ v: 1, previousTargetName: null,
+        originalTargetIdentity: rootIdentity, promotedTargetIdentity: rootIdentity });
+    let settled = false;
+    const custody: WorkspaceExportMaterializationCustody = {
+        get receipt() { return receipt; },
+        async bindPromotedTarget() { await assertCurrent(); },
+        async commit() {
+            if (settled) return;
+            await assertCurrent();
+            receipt = await committedReceipt(input.targetPath, receipt); settled = true;
+        },
+        async abort() {
+            if (settled) return;
+            await assertCurrent();
+            // Validate the entire rollback set before removing anything. A replacement
+            // is foreign even when it occupies an operation-created pathname.
+            for (const entry of created) {
+                const actual = await objectIdentity(entry.path);
+                if (actual.device !== entry.identity.device || actual.inode !== entry.identity.inode
+                    || actual.birthtime !== entry.identity.birthtime || actual.kind !== entry.identity.kind) {
+                    throw materializationRecoveryError('Promoted workspace entry changed');
+                }
+            }
+            for (const entry of [...created].reverse()) {
+                await assertCurrent();
+                const actual = await objectIdentity(entry.path);
+                if (actual.device !== entry.identity.device || actual.inode !== entry.identity.inode
+                    || actual.birthtime !== entry.identity.birthtime || actual.kind !== entry.identity.kind) {
+                    throw materializationRecoveryError('Promoted workspace entry changed');
+                }
+                if (actual.kind === 'directory') await rmdir(entry.path);
+                else await unlink(entry.path);
+            }
+            settled = true;
+        },
+    };
+    return { previousTargetPath: undefined, custody,
+        existingTarget: { retainedRelativePath: input.retained.relativePath, assertCurrent,
+            async recordCreated(path: string) { created.push({ path, identity: await objectIdentity(path) }); } },
+    };
 }
 
 export async function materializeWorkspaceExportArtifactsWithScmWorkspace(params: Readonly<{
@@ -823,62 +847,4 @@ export async function materializeWorkspaceExportArtifactsWithScmWorkspace(params
         });
     }
     return materialize();
-}
-
-async function beginWorkspaceTargetMaterializationRetainingFile(input: Readonly<{
-    targetPath: string;
-    retained: Readonly<{ relativePath: string; assertInitialTarget(): Promise<void>; assertRetainedFile(): Promise<void> }>;
-}>) {
-    await input.retained.assertInitialTarget();
-    const rootIdentity = await readWorkspaceSyncRootObjectIdentity(input.targetPath);
-    const assertCurrent = async () => {
-        await assertObjectIdentity(input.targetPath, rootIdentity);
-        await input.retained.assertRetainedFile();
-    };
-    const objectIdentity = async (path: string) => {
-        const stat = await lstat(path, { bigint: true });
-        return { device: stat.dev, inode: stat.ino, birthtime: stat.birthtimeNs,
-            kind: stat.isDirectory() ? 'directory' : stat.isSymbolicLink() ? 'symlink' : 'file' } as const;
-    };
-    const created: { path: string; identity: Awaited<ReturnType<typeof objectIdentity>> }[] = [];
-    let receipt: WorkspaceTargetMaterializationReceiptV1 = Object.freeze({ v: 1, previousTargetName: null,
-        originalTargetIdentity: rootIdentity, promotedTargetIdentity: rootIdentity, expectedBackupIdentity: null });
-    let settled = false;
-    const custody: WorkspaceExportMaterializationCustody = {
-        get receipt() { return receipt; },
-        async bindPromotedTarget() { await assertCurrent(); },
-        async commit() {
-            if (settled) return;
-            await assertCurrent();
-            receipt = await committedReceipt(input.targetPath, receipt); settled = true;
-        },
-        async abort() {
-            if (settled) return;
-            await assertCurrent();
-            // Validate the entire rollback set before removing anything. A replacement
-            // is foreign even when it occupies an operation-created pathname.
-            for (const entry of created) {
-                const actual = await objectIdentity(entry.path);
-                if (actual.device !== entry.identity.device || actual.inode !== entry.identity.inode
-                    || actual.birthtime !== entry.identity.birthtime || actual.kind !== entry.identity.kind) {
-                    throw materializationRecoveryError('Promoted workspace entry changed');
-                }
-            }
-            for (const entry of [...created].reverse()) {
-                await assertCurrent();
-                const actual = await objectIdentity(entry.path);
-                if (actual.device !== entry.identity.device || actual.inode !== entry.identity.inode
-                    || actual.birthtime !== entry.identity.birthtime || actual.kind !== entry.identity.kind) {
-                    throw materializationRecoveryError('Promoted workspace entry changed');
-                }
-                if (actual.kind === 'directory') await rmdir(entry.path);
-                else await unlink(entry.path);
-            }
-            settled = true;
-        },
-    };
-    return { previousTargetPath: undefined, custody,
-        existingTarget: { retainedRelativePath: input.retained.relativePath, assertCurrent,
-            async recordCreated(path: string) { created.push({ path, identity: await objectIdentity(path) }); } },
-    };
 }

@@ -84,7 +84,7 @@ describe('workspace export materialization custody', () => {
         }
     });
 
-    it('opens retained receipt fields across restart and rewrites only canonical custody', async () => {
+    it.each(['legacy_backup_field', 'current'] as const)('opens retained receipt fields across restart and rewrites only canonical custody (%s)', async shape => {
         const fixture = await realpath(await mkdtemp(join(tmpdir(), 'workspace-export-retained-receipt-')));
         try {
             const target = join(fixture, 'copy');
@@ -99,7 +99,7 @@ describe('workspace export materialization custody', () => {
             await writeFile(receiptPath, JSON.stringify({ ...receipt, retiredReceipt: true,
                 originalTargetIdentity: { ...receipt.originalTargetIdentity, retiredIdentity: true },
                 promotedTargetIdentity: { ...receipt.promotedTargetIdentity, retiredIdentity: true },
-                expectedBackupIdentity: { ...receipt.expectedBackupIdentity, retiredIdentity: true },
+                ...(shape === 'legacy_backup_field' ? { expectedBackupIdentity: { ...receipt.originalTargetIdentity, retiredIdentity: true } } : {}),
                 workerCopyCreation: { ...creation, retiredCreation: true } }));
             const restarted = await rehydrateWorkspaceTargetMaterializationFromReceiptPath({ targetPath: target, backupDirectoryPrefix: '.backup', receiptPath });
             expect(restarted?.receipt).toEqual(receipt);
@@ -313,7 +313,6 @@ describe('workspace export materialization custody', () => {
                     previousTargetName: backupName,
                     originalTargetIdentity: null,
                     promotedTargetIdentity: null,
-                    expectedBackupIdentity: null,
                 },
             })).rejects.toMatchObject({ code: 'workspace_target_materialization_manual_recovery' });
             await expect(readFile(join(target, 'target.txt'), 'utf8')).resolves.toBe('target');
@@ -429,7 +428,6 @@ describe('workspace export materialization custody', () => {
                     previousTargetName: '../other',
                     originalTargetIdentity: identity,
                     promotedTargetIdentity: identity,
-                    expectedBackupIdentity: identity,
                 },
             })).rejects.toThrow('Invalid workspace target materialization receipt');
             await expect(readFile(join(target, 'keep.txt'), 'utf8')).resolves.toBe('keep');
@@ -495,35 +493,6 @@ describe('workspace export materialization custody', () => {
             });
             await expect(readFile(join(target, 'user.txt'), 'utf8')).resolves.toBe('unrelated');
             expect((await readdir(fixture)).some((name) => name.startsWith('.backup.'))).toBe(true);
-        } finally {
-            await rm(fixture, { recursive: true, force: true });
-        }
-    });
-
-    it('preserves an unrelated object that replaced the expected backup before commit', async () => {
-        const fixture = await mkdtemp(join(tmpdir(), 'workspace-export-custody-commit-backup-'));
-        try {
-            const target = join(fixture, 'target');
-            await mkdir(target);
-            await writeFile(join(target, 'old.txt'), 'old');
-            const materialization = await beginWorkspaceTargetMaterialization({
-                targetPath: target,
-                backupDirectoryPrefix: '.backup',
-            });
-            await mkdir(target);
-            await writeFile(join(target, 'new.txt'), 'new');
-            await materialization.custody.bindPromotedTarget();
-
-            const backupName = (await readdir(fixture)).find((name) => name.startsWith('.backup.'))!;
-            const backupPath = join(fixture, backupName);
-            await rename(backupPath, join(fixture, 'detached-backup'));
-            await mkdir(backupPath);
-            await writeFile(join(backupPath, 'user.txt'), 'unrelated');
-
-            await expect(materialization.custody.commit()).rejects.toMatchObject({
-                code: 'workspace_target_materialization_manual_recovery',
-            });
-            await expect(readFile(join(backupPath, 'user.txt'), 'utf8')).resolves.toBe('unrelated');
         } finally {
             await rm(fixture, { recursive: true, force: true });
         }

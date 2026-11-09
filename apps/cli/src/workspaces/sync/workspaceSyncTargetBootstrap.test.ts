@@ -8,6 +8,7 @@ import { describe, expect, it } from 'vitest';
 import type { HandoffTargetReplacementApprovalV1 } from '@happier-dev/protocol';
 
 import {
+  removeWorkspaceSyncCommittedCopy,
   prepareExistingGitWorkspaceSyncTarget,
   prepareWorkspaceSyncGitTarget,
   computeWorkspaceSyncRootFingerprint,
@@ -28,7 +29,6 @@ const fakeMaterializationReceipt = {
   previousTargetName: null,
   originalTargetIdentity: null,
   promotedTargetIdentity: null,
-  expectedBackupIdentity: null,
 };
 
 async function replacementApproval(rootPath: string): Promise<HandoffTargetReplacementApprovalV1> {
@@ -719,7 +719,15 @@ describe('workspaceSyncTargetBootstrap', () => {
       expect.stringMatching(/^[a-f0-9]{64}\.json$/u),
       expect.stringMatching(/\.ready\.json$/u),
     ]);
+    await writeFile(join(target, 'copy.txt'), 'copy');
+    const sibling = join(fixture, 'sibling');
+    await mkdir(sibling);
+    await writeFile(join(sibling, 'user.txt'), 'keep');
     await result.release();
+    await removeWorkspaceSyncCommittedCopy({ rootPath: target, relationshipId: 'relationship-1', endpointRole: 'beta',
+      rootFingerprint: result.rootFingerprint, materializationDirectory: join(fixture, 'staging'), rootOwnershipManager });
+    await expect(access(target)).rejects.toMatchObject({ code: 'ENOENT' });
+    await expect(readFile(join(sibling, 'user.txt'), 'utf8')).resolves.toBe('keep');
     await rm(fixture, { recursive: true, force: true });
   });
 

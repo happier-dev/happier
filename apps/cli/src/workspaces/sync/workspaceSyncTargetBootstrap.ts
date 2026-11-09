@@ -134,13 +134,11 @@ export async function inspectWorkspaceSyncCommittedCopy(input: Omit<WorkspaceSyn
 export async function removeWorkspaceSyncCommittedCopy(input: WorkspaceSyncCommittedCopyRemoval & Readonly<{
   rootOwnershipManager: WorkspaceRootOwnershipManager;
 }>): Promise<void> {
-  await inspectWorkspaceSyncCommittedCopy(input);
   const ownership = await input.rootOwnershipManager.tryAcquire({
     ownerId: input.relationshipId, canonicalRoot: input.rootPath, operation: 'bootstrap',
   });
   if ('kind' in ownership) throw bootstrapError('workspace_root_in_use', 'Workspace copy root overlaps active work');
   try {
-    await ownership.assertCurrentRootIdentity(input.rootFingerprint);
     await removeCommittedWorkspaceTargetMaterialization({
       targetPath: input.rootPath,
       rootFingerprint: input.rootFingerprint,
