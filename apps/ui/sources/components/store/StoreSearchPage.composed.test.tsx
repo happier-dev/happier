@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { expect, it, onTestFinished, vi } from 'vitest';
-import { act, renderScreen, standardCleanup } from '@/dev/testkit';
+import { act, renderScreen, standardCleanup, flushHookEffects } from '@/dev/testkit';
 import { installPromptRegistriesCommonModuleMocks } from '@/components/settings/prompts/registries/promptRegistriesScreenTestHelpers';
 
 // Native layout boundary: react-test-renderer has no host layout, so the page measures its content at the top; the page
@@ -309,10 +309,13 @@ it('keeps malformed kind narrowing unavailable instead of browsing all sources',
     expect(cursors).toHaveLength(0);
 });
 
-it('states native Software unavailability without selecting an ambient Machine', async () => {
+it('waits for Account Software declarations without selecting an ambient Machine', async () => {
     const { Page, cursors } = await setup();
     const screen = await renderScreen(<Page filters={JSON.stringify({ kind: { include: ['software'], exclude: [] } })} />);
-    await waitForHomeGovernance(() => expect(screen.findAllByTestId('store.kind.software.state').length).toBeGreaterThan(0));
+    await flushHookEffects();
+    expect(screen.findAllByTestId('store.kind.software.state')).toHaveLength(0);
+    expect(screen.findAllByTestId('store.search.software.machine')).toHaveLength(0);
+    expect(screen.root.findByType(Directory).props.list.loading).toBe(true);
     expect(cursors).toHaveLength(0);
 });
 

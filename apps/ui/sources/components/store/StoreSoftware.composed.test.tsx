@@ -267,7 +267,7 @@ it('composes recorded Software into Installed without native reads or confusing 
     const { useManagedInventory } = await import('./inventory/useManagedInventory');
     const { InboxArtifactSourceBoundary } = await import('@/hooks/inbox/useInboxArtifactSource');
     const wrapper = ({ children }: React.PropsWithChildren) => <InboxArtifactSourceBoundary>{children}</InboxArtifactSourceBoundary>;
-    const current = storage.getState().machineListByServerId[homeId]![0]!;
+    const current = storage.getState().machineListByServerId[machineServerId]![0]!;
     const selection = { ref, inputs: { manager: 'brew', packages: [{ name: 'exact/cask', version: '2', kind: 'cask' }] } };
     const machine = { ...current, metadata: { ...current.metadata!, setup: { version: 1 as const, revision: 2, exclusions: [], sources: [
         { kind: 'direct' as const, setup: { items: [{ kind: 'softwareRecipe' as const, selection }],
@@ -608,11 +608,15 @@ it('prepares one full-target review then submits one public Apply without execut
         sources: value.sources.map(source => source.kind !== 'direct' ? source : { ...source, setup: { ...source.setup,
             scripts: [...(source.setup.scripts ?? []), { body: 'echo changed' }] } }),
     })) };
+    const approvalsBeforeChangedInput = homes.artifacts(homeId).list().length;
     const changedOutcome = await createFrontDoorActionExecute().confirmed('machines.setup.apply', changedInput, { surface: 'ui',
         serverId: homeId, expectedAccountId: 'alice', presentUserConfirmation: confirmation });
+    // docs/actions.md: a native confirmation admits only its exact normalized input;
+    // a person's UI review stays local rather than manufacturing a self-approval Artifact.
     expect(changedOutcome, JSON.stringify(changedOutcome)).toMatchObject({
-        ok: true, result: { kind: 'approval_request_created' },
+        ok: false, errorCode: 'action_interactive_review_required',
     });
+    expect(homes.artifacts(homeId).list()).toHaveLength(approvalsBeforeChangedInput);
     expect(applied).toHaveLength(1);
 });
 

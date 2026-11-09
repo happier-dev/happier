@@ -6,6 +6,7 @@ import { createHomeHubArtifactHttpBoundary } from '@/dev/testkit/harness/homeHub
 import { installRealActionExecutorModuleLoader } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { act, renderScreen, flushHookEffects } from '@/dev/testkit';
+import { waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 
 // Native layout boundary: the test renderer has no host layout, so the page viewport is reported below.
 vi.mock('@/components/ui/popover/measure', () => ({ measureInWindow: async () => ({ x: 0, y: 0, width: 800, height: 600 }) }));
@@ -38,6 +39,9 @@ it.each(['directory', 'search'] as const)('shows Software %s for an Account with
                 normalizedManifest: PLUGIN_MANIFEST, collectionContracts: [], uiSlots: [],
                 packageAssetArchive: { archiveDigestSha256: `sha256:${'b'.repeat(64)}`, resources: [] } },
             packageAssets: [], uiArtifacts: [] });
+        // Connection restoration starts the ordinary Sync census asynchronously. Its request belongs to
+        // bootstrap, not this page: wait for issuance before measuring browse's additional demand.
+        await waitForHomeGovernance(() => expect(machineReads).toBe(1));
         machineReads = 0;
         const navigation = { push: () => {}, replace: () => {}, back: () => {}, setParams: () => {} };
         const content = {};
