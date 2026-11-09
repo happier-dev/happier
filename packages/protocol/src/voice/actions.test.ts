@@ -73,7 +73,21 @@ describe('extractVoiceActionsFromAssistantText', () => {
   it('reports malformed action blocks as a failure instead of preserving success narration', () => {
     const input = ['Hello', '<voice_actions>', '{not json}', '</voice_actions>'].join('\n');
     const result = extractVoiceActionsFromAssistantText(input);
-    expect(result).toEqual({ assistantText: "I couldn't run that action because its request was invalid. Please try again.", actions: [], invalidActionBlock: true });
+    expect(result).toEqual({ assistantText: "I couldn't run that action because its action block contained invalid JSON. No action ran.", actions: [], invalidActionBlock: true });
+  });
+
+  it('identifies RUN107 malformed creation JSON without executing or disclosing the task', () => {
+    // Native carrier lines25/37 closed args but omitted actions[0]'s brace.
+    const input = 'Starting a Session. <voice_actions>{"actions":[{"t":"spawnSession","args":{"executionTarget":{"serverId":"active","machineId":"machine-1"},"directory":{"kind":"path","path":"/tmp"},"initialInput":{"text":"private QA file task"}}]}</voice_actions>';
+    const result = extractVoiceActionsFromAssistantText(input);
+    expect(result.actions).toEqual([]);
+    expect(result.invalidActionBlock).toBe(true);
+    expect(result.assistantText).toContain('JSON');
+    expect(result.assistantText).not.toContain('private QA file task');
+    expect(result.assistantText).not.toContain('Starting a Session');
+    const repaired = extractVoiceActionsFromAssistantText(input.replace('}}]}</voice_actions>', '}}}]}</voice_actions>'));
+    expect(repaired.invalidActionBlock).toBeUndefined();
+    expect(repaired.actions).toMatchObject([{ t: 'spawnSession', args: { initialInput: { text: 'private QA file task' } } }]);
   });
 
   it.each([

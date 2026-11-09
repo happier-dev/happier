@@ -2682,6 +2682,9 @@ The local Voice spoken Action outcome owner presents creation settlement even
 when the model returns an empty follow-up. It speaks a brief created confirmation
 or the host's failure reason and available alternative; direct and discovered
 Action calls consume the same presentation.
+Local Voice action documentation publishes complete tagged JSON blocks from the
+canonical Action argument examples. The decoder distinguishes malformed JSON
+from named field-validation failures and executes neither rejected request.
 
 Voice leaves automatic Session naming to the coding Session's `change_title`
 owner unless the person supplies a name. Spoken Session labels use the canonical

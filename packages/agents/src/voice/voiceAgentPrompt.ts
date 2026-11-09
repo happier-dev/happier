@@ -359,7 +359,8 @@ export function buildLocalVoiceAgentSystemPrompt(params?: Readonly<{
   // policy. A hot-path-only prompt otherwise hides tools the Agent receives.
   const actionLines = buildVoiceToolDocumentationLines(actionSpecs, {
     disabledActionIds: params?.disabledActionIds,
-    invocationLabel: 'Args:',
+    invocationLabel: 'Action:',
+    actionsTag: tag,
     requiredDirectActionIds: actionSpecs.filter(spec => isActionDirectToolExposedOn(spec, 'agent')).map(spec => spec.id),
   });
 

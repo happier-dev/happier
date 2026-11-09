@@ -8,6 +8,7 @@ import {
   listVoiceToolActionSpecs,
   VOICE_ACTIONS_BLOCK,
   VOICE_TOOL_RESULTS_JSON_PREFIX,
+  extractVoiceActionsFromAssistantText,
   renderPromptPlanV1,
 } from '@happier-dev/protocol';
 
@@ -21,6 +22,28 @@ import {
 } from './voiceAgentPrompt.js';
 
 describe('voiceAgentPrompt', () => {
+  it('publishes one complete local block per listed tool and executable default-Agent creation', () => {
+    const prompt = buildLocalVoiceAgentSystemPrompt();
+    const listedTools = prompt.slice(prompt.indexOf('Available actions:')).split('\n')
+      .filter(line => /^- \w+: /.test(line));
+    const published = listedTools.flatMap(line => {
+      const block = line.match(/<voice_actions>.*<\/voice_actions>/)?.[0];
+      return block ? [{ line, block }] : [];
+    });
+    // The real catalog is the scale fixture: no second inventory or extra
+    // example per tool, including those added by other Agent contributions.
+    expect(published).toHaveLength(listedTools.length);
+    for (const { line, block } of published) {
+      const value = JSON.parse(block.slice(VOICE_ACTIONS_BLOCK.startTag.length, -VOICE_ACTIONS_BLOCK.endTag.length));
+      expect(value.actions).toHaveLength(1);
+      expect(line.startsWith(`- ${value.actions[0].t}:`)).toBe(true);
+    }
+    const creation = published.find(({ line }) => line.startsWith('- spawnSession:'));
+    const decoded = extractVoiceActionsFromAssistantText(creation?.block ?? '');
+    expect(decoded.actions).toMatchObject([{ t: 'spawnSession', args: { initialInput: { text: expect.any(String) } } }]);
+    expect(decoded.actions[0]?.args).not.toHaveProperty('agentTarget');
+  });
+
   it('distinguishes native subagents from created Happier Sessions in every Voice mode', () => {
     for (const prompt of [
       renderPromptPlanV1(buildGlobalVoiceAgentStartupInstructionsPlanV1()),

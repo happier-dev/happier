@@ -66,10 +66,16 @@ function formatToolDocumentation(
   toolName: string,
   invocationLabel: string,
   availability: VoiceGuidanceAvailability,
+  actionsTag?: string,
 ): readonly string[] {
   const desc = normalizeText(describeActionForVoiceTool(spec)) || toolName;
   const argsExample = normalizeText(spec.examples?.voice?.argsExample) || '{}';
-  const lines: string[] = [`- ${toolName}: ${desc} ${invocationLabel} ${argsExample}.`];
+  // The Action owner already serialized its arguments. Add only the local
+  // channel envelope, so examples do not become a second input parser.
+  const invocationExample = actionsTag
+    ? `<${actionsTag}>{"actions":[{"t":${JSON.stringify(toolName)},"args":${argsExample}}]}</${actionsTag}>`
+    : argsExample;
+  const lines: string[] = [`- ${toolName}: ${desc} ${invocationLabel} ${invocationExample}.`];
 
   const workflowNotes = getActionVoiceWorkflowNotes(spec.id, availability);
   if (workflowNotes.length > 0) {
@@ -93,6 +99,7 @@ export function buildVoiceToolDocumentationLines(
   params: Readonly<{
     disabledActionIds?: readonly string[];
     invocationLabel: string;
+    actionsTag?: string;
     includeAllTools?: boolean;
     requiredDirectActionIds?: readonly string[];
   }>,
@@ -111,7 +118,7 @@ export function buildVoiceToolDocumentationLines(
   for (const spec of enabledSpecs) {
     const toolName = normalizeText(spec.bindings?.voiceClientToolName);
     if (!toolName) continue;
-    out.push(...formatToolDocumentation(spec, toolName, params.invocationLabel, availability)
+    out.push(...formatToolDocumentation(spec, toolName, params.invocationLabel, availability, params.actionsTag)
       .filter((line) => !referencesUnavailableVoiceTool(line, availability)));
   }
 

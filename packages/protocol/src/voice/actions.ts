@@ -206,32 +206,35 @@ export function extractVoiceActionsFromAssistantText(
     .slice(startIndex + VOICE_ACTIONS_BLOCK.startTag.length, endIndex)
     .trim();
 
+  let parsedJson: unknown;
   try {
-    const parsedJson = JSON.parse(jsonRaw) as unknown;
-    if (!parsedJson || typeof parsedJson !== 'object' || Array.isArray(parsedJson)) {
-      return invalidActionBlock;
-    }
-
-    const rawActionsValue = (parsedJson as { actions?: unknown }).actions;
-    if (rawActionsValue !== undefined && !Array.isArray(rawActionsValue)) {
-      return invalidActionBlock;
-    }
-
-    const rawActions = Array.isArray(rawActionsValue) ? rawActionsValue : [];
-    const parsedActions = rawActions.map(parseVoiceAssistantAction);
-    const actions = parsedActions.flatMap((parsed) => parsed && 'action' in parsed ? [parsed.action] : []);
-
-    // Reject the block together: executing a valid subset would silently omit
-    // requested work while preserving narration that says it all succeeded.
-    if (actions.length !== rawActions.length) {
-      const invalidInputs = parsedActions.flatMap((parsed) => parsed && 'invalidInput' in parsed ? [parsed.invalidInput] : []);
-      return invalidInputs.length > 0
-        ? { ...invalidActionBlock, assistantText: `I couldn't run that action because its input was invalid. ${invalidInputs.join(' ')}` }
-        : invalidActionBlock;
-    }
-
-    return { assistantText: stripped.trim(), actions };
+    parsedJson = JSON.parse(jsonRaw);
   } catch {
+    // Native SyntaxError prose can quote rejected content. Name the syntax
+    // failure without copying its message, payload or a guessed invalid field.
+    return { ...invalidActionBlock, assistantText: "I couldn't run that action because its action block contained invalid JSON. No action ran." };
+  }
+  if (!parsedJson || typeof parsedJson !== 'object' || Array.isArray(parsedJson)) {
     return invalidActionBlock;
   }
+
+  const rawActionsValue = (parsedJson as { actions?: unknown }).actions;
+  if (rawActionsValue !== undefined && !Array.isArray(rawActionsValue)) {
+    return invalidActionBlock;
+  }
+
+  const rawActions = Array.isArray(rawActionsValue) ? rawActionsValue : [];
+  const parsedActions = rawActions.map(parseVoiceAssistantAction);
+  const actions = parsedActions.flatMap((parsed) => parsed && 'action' in parsed ? [parsed.action] : []);
+
+  // Reject the block together: executing a valid subset would silently omit
+  // requested work while preserving narration that says it all succeeded.
+  if (actions.length !== rawActions.length) {
+    const invalidInputs = parsedActions.flatMap((parsed) => parsed && 'invalidInput' in parsed ? [parsed.invalidInput] : []);
+    return invalidInputs.length > 0
+      ? { ...invalidActionBlock, assistantText: `I couldn't run that action because its input was invalid. ${invalidInputs.join(' ')}` }
+      : invalidActionBlock;
+  }
+
+  return { assistantText: stripped.trim(), actions };
 }

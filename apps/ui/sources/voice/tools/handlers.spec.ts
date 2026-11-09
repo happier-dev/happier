@@ -1557,7 +1557,7 @@ describe('voice tool handlers', () => {
       'Creating the Session now. <voice_actions>{"actions":[{"t":"invokeAction","args":{"action":{"pluginId":"happier","localId":"session.spawn_new"},"input":{"directory":{"kind":"managed"}}}]}</voice_actions>',
     );
     expect(malformed.actions).toEqual([]);
-    expect(malformed.assistantText).toBe("I couldn't run that action because its request was invalid. Please try again.");
+    expect(malformed.assistantText).toContain('invalid JSON');
     expect(daemonRpc).not.toHaveBeenCalledWith(expect.objectContaining({ method: RPC_METHODS.SESSION_SPAWN_NEW }));
     expect(storage.getState().sessions.s_new).toBeUndefined();
     expect(routerNavigate).not.toHaveBeenCalled();
@@ -1574,7 +1574,20 @@ describe('voice tool handlers', () => {
       `<voice_actions>${JSON.stringify({ actions: [{ t: spawnTool, args: spawnInput }] })}</voice_actions>`,
     );
     expect(turn.actions).toHaveLength(1);
-    const action = turn.actions[0]!;
+    let action = turn.actions[0]!;
+    if (configuredDefault || rememberedDefault || signedOutDefault) {
+      // Consume the real published block before binding the test's known Home,
+      // Machine and task. RUN107 hand-wrapped Args and lost actions[0]'s brace.
+      const published = prompt.split('\n').find(line => line.startsWith(`- ${spawnTool}:`))
+        ?.match(/<voice_actions>.*<\/voice_actions>/)?.[0] ?? '';
+      const publishedTurn = extractVoiceActionsFromAssistantText(published);
+      expect(publishedTurn.actions, 'Default-Agent creation needs a complete executable published block').toHaveLength(1);
+      const example = publishedTurn.actions[0]!;
+      if (!example.args || typeof example.args !== 'object' || Array.isArray(example.args)) throw new Error('Expected published Action arguments');
+      expect(example.t).toBe(spawnTool);
+      expect(example.args).not.toHaveProperty('agentTarget');
+      action = { t: example.t, args: { ...example.args, ...spawnInput } };
+    }
     const invokeCreate = (effectId: string, input: unknown = action.args) => (entry === 'discovered'
       ? tools.action_execute!({ actionId: 'session.spawn_new', input }, { serverId: homeA, effectId })
       : tools[action.t]!(input, { serverId: homeA, effectId }));
