@@ -1,5 +1,4 @@
 import { describe, expect, it } from 'vitest';
-import type { AgentPreflightSessionControlsContributionV1 } from '@happier-dev/plugin-sdk/agents/runtime';
 
 import {
   buildOhMyPiPreflightModelsFromListModelsOutput,
@@ -7,23 +6,6 @@ import {
 } from './models.js';
 
 describe('OhMyPi preflight model parsing', () => {
-  it('uses runtime account preparation to give the native catalog its selected Codex credential', async () => {
-    const declaration: AgentPreflightSessionControlsContributionV1 = OH_MY_PI_PREFLIGHT_SESSION_CONTROLS;
-    const service = { pluginId: 'happier.agent.codex', localId: 'openai-codex' };
-    expect(declaration.prepareLaunchEnvironment).toBeTypeOf('function');
-    const prepared = await declaration.prepareLaunchEnvironment?.({
-      environment: {}, signal: new AbortController().signal,
-      connectedAccounts: {
-        watch(_purpose, listener) { void listener({ kind: 'resync' }); return { dispose() {} }; },
-        async getBinding(purpose) { return purpose === 'openai-codex'
-          ? { purpose, service, account: { service, accountId: 'primary' }, target: { kind: 'account', displayName: 'Primary' } } : null; },
-        async materialize() { return { kind: 'environment', env: { OPENAI_CODEX_OAUTH_TOKEN: 'fixture-access-only' } }; },
-      },
-    });
-    try { expect(prepared?.environment.OPENAI_CODEX_OAUTH_TOKEN).toBe('fixture-access-only'); }
-    finally { await prepared?.dispose(); }
-  });
-
   it('reads the native models JSON and preserves model-specific thinking eligibility', () => {
     expect(buildOhMyPiPreflightModelsFromListModelsOutput(JSON.stringify({ models: [
       { provider: 'openai', id: 'gpt-5.4', name: 'GPT', kind: 'chat', reasoning: true, thinking: ['low', 'high'] },

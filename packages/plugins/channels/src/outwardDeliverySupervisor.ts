@@ -415,7 +415,7 @@ export async function runConversationOutwardDeliveryCycle(
   try {
     // Delete custody is settled before generic redrive so a retained ready row
     // cannot race into a provider effect after connection authority is gone.
-    await finalizeConversationConnectionDeletesForInvocation(context);
+    if (await finalizeConversationConnectionDeletesForInvocation(context)) noteDeadline(now());
   } catch (error) {
     // The retained finalizing row remains the recovery source for the next wake.
     workFailed('delete-finalization', { error });

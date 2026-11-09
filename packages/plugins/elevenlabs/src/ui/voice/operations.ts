@@ -16,6 +16,11 @@ import {
 
 const ELEVENLABS_AGENT_CONFIG_TAG = 'happier_voice_config_v1';
 const ELEVENLABS_AGENT_CONFIG_TAG_PREFIX = 'happier_voice_config_v';
+export const ELEVENLABS_AGENT_CLIENT_EVENTS = [
+  'audio', 'interruption', 'agent_response', 'agent_response_correction',
+  'agent_chat_response_part', 'user_transcript', 'conversation_initiation_metadata',
+  'client_tool_call', 'agent_tool_response', 'guardrail_triggered',
+] as const;
 const ELEVENLABS_AGENT_PLATFORM_SETTINGS = {
   auth: { enable_auth: true },
   overrides: { conversation_config_override: {
@@ -482,7 +487,7 @@ async function runElevenLabsProvision(
       }
     }
     const conversationConfig = {
-      conversation: { client_events: ['audio', 'interruption', 'agent_response', 'agent_response_correction', 'agent_chat_response_part', 'user_transcript', 'conversation_initiation_metadata', 'client_tool_call', 'agent_tool_response', 'guardrail_triggered'] },
+      conversation: { client_events: [...ELEVENLABS_AGENT_CLIENT_EVENTS] },
       tts: {
         voice_id: request.tts.voiceId,
         ...(request.tts.modelId ? { model_id: request.tts.modelId } : {}),
@@ -635,7 +640,10 @@ function hasCurrentElevenLabsAgentConfiguration(agent: Readonly<Record<string, u
   const platform = objectValue(agent.platform_settings);
   const overrides = objectValue(objectValue(platform.overrides).conversation_config_override);
   const agentOverrides = objectValue(overrides.agent);
+  const clientEvents = objectValue(objectValue(agent.conversation_config).conversation).client_events;
   return Array.isArray(agent.tags) && agent.tags.includes(ELEVENLABS_AGENT_CONFIG_TAG)
+    && Array.isArray(clientEvents)
+    && ELEVENLABS_AGENT_CLIENT_EVENTS.every(event => clientEvents.includes(event))
     && objectValue(platform.auth).enable_auth === true
     && agentOverrides.first_message === true
     && agentOverrides.language === true

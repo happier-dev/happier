@@ -27,8 +27,28 @@ export function readConversationDiscussionInputBindingId(localId: string | null)
   return readConversationDiscussionInputOrigin(localId)?.bindingId;
 }
 
-/** Exact native local-id lookup groups a thread without a second registry or history scan. */
-export async function postConversationDiscussionInput(input: Readonly<{
+// Only unfinished publications are retained. The thread identity includes the
+// connection's Account-scoped routing HMAC, so unrelated threads remain free.
+const activeThreadPublications = new Map<string, Promise<unknown>>();
+
+export async function postConversationDiscussionInput(input: Parameters<typeof postDiscussionInput>[0], context: PluginInvocationContext) {
+  if (input.threadRootLocalId === undefined) return await postDiscussionInput(input, context);
+  const key = JSON.stringify([input.discussionId, input.threadRootLocalId]);
+  const previous = activeThreadPublications.get(key);
+  const running = (previous ?? Promise.resolve()).catch(() => undefined).then(async () => {
+    context.signal.throwIfAborted();
+    return await postDiscussionInput(input, context);
+  }).finally(() => {
+    if (activeThreadPublications.get(key) === running) activeThreadPublications.delete(key);
+  });
+  // Keep root lookup and the resulting native approval/publication together:
+  // a later arrival must see the committed root before freezing its operands.
+  activeThreadPublications.set(key, running);
+  return await running;
+}
+
+/** Exact native local-id lookup groups a thread without a second history scan. */
+async function postDiscussionInput(input: Readonly<{
   discussionId: string; localId: string; threadRootLocalId?: string;
   providerPluginId: string; observation: ConversationObservationV1;
   attachments: readonly SessionSendAttachment[];

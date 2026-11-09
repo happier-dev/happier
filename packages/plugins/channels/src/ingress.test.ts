@@ -1,3 +1,4 @@
+import { readFile } from 'node:fs/promises';
 import { createTestResourceInvocationContext } from '@happier-dev/plugin-sdk/testing';
 import { arePluginMachineExecutionOriginsEqual, definePlugin, PluginError } from '@happier-dev/plugin-sdk';
 import { arePluginMachineExecutionRoutingsEqual, getPluginMachineExecutionRouting, type PluginMachineExecutionOriginV1, type PluginMachineExecutionRoutingV1 } from '@happier-dev/plugin-sdk/actions';
@@ -2379,6 +2380,120 @@ describe('Conversation provider observation ingress', () => {
     expect(record(occurrence?.value.payload).normalizedIngress).toBeNull();
     await ingestConversationProviderObservationForInvocation(input, harness.context);
     expect(harness.execute).toHaveBeenCalledOnce();
+  });
+
+  it.each(['allowed', 'rejected'] as const)('publishes held thread inputs once in arrival order with the first decision %s, including attachment bytes', async firstDecision => {
+    const requests: Record<string, JsonValue>[] = [];
+    const publications: Record<string, JsonValue>[] = [];
+    const decisions: Array<() => void> = [];
+    const fetchedBytes = Buffer.from('channel attachment fixture');
+    const uploadedBytes: Buffer[] = [];
+    let reads = 0;
+    let independentPosts = 0;
+    let draining = false;
+    const harness = createIngressHarness({ connection: socketChannelConnection(),
+      readAdmittedProviderContributions: () => [{ ...admittedTelegramProviderContribution,
+        operations: { ...admittedTelegramProviderContribution.operations,
+          attachmentFetch: { ...telegramPollAction, identity: { ...telegramPollAction.identity, role: 'attachmentFetch' } } } }],
+      pollExecution: async input => {
+        expect(input).toMatchObject({ attachmentIds: ['file-1'] });
+        return { kind: 'fetched', attachments: [{ attachmentId: 'file-1', base64: fetchedBytes.toString('base64') }] };
+      },
+      // The Discussion Action/approval transport is outside the plugin process.
+      // Keep ingress, local-id selection and attachment materialization real.
+      execute: async (id, input): Promise<JsonValue> => {
+        if (!isChannelStateJsonRecord(input)) throw new Error('Expected a Discussion request');
+        if (id === 'discussion.read') {
+          reads += 1;
+          const root = publications.find(message => message.localId === input.localId);
+          return { v: 1, serverId: 'home-1', discussionId: 'discussion-1',
+            messages: root ? [{ id: 'root-message', localId: root.localId, content: root.content }] : [],
+            hasMoreOlder: false, messageSeq: publications.length, incomplete: false };
+        }
+        if (id !== 'discussion.post') throw new Error(`Unexpected host Action ${id}`);
+        const parts = record(input.content).parts;
+        if (Array.isArray(parts) && isChannelStateJsonRecord(parts[0]) && parts[0].text === 'independent-thread') {
+          independentPosts += 1;
+          return { v: 1, serverId: 'home-1', discussionId: 'discussion-1', messageId: 'independent-message', seq: 1 };
+        }
+        const requestNumber = requests.push(input);
+        if (!draining) await new Promise<void>(resolve => { decisions.push(resolve); });
+        if (firstDecision === 'rejected' && requestNumber === 1) {
+          throw new PluginError({ code: 'approval_rejected', message: 'Publication declined.' });
+        }
+        const existing = publications.find(message => message.localId === input.localId);
+        if (existing && JSON.stringify(existing.content) !== JSON.stringify(input.content)) {
+          throw new PluginError({ code: 'discussion_idempotency_conflict', message: 'Different input reused a publication identity.' });
+        }
+        if (!existing) {
+          if (Array.isArray(input.attachmentSources)) for (const source of input.attachmentSources) {
+            if (!isChannelStateJsonRecord(source) || typeof source.path !== 'string') throw new Error('Expected a staged attachment');
+            uploadedBytes.push(await readFile(source.path));
+          }
+          publications.push(input);
+        }
+        return { v: 1, serverId: 'home-1', discussionId: 'discussion-1', messageId: 'root-message', seq: publications.length };
+      },
+    });
+    const binding = harness.rows.get('binding-1')!;
+    harness.rows.set(binding.rowId, stateRow({ ...binding.value, payload: { ...record(binding.value.payload),
+      inputMode: 'allAllowedMessages',
+      target: { kind: 'discussion', discussionId: 'discussion-1', policy: { deliveryMode: 'repliesOnly' } },
+    } }));
+    const inputs = ['held-root', 'held-followup', 'held-file'].map(id => {
+      const input = topicObservation(id, 'telegram:user:42', id);
+      Object.assign(fullTextIngress(input).message, { id });
+      return input;
+    });
+    Object.assign(fullTextIngress(inputs[2]!).message, {
+      attachments: [{ attachmentId: 'file-1', name: 'fixture.txt', mediaType: 'text/plain' }],
+    });
+    const running: Promise<unknown>[] = [];
+    try {
+      running.push(ingestConversationProviderObservationForInvocation(inputs[0]!, harness.context));
+      await vi.waitFor(() => expect(requests).toHaveLength(1));
+      const independent = topicObservation('independent-thread', 'telegram:user:42', 'independent-thread');
+      Object.assign(fullTextIngress(independent).endpoint, { id: 'telegram:topic:8' });
+      // A held approval must not serialize another thread on this connection.
+      await ingestConversationProviderObservationForInvocation(independent, harness.context);
+      expect(independentPosts).toBe(1);
+      // Both arrivals are captured while the first native approval is held.
+      running.push(...inputs.slice(1).map(input => ingestConversationProviderObservationForInvocation(input, harness.context)));
+      await vi.waitFor(() => expect([...harness.rows.values()].filter(row => row.value['record-kind'] === 'ingress-obligation'
+        && record(record(row.value.payload).lifecycle).phase === 'attempting')).toHaveLength(3));
+      await new Promise<void>(resolve => setImmediate(resolve));
+      expect(requests).toHaveLength(1);
+      expect(reads).toBe(2);
+      expect(publications).toEqual([]);
+      for (let index = 0; index < inputs.length; index += 1) {
+        await vi.waitFor(() => expect(requests).toHaveLength(index + 1));
+        decisions[index]!();
+        await running[index];
+        expect(publications).toHaveLength(index + 1 - (firstDecision === 'rejected' ? 1 : 0));
+      }
+      const skipped = firstDecision === 'rejected' ? 1 : 0;
+      expect(new Set(publications.map(request => request.localId)).size).toBe(3 - skipped);
+      expect(publications.map(request => record(record(request.content).externalSource).inputLocalId))
+        .toEqual([...harness.rows.values()].filter(row => row.value['record-kind'] === 'ingress-obligation'
+            && obligationOccurrenceId(harness.rows, row) !== 'independent-thread')
+          .slice(skipped).map(row => record(record(row.value.payload).target).localId));
+      expect(publications.map(request => request.replyTarget ?? null)).toEqual([
+        null, ...Array.from({ length: 2 - skipped }, () => ({ kind: 'message', messageId: 'root-message' })),
+      ]);
+      expect(uploadedBytes).toEqual([fetchedBytes]);
+      for (const input of inputs) await ingestConversationProviderObservationForInvocation(input, harness.context);
+      expect(requests).toHaveLength(3);
+      expect([...harness.rows.values()].filter(row => row.value['record-kind'] === 'ingress-obligation'
+          && obligationOccurrenceId(harness.rows, row) !== 'independent-thread')
+        .map(row => record(row.value.payload).disposition)).toEqual([
+          firstDecision === 'rejected' ? 'rejected' : 'admitted', 'admitted', 'admitted',
+        ]);
+    } finally {
+      // Drain every native waiter even when RED observes all three bad asks.
+      draining = true;
+      for (const decide of decisions) decide();
+      await Promise.allSettled(running);
+    }
   });
 
   it.each(['machine', 'home', 'unavailable'] as const)('leaves parent-bound Discussion due work unchanged on a foreign %s runtime', async foreign => {

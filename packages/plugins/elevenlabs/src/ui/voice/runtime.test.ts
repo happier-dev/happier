@@ -14,6 +14,7 @@ import {
 } from './index.js';
 import { PLUGIN_MANIFEST } from '../../manifest.js';
 import { ELEVENLABS_VOICE_PROVIDER_DEFAULT_SETTINGS } from '../../protocol/voice/index.js';
+import { ELEVENLABS_AGENT_CLIENT_EVENTS } from './operations.js';
 
 /** The bound account owns the default voice these settings fixtures select. */
 const ACCOUNT_VOICE_CATALOG = Object.freeze({
@@ -651,6 +652,7 @@ describe('ElevenLabs public Voice provider leaf', () => {
           body: new TextEncoder().encode(JSON.stringify(request.operationId === 'agent' ? {
             agent_id: 'agent-1',
             tags: ['happier_voice_config_v1'],
+            conversation_config: { conversation: { client_events: ELEVENLABS_AGENT_CLIENT_EVENTS } },
             platform_settings: {
               auth: { enable_auth: true },
               overrides: { conversation_config_override: {

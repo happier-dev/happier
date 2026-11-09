@@ -3,6 +3,7 @@ import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { zodSchemaToJsonSchemaObject } from '@happier-dev/protocol/actions/actionInputJsonSchema';
 
 import {
+  ELEVENLABS_AGENT_CLIENT_EVENTS,
   isElevenLabsAgentConfigurationCurrent,
   listElevenLabsVoicesWithAccountOperations,
   mintElevenLabsConversationAuthWithAccountOperations,
@@ -114,6 +115,7 @@ describe('ElevenLabs public account operations', () => {
       status: 200, finalUrl: 'https://api.elevenlabs.io/v1/convai/agents/agent_1', headers: {},
       body: new TextEncoder().encode(JSON.stringify({
         agent_id: 'agent_1', tags: ['happier_voice_config_v1'],
+        conversation_config: { conversation: { client_events: ELEVENLABS_AGENT_CLIENT_EVENTS } },
         platform_settings: {
           auth: { enable_auth: true }, overrides: { conversation_config_override: {
             agent: { first_message: true, language: true, prompt: { prompt: true } },

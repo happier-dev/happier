@@ -159,6 +159,10 @@ export const OH_MY_PI_PLUGIN = definePlugin({
       },
       factory: createOhMyPiAgentRuntime,
       connectedAccountLaunch: {
+        environmentUses: OH_MY_PI_CONNECTED_ACCOUNT_PURPOSES.map(({ purpose, materializationKey }) => ({
+          purpose,
+          environmentKey: materializationKey,
+        })),
         stateSharingDescriptor: ohMyPiConnectedServiceStateSharingDescriptor,
         continuity: {
           generationApplicationScope: 'per_session_runtime',

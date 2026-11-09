@@ -3140,7 +3140,7 @@ async function appendFinalizingBindingDependents(input: Readonly<{
 async function finalizeConversationConnectionDelete(input: Readonly<{
   connectionId: string;
   context: ConversationStorageContext;
-}>): Promise<void> {
+}>): Promise<true | void> {
   const collection = requireChannelsAccountStorage(input.context).collection(CHANNEL_STATE_COLLECTION);
   const connectionStored = await collection.get(input.connectionId, { signal: input.context.signal });
   assertNotAborted(input.context.signal);
@@ -3268,7 +3268,7 @@ async function finalizeConversationConnectionDelete(input: Readonly<{
   if (hasDependentMutation) {
     const result = await collection.batch(mutations, { signal: input.context.signal });
     if (result.status === 'conflict') return;
-    return;
+    return true;
   }
   if (relationPage.nextCursor !== undefined) return;
 
@@ -3291,7 +3291,7 @@ function finalizingBindingDeleteIsAuthorized(current: ConversationBindingUpdateR
 async function finalizeConversationBindingDelete(input: Readonly<{
   bindingId: string;
   context: ConversationStorageContext;
-}>): Promise<void> {
+}>): Promise<true | void> {
   const collection = requireChannelsAccountStorage(input.context).collection(CHANNEL_STATE_COLLECTION);
   const bindingStored = await collection.get(input.bindingId, { signal: input.context.signal });
   assertNotAborted(input.context.signal);
@@ -3383,7 +3383,7 @@ async function finalizeConversationBindingDelete(input: Readonly<{
     });
     const result = await collection.batch(mutations, { signal: input.context.signal });
     if (result.status === 'conflict') return;
-    return;
+    return true;
   }
   if (relationPage.nextCursor !== undefined) return;
 
@@ -3408,12 +3408,15 @@ async function finalizeConversationBindingDelete(input: Readonly<{
  * The existing outward-delivery wake owns delete finalization after it has
  * observed custody. There is no persisted cursor: each bounded page deletes
  * its own dependents, and a crash or conflict resumes from current rows.
+ * A successful dependent page returns continuation to that same runner:
+ * ingress/checkpoint writes do not emit its structural binding watch.
  */
 export async function finalizeConversationConnectionDeletesForInvocation(
   context: ConversationStorageContext,
-): Promise<void> {
-  if (context.signal.aborted) return;
+): Promise<boolean> {
+  if (context.signal.aborted) return false;
   const collection = requireChannelsAccountStorage(context).collection(CHANNEL_STATE_COLLECTION);
+  let continueFinalization = false;
   let finalizationFailed = false;
   let finalizationPluginFailure: unknown;
   const recordFinalizationFailure = (error: unknown): void => {
@@ -3443,7 +3446,7 @@ export async function finalizeConversationConnectionDeletesForInvocation(
     if (connectionPage === undefined) break;
     {
       for (const stored of connectionPage.rows) {
-        if (context.signal.aborted) return;
+        if (context.signal.aborted) return false;
         const row = asChannelStateRow(stored);
         if (row === undefined || row.value[CHANNEL_STATE_FIELD.recordKind] !== CHANNEL_STATE_RECORD_KIND.connection) {
           continue;
@@ -3453,7 +3456,7 @@ export async function finalizeConversationConnectionDeletesForInvocation(
         try {
           const current = readConversationConnectionUpdateRow({ row, connectionId });
           if (!finalizingDeleteIsAuthorized(current)) continue;
-          await finalizeConversationConnectionDelete({ connectionId, context });
+          if (await finalizeConversationConnectionDelete({ connectionId, context })) continueFinalization = true;
         } catch (error) {
           // Retain the canonical rows untouched; the next existing wake re-reads
           // them rather than treating an unavailable or malformed row as deleted.
@@ -3463,14 +3466,14 @@ export async function finalizeConversationConnectionDeletesForInvocation(
     }
     connectionCursor = connectionPage.nextCursor;
   } while (connectionCursor !== undefined);
-  if (context.signal.aborted) return;
+  if (context.signal.aborted) return false;
 
   // Only finalizing bindings have a numeric due key. The keyset cursor is
   // loop-local: finalization owns no persisted cursor or cleanup scheduler. A crash
   // or conflict simply resumes from current rows on the next wake.
   let bindingCursor: string | undefined;
   for (;;) {
-    if (context.signal.aborted) return;
+    if (context.signal.aborted) return false;
     let bindingPage: Awaited<ReturnType<ChannelStateCollection['query']>> | undefined;
     try {
       bindingPage = await collection.query({
@@ -3486,7 +3489,7 @@ export async function finalizeConversationConnectionDeletesForInvocation(
     }
     if (bindingPage === undefined) break;
     for (const stored of bindingPage.rows) {
-      if (context.signal.aborted) return;
+      if (context.signal.aborted) return false;
       const row = asChannelStateRow(stored);
       if (row === undefined || row.value[CHANNEL_STATE_FIELD.recordKind] !== CHANNEL_STATE_RECORD_KIND.binding) {
         continue;
@@ -3497,7 +3500,7 @@ export async function finalizeConversationConnectionDeletesForInvocation(
         const current = readConversationBindingUpdateRow({ row, bindingId });
         if (!finalizingBindingDeleteIsAuthorized(current)) continue;
         if (!await isConversationConnectionPlacedForInvocation(context, current.binding.connectionId)) continue;
-        await finalizeConversationBindingDelete({ bindingId, context });
+        if (await finalizeConversationBindingDelete({ bindingId, context })) continueFinalization = true;
       } catch (error) {
         // Retain the canonical rows untouched; the next existing wake re-reads
         // them rather than treating an unavailable or malformed row as deleted.
@@ -3507,9 +3510,10 @@ export async function finalizeConversationConnectionDeletesForInvocation(
     bindingCursor = bindingPage.nextCursor;
     if (bindingCursor === undefined) break;
   }
-  if (context.signal.aborted) return;
+  if (context.signal.aborted) return false;
   if (finalizationPluginFailure !== undefined) throw finalizationPluginFailure;
   if (finalizationFailed) throw new Error('Channels delete finalization failed.');
+  return continueFinalization;
 }
 
 export type ConversationThreadBindingCreateResult =

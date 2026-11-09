@@ -3745,6 +3745,99 @@ describe('Channels outward-delivery supervisor', () => {
     expect(execute).not.toHaveBeenCalled();
   });
 
+  it.each([
+    { scope: 'connection', blocker: 'delivery' }, { scope: 'binding', blocker: 'delivery' },
+    { scope: 'connection', blocker: 'ingress' }, { scope: 'binding', blocker: 'ingress' },
+  ] as const)('finishes $scope deletion after $blocker custody settles without requiring another structural change', async ({ scope, blocker }) => {
+    vi.useFakeTimers();
+    vi.setSystemTime(100);
+    const state = new MemoryCollection({ enforceUniqueBatchRows: true });
+    const deliveries = new MemoryCollection();
+    const reservation = await finalizingReservationRow();
+    if (scope === 'connection') {
+      await state.put({ id: 'connection-identity-key', 'record-kind': 'connection-identity-key', v: 1,
+        'created-at': 0, 'updated-at': 0,
+        payload: { connectionIdentityKey: FINALIZING_CONNECTION_IDENTITY_KEY } }, { expectedRevision: 'absent' });
+      await state.put(finalizingConnectionRow(), { expectedRevision: 'absent' });
+      await state.put(reservation, { expectedRevision: 'absent' });
+      await state.put(finalizingBindingRow(), { expectedRevision: 'absent' });
+      await state.put(finalizingIngressObligationRow({ bindingId: FINALIZING_BINDING_ID, ordinal: 1,
+        phase: blocker === 'ingress' ? 'attempting' : 'blocked' }),
+        { expectedRevision: 'absent' });
+    } else {
+      await state.put(bindingDeleteConnectionRow(), { expectedRevision: 'absent' });
+      await state.put(finalizingBindingDeleteRow(), { expectedRevision: 'absent' });
+      const ingress = bindingDeleteIngressObligationRow();
+      await state.put(blocker === 'delivery' ? ingress : { ...ingress,
+        payload: { ...ingress.payload, lifecycle: { phase: 'attempting', attemptCount: 1, dueAt: 0 } },
+      }, { expectedRevision: 'absent' });
+    }
+    const connectionId = scope === 'connection' ? FINALIZING_CONNECTION_ID : BINDING_DELETE_CONNECTION_ID;
+    const bindingId = scope === 'connection' ? FINALIZING_BINDING_ID : BINDING_DELETE_BINDING_ID;
+    const generation = new AbortController();
+    const execute = vi.fn();
+    const deliver = vi.fn();
+    const context = { ...backgroundContext({ state, deliveries, execute,
+      executeAdmittedTargetedOperationWithExecutionOrigin: deliver }), signal: generation.signal };
+    const store = createConversationOutwardDeliveryCollectionStore({ stateCollection: state as never,
+      deliveriesCollection: deliveries as never, signal: generation.signal, now: () => Date.now() });
+    const custody = await store.ensure(scope === 'connection' ? finalizingOutwardObligation()
+      : bindingDeleteOutwardObligation(bindingId, 'channels:delivery:v1:binding-delete-continuation'));
+    if (custody.kind !== 'created') throw new Error('Expected deletion custody.');
+    const held = await store.compareAndSwap({ custodyId: custody.record.custodyId, expectedRevision: custody.record.revision,
+      custody: blocker === 'delivery'
+        ? { state: 'outcomeUnknown', attemptCount: 1, attemptId: null, providerMessageIds: [] }
+        : { state: 'delivered', attemptCount: 1, providerMessageIds: ['settled-before-delete'] } });
+    if (held.kind !== 'updated') throw new Error('Expected unresolved delivery custody.');
+    const reads = vi.spyOn(state, 'query');
+    let completedCycles = 0;
+    const supervisor = createConversationOutwardDeliverySupervisor({ runCycle: async input => {
+      const result = await runConversationOutwardDeliveryCycle(input);
+      completedCycles += 1;
+      return result;
+    } });
+    const running = supervisor.run(context);
+    try {
+      await vi.waitFor(() => expect(completedCycles).toBeGreaterThan(0), { interval: 0 });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(state.rows.get(bindingId)?.deleted).not.toBe(true);
+      expect(state.rows.get(connectionId)?.deleted).not.toBe(true);
+      const heldReads = reads.mock.calls.length;
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(reads).toHaveBeenCalledTimes(heldReads);
+      if (blocker === 'delivery') {
+        await store.compareAndSwap({ custodyId: held.record.custodyId, expectedRevision: held.record.revision,
+          custody: { state: 'delivered', attemptCount: 1, providerMessageIds: ['settled-before-delete'] } });
+      } else {
+        const row = [...state.rows.values()].find(row => row.value['record-kind'] === 'ingress-obligation');
+        if (row === undefined || !isChannelStateJsonRecord(row.value.payload)) throw new Error('Expected in-flight ingress.');
+        await state.put({ ...row.value, terminal: true, attention: false,
+          payload: { ...row.value.payload, normalizedIngress: null,
+            lifecycle: { phase: 'terminal', attemptCount: 1, dueAt: null }, disposition: 'admitted' },
+        }, { expectedRevision: row.revision });
+      }
+      // Only the real custody settlement wakes the runner; no structural
+      // connection/binding change is manufactured by the test.
+      await vi.waitFor(() => {
+        expect(state.rows.get(bindingId)?.deleted).toBe(true);
+        if (scope === 'connection') {
+          expect(state.rows.get(connectionId)?.deleted).toBe(true);
+          expect(state.rows.get(reservation.id)?.deleted).toBe(true);
+        }
+      }, { interval: 0 });
+      await vi.advanceTimersByTimeAsync(0);
+      const settledReads = reads.mock.calls.length;
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(reads).toHaveBeenCalledTimes(settledReads);
+      expect(deliveries.rows.get(custody.record.custodyId)?.value).toMatchObject({
+        payload: { state: 'delivered', providerMessageIds: ['settled-before-delete'] },
+      });
+      if (scope === 'binding') expect(state.rows.get(connectionId)?.deleted).not.toBe(true);
+      expect(execute).not.toHaveBeenCalled();
+      expect(deliver).not.toHaveBeenCalled();
+    } finally { generation.abort(); await running; await supervisor.dispose(); vi.useRealTimers(); }
+  });
+
   it('retains finalizing state when custody may already have caused a provider effect', async () => {
     const state = new MemoryCollection();
     const deliveries = new MemoryCollection();
