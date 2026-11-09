@@ -120,16 +120,30 @@ describe('Opening a Board card', () => {
             expect(find('board-header')).toBe(board);
         } finally { await dispose(); }
     });
-    it('closes when the board itself is pressed', async () => {
-        const ref = sessionRef('session-only');
-        const { find, expectReady, press, measure, dispose } = await mountBoard({ picked: [ref], sections: [] }, adopt(ref), undefined, true);
+    it('leaves every board control enabled while nothing is open', async () => {
+        const ref = sessionRef('session-enabled');
+        const { find, expectReady, measure, dispose } = await mountBoard({ picked: [ref], sections: [] }, adopt(ref), undefined, true);
         try {
             await expectReady(cardID(ref));
             await measure();
+            expect(find(cardID(ref))!.closest('[aria-disabled="true"]')).toBeNull();
+            expect(find('board-header.add')!.closest('[aria-disabled="true"]')).toBeNull();
+        } finally { await dispose(); }
+    });
+    it('closes when the board itself is pressed, and only while a detail is open', async () => {
+        const ref = sessionRef('session-only');
+        const { find, expectReady, press, measure, dispose } = await mountBoard({ picked: [ref], sections: [] }, adopt(ref), undefined, true);
+        // The page press is a pointer gesture on the board's own surface, as the responder system receives it.
+        const pressBoard = async () => { for (const type of ['mousedown', 'mouseup']) await act(async () => {
+            find('board-header')!.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, button: 0 })); }); };
+        try {
+            await expectReady(cardID(ref));
+            await measure();
+            await pressBoard();
+            expect(find('board-card-details')).toBeNull();
             await press(cardID(ref));
             await expectReady('board-card-details');
-            expect(find('board-open-dismiss')).not.toBeNull();
-            await press('board-open-dismiss');
+            await pressBoard();
             await expectReady('board-card-details', false);
         } finally { await dispose(); }
     });

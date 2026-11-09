@@ -41,6 +41,7 @@ const SOFT_SCRIM_SHARE = 0.6;
 // layer rather than relying on hook registration order.
 const DOCKED_DETAILS_ESCAPE_PRIORITY = ESCAPE_LAYER_PRIORITIES.pane + 1;
 const NOOP = () => {};
+const CLAIM_PAGE_PRESS = () => true;
 
 /**
  * Web: moves a pane column on the compositor (transform, opacity, clip), never through its layout, so the
@@ -162,6 +163,9 @@ export const MultiPaneHost = React.memo((props: MultiPaneHostProps) => {
     const rightModalActive = !rightInMain && layout.right === 'overlay' && rightPresence.present && !mainModalActive;
     const detailsOverlayActive = layout.details === 'overlay' && detailsPresence.present && !rightModalActive && !mainModalActive;
     const detailsModalActive = detailsOverlayActive && props.detailsOverPage !== true;
+    // Over a live page there is no scrim: a press on the page itself closes the detail, and a control in the
+    // page answers its own press first, because the responder system offers a press to the deepest claimant.
+    const pagePressClosesDetails = detailsOverlayActive && props.detailsOverPage === true && !detailsPresence.closing;
     const rightModalLabel = t('ui.modalPane.right');
     const detailsModalLabel = t('ui.modalPane.details');
     const detailsModalBoundary = useModalPaneBoundary({
@@ -340,6 +344,8 @@ export const MultiPaneHost = React.memo((props: MultiPaneHostProps) => {
             style={{ flex: 1, flexDirection: mirrored ? 'row-reverse' : 'row', position: 'relative' }}>
                 <View key="main" ref={mainFocusRef} testID={MULTI_PANE_MAIN_COLUMN_TEST_ID}
                     onFocus={mainRegionFocus.onFocus} onLayout={measureMainInsets} role={Platform.OS === 'web' ? 'region' : undefined}
+                    onStartShouldSetResponder={pagePressClosesDetails ? CLAIM_PAGE_PRESS : undefined}
+                    onResponderRelease={pagePressClosesDetails ? detailsPresence.requestClose : undefined}
                     tabIndex={Platform.OS === 'web' && mainRegionVisible ? -1 : undefined}
                     focusable={mainRegionVisible}
                     accessibilityLabel={mainLabel}

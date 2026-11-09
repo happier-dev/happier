@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { usePluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n';
 import { useIsFocused } from '@react-navigation/native';
-import { Platform, Pressable, View } from 'react-native';
+import { Pressable, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { createWorkBoardV1, buildWorkBoardItemKeyV1, buildWorkBoardWidgetKeyV1, type BoardItemRefV1, type WorkBoardIntentV1, type WorkBoardV1 } from '@happier-dev/protocol/boards/workBoardV1';
 import type { SessionListFilterV1 } from '@happier-dev/protocol/sessions/listFilter/sessionListFilterV1';
@@ -215,14 +215,13 @@ function useOpenBoardCard(): BoardCardOpener {
 
 /**
  * The board and the card opened over it. Nothing dims the board: the next card is one press away and swaps
- * the detail in place, while a press on the board itself (never on a card, which takes its own press) closes it.
+ * the detail in place. The shared overlay closes on a press on the board itself.
  */
 const BoardCardDetailsHost = React.memo(function BoardCardDetailsHost(props: Readonly<{ opener: BoardCardOpener; children: React.ReactNode }>) {
     const { details, close } = props.opener;
     return <DetailsPaneHost testID="board-card-details" details={details} onCloseDetails={close}
         detailsPreferredWidthPx={ITEM_DETAILS_PREFERRED_WIDTH_PX}
-        main={<Pressable testID="board-open-dismiss" accessible={false} focusable={false} disabled={details === null}
-            onPress={close} style={styles.dismiss}>{props.children}</Pressable>} />;
+        main={props.children} />;
 });
 
 /** Picked runs that no window has loaded are read once each, by the exact-run owner. */
@@ -548,12 +547,6 @@ const styles = StyleSheet.create((theme) => ({
     root: {
         flex: 1,
         minHeight: 0,
-    },
-    // Only a real press target shows the hand; the whole board is not one.
-    dismiss: {
-        flex: 1,
-        minHeight: 0,
-        ...(Platform.OS === 'web' ? { cursor: 'auto' as const } : {}),
     },
     body: {
         flex: 1,
