@@ -125,6 +125,8 @@ export function buildPiRuntimeModelsSnapshot(params: Readonly<{
     && params.previous.observedAt === observedAt) return params.previous;
   return {
     models,
+    // Registry refresh and configured auth establish candidates, not account entitlement.
+    catalogConfidence: 'account_unverified',
     ...(currentModelId ? { currentModelId } : {}),
     ...(observedAt !== undefined ? { observedAt } : {}),
   };

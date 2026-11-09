@@ -21,7 +21,7 @@ describe('Pi structured preflight model discovery', () => {
       prepared = await declaration.prepareLaunchEnvironment?.({
         environment: { PI_CODING_AGENT_DIR: directory, [PI_REQUEST_AUTH_CAPABILITY_PATH_ENV]: join(directory, 'capability.json') },
         connectedAccounts: {
-          watch(_purpose, listener) { void listener({ kind: 'resync' }); return { dispose() {} }; },
+          watch(_purpose, listener) { void listener({ kind: 'resync', authorityChanged: true }); return { dispose() {} }; },
           async getBinding(purpose) { return purpose === PI_OPENAI_CODEX_REQUEST_AUTH_PURPOSE_ID
             ? { purpose, service, account: { service, accountId: 'primary' }, target: { kind: 'account', displayName: 'Primary' } } : null; },
           async materialize() { throw new Error('Codex request auth must remain request scoped'); },
@@ -43,10 +43,10 @@ describe('Pi structured preflight model discovery', () => {
         { provider: 'openai-codex', id: 'gpt-6-sol', name: 'GPT-6 Sol', reasoning: true },
         { provider: 'openrouter', id: 'meta/muse', name: 'Muse', reasoning: false },
       ])].join('\n'),
-    })).toEqual([
+    })).toEqual({ source: 'static', availableModels: [
       expect.objectContaining({ id: 'openai-codex/gpt-6-sol', name: 'GPT-6 Sol', modelOptions: expect.any(Array) }),
       { id: 'openrouter/meta/muse', name: 'Muse', description: 'openrouter' },
-    ]);
+    ] });
   });
 
   it.each([
@@ -69,6 +69,6 @@ describe('Pi structured preflight model discovery', () => {
   });
 
   it('preserves a confirmed empty catalog', () => {
-    expect(PI_PREFLIGHT_SESSION_CONTROLS.models.parseOutput?.({ ok: true, stdout: '', stderr: observation([]), exitCode: 0 })).toEqual([]);
+    expect(PI_PREFLIGHT_SESSION_CONTROLS.models.parseOutput?.({ ok: true, stdout: '', stderr: observation([]), exitCode: 0 })).toEqual({ source: 'static', availableModels: [] });
   });
 });

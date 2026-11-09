@@ -49,10 +49,16 @@ export type ProviderSourceModelCatalogResult = Readonly<
   | { status: 'error'; error: ProviderErrorV1 }
 >;
 
-/** Source execution consumes current membership; stale rows remain presentation only. */
+/** Shared membership rule for Provider and native Agent catalog publication. */
+export function isProviderSourceModelCatalogConfidenceUsable(confidence: DaemonProviderModelProjectionRowV1['confidence'] | undefined): boolean {
+  return confidence !== 'account_unverified';
+}
+
+/** Source execution consumes current membership; unverified and stale rows are diagnostic only. */
 export function projectCurrentProviderSourceModelCatalogs(catalogs: readonly ProviderSourceModelCatalog[]): ProviderSourceModelCatalogResult {
   return { status: 'success', catalogs: catalogs.flatMap(catalog => {
-    const rows = catalog.rows.filter(row => !row.catalog.stale && row.visibility === 'visible'
+    const rows = catalog.rows.filter(row => isProviderSourceModelCatalogConfidenceUsable(row.confidence)
+      && !row.catalog.stale && row.visibility === 'visible'
       && row.compatibility.result.status !== 'incompatible');
     return rows.length > 0 ? [{ ...catalog, rows }] : [];
   }) };

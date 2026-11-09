@@ -7,6 +7,7 @@ import { readExactSessionActiveModelSelection } from '@happier-dev/protocol/prov
 import { readSessionProviderBindingMetadataStateV1 } from '@happier-dev/protocol/providers/sessions/bindingMetadataV1';
 import type { ProviderBoundModelRef, TeamCredentialProviderModelSelectionV1 } from '@happier-dev/protocol';
 import { createSessionActiveModelSelection, type SessionActiveModelSelection } from '@happier-dev/protocol/providers/selection/v2';
+import { isProviderSourceModelCatalogConfidenceUsable } from '@/providers/modelManagement/sourceCatalog';
 import { applyActiveModelFacts } from '@/providers/sessions/applyActiveModelFacts';
 import type { AuthorizedSessionModelTransitionTarget } from '@/providers/sessions/sessionModelTransitionCoordinator';
 
@@ -84,7 +85,9 @@ function mergeState(params: Readonly<{
   const availableModels: SessionModel[] = [];
   const indexById = new Map<string, number>();
   const suppressedOptionIdsByModelId = new Map<string, readonly string[]>();
-  const currentFactsOnly = params.runtime.observedAt === 0 && (params.base?.updatedAt ?? 0) > 0;
+  const preserveBaseCatalog = params.runtime.observedAt === 0
+    && isProviderSourceModelCatalogConfidenceUsable(params.runtime.catalogConfidence);
+  const currentFactsOnly = preserveBaseCatalog && (params.base?.updatedAt ?? 0) > 0;
   for (const runtimeModel of params.runtime.models) {
     if (currentFactsOnly && runtimeModel.id !== params.runtime.currentModelId) continue;
     const model: NonNullable<AgentSessionModelsSnapshot['models']>[number] = currentFactsOnly ? {
@@ -114,7 +117,7 @@ function mergeState(params: Readonly<{
       ...(modelOptions ? { modelOptions } : {}),
     });
   }
-  for (const model of params.runtime.observedAt === 0 ? params.base?.availableModels ?? [] : []) {
+  for (const model of preserveBaseCatalog ? params.base?.availableModels ?? [] : []) {
     const existingIndex = indexById.get(model.id);
     if (existingIndex === undefined) {
       indexById.set(model.id, availableModels.length);
@@ -147,7 +150,7 @@ function mergeState(params: Readonly<{
       ...(modelOptions ? { modelOptions } : {}),
     };
   }
-  if (availableModels.length === 0 && params.runtime.observedAt === 0) return params.base;
+  if (availableModels.length === 0 && preserveBaseCatalog) return params.base;
   const candidates = [
     params.authoritativeCurrentModelId ?? undefined,
     params.runtime.currentModelId ?? undefined,

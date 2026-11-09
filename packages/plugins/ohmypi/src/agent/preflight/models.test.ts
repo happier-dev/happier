@@ -78,6 +78,6 @@ describe('OhMyPi preflight model parsing', () => {
       stdout: JSON.stringify({ models: [{ provider: 'openai', id: 'gpt-5.4', kind: 'chat', thinking: ['medium'] }] }),
       stderr: '',
       exitCode: 0,
-    })).toEqual([expect.objectContaining({ id: 'openai/gpt-5.4' })]);
+    })).toEqual({ source: 'static', availableModels: [expect.objectContaining({ id: 'openai/gpt-5.4' })] });
   });
 });

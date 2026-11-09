@@ -219,15 +219,21 @@ Agent Provider adapter registration remains tied to the admitted plugin
 occurrence and generation. Plugin-owned wrappers use the existing host ACP
 composer when native configuration requires process-only launch arguments;
 they do not create another Session lifecycle owner. Native configuration
-substitution syntax in catalog data is refused where it would expand an
-environment variable or file; only the adapter authors credential references.
+substitution syntax in catalog data is escaped or refused where it would expand
+an environment variable or file; only the adapter authors credential references.
+
+Pi and Oh My Pi accept credentialed OpenAI Responses bindings in 0.3 development.
+Their plugin adapters register the selected model in a private native home,
+forward the admitted endpoint and public headers, and keep credentials in child
+environment values referenced by native configuration. Native model owners
+supply defaults for metadata the Provider did not declare. Oh My Pi retains its
+native ACP launch and model acknowledgement path; changing the Provider binding
+uses Session restart semantics. Native candidate catalogs remain unverified
+until the canonical account catalog owner observes the selected account.
 
 Custom ACP definitions do not inherit another Agent's Provider adapter merely
-because their command launches that executable. Pi and Oh My Pi have native
-custom Providers, but an arbitrary model's complete native metadata and
-Session-isolated configuration/state continuity are not established by the
-current binding. Qwen's native Provider catalog can override process endpoint
-choices, while replacing its System settings file would discard managed policy;
+because their command launches that executable. Qwen's native Provider catalog
+can override process endpoint choices, while replacing its System settings file would discard managed policy;
 its native custom Provider support therefore does not yet supply a safe generic
 binding. Kimi's current multi-Session ACP server requires native OAuth
 before opening a Session. CodeBuddy's native managed product configuration can
@@ -820,7 +826,8 @@ pre-start discovery sees the selected account's native configuration and request
 Oh My Pi declares its native credential environment destinations from its Connected Account
 purposes. Catalog probes and daemon launch prerequisites consume the same qualified launch
 materializer before running `omp models --json`; neither path performs separate account
-preparation or model discovery. Direct Session and execution-run opens use that same account
+preparation or model discovery. Native AuthStorage inventories remain static candidate diagnostics;
+they do not establish selected-account model entitlement. Direct Session and execution-run opens use that same account
 preparation. A fresh native Oh My Pi launch with a selected Connected Account requires an
 explicit model or an admitted Provider model. Without one, preparation refuses before credential
 materialization or ACP startup with `agent_startup_model_reconciliation_failed` and the startup
@@ -1096,6 +1103,9 @@ and only configured providers are selected. Current-model and thinking-value upd
 catalog observation time rather than reporting new membership.
 
 Pi's native registry supplies model candidates, not proof of ChatGPT account entitlement.
+Preflight labels these candidates as static diagnostics; runtime snapshots declare
+`catalogConfidence: 'account_unverified'` for the shared host membership owner to withhold.
+Current-model facts and explicit model commands remain separate from that membership.
 A new Session or finite Run with a Connected ChatGPT account therefore requires a concrete
 model choice and returns the existing `agent_startup_model_reconciliation_failed` refusal for an automatic default,
 with the closed `failureCause.failureReason: model_selection_required` and no automatic retry.

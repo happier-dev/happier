@@ -28,7 +28,7 @@ export function buildOhMyPiPreflightModelsFromListModelsOutput(
   try { output = JSON.parse(outputRaw); } catch { return null; }
   if (!output || typeof output !== 'object' || !('models' in output) || !Array.isArray(output.models)) return null;
   const models: OhMyPiPreflightModel[] = [];
-  // Native models --json already filters eligibility through its AuthStorage.
+  // Native AuthStorage filters configured candidates, not account entitlement.
   const entries: readonly unknown[] = output.models;
   for (const value of entries) {
     if (!value || typeof value !== 'object' || Array.isArray(value)) continue;
@@ -65,8 +65,10 @@ export const OH_MY_PI_PREFLIGHT_SESSION_CONTROLS = Object.freeze({
   catalogs: Object.freeze({ kind: 'acp' as const, command: OH_MY_PI_ACP_COMMAND }),
   models: Object.freeze({
     command: Object.freeze({ toolId: OH_MY_PI_SYSTEM_TOOL_ID, args: OH_MY_PI_CLI_MODELS_COMMAND_ARGS }),
-    parseOutput: ({ stdout, stderr }) =>
-      buildOhMyPiPreflightModelsFromListModelsOutput(stdout)
-      ?? buildOhMyPiPreflightModelsFromListModelsOutput(stderr),
+    parseOutput: ({ stdout, stderr }) => {
+      const availableModels = buildOhMyPiPreflightModelsFromListModelsOutput(stdout)
+        ?? buildOhMyPiPreflightModelsFromListModelsOutput(stderr);
+      return availableModels ? { availableModels, source: 'static' as const } : null;
+    },
   }),
 } satisfies AgentPreflightSessionControlsContributionV1);

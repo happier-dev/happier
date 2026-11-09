@@ -70,7 +70,7 @@ describe('createPiSessionModelsSource', () => {
       onError: () => undefined,
     });
     await source.refresh();
-    expect(source.read()).toEqual({ models: null, currentModelId: 'openai/current' });
+    expect(source.read()).toEqual({ models: null, currentModelId: 'openai/current', catalogConfidence: 'account_unverified' });
     source.dispose();
   });
 

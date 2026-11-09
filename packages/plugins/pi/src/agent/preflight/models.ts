@@ -12,10 +12,10 @@ export type PiPreflightModel = AgentSessionModel;
 const PI_MODEL_DISCOVERY_ARGS = ['--mode', 'json', '--no-session', '--no-tools'] as const;
 const PI_COMMAND_CATALOG_ARGS = ['--mode', 'json', '--no-session'] as const;
 
-type PiPreflightModelObservation = readonly PiPreflightModel[] | Readonly<{
+type PiPreflightModelObservation = Readonly<{
   availableModels: readonly PiPreflightModel[];
   source: 'static';
-  refreshError: true;
+  refreshError?: true;
 }> | null;
 
 function parsePiPreflightModelObservation(stderr: string): PiPreflightModelObservation {
@@ -26,8 +26,9 @@ function parsePiPreflightModelObservation(stderr: string): PiPreflightModelObser
     const localFallback = 'error' in observation && observation.error === 'refresh-unsupported';
     if (('error' in observation && !localFallback) || !Array.isArray(observation.models)) { result = null; continue; }
     const models = buildPiRuntimeModelsSnapshot({ state: {}, availableModels: { models: observation.models } })?.models;
-    result = !models ? null
-      : localFallback ? { availableModels: models, source: 'static', refreshError: true } : models;
+    // Registry refresh establishes candidates; it does not verify account entitlement.
+    result = !models ? null : { availableModels: models, source: 'static',
+      ...(localFallback ? { refreshError: true } : {}) };
   }
   return result;
 }

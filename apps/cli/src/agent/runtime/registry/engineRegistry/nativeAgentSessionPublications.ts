@@ -12,6 +12,7 @@ import { readAcpSessionModeIntentFromMetadata } from '@happier-dev/agents';
 import { applyAcpSessionModeIntentSessionMetadata } from '@happier-dev/agents/session/state/metadataWriters';
 import type { Metadata } from '@/api/types';
 
+import { isProviderSourceModelCatalogConfidenceUsable } from '@/providers/modelManagement/sourceCatalog';
 import { updateAgentStateBestEffort } from '@/api/session/sessionWritesBestEffort';
 
 type PublicationSession = Readonly<{
@@ -121,7 +122,8 @@ export function createNativeAgentSessionPublications(params: Readonly<{
     });
   };
   const modelPublication = createCatalogPublication<AgentSessionModelsSnapshot>(Object.freeze({ models: null }), (snapshot) => Object.freeze({
-    models: snapshot.models,
+    models: snapshot.models === null || isProviderSourceModelCatalogConfidenceUsable(snapshot.catalogConfidence) ? snapshot.models : [],
+    ...(snapshot.catalogConfidence === undefined ? {} : { catalogConfidence: snapshot.catalogConfidence }),
     ...(snapshot.observedAt === undefined ? {} : { observedAt: snapshot.observedAt }),
     ...(snapshot.currentModelId === undefined ? {} : { currentModelId: snapshot.currentModelId }),
   }));

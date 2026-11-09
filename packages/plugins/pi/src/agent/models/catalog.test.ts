@@ -50,6 +50,7 @@ describe('Pi model catalog projection', () => {
         models: [{ provider: 'openai', id: 'gpt-4o-mini', name: 'GPT-4o mini', reasoning: true }],
       },
     })).toEqual({
+      catalogConfidence: 'account_unverified',
       currentModelId: 'openai/gpt-4o-mini',
       models: [{
         id: 'openai/gpt-4o-mini',

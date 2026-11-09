@@ -1,3 +1,4 @@
+import type { DaemonProviderModelProjectionRowV1 } from '@happier-dev/protocol/rpc/providers';
 import type { AgentRuntimeFactoryContext, PluginInvocationContext } from '../invocation.js';
 import type { AgentNativeLaunchQualifier } from '../exec.js';
 import type {
@@ -468,6 +469,8 @@ export type AgentSessionModel = Readonly<
 >;
 
 export type AgentSessionModelsSnapshot = Readonly<{
+  /** Provenance of the offered catalog, independent of the active model. */
+  catalogConfidence?: DaemonProviderModelProjectionRowV1['confidence'];
   /** Last catalog observation time; zero identifies static or current-only model facts. */
   observedAt?: number;
   models: readonly AgentSessionModel[] | null;
