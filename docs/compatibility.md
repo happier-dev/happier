@@ -5296,6 +5296,12 @@ decision and comparator order. It does not switch a credential, acquire a lease
 or create a cross-pool value ranking. Existing UI summaries and explicit manual
 switch intent remain presentation/authoring seams, not automatic selectors.
 
+The unreleased 0.3 pool diagnostics preserve the selector's existing
+`quota_probe_deferred`, `quota_evidence_unavailable`, and
+`not_meaningfully_better` reasons through pool reads and launch errors. The
+canonical selection schema owns this vocabulary for matching development
+readers; this correction changes no persisted pool policy or state format.
+
 The inspected clean `../0.2` usage paths at
 `17ba05df68d4d3d4cad1c1241b58e63805db37ed` supply the separate-facet input contract;
 development V4 qualified account transport is not a promise that older clients
@@ -7449,6 +7455,14 @@ still accept existing causes, including `unknown`. The inspected `../0.2`
 frontier `7b37d65ca75e58560f8f3ca850958ac5407d2e75` has no failure-cause carrier
 in its runtime issue schema. No wire epoch, migration or compatibility adapter
 is introduced.
+
+Waiting Session sends now reuse resume readiness and may settle with the existing
+`failed` status and `resume_failed` code, retaining the accepted input receipt and
+optional canonical launch error detail. The prompt remains in Pending as blocked
+and recoverable; admission does not imply successful execution. Matching Protocol,
+CLI Action and UI readers reload together for this closed result extension.
+Asynchronous sends retain their admission-only behavior. This is the same
+unpublished 0.3 direct cut, without a new status, epoch or persisted format.
 
 Unreleased 0.3 custom Agent runtime declarations add optional
 `permissionModeMapping`, using the existing native permission mapping grammar.
