@@ -13,6 +13,17 @@ function adapter(invoke: ForgeCiAdapterOptionsV1['invoke'], bindings = actionRef
 }
 
 describe('public CI adapter', () => {
+    it('settles the observed status-string rejection without throwing or replaying a write', async () => {
+        const invoke = vi.fn<ForgeCiAdapterOptionsV1['invoke']>().mockRejectedValue('outcomeUnknown');
+        const ci = adapter(invoke);
+        const input = { repository: vectors.github.repository, runId: '101' };
+        expect(await ci.readRun(input)).toEqual({
+            kind: 'unavailable', failure: { class: 'transient', code: 'ci_invocation_failed' },
+        });
+        expect(await ci.cancelRun(input)).toMatchObject({ kind: 'outcome_unknown' });
+        expect(invoke).toHaveBeenCalledTimes(2);
+    });
+
     it.each(['plugin_action_current_intent_rejected', 'plugin_action_not_allowed'])(
         'keeps the settled host denial %s rejected rather than uncertain', async code => {
             const invoke = vi.fn<ForgeCiAdapterOptionsV1['invoke']>().mockRejectedValue(new PluginError({

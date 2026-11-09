@@ -34,12 +34,14 @@ export function projectTriageSourceReadFailureV1(
   fallbackCode: string,
   notDispatchedCode: string,
 ): TriageSourceReadFailureV1 {
+  const settledFailure = execution.status === 'error' || execution.status === 'outcomeUnknown'
+    ? execution : undefined;
   const failure: TriageSourceFailureV1 = execution.status === 'error'
     ? invocationFailure(execution, fallbackCode)
     : {
       class: 'unknown',
       code: execution.status === 'idle' || execution.status === 'pending' ? notDispatchedCode
-        : 'code' in execution ? execution.code : fallbackCode,
+        : settledFailure?.code ?? fallbackCode,
     };
   return Object.freeze({
     ...failure,
@@ -48,6 +50,6 @@ export function projectTriageSourceReadFailureV1(
       ...(execution.diagnostics === undefined ? {} : { diagnostics: execution.diagnostics }),
     } : {}),
     ...(execution.status === 'outcomeUnknown' ? { retryable: true } : {}),
-    ...('requestId' in execution && execution.requestId !== undefined ? { requestId: execution.requestId } : {}),
+    ...(settledFailure?.requestId === undefined ? {} : { requestId: settledFailure.requestId }),
   });
 }

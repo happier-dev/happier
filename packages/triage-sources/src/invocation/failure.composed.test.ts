@@ -4,8 +4,16 @@ import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import { dispatchFailure as githubFailure } from '../../../plugins/scm-github/src/ui/detail/readBoundary.js';
 import { dispatchFailure as gitlabFailure } from '../../../plugins/scm-gitlab/src/ui/detail/readBoundary.js';
 import { forgeCiInvocationFailureV1 } from '../../../forge-ci/src/runtime/adapter.js';
+import { projectTriageSourceReadFailureV1 } from './failure.js';
 
 describe('native source read host failures', () => {
+  it('settles the observed legacy status-only caller without throwing', () => {
+    // READY158's Bitbucket diff caller passed the status instead of the execution.
+    // @ts-expect-error The regression exercised this invalid runtime input before caller migration.
+    expect(projectTriageSourceReadFailureV1('outcomeUnknown', 'timeout', 'not-dispatched'))
+      .toEqual({ class: 'unknown', code: 'timeout' });
+  });
+
   const diagnostics = [{ severity: 'error', code: 'plugin_action_permission_denied' }] as const;
   const refusal = {
     status: 'error', code: 'denied', message: 'denied', retryable: false,

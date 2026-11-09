@@ -2,9 +2,10 @@
 import * as React from 'react';
 import { act } from 'react';
 import { defineUiSurface } from '@happier-dev/plugin-ui';
+import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
 import { createPluginTestkit, createPluginUiTestkit, createSurfaceContextFixture, type PluginUiTestkit } from '@happier-dev/plugin-sdk/testing';
-import { describeTriageSourceFailureV1, TriageDetailSurfaceInputV1Schema } from '@happier-dev/triage-protocol/v1';
+import { describeTriageSourceFailureV1, TRIAGE_SOURCE_FAILURE_COPY_V1, TriageDetailSurfaceInputV1Schema } from '@happier-dev/triage-protocol/v1';
 import { afterEach, describe, expect, it } from 'vitest';
 import { activate } from '../../activate.js';
 import { activate as activateAccount } from '../../accountRuntime.js';
@@ -37,7 +38,7 @@ function launchInput() {
       observedAtMs: 1_760_000_700_000, locator: { v: 1, routingToken: 'example-workspace/deploy-tools' },
       snapshot: { v: 1, title: 'Read dispatch', scopeLabel: 'example-workspace/deploy-tools', state: { presentation: 'active', nativeLabel: 'Open' }, facts: [] }, viewer: { involvement: [] } }, linkedSessions: [] });
 }
-async function mountRegisteredDetail(misbind = false, initialPanel: 'checks' | 'overview' = 'checks') {
+async function mountRegisteredDetail(misbind = false, initialPanel: 'checks' | 'overview' = 'checks', diffFailure?: PluginError) {
   let panel: 'checks' | 'overview' | 'files' = initialPanel;
   let entryId = '42';
   const input = () => {
@@ -75,10 +76,14 @@ async function mountRegisteredDetail(misbind = false, initialPanel: 'checks' | '
         const body = renderSurface({ ...context, launchInput: input() });
         if (body !== null && !React.isValidElement(body)) throw new Error('Expected native detail');
         return body;
-      }), launchInput: launchInput(), surfaceContext: createSurfaceContextFixture(), adapter: createPluginUiRnwSemanticSurfaceAdapter(),
+      }), launchInput: launchInput(), surfaceContext: createSurfaceContextFixture({ translations: {
+        'plugins.triage.sourceSettings.failure.permission': TRIAGE_SOURCE_FAILURE_COPY_V1.permission,
+      } }), adapter: createPluginUiRnwSemanticSurfaceAdapter(),
       handlers: { executeAction: async ({ action, input }) => {
         if (typeof action === 'string' || action.pluginId !== BITBUCKET_PLUGIN_ID || input === undefined) throw new Error('Wrong Action owner');
         actions.push(action.localId);
+        // The host transport boundary can lose a receipt after dispatch.
+        if (action.localId === BITBUCKET_TRIAGE_DETAIL_ACTION_IDS.readDiff && diffFailure !== undefined) throw diffFailure;
         const builds = action.localId === BITBUCKET_TRIAGE_DETAIL_ACTION_IDS.listBuilds;
         const request = misbind && builds ? BitbucketBuildsInputV1Schema.parse(input) : null;
         const result = await plugin.invokeAction(request === null ? action.localId : BITBUCKET_TRIAGE_DETAIL_ACTION_IDS.listComments,
@@ -94,11 +99,28 @@ async function mountRegisteredDetail(misbind = false, initialPanel: 'checks' | '
     async selectPanel(nextPanel: typeof panel, nextEntryId = entryId) {
       panel = nextPanel;
       entryId = nextEntryId;
-      await act(async () => { await detail.updateSurface(createSurfaceContextFixture()); });
+      await act(async () => { await detail.updateSurface(createSurfaceContextFixture({ translations: {
+        'plugins.triage.sourceSettings.failure.permission': TRIAGE_SOURCE_FAILURE_COPY_V1.permission,
+      } })); });
     },
   };
 }
 describe('registered Bitbucket detail read dispatch', () => {
+  it.each([
+    ['timeout', 'unknown'],
+    ['denied', 'permission'],
+  ] as const)('settles a %s diff read as a typed failure on Overview and Files', async (code, failureClass) => {
+    const { detail, release, selectPanel } = await mountRegisteredDetail(false, 'overview', new PluginError({ code }));
+    await act(async () => { release(); });
+    await selectPanel('files');
+    const description = failureClass === 'permission'
+      ? TRIAGE_SOURCE_FAILURE_COPY_V1.permission
+      : describeTriageSourceFailureV1({ class: failureClass, code }, 'Bitbucket could not complete this read.');
+    await expect(detail.getByText(description)).resolves.toBeDefined();
+    await selectPanel('overview');
+    await expect(detail.getByText(pullRequest.summary.raw)).resolves.toBeDefined();
+  });
+
   it('retains the settled Overview across host Files switches but reads a different entry', async () => {
     const { detail, release, actions, overviewResults, requests, selectPanel } = await mountRegisteredDetail(false, 'overview');
     await act(async () => { release(); });

@@ -24,6 +24,7 @@
 
 import { useCallback, useEffect, useMemo, useReducer, useRef } from 'react';
 import { useExecutePluginAction, useTabPanelActivity } from '@happier-dev/plugin-ui';
+import { projectTriageSourceReadFailureV1 } from '@happier-dev/triage-sources/runtime';
 import type {
   TriageDetailSurfaceInputV1,
   TriageSourceFailureV1,
@@ -157,15 +158,6 @@ const UNREADABLE_RESULT: TriageSourceFailureV1 = Object.freeze({
   code: 'sentry-detail-result-unreadable',
 });
 
-type ExecuteResult = Readonly<{ status: string; result?: unknown; code?: string }>;
-
-function dispatchFailure(status: string, code: string): TriageSourceFailureV1 {
-  return Object.freeze({
-    class: status === 'error' ? 'transient' : 'unknown',
-    code: status === 'idle' || status === 'pending' ? 'sentry-detail-read-not-dispatched' : code,
-  });
-}
-
 /**
  * Drives the one selected-event read for one mounted detail instance.
  *
@@ -225,13 +217,15 @@ export function useSentrySelectedEvent(
         instance,
         localRef,
         selector: selected,
-      }, { signal: controller.signal }) as ExecuteResult;
+      }, { signal: controller.signal });
       if (controller.signal.aborted) return;
       if (execution.status !== 'success') {
         dispatch({
           kind: 'failed',
           token,
-          failure: dispatchFailure(execution.status, execution.code ?? 'sentry-detail-read-failed'),
+          failure: projectTriageSourceReadFailureV1(
+            execution, 'sentry-detail-read-failed', 'sentry-detail-read-not-dispatched',
+          ),
         });
         return;
       }

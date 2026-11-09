@@ -5,10 +5,11 @@ import { readPluginTranslationResources } from '../../../../../scripts/testing/r
 import React, { act } from 'react';
 import { defineUiSurface, Tabs, Text } from '@happier-dev/plugin-ui';
 import type { JsonValue } from '@happier-dev/plugin-sdk';
+import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import { createPluginUiTestkit, createSurfaceContextFixture } from '@happier-dev/plugin-sdk/testing';
 import type { PluginUiTestkit } from '@happier-dev/plugin-sdk/testing';
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
-import { TriageDetailSurfaceInputV1Schema, type TriageDetailSurfaceInputV1 } from '@happier-dev/triage-protocol/v1';
+import { TRIAGE_SOURCE_FAILURE_COPY_V1, TriageDetailSurfaceInputV1Schema, type TriageDetailSurfaceInputV1 } from '@happier-dev/triage-protocol/v1';
 import {
   TriageDetailPanelNavigationProvider,
   type TriageDetailPanelNavigationV1,
@@ -312,6 +313,20 @@ afterEach(async () => {
 });
 
 describe('the mounted Sentry issue detail body', () => {
+  it.each([
+    ['denied', TRIAGE_SOURCE_FAILURE_COPY_V1.permission],
+    ['timeout', 'Sentry could not complete this read.'],
+  ] as const)('preserves the selected-event %s host failure in Overview', async (code, description) => {
+    const harness = createHarness({ readEvent: async () => {
+      throw new PluginError({ code, retryable: false,
+        diagnostics: [{ severity: 'error', code: 'plugin_action_permission_denied' }],
+      });
+    } });
+    const page = await mountDetail(harness, createSurfaceContextFixture({ translations: {
+      'plugins.triage.sourceSettings.failure.permission': TRIAGE_SOURCE_FAILURE_COPY_V1.permission,
+    } }), undefined, 'overview');
+    await expect(page.getByText(description)).resolves.toBeDefined();
+  });
   it('replaces settled selected evidence when the exact account authority changes', async () => {
     let input = TriageDetailSurfaceInputV1Schema.parse({ ...DETAIL_INPUT, panel: 'overview' });
     const harness = createHarness({ eventSequence: [

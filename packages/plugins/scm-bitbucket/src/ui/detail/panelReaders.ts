@@ -483,8 +483,8 @@ export function useBitbucketDiff(
     }, { signal }) as ExecuteResult;
     if (execution.status !== 'success') {
       return { kind: 'failed' as const, failure: dispatchFailure(
-        execution.status,
-        execution.code ?? 'bitbucket-diff-read-failed',
+        execution,
+        'bitbucket-diff-read-failed',
       ) };
     }
     const parsed = BitbucketDiffResultV1Schema.safeParse(execution.result);
