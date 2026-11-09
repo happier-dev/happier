@@ -1,4 +1,5 @@
 import type { ActionExecutorContext, ActionExecuteFailure, ActionExecutorDeps } from '@happier-dev/protocol/actions';
+import { isRecord } from '@happier-dev/protocol/common/records';
 import {
     DeploymentBackupRestoreResultV1Schema, DeploymentBackupActionResultSchemasV1,
     type DeploymentBackupActionIdV1, type DeploymentBackupActionInputV1,
@@ -13,6 +14,7 @@ import type { HostActionOperationRuntime } from '@/daemon/actionOperations/creat
 import type { OwnServerDeploymentTargetForHost } from '../targets/ownServer/ownServerDeploymentTarget';
 import { OwnServerRestorePreparationForHostSchema } from '../targets/ownServer/restorePreparation';
 import { projectDeploymentBackupHistory } from './backupHistory';
+import { projectDeploymentFailure } from '../deploymentFailure';
 import { isDeploymentBackupReadActionIdV1, DEPLOYMENT_BACKUP_RUN_ACTION_ID_V1, DEPLOYMENT_BACKUP_TEST_ACTION_ID_V1,
     DEPLOYMENT_BACKUP_HISTORY_ACTION_ID_V1, DEPLOYMENT_BACKUP_INVENTORY_ACTION_ID_V1, DEPLOYMENT_BACKUP_VERIFY_ACTION_ID_V1,
     DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
@@ -124,7 +126,7 @@ export function createDeploymentBackupActionForHost(host: Readonly<{
                 const result = DeploymentBackupRestoreResultV1Schema.safeParse(snapshot.result);
                 if (!result.success || result.data.kind !== 'prepared') continue;
                 const evidence = result.data.evidence;
-                if (!evidence || typeof evidence !== 'object' || Array.isArray(evidence)) continue;
+                if (!isRecord(evidence)) continue;
                 const native = OwnServerRestorePreparationForHostSchema.safeParse(evidence.native);
                 if (!native.success) continue;
                 protectedSnapshotIds.add(native.data.prepared.source.snapshot.snapshotId);
@@ -141,7 +143,8 @@ export function createDeploymentBackupActionForHost(host: Readonly<{
             const step = error && typeof error === 'object' && 'step' in error && typeof error.step === 'string'
                 ? error.step : 'native';
             const partial = readDeploymentBackupMaintenanceFailureEvidenceV1(error);
-            return { ...failure(code, step), details: { step, code, ...partial } };
+            const projected = projectDeploymentFailure(code, error, `deployment.backup.${step}`);
+            return { ...projected, details: { ...(isRecord(projected.details) ? projected.details : {}), step, code, ...partial } };
         }
     };
 }

@@ -1,17 +1,20 @@
 import { PluginError, BackupDestinationOpenV1ProtocolSchema, type BackupDestinationOpenV1 } from '@happier-dev/plugin-sdk';
 import type { ActionExecutorContext } from '@happier-dev/protocol';
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { readPluginActionFailureAuthorPayload } from '@happier-dev/protocol/plugins/actions/invocation';
 import { environmentSecretBindingIdentityV1, type DeploymentBackupConfigurationV1, type DeploymentEnvironmentContentV1 } from '@happier-dev/deployment-protocol';
 import type { DeploymentBackupRunInputV1, DeploymentRestoreDestinationV1 } from '@happier-dev/deployments';
 import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 import { createDeploymentBackupEnvironmentForHost, prepareDeploymentBackupEnvironmentForHost } from '@/deployments/secrets/deploymentExecEnvPort';
 
 export type DeploymentBackupDestinationRegistryForHost = Pick<ResolvedExecutablePluginRuntimeRegistry,
-    'targetActionInvocations' | 'readPluginOccurrenceId'> & Readonly<{
+    'targetActionInvocations' | 'readPluginOccurrenceId' | 'activateContributionsOnDemand'> & Readonly<{
         contributes: Pick<ResolvedExecutablePluginRuntimeRegistry['contributes'], 'backupDestinations'>;
     }>;
 
-const refuse = (code: 'backup_required' | 'stale_input' | 'unsupported_action'): never => {
-    throw new PluginError({ code, message: 'The configured backup destination is unavailable' });
+const refuse = (code: 'backup_required' | 'stale_input' | 'unsupported_action', phase?: string): never => {
+    throw new PluginError({ code, message: 'The configured backup destination is unavailable',
+        ...(phase ? { failureCause: projectActionFailureCauseV1({ name: 'Error', code }, phase) } : {}) });
 };
 
 /** Open the captured destination through its ordinary installed Action. No
@@ -27,16 +30,21 @@ export async function openDeploymentBackupDestinationForHost(input: Readonly<{
     const ref = configuration.destinationRef;
     const descriptor = registry.contributes.backupDestinations.find(entry =>
         entry.identity.pluginId === ref.pluginId && entry.identity.localId === ref.localId);
-    if (!descriptor) return refuse('backup_required');
+    if (!descriptor) return refuse('backup_required', 'deployment.backup.destination.descriptor');
     if (configuration.occurrenceId !== registry.readPluginOccurrenceId(ref.pluginId)) return refuse('stale_input');
     const action = descriptor.definition.actions.open;
+    await registry.activateContributionsOnDemand([{ ...action, family: 'actions' }]);
     const result = await registry.targetActionInvocations.invoke({ ...action,
         input: { config: configuration.config, credentialRoles: configuration.credentialBindings.map(binding => binding.role) },
         surface: 'plugin', requiredReadOnly: true, signal: input.signal, approvalContext: input.context,
     });
-    if (result.status !== 'executed') throw new PluginError({ code: 'backup_required',
-        message: 'The configured backup destination Action did not open',
-        details: { reason: result.status === 'deferred' ? 'approval_required' : result.code } });
+    if (result.status !== 'executed') {
+        const reason = result.status === 'deferred' ? 'approval_required' : result.code;
+        const authoredCause = result.status === 'failed' ? readPluginActionFailureAuthorPayload(result.data).failureCause : undefined;
+        throw new PluginError({ code: 'backup_required',
+            message: 'The configured backup destination Action did not open', details: { reason },
+            failureCause: authoredCause ?? projectActionFailureCauseV1({ name: 'Error', code: reason }, 'deployment.backup.destination.open') });
+    }
     const opened = BackupDestinationOpenV1ProtocolSchema.safeParse(result.value);
     if (!opened.success) return refuse('unsupported_action');
     if (opened.data.credentialBindings.length !== configuration.credentialBindings.length

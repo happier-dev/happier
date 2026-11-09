@@ -10,6 +10,7 @@ import type { OwnServerDeploymentTargetForHost } from '../targets/ownServer/ownS
 import { OwnServerRestorePreparationForHostSchema } from '../targets/ownServer/restorePreparation';
 import type { HostActionOperationRuntime } from '@/daemon/actionOperations/createHostActionOperationRuntime';
 import { DEPLOYMENT_BACKUP_RUN_ACTION_ID_V1, DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { projectDeploymentFailure } from '../deploymentFailure';
 
 const failure = (errorCode: string): ActionExecuteFailure => ({ ok: false, errorCode, error: errorCode });
 
@@ -80,7 +81,10 @@ export function createDeploymentRestoreActionForHost(host: Readonly<{
                     const step = DeploymentRestoreStepV1Schema.safeParse(value);
                     return step.success ? [step.data] : [];
                 }) : [];
-            return { ...failure(context.signal?.aborted ? 'cancelled' : code), ...(steps.length ? { details: { steps } } : {}) };
+            const projected = projectDeploymentFailure(context.signal?.aborted ? 'cancelled' : code, error, 'deployment.restore');
+            return { ...projected, ...(steps.length ? {
+                details: { ...(isRecord(projected.details) ? projected.details : {}), steps },
+            } : {}) };
         }
     };
 }
