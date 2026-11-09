@@ -80,10 +80,10 @@ describe('source Remove through the shared Action admission and durable writer',
       } satisfies CorpusSourceInstanceRowV1;
       control.sourceInstances.seed(toCorpusStoredValue(row));
     }
-    const admitted = [SOURCE, otherSource].map((source) => ({
+    const admitted = [own, other].map(({ instance: { source }, binding }) => ({
       contributor: { pluginId: source.pluginId, contributionId: source.localId, immutableGenerationId: 'generation-1' },
       protocol: { id: TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_ID_V1, version: TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_VERSION_V1 },
-      descriptor: { v: 1, purpose: PURPOSE, displayName: source.pluginId,
+      descriptor: { v: 1, purpose: binding.purpose, displayName: source.pluginId,
         kinds: [{ id: 'pull-request', workflowSubject: 'pullRequest', displayName: 'Pull request' }] },
       operations: { listInstances: {}, scan: {}, get: {} }, surfaces: { detail: {} },
     } as unknown as TriageAdmittedSourceV1));
