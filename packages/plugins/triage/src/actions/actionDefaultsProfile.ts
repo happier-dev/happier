@@ -26,16 +26,13 @@ export async function saveTriageActionDefaultProfileV1(input: Readonly<{
     placement: NonNullable<Profile['placement']>;
     checkout: NonNullable<Profile['checkout']>;
     ownedProfileId?: string;
-    sourceProfileId?: string | null;
 }>, deps: Readonly<{
     actions: Pick<ActionsService, 'execute'>;
     mintId: () => string;
     signal?: AbortSignal;
-}>): Promise<Readonly<{ profileId: string; sourceProfileId: string | null }>> {
-    const reuse = input.ownedProfileId !== undefined
-        && (input.profileId === input.ownedProfileId || input.profileId === input.sourceProfileId);
+}>): Promise<Readonly<{ profileId: string }>> {
+    const reuse = input.ownedProfileId !== undefined && input.profileId === input.ownedProfileId;
     const profileId = reuse ? input.ownedProfileId! : deps.mintId();
-    const sourceProfileId = reuse ? input.sourceProfileId ?? null : input.profileId;
     const selectedId = reuse ? profileId : input.profileId;
     const now = Date.now();
     const name = `Action default (${profileId})`;
@@ -48,7 +45,7 @@ export async function saveTriageActionDefaultProfileV1(input: Readonly<{
                 placement: input.placement, checkout: input.checkout, createdAt: now, updatedAt: now,
             },
         }, { signal: deps.signal }));
-        return { profileId, sourceProfileId };
+        return { profileId };
     }
 
     const opened = await deps.actions.execute('launch_profiles.read', { id: selectedId }, { signal: deps.signal });
@@ -61,12 +58,12 @@ export async function saveTriageActionDefaultProfileV1(input: Readonly<{
             id: selectedId, expectedRevision, newProfileId: profileId, name, now,
             placement: input.placement, checkout: input.checkout,
         }, { signal: deps.signal }));
-        return { profileId, sourceProfileId };
+        return { profileId };
     }
 
     requireProfileUpdate('launch_profiles.save', await deps.actions.execute('launch_profiles.save', {
         id: profileId, expectedRevision,
         profile: { ...opened.profile, placement: input.placement, checkout: input.checkout, updatedAt: now },
     }, { signal: deps.signal }));
-    return { profileId, sourceProfileId };
+    return { profileId };
 }

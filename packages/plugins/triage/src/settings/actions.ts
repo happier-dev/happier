@@ -197,7 +197,6 @@ export type TriageActionSavedDefaultsV1 = Readonly<{
     promptDocumentId: string;
     promptInvocationId: string;
     profileId: string;
-    sourceProfileId: string | null;
 }>;
 
 export type TriageActionV1 = Readonly<{
@@ -376,7 +375,6 @@ const TriageActionSavedDefaultsV1Schema = defineProtocolObject({
     promptDocumentId: defineProtocolString({ minLength: 1 }),
     promptInvocationId: defineProtocolString({ minLength: 1 }),
     profileId: ProtocolLaunchProfileIdV2Schema,
-    sourceProfileId: ProtocolLaunchProfileIdV2Schema.nullable(),
 }, { policy: 'closed' });
 
 export const TriageActionRecordV1Schema = defineProtocolObject({

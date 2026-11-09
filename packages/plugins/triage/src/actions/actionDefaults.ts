@@ -33,7 +33,7 @@ export async function prepareTriageActionDefaultsV1(
     const saved = action.savedDefaults;
     const profile = await saveTriageActionDefaultProfileV1({
         profileId: input.profileId, placement: input.placement, checkout: input.checkout,
-        ...(saved ? { ownedProfileId: saved.profileId, sourceProfileId: saved.sourceProfileId } : {}),
+        ...(saved ? { ownedProfileId: saved.profileId } : {}),
     }, { actions, mintId: deps.mintActionId, ...(deps.signal ? { signal: deps.signal } : {}) });
 
     let promptDocumentId: string;
@@ -66,6 +66,6 @@ export async function prepareTriageActionDefaultsV1(
         label: input.label, enabled: action.enabled, appliesTo: action.appliesTo, workspaceMode: action.workspaceMode,
         profileId: profile.profileId,
         target: { kind: 'agent', promptInvocationId, delivery: triageActionDeliveryForLaunchModeV1(input.launchMode) },
-        savedDefaults: { promptDocumentId, promptInvocationId, profileId: profile.profileId, sourceProfileId: profile.sourceProfileId },
+        savedDefaults: { promptDocumentId, promptInvocationId, profileId: profile.profileId },
     } };
 }

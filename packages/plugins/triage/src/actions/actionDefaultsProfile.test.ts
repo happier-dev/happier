@@ -64,7 +64,7 @@ describe('action-owned Profile defaults', () => {
         const f = fixture();
         const original = structuredClone(f.original);
         const result = await saveTriageActionDefaultProfileV1({ profileId: 'shared', placement: 'ask', checkout: 'create_worktree' }, f.deps);
-        expect(result).toEqual({ profileId: 'owned-1', sourceProfileId: 'shared' });
+        expect(result).toEqual({ profileId: 'owned-1' });
         expect(f.rows.get('shared')?.record).toEqual(original);
         expect(f.rows.get(result.profileId)?.record).toMatchObject({ secretBindings: f.original.secretBindings,
             skillSeeds: f.original.skillSeeds, promptStack: f.original.promptStack, definition: { kind: 'inline', profile: {
@@ -73,12 +73,12 @@ describe('action-owned Profile defaults', () => {
             } } });
     });
 
-    it.each(['shared', 'owned-1'])('reuses the owned Profile when the selected Profile is %s', async selected => {
+    it('reuses the selected owned Profile on later saves', async () => {
         const f = fixture();
         const input = { profileId: 'shared', placement: 'ask' as const, checkout: 'create_worktree' as const };
         const first = await saveTriageActionDefaultProfileV1(input, f.deps);
-        const next = await saveTriageActionDefaultProfileV1({ ...input, profileId: selected,
-            ownedProfileId: first.profileId, sourceProfileId: first.sourceProfileId, checkout: 'reuse_workspace' }, f.deps);
+        const next = await saveTriageActionDefaultProfileV1({ ...input, profileId: first.profileId,
+            ownedProfileId: first.profileId, checkout: 'reuse_workspace' }, f.deps);
         expect(next).toEqual(first);
         expect(f.rows.size).toBe(2);
         expect(f.rows.get(first.profileId)?.record).toMatchObject({ definition: { profile: { checkout: 'reuse_workspace' } },
@@ -97,8 +97,7 @@ describe('action-owned Profile defaults', () => {
         });
         f.rows.set('shared', { record: changedSource, revision: 3 });
 
-        const next = await saveTriageActionDefaultProfileV1({ ...input,
-            ownedProfileId: first.profileId, sourceProfileId: first.sourceProfileId }, f.deps);
+        const next = await saveTriageActionDefaultProfileV1({ ...input, ownedProfileId: first.profileId }, f.deps);
 
         expect(next.profileId).not.toBe(first.profileId);
         expect(f.rows.get(next.profileId)?.record).toMatchObject({ secretBindings: { TOKEN: 'changed-secret' },
@@ -110,17 +109,17 @@ describe('action-owned Profile defaults', () => {
     it('creates a modern Profile for machine defaults and replaces the snapshot when its source changes', async () => {
         const f = fixture();
         const first = await saveTriageActionDefaultProfileV1({ profileId: null, placement: 'automatic', checkout: 'ask' }, f.deps);
-        expect(first.sourceProfileId).toBeNull();
+        expect(first).toEqual({ profileId: 'owned-1' });
         expect(f.rows.get(first.profileId)?.record).toMatchObject({ definition: { kind: 'inline', profile: { v: 2, placement: 'automatic', checkout: 'ask' } } });
-        expect(await saveTriageActionDefaultProfileV1({ profileId: null, placement: 'automatic', checkout: 'ask',
-            ownedProfileId: first.profileId, sourceProfileId: null }, f.deps)).toEqual(first);
+        expect(await saveTriageActionDefaultProfileV1({ profileId: first.profileId, placement: 'automatic', checkout: 'ask',
+            ownedProfileId: first.profileId }, f.deps)).toEqual(first);
         expect(f.rows.size).toBe(2);
         const next = await saveTriageActionDefaultProfileV1({ profileId: 'shared', placement: 'ask', checkout: 'ask',
-            ownedProfileId: first.profileId, sourceProfileId: null }, f.deps);
-        expect(next).toEqual({ profileId: 'owned-2', sourceProfileId: 'shared' });
+            ownedProfileId: first.profileId }, f.deps);
+        expect(next).toEqual({ profileId: 'owned-2' });
     });
 
-    it('preserves legacy machine-login and container requirements while saving launch preferences', async () => {
+    it('preserves legacy machine-login and backend compatibility while saving launch preferences', async () => {
         const f = fixture(true);
         const original = structuredClone(f.original);
         if (original.definition.kind !== 'legacy') throw new Error('Expected legacy source');
