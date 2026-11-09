@@ -294,11 +294,9 @@ describe('machine setup native typed effects', () => {
             path: '/etc/happier/fixture.conf', owner: 'root', group: 'root', mode: 0o600,
             content: { kind: 'literal', value: 'fixture' } };
         const fileDeclarations: MachineRecipeStepV1[] = [
-            { ...file, validate: { kind: 'sshd', contexts: [{ user: 'happier', host: 'machine', address: '192.0.2.1' }] } },
+            { ...file, validate: { kind: 'caddy' } },
             { ...file, probe: { kind: 'docker' } },
-            { ...file, onChange: { serviceStepId: 'fixture-service', action: 'reload' } },
             { ...file, content: { kind: 'secretGrant', grantRef: 'grant-a' } },
-            { ...file, content: { kind: 'iniKeys', sections: { commands: { enabled: 'yes' } } } },
             { ...file, content: { kind: 'template', value: '{{value}}', variables: { value: 'fixture' } } },
         ];
         for (const declaration of fileDeclarations) {
@@ -370,7 +368,7 @@ describe('machine setup native typed effects', () => {
         expect(effects).toBe(1);
     });
 
-    it('proves package unavailability only from an explicit negative candidate and preserves unknown-index refresh', async () => {
+    it('keeps missing apt candidates unresolved for Apply refresh without mutating during observation', async () => {
         let metadata: 'none' | 'empty' | 'available' | 'installed' = 'none';
         const effects: MachineSetupNativeCommand[] = [];
         const step: Extract<MachineRecipeStepV1, { kind: 'package' }> = { id: 'package', kind: 'package', manager: 'apt', packages: [{ name: 'wanted' }] };
@@ -384,7 +382,7 @@ describe('machine setup native typed effects', () => {
                 : 'Package: wanted\nVersion: 1\nArchitecture: amd64\n\n');
             effects.push(command); throw new Error('Observation must not mutate or refresh package metadata');
         } });
-        expect(await backend.observe(step)).toMatchObject({ status: 'unsupported', facts: { requiredFact: 'packageAvailability', package: 'wanted' } });
+        expect(await backend.observe(step)).toMatchObject({ status: 'drifted', facts: { unresolvedPackages: ['wanted'] } });
         metadata = 'empty';
         const unknown = await backend.observe(step);
         expect(unknown).toMatchObject({ status: 'drifted', facts: { unresolvedPackages: ['wanted'] } });
@@ -428,7 +426,7 @@ describe('machine setup native typed effects', () => {
         expect(installed.get('already')).toBe('1');
     });
 
-    it('refuses native locks and unavailable pins or architecture without launching an install or forcing unlock', async () => {
+    it('refuses native locks and architecture and refreshes unavailable pins before a typed refusal without installing', async () => {
         let mode: 'lock' | 'version' | 'architecture' = 'lock';
         const effects: MachineSetupNativeCommand[] = [];
         const step: MachineRecipeStepV1 = { id: 'package', kind: 'package', manager: 'apt', packages: [{ name: 'wanted', version: '2' }] };
@@ -444,10 +442,14 @@ describe('machine setup native typed effects', () => {
         };
         expect(await apply([step], run)).toMatchObject({ status: 'unavailable', reason: 'package_manager_busy' });
         mode = 'version';
-        expect(await apply([step], run)).toMatchObject({ status: 'unsupported', reason: 'required_fact_unavailable' });
+        expect(await apply([step], run)).toMatchObject({ status: 'failed', reason: 'required_fact_unavailable', failure: {
+            kind: 'native_check_unsupported', requiredFact: 'packageVersion',
+        } });
         mode = 'architecture';
         expect(await apply([step], run)).toMatchObject({ status: 'unsupported', reason: 'required_fact_unavailable' });
-        expect(effects).toEqual([]);
+        expect(effects.map(command => ({ executable: command.executable, args: command.args }))).toEqual([
+            { executable: 'apt-get', args: ['update', '--error-on=any'] },
+        ]);
     });
 
     it('creates an exact local account and adds only missing group members, preserving unrelated and primary membership', async () => {
