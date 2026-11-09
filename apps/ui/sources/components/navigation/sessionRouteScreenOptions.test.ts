@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { buildSessionRouteScreenOptions } from './sessionRouteScreenOptions';
+import { t } from '@/text';
 
 /**
  * `session/[id]` is one screen of the root stack (its `_layout` is a Slot), so every Session
@@ -21,7 +22,22 @@ describe('Session route screen options', () => {
     });
 
     it('leaves a Session sub-page that declares its own stack header alone', () => {
-        expect(buildSessionRouteScreenOptions({ childRouteName: 'runs' })).toEqual({});
-        expect(buildSessionRouteScreenOptions({ childRouteName: 'info' })).toEqual({});
+        expect(buildSessionRouteScreenOptions({ childRouteName: 'follow' })).toEqual({});
+    });
+
+    it('names the Info page before its body hydrates instead of exposing the parent route pattern', () => {
+        expect(buildSessionRouteScreenOptions({ childRouteName: 'info' })).toMatchObject({
+            headerTitle: t('sessionInfo.title'),
+        });
+    });
+
+    it.each([
+        ['log', 'sessionLog.title'], ['usage', 'usage.sessionUsage'], ['template', 'botTemplates.title'],
+        ['file', 'common.fileViewer'], ['commit', 'common.commit'], ['message/[messageId]', 'common.message'],
+        ['sharing', 'session.collaboration.title'], ['triggers', 'sessionInfo.title'], ['automations', 'sessionInfo.title'],
+        ['runs', 'session.subagents.panel.title'],
+        ['automations/new', 'sessionInfo.title'], ['automations/when-turn-finishes', 'sessionInfo.title'],
+    ] as const)('names %s before its body or compatibility redirect resolves', (childRouteName, key) => {
+        expect(buildSessionRouteScreenOptions({ childRouteName })).toMatchObject({ headerShown: true, headerTitle: t(key) });
     });
 });

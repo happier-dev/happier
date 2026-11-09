@@ -14,15 +14,24 @@ struct SystemTabItem: Record {
 public final class HappierSystemTabBarModule: Module {
   public func definition() -> ModuleDefinition {
     Name("HappierSystemTabBar")
+    Constants(["isSupported": Self.isSupported])
     View(HappierSystemTabBarView.self) {
       Events("onTabPress", "onSessionNavigate")
       Prop("items") { (view: HappierSystemTabBarView, items: [SystemTabItem]) in view.items = items; view.reconcile() }
       Prop("selectedId") { (view: HappierSystemTabBarView, id: String) in view.selectedId = id; view.reconcile() }
       Prop("hidden") { (view: HappierSystemTabBarView, hidden: Bool) in view.barHidden = hidden; view.reconcile() }
+      Prop("showLabels") { (view: HappierSystemTabBarView, show: Bool) in view.showLabels = show; view.reconcile() }
       Prop("tintColor") { (view: HappierSystemTabBarView, color: UIColor) in view.accent = color; view.reconcile() }
       Prop("sessionSwipeEnabled") { (view: HappierSystemTabBarView, enabled: Bool) in view.sessionSwipeEnabled = enabled; view.reconcile() }
       Prop("sessionNavigationLabels") { (view: HappierSystemTabBarView, labels: [String: String]?) in view.sessionNavigationLabels = labels; view.reconcile() }
     }
+  }
+
+  fileprivate static var isSupported: Bool {
+    #if canImport(UIKit, _version: 9127.0.85)
+    if #available(iOS 27.1, *) { return true }
+    #endif
+    return false
   }
 }
 
@@ -34,6 +43,7 @@ final class HappierSystemTabBarView: ExpoView, UITabBarControllerDelegate {
   var items: [SystemTabItem] = []
   var selectedId = ""
   var barHidden = false
+  var showLabels = true
   var accent: UIColor?
   var sessionSwipeEnabled = false
   var sessionNavigationLabels: [String: String]?
@@ -65,17 +75,21 @@ final class HappierSystemTabBarView: ExpoView, UITabBarControllerDelegate {
     super.willMove(toSuperview: newSuperview)
   }
 
-  private var supportsRail: Bool {
-    #if canImport(UIKit, _version: 9127.0.85)
-    if #available(iOS 27.1, *) { return true }
-    #endif
-    return false
-  }
-
   func reconcile() {
-    guard #available(iOS 18.0, *), supportsRail, !changingHierarchy,
-          let window, !items.isEmpty,
-          items.contains(where: { $0.id == selectedId && !$0.action }) else { return }
+    guard #available(iOS 18.0, *), HappierSystemTabBarModule.isSupported, !changingHierarchy,
+          let window, !items.isEmpty else { return }
+    // A placement change can remove the selected item as its route hides the bar.
+    // Visibility and input must still settle before the next selected item is available.
+    defer {
+      controller?.setTabBarHidden(barHidden, animated: false)
+      if let controller {
+        sessionNavigation.update(bar: controller.tabBar, container: controller.view, content: content?.view,
+                                 swipeEnabled: sessionSwipeEnabled && !barHidden,
+                                 labels: barHidden ? nil : sessionNavigationLabels)
+      }
+    }
+    // JS may select More to host a destination that is no longer pinned.
+    guard items.contains(where: { $0.id == selectedId }) else { return }
     changingHierarchy = true
     defer { changingHierarchy = false }
 
@@ -99,12 +113,6 @@ final class HappierSystemTabBarView: ExpoView, UITabBarControllerDelegate {
       attachContent(controller, in: window)
     }
     controller?.view.tintColor = accent
-    controller?.setTabBarHidden(barHidden, animated: false)
-    if let controller {
-      sessionNavigation.update(bar: controller.tabBar, container: controller.view, content: content?.view,
-                               swipeEnabled: sessionSwipeEnabled && !barHidden,
-                               labels: barHidden ? nil : sessionNavigationLabels)
-    }
   }
 
   @available(iOS 18.0, *)
@@ -112,7 +120,7 @@ final class HappierSystemTabBarView: ExpoView, UITabBarControllerDelegate {
     let previous = Dictionary(uniqueKeysWithValues: tabs.tabs.map { ($0.identifier, $0) })
     let next = items.map { item in
       let tab = previous[item.id] ?? UITab(title: item.title, image: nil, identifier: item.id) { _ in RailContentHost() }
-      tab.title = item.title
+      tab.title = showLabels ? item.title : ""
       tab.image = UIImage(systemName: item.sfSymbol)
       tab.badgeValue = item.badge
       tab.accessibilityLabel = item.accessibilityLabel ?? item.title

@@ -151,6 +151,7 @@ const RootLayoutShell = React.memo(function RootLayoutShell(): React.ReactElemen
         preferredLanguage,
         theme.colors.chrome.header.background,
         theme.colors.chrome.header.foreground,
+        theme.colors.surface.base,
     ]);
     const rootStackRouteOptions = useRootStackRouteOptions();
     const homeScreenOptions = React.useMemo(() => withSessionsFallbackBack(rootStackRouteOptions['home'], 'home-back'), [rootStackRouteOptions]);

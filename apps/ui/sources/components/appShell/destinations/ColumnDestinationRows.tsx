@@ -48,8 +48,7 @@ const PHONE_TAB_BAR_DESTINATION_IDS: ReadonlySet<string> = new Set(TAB_TYPES);
 function selectPhoneLauncherDestinations(catalog: readonly CompactAppDestination[]): readonly CompactAppDestination[] {
     return catalog.filter((destination) => isCompactAppDestinationVisible(destination)
         && !isRailControlDestination(destination)
-        && !PHONE_TAB_BAR_DESTINATION_IDS.has(destination.id)
-        && !(destination.placement.kind === 'rail' && destination.placement.region === 'account'));
+        && !PHONE_TAB_BAR_DESTINATION_IDS.has(destination.id));
 }
 
 const NO_LEADING_ROWS: readonly ColumnLeadingRow[] = Object.freeze([]);

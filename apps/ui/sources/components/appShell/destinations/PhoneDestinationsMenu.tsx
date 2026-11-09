@@ -3,16 +3,16 @@ import { View } from 'react-native';
 
 import { BotsEntrySummary } from '@/components/sessions/bots/BotsEntrySummary';
 import { useBotsSummary } from '@/components/sessions/bots/botsSummary';
-import { TabBadge } from '@/components/ui/navigation/tabBadge/TabBadge';
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
-import { Icon, type IconName } from '@/components/ui/icons/Icon';
+import { Icon } from '@/components/ui/icons/Icon';
 import { NavigationPlacementTabMenu } from '@/components/ui/navigation/NavigationPlacementTabMenu';
 import { useNavigationSurfacePlacement } from '@/components/ui/navigation/useNavigationSurfacePlacement';
 import { resolveTabBarMetrics, type TabBarMetrics } from '@/components/ui/navigation/tabBarMetrics';
 import { CockpitTabBarActionView, type CockpitTabBarTabDefinition } from '@/components/navigation/mobile/chrome/bars/CockpitTabBar';
 import { MainAppTabBar } from '@/components/navigation/mobile/chrome/bars/MainAppTabBar';
-import { useSetting } from '@/sync/domains/state/storage';
-import { resolveNavigationPlacements, type NavigationPlacement } from '@/sync/domains/settings/mobileSurfacePinning';
+import { sfSymbolForCockpitTabIcon } from '@/components/navigation/mobile/chrome/bars/cockpitTabSymbols';
+import { useLocalSetting, useSetting } from '@/sync/domains/state/storage';
+import { readNavigationPlacementPreferences, resolveNavigationPlacements, type NavigationPlacement, type NavigationSurfacePlacementsV1 } from '@/sync/domains/settings/mobileSurfacePinning';
 import { resolveReasonCopy } from '@/sync/domains/surfaces/copy';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { Modal } from '@/modal';
@@ -37,8 +37,15 @@ const NATIVE_ANCHOR_STYLE = { width: 0, height: 0 } as const;
 const HOME_ITEM_ID = 'phone-launcher:home';
 
 function phoneLauncherDefaultPlacement(destination: CompactAppDestination): NavigationPlacement {
-    // A contextual plugin page (owner Q3) waits in Customize until the person places it.
-    return destination.contextual ? 'hidden' : 'overflow';
+    // Contextual pages and Settings wait in Customize; Settings already has its avatar door.
+    return destination.contextual || destination.id === 'settings' ? 'hidden' : 'overflow';
+}
+
+/** The chrome consumes the same placement decision as its launcher, without subscribing to other choices. */
+export function usePhoneLauncherDestinationPinned(destination: CompactAppDestination | null): boolean {
+    return useLocalSetting('navigationSurfacePlacementsV1', React.useCallback((stored: NavigationSurfacePlacementsV1) => destination !== null
+        && resolveNavigationPlacements([{ id: destination.id, defaultPlacement: phoneLauncherDefaultPlacement(destination) }],
+            readNavigationPlacementPreferences(stored, 'phoneLauncher')).effectivePlacements[destination.id] === 'pinned', [destination]));
 }
 
 function phoneLauncherOrder(destinations: readonly CompactAppDestination[]): readonly CompactAppDestination[] {
@@ -49,21 +56,14 @@ function phoneLauncherOrder(destinations: readonly CompactAppDestination[]): rea
     return [...destinations].sort((left, right) => lead(left) - lead(right));
 }
 
-/** A Bots slot on the bar says who wants the person without opening it (lab mnBots A). */
-const BotsBarIcon = React.memo(function BotsBarIcon(props: Readonly<{ icon: IconName; size: number; tintColor: string }>) {
-    const { needsYou } = useBotsSummary();
-    return <>
-        <Icon name={props.icon} size={props.size} color={props.tintColor} />
-        {needsYou > 0 ? <TabBadge variant="dot" tone="attention" testID="tabbar-tab-bots-needs-you" /> : null}
-    </>;
-});
-
-function phoneBarTab(destination: CompactAppDestination): CockpitTabBarTabDefinition<string> {
+function phoneBarTab(destination: CompactAppDestination, botsNeedsYou: number): CockpitTabBarTabDefinition<string> & Readonly<{ sfSymbol: string }> {
     return {
         id: destination.id, label: destination.title,
-        icon: destination.activation === 'botsRoster'
-            ? { render: ({ size, tintColor }) => <BotsBarIcon icon={destination.icon} size={size} tintColor={tintColor} /> }
-            : destination.icon,
+        sfSymbol: sfSymbolForCockpitTabIcon(destination.icon),
+        icon: destination.icon,
+        badge: destination.activation === 'botsRoster'
+            ? botsNeedsYou > 0 ? { kind: 'attention' } : undefined
+            : destination.kind === 'plugin' && destination.badge ? { kind: 'text', value: destination.badge.label } : undefined,
         disabled: destination.availability !== 'available',
         unavailableReason: destination.kind === 'plugin' && destination.availability === 'unavailable'
             ? resolveReasonCopy({ reasonCode: destination.unavailableReason, kind: 'pluginRuntime' }).message : undefined,
@@ -73,8 +73,8 @@ function phoneBarTab(destination: CompactAppDestination): CockpitTabBarTabDefini
 /**
  * The phone's way to every destination its tabs do not show (owner 11-06). The person places each one on
  * the Bar, in More or Hidden (device-local): Bar items ride the floating main bar after its tabs, and More
- * lists Home, what was placed in More, then Customize. The native bar keeps UIKit's own tabs, so there its
- * Bar items lead More. Rows, availability and activation come from the one destination catalog.
+ * lists Home, what was placed in More, then Customize. UIKit and the custom bar consume the same Bar
+ * items. Rows, availability and activation come from the one destination catalog.
  */
 export function usePhoneDestinationsMore(input: Readonly<{ native: boolean }>) {
     const settingsMetrics = resolveTabBarMetrics(useSetting('tabBarSize'), useSetting('tabBarShowLabels'));
@@ -87,20 +87,16 @@ export function usePhoneDestinationsMore(input: Readonly<{ native: boolean }>) {
     const placed = React.useMemo(() => resolveNavigationPlacements(phoneLauncherOrder(destinations).map((destination) => ({
         id: destination.id, destination, defaultPlacement: phoneLauncherDefaultPlacement(destination),
     })), placement.preferences), [destinations, placement.preferences]);
-    const barTabs = React.useMemo(() => input.native ? [] : placed.pinned.map((entry) => phoneBarTab(entry.destination)),
-        [input.native, placed]);
+    const { needsYou } = useBotsSummary(placed.pinned.some(entry => entry.destination.activation === 'botsRoster'));
+    const barTabs = React.useMemo(() => placed.pinned.map((entry) => phoneBarTab(entry.destination, needsYou)), [placed, needsYou]);
 
     const items = React.useMemo((): readonly DropdownMenuItem[] => {
-        // A shortcut in More is dimmed when unavailable and does not repeat why; a pinned one the person
-        // chose keeps its reason.
-        const item = (destination: CompactAppDestination, category: string): DropdownMenuItem => ({
+        // More dims unavailable shortcuts; the bar keeps the reason for an explicitly pinned one.
+        const item = (destination: CompactAppDestination): DropdownMenuItem => ({
             id: destination.id,
             testID: destinationRowTestId(destination),
             title: destination.title,
-            category,
-            subtitle: category === 'pinned' && destination.kind === 'plugin' && destination.availability === 'unavailable'
-                ? resolveReasonCopy({ reasonCode: destination.unavailableReason, kind: 'pluginRuntime' }).message
-                : undefined,
+            category: 'more',
             icon: <Icon name={destination.icon} />,
             rightElement: destination.kind === 'plugin' && destination.badge
                 ? <CompactAppDestinationBadge destination={destination} />
@@ -112,13 +108,12 @@ export function usePhoneDestinationsMore(input: Readonly<{ native: boolean }>) {
         return [
             { id: HOME_ITEM_ID, testID: 'phone-launcher-home', title: t('common.home'), category: 'pinned',
                 icon: <Icon name="house" />, checked: onHome },
-            ...(input.native ? placed.pinned.map((entry) => item(entry.destination, 'pinned')) : []),
-            ...placed.overflow.map((entry) => item(entry.destination, 'more')),
+            ...placed.overflow.map((entry) => item(entry.destination)),
             { id: CUSTOMIZE_ITEM_ID, testID: 'phone-launcher-customize', title: t('navigationPlacement.customize'),
                 category: 'customize', icon: <Icon name="sliders-horizontal" /> },
             ...(pluginPages.item ? [{ ...pluginPages.item, category: 'recovery' }] : []),
         ];
-    }, [currentId, input.native, onHome, placed, pluginPages.item]);
+    }, [currentId, onHome, placed, pluginPages.item]);
 
     const select = React.useCallback((id: string) => {
         setOpen(false);
@@ -135,8 +130,8 @@ export function usePhoneDestinationsMore(input: Readonly<{ native: boolean }>) {
             fireAndForget(import('@/components/ui/navigation/NavigationPlacementCustomizer').then(({ NavigationPlacementCustomizer }) => {
                 Modal.show({ component: NavigationPlacementCustomizer,
                     props: { surfaceId: 'phoneLauncher', items: customizable, testID: 'phone-launcher-customizer',
-                        ...(input.native ? {} : { placementLabels: { pinned: t('navigationPlacement.bar') },
-                            description: t('navigationPlacement.phoneBarDescription') }) } });
+                        placementLabels: { pinned: t('navigationPlacement.bar') },
+                        description: t('navigationPlacement.phoneBarDescription') } });
             }), { tag: 'PhoneDestinationsMenu.customize' });
             return;
         }
@@ -146,7 +141,7 @@ export function usePhoneDestinationsMore(input: Readonly<{ native: boolean }>) {
         activate(destination, { searchScope: scope ? {
             accountId: scope.accountId, serverId: scope.serverId, sessionId: null, machineId: null, rootPath: null,
         } : undefined });
-    }, [activate, destinations, input.native, openHome, pluginPages.select]);
+    }, [activate, destinations, openHome, pluginPages.select]);
 
     const openMenu = React.useCallback(() => setOpen(true), []);
     const available = destinations.length > 0;

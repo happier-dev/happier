@@ -36,7 +36,7 @@ import {
 } from '@/components/workspaceCockpit/session/sessionCockpitState';
 import { parseSessionPaneUrlState, serializeSessionPaneUrlState } from '@/components/sessions/panes/url/sessionPaneUrlState';
 
-import { PhoneMainAppTabBar } from '@/components/appShell/destinations/PhoneDestinationsMenu';
+import { PhoneMainAppTabBar, usePhoneLauncherDestinationPinned } from '@/components/appShell/destinations/PhoneDestinationsMenu';
 import { resolveCurrentAppDestination } from '@/components/appShell/destinations/compactAppDestinationCatalog';
 import { useCompactAppDestinations } from '@/components/appShell/destinations/useCompactAppDestinations';
 import { PHONE_HOME_ROUTE } from '@/components/navigation/shell/PhoneHomeLogoButton';
@@ -150,7 +150,9 @@ export const MobileBottomChromeHost = React.memo(function MobileBottomChromeHost
     const destinationCatalog = useCompactAppDestinations();
     const routeDestination = React.useMemo(() => (typeof anchorPathname === 'string' && anchorPathname !== PHONE_HOME_ROUTE
         ? resolveCurrentAppDestination(destinationCatalog, anchorPathname) : null), [anchorPathname, destinationCatalog]);
-    const sectionPage = anchorPathname === PHONE_HOME_ROUTE || (routeDestination !== null && routeDestination.column !== 'settings');
+    const destinationPinned = usePhoneLauncherDestinationPinned(routeDestination);
+    const sectionPage = anchorPathname === PHONE_HOME_ROUTE
+        || (routeDestination !== null && (routeDestination.column !== 'settings' || destinationPinned));
     // The root route is shared by the tabs, so the remembered tab answers there; any other page is its own destination,
     // and on one that isn't on the bar (More's Home included) no tab claims to be here.
     const selectedDestinationId = anchorPathname === '/' ? null : routeDestination?.id ?? (sectionPage ? PHONE_HOME_ROUTE : null);

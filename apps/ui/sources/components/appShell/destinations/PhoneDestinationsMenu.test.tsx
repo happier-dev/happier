@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { installSessionPaneRuntimeTestHarness } from '@/components/sessions/panes/sessionPaneRuntimeTestHarness';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { normalizePluginUiDestinationBindingV1 } from '@happier-dev/protocol/plugins/ui';
-import { createSessionListRenderableSessionFixture, flushHookEffects, renderScreen } from '@/dev/testkit';
+import { createSessionListRenderableSessionFixture, createSessionViewerFixture, flushHookEffects, renderScreen } from '@/dev/testkit';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { act } from 'react-test-renderer';
 import { storage } from '@/sync/domains/state/storageStore';
@@ -64,7 +64,7 @@ const runtime = installSessionPaneRuntimeTestHarness({
 let projection: PluginUiProjectionModel;
 
 function placement(localId: string, container: 'appPage' | 'rightSidebarTab',
-    extra: Partial<Pick<PluginPage, 'requestedPlacement' | 'disabledReason'>> = {}): PluginUiSurfacePlacementProjection {
+    extra: Partial<Pick<PluginPage, 'requestedPlacement' | 'disabledReason' | 'badge'>> = {}): PluginUiSurfacePlacementProjection {
     const pluginId = container === 'rightSidebarTab' ? 'acme.review' : `acme.${localId}`;
     const binding = normalizePluginUiDestinationBindingV1({
         pluginId, destinationId: localId, rendererId: localId, container, target: { kind: 'app' },
@@ -74,7 +74,8 @@ function placement(localId: string, container: 'appPage' | 'rightSidebarTab',
         id: `surfacePlacement:${pluginId}:${localId}`, pluginId, occurrenceId: `${pluginId}-occurrence`,
         contributionKind: 'surfacePlacement', descriptorId: localId, binding, target: { kind: 'app' },
         renderer: { kind: 'host', rendererId: localId },
-        display: { developerFallback: localId, ...(extra.requestedPlacement ? { placement: extra.requestedPlacement } : {}) },
+        display: { developerFallback: localId, ...(extra.requestedPlacement ? { placement: extra.requestedPlacement } : {}),
+            ...(extra.badge ? { badge: extra.badge } : {}) },
         availability: extra.disabledReason
             ? { state: 'disabled', reason: extra.disabledReason, diagnostics: [] }
             : { state: 'available', reason: 'available', diagnostics: [] },
@@ -82,7 +83,7 @@ function placement(localId: string, container: 'appPage' | 'rightSidebarTab',
         ...(container === 'rightSidebarTab' ? { rightSidebar: { tabId: localId, scopes: ['app'] } } : {}),
     };
 }
-function page(localId: string, extra: Partial<Pick<PluginPage, 'requestedPlacement' | 'disabledReason'>> = {}) {
+function page(localId: string, extra: Partial<Pick<PluginPage, 'requestedPlacement' | 'disabledReason' | 'badge'>> = {}) {
     return placement(localId, 'appPage', extra);
 }
 const RAIL = { requestedPlacement: { kind: 'rail' } } as const;
@@ -157,6 +158,27 @@ describe('PhoneDestinationsMenu', () => {
         setCatalog({ pages: [page('notes', { requestedPlacement: { kind: 'column', column: 'sessions' } })] });
     });
 
+    it('preserves Bots attention and static plugin badges when placed on the native bar', async () => {
+        surfaceState.platformOS = 'ios';
+        setCatalog({ pages: [page('notes', { ...RAIL, badge: { label: 'Ready', tone: 'success' } })],
+            navigationPlacements: { phoneLauncher: { orderedIds: [], placements: { bots: 'pinned', 'plugin:acme.notes:notes': 'pinned' } } } });
+        const bot = createSessionListRenderableSessionFixture({ id: 'needs-person',
+            metadata: { path: '/repo', bot: { kind: 'bot' } },
+            viewer: createSessionViewerFixture({ attention: { needsAttention: true,
+                reasons: ['permission_required'], primary: 'permission_required', presentation: 'full' } }),
+        });
+        storage.setState({ sessionListBotRowsByServerId: { [runtime.serverId]: { [bot.id]: bot } } });
+        const { SystemMobileBottomChrome } = await import('@/components/navigation/mobile/chrome/SystemMobileBottomChrome');
+        const { SystemTabBar } = await import('@/components/navigation/mobile/chrome/SystemTabBar');
+        const screen = await render(<SystemMobileBottomChrome hidden={false} model={{ kind: 'mainAppTabs',
+            props: { activeTab: 'sessions', onTabPress: () => {} } }} />);
+        const nativeItems = () => screen.findByType(SystemTabBar).props.items;
+        expect(nativeItems().find((item: { id: string }) => item.id === 'bots')).toMatchObject({ badge: '' });
+        expect(nativeItems().find((item: { id: string }) => item.id === 'plugin:acme.notes:notes')).toMatchObject({ badge: 'Ready' });
+        await act(async () => storage.setState({ sessionListBotRowsByServerId: {} }));
+        expect(nativeItems().find((item: { id: string }) => item.id === 'bots').badge).toBeUndefined();
+    });
+
     // The trigger is the tab bar's last slot, named More, so the menu rises from it and ends at its edge.
     it('is the tab bar More: named More and rising from its slot', async () => {
         const screen = await renderMenu();
@@ -210,7 +232,7 @@ describe('PhoneDestinationsMenu', () => {
     });
 
     it("honours the launcher's own placements, never the desktop rail's", async () => {
-        surfaceState.platformOS = 'ios';
+        surfaceState.platformOS = 'web';
         setCatalog({
             pages: [page('board')],
             navigationPlacements: {
@@ -220,7 +242,8 @@ describe('PhoneDestinationsMenu', () => {
         });
         const menu = await renderMenu();
         const { pinned = [], more = [] } = groups(menu);
-        expect(pinned).toContain('compact-app-destination:plugin:acme.board:board');
+        expect(menu.findHostByTestId('tabbar-tab-plugin:acme.board:board')).not.toBeNull();
+        expect(pinned).not.toContain('compact-app-destination:plugin:acme.board:board');
         expect(more).toContain('compact-app-destination:friends');
         expect(more).toContain('compact-app-destination:artifacts');
         expect([...pinned, ...more]).not.toContain('compact-app-destination:boards');
@@ -261,16 +284,16 @@ describe('PhoneDestinationsMenu', () => {
     });
 
     it('names why a pinned destination is unavailable, and dims an unavailable one in More without repeating it', async () => {
-        surfaceState.platformOS = 'ios';
+        surfaceState.platformOS = 'web';
         setCatalog({
             pages: [page('pinned', { ...RAIL, disabledReason: 'feature_disabled' }), page('later', { ...RAIL, disabledReason: 'feature_disabled' })],
             navigationPlacements: { phoneLauncher: { orderedIds: [], placements: { 'plugin:acme.pinned:pinned': 'pinned' } } },
         });
         const menu = await renderMenu();
-        const pinned = itemFor(menu, 'compact-app-destination:plugin:acme.pinned:pinned');
-        expect(pinned?.disabled).toBe(true);
-        expect(pinned?.subtitle).toEqual(expect.any(String));
-        expect(pinned?.subtitle).not.toBe('feature_disabled');
+        const pinned = menu.findHostByTestId('tabbar-tab-plugin:acme.pinned:pinned');
+        expect(pinned?.props.disabled).toBe(true);
+        expect(pinned?.props.accessibilityHint).toEqual(expect.any(String));
+        expect(pinned?.props.accessibilityHint).not.toBe('feature_disabled');
         const later = itemFor(menu, 'compact-app-destination:plugin:acme.later:later');
         expect(later?.disabled).toBe(true);
         expect(later?.subtitle).toBeUndefined();
@@ -288,6 +311,18 @@ describe('PhoneDestinationsMenu', () => {
         await select(menu, 'compact-app-destination:plugins');
         await select(menu, 'compact-app-destination:plugin:acme.notes:notes');
         expect(routeState.push.mock.calls.map(([href]) => href)).toEqual(['/plugins', '/plugins/acme.notes/notes']);
+    });
+
+    it('puts Settings on the custom bar when pinned and opens its catalog destination', async () => {
+        setCatalog({ pages: [], navigationPlacements: {
+            phoneLauncher: { orderedIds: [], placements: { settings: 'pinned' } },
+        } });
+        const screen = await renderMenu();
+        const settings = screen.findHostByTestId('tabbar-tab-settings');
+        expect(settings).not.toBeNull();
+        expect(itemFor(screen, 'compact-app-destination:settings')).toBeUndefined();
+        await act(async () => settings?.props.onPress());
+        expect(routeState.push).toHaveBeenLastCalledWith('/settings');
     });
 
     it('opens Home as its own page, marked while it is open', async () => {

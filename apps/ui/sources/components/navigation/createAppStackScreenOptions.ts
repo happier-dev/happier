@@ -34,7 +34,8 @@ export function createAppStackScreenOptions(args: Readonly<{
             backgroundColor: glassSurfaceBackgroundColor(args.theme.colors.surface.base, 'content', true),
         },
         headerStyle: {
-            backgroundColor: args.theme.colors.chrome.header.background,
+            backgroundColor: args.shouldUseCustomHeader ? args.theme.colors.chrome.header.background
+                : glassSurfaceBackgroundColor(args.theme.colors.surface.base, 'content', true),
         },
         headerTintColor: args.theme.colors.chrome.header.foreground,
         headerTitleStyle: {

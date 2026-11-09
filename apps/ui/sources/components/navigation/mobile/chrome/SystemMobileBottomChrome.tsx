@@ -33,6 +33,7 @@ type Publication = Readonly<{ onPresentation: (presentation: TabPresentation) =>
 export function SystemMobileBottomChrome(props: Readonly<{ model: SystemMobileBottomChromeModel; hidden: boolean }>) {
     const [presentation, setPresentation] = React.useState<TabPresentation | null>(null);
     const { theme } = useUnistyles();
+    const showLabels = useSetting('tabBarShowLabels');
     const model = props.model;
     return <>
         {model.kind === 'mainAppTabs' ? <MainPresentation {...model.props} onPresentation={setPresentation} />
@@ -43,7 +44,7 @@ export function SystemMobileBottomChrome(props: Readonly<{ model: SystemMobileBo
                     : model.kind === 'environmentCockpit' ? <EnvironmentPresentation {...model.props} onPresentation={setPresentation} />
                     : model.kind === 'pluginCockpit' ? <PluginDetailPresentation {...model.props} onPresentation={setPresentation} />
                     : <DiscussionPresentation {...model.props} onPresentation={setPresentation} />}
-        {presentation ? <SystemTabBar {...presentation} hidden={props.hidden} tintColor={theme.colors.accent.blue} /> : null}
+        {presentation ? <SystemTabBar {...presentation} showLabels={showLabels} hidden={props.hidden} tintColor={theme.colors.accent.blue} /> : null}
     </>;
 }
 
@@ -51,6 +52,7 @@ function nativeBadge(badge: CockpitTabBadge | Readonly<{ kind: 'dot' }> | undefi
     if (!badge) return undefined;
     if (badge.kind === 'dot' || badge.kind === 'attention') return '';
     if (badge.kind === 'count') return formatBadgeCount(badge.value);
+    if (badge.kind === 'text') return badge.value;
     if (badge.added === 0 && badge.removed === 0) return formatBadgeCount(badge.changedFileCount, 999);
     return [badge.added > 0 ? `+${formatBadgeCount(badge.added, 999)}` : '', badge.removed > 0 ? `−${formatBadgeCount(badge.removed, 999)}` : ''].filter(Boolean).join(' ');
 }
@@ -63,16 +65,21 @@ const MainPresentation = React.memo(function MainPresentation(props: React.Compo
     React.useLayoutEffect(() => {
         const items: SystemTabItem[] = tabs.map(tab => ({ id: tab.key, title: tab.label, sfSymbol: tab.sfSymbol,
             accessibilityLabel: tab.accessibilityLabel, badge: nativeBadge(tab.badge) }));
+        items.push(...more.bar.tabs.map(tab => ({ id: tab.id, title: tab.label, sfSymbol: tab.sfSymbol,
+            accessibilityLabel: tab.unavailableReason ? `${tab.label}, ${tab.unavailableReason}` : tab.accessibilityLabel ?? tab.label,
+            disabled: tab.disabled, badge: nativeBadge(tab.badge) })));
         if (more.available) items.push({ id: 'more', title: t('common.more'), sfSymbol: 'ellipsis', action: true });
-        const selectedId = props.selectedDestinationId ?? props.activeTab;
+        const destinationId = props.selectedDestinationId ?? props.activeTab;
+        const selectedId = items.some(item => item.id === destinationId) ? destinationId : 'more';
         if (selectedId === 'sessions') items.push({ id: 'newSession', title: t('newSession.title'), sfSymbol: 'square.and.pencil', action: true });
         props.onPresentation({ items, selectedId, onPress: id => {
             if (id === 'newSession' && selectedId === 'sessions') { newSessionPress(); return; }
             if (id === 'more') { more.open(); return; }
             const tab = tabs.find(tab => tab.key === id);
             if (tab) props.onTabPress(tab.key);
+            else more.bar.onPress(id);
         } });
-    }, [tabs, newSessionPress, more.available, more.open, props.activeTab, props.selectedDestinationId, props.onTabPress, props.onPresentation]);
+    }, [tabs, newSessionPress, more.available, more.open, more.bar.tabs, more.bar.onPress, props.activeTab, props.selectedDestinationId, props.onTabPress, props.onPresentation]);
     return more.menu;
 });
 

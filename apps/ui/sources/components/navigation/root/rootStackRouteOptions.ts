@@ -3,6 +3,7 @@ import type { ExtendedStackNavigationOptions } from 'expo-router/build/layouts/S
 import { t } from '@/text';
 import { createFriendsStackScreenOptions, createInboxStackScreenOptions } from '@/utils/navigation/createSocialStackScreenOptions';
 import { resolveNewSessionPickerRoutePresentation, resolveNewSessionSecretRequirementRoutePresentation } from '@/components/sessions/new/navigation/newSessionPresentation';
+import { createSessionPageScreenOptions } from '@/components/navigation/sessionRouteScreenOptions';
 
 type StackScreenOptions = ExtendedStackNavigationOptions;
 const MAIN_TAB_STACK_SCREEN_OPTIONS = { animation: 'none' } as const;
@@ -263,6 +264,7 @@ export function createRootStackRouteOptions(newSessionPresentationMode: 'auto' |
         'projects/[workspaceRefId]/memory': options.hiddenHeader,
         'session/recent': options.sessionRecent,
         'session/archived': options.sessionArchived,
+        ...Object.fromEntries(Object.entries(createSessionPageScreenOptions()).map(([name, options]) => [`session/[id]/${name}`, options])),
         'teams/[teamId]/sessions': options.teamSessions,
         'teams/[teamId]/sign-in': options.hiddenHeader,
         'join/[token]': options.hiddenHeader,

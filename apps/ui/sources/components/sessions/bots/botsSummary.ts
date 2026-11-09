@@ -154,11 +154,12 @@ export function useBotActivity(address: SessionAddress) {
 }
 
 /** The loaded-Bots summary, subscribed narrowly: unrelated store changes keep the same object. */
-export function useBotsSummary(): BotsSummary {
+export function useBotsSummary(enabled = true): BotsSummary {
   const serverIds = useBotsHomeServerIds();
-  const isSessionVisible = useSessionRecordingVisibility();
-  const read = React.useMemo(() => createBotsSummaryReader(serverIds, isSessionVisible), [serverIds, isSessionVisible]);
-  return useBotsSelection(serverIds, read, true, undefined, isSessionVisible);
+  const isSessionVisible = useSessionRecordingVisibility(enabled);
+  const read = React.useMemo(() => enabled ? createBotsSummaryReader(serverIds, isSessionVisible) : () => EMPTY_SUMMARY,
+    [enabled, serverIds, isSessionVisible]);
+  return useBotsSelection(serverIds, read, enabled, undefined, isSessionVisible);
 }
 
 /**

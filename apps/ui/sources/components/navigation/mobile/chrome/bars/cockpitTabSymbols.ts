@@ -25,6 +25,7 @@ const COCKPIT_TAB_SYMBOLS: Readonly<Partial<Record<IconName, string>>> = {
     code: 'chevron.left.forwardslash.chevron.right',
     play: 'play',
     'book-bookmark': 'book.closed',
+    gear: 'gearshape',
 };
 
 /** Native presentation of the same semantic icon declared by a cockpit catalog. */

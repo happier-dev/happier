@@ -90,7 +90,8 @@ vi.mock('expo-modules-core', async importOriginal => {
     };
     const Fold = (props: Record<string, unknown>) => React.createElement('NativeFoldObserver', props);
     return { ...original,
-        requireOptionalNativeModule: (name: string) => name === 'HappierSystemTabBar' || name === 'HappierWindowFoldMetrics' ? {} : null,
+        requireOptionalNativeModule: (name: string) => name === 'HappierSystemTabBar' ? { isSupported: true }
+            : name === 'HappierWindowFoldMetrics' ? {} : null,
         requireNativeViewManager: (name: string) => name === 'HappierSystemTabBar' ? Rail : Fold,
     };
 });
@@ -121,7 +122,8 @@ beforeEach(async () => {
     });
     route.params.serverId = connection.home.id;
     await flushHookEffects({ cycles: 3 });
-    storage.setState({ isDataReady: true, settings, localSettings: { ...storage.getState().localSettings, systemTabBarEnabled: true } });
+    storage.setState({ isDataReady: true, settings, localSettings: { ...storage.getState().localSettings,
+        systemTabBarEnabled: true, navigationSurfacePlacementsV1: {} } });
 });
 afterEach(async () => {
     clearSessionNavigationCursor();
@@ -155,6 +157,83 @@ async function createHarness() {
 }
 
 describe('system bottom chrome through the real host', () => {
+    it('updates label visibility without replacing the native bar or losing accessible names', async () => {
+        const h = await createHarness();
+        await h.setEdge('trailing');
+        const bar = h.bars()[0]!;
+        for (const showLabels of [false, true]) {
+            await act(async () => storage.setState({ settings: { ...storage.getState().settings, tabBarShowLabels: showLabels } }));
+            expect(h.bars()[0]).toBe(bar);
+            expect(bar.props.showLabels).toBe(showLabels);
+            expect(bar.props.items.find((item: { id: string }) => item.id === 'sessions')).toMatchObject({
+                title: expect.any(String), accessibilityLabel: expect.any(String),
+            });
+        }
+        expect(native).toEqual({ mounts: 1, unmounts: 0 });
+    });
+
+    it('puts pinned launcher destinations, including Settings, on the native bar and activates them', async () => {
+        storage.setState({ localSettings: { ...storage.getState().localSettings, navigationSurfacePlacementsV1: {
+            phoneLauncher: { orderedIds: ['settings', 'artifacts'], placements: { settings: 'pinned', artifacts: 'pinned', friends: 'hidden' } },
+        } } });
+        const h = await createHarness();
+        await h.setEdge('trailing');
+        const bar = h.bars()[0]!;
+        const ids = () => bar.props.items.map((item: { id: string }) => item.id);
+        expect(ids()).toEqual(['sessions', 'projects', 'inbox', 'workflows', 'settings', 'artifacts', 'more', 'newSession']);
+        expect(bar.props.items.find((item: { id: string }) => item.id === 'settings')).toMatchObject({ sfSymbol: 'gearshape' });
+        await act(async () => bar.props.onTabPress({ nativeEvent: { id: 'settings' } }));
+        expect(navigation.navigate).toHaveBeenLastCalledWith('/settings');
+        route.pathname = '/settings';
+        await h.update();
+        expect(bar.props.hidden).toBe(false);
+        expect(bar.props.selectedId).toBe('settings');
+        await act(async () => storage.setState({ localSettings: { ...storage.getState().localSettings, navigationSurfacePlacementsV1: {
+            phoneLauncher: { orderedIds: [], placements: { settings: 'overflow', artifacts: 'hidden' } },
+        } } }));
+        expect(bar.props.hidden).toBe(true);
+        route.pathname = '/';
+        await h.update();
+        expect(ids()).not.toContain('settings');
+        expect(ids()).not.toContain('artifacts');
+        expect(native).toEqual({ mounts: 1, unmounts: 0 });
+    });
+
+    it('keeps the current page under More when its active pinned destination moves off the bar', async () => {
+        const placeArtifacts = async (placement: 'pinned' | 'overflow' | 'hidden') => {
+            await act(async () => storage.setState({ localSettings: { ...storage.getState().localSettings,
+                navigationSurfacePlacementsV1: { phoneLauncher: { orderedIds: [], placements: { artifacts: placement } } },
+            } }));
+        };
+        await placeArtifacts('pinned');
+        route.pathname = '/artifacts';
+        const h = await createHarness();
+        await h.setEdge('trailing');
+        const bar = h.bars()[0]!;
+        expect(bar.props.selectedId).toBe('artifacts');
+        for (const placement of ['overflow', 'hidden'] as const) {
+            await placeArtifacts(placement);
+            expect(bar.props.items.some((item: { id: string }) => item.id === 'artifacts')).toBe(false);
+            expect(bar.props.selectedId).toBe('more');
+            expect(bar.props.hidden).toBe(false);
+            expect(route.pathname).toBe('/artifacts');
+            await placeArtifacts('pinned');
+            expect(bar.props.selectedId).toBe('artifacts');
+        }
+        expect(navigation.navigate).not.toHaveBeenCalled();
+        expect(navigation.replace).not.toHaveBeenCalled();
+        expect(native).toEqual({ mounts: 1, unmounts: 0 });
+    });
+
+    it.each(['/artifacts', '/home'])('hosts an already unpinned page under More on direct entry: %s', async pathname => {
+        route.pathname = pathname;
+        const h = await createHarness();
+        await h.setEdge('trailing');
+        expect(h.bars()[0]!.props).toMatchObject({ selectedId: 'more', hidden: false });
+        expect(navigation.navigate).not.toHaveBeenCalled();
+        expect(route.pathname).toBe(pathname);
+    });
+
     it('routes native swipes and accessibility steps through the Session order, respecting disabled and hidden input', async () => {
         const serverId = connection!.home.id;
         const sessions = ['newer', 'current', 'older'].map(id => createSessionFixture({ id, serverId }));

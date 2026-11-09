@@ -28,6 +28,7 @@ type NativeProps = ViewProps & Readonly<{
     items: readonly SystemTabItem[];
     selectedId: string;
     hidden: boolean;
+    showLabels: boolean;
     tintColor: string;
     onTabPress: (event: { nativeEvent: { id: string } }) => void;
     sessionSwipeEnabled: boolean;
@@ -35,7 +36,9 @@ type NativeProps = ViewProps & Readonly<{
     onSessionNavigate: (event: { nativeEvent: SystemTabBarSessionNavigationEvent }) => void;
 }>;
 
-export const systemTabBarAvailable = Platform.OS === 'ios' && !!requireOptionalNativeModule('HappierSystemTabBar');
+const nativeModule = Platform.OS === 'ios'
+    ? requireOptionalNativeModule<{ isSupported?: boolean }>('HappierSystemTabBar') : null;
+export const systemTabBarAvailable = nativeModule?.isSupported === true;
 const NativeBar = systemTabBarAvailable ? requireNativeViewManager<NativeProps>('HappierSystemTabBar') : null;
 
 export function SystemTabBar({ onPress, sessionNavigation, ...props }: Omit<NativeProps, 'onTabPress' | 'sessionSwipeEnabled' | 'sessionNavigationLabels' | 'onSessionNavigate'> & Readonly<{

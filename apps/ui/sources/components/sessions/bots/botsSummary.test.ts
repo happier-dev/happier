@@ -15,6 +15,33 @@ import { createBotsPresentationReader, createBotsSummaryReader, useOrderedBots, 
 
 describe('closed Bots entries summary', () => {
   const now = 1_800_000_000_000;
+  it('does not read Bot facts or publish faces while the summary is disabled', async () => {
+    const previousState = storage.getState();
+    const previousServerId = getActiveServerSnapshot().serverId;
+    const home = await upsertAndActivateServer({ serverUrl: 'https://disabled-bots-summary.test' });
+    let reads = 0;
+    const bot = createSessionListRenderableSessionFixture({ id: 'bot', metadata: { path: '/repo', bot: { kind: 'bot' } } });
+    const counted = new Proxy(bot, { get(target, key, receiver) {
+      if (key === 'metadata') reads += 1;
+      return Reflect.get(target, key, receiver);
+    } });
+    let hook: Pick<Awaited<ReturnType<typeof renderHook>>, 'unmount'> | undefined;
+    try {
+      storage.setState({ sessionListBotRowsByServerId: { [home.id]: { bot: counted } } });
+      const result = await renderHook(() => useBotsSummary(false));
+      hook = result;
+      expect(result.getCurrent()).toEqual({ needsYou: 0, faces: [] });
+      expect(reads).toBe(0);
+      await act(async () => storage.setState({ sessionListBotRowsByServerId: { [home.id]: { bot: counted, another: counted } } }));
+      expect(result.getCurrent()).toEqual({ needsYou: 0, faces: [] });
+      expect(reads).toBe(0);
+    } finally {
+      await hook?.unmount();
+      if (previousServerId) await setActiveServerId(previousServerId);
+      await removeServerProfile(home.id);
+      storage.setState(previousState, true);
+    }
+  });
   it('omits recording-private Bots from roster, summary and raw rail pins, then restores them', async () => {
     const previousState = storage.getState();
     const previousServerId = getActiveServerSnapshot().serverId;
