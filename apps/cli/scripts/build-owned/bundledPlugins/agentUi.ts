@@ -37,15 +37,9 @@ import type {
   DescriptorAgentUiProjectionSource,
   DescriptorGeneratedSvgIconPathSource,
   DescriptorGeneratedSvgIconSource,
-  GeneratedAgentUiProjectionSource,
   JsonObject,
   SessionSubagentVisibleMessageResolverSource,
 } from './projectionFacts.ts';
-
-export const GENERATED_AGENT_UI_PROJECTION_SOURCES: readonly GeneratedAgentUiProjectionSource[] = Object.freeze([
-  // Remove this legacy host projection once Qwen ships a first-party plugin.ui.v1 descriptor.
-  { agentId: 'qwen', coreConst: 'QWEN_CORE', uiConst: 'QWEN_UI', renderLines: renderQwenGeneratedUiProjectionLines },
-]);
 
 const AGENT_UI_PROJECTION_ORDER = Object.freeze([
   'claude',
@@ -102,7 +96,7 @@ function renderDescriptorGeneratedSvgPath(path: DescriptorGeneratedSvgIconPathSo
   return `<path ${attributes.join(' ')}/>`;
 }
 
-function renderDescriptorGeneratedSvgIconLines(source: DescriptorGeneratedSvgIconSource): readonly string[] {
+export function renderDescriptorGeneratedSvgIconLines(source: DescriptorGeneratedSvgIconSource): readonly string[] {
   const lines: string[] = [];
   lines.push(`const ${source.constName}: AgentIconSvgXmlResolver = (theme): string => createGeneratedSvgIconXml(`);
   lines.push(`    ${renderTsStringLiteral(source.viewBox)},`);
@@ -122,13 +116,6 @@ export function hasDescriptorFields(value: JsonObject | undefined): value is Jso
 function readDescriptorString(value: JsonObject | undefined, key: string): string | null {
   const property = value?.[key];
   return typeof property === 'string' && property.trim().length > 0 ? property : null;
-}
-
-function readUiDescriptorSvgIconKey(descriptor: AgentUiDescriptor): string | null {
-  const assetId = readJsonObjectProperty(descriptor.assets ?? {}, 'svgIcon')
-    ? readDescriptorString(readJsonObjectProperty(descriptor.assets ?? {}, 'svgIcon') ?? undefined, 'assetId')
-    : null;
-  return assetId ?? descriptor.display.icon?.assetId ?? null;
 }
 
 function assertSafeSvgAttributeValue(value: string, path: string): void {
@@ -166,7 +153,7 @@ function readSvgThemeToken(value: unknown, path: string): string | undefined {
   return value;
 }
 
-function readDescriptorGeneratedSvgIcon(
+export function readDescriptorGeneratedSvgIcon(
   descriptor: AgentUiDescriptor,
   constPrefix: string,
 ): DescriptorGeneratedSvgIconSource | undefined {
@@ -229,7 +216,6 @@ function createDescriptorAgentUiProjectionSource(
   descriptor: AgentUiDescriptor,
 ): DescriptorAgentUiProjectionSource {
   const constPrefix = toAgentConstPrefix(descriptor.agentId);
-  const svgIcon = readDescriptorGeneratedSvgIcon(descriptor, constPrefix);
   const permissionModeMapping = readPermissionModeMapping(pluginPackage, descriptor.agentId);
   return {
     agentId: descriptor.agentId,
@@ -238,19 +224,14 @@ function createDescriptorAgentUiProjectionSource(
     descriptor,
     providerOwnedEnvironmentKeys: readProviderOwnedEnvironmentKeys(pluginPackage, descriptor.agentId),
     ...(permissionModeMapping === undefined ? {} : { permissionModeMapping }),
-    ...(svgIcon === undefined ? {} : { svgIcon }),
   };
 }
 
 function renderDescriptorGeneratedUiProjectionLines(source: DescriptorAgentUiProjectionSource): readonly string[] {
   const { descriptor } = source;
   const agentId = renderTsStringLiteral(descriptor.agentId);
-  const svgIconXmlExpression = source.svgIcon?.constName ?? renderAgentLogoSvgXmlExpression(readUiDescriptorSvgIconKey(descriptor));
+  const svgIconXmlExpression = renderAgentLogoSvgXmlExpression(descriptor.agentId);
   const lines: string[] = [];
-  if (source.svgIcon) {
-    lines.push(...renderDescriptorGeneratedSvgIconLines(source.svgIcon));
-    lines.push('');
-  }
   lines.push(`const ${source.coreConst}: AgentCoreConfig = {`);
   lines.push(`    id: ${agentId},`);
   lines.push(`    displayNameKey: ${renderTsStringLiteral(descriptor.display.nameKey)},`);
@@ -265,7 +246,6 @@ function renderDescriptorGeneratedUiProjectionLines(source: DescriptorAgentUiPro
   lines.push(`    providerOwnedEnvironmentKeys: ${renderTsStringArrayLiteral(source.providerOwnedEnvironmentKeys)},`);
   lines.push(`    cli: buildCatalogAgentCliUiConfig(${agentId}),`);
   lines.push('    permissions: {');
-  lines.push(`        modeGroup: ${renderTsStringLiteral(descriptor.display.permissions.modeGroup)},`);
   lines.push(`        promptProtocol: ${renderTsStringLiteral(descriptor.display.permissions.promptProtocol)},`);
   lines.push('    },');
   lines.push('    sessionModes: {');
@@ -332,65 +312,10 @@ function renderDescriptorGeneratedUiProjectionLines(source: DescriptorAgentUiPro
   return lines;
 }
 
-function renderQwenGeneratedUiProjectionLines(): readonly string[] {
-  return [
-    'const QWEN_CORE: AgentCoreConfig = {',
-    '    id: \'qwen\',',
-    '    displayNameKey: \'agentInput.agent.qwen\',',
-    '    subtitleKey: \'profiles.aiBackend.qwenSubtitleExperimental\',',
-    '    permissionModeI18nPrefix: \'agentInput.codexPermissionMode\',',
-    '    availability: { experimental: true },',
-    '    connectedServices: buildAgentConnectedServicesUiConfig({ agentId: \'qwen\' }),',
-    '    uiConnectedService: { serviceId: null, labelKey: \'agentInput.agent.qwen\', connectRoute: null },',
-    '    flavorAliases: [\'qwen\', \'qwen-code\'],',
-    '    cli: buildCatalogAgentCliUiConfig(\'qwen\'),',
-    '    permissions: {',
-    '        modeGroup: \'codexLike\',',
-    '        promptProtocol: \'codexDecision\',',
-    '    },',
-    '    sessionModes: {',
-    '        kind: getAgentSessionModesKind(\'qwen\'),',
-    '    },',
-    '    model: getAgentModelConfig(\'qwen\'),',
-    '    resume: buildAgentResumeUiConfig({',
-    '        agentId: \'qwen\',',
-    '        uiVendorResumeIdLabelKey: \'sessionInfo.qwenSessionId\',',
-    '        uiVendorResumeIdCopiedKey: \'sessionInfo.qwenSessionIdCopied\',',
-    '    }),',
-    '    toolRendering: {',
-    '        hideUnknownToolsByDefault: true,',
-    '    },',
-    '    tools: buildAgentToolsUiConfig({ agentId: \'qwen\' }),',
-    '    sessionStorage: buildAgentSessionStorageUiConfig({ agentId: \'qwen\' }),',
-    '    ui: {',
-    '        agentPickerIconName: \'code\',',
-    '        cliGlyphScale: 1.0,',
-    '        profileCompatibilityGlyphScale: 1.0,',
-    '    },',
-    '};',
-    '',
-    'const QWEN_UI: AgentUiConfig = {',
-    '    id: \'qwen\',',
-    '    icon: null,',
-    '    svgIconXml: AGENT_LOGO_SVG_XML.qwen ?? null,',
-    '    pickerIconScale: 0.9,',
-    '    tintColor: null,',
-    '    avatarOverlay: {',
-    '        circleScale: 0.35,',
-    '        iconScale: ({ size }: { size: number }) => Math.round(size * 0.22),',
-    '    },',
-    '    cliGlyph: \'Q\',',
-    '};',
-  ];
-}
-
 export function renderUiBundledPluginEntriesTs(params: Readonly<{
   packageNames: readonly string[];
   pluginPackages: readonly BundledPluginPackage[];
 }>): string {
-  const generatedSourcesByAgentId = new Map(
-    GENERATED_AGENT_UI_PROJECTION_SOURCES.map((source) => [source.agentId, source] as const),
-  );
   const descriptorSourcesByAgentId = new Map(
     params.pluginPackages
       .flatMap((entry) => (entry.agentUiDescriptor ? [createDescriptorAgentUiProjectionSource(entry, entry.agentUiDescriptor)] : []))
@@ -405,33 +330,12 @@ export function renderUiBundledPluginEntriesTs(params: Readonly<{
   const bundledAgentIds = new Set(
     params.pluginPackages.flatMap((entry) => (entry.agentId ? [entry.agentId] : [])),
   );
-  const pluginPackageByAgentId = new Map(
-    params.pluginPackages.flatMap((entry) => entry.agentId ? [[entry.agentId, entry] as const] : []),
-  );
   const selectedProjectionSources = AGENT_UI_PROJECTION_ORDER.flatMap((agentId) => {
     if (!bundledAgentIds.has(agentId)) return [];
     const descriptorSource = descriptorSourcesByAgentId.get(agentId);
-    const generatedSource = generatedSourcesByAgentId.get(agentId);
-    if (!descriptorSource && !generatedSource) return [];
-    let projectionLines = descriptorSource
-      ? renderDescriptorGeneratedUiProjectionLines(descriptorSource)
-      : generatedSource?.renderLines() ?? [];
-    const pluginPackage = pluginPackageByAgentId.get(agentId);
-    if (!descriptorSource && generatedSource) {
-      const providerOwnedEnvironmentKeys = pluginPackage
-        ? readProviderOwnedEnvironmentKeys(pluginPackage, agentId)
-        : [];
-      const insertionIndex = projectionLines.findIndex((line) => line.trimStart().startsWith('flavorAliases:'));
-      if (insertionIndex < 0) throw new Error(`Generated UI projection '${agentId}' has no flavorAliases insertion anchor`);
-      projectionLines = [
-        ...projectionLines.slice(0, insertionIndex + 1),
-        `    providerOwnedEnvironmentKeys: ${renderTsStringArrayLiteral(providerOwnedEnvironmentKeys)},`,
-        ...projectionLines.slice(insertionIndex + 1),
-      ];
-    }
-    const permissionModeMapping = descriptorSource
-      ? descriptorSource.permissionModeMapping
-      : pluginPackage ? readPermissionModeMapping(pluginPackage, agentId) : undefined;
+    if (!descriptorSource) return [];
+    let projectionLines = renderDescriptorGeneratedUiProjectionLines(descriptorSource);
+    const permissionModeMapping = descriptorSource.permissionModeMapping;
     if (permissionModeMapping !== undefined) {
       const insertionIndex = projectionLines.findIndex((line) => line.trimStart().startsWith('promptProtocol:'));
       if (insertionIndex < 0) throw new Error(`Generated UI projection '${agentId}' has no permissions insertion anchor`);
@@ -443,20 +347,14 @@ export function renderUiBundledPluginEntriesTs(params: Readonly<{
     }
     return [{
       agentId,
-      coreConst: descriptorSource?.coreConst ?? generatedSource?.coreConst,
-      uiConst: descriptorSource?.uiConst ?? generatedSource?.uiConst,
+      coreConst: descriptorSource.coreConst,
+      uiConst: descriptorSource.uiConst,
       projectionLines,
     }];
   });
   const selectedProjectionSourcesByAgentId = new Map(
     selectedProjectionSources.map((source) => [source.agentId, source] as const),
   );
-  const usesGeneratedSvgIcons = selectedProjectionSources.some((source) =>
-    source.projectionLines.some((line) =>
-      line.includes('AgentIconSvgXmlResolver') || line.includes('createGeneratedSvgIconXml('),
-    ),
-  );
-
   const lines: string[] = [];
   lines.push('/* eslint-disable @typescript-eslint/naming-convention */');
   lines.push('/**');
@@ -471,9 +369,7 @@ export function renderUiBundledPluginEntriesTs(params: Readonly<{
   lines.push('');
   lines.push('import type { AgentCoreConfig, CanonicalAgentId } from \'./registryCore\';');
   lines.push(renderBundledUiDeclarationImportsTs());
-  lines.push(usesGeneratedSvgIcons
-    ? 'import type { AgentIconSvgXmlResolver, AgentUiConfig } from \'./registryUi\';'
-    : 'import type { AgentUiConfig } from \'./registryUi\';');
+  lines.push('import type { AgentUiConfig } from \'./registryUi\';');
   lines.push('import { AGENT_LOGO_SVG_XML } from \'./agentLogoSvgXml\';');
   lines.push('');
   lines.push('import { buildCatalogAgentCliUiConfig } from \'@/agents/registry/buildCatalogAgentCliUiConfig\';');
@@ -485,16 +381,6 @@ export function renderUiBundledPluginEntriesTs(params: Readonly<{
   lines.push('import { getAgentModelConfig, getAgentSessionModesKind } from \'@happier-dev/agents\';');
   lines.push('import { readBundledAgentPresentation } from \'@happier-dev/agents/presentation\';');
   lines.push('');
-  if (usesGeneratedSvgIcons) {
-    lines.push('function normalizeGeneratedSvgXml(xml: string): string {');
-    lines.push('    return xml.replace(/\\s{2,}/g, \' \').trim();');
-    lines.push('}');
-    lines.push('');
-    lines.push('function createGeneratedSvgIconXml(viewBox: string, body: string): string {');
-    lines.push('    return normalizeGeneratedSvgXml(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="${viewBox}">${body}</svg>`);');
-    lines.push('}');
-    lines.push('');
-  }
   for (const source of selectedProjectionSources) {
     lines.push(...source.projectionLines);
     lines.push('');

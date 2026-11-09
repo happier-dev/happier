@@ -148,6 +148,7 @@ import {
   renderProtocolBuiltInLegacyConnectedAccountCompatibilityTs,
   renderProtocolBundledAgentIdentitiesV1Ts,
   renderProtocolSessionPresentationCompatV1Ts,
+  renderProtocolCodexNativeHomePolicyTs,
 } from './bundledPlugins/protocol.ts';
 import {
   buildVisibleMessageDescriptor,
@@ -162,6 +163,7 @@ import {
   toAgentConstPrefix,
 } from './bundledPlugins/agentUi.ts';
 import { renderRetainedUiBundledPluginEntriesTs } from './bundledPlugins/retainedUi.ts';
+import { renderBundledBrandAssetsTs } from './bundledPlugins/brandAssets.ts';
 import {
   renderBundledVoiceEntriesTs,
   renderBundledVoiceSelectionOptionsTs,
@@ -572,6 +574,9 @@ const BUNDLED_FIRST_PARTY_VOICE_PLUGIN_IDS: Readonly<Record<BundledFirstPartyVoi
 const BUNDLED_FIRST_PARTY_VOICE_PACKAGE_IDS = Object.freeze(
   Object.keys(BUNDLED_FIRST_PARTY_VOICE_PLUGIN_IDS) as BundledFirstPartyVoicePackageId[],
 );
+// Presentation/order continuity for collectGeneratedAgentIds and provider
+// registration sorting only. Membership still comes from authored definitions;
+// an unlisted Agent is appended rather than excluded.
 const STABLE_AGENT_ID_ORDER = Object.freeze([
   'claude',
   'codex',
@@ -595,6 +600,9 @@ const STABLE_AGENT_ID_ORDER = Object.freeze([
   'coderabbit',
   'deepsec',
 ] as const);
+// Frozen AgentProviderIdV1 wire vocabulary consumed by the Protocol V1 codec.
+// Modern qualified identities are generated from plugin declarations separately;
+// adding a bundled Agent must not widen this released enum.
 const PROTOCOL_AGENT_PROVIDER_IDS_V1 = Object.freeze([
   'claude',
   'codex',
@@ -1038,7 +1046,6 @@ function normalizeAgentUiDescriptor(value: unknown, descriptorPath: string): Age
       },
       flavorAliases: readStringArray(display, 'flavorAliases', `${descriptorPath}.display`),
       permissions: {
-        modeGroup: readRequiredString(permissions, 'modeGroup', `${descriptorPath}.display.permissions`),
         promptProtocol: readRequiredString(permissions, 'promptProtocol', `${descriptorPath}.display.permissions`),
       },
       ...(sessionModes === undefined ? {} : { sessionModes }),
@@ -1703,8 +1710,11 @@ async function loadPluginAgentPredecessorMessageMetaWriter(
   agentId: string,
 ): Promise<AgentPredecessorMessageMetaWriterImportSource | undefined> {
   // This is not an extension convention. Claude is the sole observed
-  // predecessor metadata consumer; adding another writer needs its own
-  // provenance and generator change instead of silently widening this bridge.
+  // predecessor metadata consumer: generated UI entries supply its legacy
+  // transcript-message defaults. New native Agents use descriptor/native resume
+  // identity and must not acquire a flat writer through this bridge.
+  // Adding another writer needs released provenance and an explicit contract
+  // change instead of silently widening this bridge.
   if (pluginPackageId !== 'claude' || agentId !== 'claude') return undefined;
   const predecessorMessageMetaPath = resolve(
     repoRoot,
@@ -2562,7 +2572,8 @@ async function readSourceProjectionFacts(params: Readonly<{
     params.pluginPackageId,
     'src/agent/definition.ts',
   );
-  const loadedAgentFacts = existsSync(definitionPath)
+  const loadedAgentFacts = readManifestContributionArray(params.manifest, 'agents').length > 0
+    && existsSync(definitionPath)
     ? await loadPluginAgentDefinitionFacts(params.repoRoot, params.pluginPackageId)
     : undefined;
   const agentDefinition = loadedAgentFacts
@@ -2756,8 +2767,33 @@ async function publishSourceAgentDefinitions(
     agentDefinitionsById: definitions.agentDefinitionsById,
     nativeHomeEnvironmentKeys: definitions.nativeHomeEnvironmentKeys,
   });
-  if (options.mode === 'check') assertGeneratedOutputMatches(outPath, out);
-  else publishCoherentProjectionOutputs(options.rootDir, [{ outPath, out }], requireGeneratorPublicationLease(publicationContext));
+  const outputs = [{ outPath, out },
+    ...await collectProtocolCodexNativeHomeCompatibilityOutputs(options.rootDir, definitions.agentIds)];
+  if (options.mode === 'check') {
+    for (const output of outputs) assertGeneratedOutputMatches(output.outPath, output.out);
+  } else publishCoherentProjectionOutputs(options.rootDir, outputs, requireGeneratorPublicationLease(publicationContext));
+}
+
+/** Preserve the existing static Protocol exports from their Codex declaration owner. */
+async function collectProtocolCodexNativeHomeCompatibilityOutputs(
+  repoRoot: string,
+  agentIds: readonly string[],
+): Promise<readonly Readonly<{ outPath: string; out: string }>[]> {
+  if (!agentIds.includes('codex')) return [];
+  return await withTypescriptModuleInspectionSession(async () => {
+    const definitionPath = resolve(repoRoot, 'packages/plugins/codex/src/agent/definition.ts');
+    const definition = readRequiredRecord(await importTypescriptModule(definitionPath), definitionPath);
+    const sharing = readRequiredRecord(definition.AGENT_STATE_SHARING_DESCRIPTOR, definitionPath);
+    const nativeHome = readRequiredRecord(sharing.nativeHome, `${definitionPath}.nativeHome`);
+    return [{
+      outPath: resolve(repoRoot, 'packages/protocol/src/agents/codex/nativeHomePolicy.ts'),
+      out: renderProtocolCodexNativeHomePolicyTs({
+        environmentKey: readRequiredString(nativeHome, 'environmentKey', `${definitionPath}.nativeHome`),
+        defaultRelativePath: readRequiredString(nativeHome, 'defaultRelativePath', `${definitionPath}.nativeHome`),
+        materializedDirectoryName: readRequiredString(nativeHome, 'materializedDirectoryName', `${definitionPath}.nativeHome`),
+      }),
+    }];
+  });
 }
 
 async function readBundledSourceAgentDefinitionProjection(
@@ -2783,6 +2819,7 @@ async function readBundledSourceAgentDefinitionProjection(
       const manifest = prepared?.manifest ?? (existsSync(manifestPath)
         ? normalizePluginManifest(readFileSync(manifestPath), manifestPath, parser)
         : undefined);
+      if (manifest && readManifestContributionArray(manifest, 'agents').length === 0) continue;
       if (!existsSync(definitionPath)) {
         if (manifest && readManifestContributionArray(manifest, 'agents').length > 0) {
           throw new Error(`Missing required agent definition at ${definitionPath}`);
@@ -4589,10 +4626,13 @@ async function generateBundledPluginEntries(
   const packageNames = pluginPackages.map((entry) => entry.packageName);
   const bundledAgentDefinitionProjection = await readBundledSourceAgentDefinitionProjection(options.rootDir, pluginPackages);
   const bundledAgentDefinitionIds = bundledAgentDefinitionProjection.agentIds;
+  const protocolCodexNativeHomeCompatibilityOutputs = await collectProtocolCodexNativeHomeCompatibilityOutputs(
+    options.rootDir, bundledAgentDefinitionIds,
+  );
   const generatedAgentIds = collectGeneratedAgentIds(bundledAgentDefinitionIds);
   const agentDefinitionsById = bundledAgentDefinitionProjection.agentDefinitionsById;
 
-  const { cliOutPath, cliManifestOutPath, uiOutPath, agentPresentationOutPath, uiTranslationsOutPath, uiVoiceEntriesOutPath, protocolVoiceSelectionOptionsOutPath,
+  const { cliOutPath, cliManifestOutPath, uiOutPath, agentLogoSvgOutPath, agentPresentationOutPath, uiTranslationsOutPath, uiVoiceEntriesOutPath, protocolVoiceSelectionOptionsOutPath,
     uiBehaviorOverridesOutPath, sessionAgentBehaviorsOutPath, visibleMessageResolversOutPath,
     uiTranslationKeysOutPath, retiredAgentSettingsOutPath } = resolveGeneratorHostProjectionOutPaths(options.rootDir);
   const retiredPromptAssetPluginDescriptorsOutPath = resolve(
@@ -4685,6 +4725,7 @@ async function generateBundledPluginEntries(
     protocolExternalSessionSourceContributions,
   );
   const uiOut = renderUiBundledPluginEntriesTs({ packageNames, pluginPackages });
+  const agentLogoSvgOut = renderBundledBrandAssetsTs({ rootDir: options.rootDir, pluginPackages });
   const agentPresentationOut = renderBundledAgentPresentationTs(pluginPackages);
   const uiTranslationsOut = renderBundledPluginTranslationsTs(bundledPluginUiTranslations);
   const uiTranslationLocaleOutputs = Object.keys(bundledPluginUiTranslations).sort().map((locale) => ({
@@ -4725,6 +4766,9 @@ async function generateBundledPluginEntries(
     assertGeneratedOutputMatches(cliManifestOutPath, cliManifestOut);
     for (const output of cliManifestAssetOutputs) assertGeneratedOutputMatches(output.outPath, output.out);
     assertGeneratedOutputMatches(agentsOutPath, agentsOut);
+    for (const output of protocolCodexNativeHomeCompatibilityOutputs) {
+      assertGeneratedOutputMatches(output.outPath, output.out);
+    }
     assertGeneratedOutputMatches(agentIdsOutPath, agentIdsOut);
     assertGeneratedOutputMatches(runtimeDescriptorReadersOutPath, runtimeDescriptorReadersOut);
     assertGeneratedOutputMatches(protocolAgentProviderIdsV1OutPath, protocolAgentProviderIdsV1Out);
@@ -4742,6 +4786,7 @@ async function generateBundledPluginEntries(
     );
     assertGeneratedOutputMatches(protocolExternalSessionSourcesOutPath, protocolExternalSessionSourcesOut);
     assertGeneratedOutputMatches(uiOutPath, uiOut);
+    assertGeneratedOutputMatches(agentLogoSvgOutPath, agentLogoSvgOut);
     assertGeneratedOutputMatches(agentPresentationOutPath, agentPresentationOut);
     assertGeneratedOutputMatches(uiTranslationsOutPath, uiTranslationsOut);
     for (const output of uiTranslationLocaleOutputs) {
@@ -4763,6 +4808,7 @@ async function generateBundledPluginEntries(
     { outPath: cliManifestOutPath, out: cliManifestOut },
     ...cliManifestAssetOutputs,
     { outPath: agentsOutPath, out: agentsOut },
+    ...protocolCodexNativeHomeCompatibilityOutputs,
     { outPath: agentIdsOutPath, out: agentIdsOut },
     { outPath: runtimeDescriptorReadersOutPath, out: runtimeDescriptorReadersOut },
     { outPath: protocolAgentProviderIdsV1OutPath, out: protocolAgentProviderIdsV1Out },
@@ -4780,6 +4826,7 @@ async function generateBundledPluginEntries(
     },
     { outPath: protocolExternalSessionSourcesOutPath, out: protocolExternalSessionSourcesOut },
     { outPath: uiOutPath, out: uiOut },
+    { outPath: agentLogoSvgOutPath, out: agentLogoSvgOut },
     { outPath: agentPresentationOutPath, out: agentPresentationOut },
     { outPath: uiTranslationsOutPath, out: uiTranslationsOut },
     ...uiTranslationLocaleOutputs,

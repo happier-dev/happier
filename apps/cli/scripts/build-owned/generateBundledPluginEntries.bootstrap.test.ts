@@ -11,6 +11,31 @@ import { createPackageLayoutSandbox, writeBundledPluginSourceInputs, writeCliBun
 import { runRuntimeConsumedAgentFactsPrivatePhase } from './generateBundledPluginEntries';
 
 describe('bundled plugin generator bootstrap', () => {
+  it('ignores dormant Agent source when the tracked declaration contributes no Agent', async () => {
+    const { repoRoot, happyCliDir, cleanup } = createPackageLayoutSandbox('happier-generator-dormant-agent-');
+    const packageRoot = writeBundledPluginSourceInputs({ repoRoot, pluginId: 'custom-acp' });
+    writeCliBundledHostPackage({ happyCliDir, bundledDependencies: ['@happier-dev/plugins-custom-acp'] });
+    const declarationPath = join(happyCliDir, 'assets/bundled-plugin-manifests/custom-acp.json');
+    mkdirSync(dirname(declarationPath), { recursive: true });
+    mkdirSync(join(packageRoot, 'src/agent'), { recursive: true });
+    writeFileSync(declarationPath, JSON.stringify({
+      ...PLUGIN_MANIFEST,
+      contributes: { ...PLUGIN_MANIFEST.contributes, agents: [] },
+    }));
+    writeFileSync(join(packageRoot, 'src/agent/definition.ts'), `export const AGENT_DEFINITION = ${JSON.stringify(AGENT_DEFINITION)};`);
+    try {
+      await withWorkspaceBundleLock(async lease => {
+        await runRuntimeConsumedAgentFactsPrivatePhase(repoRoot, lease);
+      }, { lockPath: join(repoRoot, 'publication.lock') });
+      const published = readFileSync(join(repoRoot, 'packages/agents/src/generated/bundledAgentDefinitions.ts'), 'utf8');
+      const exports: Record<string, unknown> = {};
+      runInNewContext(transpileModule(published, { compilerOptions: { module: ModuleKind.CommonJS } }).outputText, { exports });
+      expect(exports.BUNDLED_AGENT_DEFINITIONS_BY_ID).toEqual({});
+    } finally {
+      cleanup();
+    }
+  });
+
   it('rebuilds Agent facts from tracked declarations when the generated locator is unparseable', async () => {
     const { repoRoot, happyCliDir, cleanup } = createPackageLayoutSandbox('happier-generator-bootstrap-');
     const packageRoot = writeBundledPluginSourceInputs({ repoRoot, pluginId: 'custom-acp' });
