@@ -7,7 +7,7 @@ import type {
 } from '@happier-dev/protocol/workflows/workflowV1';
 import type { WorkflowInvocationLifecycleV1, WorkflowProgressEnvelopeV1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
 import type { SessionWorkflowAgentStatusV1, SessionWorkflowRunSnapshotV1 } from '@happier-dev/protocol/sessions/work/workflow/sessionWorkflowRunSnapshotV1';
-import { listWorkflowBlockOrdinalsV1 } from '@happier-dev/protocol/workflows/workflowStepLabel';
+import { listWorkflowBlockOrdinalsV1, workflowStepPromptLabel } from '@happier-dev/protocol/workflows/workflowStepLabel';
 import { t } from '@/text';
 import { formatWorkflowConditionSentence, resolveWorkflowConditionHeadline } from '@/components/workflows/presentation/workflowConditionPresentation';
 import { workflowBlockReferenceLabel } from '@/sync/domains/workflows/workflowBlockLabel';
@@ -221,7 +221,8 @@ export function projectWorkflowFlow(
             blockId: block.id,
             kind: 'step',
             editTarget: childEditTarget ?? { kind: 'prompt', blockId: block.id },
-            label: workflowBlockReferenceLabel(block, blockLabels[nodeId]),
+            label: workflowBlockReferenceLabel(block, blockLabels[nodeId]
+              ?? (options.presentation === 'run' ? workflowStepPromptLabel(block) ?? undefined : undefined)),
             parentNodeId,
             observed: false,
             ...resultFacts(block, workflowPath, ordinals),
@@ -288,7 +289,8 @@ export function projectWorkflowFlow(
               blockId: evaluator.id,
               kind: 'evaluator',
               editTarget: childEditTarget ?? { kind: evaluator.kind === 'step' ? 'prompt' : 'block', blockId: evaluator.id },
-              label: workflowBlockReferenceLabel(evaluator, t('workflows.editor.evaluator')),
+              label: workflowBlockReferenceLabel(evaluator, options.presentation === 'run' && evaluator.kind === 'step'
+                ? workflowStepPromptLabel(evaluator) ?? t('workflows.editor.evaluator') : t('workflows.editor.evaluator')),
               parentNodeId: nodeId,
               observed: false,
               ...(ordinals.get(evaluator.id) === undefined ? {} : { stepOrdinal: ordinals.get(evaluator.id)! }),
@@ -415,6 +417,9 @@ export function projectObservedWorkflowFlow(
   return { source: 'observed', ...buildHappierWorkMap({ relationships: 'unknown', nodes: declarations }) };
 }
 
+/** One loop an occurrence sits in: which item it ran for, and that item's name. */
+export type WorkflowFlowRunStateRepetition = Readonly<{ loopNodeId: string; index: number; label: string }>;
+
 /**
  * Run state supplied by the canonical invocation owner. Flow renders exactly
  * what it is handed; it never derives a lifecycle from structure or timing.
@@ -426,6 +431,8 @@ export type WorkflowFlowNodeRunState = Readonly<{
   lifecycle: WorkflowInvocationLifecycleV1;
   /** Scoped occurrence identity, e.g. the current item or iteration. */
   occurrenceLabel?: string;
+  /** The loops this occurrence sits in, outermost first: the coordinates the item selector groups by. */
+  repetitions?: readonly WorkflowFlowRunStateRepetition[];
   attempt?: string;
   /** Worker-recorded timing of this exact physical attempt, absent for unopened/older rows. */
   timing?: WorkflowProgressEnvelopeV1['timing'];

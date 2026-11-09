@@ -10,6 +10,7 @@ import {
 import { useUnistyles } from 'react-native-unistyles';
 
 import { formatHappierWorkMapNodeName, resolveHappierWorkMapNodePosition, type HappierWorkMapDensity } from '@happier-dev/plugin-ui/presentation';
+import { useWorkflowFlowLoopScope } from './useWorkflowFlowLoopScope';
 import { useWorkflowFlowNodeSlots, workflowFlowStyles as styles } from './useWorkflowFlowNodeSlots';
 import { WorkMapView } from '@/components/work/map/WorkMapView';
 
@@ -96,10 +97,20 @@ export function WorkflowFlowView(props: Readonly<{
     const editLabel = editTarget?.kind === 'prompt' ? t('workflows.a11y.editStep') : t('workflows.a11y.editBlock');
     const selectsOccurrence = props.onSelectOccurrence !== undefined;
 
-    const notTaken = React.useMemo(() => listWorkflowFlowNotTakenNodeIds(props.projection, props.runStates),
-        [props.projection, props.runStates]);
+    // A Run's loop draws one item at a time; compact and preview maps keep every occurrence.
+    const loopScope = useWorkflowFlowLoopScope({
+        enabled: selectsOccurrence && !compact && props.preview !== true,
+        projection: props.projection,
+        runStates: props.runStates,
+        selectedInvocationId: props.selectedInvocationId ?? null,
+        invocationStatusContext: props.invocationStatusContext,
+        onSelectOccurrence: props.onSelectOccurrence,
+    });
+    const runStates = loopScope.runStates;
+    const notTaken = React.useMemo(() => listWorkflowFlowNotTakenNodeIds(props.projection, runStates),
+        [props.projection, runStates]);
     const nodeSlots = useWorkflowFlowNodeSlots(props.projection.nodes.map(node => {
-        const occurrences = props.runStates?.get(node.nodeId) ?? [];
+        const occurrences = runStates?.get(node.nodeId) ?? [];
         return {
             node,
             structure: describeNodeStructure(props.projection, node),
@@ -107,7 +118,7 @@ export function WorkflowFlowView(props: Readonly<{
             selectedInvocationId: occurrences.some(state => state.invocationId === props.selectedInvocationId)
                 ? props.selectedInvocationId ?? null : null,
             invocationStatusContext: props.invocationStatusContext,
-            hasRunStates: props.runStates !== undefined,
+            hasRunStates: runStates !== undefined,
             selectsOccurrence,
             onSelectOccurrence: occurrences.length > 1 ? props.onSelectOccurrence : undefined,
             agentMarkForNode: props.agentMarkForNode,
@@ -115,11 +126,16 @@ export function WorkflowFlowView(props: Readonly<{
             preview: props.preview === true,
             notStartedLabel: props.notStartedLabel,
             notTaken: notTaken.has(node.nodeId),
+            loopView: node.kind === 'loop' ? loopScope.loops.get(node.nodeId) : undefined,
+            itemNamedBySelector: occurrences.some(state => state.repetitions?.some(repetition =>
+                (loopScope.loops.get(repetition.loopNodeId)?.items.length ?? 0) > 1) === true),
+            onSelectLoopItem: loopScope.selectItem,
+            onFilterLoopItems: loopScope.filterItems,
             testIDPrefix,
             theme: nodeTheme,
         };
     }));
-    const occurrencesOf = (node: WorkflowFlowNode) => props.runStates?.get(node.nodeId) ?? [];
+    const occurrencesOf = (node: WorkflowFlowNode) => runStates?.get(node.nodeId) ?? [];
 
     return (
         <WorkMapView<WorkflowFlowNode>

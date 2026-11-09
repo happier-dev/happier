@@ -16,8 +16,9 @@ import { WorkflowLifecycleStatus } from '@/components/workflows/presentation/Wor
 import { MeterBar } from '@/components/ui/lists/MeterBar';
 import { formatWorkflowInvocationElapsedLabel } from '@/components/workflows/presentation/workflowUsagePresentation';
 import { describeWorkflowInvocationAttempt, describeWorkflowInvocationLifecycle, workflowLifecycleAwaitsDecision, type WorkflowInvocationLifecycleContext } from '@/components/workflows/presentation/workflowLifecyclePresentation';
-import { resolveWorkStatusTone } from '@/components/work/status/resolveWorkStatusTone';
 import { retainDeep } from '@/sync/domains/state/structuralSharing';
+import { resolveWorkflowFlowOccurrenceStatus, type WorkflowFlowLoopItemFilter, type WorkflowFlowLoopView } from './workflowFlowLoopItems';
+import { WorkflowFlowLoopItemSelector } from './WorkflowFlowLoopItemSelector';
 import type { WorkflowFlowNode, WorkflowFlowNodeRunState } from './workflowFlowProjection';
 
 /**
@@ -176,6 +177,12 @@ type FlowNodeInputs = Readonly<{
     notStartedLabel: string | undefined;
     /** The Run did not take the If alternative this node is, or sits in (`listWorkflowFlowNotTakenNodeIds`). */
     notTaken: boolean;
+    /** A loop's item selection; the node's occurrences are already scoped to the selected item. */
+    loopView: WorkflowFlowLoopView | undefined;
+    /** The selector names the item on show, so a step inside it doesn't repeat that name. */
+    itemNamedBySelector: boolean;
+    onSelectLoopItem: (loopNodeId: string, index: number) => void;
+    onFilterLoopItems: (loopNodeId: string, filter: WorkflowFlowLoopItemFilter) => void;
     testIDPrefix: string;
     theme: Pick<ReturnType<typeof useUnistyles>['theme'], 'colors'>;
 }>;
@@ -235,11 +242,7 @@ function createNodeSlots(props: FlowNodeInputs) {
                 : node.kind === 'if' ? { ...FLOW_NODE_LAYOUT.if, alternatives: t('workflows.map.or') } : FLOW_NODE_LAYOUT[node.kind];
             const layout = props.notTaken ? { ...grammar, muted: true } : grammar;
             // INT I3: the ring and tint come from the shared status tone, never a local colour rule.
-            const toneOf = (state: (typeof occurrences)[number]) => resolveWorkStatusTone({
-                kind: 'workflow_step',
-                facts: { ...props.invocationStatusContext, lifecycle: state.lifecycle,
-                    word: describeWorkflowInvocationLifecycle(state.lifecycle, { ...props.invocationStatusContext, blockKind: node.kind }).label },
-            }).tone;
+            const toneOf = (state: (typeof occurrences)[number]) => resolveWorkflowFlowOccurrenceStatus(state, node.kind, props.invocationStatusContext).tone;
             if (runState !== undefined) return { ...layout, tone: toneOf(runState) };
             // A step run once per item with none selected: the node is the hold (07 §2.3 item 1), so an item
             // that waits for you rings it amber, else a failed item rings it rose; settled items stay neutral.
@@ -266,7 +269,7 @@ function createNodeSlots(props: FlowNodeInputs) {
                             {t('workflows.loop.noWorkflowLimit')}
                         </Text>
                     ) : null}
-                    {runState === undefined || runState.occurrenceLabel === undefined ? null : (
+                    {runState === undefined || runState.occurrenceLabel === undefined || props.itemNamedBySelector ? null : (
                         <Text style={styles.meta}>{runState.occurrenceLabel}</Text>
                     )}
                     {runState?.loopProgress !== undefined ? (
@@ -306,6 +309,18 @@ function createNodeSlots(props: FlowNodeInputs) {
             );
         })(),
         renderDetail: (() => {
+            if (props.loopView !== undefined && props.loopView.items.length > 1) {
+                return (
+                    <WorkflowFlowLoopItemSelector
+                        loopNodeId={node.nodeId}
+                        view={props.loopView}
+                        invocationStatusContext={props.invocationStatusContext}
+                        onSelectItem={props.onSelectLoopItem}
+                        onFilterItems={props.onFilterLoopItems}
+                        testIDPrefix={testIDPrefix}
+                    />
+                );
+            }
             if (!selectsOccurrence || occurrences.length <= 1) return null;
             const retried = occurrences.some((occurrence) => (occurrence.attempt ?? '0') !== '0');
             return (
@@ -390,6 +405,7 @@ export function useWorkflowFlowNodeSlots(inputs: readonly FlowNodeInputs[]): Rea
             ...input,
             node: retainDeep(existing?.inputs.node, input.node),
             occurrences: retainDeep(existing?.inputs.occurrences, input.occurrences),
+            loopView: retainDeep(existing?.inputs.loopView, input.loopView),
             invocationStatusContext: retainDeep(existing?.inputs.invocationStatusContext, input.invocationStatusContext),
         };
         const unchanged = existing !== undefined && existing.language === language && (Object.keys(retained) as (keyof FlowNodeInputs)[])

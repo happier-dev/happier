@@ -20,6 +20,7 @@ import {
     resolveWorkflowFlowScopedNodeId,
     type WorkflowFlowNodeRunState,
     type WorkflowFlowProjection,
+    type WorkflowFlowRunStateRepetition,
 } from '@/components/workflows/flow/workflowFlowProjection';
 
 /**
@@ -636,6 +637,25 @@ export function compareWorkflowOccurrences(
     return a.length - b.length;
 }
 
+/** Which loop items an occurrence sits in, outermost first; loops are keyed by their Flow node. */
+function projectWorkflowFlowRepetitions(
+    occurrence: readonly WorkflowOccurrenceCoordinate[],
+    projection: WorkflowFlowProjection | undefined,
+): readonly WorkflowFlowRunStateRepetition[] {
+    const repetitions: WorkflowFlowRunStateRepetition[] = [];
+    const workflowPath: string[] = [];
+    for (const coordinate of occurrence) {
+        if (coordinate.kind === 'workflow') workflowPath.push(coordinate.blockId);
+        if (coordinate.kind !== 'item' && coordinate.kind !== 'iteration') continue;
+        repetitions.push({
+            loopNodeId: resolveWorkflowFlowScopedNodeId(coordinate.blockId, workflowPath),
+            index: coordinate.index,
+            label: formatWorkflowOccurrenceLabel([coordinate], projection ?? null, 'repetition') ?? String(coordinate.index + 1),
+        });
+    }
+    return repetitions;
+}
+
 /**
  * The run state Flow draws on each authored node: exactly the lifecycles the
  * invocation owner supplied, placed by this structure owner. It never derives a
@@ -659,6 +679,7 @@ export function projectWorkflowFlowRunStates(params: Readonly<{
         const entry = params.structure.get(invocation.id);
         if (entry === undefined || entry.nodeId === null || entry.isFrame) continue;
         const occurrenceLabel = params.formatOccurrence?.(entry.occurrence);
+        const repetitions = projectWorkflowFlowRepetitions(entry.occurrence, params.projection);
         const opened = params.progressByInvocationId?.get(invocation.id);
         const progress = opened?.attempt === invocation.attempt ? opened : undefined;
         const repetition = params.projection?.nodesById.get(entry.nodeId)?.repetition;
@@ -670,6 +691,7 @@ export function projectWorkflowFlowRunStates(params: Readonly<{
             lifecycle: invocation.lifecycle,
             attempt: invocation.attempt,
             ...(occurrenceLabel === undefined ? {} : { occurrenceLabel }),
+            ...(repetitions.length === 0 ? {} : { repetitions }),
             ...(progress?.timing ? { timing: progress.timing } : {}),
             ...(progress?.loopProgress && repetition?.kind === 'items'
                 ? { loopProgress: { ...progress.loopProgress, ...(maxConcurrent === undefined ? {} : { maxConcurrent }) } } : {}),

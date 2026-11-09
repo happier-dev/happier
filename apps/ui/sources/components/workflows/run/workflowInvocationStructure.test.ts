@@ -104,6 +104,21 @@ describe('projectWorkflowInvocationStructure', () => {
         expect(project(leaf.contentRevision, 'unloaded-session', 'External reviewer')).toBe('External reviewer');
         expect(project(leaf.contentRevision, 'external-reviewer', 'Issue #1482', ['assignee'])).toBe('Issue #1482');
     });
+    it('states which loop items an occurrence sits in, for the Map item selector', () => {
+        const definition = definitionOf([{ kind: 'loop', id: 'files', repetition: { kind: 'items',
+            items: { kind: 'literal', value: [] }, execution: 'parallel', failurePolicy: 'collect_outcomes' }, body: [step('inspect')] }]);
+        const loop = child({ id: 'loop', parentRecordId: root.id, memberOrdinal: '0', sequence: '1' });
+        const frame = child({ id: 'frame', parentRecordId: loop.id, memberOrdinal: '1', sequence: '2' });
+        const leaf = child({ id: 'leaf', parentRecordId: frame.id, memberOrdinal: '0', sequence: '3' });
+        const progress: WorkflowProgressEnvelopeV1 = { kind: 'happier.workflow-progress.v1', blockKind: 'loop', attempt: '0',
+            logicalInvocationRecordId: frame.id, invocationPath: { blockId: 'files', scope: [{ kind: 'iteration', blockId: 'files', index: 1 }] },
+            frame: { ownerBlockId: 'files', source: { kind: 'item', index: '1', displayLabel: '#1482' } } };
+        const projection = projectWorkflowFlow(definition);
+        const structure = projectWorkflowInvocationStructure({ definition, invocations: [root, loop, frame, leaf],
+            progressByInvocationId: new Map([[frame.id, progress]]), invocationEvidenceById: new Map([[frame.id, { progress, index: frame }]]) });
+        const runStates = projectWorkflowFlowRunStates({ invocations: [root, loop, frame, leaf], structure, projection });
+        expect(runStates.get('inspect')?.[0]?.repetitions).toEqual([{ loopNodeId: 'files', index: 1, label: '#1482' }]);
+    });
     it('names leaf occurrences from their exact opened item frame and drops stale frame labels', () => {
         const definition = definitionOf([{ kind: 'loop', id: 'files', repetition: { kind: 'items',
             items: { kind: 'literal', value: [] }, execution: 'parallel', failurePolicy: 'collect_outcomes' }, body: [step('inspect')] }]);

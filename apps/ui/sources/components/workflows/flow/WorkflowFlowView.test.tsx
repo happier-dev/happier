@@ -8,6 +8,7 @@ import { renderScreen } from '@/dev/testkit';
 import { WorkflowFlowView } from './WorkflowFlowView';
 import { projectWorkflowFlow } from './workflowFlowProjection';
 import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
+import { WorkflowLifecycleStatus } from '@/components/workflows/presentation/WorkflowLifecycleStatus';
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -101,6 +102,32 @@ describe('WorkflowFlowView accessibility structure', () => {
         expect(occurrences.map((node) => node.props['aria-current'])).toEqual(['page', undefined]);
         await screen.pressByTestIdAsync('flow-node-wait-occurrence-held-2');
         expect(onSelectOccurrence.mock.calls.at(-1)?.[0]).toBe('held-2');
+    });
+
+    it('rings a node whose items wait for you, even when no single item is selected (07 §2.3 item 1)', async () => {
+        const definition: WorkflowDefinitionV1 = { version: 1, inputs: [], defaults: {}, blocks: [
+            { kind: 'wait', id: 'wait', document: { text: 'Continue?', references: [], attachments: [] } },
+        ] };
+        const projection = projectWorkflowFlow(definition);
+        const nodeStyle = async (states: readonly { invocationId: string; lifecycle: 'waiting_for_review' | 'completed'; occurrenceLabel?: string }[]) => {
+            const screen = await renderScreen(React.createElement(WorkflowFlowView, {
+                projection, selectedNodeId: null, selectedInvocationId: null, onSelectOccurrence: vi.fn(),
+                runStates: new Map([['wait', states.map((state) => ({ nodeId: 'wait', ...state }))]]),
+                testIDPrefix: 'flow',
+            }));
+            const raw = screen.findByTestId('flow-node-wait')?.props.style;
+            const style = JSON.stringify(typeof raw === 'function' ? raw({ pressed: false }) : raw);
+            await screen.unmount();
+            return style;
+        };
+        const held = await nodeStyle([{ invocationId: 'held-1', lifecycle: 'waiting_for_review' }]);
+        const settled = await nodeStyle([{ invocationId: 'done-1', lifecycle: 'completed' }]);
+        const items = await nodeStyle([
+            { invocationId: 'done-1', lifecycle: 'completed', occurrenceLabel: 'a' },
+            { invocationId: 'held-1', lifecycle: 'waiting_for_review', occurrenceLabel: 'b' },
+        ]);
+        expect(held).not.toBe(settled);
+        expect(items).toBe(held);
     });
 
     it('exposes every node as a real list item rather than a bare button under a list', async () => {
@@ -233,5 +260,63 @@ describe('WorkflowFlowView map grammar (07 S14)', () => {
             runStates={new Map([['docs', [{ nodeId: 'docs', invocationId: 'd-1', lifecycle: 'running' as const }]]])} notStartedLabel="not started" />);
         expect(screen.findByTestId('flow-node-passed#then-not-taken')).toBeNull();
         expect(screen.findByTestId('flow-node-tag-not-started')).not.toBeNull();
+    });
+});
+
+describe('WorkflowFlowView loop item selector (07 S14)', () => {
+    const definition = {
+        version: 1, inputs: [], defaults: {},
+        blocks: [{ kind: 'loop', id: 'issues', repetition: { kind: 'items', items: { kind: 'literal', value: [] }, execution: 'parallel', failurePolicy: 'collect_outcomes' },
+            body: [step('fix'), step('note')] }],
+    } as unknown as WorkflowDefinitionV1;
+    const lifecycles = ['completed', 'waiting_for_review', 'running'] as const;
+    function statesFor(nodeIds: readonly string[]) {
+        return new Map(nodeIds.map(nodeId => [nodeId, lifecycles.map((lifecycle, index) => ({
+            nodeId, invocationId: `${nodeId}-${index}`, lifecycle, attempt: '0', occurrenceLabel: `Issue ${index + 1}`,
+            repetitions: [{ loopNodeId: 'issues', index, label: `Issue ${index + 1}` }],
+        }))]));
+    }
+    const baseProps = {
+        projection: projectWorkflowFlow(definition),
+        selectedNodeId: null,
+        testIDPrefix: 'flow',
+    } as const;
+
+    it('draws the loop body once for the item that needs you, and swaps it with the selector', async () => {
+        const screen = await renderScreen(React.createElement(WorkflowFlowView, {
+            ...baseProps,
+            selectedInvocationId: null,
+            onSelectOccurrence: vi.fn(),
+            runStates: statesFor(['fix', 'note']),
+        }));
+        expect(screen.findByTestId('flow-node-issues-item-selector-open')?.props.accessibilityLabel).toContain('Issue 2');
+        // The body shows one item, never a row per item.
+        expect(screen.findByTestId('flow-node-fix-occurrences')).toBeNull();
+        expect(screen.findByTestId('flow-node-fix')?.props.disabled).not.toBe(true);
+        await screen.pressByTestIdAsync('flow-node-issues-item-selector-next');
+        expect(screen.findByTestId('flow-node-issues-item-selector-open')?.props.accessibilityLabel).toContain('Issue 3');
+        expect(screen.findAllByType(WorkflowLifecycleStatus).find(node => node.props.testID === 'flow-node-fix-state')?.props.lifecycle).toBe('running');
+    });
+
+    it('follows the selected step into its item and carries an open step to the next item', async () => {
+        const onSelectOccurrence = vi.fn();
+        const screen = await renderScreen(React.createElement(WorkflowFlowView, {
+            ...baseProps,
+            selectedInvocationId: 'fix-0',
+            onSelectOccurrence,
+            runStates: statesFor(['fix', 'note']),
+        }));
+        expect(screen.findByTestId('flow-node-issues-item-selector-open')?.props.accessibilityLabel).toContain('Issue 1');
+        await screen.pressByTestIdAsync('flow-node-issues-item-selector-next');
+        expect(onSelectOccurrence.mock.calls[0]?.[0]).toBe('fix-1');
+    });
+
+    it('keeps every occurrence on a compact map and shows no selector', async () => {
+        const screen = await renderScreen(React.createElement(WorkflowFlowView, {
+            ...baseProps,
+            density: 'compact',
+            runStates: statesFor(['fix', 'note']),
+        }));
+        expect(screen.findByTestId('flow-node-issues-item-selector-open')).toBeNull();
     });
 });

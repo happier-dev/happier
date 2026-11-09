@@ -529,6 +529,7 @@ it('renders For-each value names and stopped occurrence facts through the real R
     }),
   });
   expect(screen.getTextContent()).toContain('#1482');
+  await screen.pressByTestIdAsync('workflow-run-flow-node-files-item-selector-next');
   expect(screen.getTextContent()).toContain('src/main.ts');
   expect(screen.getTextContent()).toContain('Partial findings');
   expect(screen.getTextContent()).toContain(
@@ -2405,8 +2406,13 @@ describe('WorkflowRunContent', () => {
     );
   });
 
-  it('keeps a running Run\'s state and its ordinary-review consequence together in the live outcome',
-    async () => {
+  it.each([
+    ['running', 'running', 'runningStepSentence'],
+    ['running', 'waiting_for_review', 'attentionReviewSentence'],
+    ['running', 'waiting_for_approval', 'attentionApprovalSentence'],
+    ['waiting_for_review', 'waiting_for_review', 'parkedReviewSentence'],
+  ] as const)('explains a %s Run with a %s step through %s (07 §6.1)',
+    async (state, lifecycle, sentenceKey) => {
       const definition = createWorkflowDefinitionFixture({
         blocks: [
           {
@@ -2425,7 +2431,9 @@ describe('WorkflowRunContent', () => {
       });
       const screen = await renderContent({
         definition,
-        run: createWorkflowRunSummaryFixture({ id: 'run-1', state: 'running' }),
+        run: createWorkflowRunSummaryFixture({ id: 'run-1', state }),
+        invocationStructure: new Map([['review', { invocationId: 'review', blockId: 'check', nodeId: 'check',
+          occurrence: [{ kind: 'item', blockId: 'files', index: 1 }], isFrame: false, coverageKind: 'executable' }]]),
         invocations: [
           createWorkflowInvocationIndexFixture({
             id: 'root',
@@ -2438,7 +2446,7 @@ describe('WorkflowRunContent', () => {
             parentRecordId: 'root',
             memberOrdinal: '0',
             sequence: '1',
-            lifecycle: 'waiting_for_review',
+            lifecycle,
           }),
         ],
       });
@@ -2446,9 +2454,12 @@ describe('WorkflowRunContent', () => {
         screen.findByTestId('workflow-run-outcome')?.props.children,
       );
       expect(outcome).toContain('workflows.run.outcomeLine');
-      expect(outcome).toContain('"word":"workflows.runState.running"');
-      expect(outcome).toContain('workflows.run.attentionReviewSentence');
-      expect(outcome).toContain('Check the release');
+      expect(outcome).toContain(`"word":"workflows.runState.${state}"`);
+      expect(outcome).toContain(`workflows.run.${sentenceKey}`);
+      if (sentenceKey !== 'parkedReviewSentence') {
+        expect(outcome).toContain('Check the release');
+        expect(outcome).toContain('workflows.run.occurrenceItem');
+      }
     },
   );
 
@@ -2532,7 +2543,7 @@ describe('WorkflowRunContent', () => {
 
     expect(screen.findByTestId('workflow-run-needs-you')).toBeTruthy();
     expect(screen.findByTestId('workflow-run-needs-you-inv-2')).toBeTruthy();
-    expect(screen.getTextContent()).toContain('workflows.editor.addStep');
+    expect(screen.getTextContent()).toContain('Analyze changes');
     expect(screen.getTextContent()).not.toContain('inv-2');
     expect(screen.findAllByTestId('workflow-run-needs-you-inv-1')).toHaveLength(
       0,
@@ -2573,7 +2584,7 @@ describe('WorkflowRunContent', () => {
       invocationProgressById: new Map([[invocation.id, progress]]),
     });
 
-    expect(screen.getTextContent()).toContain('workflows.editor.addStep');
+    expect(screen.getTextContent()).toContain('Analyze changes');
     expect(screen.getTextContent()).not.toContain('invocation-private-id');
     await openTechnicalDetails(screen);
     expect(screen.getTextContent()).toContain('invocation-private-id');
@@ -2959,23 +2970,18 @@ describe('WorkflowRunContent', () => {
       onSelectInvocation,
     });
 
-    expect(
-      screen.findByTestId(
-        'workflow-run-flow-node-inspect-occurrence-inspect-0',
-      ),
-    ).toBeTruthy();
-    expect(
-      screen.findByTestId(
-        'workflow-run-flow-node-inspect-occurrence-inspect-1',
-      ),
-    ).toBeTruthy();
+    // The Map opens on the item that needs the person, named by the selector.
     expect(screen.getTextContent()).toContain(
       'workflows.run.occurrenceItem:{"number":"2"}',
     );
-    await screen.pressByTestIdAsync(
-      'workflow-run-flow-node-inspect-occurrence-inspect-1',
-    );
+    await screen.pressByTestIdAsync('workflow-run-flow-node-inspect');
     expect(onSelectInvocation).toHaveBeenCalledWith('inspect-1');
+    await screen.pressByTestIdAsync('workflow-run-flow-node-files-item-selector-previous');
+    expect(screen.getTextContent()).toContain(
+      'workflows.run.occurrenceItem:{"number":"1"}',
+    );
+    await screen.pressByTestIdAsync('workflow-run-flow-node-inspect');
+    expect(onSelectInvocation).toHaveBeenCalledWith('inspect-0');
   });
 
   it('gives Activity rows their authored identity before any private detail has been opened', async () => {
@@ -3467,7 +3473,7 @@ describe('WorkflowRunContent', () => {
     expect(empty.findByTestId('workflow-run-invocations-loading')).toBeNull();
     expect(
       empty.findByTestId('workflow-run-invocations-empty')?.props.children,
-    ).toBe('workflows.run.notStarted');
+    ).toBe('workflows.recovery.executionNotStarted');
   });
 
   /**
@@ -3635,7 +3641,7 @@ describe('WorkflowRunContent', () => {
     expect(
       screen.findByTestId('workflow-run-workspace-source')?.props.children,
     ).toEqual(
-      'workflows.workspace.fromStep:{"block":"workflows.editor.addStep · inv-analyze-iteration-7"}',
+      'workflows.workspace.fromStep:{"block":"Analyze the repository · inv-analyze-iteration-7"}',
     );
   });
 
