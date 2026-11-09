@@ -17,6 +17,7 @@ import { PluginMark } from '@/components/settings/plugins/PluginMark';
 import { PLUGINS_APP_ROUTE } from '@/components/settings/plugins/model/pluginsSurfaceRoutes';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { FieldValueItem } from '@/components/ui/forms/FieldValueItem';
+import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
 import { Switch } from '@/components/ui/forms/Switch';
 import { KeyboardStickyFooter } from '@/components/ui/keyboardAvoidance/KeyboardStickyFooter';
 import { PageHeader } from '@/components/ui/layout/PageHeader';
@@ -115,6 +116,7 @@ export const DeploymentEnvironmentDraft = React.memo(
     const platformTarget = props.platformAvailable === true ? platformTargets.find((target) => target.key === targetKey) ?? null : null;
     const onPlatform = platformTarget !== null;
     const [composePath, setComposePath] = React.useState(DEFAULT_COMPOSE_PATH);
+    const [composeDocument, setComposeDocument] = React.useState('');
     const [ref, setRef] = React.useState<string | null>(null);
     const [production, setProduction] = React.useState(props.copyFrom?.environment.protection === 'production');
     const [saving, setSaving] = React.useState(false);
@@ -147,6 +149,7 @@ export const DeploymentEnvironmentDraft = React.memo(
       machines.find(answers) ??
       null;
     const branch = ref ?? source?.defaultRef ?? null;
+    const storedDefinition = source !== null && source.repository === undefined;
     // A Compose Environment runs on the chosen Machine: its Docker host setup is planned once per choice, and a
     // Machine that needs it shows the setup review in place. Saving can wait for it; nothing runs until Apply.
     const host = useDeployHostReadiness(onPlatform ? null : props.lifetime, onPlatform ? null : chosen?.id ?? null);
@@ -174,8 +177,9 @@ export const DeploymentEnvironmentDraft = React.memo(
     const valid =
       name.trim().length > 0 &&
       chosen !== null &&
-      (props.copyFrom !== undefined && props.copyFrom !== null || branch !== null &&
-      (onPlatform || composePath.trim().length > 0));
+      (props.copyFrom !== undefined && props.copyFrom !== null || (storedDefinition
+        ? composeDocument.trim().length > 0
+        : branch !== null && (onPlatform || composePath.trim().length > 0)));
     const { actions, onSaved, onApprovalRequested } = props;
     // A retention choice belongs to the Machine it was made for.
     React.useEffect(() => {
@@ -184,7 +188,7 @@ export const DeploymentEnvironmentDraft = React.memo(
     // A prepared run carries the exact operands it was prepared from; any edit makes it stale.
     React.useEffect(() => {
       setPrepared(null);
-    }, [name, chosen?.id, branch, composePath, production, retention, onPlatform, copyChoices]);
+    }, [name, chosen?.id, branch, composePath, composeDocument, storedDefinition, production, retention, onPlatform, copyChoices]);
     const machineName = (machineId: string) => {
       const machine = (allMachines ?? []).find((entry) => entry.id === machineId);
       return machine ? getMachineDisplayName(machine, allMachines ?? []) : t('approvals.machineNotKnown');
@@ -197,18 +201,19 @@ export const DeploymentEnvironmentDraft = React.memo(
         if (partial.environmentId) onSaved(partial.environmentId, { tab: deploymentPartialRecoveryTab(partial) });
         return;
       }
-      if (!actions || !chosen?.installationId || (!props.copyFrom && !branch) || saving) return;
+      if (!valid || !actions || !chosen?.installationId || saving) return;
       setSaving(true);
       setRefusal(null);
       try {
         if (!prepared) {
           const next = await actions.prepareCreate({
             name: name.trim(),
-            // A platform builds from the repository itself; only a Machine runs a Compose file.
             ...(props.copyFrom && copyChoices ? { copyFrom: {
               environmentId: props.copyFrom.environment.id, expectedRevision: props.copyFrom.environment.revision,
               choices: copyChoices,
-            } } : { definition: onPlatform ? { from: 'repository', ref: branch! } : {
+            } } : { definition: storedDefinition ? {
+              from: 'compose', document: composeDocument, profiles: [], services: [],
+            } : onPlatform ? { from: 'repository', ref: branch! } : {
               from: 'repository', ref: branch!,
               compose: { path: composePath.trim(), profiles: [], services: [] },
             } }),
@@ -434,12 +439,18 @@ export const DeploymentEnvironmentDraft = React.memo(
           ) : null}
           <ItemGroup
             title={t('projects.deployments.whatRunsTitle')}
-            description={props.copyFrom ? undefined : onPlatform
+            description={props.copyFrom || storedDefinition ? undefined : onPlatform
               ? t('projects.deployments.platformLink.platformBuilds')
               : t('projects.deployments.whatRunsDescription')}
           >
             {props.copyFrom ? <Item title={deploymentDefinitionLabel(props.copyFrom.content) ?? t('projects.deployments.whatRunsTitle')}
-              subtitle={props.copyFrom.content.name} mode="info" /> : <>
+              subtitle={props.copyFrom.content.name} mode="info" /> : storedDefinition ? (
+              <Item title={t('projects.deployments.composeFile')} accessoryLayout="stacked" showChevron={false}
+                rightElement={<FieldTextInput testID="project-deployments.draft.composeDocument"
+                  accessibilityLabel={t('projects.deployments.composeFile')} value={composeDocument}
+                  onChangeText={setComposeDocument} multiline growWithText monospace autoCapitalize="none" autoComplete="off" />}
+              />
+            ) : <>
             {onPlatform ? null : <FieldValueItem
               testID="project-deployments.draft.compose"
               title={t('projects.deployments.composeFile')}

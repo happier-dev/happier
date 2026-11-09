@@ -36,6 +36,11 @@ const { createDeploymentTargetsTestPlugin, DEPLOYMENT_TARGETS_TEST_EXECUTION } =
 const { installPortableAccountPluginReleaseForTest } = await import('@/dev/testkit/harness/portableAccountPlugin');
 const { answerExternalActionAccountForHome } = await import('@/dev/testkit/harness/externalActionAccountHttpBoundary');
 const { DeploymentEnvironmentCreateInputV1Schema, DeploymentEnvironmentCreatePreviewV1Schema, DeploymentEnvironmentCreateIntentInputV1Schema, DeploymentTemplateInstantiationPartialV1Schema } = await import('@happier-dev/protocol/deployments/deploymentActionsV1');
+const { ProjectSourceRepositorySelectorV1Schema } = await import('@happier-dev/protocol/projects/sources/projectSourceV1');
+const repository = ProjectSourceRepositorySelectorV1Schema.parse({
+  provider: { id: 'github', kind: 'github', displayName: 'GitHub', baseUrl: 'https://github.com' },
+  repository: { nameWithOwner: 'alice/app', cloneUrl: 'https://github.com/alice/app.git' }, protocol: 'https',
+});
 await import('@/sync/ops/actions/defaultActionExecutor');
 
 describe('Environment draft Machine Home', () => {
@@ -61,7 +66,7 @@ describe('Environment draft Machine Home', () => {
     try {
       homes.answer(serverId, 'GET /v1/projects/sources/source-app', { body: { ok: true, canManage: true, source: {
         id: 'source-app', revision: 3, name: 'App', owner: { kind: 'account', accountId: 'alice' }, audience: [],
-        createdByAccountId: 'alice', defaultRef: 'main' } } });
+        createdByAccountId: 'alice', repository, defaultRef: 'main' } } });
       await answerExternalActionAccountForHome(homes, serverId, { machineId: 'runtime', installationId: 'runtime-installation',
         actionId: 'deployments.environments.create', tokenEpoch: 0, execute: input => {
           authored = DeploymentEnvironmentCreateIntentInputV1Schema.parse(input);
@@ -127,7 +132,7 @@ describe('Environment draft Machine Home', () => {
     try {
       homes.answer(serverId, 'GET /v1/projects/sources/source-app', { body: { ok: true, canManage: true, source: {
         id: 'source-app', revision: 3, name: 'App', owner: { kind: 'account', accountId: 'alice' }, audience: [],
-        createdByAccountId: 'alice', defaultRef: 'main' } } });
+        createdByAccountId: 'alice', repository, defaultRef: 'main' } } });
       await answerExternalActionAccountForHome(homes, serverId, { machineId: 'runtime', installationId: 'runtime-installation',
         actionId: 'deployments.environments.create', tokenEpoch: 0,
         execute: input => {
@@ -239,7 +244,7 @@ describe('Environment draft Machine Home', () => {
     let previewRequests = 0;
     try {
       homes.answer(serverId, 'GET /v1/projects/sources/source-app', { body: { ok: true, canManage: true, source: {
-        id: 'source-app', revision: 3, name: 'App', owner, audience: [], createdByAccountId: 'alice', defaultRef: 'main',
+        id: 'source-app', revision: 3, name: 'App', owner, audience: [], createdByAccountId: 'alice', repository, defaultRef: 'main',
       } } });
       homes.answer(serverId, 'GET /v1/deployments/environments', { body: { ok: true, items: [], nextCursor: null } });
       // The post-create detail is a separate demand; no Environment content is
@@ -349,7 +354,7 @@ describe('Environment draft Machine Home', () => {
     try {
       homes.answer(serverId, 'GET /v1/projects/sources/source-app', { body: { ok: true, canManage: true, source: {
         id: 'source-app', revision: 3, name: 'App', owner: { kind: 'account', accountId: 'alice' }, audience: [],
-        createdByAccountId: 'alice', defaultRef: 'main' } } });
+        createdByAccountId: 'alice', repository, defaultRef: 'main' } } });
       const { ManagedMachineV1Schema } = await import('@happier-dev/protocol/machines/managed/managedMachineV1');
       const allocation = ManagedMachineV1Schema.parse({ id: 'managed-runtime', homeId, custodianAccountId: 'alice',
         controller: { machineId: 'controller', installationId: 'installed' }, enrolledMachineId: 'runtime',
@@ -388,6 +393,48 @@ describe('Environment draft Machine Home', () => {
     } finally { standardCleanup(); account.dispose(); storage.setState(previous); }
   });
 
+  it.each([false, true])('authors a stored Compose definition for a repository-free Project (phone=%s)', async (phone) => {
+    const serverId = await homes.addHome({ name: 'Project', serverUrl: 'https://draft-stored.test', accountId: 'alice',
+      serverIdentityId: `srv_${'c'.repeat(32)}`, currentAccount: true });
+    const account = await captureLazyActionAccountContext(serverId);
+    const previous = storage.getState();
+    let authored: unknown;
+    const document = 'services:\n  web:\n    image: nginx:alpine\n';
+    try {
+      homes.answer(serverId, 'GET /v1/projects/sources/source-app', { body: { ok: true, canManage: true, source: {
+        id: 'source-app', revision: 3, name: 'App', owner: { kind: 'account', accountId: 'alice' }, audience: [],
+        createdByAccountId: 'alice' } } });
+      homes.answer(serverId, 'POST /v1/machines/managed/actions/list', { body: { machines: [] } });
+      await answerExternalActionAccountForHome(homes, serverId, { machineId: 'runtime', installationId: 'runtime-installation',
+        actionId: 'deployments.environments.create', tokenEpoch: 0, execute: input => {
+          authored = DeploymentEnvironmentCreateIntentInputV1Schema.parse(input);
+          return { ok: false, error: 'deployment_unavailable' };
+        } });
+      await publishMachineInventoryForTest(account.accountLifetime.scope,
+        [createMachineFixture({ id: 'runtime', installationId: 'runtime-installation', activeAt: Date.now() })]);
+      const screen = await renderScreen(<DeploymentEnvironmentDraft lifetime={account.accountLifetime} sourceId="source-app"
+        phone={phone} actions={createDeploymentActions(account.accountLifetime, 'source-app')}
+        onApprovalRequested={() => {}} onSaved={() => {}} onDiscard={() => {}} />);
+      const header = () => screen.findAllByType(PageHeader)[0]!;
+      const save = () => phone ? screen.findByTestId('project-deployments.draft.save.phone')!.props : header().props.primaryAction;
+      await act(async () => header().props.titleEditor.onChangeText('Web'));
+      await waitForTestEvent(screen.subscribe, () => screen.findByTestId('project-deployments.draft.composeDocument'), node => node !== null);
+      expect(save().disabled, 'a stored definition needs the person’s Compose document').toBe(true);
+      expect(screen.findByTestId('project-deployments.draft.ref')).toBeNull();
+      const { FieldTextInput } = await import('@/components/ui/forms/FieldTextInput');
+      const field = () => screen.findAllByType(FieldTextInput).find(node => node.props.testID === 'project-deployments.draft.composeDocument')!;
+      await act(async () => field().props.onChangeText(document));
+      expect(save().disabled).toBe(false);
+      await act(async () => save().onPress());
+      await waitForTestEvent(homes.subscribe, () => authored, value => value !== undefined);
+      expect(authored).toMatchObject({ name: 'Web', definition: { from: 'compose', document, profiles: [], services: [] },
+        firstTargetLink: { machines: [{ machineId: 'runtime', installationId: 'runtime-installation' }] } });
+      expect(authored).not.toHaveProperty('definition.ref');
+      expect(authored).not.toHaveProperty('definition.compose');
+      await screen.unmount();
+    } finally { standardCleanup(); account.dispose(); storage.setState(previous); }
+  });
+
   it('starts on an answering Machine, never an unreachable one, and says the typed remedy when the target is unavailable', async () => {
     const serverId = await homes.addHome({ name: 'Project', serverUrl: 'https://draft-reachable.test', accountId: 'alice',
       serverIdentityId: `srv_${'r'.repeat(32)}`, currentAccount: true });
@@ -398,7 +445,7 @@ describe('Environment draft Machine Home', () => {
     try {
       homes.answer(serverId, 'GET /v1/projects/sources/source-app', { body: { ok: true, canManage: true, source: {
         id: 'source-app', revision: 3, name: 'App', owner: { kind: 'account', accountId: 'alice' }, audience: [],
-        createdByAccountId: 'alice', defaultRef: 'main' } } });
+        createdByAccountId: 'alice', repository, defaultRef: 'main' } } });
       homes.answer(serverId, 'POST /v1/machines/managed/actions/list', { body: { machines: [] } });
       await answerExternalActionAccountForHome(homes, serverId, { machineId: 'here', installationId: 'here-installation',
         actionId: 'deployments.environments.create', tokenEpoch: 0,
@@ -451,7 +498,7 @@ describe('Environment draft Machine Home', () => {
     try {
       homes.answer(serverId, 'GET /v1/projects/sources/source-app', { body: { ok: true, canManage: true, source: {
         id: 'source-app', revision: 3, name: 'App', owner: { kind: 'account', accountId: 'alice' }, audience: [],
-        createdByAccountId: 'alice', defaultRef: 'main' } } });
+        createdByAccountId: 'alice', repository, defaultRef: 'main' } } });
       await answerExternalActionAccountForHome(homes, serverId, { machineId: 'runtime', installationId: 'runtime-installation',
         actionId: 'deployments.environments.create', tokenEpoch: 0,
         execute: input => {
