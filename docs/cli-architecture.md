@@ -6394,6 +6394,13 @@ including URL-less workers. Raw listener inventory remains available to Processe
 Guard and Provider discovery. A failed Open retains the endpoint owner's typed
 reason rather than replacing it with a generic unknown-scheme result.
 
+An admitted guest Account's launcher read uses the existing Machine Service
+disclosure owner to show only its own managed Workspace Services, including
+their native control targets. This metadata read excludes the Machine owner's
+listener inventory, declarations and private preview registrations. Credential
+reads and Service control retain their own admission and approval paths. This
+unreleased 0.3 correction needs the updated daemon; no wire format changes.
+
 The first launcher read discovers its requested workspace roots. Later ordinary
 reads project those admitted observations without repeating discovery. Explicit Machine scope discovers declared Services without
 walking package trees or offering automatic package-script suggestions. Workspace

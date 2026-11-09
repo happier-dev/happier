@@ -19,7 +19,7 @@ import type { RpcHandlerContext, RpcHandlerRegistrar } from '@/api/rpc/types';
 import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
 import { authorizeMachineRpcRequest } from '@/api/machine/machineRpcAuthorization';
 import { createLocalServiceInventoryRegistry } from '@/daemon/local/services/inventory/registry';
-import { createLocalServicePreviewRegistry } from '@/daemon/local/services/preview/registry';
+import { createLocalServicePreviewRegistry, registerLocalServicePreview } from '@/daemon/local/services/preview/registry';
 import { createLocalServiceLauncherFeed } from '@/daemon/local/services/launch/feed';
 import { createLocalServiceLauncherRoutes } from '@/daemon/local/services/launch/routes';
 import { createLocalServiceActionRoutes } from '@/daemon/local/services/actions/routes';
@@ -35,8 +35,17 @@ import { isApprovalRequiredByActionsSettings } from '@happier-dev/protocol/actio
 import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
 import { discoverLocalServiceRunTargets } from '@/daemon/local/services/launch/runTargets';
 import { createManagedServicesOwner } from '@/plugins/runtime/invocation/services/managedServicesOwner';
+import { DaemonLocalServiceLauncherSnapshotResponseV1Schema } from '@happier-dev/protocol/local/services/launcher/v1';
+import { fetchLocalServiceLauncherSnapshotViaMachineRpc } from '../../../../ui/sources/sync/domains/local/services/launch/machineRpc';
+
+const launcherReadTransport = vi.hoisted(() => vi.fn());
+// Only the UI's remote Machine transport is replaced; admission, handler, feed,
+// native Service ownership and both wire decoders remain real.
+vi.mock('../../../../ui/sources/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({
+    machineRpcWithServerScope: launcherReadTransport,
+}));
 import { createManagedServiceProcessSupervisorHost } from '@/plugins/runtime/invocation/services/managedProcessSupervisor';
-import { authorizeResolvedProjectExecLaunchForHost, createProjectNativeEnvironmentIoForHost } from '@/plugins/runtime/invocation/services/exec';
+import { authorizeResolvedProjectExecLaunchForHost, createProjectNativeToolchainIoForHost } from '@/plugins/runtime/invocation/services/exec';
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 import { SOCKET_RPC_EVENTS, type SocketRpcMachineAdmissionContextV1 } from '@happier-dev/protocol/socketRpc';
 import { createLocalServicesDaemonRuntime } from '@/daemon/local/services/runtime';
@@ -242,7 +251,7 @@ describe('daemon local services machine rpc handlers', () => {
     });
 
     it.each([undefined, 'managed_bindings'] as const)(
-        'refuses foreign requester disclosure of the private accepted Project feed (projection=%s)',
+        'admits launcher reads once and discloses only the guest requester own managed Services (projection=%s)',
         async projection => {
             const root = await mkdtemp(join(tmpdir(), 'happier-private-project-feed-'));
             const owner = createManagedServicesOwner({
@@ -254,44 +263,66 @@ describe('daemon local services machine rpc handlers', () => {
             try {
                 await mkdir(join(root, '.happier'));
                 await writeFile(join(root, '.happier', 'project.json'), JSON.stringify({
-                    version: 1, services: { 'private-web': { source: { kind: 'command', command: 'echo private' } } },
+                    version: 1, services: {
+                        'private-web': { source: { kind: 'command', command: 'echo private' } },
+                        'requester-web': { source: { kind: 'command', command: 'echo requester' } },
+                    },
                 }));
                 const workspace = { id: 'private-workspace', serverId: 'private-home', machineId: 'machine_1',
                     rootPath: root, createdAtMs: 1, projectKey: 'private-project' };
                 const declaration = { workspaceRefId: workspace.id, selection: { kind: 'manifest' as const, name: 'private-web' } };
-                const handle = await owner.superviseProject({ kind: 'workspace',
-                    workspace, declaration, cwd: root, serviceId: 'private-native-service', specIdentity: 'private-native-effect',
-                    requester: { serverId: workspace.serverId, accountId: 'custodian', machineId: workspace.machineId,
+                const supervise = (serviceId: string, accountId: string) => owner.superviseProject({
+                    kind: 'workspace',
+                    workspace, declaration: accountId === 'custodian' ? declaration : {
+                        workspaceRefId: workspace.id, selection: { kind: 'manifest', name: 'requester-web' },
+                    }, cwd: root, serviceId, specIdentity: 'private-native-effect',
+                    requester: { serverId: workspace.serverId, accountId, machineId: workspace.machineId,
                         installationId: 'installation_1' }, isCurrent: () => true,
                     processSpec: { startupTimeoutMs: 1_000, mode: { kind: 'native',
-                        instance: { adapter: { pluginId: 'private-native', localId: 'web' }, nativeResourceId: 'private-resource' },
+                        instance: { adapter: { pluginId: 'private-native', localId: 'web' }, nativeResourceId: serviceId },
                         // Native inspection and termination are external IO; all owner/feed logic remains real.
                         lifecycle: { inspect: async () => ({ phase: 'running', readiness: 'not_reported', endpoint: 'http://127.0.0.1:43170' }),
                             stop: async () => ({ status: 'stopped' }) },
                     } },
                     authorizeLaunch: ({ signal }) => authorizeResolvedProjectExecLaunchForHost({ signal, assertCurrent() {},
-                        projectLaunch: { status: 'ready', reviewedEffectDigest: 'private-native-effect', environment: {
+                        projectLaunch: { status: 'ready', reviewedEffectDigest: 'private-native-effect', toolchain: {
                             selection: { kind: 'host' }, root, platform: process.platform,
-                            io: createProjectNativeEnvironmentIoForHost({ resolveTool: async () => null }),
+                            io: createProjectNativeToolchainIoForHost({ resolveTool: async () => null }),
                         } }, launch: { command: process.execPath, args: [], cwd: root, env: {} },
                     }),
                 });
+                const handle = await supervise('private-native-service', 'custodian');
+                const requesterHandle = await supervise('requester-native-service', 'foreign-account');
+                expect(requesterHandle.serviceId).not.toBe(handle.serviceId);
+                expect(requesterHandle.requester.accountId).toBe('foreign-account');
                 const runTargets = await discoverLocalServiceRunTargets({ roots: [], acceptedWorkspaceRefs: [workspace] });
                 const acceptedDeclaration = runTargets.find(target => 'declaration' in target
                     && target.declaration.selection.kind === 'manifest' && target.declaration.selection.name === 'private-web');
                 if (!acceptedDeclaration) throw new Error('The accepted private Project fixture did not produce its declaration');
+                const previewRegistry = createLocalServicePreviewRegistry();
+                expect(registerLocalServicePreview(previewRegistry, {
+                    previewId: 'custodian-private-preview', machineId: workspace.machineId,
+                    owner: { kind: 'user', id: 'custodian' },
+                    serviceTarget: { kind: 'managed_service', machineId: workspace.machineId,
+                        workspaceId: workspace.id, managedServiceId: requesterHandle.instanceId, cwd: root,
+                        declaration: requesterHandle.declaration },
+                    target: { scheme: 'http', host: '127.0.0.1', port: 43170 },
+                    initialPath: { pathname: '/private', search: '' },
+                    display: { title: 'Custodian private preview', addressLabel: 'localhost:43170' }, originMode: 'host',
+                }).ok).toBe(true);
                 const feed = createLocalServiceLauncherFeed({ machineId: workspace.machineId,
-                    inventoryRegistry: createLocalServiceInventoryRegistry(), previewRegistry: createLocalServicePreviewRegistry(),
+                    inventoryRegistry: createLocalServiceInventoryRegistry(), previewRegistry,
                     projectManagedServices: owner,
                     runTargets,
                 });
                 let current = true;
+                let verificationRequests = 0;
                 const rpc = new RpcHandlerManager({ scopePrefix: workspace.machineId, localMachineId: workspace.machineId,
                     encryptionMode: 'plain', logger() {}, authorizeRequest: request => authorizeMachineRpcRequest(request, {
                         machineId: workspace.machineId, resolveCustodianAccountId: async () => 'custodian',
                         resolveInstallationId: () => 'installation_1',
                         // Only the current Home admission network boundary is substituted.
-                        verifyMachineAdmission: async () => current,
+                        verifyMachineAdmission: async () => { verificationRequests++; return current; },
                     }) });
                 const boundCredential = { accountId: 'custodian' };
                 registerDaemonLocalServicesMachineRpcHandlers(rpc, { ...boundCredential,
@@ -309,14 +340,44 @@ describe('daemon local services machine rpc handlers', () => {
                     ...(projection ? [] : [expect.objectContaining({ id: acceptedDeclaration.id, declaration,
                         workspace: expect.objectContaining({ workspaceId: workspace.id }) })]),
                 ]) } };
-                expect(await rpc.handleRequest(request)).toMatchObject(visible);
+                const custodianResponse = await rpc.handleRequest(request);
+                expect(custodianResponse).toMatchObject(visible);
+                expect(DaemonLocalServiceLauncherSnapshotResponseV1Schema.parse(custodianResponse).snapshot.targets
+                    .find(target => target.id === requesterHandle.serviceId)?.browserTarget)
+                    .toMatchObject({ targetId: 'custodian-private-preview' });
+                expect(verificationRequests).toBe(1);
                 expect(await rpc.invokeLocal(RPC_METHODS.DAEMON_LOCAL_SERVICES_LAUNCHER_SNAPSHOT, params)).toMatchObject(visible);
                 expect(await rpc.handleRequest({ method: request.method, params })).toMatchObject(visible);
                 current = false;
                 expect(await rpc.handleRequest(request)).toMatchObject({ errorCode: RPC_ERROR_CODES.FORBIDDEN });
                 current = true;
-                expect(await rpc.handleRequest({ ...request, machineAdmission: { ...machineAdmission,
-                    actorAccountId: 'foreign-account', role: 'use' } })).toMatchObject({ error: 'requester_credentials_unavailable' });
+                verificationRequests = 0;
+                let response: unknown;
+                launcherReadTransport.mockImplementation(async ({ method, payload }: { method: string; payload: unknown }) => {
+                    response = await rpc.handleRequest({ ...request, method: `${workspace.machineId}:${method}`, params: payload,
+                        machineAdmission: { ...machineAdmission, actorAccountId: 'foreign-account', role: 'use' } });
+                    return response;
+                });
+                const uiRead = await fetchLocalServiceLauncherSnapshotViaMachineRpc({ ...params, scope: 'workspace',
+                    accountId: 'foreign-account', serverId: workspace.serverId });
+                const decoded = DaemonLocalServiceLauncherSnapshotResponseV1Schema.safeParse(response);
+                expect(decoded.success, JSON.stringify(decoded.success ? null : {
+                    response, issues: decoded.error.issues.map(issue => ({ code: issue.code, path: issue.path })),
+                })).toBe(true);
+                expect(uiRead).toMatchObject({ ok: true, snapshot: { machineId: workspace.machineId } });
+                if (!decoded.success) throw new Error('The real launcher read response must satisfy the UI decoder');
+                expect(decoded.data.snapshot.machineId).toBe(workspace.machineId);
+                expect(decoded.data.snapshot.targets).toEqual([expect.objectContaining({
+                    id: requesterHandle.serviceId, startedByAccountId: 'foreign-account',
+                    sourceClass: { kind: 'managed_service', managedServiceId: requesterHandle.instanceId },
+                    actions: expect.arrayContaining(['manage']),
+                })]);
+                expect(decoded.data.snapshot.targets[0]).not.toHaveProperty('browserTarget');
+                expect(decoded.data.snapshot.targets[0]?.actions).not.toContain('open_preview');
+                expect(verificationRequests).toBe(1);
+                expect(DaemonLocalServiceLauncherSnapshotResponseV1Schema.parse(await rpc.handleRequest({
+                    ...request, machineAdmission: { ...machineAdmission, actorAccountId: 'unrelated-account', role: 'use' },
+                })).snapshot.targets).toEqual([]);
             } finally {
                 await owner.dispose();
                 await rm(root, { recursive: true, force: true });

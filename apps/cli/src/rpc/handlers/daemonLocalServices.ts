@@ -158,7 +158,12 @@ export function registerDaemonLocalServicesMachineRpcHandlers(
             RPC_METHODS.DAEMON_LOCAL_SERVICES_LAUNCHER_SNAPSHOT,
             async (raw: unknown, context): Promise<DaemonLocalServiceLauncherSnapshotResponseV1> => {
                 const request = DaemonLocalServiceLauncherSnapshotRequestV1Schema.parse(raw);
-                await assertRequesterRead(context);
+                const requesterAccountId = await assertLocalServiceReadCustody({
+                    accountId: options.accountId, machineId: options.machineId ?? '', context,
+                }, request.startReview ? undefined : true);
+                const requesterManagedServices = requesterAccountId && options.serverId
+                    ? { accountId: requesterAccountId, serverId: options.serverId } : undefined;
+                if (requesterAccountId && !requesterManagedServices) throw new Error('requester_credentials_unavailable');
                 const review = request.startReview;
                 const prepare = options.localServicesLauncher?.prepareStartApproval;
                 let startReview: DaemonLocalServiceLauncherSnapshotResponseV1['startReview'];
@@ -176,7 +181,7 @@ export function registerDaemonLocalServicesMachineRpcHandlers(
                             method: RPC_METHODS.DAEMON_LOCAL_SERVICES_LAUNCHER_SNAPSHOT, isAlias: false, input: raw, ingress: context });
                         startReview = await prepare(review.request, context, actionContext,
                             (actionId, input) => executor.execute(actionId, input, actionContext));
-                        await assertRequesterRead(context);
+                        context.signal.throwIfAborted();
                     }
                 }
                 const routes = requireLauncherRoutes(options);
@@ -185,6 +190,7 @@ export function registerDaemonLocalServicesMachineRpcHandlers(
                 // project root. Dropping these here was the precise plumbing break that made
                 // per-request scope structurally impossible.
                 const feedRequest = {
+                    ...(requesterManagedServices ? { requesterManagedServices } : {}),
                     ...(request.projection ? { projection: request.projection } : {}),
                     ...(request.sessionId ? { sessionId: request.sessionId } : {}),
                     ...(request.scope ? { scope: request.scope } : {}),
@@ -193,7 +199,7 @@ export function registerDaemonLocalServicesMachineRpcHandlers(
                 const snapshot = await routes.getSnapshot(
                     Object.keys(feedRequest).length > 0 ? feedRequest : undefined,
                 );
-                await assertRequesterRead(context);
+                context?.signal.throwIfAborted();
                 return DaemonLocalServiceLauncherSnapshotResponseV1Schema.parse({
                     protocolVersion: 1,
                     snapshot,

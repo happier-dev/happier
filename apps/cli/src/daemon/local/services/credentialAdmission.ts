@@ -23,7 +23,11 @@ export async function assertLocalServiceCredentialAdmission(input: Readonly<{
     }
 }
 
-export async function assertLocalServiceReadCustody(input: LocalServiceCredentialScope): Promise<void> {
+export async function assertLocalServiceReadCustody(
+    input: LocalServiceCredentialScope,
+    /** Host-only launcher read; credential-bearing callers retain custodian scope. */
+    requesterManagedServices?: true,
+): Promise<string | undefined> {
     const context = input.context;
     // Local calls use the daemon's own credentials. Transport authority is host-private.
     if (!context?.machineAdmission && !context?.authorization && !context?.transportRequestId) return;
@@ -32,11 +36,14 @@ export async function assertLocalServiceReadCustody(input: LocalServiceCredentia
         && context.workspaceSyncSourceExecution?.originalActionEnvelope
         ? readRequesterAccountActionContext(context.callerInputAuthorization) : null;
     const privateMove = requester?.authorization.binding.accountId === admission?.actorAccountId && await requester?.isCurrent();
-    if (!input.accountId || !admission || admission.actorAccountId !== input.accountId && !privateMove
+    const requesterOnly = requesterManagedServices === true && admission
+        && admission.actorAccountId !== input.accountId && !privateMove;
+    if (!input.accountId || !admission || admission.actorAccountId !== input.accountId && !privateMove && !requesterOnly
         || admission.machineId !== input.machineId || context.signal.aborted
         || !context.verifyMachineAdmissionCurrent) {
         throw new Error('requester_credentials_unavailable');
     }
+    return requesterOnly ? admission.actorAccountId : undefined;
 }
 
 type LocalServiceCredentialScope = Readonly<{

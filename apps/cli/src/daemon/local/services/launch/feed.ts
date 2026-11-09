@@ -7,6 +7,7 @@ import type { LocalServiceInventoryRegistry } from '../inventory/registry';
 import type { NormalizedLocalServiceInventoryEntry } from '../inventory/scanner';
 import { buildLocalServicePreviewBrowserTarget, listLocalServicePreviewResources, type LocalServicePreviewRegistry } from '../preview/registry';
 import { readProjectManagedServicePreviewEndpoint } from '../preview/projectEndpoint';
+import { selectVisibleMachineProjectServices } from './machineServiceDisclosure';
 import type { LocalServiceLauncherRunTarget, LocalServiceRunTargetDiscoveryOptions } from './runTargets';
 import type { LocalServiceLauncherHistoryStore } from './leaves';
 import { buildLocalServiceLauncherSnapshot, formatLocalServiceLauncherTitle } from './suggestions';
@@ -21,6 +22,8 @@ export type LocalServiceLauncherFeedSnapshotRequest = Readonly<{
     /** Host-only mutation read: an unresolved Workspace must not broaden to Machine scope. */
     requireWorkspaceScope?: true;
     projection?: 'managed_bindings';
+    /** Host-private Home admission; never accepted from launcher wire operands. */
+    requesterManagedServices?: Readonly<{ serverId: string; accountId: string }>;
     /** Host-only material update: use admitted discovery facts and live supervisor state. */
     discovery?: 'cached';
     /** Explicit scope: `machine` skips workspace scoping; `workspace` (default) keeps it. */
@@ -251,7 +254,8 @@ export function createLocalServiceLauncherFeed(
         refreshRunTargets,
         resolveWorkspaceScope,
         async getSnapshot(request, observedInventoryEntries) {
-            if (request?.projection === 'managed_bindings' && !input.projectManagedServices) {
+            const bindingsOnly = request?.projection === 'managed_bindings' || request?.requesterManagedServices !== undefined;
+            if (bindingsOnly && !input.projectManagedServices) {
                 throw Object.assign(new Error('Project Service binding owner is unavailable'), {
                     code: 'project_service_bindings_unavailable',
                 });
@@ -263,7 +267,6 @@ export function createLocalServiceLauncherFeed(
                     code: 'local_service_workspace_scope_unavailable',
                 });
             }
-            const bindingsOnly = request?.projection === 'managed_bindings';
             const includePackageScripts = request?.scope !== 'machine';
             // Complete bindings read cached listener evidence without waiting for discovery.
             // Both projections must retain the same managed identity and preview presentation.
@@ -274,8 +277,9 @@ export function createLocalServiceLauncherFeed(
                 ? [...observedDeclarations, ...observedPackageScripts] : observedDeclarations;
             // The scan publisher projects this same observation before deciding whether to wake
             // readers. Ordinary reads use the registry's annotated, visible inventory.
-            const inventoryEntries = observedInventoryEntries ?? input.inventoryRegistry.getSnapshot().entries;
-            const previewResources = listLocalServicePreviewResources(input.previewRegistry);
+            const inventoryEntries = request?.requesterManagedServices ? []
+                : observedInventoryEntries ?? input.inventoryRegistry.getSnapshot().entries;
+            const previewResources = request?.requesterManagedServices ? [] : listLocalServicePreviewResources(input.previewRegistry);
             const managedPreviews = new Map(previewResources.flatMap(resource => resource.machineId === input.machineId && resource.serviceTarget
                 ? [[resource.serviceTarget.managedServiceId, resource] as const] : []));
             const snapshot = buildLocalServiceLauncherSnapshot({
@@ -289,17 +293,21 @@ export function createLocalServiceLauncherFeed(
                 previewResources,
                 terminateDetectedEnabled: input.terminateDetectedEnabled?.() === true,
             });
-            const processRoots = input.projectManagedServices?.readProcessRoots() ?? [];
+            const processRoots = request?.requesterManagedServices ? [] : input.projectManagedServices?.readProcessRoots() ?? [];
             const inventoryTargets = new Map(snapshot.targets.flatMap(target => target.sourceClass?.kind === 'inventory_entry'
                 ? [[target.sourceClass.inventoryEntryId, target] as const] : []));
             const correlatedInventoryIds = new Set<string>();
             const handles = bindingsOnly ? await input.projectManagedServices!.listProjectServices({ requireComplete: true,
                 ...(workspaceScopePaths?.length === 1 ? { workspaceRoot: workspaceScopePaths[0] } : {}) })
                 : input.projectManagedServices?.listProjectServices() ?? [];
-            const managed = handles
-                .filter(handle => (!bindingsOnly || handle.isCurrent())
-                    && (handle.kind === 'workspace' ? handle.workspace.machineId : handle.machineId) === input.machineId
-                    && (!workspaceScopePaths || handle.kind === 'workspace' && workspaceScopePaths.some(root => isWorkspacePathWithin(root, handle.cwd))))
+            const visibleHandles = request?.requesterManagedServices ? await selectVisibleMachineProjectServices(
+                { serverId: request.requesterManagedServices.serverId, machineId: input.machineId }, handles,
+                { requesterAccountId: request.requesterManagedServices.accountId },
+            ) : handles.filter(handle => (!bindingsOnly || handle.isCurrent())
+                && (handle.kind === 'workspace' ? handle.workspace.machineId : handle.machineId) === input.machineId);
+            const managed = visibleHandles
+                .filter(handle => !workspaceScopePaths || handle.kind === 'workspace'
+                    && workspaceScopePaths.some(root => isWorkspacePathWithin(root, handle.cwd)))
                 .map(handle => {
                     const nativeTarget = managedTarget(handle);
                     const preview = nativeTarget.endpointUrl ? managedPreviews.get(handle.instanceId) : undefined;
