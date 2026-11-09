@@ -45,7 +45,7 @@ const resolved = {
   probes: [{
     endpointTemplateId: 'management',
     path: '/api/v1/models',
-    parser: 'lmstudio-native-models' as const,
+    reportsModelLoadState: true, parser: 'lmstudio-native-models' as const,
   }],
   observationAuthorizationFingerprints: [createProviderObservationAuthorizationFingerprintV1({
     selectedSecretBindingId: null,

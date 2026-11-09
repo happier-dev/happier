@@ -1,6 +1,6 @@
 import { definePlugin } from '@happier-dev/plugin-sdk';
 
-import { LMSTUDIO_PROVIDER_CONTRIBUTION } from './provider/contribution.js';
+import { LMSTUDIO_PROVIDER_CONTRIBUTION, parseLmStudioModels } from './provider/contribution.js';
 
 export const { manifest: PLUGIN_MANIFEST, activate } = definePlugin({
   id: 'happier.provider.lmstudio',
@@ -13,6 +13,7 @@ export const { manifest: PLUGIN_MANIFEST, activate } = definePlugin({
   },
   hostAccess: { required: [], optional: [] },
   providers: {
-    lmstudio: { declaration: LMSTUDIO_PROVIDER_CONTRIBUTION },
+    lmstudio: { declaration: LMSTUDIO_PROVIDER_CONTRIBUTION,
+      catalogParsers: { 'lmstudio-native-models': parseLmStudioModels } },
   },
 });

@@ -47,7 +47,7 @@ export const ANTHROPIC_PROVIDER_CONTRIBUTION: ProviderContribution = {
     probes: [{
       endpointTemplateId: 'anthropic',
       path: '/v1/models?limit=1000',
-      parser: 'anthropic-models',
+      parser: 'claude-models',
     }],
   },
 };

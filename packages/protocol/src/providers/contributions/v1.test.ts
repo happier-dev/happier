@@ -182,7 +182,7 @@ describe('ProviderContributionV1Schema', () => {
           purpose: 'upstream',
           materialization: {
             kind: 'httpHeaders',
-            origin: 'https://api.openai.com',
+            origins: ['https://api.openai.com'],
             headerNames: ['authorization'],
           },
         }],
@@ -299,7 +299,7 @@ describe('ProviderContributionV1Schema', () => {
           purpose: 'upstream',
           materialization: {
             kind: 'httpHeaders' as const,
-            origin: 'https://api.example.test',
+            origins: ['https://api.example.test', 'https://regional.example.test'],
             headerNames: ['authorization', 'x-trace-id'],
           },
         },
@@ -307,7 +307,7 @@ describe('ProviderContributionV1Schema', () => {
           purpose: 'audit',
           materialization: {
             kind: 'httpHeaders' as const,
-            origin: 'https://audit.example.test',
+            origins: ['https://audit.example.test'],
             headerNames: ['authorization'],
           },
         },
@@ -339,6 +339,7 @@ describe('ProviderContributionV1Schema', () => {
             ...use,
             materialization: {
               ...use.materialization,
+              origins: [...use.materialization.origins].reverse(),
               headerNames: [...use.materialization.headerNames].reverse(),
             },
           }))
@@ -488,7 +489,7 @@ describe('ProviderContributionV1Schema', () => {
         purpose: 'provider.inference',
         materialization: {
           kind: 'httpHeaders',
-          origin: 'https://api.openai.com',
+          origins: ['https://api.openai.com'],
           headerNames: ['authorization'],
         },
       }],
@@ -537,7 +538,7 @@ describe('ProviderContributionV1Schema', () => {
       purpose,
       materialization: {
         kind: 'httpHeaders' as const,
-        origin: `https://api-${index}.example.com`,
+        origins: [`https://api-${index}.example.com`],
         headerNames: ['authorization'],
       },
     }));
@@ -566,7 +567,7 @@ describe('ProviderContributionV1Schema', () => {
           purpose: 'provider.request-32',
           materialization: {
             kind: 'httpHeaders',
-            origin: 'https://api-32.example.com',
+            origins: ['https://api-32.example.com'],
             headerNames: ['authorization'],
           },
         }],
@@ -672,6 +673,7 @@ describe('ProviderContributionV1Schema', () => {
     invalid.kind = 'local';
     invalid.credential.transports[0].uses.push('management');
     invalid.catalog.probes[0].parser = 'lmstudio-native-models';
+    invalid.catalog.probes[0].reportsModelLoadState = true;
     expect(ProviderContributionV1Schema.safeParse(invalid).success).toBe(true);
   });
 
@@ -703,7 +705,7 @@ describe('ProviderContributionV1Schema', () => {
     invalid.endpointTemplates.push({
       ...invalid.endpointTemplates[0], id: 'native', protocol: 'ollama-native',
     });
-    invalid.catalog.probes[0] = { endpointTemplateId: 'responses', path: '/api/v1/models', parser: 'lmstudio-native-models' };
+    invalid.catalog.probes[0] = { endpointTemplateId: 'responses', path: '/api/v1/models', parser: 'lmstudio-native-models', reportsModelLoadState: true };
     invalid.credential.transports[0].uses.push('management');
     invalid.credential.transports[0].protocols = ['ollama-native'];
     invalid.modelLoad = {

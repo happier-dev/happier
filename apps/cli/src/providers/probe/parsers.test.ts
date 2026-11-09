@@ -1,4 +1,7 @@
 import { describe, expect, it } from 'vitest';
+import { parseOllamaTags } from '../../../../../packages/plugins/ollama/src/provider/contribution';
+import { parseLmStudioModels } from '../../../../../packages/plugins/lmstudio/src/provider/contribution';
+import { parseClaudeModelCatalog } from '../../../../../packages/plugins/claude/src/provider/catalog';
 
 import {
   ProviderCatalogFormatUnavailableError,
@@ -6,26 +9,35 @@ import {
   resolveProviderCatalogFormatParser,
 } from './parsers';
 
+const declaredParsers = { 'ollama-tags': parseOllamaTags, 'lmstudio-native-models': parseLmStudioModels,
+  'claude-models': parseClaudeModelCatalog };
+const parseCatalog: typeof parseProviderCatalogResponse = (parser, input, contributed) =>
+  parseProviderCatalogResponse(parser, input, { ...declaredParsers, ...contributed });
+
 describe('parseProviderCatalogResponse', () => {
   it('preserves a completion model with complete large Ollama capability metadata', () => {
     const capabilities = ['completion', ...Array.from({ length: 33 }, (_, index) => `future-${index}-${'x'.repeat(65)}`)];
-    expect(parseProviderCatalogResponse('ollama-tags', { models: [{ model: 'completion-model', capabilities }] }).models)
+    expect(parseCatalog('ollama-tags', { models: [{ model: 'completion-model', capabilities }] }).models)
       .toEqual([expect.objectContaining({ id: 'completion-model' })]);
-    expect(parseProviderCatalogResponse('ollama-tags', { models: [{ model: 'embedding-model', capabilities: capabilities.slice(1) }] }).models).toEqual([]);
+    expect(parseCatalog('ollama-tags', { models: [{ model: 'embedding-model', capabilities: capabilities.slice(1) }] }).models).toEqual([]);
+  });
+  it('keeps literal display labels in the shared Anthropic wire codec for custom templates', () => {
+    expect(parseProviderCatalogResponse('anthropic-models', { data: [{ id: 'model', display_name: 'Claude Future' }] }))
+      .toEqual({ models: [{ id: 'model', name: 'Claude Future' }], loadStates: [] });
   });
   it('parses only the declared OpenAI models discriminant', () => {
-    expect(parseProviderCatalogResponse('openai-models', {
+    expect(parseCatalog('openai-models', {
       data: [{ id: 'gpt-a' }, { id: 'gpt-b', name: 'GPT B' }],
     })).toEqual({
       models: [{ id: 'gpt-a' }, { id: 'gpt-b', name: 'GPT B' }],
       loadStates: [],
     });
-    expect(() => parseProviderCatalogResponse('openai-models', { models: [{ id: 'wrong' }] }))
+    expect(() => parseCatalog('openai-models', { models: [{ id: 'wrong' }] }))
       .toThrow('missing data');
   });
 
-  it('parses bounded Anthropic model rows through the declared Anthropic discriminant', () => {
-    expect(parseProviderCatalogResponse('anthropic-models', {
+  it('parses Anthropic model rows through the contributed Claude parser', () => {
+    expect(parseCatalog('claude-models', {
       data: [
         {
           id: 'claude-future-6',
@@ -72,21 +84,21 @@ describe('parseProviderCatalogResponse', () => {
       loadStates: [],
     });
 
-    expect(() => parseProviderCatalogResponse('anthropic-models', {
+    expect(() => parseCatalog('claude-models', {
       data: [{ id: 'same' }, { id: 'same' }],
     })).toThrow('Duplicate');
-    expect(() => parseProviderCatalogResponse('anthropic-models', {
+    expect(() => parseCatalog('claude-models', {
       data: [{ id: 'claude-opus-4-6', display_name: 42 }],
     })).toThrow('display_name');
-    expect(() => parseProviderCatalogResponse('anthropic-models', {
+    expect(() => parseCatalog('claude-models', {
       models: [{ id: 'wrong-envelope' }],
     })).toThrow('missing data');
 
-    expect(parseProviderCatalogResponse('anthropic-models', {
+    expect(parseCatalog('claude-models', {
       data: [{ id: 'glm-4.6', display_name: 'GLM 4.6' }],
     }).models).toEqual([{ id: 'glm-4.6', name: 'GLM 4.6' }]);
 
-    const thirdParty = parseProviderCatalogResponse('anthropic-models', {
+    const thirdParty = parseCatalog('claude-models', {
       data: [{ id: 'third-party-model', capabilities: { effort: { supported: true,
         high: { supported: true }, xhigh: { supported: true } } } }],
     }).models[0];
@@ -95,7 +107,7 @@ describe('parseProviderCatalogResponse', () => {
   });
 
   it('rejects malformed Anthropic context and effort capability facts', () => {
-    const parseRow = (row: unknown) => parseProviderCatalogResponse('anthropic-models', { data: [row] });
+    const parseRow = (row: unknown) => parseCatalog('claude-models', { data: [row] });
 
     expect(() => parseRow({ id: 'bad-context', max_input_tokens: 0 }))
       .toThrow('max_input_tokens');
@@ -122,7 +134,7 @@ describe('parseProviderCatalogResponse', () => {
   });
 
   it('preserves exact Ollama model capabilities and excludes explicitly non-completion models', () => {
-    expect(parseProviderCatalogResponse('ollama-tags', {
+    expect(parseCatalog('ollama-tags', {
       models: [
         { name: 'legacy-without-capabilities:latest' },
         {
@@ -159,13 +171,13 @@ describe('parseProviderCatalogResponse', () => {
   });
 
   it('rejects malformed Ollama capability metadata instead of guessing model usability', () => {
-    expect(() => parseProviderCatalogResponse('ollama-tags', {
+    expect(() => parseCatalog('ollama-tags', {
       models: [{ model: 'malformed', capabilities: 'completion' }],
     })).toThrow('capabilities');
   });
 
   it('parses LM Studio native ids and only explicit loaded_instances state', () => {
-    expect(parseProviderCatalogResponse('lmstudio-native-models', {
+    expect(parseCatalog('lmstudio-native-models', {
       models: [
         { key: 'publisher/model-a', display_name: 'Model A', type: 'llm', loaded_instances: [] },
         { key: 'publisher/model-b', type: 'llm', loaded_instances: [{ id: 'instance-1' }] },
@@ -181,10 +193,10 @@ describe('parseProviderCatalogResponse', () => {
   });
 
   it('keeps legacy LM Studio rows without type metadata and rejects malformed explicit types', () => {
-    expect(parseProviderCatalogResponse('lmstudio-native-models', {
+    expect(parseCatalog('lmstudio-native-models', {
       models: [{ key: 'legacy/model', loaded_instances: [] }],
     }).models).toEqual([{ id: 'legacy/model' }]);
-    expect(() => parseProviderCatalogResponse('lmstudio-native-models', {
+    expect(() => parseCatalog('lmstudio-native-models', {
       models: [{ key: 'malformed', type: 42 }],
     })).toThrow('type');
   });
@@ -197,7 +209,7 @@ describe('parseProviderCatalogResponse', () => {
         loadStates: [{ modelId: 'acme/one', loadState: 'loaded' as const }],
       }),
     };
-    expect(parseProviderCatalogResponse('acme-catalog-v3', {
+    expect(parseCatalog('acme-catalog-v3', {
       entries: [{ slug: 'acme/one', label: 'Acme One' }, { slug: 'acme/two', label: 'Acme Two' }],
     }, contributed)).toEqual({
       models: [{ id: 'acme/one', name: 'Acme One' }, { id: 'acme/two', name: 'Acme Two' }],
@@ -206,35 +218,37 @@ describe('parseProviderCatalogResponse', () => {
   });
 
   it('reports a declared format with no reachable implementation instead of guessing one', () => {
-    expect(() => parseProviderCatalogResponse('acme-catalog-v3', { data: [{ id: 'gpt-a' }] }))
+    expect(() => parseCatalog('acme-catalog-v3', { data: [{ id: 'gpt-a' }] }))
       .toThrow(ProviderCatalogFormatUnavailableError);
-    expect(() => parseProviderCatalogResponse('acme-catalog-v3', { data: [{ id: 'gpt-a' }] }, {}))
+    expect(() => parseCatalog('acme-catalog-v3', { data: [{ id: 'gpt-a' }] }, {}))
       .toThrow(ProviderCatalogFormatUnavailableError);
   });
 
-  it('keeps every bundled format owned by the host even when a plugin claims its id', () => {
-    const hijack = () => ({ models: [{ id: 'hijacked' }] });
-    expect(parseProviderCatalogResponse('openai-models', { data: [{ id: 'gpt-a' }] }, {
-      'openai-models': hijack,
-    })).toEqual({ models: [{ id: 'gpt-a' }], loadStates: [] });
-    expect(resolveProviderCatalogFormatParser('openai-models', { 'openai-models': hijack }))
-      .not.toBe(hijack);
+  it('uses the declaring plugin implementation instead of a host vendor default (01E)', () => {
+    const declared = () => ({ models: [{ id: 'declared', name: 'Declared model' }] });
+    expect(parseCatalog('ollama-tags', { models: [{ model: 'wire-model' }] }, {
+      'ollama-tags': declared,
+    })).toEqual({ models: [{ id: 'declared', name: 'Declared model' }], loadStates: [] });
+    expect(resolveProviderCatalogFormatParser('ollama-tags', { 'ollama-tags': declared }))
+      .toBe(declared);
+    expect(() => parseProviderCatalogResponse('ollama-tags', { models: [{ model: 'wire-model' }] }))
+      .toThrow(ProviderCatalogFormatUnavailableError);
   });
 
   it('preserves complete contributed catalogs while rejecting duplicate identities and inherited implementations', () => {
     const duplicates = { 'acme-catalog-v3': () => ({ models: [{ id: 'same' }, { id: 'same' }] }) };
-    expect(() => parseProviderCatalogResponse('acme-catalog-v3', {}, duplicates)).toThrow('Duplicate');
+    expect(() => parseCatalog('acme-catalog-v3', {}, duplicates)).toThrow('Duplicate');
 
     const oversized = {
       'acme-catalog-v3': () => ({
         models: Array.from({ length: 5_001 }, (_row, index) => ({ id: `acme/${index}` })),
       }),
     };
-    expect(parseProviderCatalogResponse('acme-catalog-v3', {}, oversized).models).toHaveLength(5_001);
+    expect(parseCatalog('acme-catalog-v3', {}, oversized).models).toHaveLength(5_001);
 
     const inherited = Object.create({ 'acme-catalog-v3': () => ({ models: [{ id: 'acme/one' }] }) }) as
       Record<string, () => { models: readonly { id: string }[] }>;
-    expect(() => parseProviderCatalogResponse('acme-catalog-v3', {}, inherited))
+    expect(() => parseCatalog('acme-catalog-v3', {}, inherited))
       .toThrow(ProviderCatalogFormatUnavailableError);
   });
 
@@ -243,26 +257,26 @@ describe('parseProviderCatalogResponse', () => {
       'acme-catalog-v3': () => ({ models: [{ id: 'acme/one' }, { id: 'acme/two' }], loadStates }),
     }) as unknown as Record<string, () => { models: readonly { id: string }[] }>;
 
-    expect(parseProviderCatalogResponse('acme-catalog-v3', {}, parsers([
+    expect(parseCatalog('acme-catalog-v3', {}, parsers([
       { modelId: 'acme/two', loadState: 'loaded' },
     ])).loadStates).toEqual([{ modelId: 'acme/two', loadState: 'loaded' }]);
 
-    expect(() => parseProviderCatalogResponse('acme-catalog-v3', {}, parsers([
+    expect(() => parseCatalog('acme-catalog-v3', {}, parsers([
       { modelId: 'acme/one', loadState: 'warming' },
     ]))).toThrow();
-    expect(() => parseProviderCatalogResponse('acme-catalog-v3', {}, parsers([
+    expect(() => parseCatalog('acme-catalog-v3', {}, parsers([
       { modelId: 'acme/one', loadState: 'loaded' },
       { modelId: 'acme/one', loadState: 'unloaded' },
     ]))).toThrow('Duplicate');
-    expect(() => parseProviderCatalogResponse('acme-catalog-v3', {}, parsers([
+    expect(() => parseCatalog('acme-catalog-v3', {}, parsers([
       { modelId: 'acme/absent', loadState: 'loaded' },
     ]))).toThrow('absent from the catalog');
-    expect(() => parseProviderCatalogResponse('acme-catalog-v3', {}, parsers('loaded')))
+    expect(() => parseCatalog('acme-catalog-v3', {}, parsers('loaded')))
       .toThrow('must be an array');
   });
 
   it('rejects duplicate identities from bundled formats', () => {
-    expect(() => parseProviderCatalogResponse('openai-models', { data: [{ id: 'same' }, { id: 'same' }] }))
+    expect(() => parseCatalog('openai-models', { data: [{ id: 'same' }, { id: 'same' }] }))
       .toThrow('Duplicate');
 
   });

@@ -1,4 +1,4 @@
-import type { ProviderContribution as ProviderContributionV1 } from '@happier-dev/plugin-sdk/providers';
+import type { ProviderContribution as ProviderContributionV1, ProviderCatalogParser, ProviderCatalogParsedModelLoadState } from '@happier-dev/plugin-sdk/providers';
 
 const LMSTUDIO_LOCAL_ORIGINS = [
   'http://127.0.0.1:1234',
@@ -64,7 +64,7 @@ export const LMSTUDIO_PROVIDER_CONTRIBUTION = {
     source: 'probe',
     manualModelPolicy: 'allowed',
     probes: [
-      { endpointTemplateId: 'lmstudio-openai-responses', path: '/api/v1/models', parser: 'lmstudio-native-models' },
+      { endpointTemplateId: 'lmstudio-openai-responses', path: '/api/v1/models', parser: 'lmstudio-native-models', reportsModelLoadState: true },
       { endpointTemplateId: 'lmstudio-openai-responses', path: '/v1/models', parser: 'openai-models' },
     ],
   },
@@ -82,6 +82,7 @@ export const LMSTUDIO_PROVIDER_CONTRIBUTION = {
       endpointTemplateId: 'lmstudio-openai-responses',
       path: '/api/v1/models',
       parser: 'lmstudio-native-models',
+      reportsModelLoadState: true,
     },
     installedCheck: { lookupNames: ['lms'] },
     presenceCheck: {
@@ -91,3 +92,69 @@ export const LMSTUDIO_PROVIDER_CONTRIBUTION = {
     },
   },
 } satisfies ProviderContributionV1;
+
+function ownDataProperty(value: unknown, key: string): unknown {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new TypeError('Provider catalog response must be an object');
+  }
+  const descriptor = Object.getOwnPropertyDescriptor(value, key);
+  if (!descriptor || !descriptor.enumerable || !('value' in descriptor)) {
+    throw new TypeError(`Provider catalog response is missing ${key}`);
+  }
+  return descriptor.value;
+}
+
+function boundedArray(value: unknown, label: string): readonly unknown[] {
+  if (!Array.isArray(value)) throw new TypeError(`${label} must be an array`);
+  return value;
+}
+
+function optionalOwnString(value: unknown, key: string): string | undefined {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new TypeError('Provider model row must be an object');
+  }
+  const descriptor = Object.getOwnPropertyDescriptor(value, key);
+  if (!descriptor) return undefined;
+  if (!descriptor.enumerable || !('value' in descriptor) || typeof descriptor.value !== 'string') {
+    throw new TypeError(`Provider model ${key} must be a string`);
+  }
+  return descriptor.value;
+}
+
+function requiredOwnString(value: unknown, key: string): string {
+  const output = optionalOwnString(value, key);
+  if (output === undefined) throw new TypeError(`Provider model is missing ${key}`);
+  return output;
+}
+
+export const parseLmStudioModels: ProviderCatalogParser = (input) => {
+  const rows = boundedArray(ownDataProperty(input, 'models'), 'LM Studio model list');
+  const loadStates: Array<{ modelId: string; loadState: ProviderCatalogParsedModelLoadState['loadState'] }> = [];
+  const models = rows.flatMap((row) => {
+    const type = optionalOwnString(row, 'type');
+    if (type !== undefined && type !== 'llm' && type !== 'embedding') {
+      throw new TypeError('LM Studio model type must be llm or embedding');
+    }
+    // The native list includes embedding models, which cannot serve any coding
+    // agent's chat/responses protocol. Preserve legacy rows that predate the
+    // type field, but exclude rows explicitly identified as embeddings.
+    if (type === 'embedding') return [];
+    const id = requiredOwnString(row, 'key');
+    const name = optionalOwnString(row, 'display_name');
+    const loadedInstancesDescriptor = typeof row === 'object' && row !== null
+      ? Object.getOwnPropertyDescriptor(row, 'loaded_instances')
+      : undefined;
+    if (loadedInstancesDescriptor) {
+      if (!loadedInstancesDescriptor.enumerable || !('value' in loadedInstancesDescriptor)
+        || !Array.isArray(loadedInstancesDescriptor.value)) {
+        throw new TypeError('LM Studio loaded_instances must be an array');
+      }
+      loadStates.push({
+        modelId: id,
+        loadState: loadedInstancesDescriptor.value.length > 0 ? 'loaded' : 'unloaded',
+      });
+    }
+    return [name === undefined ? { id } : { id, name }];
+  });
+  return { models, loadStates };
+}

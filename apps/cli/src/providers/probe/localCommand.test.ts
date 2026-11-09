@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { parseOllamaListTable } from '../../../../../packages/plugins/ollama/src/provider/contribution';
 import { watch } from 'node:fs';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -134,7 +135,7 @@ describe('createProviderLocalCatalogFallbackRunner', () => {
           resolve({ ok: false, reasonCode: 'aborted' }); }, { once: true });
       }),
     } satisfies ProviderLocalCommandRunner });
-    const request = { descriptor, endpointUrl: 'http://127.0.0.1:11434/',
+    const request = { contributedCatalogParsers: { 'ollama-list-table': parseOllamaListTable }, descriptor, endpointUrl: 'http://127.0.0.1:11434/',
       lifetime: createProviderOperationLifetime({ wallTimeMs: 30_000, signal: caller.signal }) };
     const pending = fallback.run(request).then(value => ({ value }), error => ({ reason: error.reason }));
     try {
@@ -152,7 +153,7 @@ describe('createProviderLocalCatalogFallbackRunner', () => {
       runSystemTool: async () => ({ ok: true, exitCode: 0,
         stdout: `NAME ID SIZE MODIFIED\n${' '.repeat(1024 * 1024)}valid-model id 1 GB now\n`, stderr: '' }),
     } });
-    await expect(fallback.run({ descriptor, endpointUrl: 'http://127.0.0.1:11434/' }))
+    await expect(fallback.run({ contributedCatalogParsers: { 'ollama-list-table': parseOllamaListTable }, descriptor, endpointUrl: 'http://127.0.0.1:11434/' }))
       .resolves.toMatchObject({ status: 'success', models: [{ id: 'valid-model' }] });
   });
 
@@ -176,7 +177,7 @@ describe('createProviderLocalCatalogFallbackRunner', () => {
     }));
     const fallback = createProviderLocalCatalogFallbackRunner({ runner: { runSystemTool } });
 
-    await expect(fallback.run({
+    await expect(fallback.run({ contributedCatalogParsers: { 'ollama-list-table': parseOllamaListTable },
       descriptor: { ...descriptor, fixedArgs: ['list', 'literal; & | $()'] },
       endpointUrl: 'http://127.0.0.1:22434/',
     })).resolves.toEqual({
@@ -197,7 +198,7 @@ describe('createProviderLocalCatalogFallbackRunner', () => {
     }));
     const fallback = createProviderLocalCatalogFallbackRunner({ runner: { runSystemTool } });
     const scheduler = createProviderProbeScheduler();
-    const input = { descriptor, endpointUrl: 'http://127.0.0.1:11434/' };
+    const input = { contributedCatalogParsers: { 'ollama-list-table': parseOllamaListTable }, descriptor, endpointUrl: 'http://127.0.0.1:11434/' };
     const refresh = () => scheduler.runCatalog('local-catalog', 'manual_refresh', () => fallback.run(input), {
       unavailable: () => ({ status: 'unavailable' as const }),
     });
@@ -216,9 +217,9 @@ describe('createProviderLocalCatalogFallbackRunner', () => {
       ok: true as const, exitCode: 0, stdout: outputs.shift()!, stderr: '',
     }));
     const fallback = createProviderLocalCatalogFallbackRunner({ runner: { runSystemTool } });
-    await expect(fallback.run({ descriptor, endpointUrl: 'http://127.0.0.1:11434/' }))
+    await expect(fallback.run({ contributedCatalogParsers: { 'ollama-list-table': parseOllamaListTable }, descriptor, endpointUrl: 'http://127.0.0.1:11434/' }))
       .resolves.toEqual({ status: 'unavailable' });
-    await expect(fallback.run({ descriptor, endpointUrl: 'http://127.0.0.1:11434/' }))
+    await expect(fallback.run({ contributedCatalogParsers: { 'ollama-list-table': parseOllamaListTable }, descriptor, endpointUrl: 'http://127.0.0.1:11434/' }))
       .resolves.toEqual({ status: 'unavailable' });
   });
 
@@ -259,7 +260,7 @@ describe('createProviderLocalCatalogFallbackRunner', () => {
 
     // Without the declaring plugin's implementation the output is reported
     // unavailable rather than handed to a bundled format's parser.
-    await expect(fallback.run({
+    await expect(fallback.run({ contributedCatalogParsers: { 'ollama-list-table': parseOllamaListTable },
       descriptor: { ...contributedDescriptor, endpointTemplateId: 'acme-2' },
       endpointUrl: 'http://127.0.0.1:9911/',
     })).resolves.toEqual({ status: 'unavailable' });
@@ -277,7 +278,7 @@ describe('createProviderLocalCatalogFallbackRunner', () => {
       },
     });
 
-    await expect(fallback.run({ descriptor, endpointUrl: 'http://127.0.0.1:11434/' }))
+    await expect(fallback.run({ contributedCatalogParsers: { 'ollama-list-table': parseOllamaListTable }, descriptor, endpointUrl: 'http://127.0.0.1:11434/' }))
       .resolves.toEqual({ status: 'unavailable' });
   });
 });

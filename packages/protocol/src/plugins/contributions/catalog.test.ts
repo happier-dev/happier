@@ -15,6 +15,7 @@ import {
   derivePluginContributionRegistrationRights,
   derivePluginDaemonContributionRegistrationRights,
   listPluginProjectionFamilyIdsV2,
+  readContributedProviderCatalogParserIds,
   PLUGIN_CONTRIBUTION_CATALOG_V2,
 } from './catalog.js';
 import {
@@ -24,6 +25,12 @@ import {
 } from './v2.js';
 
 describe('plugin contribution catalog', () => {
+  it('01E admits an availability-only native catalog parser for manual catalogs', () => {
+    expect(readContributedProviderCatalogParserIds({
+      catalog: { source: 'manual', manualModelPolicy: 'allowed' },
+      discovery: { availabilityProbe: { parser: 'ollama-tags' } },
+    })).toEqual(['ollama-tags']);
+  });
   it('admits access descriptors through their canonical Action contracts and reference graph', () => {
     const config = defineProtocolObject({}, { policy: 'closed' });
     const schemas = defineAccessProviderSchemas({ config });

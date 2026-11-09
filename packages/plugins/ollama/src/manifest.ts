@@ -1,6 +1,6 @@
 import { definePlugin } from '@happier-dev/plugin-sdk';
 
-import { OLLAMA_PROVIDER_CONTRIBUTION } from './provider/contribution.js';
+import { OLLAMA_PROVIDER_CONTRIBUTION, parseOllamaListTable, parseOllamaTags } from './provider/contribution.js';
 import { OLLAMA_PUBLIC_MANAGED_PROVIDER_RUNTIME } from './provider/publicManagedRuntime.js';
 
 export const { manifest: PLUGIN_MANIFEST, activate } = definePlugin({
@@ -29,6 +29,7 @@ export const { manifest: PLUGIN_MANIFEST, activate } = definePlugin({
     ollama: {
       declaration: OLLAMA_PROVIDER_CONTRIBUTION,
       runtime: OLLAMA_PUBLIC_MANAGED_PROVIDER_RUNTIME,
+      catalogParsers: { 'ollama-tags': parseOllamaTags, 'ollama-list-table': parseOllamaListTable },
     },
   },
   systemTools: {

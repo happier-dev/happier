@@ -1,7 +1,7 @@
-import { ProviderCatalogCommandFallbackV1Schema, readBundledProviderCommandCatalogParserFactV1 } from '@happier-dev/protocol/providers/detection/descriptorV1';
+import { ProviderCatalogCommandFallbackV1Schema } from '@happier-dev/protocol/providers/detection/descriptorV1';
 import { ProviderEndpointUrlSyntaxSchema } from '@happier-dev/protocol/providers/endpoint-url';
 import { ProviderModelDescriptorV1Schema } from '@happier-dev/protocol/models/descriptor';
-import type { BundledProviderCommandCatalogParserV1, ProviderCatalogCommandFallbackV1, ProviderCommandCatalogParserV1, ProviderModelDescriptorV1 } from '@happier-dev/protocol';
+import type { ProviderCatalogCommandFallbackV1, ProviderCommandCatalogParserV1, ProviderModelDescriptorV1 } from '@happier-dev/protocol';
 
 import type { ProviderCatalogFormatParser } from './parsers';
 import { awaitAbortableWithinProviderOperation, awaitWithinProviderOperation, createProviderOperationLifetime,
@@ -59,46 +59,11 @@ function commandStdout(input: unknown): string {
   return input;
 }
 
-const parseOllamaListTable: ProviderCatalogFormatParser = (input) => {
-  const lines = commandStdout(input).split(/\r?\n/u).map((line) => line.trim()).filter(Boolean);
-  if (lines.length === 0) throw new TypeError('Ollama model table is empty');
-  const header = lines[0]!.split(/\s+/u).map((part) => part.toUpperCase());
-  if (header.length !== 4 || header.join('\0') !== 'NAME\0ID\0SIZE\0MODIFIED') {
-    throw new TypeError('Ollama model table header is unrecognized');
-  }
-  return {
-    models: lines.slice(1).map((line) => {
-      const columns = line.split(/\s+/u);
-      if (columns.length < 4) throw new TypeError('Ollama model table row is malformed');
-      return { id: columns[0]! };
-    }),
-  };
-};
-
-/**
- * The command-output catalog formats the host implements. A Provider plugin
- * contributes any other format through the `providers` contribution family and
- * implements it with the same registered catalog parser used for HTTP catalog
- * formats; the bundled set never decides whether a declared format is valid.
- */
-export const BUNDLED_PROVIDER_COMMAND_CATALOG_FORMAT_PARSERS: Readonly<
-  Record<BundledProviderCommandCatalogParserV1, ProviderCatalogFormatParser>
-> = Object.freeze({ 'ollama-list-table': parseOllamaListTable });
-
-/**
- * Resolves a declared command-output format to its implementation. A
- * contributed parser wins only for a format the host does not bundle, so a
- * plugin can never displace a bundled format's meaning for another Provider.
- */
+/** Resolve the implementation supplied by the declaring Provider. */
 export function resolveProviderCommandCatalogFormatParser(
   parser: ProviderCommandCatalogParserV1,
   contributedParsers?: Readonly<Record<string, ProviderCatalogFormatParser>>,
 ): ProviderCatalogFormatParser | null {
-  const bundled = readBundledProviderCommandCatalogParserFactV1(
-    BUNDLED_PROVIDER_COMMAND_CATALOG_FORMAT_PARSERS,
-    parser,
-  );
-  if (bundled) return bundled;
   const contributed = contributedParsers
     ? Object.getOwnPropertyDescriptor(contributedParsers, parser)
     : undefined;
@@ -152,8 +117,7 @@ export function createProviderLocalCatalogFallbackRunner(input: Readonly<{
     endpointUrl: string;
     /**
      * Implementations of the command-output formats the declaring Provider
-     * plugin contributes, keyed by format id. A format the host bundles is
-     * never taken from here.
+     * plugin contributes, keyed by format id.
      */
     contributedCatalogParsers?: Readonly<Record<string, ProviderCatalogFormatParser>>;
     lifetime?: ProviderOperationLifetime;

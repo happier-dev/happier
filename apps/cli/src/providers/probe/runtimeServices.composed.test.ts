@@ -28,6 +28,7 @@ import { createProviderRuntimeStateStore } from '@/providers/runtimeState';
 import { getActiveAccountSettingsSnapshot, resetActiveAccountSettingsSnapshotForTests, setActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { resolveAccountSettingsScopeKeyForToken } from '@/settings/accountSettings/accountSettingsScopeKey';
 import { hydrateSavedSecretCatalog } from "@/settings/secrets/savedSecretCatalogRead";
+import { withSavedSecretMaterializer } from '@/settings/secrets/savedSecretCatalog.testkit';
 import { emptyAccountSettingsHistoryCaptureResponse } from '@/settings/accountSettings/emptyAccountSettingsHistoryCapture.testkit';
 import { createDeferred } from '@/testkit/async/deferred';
 import type { ActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
@@ -59,6 +60,8 @@ import { definePlugin } from '@happier-dev/plugin-sdk';
 import { createAdmittedPluginRuntimeFixture, createAuthoredAdmittedPluginRuntimeFixture, retireAdmittedPluginRuntimeRegistry } from '@/plugins/testkit/admittedRuntime';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { configuration } from '@/configuration';
+import { parseOllamaListTable, parseOllamaTags } from '../../../../../packages/plugins/ollama/src/provider/contribution';
+import { parseLmStudioModels } from '../../../../../packages/plugins/lmstudio/src/provider/contribution';
 
 const temporaryPaths: string[] = [];
 afterEach(async () => {
@@ -1043,6 +1046,7 @@ describe('runtime provider services', () => {
     }));
     const services = createRuntimeProviderServices({
       machineId: 'machine-a', happyHomeDir, registry: localRegistry,
+      resolveContributedCatalogParsers: async () => ({ pluginId: 'acme.local', parsersByFormat: { 'ollama-tags': parseOllamaTags } }),
       resolveAddresses: async () => ['127.0.0.1'],
       client: createProviderProbeHttpClient({ resolveAddresses: async () => ['127.0.0.1'], transport }),
       getAccountSettingsSnapshot: (() => { const snapshot = providerSnapshot(settings); return () => snapshot; })(),
@@ -1644,7 +1648,7 @@ describe('runtime provider services', () => {
     ]);
     expect(serializedIdentities).not.toContain('secret-one');
     expect(serializedIdentities).not.toContain('secret-two');
-    await expect(services.summary({
+    await expect(services.summary(withSavedSecretMaterializer({
       ...requestIdentity,
       resolution: initialResolution,
       accountSettings: initialAccountSettings,
@@ -1653,7 +1657,7 @@ describe('runtime provider services', () => {
       registry: initialRegistry,
       dnsEvidence: initialDnsEvidenceByEndpointUrl,
       lifetime: { wallDeadlineAtMs: Infinity },
-    })).resolves.toMatchObject({
+    }))).resolves.toMatchObject({
       status: 'success',
       probeObservationIdentity: initialIdentity,
     });
@@ -1683,7 +1687,7 @@ describe('runtime provider services', () => {
         source: 'probe',
         manualModelPolicy: 'allowed',
         probes: [
-          { endpointTemplateId: 'responses', path: '/api/v1/models', parser: 'lmstudio-native-models' },
+          { endpointTemplateId: 'responses', path: '/api/v1/models', reportsModelLoadState: true, parser: 'lmstudio-native-models' },
           { endpointTemplateId: 'responses', path: '/v1/models', parser: 'openai-models' },
         ],
       },
@@ -1695,7 +1699,7 @@ describe('runtime provider services', () => {
         v: 1,
         listener: { executableBasenames: ['llmster'], defaultPorts: [1234] },
         availabilityProbe: {
-          endpointTemplateId: 'responses', path: '/api/v1/models', parser: 'lmstudio-native-models',
+          endpointTemplateId: 'responses', path: '/api/v1/models', reportsModelLoadState: true, parser: 'lmstudio-native-models',
         },
       },
     });
@@ -1761,6 +1765,8 @@ describe('runtime provider services', () => {
         transport,
       }),
       createObservationId: () => `lmstudio-observation-${observation += 1}`,
+      resolveContributedCatalogParsers: async () => ({ pluginId: 'happier.provider.lmstudio',
+        parsersByFormat: { 'lmstudio-native-models': parseLmStudioModels } }),
     });
     const identity = { connectionId: localConnectionId, machineId: 'machine-a' };
 
@@ -1898,6 +1904,8 @@ describe('runtime provider services', () => {
       }),
       localCatalogFallback: createProviderLocalCatalogFallbackRunner({ runner: { runSystemTool } }),
       createObservationId: () => 'local-command-observation',
+      resolveContributedCatalogParsers: async () => ({ pluginId: 'happier.provider.ollama',
+        parsersByFormat: { 'ollama-tags': parseOllamaTags, 'ollama-list-table': parseOllamaListTable } }),
     });
 
     vi.useFakeTimers();

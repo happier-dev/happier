@@ -42,6 +42,7 @@ import {
   CLAUDE_PROVIDER_HELPER_ENV_KEYS,
 } from './agent/providerBinding/adapter.js';
 import { CLAUDE_PREFLIGHT_CATALOGS } from './agent/preflight/catalogs.js';
+import { CLAUDE_PROVIDER_MODEL_ROLES } from './agent/providerBinding/modelRoles.js';
 import { resolveClaudeNativePluginSkillRoots } from './agent/preflight/pluginSkillRoots.js';
 import { createClaudeAgentRuntime } from './agent/runtime/factory.js';
 import { createClaudePromptSubmitVerificationPolicy } from './agent/runtime/terminal/unified/promptSubmitVerification.js';
@@ -58,6 +59,7 @@ import {
 } from './connectedAccounts/claudeSubscriptionNativeRuntime.js';
 
 import { ANTHROPIC_PROVIDER_CONTRIBUTION } from './provider/contribution.js';
+import { parseClaudeModelCatalog } from './provider/catalog.js';
 
 const resolveClaudeDaemonSpawnPrerequisitesHook: HookHandler = (event, context) =>
   resolveClaudeDaemonSpawnPrerequisites(event, context);
@@ -213,12 +215,14 @@ export const CLAUDE_PLUGIN = definePlugin({
   providers: {
     [ANTHROPIC_PROVIDER_CONTRIBUTION_ID]: {
       declaration: ANTHROPIC_PROVIDER_DECLARATION,
+      catalogParsers: { 'claude-models': parseClaudeModelCatalog },
     },
   },
   connectedAccountDescriptors: {
     'claude-subscription': {
       declaration: {
         title: 'Claude',
+        ui: { iconResourceId: 'agent-mark', setup: { order: 0, firstRun: true, catalogDescription: { key: 'connectedServicesSettings.catalogClaude', fallback: 'Pro or Max plan. Sign in with a browser, or paste a setup token.' } } },
         // Claude Pro/Max web billing, not the separate Anthropic API account.
         billingUrl: 'https://claude.ai/settings/billing',
         recoveryCredits: { supported: true },
@@ -279,12 +283,14 @@ export const CLAUDE_PLUGIN = definePlugin({
     anthropic: {
       declaration: {
         title: 'Anthropic API key',
+        ui: { iconResourceId: 'anthropic-mark', setup: { order: 3, firstRun: false, catalogDescription: { key: 'connectedServicesSettings.catalogAnthropic', fallback: 'Pay per use, billed to your Anthropic organization.' } } },
         billingUrl: 'https://platform.claude.com/settings/billing',
         authentication: {
           defaultModeId: 'api-key',
           modes: [{
             id: 'api-key',
             kind: 'manual',
+            apiKey: true,
             setup: {
               url: 'https://platform.claude.com/settings/keys',
               checklist: [{ key: 'connectedServicesSettings.keyCreateAnthropic', fallback: 'Create an API key in the Anthropic Console, then paste it here.' }],
@@ -312,6 +318,7 @@ export const CLAUDE_PLUGIN = definePlugin({
       accountSettings: { settingLocalIds: [CLAUDE_SESSION_RETENTION_SETTING_ID], apply: applyClaudeAccountSettings },
       declaration: {
         title: 'Claude',
+        sessionModeDescriptor: AGENT_DEFINITION.sessionModeDescriptor,
         runtime: { kind: 'custom' },
         cli: {
           displayName: 'Claude Code CLI',
@@ -363,6 +370,7 @@ export const CLAUDE_PLUGIN = definePlugin({
           },
         },
         primary: 'sessions',
+        requestCoverage: AGENT_DEFINITION.requestCoverage,
         catalog: {
           acpRegistryIds: [...AGENT_DEFINITION.acpRegistryIds],
           vendorResume: { support: AGENT_DEFINITION.core.resume.vendorResume },
@@ -451,6 +459,7 @@ export const CLAUDE_PLUGIN = definePlugin({
           },
           materialization: 'spawnEnv',
           applyPolicy: 'live',
+          modelRoles: CLAUDE_PROVIDER_MODEL_ROLES,
           supportsFreeformModelIds: true,
           supportsReasoningEffort: true,
         },
@@ -532,7 +541,7 @@ export const CLAUDE_PLUGIN = definePlugin({
           purpose: 'model_upstream',
           materialization: {
             kind: 'httpHeaders',
-            origin: 'https://api.anthropic.com',
+            origins: ['https://api.anthropic.com'],
             headerNames: ['authorization'],
           },
         }],
@@ -757,6 +766,8 @@ export const CLAUDE_PLUGIN = definePlugin({
     }],
   },
   resources: {
+    'agent-mark': { kind: 'asset', path: 'assets/agent-mark.svg', contentType: 'image/svg+xml' },
+    'anthropic-mark': { kind: 'asset', path: 'assets/anthropic-mark.svg', contentType: 'image/svg+xml' },
     "i18n-en": { kind: 'asset', path: "assets/i18n/en.json", contentType: 'application/json' },
     "i18n-de": { kind: 'asset', path: "assets/i18n/de.json", contentType: 'application/json' },
     "i18n-ru": { kind: 'asset', path: "assets/i18n/ru.json", contentType: 'application/json' },

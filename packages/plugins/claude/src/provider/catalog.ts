@@ -1,21 +1,61 @@
 import {
-  ANTHROPIC_EFFORT_LEVELS,
-  buildAnthropicModelOptions,
-  type AnthropicEffortLevel,
-} from '@happier-dev/protocol/providers/anthropic-models';
-export {
-  ANTHROPIC_EFFORT_LEVELS,
-  buildAnthropicModelOptions,
-  normalizeAnthropicModelDisplayName,
-  formatAnthropicEffortLevelLabel,
-  type AnthropicEffortLevel,
-} from '@happier-dev/protocol/providers/anthropic-models';
+  PROVIDER_REASONING_EFFORT_LEVELS_V1,
+  PROVIDER_REASONING_EFFORT_OPTION_ID,
+  buildProviderReasoningModelOptions,
+  formatProviderReasoningEffortLevelLabel,
+  type ProviderReasoningEffortLevelV1,
+} from '@happier-dev/protocol/providers/catalog/reasoningEffort';
+import { parseAnthropicModelCatalog } from '@happier-dev/protocol/providers/anthropic-models';
 
 import {
   readProviderReasoningEffortOption,
   type ProviderCatalogParsedModel,
   type ProviderContribution,
+  type ProviderCatalogParser,
 } from '@happier-dev/plugin-sdk/providers';
+
+type AnthropicModelOption = NonNullable<ProviderCatalogParsedModel['modelOptions']>[number];
+
+export const ANTHROPIC_EFFORT_LEVELS = PROVIDER_REASONING_EFFORT_LEVELS_V1;
+export type AnthropicEffortLevel = ProviderReasoningEffortLevelV1;
+
+export function normalizeAnthropicModelDisplayName(nameRaw: unknown, fallback: string): string {
+  const name = typeof nameRaw === 'string' ? nameRaw.trim() : '';
+  const prefixed = /^claude\s+(.+)$/iu.exec(name);
+  return prefixed?.[1]?.trim() || name || fallback.trim();
+}
+
+export const formatAnthropicEffortLevelLabel = formatProviderReasoningEffortLevelLabel;
+
+export function buildAnthropicModelOptions(input: Readonly<{
+  supportedLevels: readonly AnthropicEffortLevel[];
+  defaultEffort?: AnthropicEffortLevel | null;
+}>): readonly AnthropicModelOption[] {
+  const options = [...buildProviderReasoningModelOptions(input)];
+
+  if (input.supportedLevels.includes('xhigh')) {
+    options.push({
+      id: 'ultracode',
+      name: 'Ultracode',
+      description: 'Maximum coding effort. Forces XHigh Thinking effort while enabled.',
+      type: 'boolean',
+      currentValue: 'false',
+      overridesWhenOn: { optionIds: [PROVIDER_REASONING_EFFORT_OPTION_ID], forcedValue: 'xhigh' },
+    });
+  }
+  return options;
+}
+
+export const parseClaudeModelCatalog: ProviderCatalogParser = input => {
+  const parsed = parseAnthropicModelCatalog(input);
+  return {
+    ...parsed,
+    models: parsed.models.map(model => ({
+      ...model,
+      ...(model.name === undefined ? {} : { name: normalizeAnthropicModelDisplayName(model.name, model.id) }),
+    })),
+  };
+};
 
 type ProviderStaticModel = Extract<
   ProviderContribution['catalog'],

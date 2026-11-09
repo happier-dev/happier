@@ -32,7 +32,6 @@ import {
 import { PluginClientExecutionReferenceV1Schema, type PluginClientExecutionPlatformV1 } from './clientExecution.js';
 import type { VoiceProviderContribution } from './voiceProviders.js';
 import { isBundledProviderCatalogParserV1 } from '../../providers/catalog/descriptorV1.js';
-import { isBundledProviderCommandCatalogParserV1 } from '../../providers/detection/descriptorV1.js';
 import { parseQualifiedPluginContributionKey } from '../contributionIdentity.js';
 import { readMachineProvisionerActionRolesV1, type MachineProvisionerContributionV1 } from './machineProvisioners.js';
 import { readAccessProviderActionRolesV1, type AccessProviderContributionV1 } from './accessProviders.js';
@@ -1004,10 +1003,15 @@ export function readContributedProviderCatalogParserIds(
   // declaring one on an HTTP probe.
   const discovery = value.discovery;
   if (discovery && typeof discovery === 'object' && !Array.isArray(discovery)) {
+    const availability = (discovery as Readonly<Record<string, unknown>>).availabilityProbe;
+    if (availability && typeof availability === 'object' && !Array.isArray(availability)) {
+      const parser = (availability as Readonly<Record<string, unknown>>).parser;
+      if (typeof parser === 'string' && !isBundledProviderCatalogParserV1(parser)) contributed.add(parser);
+    }
     const fallback = (discovery as Readonly<Record<string, unknown>>).catalogFallback;
     if (fallback && typeof fallback === 'object' && !Array.isArray(fallback)) {
       const parser = (fallback as Readonly<Record<string, unknown>>).parser;
-      if (typeof parser === 'string' && !isBundledProviderCommandCatalogParserV1(parser)) {
+      if (typeof parser === 'string') {
         contributed.add(parser);
       }
     }

@@ -15,8 +15,6 @@ import { ProviderModelDescriptorV1Schema } from '../../models/descriptor.js';
 export const BUNDLED_PROVIDER_CATALOG_PARSERS_V1 = Object.freeze([
   'openai-models',
   'anthropic-models',
-  'ollama-tags',
-  'lmstudio-native-models',
 ] as const);
 
 export const BundledProviderCatalogParserV1Schema = lazyZodSchema(() => z.enum(
@@ -66,22 +64,13 @@ export function readBundledProviderCatalogParserFactV1<T>(
   return isBundledProviderCatalogParserV1(parser) ? factsByParser[parser] : null;
 }
 
-const BUNDLED_PROVIDER_CATALOG_PARSER_REPORTS_MODEL_LOAD_STATE_V1 = Object.freeze({
-  'openai-models': false,
-  'anthropic-models': false,
-  'ollama-tags': false,
-  'lmstudio-native-models': true,
-} as const satisfies Record<BundledProviderCatalogParserV1, boolean>);
-
 export const ProviderCatalogProbeV1Schema = lazyZodSchema(() => z.strictObject({
   endpointTemplateId: ProviderLocalIdSchema,
   path: ProviderOriginRelativePathSchema,
   parser: ProviderCatalogParserV1Schema,
   /**
    * Declares that this probe's catalog format reports per-model load state.
-   * Bundled formats carry that fact centrally; a contributed format states it
-   * here so model loading is decided by the format's behavior rather than by
-   * whether the host happens to bundle it.
+   * The declaring Provider owns this fact independently of parser identity.
    */
   reportsModelLoadState: z.optional(z.boolean()),
 }));
@@ -100,18 +89,12 @@ export type ProviderCatalogSourceRegistryVersionV1 = z.infer<
 
 /**
  * Canonical owner for "does this catalog probe report model load state".
- * An explicit declaration wins; otherwise the bundled fact answers, and an
- * unknown contributed format reports `false` rather than being guessed.
+ * Only an explicit declaration reports load state; an absent fact stays false.
  */
 export function providerCatalogProbeReportsModelLoadStateV1(
   probe: Readonly<{ parser: ProviderCatalogParserV1; reportsModelLoadState?: boolean }>,
 ): boolean {
-  return probe.reportsModelLoadState
-    ?? readBundledProviderCatalogParserFactV1(
-      BUNDLED_PROVIDER_CATALOG_PARSER_REPORTS_MODEL_LOAD_STATE_V1,
-      probe.parser,
-    )
-    ?? false;
+  return probe.reportsModelLoadState === true;
 }
 
 export const ProviderCatalogMembershipPolicyV1Schema = lazyZodSchema(() => z.enum([

@@ -14,64 +14,11 @@ const ExecutableLookupNameSchema = lazyZodSchema(() => z.string().check(z.trim()
 const LookupNamesSchema = lazyZodSchema(() => z.array(ExecutableLookupNameSchema).check(z.minLength(1), z.maxLength(16)));
 const EnvironmentVariableNameSchema = lazyZodSchema(() => z.string().check(z.minLength(1), z.maxLength(128), z.regex(/^[A-Za-z_][A-Za-z0-9_]*$/u)));
 
-/**
- * The command-output catalog formats Happier bundles an implementation for.
- * This list answers only "does the host already implement this format"; it
- * never decides whether a declared format is valid. A Provider plugin
- * contributes its own command-output format through the `providers`
- * contribution family, exactly like a bundled Provider does, and implements it
- * with the same registered catalog parser it uses for HTTP catalog formats.
- */
-export const BUNDLED_PROVIDER_COMMAND_CATALOG_PARSERS_V1 = Object.freeze([
-  'ollama-list-table',
-] as const);
-
-export const BundledProviderCommandCatalogParserV1Schema = lazyZodSchema(() => z.enum(
-  BUNDLED_PROVIDER_COMMAND_CATALOG_PARSERS_V1,
-));
-export type BundledProviderCommandCatalogParserV1 = z.infer<
-  typeof BundledProviderCommandCatalogParserV1Schema
->;
-
-/**
- * An open command-output catalog-format identifier: a bundled format, or any
- * format a currently installed Provider plugin contributes. Never narrow this
- * to the bundled set to reject an id or gate a capability.
- */
-export type ProviderCommandCatalogParserV1 =
-  | BundledProviderCommandCatalogParserV1
-  | (string & {});
+/** Open identifier for a command-output format implemented by its declaring Provider. */
+export type ProviderCommandCatalogParserV1 = string & {};
 
 export const ProviderCommandCatalogParserV1Schema:
   z.ZodMiniType<ProviderCommandCatalogParserV1, ProviderCommandCatalogParserV1> = ProviderLocalIdSchema;
-
-const BUNDLED_PROVIDER_COMMAND_CATALOG_PARSER_IDS: ReadonlySet<string> = new Set(
-  BUNDLED_PROVIDER_COMMAND_CATALOG_PARSERS_V1,
-);
-
-/**
- * Answers only whether the host bundles an implementation for this format.
- * A `false` result means "no bundled implementation", never "invalid format".
- */
-export function isBundledProviderCommandCatalogParserV1(
-  parser: ProviderCommandCatalogParserV1,
-): parser is BundledProviderCommandCatalogParserV1 {
-  return BUNDLED_PROVIDER_COMMAND_CATALOG_PARSER_IDS.has(parser);
-}
-
-/**
- * Read a bundled command-output catalog-format fact by an open format id.
- *
- * Bundled fact records are exhaustive over the bundled formats only. A
- * contributed format has no entry, so the lookup reports a typed unavailable
- * instead of borrowing another format's fact.
- */
-export function readBundledProviderCommandCatalogParserFactV1<T>(
-  factsByParser: Readonly<Record<BundledProviderCommandCatalogParserV1, T>>,
-  parser: ProviderCommandCatalogParserV1,
-): T | null {
-  return isBundledProviderCommandCatalogParserV1(parser) ? factsByParser[parser] : null;
-}
 
 export const ProviderCatalogCommandFallbackV1Schema = lazyZodSchema(() => z.strictObject({
   endpointTemplateId: ProviderLocalIdSchema,

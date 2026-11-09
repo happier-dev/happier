@@ -5,6 +5,11 @@ import { ProviderContributionV1Schema } from '@happier-dev/protocol';
 import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
 import { PLUGIN_MANIFEST as vercelManifest, activate as activateVercel } from '../../../../../packages/plugins/vercel-ai-gateway/src/manifest';
 import vercelCatalog from '../../../../../packages/plugins/vercel-ai-gateway/src/provider/catalog/fixtures/catalog.json';
+import { PLUGIN_MANIFEST as ollamaManifest, activate as activateOllama } from '../../../../../packages/plugins/ollama/src/manifest';
+import { PLUGIN_MANIFEST as lmstudioManifest, activate as activateLmstudio } from '../../../../../packages/plugins/lmstudio/src/manifest';
+import { CLAUDE_PLUGIN, PLUGIN_MANIFEST as claudeManifest } from '../../../../../packages/plugins/claude/src/manifest';
+import { parseProviderCatalogResponse } from './parsers';
+import { createProviderLocalCatalogFallbackRunner } from './localCommand';
 
 import {
   createProviderProbeHttpClient,
@@ -73,6 +78,64 @@ const CATALOG_BODY = JSON.stringify({
 });
 
 describe('externally contributed Provider catalog format', () => {
+  it('normalizes Claude catalog labels and preserves advertised reasoning through its declared parser (01E)', async () => {
+    const plugin = await createPluginTestkit({ manifest: claudeManifest, module: { activate: CLAUDE_PLUGIN.activate } });
+    try {
+      const parsers = plugin.registration('providers', 'anthropic')?.catalogParsers;
+      expect(parsers).toBeDefined();
+      const provider = ProviderContributionV1Schema.parse(claudeManifest.contributes.providers?.find(row => row.id === 'anthropic'));
+      if (!('probes' in provider.catalog)) throw new Error('Expected Claude dynamic catalog');
+      const result = parseProviderCatalogResponse(provider.catalog.probes[0]!.parser, { data: [{
+        id: 'claude-future-6', display_name: 'Claude Future 6', max_input_tokens: 1_000_000,
+        capabilities: { effort: { supported: true, high: { supported: true }, xhigh: { supported: true } } },
+      }] }, parsers);
+      expect(result.models).toEqual([expect.objectContaining({
+        id: 'claude-future-6', name: 'Future 6', contextWindowTokens: 1_000_000,
+        capabilities: { reasoningControls: 'supported' },
+        modelOptions: [expect.objectContaining({ id: 'reasoning_effort', options: [
+          { value: 'high', name: 'High' }, { value: 'xhigh', name: 'XHigh' },
+        ] })],
+      })]);
+    } finally { await plugin.dispose(); }
+  });
+
+  it('preserves native model capabilities, identities and load states through the local Provider declarations (01E)', async () => {
+    const ollama = await createPluginTestkit({ manifest: ollamaManifest, module: { activate: activateOllama } });
+    const lmstudio = await createPluginTestkit({ manifest: lmstudioManifest, module: { activate: activateLmstudio } });
+    try {
+      const ollamaParsers = ollama.registration('providers', 'ollama')?.catalogParsers;
+      const lmstudioParsers = lmstudio.registration('providers', 'lmstudio')?.catalogParsers;
+      expect(ollamaParsers).toBeDefined();
+      expect(lmstudioParsers).toBeDefined();
+      expect(parseProviderCatalogResponse('ollama-tags', { models: [
+        { model: 'coding:latest', capabilities: ['completion', 'tools', 'thinking'] },
+        { model: 'embedding:latest', capabilities: ['embedding'] },
+      ] }, ollamaParsers).models).toEqual([{ id: 'coding:latest', capabilities: {
+        toolRoundTrips: 'supported', reasoningControls: 'supported',
+      } }]);
+      expect(parseProviderCatalogResponse('lmstudio-native-models', { models: [
+        { key: 'coding-model', display_name: 'Coding Model', type: 'llm', loaded_instances: [{}] },
+        { key: 'unloaded-model', type: 'llm', loaded_instances: [] },
+        { key: 'embedding-model', type: 'embedding' },
+      ] }, lmstudioParsers)).toEqual({ models: [
+        { id: 'coding-model', name: 'Coding Model' }, { id: 'unloaded-model' },
+      ], loadStates: [
+        { modelId: 'coding-model', loadState: 'loaded' }, { modelId: 'unloaded-model', loadState: 'unloaded' },
+      ] });
+      const fallback = createProviderLocalCatalogFallbackRunner({ runner: { runSystemTool: async () => ({
+        ok: true, exitCode: 0, stdout: 'NAME ID SIZE MODIFIED\ncoding:latest abc 4GB now\n', stderr: '',
+      }) } });
+      const provider = ProviderContributionV1Schema.parse(ollamaManifest.contributes.providers?.[0]);
+      if (!provider.discovery?.catalogFallback) throw new Error('Expected Ollama command fallback');
+      expect(await fallback.run({ descriptor: provider.discovery.catalogFallback,
+        endpointUrl: 'http://127.0.0.1:11434', contributedCatalogParsers: ollamaParsers,
+      })).toEqual({ status: 'success', models: [{ id: 'coding:latest', name: 'coding:latest' }] });
+    } finally {
+      await ollama.dispose();
+      await lmstudio.dispose();
+    }
+  });
+
   it('dispatches the Gateway plugin parser through activation and the real HTTP catalog consumer', async () => {
     const testkit = await createPluginTestkit({ manifest: vercelManifest, module: { activate: activateVercel } });
     try {

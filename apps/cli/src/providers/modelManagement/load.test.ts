@@ -27,6 +27,14 @@ import {
   createProviderProbeHttpClient,
   type ProviderProbeTransport,
 } from '../probe/client';
+import { parseLmStudioModels } from '../../../../../packages/plugins/lmstudio/src/provider/contribution';
+import { definePlugin } from '@happier-dev/plugin-sdk';
+import { createAuthoredAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
+import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
+import { loadInstalledPlugins } from '@/plugins/discovery/load/installed';
+import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
+import { projectLoadedPluginContributes } from '@/plugins/projection/registry/fullProjection';
+import { configuration } from '@/configuration';
 
 type Ticket = Readonly<{ revision: number }>;
 type CredentialRef = Readonly<{ id: string }>;
@@ -46,13 +54,28 @@ it('coalesces admitted model loads past the former ten-minute cutoff and a conne
     endpointTemplates: [{ id: 'management', protocol: 'openai-chat', localUrlCandidates: ['http://127.0.0.1:1234/'],
       capabilities: { streaming: 'unknown', toolRoundTrips: 'unknown', statefulResponses: 'unknown', reasoningControls: 'unknown' } }],
     catalog: { source: 'probe', manualModelPolicy: 'allowed',
-      probes: [{ endpointTemplateId: 'management', path: '/api/v1/models', parser: 'lmstudio-native-models' }] },
+      probes: [{ endpointTemplateId: 'management', path: '/api/v1/models', reportsModelLoadState: true, parser: 'lmstudio-native-models' }] },
     modelLoad: descriptor,
   });
   const registry = { providersByContributionKey: new Map([['acme.loader/loader', {
     provenance: 'external' as const, source: { kind: 'path' as const }, pluginId: 'acme.loader',
     identity: { pluginId: 'acme.loader', localId: 'loader' }, definition,
   }]]) };
+  const plugin = definePlugin({ id: 'acme.loader', version: '1.0.0', displayName: 'Loader',
+    entrypoints: { daemon: './daemon.mjs' },
+    providers: { loader: { declaration: definition,
+      catalogParsers: { 'lmstudio-native-models': parseLmStudioModels } } },
+  });
+  const fixture = await createAuthoredAdmittedPluginRuntimeFixture({
+    happyHomeDir: homeDir, controller: pluginReloadController, coldStart: true,
+    plugins: [{ manifest: plugin.manifest, files: { 'daemon.mjs': 'export function activate() {}' },
+      instantiateCommittedModule: () => ({ activate: plugin.activate }) }],
+    async resolveContributes(happyHomeDir) {
+      return createResolvedContributionRegistry(projectLoadedPluginContributes({
+        loadResult: await loadInstalledPlugins({ happyHomeDir }), provenance: 'external',
+      }));
+    },
+  });
   const baseSettings = ProviderSettingsV1Schema.parse({ ...DEFAULT_PROVIDER_SETTINGS_V1, connections: [{
     v: 1, id: 'connection-a', source: { kind: 'contribution', contributionKey: 'acme.loader/loader' },
     role: 'default', displayName: 'Loader', displayNameMode: 'automatic', revision: 0, createdAt: 1, updatedAt: 1,
@@ -92,7 +115,7 @@ it('coalesces admitted model loads past the former ten-minute cutoff and a conne
       })) };
     },
   });
-  const services = createRuntimeProviderModelManagementServices({ machineId: 'machine-a', happyHomeDir: homeDir,
+  const services = createRuntimeProviderModelManagementServices({ machineId: 'machine-a', happyHomeDir: configuration.happyHomeDir,
     registry, featureGate: { isEnabled: () => true }, getAccountSettingsSnapshot: () => snapshot,
     resolveAddresses: async () => ['127.0.0.1'], runtimeStore: createProviderRuntimeStateStore({ happyHomeDir: homeDir, machineId: 'machine-a' }), client,
     modelSettingsMutation: async (): Promise<never> => { throw new Error('Unexpected model-settings mutation'); },
@@ -120,6 +143,7 @@ it('coalesces admitted model loads past the former ten-minute cutoff and a conne
     releasePost();
     await pending;
     clock.mockRestore();
+    await fixture.dispose();
     await rm(homeDir, { recursive: true, force: true });
   }
 });

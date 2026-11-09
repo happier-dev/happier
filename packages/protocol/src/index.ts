@@ -1,4 +1,5 @@
 export const HAPPY_PROTOCOL_PACKAGE = '@happier-dev/protocol';
+export { ConnectedServiceAuthGroupPolicyV2Schema, ConnectedServiceAuthGroupPolicyPatchV2Schema, parseConnectedServiceAuthGroupPolicy, type ConnectedServiceAuthGroupPolicyV2, type ConnectedServiceAuthGroupPolicyPatchV2 } from './connect/connectedServiceSchemas.js';
 export type { ConnectedAccountInvocationPurposeBinding } from './connect/connectedAccountInvocationPurposeBinding.js';
 export * from './sessions/media/imageMarksV1.js';
 export * from './machines/reachability/actionIdsV1.js';
@@ -761,21 +762,23 @@ export {
   ConnectedAccountRequestAuthUsesV1Schema,
   QualifiedConnectedAccountRequestAuthUseV1Schema,
   QualifiedConnectedAccountRequestAuthUsesV1Schema,
-  RequestAuthRequiredHeadersV1Schema,
+  RequestAuthHeaderMapV1Schema,
+  RequestAuthFactsV1Schema,
   RequestAuthCredentialContextV1Schema,
-  OAuthBearerLeaseV1Schema,
+  RequestAuthHeadersV1Schema,
   ConnectedAccountRequestAuthLookupRequestV1Schema,
   BoundedProviderFailureEvidenceV1Schema,
   ConnectedAccountConsumerFailureV1Schema,
   ConnectedAccountAuthFailureRequestV1Schema,
   ConnectedAccountQuotaFailureRequestV1Schema,
   RequestAuthFailureOutcomeV1Schema,
-  type RequestAuthRequiredHeadersV1,
+  type RequestAuthHeaderMapV1,
+  type RequestAuthFactsV1,
   type ConnectedAccountRequestAuthMaterializationV1,
   type ConnectedAccountRequestAuthUseV1,
   type QualifiedConnectedAccountRequestAuthUseV1,
   type RequestAuthCredentialContextV1,
-  type OAuthBearerLeaseV1,
+  type RequestAuthHeadersV1,
   type ConnectedAccountRequestAuthLookupRequestV1,
   type ConnectedAccountRequestAuthErrorCodeV1,
   type BoundedProviderFailureEvidenceV1,
@@ -1003,14 +1006,9 @@ export {
   type ProviderCredentialTransportV1,
 } from './providers/credentials/v1.js';
 export {
-  BUNDLED_PROVIDER_COMMAND_CATALOG_PARSERS_V1,
-  BundledProviderCommandCatalogParserV1Schema,
   ProviderCatalogCommandFallbackV1Schema,
   ProviderCommandCatalogParserV1Schema,
   ProviderDetectionDescriptorV1Schema,
-  isBundledProviderCommandCatalogParserV1,
-  readBundledProviderCommandCatalogParserFactV1,
-  type BundledProviderCommandCatalogParserV1,
   type ProviderCatalogCommandFallbackV1,
   type ProviderCommandCatalogParserV1,
   type ProviderDetectionDescriptorV1,
@@ -1240,6 +1238,8 @@ export {
 } from './plugins/contributions/agentExternalSessions.js';
 export {
   PluginAgentContributionV2Schema,
+  AgentStateRequestCoverageOptionsSchema,
+  type AgentStateRequestCoverageOptions,
   PluginAgentCapabilitiesV2Schema,
   PluginAgentCapabilitySurfaceV2Schema,
   PluginAgentCapabilitySurfacesV2Schema,
@@ -4292,15 +4292,15 @@ export {
   type KeysetCursorPartsDecodeV1,
 } from './pagination/keysetCursorV1.js';
 export {
-  CodexPassiveRealtimeSetupResultV1Schema,
-  CodexPassiveRealtimeSetupStatusV1Schema,
+  AgentPassiveRealtimeSetupResultV1Schema,
+  AgentPassiveRealtimeSetupStatusV1Schema,
   type CapabilitiesDescribeResponse,
   type CapabilitiesDetectRequest,
   type CapabilitiesDetectResponse,
   type CapabilitiesInvokeRequest,
   type CapabilitiesInvokeResponse,
-  type CodexPassiveRealtimeSetupResultV1,
-  type CodexPassiveRealtimeSetupStatusV1,
+  type AgentPassiveRealtimeSetupResultV1,
+  type AgentPassiveRealtimeSetupStatusV1,
   type CapabilityDescriptor,
   type CapabilityDetectRequest,
   type CapabilityDetectResult,

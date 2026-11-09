@@ -2,10 +2,7 @@ import { ProviderCatalogParserV1Schema, readBundledProviderCatalogParserFactV1 }
 import { ProviderCatalogProbeModelV1Schema } from '@happier-dev/protocol/providers/catalog/merge';
 import { ProviderModelLoadStateV1Schema } from '@happier-dev/protocol/providers/runtimeState/v1';
 import type { BundledProviderCatalogParserV1, ProviderCatalogParserV1, ProviderCatalogProbeModelV1, ProviderModelLoadStateV1 } from '@happier-dev/protocol';
-import { ProviderModelDescriptorV1Schema } from '@happier-dev/protocol/models/descriptor';
-import { ANTHROPIC_EFFORT_LEVELS, normalizeAnthropicModelDisplayName } from '@happier-dev/protocol/providers/anthropic-models';
-import { buildProviderReasoningModelOptions } from '@happier-dev/protocol/providers/catalog/reasoningEffort';
-import type { AnthropicEffortLevel } from '@happier-dev/protocol/providers/anthropic-models';
+import { parseAnthropicModelCatalog } from '@happier-dev/protocol/providers/anthropic-models';
 
 export type ParsedProviderCatalogResponse = Readonly<{
   models: readonly ProviderCatalogProbeModelV1[];
@@ -49,94 +46,6 @@ function requiredOwnString(value: unknown, key: string): string {
   return output;
 }
 
-function optionalOwnObject(value: unknown, key: string, label: string): Record<string, unknown> | undefined {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
-    throw new TypeError('Provider model row must be an object');
-  }
-  const descriptor = Object.getOwnPropertyDescriptor(value, key);
-  if (!descriptor) return undefined;
-  if (!descriptor.enumerable || !('value' in descriptor)
-    || typeof descriptor.value !== 'object' || descriptor.value === null || Array.isArray(descriptor.value)) {
-    throw new TypeError(`${label} must be an object`);
-  }
-  return descriptor.value as Record<string, unknown>;
-}
-
-function requiredOwnBoolean(value: unknown, key: string, label: string): boolean {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
-    throw new TypeError(`${label} must be an object`);
-  }
-  const descriptor = Object.getOwnPropertyDescriptor(value, key);
-  if (!descriptor || !descriptor.enumerable || !('value' in descriptor)
-    || typeof descriptor.value !== 'boolean') {
-    throw new TypeError(`${label} ${key} must be a boolean`);
-  }
-  return descriptor.value;
-}
-
-function optionalOwnContextWindowTokens(value: unknown): number | undefined {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
-    throw new TypeError('Provider model row must be an object');
-  }
-  const descriptor = Object.getOwnPropertyDescriptor(value, 'max_input_tokens');
-  if (!descriptor) return undefined;
-  if (!descriptor.enumerable || !('value' in descriptor)) {
-    throw new TypeError('Provider model max_input_tokens must be a positive bounded integer');
-  }
-  try {
-    return ProviderModelDescriptorV1Schema.shape.contextWindowTokens.parse(descriptor.value);
-  } catch {
-    throw new TypeError('Provider model max_input_tokens must be a positive bounded integer');
-  }
-}
-
-function readAnthropicEffortCapability(value: unknown): Readonly<{
-  supported: boolean;
-  levels: readonly AnthropicEffortLevel[];
-}> | undefined {
-  const capabilities = optionalOwnObject(value, 'capabilities', 'Anthropic model capabilities');
-  if (!capabilities) return undefined;
-  const effort = optionalOwnObject(capabilities, 'effort', 'Anthropic model effort capability');
-  if (!effort) return undefined;
-  const supported = requiredOwnBoolean(effort, 'supported', 'Anthropic model effort capability');
-  const levels: AnthropicEffortLevel[] = [];
-  for (const level of ANTHROPIC_EFFORT_LEVELS) {
-    const tier = optionalOwnObject(effort, level, `Anthropic model effort tier ${level}`);
-    if (tier && requiredOwnBoolean(tier, 'supported', `Anthropic model effort tier ${level}`)) {
-      levels.push(level);
-    }
-  }
-  if (!supported && levels.length > 0) {
-    throw new TypeError('Anthropic model effort capability cannot disable supported tiers');
-  }
-  if (supported && levels.length === 0) {
-    throw new TypeError('Anthropic model effort capability requires a supported tier');
-  }
-  return { supported, levels };
-}
-
-function optionalOwnStringArray(
-  value: unknown,
-  key: string,
-): readonly string[] | undefined {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
-    throw new TypeError('Provider model row must be an object');
-  }
-  const descriptor = Object.getOwnPropertyDescriptor(value, key);
-  if (!descriptor) return undefined;
-  if (!descriptor.enumerable || !('value' in descriptor) || !Array.isArray(descriptor.value)) {
-    throw new TypeError(`Provider model ${key} must be a string array`);
-  }
-  return descriptor.value.map((_entry, index) => {
-    const item = Object.getOwnPropertyDescriptor(descriptor.value, String(index));
-    if (!item || !item.enumerable || !('value' in item)
-      || typeof item.value !== 'string') {
-      throw new TypeError(`Provider model ${key} must be a string array`);
-    }
-    return item.value;
-  });
-}
-
 function normalizeModels(models: readonly ProviderCatalogProbeModelV1[]): readonly ProviderCatalogProbeModelV1[] {
   const parsed = models.map((model) => ProviderCatalogProbeModelV1Schema.parse(model));
   const seen = new Set<string>();
@@ -167,92 +76,6 @@ function parseOpenAiModels(input: unknown): ParsedProviderCatalogResponse {
   };
 }
 
-function parseAnthropicModels(input: unknown): ParsedProviderCatalogResponse {
-  const rows = boundedArray(ownDataProperty(input, 'data'), 'Anthropic model list');
-  return {
-    models: normalizeModels(rows.map((row) => {
-      const id = requiredOwnString(row, 'id');
-      const nameRaw = optionalOwnString(row, 'display_name');
-      const name = nameRaw === undefined ? undefined : normalizeAnthropicModelDisplayName(nameRaw, id);
-      const contextWindowTokens = optionalOwnContextWindowTokens(row);
-      const effort = readAnthropicEffortCapability(row);
-      const modelOptions = effort?.supported
-        ? buildProviderReasoningModelOptions({ supportedLevels: effort.levels })
-        : [];
-      return {
-        id,
-        ...(name === undefined ? {} : { name }),
-        ...(contextWindowTokens === undefined ? {} : { contextWindowTokens }),
-        ...(effort ? {
-          capabilities: {
-            reasoningControls: effort.supported ? 'supported' as const : 'unsupported' as const,
-          },
-        } : {}),
-        ...(modelOptions.length > 0 ? { modelOptions } : {}),
-      };
-    })),
-    loadStates: [],
-  };
-}
-
-function parseOllamaTags(input: unknown): ParsedProviderCatalogResponse {
-  const rows = boundedArray(ownDataProperty(input, 'models'), 'Ollama model list');
-  return {
-    models: normalizeModels(rows.flatMap((row) => {
-      const capabilities = optionalOwnStringArray(row, 'capabilities');
-      // Newer Ollama versions expose exact model capabilities on /api/tags.
-      // A row explicitly lacking completion support cannot serve a coding-agent
-      // session. Older versions omit this field, so absence remains unknown and
-      // the model stays visible rather than being guessed incompatible.
-      if (capabilities !== undefined && !capabilities.includes('completion')) return [];
-      return [{
-        id: optionalOwnString(row, 'model') ?? requiredOwnString(row, 'name'),
-        ...(capabilities === undefined
-          ? {}
-          : {
-              capabilities: {
-                toolRoundTrips: capabilities.includes('tools') ? 'supported' as const : 'unsupported' as const,
-                reasoningControls: capabilities.includes('thinking') ? 'supported' as const : 'unsupported' as const,
-              },
-            }),
-      }];
-    })),
-    loadStates: [],
-  };
-}
-
-function parseLmStudioModels(input: unknown): ParsedProviderCatalogResponse {
-  const rows = boundedArray(ownDataProperty(input, 'models'), 'LM Studio model list');
-  const loadStates: Array<{ modelId: string; loadState: ProviderModelLoadStateV1 }> = [];
-  const models = normalizeModels(rows.flatMap((row) => {
-    const type = optionalOwnString(row, 'type');
-    if (type !== undefined && type !== 'llm' && type !== 'embedding') {
-      throw new TypeError('LM Studio model type must be llm or embedding');
-    }
-    // The native list includes embedding models, which cannot serve any coding
-    // agent's chat/responses protocol. Preserve legacy rows that predate the
-    // type field, but exclude rows explicitly identified as embeddings.
-    if (type === 'embedding') return [];
-    const id = requiredOwnString(row, 'key');
-    const name = optionalOwnString(row, 'display_name');
-    const loadedInstancesDescriptor = typeof row === 'object' && row !== null
-      ? Object.getOwnPropertyDescriptor(row, 'loaded_instances')
-      : undefined;
-    if (loadedInstancesDescriptor) {
-      if (!loadedInstancesDescriptor.enumerable || !('value' in loadedInstancesDescriptor)
-        || !Array.isArray(loadedInstancesDescriptor.value)) {
-        throw new TypeError('LM Studio loaded_instances must be an array');
-      }
-      loadStates.push({
-        modelId: id,
-        loadState: loadedInstancesDescriptor.value.length > 0 ? 'loaded' : 'unloaded',
-      });
-    }
-    return [name === undefined ? { id } : { id, name }];
-  }));
-  return { models, loadStates };
-}
-
 /**
  * A catalog wire format implementation: maps one decoded response body onto
  * model rows. Bundled formats and plugin-contributed formats implement the
@@ -275,9 +98,7 @@ export const BUNDLED_PROVIDER_CATALOG_FORMAT_PARSERS: Readonly<
   Record<BundledProviderCatalogParserV1, ProviderCatalogFormatParser>
 > = Object.freeze({
   'openai-models': parseOpenAiModels,
-  'anthropic-models': parseAnthropicModels,
-  'ollama-tags': parseOllamaTags,
-  'lmstudio-native-models': parseLmStudioModels,
+  'anthropic-models': parseAnthropicModelCatalog,
 });
 
 /**
@@ -294,32 +115,22 @@ export class ProviderCatalogFormatUnavailableError extends Error {
   }
 }
 
-/**
- * Resolves a declared format to its implementation. A contributed parser wins
- * only for a format the host does not bundle, so a plugin can never displace a
- * bundled format's meaning for another Provider.
- */
+/** A Provider implementation owns its declared format; shared wire codecs serve custom templates. */
 export function resolveProviderCatalogFormatParser(
   parser: ProviderCatalogParserV1,
   contributedParsers?: Readonly<Record<string, ProviderCatalogFormatParser>>,
 ): ProviderCatalogFormatParser | null {
-  const bundled = readBundledProviderCatalogParserFactV1(
-    BUNDLED_PROVIDER_CATALOG_FORMAT_PARSERS,
-    parser,
-  );
-  if (bundled) return bundled;
   const contributed = contributedParsers
     ? Object.getOwnPropertyDescriptor(contributedParsers, parser)
     : undefined;
   return contributed && contributed.enumerable && typeof contributed.value === 'function'
     ? contributed.value as ProviderCatalogFormatParser
-    : null;
+    : readBundledProviderCatalogParserFactV1(BUNDLED_PROVIDER_CATALOG_FORMAT_PARSERS, parser);
 }
 
 /**
  * Host-owned normalization of any format's output. A contributed format decides
- * the model rows; the catalog's schema, dedupe, and size limits stay here so a
- * plugin cannot widen them.
+ * the model rows; the catalog's schema and dedupe stay here.
  */
 function normalizeLoadStates(
   loadStates: unknown,

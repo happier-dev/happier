@@ -40,7 +40,7 @@ describe('Anthropic Provider contribution', () => {
         probes: [{
           endpointTemplateId: 'anthropic',
           path: '/v1/models?limit=1000',
-          parser: 'anthropic-models',
+          parser: 'claude-models',
         }],
       },
     });

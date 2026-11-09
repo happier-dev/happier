@@ -37,12 +37,15 @@ describe('provider catalog format identifier', () => {
       'ollama-tags': 'ollama',
       'lmstudio-native-models': 'lmstudio',
     } as const;
-    expect(readBundledProviderCatalogParserFactV1(facts, 'ollama-tags')).toBe('ollama');
+    expect(readBundledProviderCatalogParserFactV1(facts, 'openai-models')).toBe('openai');
+    expect(readBundledProviderCatalogParserFactV1(facts, 'ollama-tags')).toBeNull();
     expect(readBundledProviderCatalogParserFactV1(facts, 'acme-catalog-v3')).toBeNull();
   });
 
   it('decides model-load state reporting from the format, not from bundled-ness', () => {
-    expect(providerCatalogProbeReportsModelLoadStateV1({ parser: 'lmstudio-native-models' })).toBe(true);
+    // 01E: only the declaring Provider knows whether its response reports load state.
+    expect(providerCatalogProbeReportsModelLoadStateV1({ parser: 'lmstudio-native-models' })).toBe(false);
+    expect(providerCatalogProbeReportsModelLoadStateV1({ parser: 'lmstudio-native-models', reportsModelLoadState: true })).toBe(true);
     expect(providerCatalogProbeReportsModelLoadStateV1({ parser: 'openai-models' })).toBe(false);
     expect(providerCatalogProbeReportsModelLoadStateV1({ parser: 'acme-catalog-v3' })).toBe(false);
     expect(providerCatalogProbeReportsModelLoadStateV1({
