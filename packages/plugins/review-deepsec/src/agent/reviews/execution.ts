@@ -25,6 +25,9 @@ import {
   type DeepSecScopedPathListDiagnostic,
 } from './run.js';
 import { createDeepSecTempFiles } from './tempFiles.js';
+import { readDeepSecProviderLaunch } from '../providerBinding.js';
+import { isPluginError } from '@happier-dev/plugin-sdk';
+import { prepareDeepSecClaudeAccount } from '../connectedAccount.js';
 
 type NormalizedDeepSecStart = Readonly<{
   mode: DeepSecReviewMode;
@@ -38,6 +41,8 @@ type NormalizedDeepSecStart = Readonly<{
 }>;
 
 type DeepSecAgentCli = 'claude' | 'codex' | 'both';
+
+class DeepSecProviderHarnessMismatchError extends Error {}
 
 function readRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object' && !Array.isArray(value)
@@ -430,7 +435,8 @@ function createRuntime(
     },
     mapFailure(error) {
       return {
-        code: 'deepsec_execution_failed',
+        code: isPluginError(error) ? error.code : error instanceof DeepSecProviderHarnessMismatchError
+          ? 'deepsec_provider_harness_mismatch' : 'deepsec_execution_failed',
         severity: 'error',
         message: error instanceof Error ? error.message : 'DeepSec execution failed',
       };
@@ -445,7 +451,7 @@ function createRuntime(
         profileId: `${request.profile.pluginId}/${request.profile.localId}`,
       });
       assertSupportedScmReviewScope(startInput);
-      const selectedScope = startInput.mode === 'selected_files'
+      const selectedScope = startInput.mode === 'selected_files' || startInput.mode === 'current_diff'
         ? await resolveSelectedScopePaths({
           context,
           cwd: request.cwd,
@@ -466,9 +472,15 @@ function createRuntime(
         });
         return { status: 'complete' };
       }
+      const provider = request.providerBinding
+        ? readDeepSecProviderLaunch(request.providerBinding, request.launchEnvironment) : null;
+      const claudeAccount = provider ? null : await prepareDeepSecClaudeAccount(context, startInput.agentCli);
+      if (provider && startInput.agentCli && startInput.agentCli !== provider.route.agent) {
+        throw new DeepSecProviderHarnessMismatchError('The selected DeepSec Provider requires the Codex harness.');
+      }
       const agentCli = await resolveAgentCliReadiness({
         context,
-        configuredAgentCli: startInput.agentCli ?? null,
+        configuredAgentCli: claudeAccount ? 'claude' : provider?.route.agent ?? startInput.agentCli ?? null,
         cwd: request.cwd,
         projectId: startInput.projectId,
         workspaceId: startInput.workspaceId,
@@ -484,7 +496,9 @@ function createRuntime(
         preferredExecutablePath: startInput.preferredExecutablePath,
         exec: context.services.exec,
         tempFiles: await createDeepSecTempFiles(),
-        environment: gateway.environment,
+        environment: provider?.environment ?? claudeAccount ?? gateway.environment,
+        provider: provider?.route,
+        claudeSubscription: Boolean(claudeAccount),
         readiness: {
           agentCli,
           hasGatewayKey: gateway.hasGatewayKey,

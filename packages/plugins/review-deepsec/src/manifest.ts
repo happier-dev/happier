@@ -6,6 +6,8 @@ import { AGENT_DEFINITION } from './agent/definition.js';
 import { createDeepSecExecutionRunFactory } from './agent/reviews/execution.js';
 import { createDeepSecReviewExecutionProfile } from './agent/reviews/profile.js';
 import { DEEPSEC_SYSTEM_TOOL_ID } from './agent/reviews/systemTool.js';
+import { DEEPSEC_PROVIDER_BINDING_ADAPTER_V1, DEEPSEC_PROVIDER_ENV_KEYS } from './agent/providerBinding.js';
+import { DEEPSEC_CLAUDE_ACCOUNT_PURPOSE } from './agent/connectedAccount.js';
 
 const createDeepSecRuntime: AgentRuntimeFactory = () => Object.freeze({
   executionRuns: createDeepSecExecutionRunFactory(),
@@ -16,7 +18,6 @@ export const DEEPSEC_PLUGIN = definePlugin({
   version: '0.0.0',
   displayName: 'DeepSec review engine',
   description: 'Runs DeepSec as a review and security-review execution engine.',
-  engines: { happier: '^0.0.0' }, runtime: { apiVersion: 1 },
   entrypoints: { daemon: './.happier-plugin/daemon.js' },
   hostAccess: {
     required: [{
@@ -38,7 +39,7 @@ export const DEEPSEC_PLUGIN = definePlugin({
       reason: 'Launch the user-installed DeepSec CLI for an admitted review run.',
       scope: {
         executables: [{ kind: 'systemTool', id: DEEPSEC_SYSTEM_TOOL_ID }],
-        envKeys: ['AI_GATEWAY_API_KEY'],
+        envKeys: [...DEEPSEC_PROVIDER_ENV_KEYS],
       },
     }],
     optional: [],
@@ -47,6 +48,18 @@ export const DEEPSEC_PLUGIN = definePlugin({
     deepsec: {
       declaration: {
         title: 'DeepSec',
+        providerRequirements: {
+          acceptsProtocols: ['openai-responses'],
+          required: { streaming: true, toolRoundTrips: true },
+          credentialSupport: {
+            supportsNoAuth: false,
+            apiKeyTransports: [
+              { protocol: 'openai-responses', destination: { kind: 'httpHeader', names: ['authorization'], formats: ['bearer'] } },
+            ],
+          },
+          authIsolation: { suppressConnectedServiceIds: ['claude-subscription'], ownedEnvKeys: [...DEEPSEC_PROVIDER_ENV_KEYS] },
+          materialization: 'spawnEnv', applyPolicy: 'restart_session', supportsFreeformModelIds: true,
+        },
         runtime: { kind: 'custom' },
         cli: {
           executable: {
@@ -68,12 +81,21 @@ export const DEEPSEC_PLUGIN = definePlugin({
           },
         },
         primary: 'executionRuns',
+        connectedAccounts: [{
+          purpose: DEEPSEC_CLAUDE_ACCOUNT_PURPOSE,
+          service: { pluginId: 'happier.agent.claude', localId: 'claude-subscription' },
+          required: false,
+          materializationKinds: ['environment'],
+          credentialKinds: ['oauth', 'token'],
+        }],
         catalog: {
+          agentCliSystemTool: { toolId: DEEPSEC_SYSTEM_TOOL_ID },
           vendorResume: { support: AGENT_DEFINITION.core.resume.vendorResume },
         },
         capabilities: projectAgentCapabilitiesV2FromDefinition(AGENT_DEFINITION.core, { skills: { delivery: 'none', nativeDisable: 'unsupported', liveReload: 'unsupported' }, executionRuns: { open: ['create'], checkpoint: false, stop: true } }),
       },
       factory: createDeepSecRuntime,
+      providerBinding: DEEPSEC_PROVIDER_BINDING_ADAPTER_V1,
     },
   },
   executionRunProfiles: {

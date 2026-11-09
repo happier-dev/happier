@@ -9,6 +9,7 @@ import { buildDeepSecCommand, type DeepSecReviewMode } from './command.js';
 import { buildDeepSecCostWarning, type DeepSecCostWarningInput, type DeepSecCostWarningResult } from './costWarning.js';
 import { resolveDeepSecExecutable } from './executable.js';
 import { checkDeepSecReadiness, type DeepSecReadiness } from './readiness.js';
+import type { DeepSecProviderRoute } from '../providerBinding.js';
 
 export type DeepSecTempFileRequest = Readonly<{
   suffix: string;
@@ -86,6 +87,8 @@ export type RunDeepSecReviewParams = Readonly<{
   exec: Pick<ExecService, 'systemTools' | 'run'>;
   tempFiles: DeepSecTempFiles;
   environment?: Readonly<Record<string, string>>;
+  provider?: DeepSecProviderRoute;
+  claudeSubscription?: boolean;
   readiness?: Readonly<{
     toolRuntime?: DeepSecReadiness['toolRuntime'];
     agentCli?: 'claude' | 'codex' | 'both' | null;
@@ -213,7 +216,7 @@ function missingScopedPathListDiagnostic(): DeepSecScopedPathListDiagnostic {
 
 export async function runDeepSecReview(params: RunDeepSecReviewParams): Promise<DeepSecReviewRunResult> {
   try {
-    const selectedFiles = params.mode === 'selected_files'
+    const selectedFiles = params.mode === 'selected_files' || params.mode === 'current_diff'
       ? normalizeSelectedFiles(params.selectedFiles)
       : undefined;
     const warning = buildDeepSecCostWarning({ mode: params.mode, ...(params.cost ?? {}) });
@@ -232,6 +235,7 @@ export async function runDeepSecReview(params: RunDeepSecReviewParams): Promise<
       toolRuntime: params.readiness?.toolRuntime ?? resolveToolRuntimeFromGrant(grant),
       agentCli: resolveReadinessAgentCli(params.readiness),
       hasGatewayKey: resolveReadinessGatewayKey(params.readiness),
+      hasProviderCredential: Boolean(params.provider || params.claudeSubscription),
     });
     if (readiness.status !== 'ready') {
       return {
@@ -243,7 +247,7 @@ export async function runDeepSecReview(params: RunDeepSecReviewParams): Promise<
 
     let commentOutPath: string | undefined;
     let filesFromPath: string | undefined;
-    if (params.mode === 'selected_files') {
+    if (selectedFiles) {
       const selectedFileList = await params.tempFiles.createScopedPathListFile?.({
         suffix: '.files.txt',
         paths: selectedFiles ?? [],
@@ -265,6 +269,8 @@ export async function runDeepSecReview(params: RunDeepSecReviewParams): Promise<
       mode: params.mode,
       commentOutPath,
       filesFromPath,
+      provider: params.provider,
+      claudeSubscription: params.claudeSubscription,
     });
     const run = (args: readonly string[]) => params.exec.run({
       executable: grant.executable,
@@ -280,6 +286,8 @@ export async function runDeepSecReview(params: RunDeepSecReviewParams): Promise<
       const processResult = await run(buildDeepSecCommand({
         mode: 'repository_security_audit_process',
         commentOutPath,
+        provider: params.provider,
+        claudeSubscription: params.claudeSubscription,
       }));
       const commentOutMarkdown = await params.tempFiles.readText(commentOutPath);
       if (commandFailed(processResult)) {

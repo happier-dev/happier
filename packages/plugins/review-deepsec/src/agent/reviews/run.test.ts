@@ -41,7 +41,7 @@ function createTempFiles(overrides?: Partial<DeepSecTempFiles>): DeepSecTempFile
 }
 
 describe('runDeepSecReview', () => {
-  it('runs the resolved managed executable and cleans temporary artifacts', async () => {
+  it.each(['selected_files', 'current_diff'] as const)('runs the canonical file list and cleans temporary artifacts (%s)', async mode => {
     const resolve = vi.fn(async () => resolvedTool);
     const run = vi.fn(async () => processResult());
     const createScopedPathListFile = vi.fn(async ({ paths }: { paths: readonly string[] }) => ({
@@ -53,8 +53,8 @@ describe('runDeepSecReview', () => {
 
     const result = await runDeepSecReview({
       cwd: '/repo',
-      mode: 'selected_files',
-      selectedFiles: ['src/auth.ts', 'src/api.ts'],
+      mode,
+      selectedFiles: ['src/auth.ts', 'src/brand-new.ts', 'src/brand-new.test.ts'],
       confirmedCostWarning: true,
       environment: { AI_GATEWAY_API_KEY: 'gateway-key' },
       exec: { systemTools: { resolve }, run },
@@ -73,6 +73,7 @@ describe('runDeepSecReview', () => {
         'process',
         '--files-from',
         '/tmp/deepsec-files.txt',
+        '--no-ignore',
         '--comment-out',
         '/tmp/deepsec-comments.md',
       ],
@@ -81,7 +82,7 @@ describe('runDeepSecReview', () => {
     }, { signal: undefined });
     expect(createScopedPathListFile).toHaveBeenCalledWith({
       suffix: '.files.txt',
-      paths: ['src/auth.ts', 'src/api.ts'],
+      paths: ['src/auth.ts', 'src/brand-new.ts', 'src/brand-new.test.ts'],
     });
     expect(cleanup).toHaveBeenCalledOnce();
   });
@@ -116,6 +117,7 @@ describe('runDeepSecReview', () => {
     const result = await runDeepSecReview({
       cwd: '/repo',
       mode: 'current_diff',
+      selectedFiles: ['src/auth.ts'],
       confirmedCostWarning: true,
       readiness: {
         toolRuntime: { kind: 'node', version: '20.19.0', majorVersion: 20, diagnostics: [] },
@@ -205,6 +207,7 @@ describe('runDeepSecReview', () => {
     await expect(runDeepSecReview({
       cwd: '/repo',
       mode: 'current_diff',
+      selectedFiles: ['src/auth.ts'],
       confirmedCostWarning: true,
       exec: {
         systemTools: { resolve: async () => resolvedTool },
@@ -224,6 +227,7 @@ describe('runDeepSecReview', () => {
     await expect(runDeepSecReview({
       cwd: '/repo',
       mode: 'current_diff',
+      selectedFiles: ['src/auth.ts'],
       confirmedCostWarning: true,
       exec: {
         systemTools: {

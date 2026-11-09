@@ -4,9 +4,11 @@ import { buildDeepSecCommand } from './command.js';
 
 describe('buildDeepSecCommand', () => {
   it('maps supported review actions to exact DeepSec args', () => {
-    expect(buildDeepSecCommand({ mode: 'current_diff', commentOutPath: '/tmp/comments.md' })).toEqual([
+    expect(buildDeepSecCommand({ mode: 'current_diff', filesFromPath: '/tmp/files.txt', commentOutPath: '/tmp/comments.md' })).toEqual([
       'process',
-      '--diff',
+      '--files-from',
+      '/tmp/files.txt',
+      '--no-ignore',
       '--comment-out',
       '/tmp/comments.md',
     ]);
@@ -26,7 +28,7 @@ describe('buildDeepSecCommand', () => {
       mode: 'selected_files',
       filesFromPath: '/tmp/files.txt',
       commentOutPath: '/tmp/comments.md',
-    })).toEqual(['process', '--files-from', '/tmp/files.txt', '--comment-out', '/tmp/comments.md']);
+    })).toEqual(['process', '--files-from', '/tmp/files.txt', '--no-ignore', '--comment-out', '/tmp/comments.md']);
     expect(buildDeepSecCommand({ mode: 'repository_security_audit' })).toEqual(['scan']);
     expect(buildDeepSecCommand({
       mode: 'repository_security_audit_process',
