@@ -6,6 +6,7 @@ import type {
   TargetedContributionsService,
 } from '@happier-dev/plugin-sdk';
 import type { TargetedContributionPointRef } from '@happier-dev/plugin-sdk/contributions';
+import type { PluginCollectionQuery } from '@happier-dev/plugin-sdk/collections';
 import { compareCanonicalConversationResolutionCandidatesV1, ConversationPairingCreateResultV1Schema, type ConversationResolvedEndpointV1 } from '@happier-dev/channels-protocol/v1';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -323,12 +324,7 @@ function createCollection(initial: readonly StateRow[]) {
     async get(rowId: string) {
       return rows.get(rowId) ?? null;
     },
-    async query(request: Readonly<{
-      index: string;
-      prefix?: readonly unknown[];
-      order?: 'asc' | 'desc';
-      limit: number;
-    }>) {
+    async query(request: PluginCollectionQuery) {
       return collection.query(request);
     },
     async batch(operations: readonly StateMutation[]) {

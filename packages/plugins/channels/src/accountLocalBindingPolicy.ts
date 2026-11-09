@@ -984,13 +984,18 @@ function readConversationBindingManagementCurrentRow(
   }
 }
 
+/** Full human endpoint name; list projections may shorten it, consent surfaces retain it. */
+export function readConversationBindingEndpointName(endpoint: Readonly<{ label?: string; parentLabel?: string }>): string | null {
+  return (endpoint.label ?? endpoint.parentLabel)?.trim() || null;
+}
+
 function projectConversationBindingManagementRow(
   row: ChannelStateRow,
   currentRow?: ConversationBindingUpdateRow,
 ): ConversationBindingManagementRow {
   const current: ConversationBindingUpdateRow = currentRow
     ?? readConversationBindingManagementCurrentRow(row);
-  const endpointLabel = current.binding.endpoint.label ?? current.binding.endpoint.parentLabel;
+  const endpointLabel = readConversationBindingEndpointName(current.binding.endpoint);
   const targetSummary = current.binding.target.kind === 'session'
     ? boundedSummary(current.binding.target.sessionId)
     : current.binding.target.kind === 'discussion' ? boundedSummary(current.binding.target.discussionId)
@@ -1013,7 +1018,7 @@ function projectConversationBindingManagementRow(
     connectionId: current.binding.connectionId,
     endpoint: {
       audience: current.binding.endpoint.audience,
-      ...(endpointLabel === undefined ? {} : { label: boundedSummary(endpointLabel) }),
+      ...(endpointLabel === null ? {} : { label: boundedSummary(endpointLabel) }),
     },
     target: {
       kind: current.binding.target.kind,
@@ -1027,6 +1032,23 @@ function projectConversationBindingManagementRow(
     enabled: current.binding.enabled,
     deletionState: current.binding.deletionState,
   };
+}
+
+/** Exact destination names share the binding and connection owners. Presentation never grants delivery. */
+export async function readConversationDiscussionBindingDestination(input: Readonly<{
+  collection: Pick<ChannelStateBindingCollection, 'get'>;
+  bindingId: string;
+  discussionId: string;
+  signal?: AbortSignal;
+}>): Promise<Readonly<{ connectionName: string | null; conversationName: string | null }> | null> {
+  const row = asChannelStateRow(await input.collection.get(input.bindingId, { signal: input.signal }));
+  if (!row) return null;
+  const { binding } = readConversationBindingUpdateRow({ row, bindingId: input.bindingId });
+  if (binding.target.kind !== 'discussion' || binding.target.discussionId !== input.discussionId) return null;
+  const connectionRow = asChannelStateRow(await input.collection.get(binding.connectionId, { signal: input.signal }));
+  const connection = connectionRow ? projectConversationConnectionManagementRow(connectionRow) : null;
+  return { connectionName: connection?.integrationPrincipalLabel?.trim() || null,
+    conversationName: readConversationBindingEndpointName(binding.endpoint) };
 }
 
 /**

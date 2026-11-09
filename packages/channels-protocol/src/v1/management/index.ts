@@ -14,6 +14,7 @@ import {
     ConversationBindingUpdateResultV1Schema,
 } from './bindings.js';
 export * from './reads.js';
+export * from './discussionReplyDestination.js';
 import {
     ConversationConnectionListInputV1Schema, ConversationConnectionListResultV1Schema,
     ConversationBindingListInputV1Schema, ConversationBindingListResultV1Schema,

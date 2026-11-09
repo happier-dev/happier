@@ -188,7 +188,9 @@ describe('registered Session PR URL attach', () => {
       expect(completionObservations).toBe(1);
       expect(disposedCompletionObservations).toBe(completionObservations);
       if (result.kind !== 'attached') throw new Error('Expected the existing PR link');
-      const linkedAtMs = (await state.get(result.bindingId))?.value[CHANNEL_STATE_FIELD.createdAt];
+      const initialBindingRow = await state.get(result.bindingId);
+      if (!initialBindingRow) throw new Error('Expected the retained PR binding');
+      const linkedAtMs = readConversationBindingUpdateRow({ row: initialBindingRow, bindingId: result.bindingId }).binding.createdAt;
       expect(linkedAtMs).toEqual(expect.any(Number));
       expect((await state.get(result.bindingId))?.value.payload).toMatchObject({ enabled: false, target: {
         kind: 'session', sessionId: 'session-1', pullRequestLink: { repository: 'acme/widgets', number: 12 },
@@ -201,9 +203,9 @@ describe('registered Session PR URL attach', () => {
       await expect(core.invokeAction('session-pull-request-binding-v1', { ...input, credentialRef: null }, {
         surface: 'mcp', services,
       })).rejects.toMatchObject({ code: 'channels_pr_link_native_origin_unavailable' });
-      const read = async () => SessionPullRequestBindingResultV1Schema.parse(await core.invokeAction('session-pull-request-binding-v1', {
+      const read = () => core.invokeAction('session-pull-request-binding-v1', {
         kind: 'readRelations', credentialRef, pullRequest: { repositoryId: '77', number: 12 },
-      }, { surface: 'plugin', services }));
+      }, { surface: 'plugin', services });
       const beforeRead = requests.length;
       expect(await read()).toMatchObject({ kind: 'relations', links: [{ bindingId: result.bindingId,
         sessionId: 'session-1', repositoryId: '77', pullRequest: { repository: 'acme/widgets', number: 12 }, linkedAtMs }] });
