@@ -51,15 +51,15 @@ import type {
 } from '@/plugins/runtime/invocation/services/connectedAccounts';
 import {
   ConnectedAccountRequestAuthError,
-  type BearerMaterial,
+  type HeadersMaterial,
   type ConnectedAccountRequestAuthResolvedBinding,
   type ConnectedAccountRequestAuthPurposeUse,
   type ConnectedAccountRequestAuthSubject,
   type ConnectedAccountRequestAuthBindingAuthority,
 } from '../requestAuth/ConnectedAccountRequestAuthService';
 import {
-  parseHttpHeadersRequestAuthBearer,
-} from '../requestAuth/parseHttpHeadersRequestAuthBearer';
+  parseHttpHeadersRequestAuthMaterial,
+} from '../requestAuth/parseHttpHeadersRequestAuthMaterial';
 import { runConnectedAccountBindingStage, withConnectedAccountBindingDiagnostic } from './bindingDiagnostics';
 import {
   assertConnectedAccountPurposeTargetAuthorized as assertTargetAuthorized,
@@ -447,6 +447,8 @@ export const scopeConnectedAccountSessionPurposeBindingLease =
  */
 export type ConnectedAccountPurposeBindingOwner =
   StablePluginConnectedAccountsOwner & Readonly<{
+    /** One nonsecret observation of the exact selected binding; never acquires credentials. */
+    readBindingObservation(input: Parameters<StablePluginConnectedAccountsOwner['getBinding']>[0]): Promise<PluginConnectedAccountBindingSummary | null>;
     readCredentialConfigurationRevision(account: QualifiedConnectedAccountRef, signal: AbortSignal): Promise<string | null>;
     /**
      * Canonical immutable launch snapshot for either a primary Agent session or one exact
@@ -514,7 +516,7 @@ export type ConnectedAccountPurposeBindingOwner =
       resolved: ConnectedAccountRequestAuthResolvedBinding;
       materialization: QualifiedConnectedAccountRequestAuthUseV1['materialization'];
       signal: AbortSignal;
-    }>): Promise<BearerMaterial>;
+    }>): Promise<HeadersMaterial>;
     /**
      * Atomic generation-adoption contraction for the complete previous/current consumer union.
      * Call once after candidate validation and before publication. A removed consumer is
@@ -1120,7 +1122,7 @@ export function createConnectedAccountPurposeBindingOwner(
           if (!isCurrent()) return null;
           return await resolveCurrentRequestAuthBinding({ ...request, subjectId: state.subjectId });
         },
-        materializeBearer: async (request: Parameters<ConnectedAccountRequestAuthBindingAuthority['materializeBearer']>[0]) => {
+        materializeHeaders: async (request: Parameters<ConnectedAccountRequestAuthBindingAuthority['materializeHeaders']>[0]) => {
           if (!isCurrent()) throw new ConnectedAccountRequestAuthError('request_auth_not_active');
           return await materializeRequestAuthBearer({ ...request, subjectId: state.subjectId });
         },
@@ -1230,6 +1232,9 @@ export function createConnectedAccountPurposeBindingOwner(
     const resolved = await runConnectedAccountBindingStage('target_resolution', () => dependencies.resolveTarget(target, input.signal, input.observationOnly));
     input.signal.throwIfAborted();
     if (!resolved) {
+      // An observation reports the recorded selection as absent; it does not
+      // retry the same Pool lookup or seek a usable replacement member.
+      if (input.observationOnly) return unavailableBinding(input, 'target_unavailable');
       const revalidatedTarget = readPurposeBinding(
         publishedCatalog ?? await runConnectedAccountBindingStage('account_purpose_read', () => dependencies.store.read(input.signal, { published: true })),
         purpose,
@@ -1254,6 +1259,38 @@ export function createConnectedAccountPurposeBindingOwner(
     assertResolvedTargetMatchesIntent(target, resolved);
     return { target, resolved, directMaterialOrigin: null };
   };
+  const readObservation = async (input: Parameters<StablePluginConnectedAccountsOwner['getBinding']>[0]) => {
+    const resolved = await readAuthorizedResolved({ ...input, observationOnly: true });
+    const profile = resolved?.resolved.observation?.profiles.find(profile => (
+      sameQualifiedConnectedAccountRef(profile.ref, resolved.resolved.account)
+    ));
+    const credentialRevision = resolved && !resolved.directMaterialOrigin
+      ? profile ? profile.credentialRevision
+        : await dependencies.resolveCredentialRevision?.(resolved.resolved.account, input.signal)
+      : undefined;
+    const configurationRevision = resolved && !resolved.directMaterialOrigin
+      ? profile ? profile.configurationRevision
+        : await dependencies.resolveCredentialConfigurationRevision?.(resolved.resolved.account, input.signal)
+      : undefined;
+    return { resolved, credentialRevision, configurationRevision,
+      selectedRevisioned: profile?.revisionSemantics === 'revisioned'
+        || resolved?.resolved.observation === undefined && typeof credentialRevision === 'string' };
+  };
+  const readBindingObservation: ConnectedAccountPurposeBindingOwner['readBindingObservation'] = input => (
+    withConnectedAccountBindingDiagnostic({
+      ...(input.sessionId ? { sessionId: input.sessionId } : {}),
+      pluginId: input.purpose.consumer.pluginId, localId: input.purpose.consumer.localId, purpose: input.purpose.purpose,
+    }, async () => {
+      const observation = await runConnectedAccountBindingStage('binding_read', () => readObservation(input));
+      if (!observation.resolved) return null;
+      return Object.freeze({
+        ...summary(input.purpose, observation.resolved.target, observation.resolved.resolved),
+        ...(observation.credentialRevision === undefined ? {} : { credentialRevision: observation.credentialRevision }),
+        ...(observation.configurationRevision === undefined ? {} : { configurationRevision: observation.configurationRevision }),
+        ...(observation.resolved.resolved.group ? { group: observation.resolved.resolved.group } : {}),
+      });
+    })
+  );
   const resolveCurrentSessionPurposeBindingSnapshot = async (input: Readonly<{
     authorizedPurposes: readonly ConnectedAccountPurposeAuthorizationScope[];
     signal: AbortSignal;
@@ -1625,7 +1662,7 @@ export function createConnectedAccountPurposeBindingOwner(
     resolved: ConnectedAccountRequestAuthResolvedBinding;
     materialization: QualifiedConnectedAccountRequestAuthUseV1['materialization'];
     signal: AbortSignal;
-  }>): Promise<BearerMaterial> => {
+  }>): Promise<HeadersMaterial> => {
     const subjectId = input.subjectId.trim();
     if (!subjectId) throw bindingOutOfScope();
     const binding = QualifiedConnectedAccountPurposeBindingV1Schema.parse(
@@ -1703,7 +1740,7 @@ export function createConnectedAccountPurposeBindingOwner(
     ) {
       throw bindingOutOfScope();
     }
-    const bearer = parseHttpHeadersRequestAuthBearer(
+    const bearer = parseHttpHeadersRequestAuthMaterial(
       input.materialization,
       materialization,
     );
@@ -1878,6 +1915,7 @@ export function createConnectedAccountPurposeBindingOwner(
       }
     },
     getBinding(input) {
+      if (input.observation) return readBindingObservation(input);
       return withConnectedAccountBindingDiagnostic({
         ...(input.sessionId ? { sessionId: input.sessionId } : {}),
         pluginId: input.purpose.consumer.pluginId, localId: input.purpose.consumer.localId, purpose: input.purpose.purpose,
@@ -1927,6 +1965,7 @@ export function createConnectedAccountPurposeBindingOwner(
       );
     },
     materialize,
+    readBindingObservation,
     listAccounts,
     materializeListedAccount,
     watch(input) {
@@ -1938,21 +1977,7 @@ export function createConnectedAccountPurposeBindingOwner(
         pluginId: input.purpose.consumer.pluginId, localId: input.purpose.consumer.localId, purpose: input.purpose.purpose,
       }, async () => {
         try {
-          const resolved = await readAuthorizedResolved({ ...input, signal: controller.signal, observationOnly: true });
-          const profile = resolved?.resolved.observation?.profiles.find(profile => (
-            sameQualifiedConnectedAccountRef(profile.ref, resolved.resolved.account)
-          ));
-          const credentialRevision = resolved && !resolved.directMaterialOrigin
-            ? profile ? profile.credentialRevision
-              : await dependencies.resolveCredentialRevision?.(resolved.resolved.account, controller.signal)
-            : undefined;
-          const configurationRevision = resolved && !resolved.directMaterialOrigin
-            ? profile ? profile.configurationRevision
-              : await dependencies.resolveCredentialConfigurationRevision?.(resolved.resolved.account, controller.signal)
-            : undefined;
-          return { ok: true as const, resolved, credentialRevision, configurationRevision,
-            selectedRevisioned: profile?.revisionSemantics === 'revisioned'
-              || resolved?.resolved.observation === undefined && typeof credentialRevision === 'string' };
+          return { ok: true as const, ...await readObservation({ ...input, signal: controller.signal }) };
         } catch {
           // A failed read cannot establish unchanged authority. Preserve fail-closed delivery.
           return { ok: false as const };

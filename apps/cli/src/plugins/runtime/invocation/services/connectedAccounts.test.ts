@@ -184,6 +184,35 @@ describe('Crabbox coordinator check through declared host capabilities', () => {
 });
 
 describe('stable plugin Connected Accounts host', () => {
+    it('projects requested revision observations through the real purpose owner without credential access', async () => {
+        const { seed } = createSeed();
+        const purpose = { consumer: { pluginId: seed.plugin.id, localId: seed.contribution.id }, purpose: scope.purpose };
+        const account = { service: scope.serviceRefs[0], accountId: 'observed' };
+        const authentication = PluginConnectedAccountAuthenticationV2Schema.parse({ defaultModeId: 'token', modes: [{
+            id: 'token', kind: 'manual', outcomeReconciliation: 'none',
+            fields: [{ id: 'token', title: 'Token', secret: true, schema: { type: 'string' } }],
+        }] });
+        const credentialRevision = 'csr_0123456789ABCDEFGHJKMNPQRS';
+        const listAccounts = vi.fn(async () => [QualifiedConnectedAccountProfileV4Schema.parse({
+            ref: account, authenticationModeId: 'token', status: 'connected', revisionSemantics: 'revisioned',
+            credentialRevision, configurationReady: true, configurationRevision: 'config-one', scopes: [], displayName: 'Observed',
+        })]);
+        const unexpected = async () => { throw new Error('Observation must not select or access credentials'); };
+        const owner = createConnectedAccountPurposeBindingOwner({
+            store: { read: async () => ({ v: 1, bindings: [{ purpose, target: { kind: 'account', account } }] }),
+                update: unexpected, subscribe: () => ({ dispose() {} }) },
+            resolveTarget: createPurposeTargetResolver({ available: true,
+                resolveService: async () => ({ service: account.service, authentication }), listAccounts }),
+            selectTarget: unexpected, materializeAccount: unexpected,
+            projectTargetAccounts: unexpected, assertTargetAccountMaterializable: unexpected,
+        });
+        const connectedAccounts = createStablePluginConnectedAccountsHost(owner).bind(seed, [scope]);
+        await expect(connectedAccounts.getBinding(scope.purpose, { observation: true })).resolves.toMatchObject({
+            account, credentialRevision, configurationRevision: 'config-one',
+        });
+        expect(listAccounts).toHaveBeenCalledOnce();
+    });
+
     it('connects the detached OpenCode server through its exact Run profile instead of ambient defaults', async () => {
         const consumer = { pluginId: 'happier.agent.opencode', localId: 'opencode' };
         const actionConsumer = { ...consumer, localId: 'nested-action' };
@@ -411,6 +440,8 @@ describe('stable plugin Connected Accounts host', () => {
         let retirements = 0;
         const connectedAccounts = host.bind({ ...seed, retireReadObservation() { retirements++; } }, [scope]);
         const subscription = connectedAccounts.watch(scope.purpose, () => {});
+        const delivered: unknown[] = [];
+        const publicSubscription = host.bind(seed, [scope]).watch(scope.purpose, event => { delivered.push(event); });
         const watches = createStablePluginUiResourceWatchOwner({
             isPluginConsumerCurrent: () => !seed.signal.aborted,
             readPluginOccurrenceId: () => seed.occurrenceId,
@@ -425,6 +456,8 @@ describe('stable plugin Connected Accounts host', () => {
             await expect(watches.open({ callerPluginId: seed.plugin.id, subscriptionId: 'exact-authority',
                 readAuthority: { consumer: purpose.consumer, purpose: scope.purpose, input: {} } })).resolves.toEqual({ subscriptionId: 'exact-authority' });
             await settled();
+            expect(delivered).toEqual([{ kind: 'resync', authorityChanged: false }]);
+            delivered.length = 0;
             for (let index = 0; index < 100; index++) {
                 await store.update(value => ({ ...value, bindings: [...value.bindings.filter(binding => binding.purpose.purpose !== 'unrelated'), {
                     purpose: { ...purpose, purpose: 'unrelated' },
@@ -436,14 +469,18 @@ describe('stable plugin Connected Accounts host', () => {
             await store.update(value => value);
             await settled();
             expect(retirements).toBe(0);
+            expect(delivered).toEqual([]);
             displayName = 'Renamed account';
             await store.update(value => value);
             await settled();
             expect(retirements).toBe(0);
+            expect(delivered).toEqual([{ kind: 'resync', authorityChanged: forwarding === 'dropped' }]);
+            delivered.length = 0;
             await owner.requestSelection({ purpose, serviceRefs: [service], assertGenerationCurrent() {},
                 reason: 'Replace the exact observed authority', signal: seed.signal });
             await settled();
             expect(retirements).toBe(forwarding === 'preserved' ? 1 : 0);
+            expect(delivered).toEqual([{ kind: 'resync', authorityChanged: true }]);
             if (forwarding === 'preserved') {
                 await expect(watches.next({ callerPluginId: seed.plugin.id, subscriptionId: 'exact-authority' }))
                     .resolves.toMatchObject({ status: 'event', event: { kind: 'error', code: 'expired_resource',
@@ -451,6 +488,7 @@ describe('stable plugin Connected Accounts host', () => {
             }
         } finally {
             watches.retire();
+            publicSubscription.dispose();
             await subscription.dispose(); host.retire(); retire();
         }
         expect(subscribers.size).toBe(0);

@@ -11,6 +11,7 @@ import type {
 } from '@happier-dev/protocol/connect/connected-service-schemas';
 import type {
     ConnectedAccountMaterializationRequest,
+    ConnectedAccountBindingEvent as PluginConnectedAccountBindingEvent,
     ConnectedAccountsService,
     ConnectedAccountBindingSummary as PluginConnectedAccountBindingSummary,
     ConnectedAccountListedAccount as PluginConnectedAccountListedAccount,
@@ -60,6 +61,7 @@ export type StablePluginConnectedAccountsOwner = Readonly<{
             sessionId?: string;
             /** Host launch reads require a classified refusal; SDK reads keep their null contract. */
             requireSelected?: true;
+            observation?: true;
             signal: AbortSignal;
         }>,
     ): Promise<PluginConnectedAccountBindingSummary | null>;
@@ -662,6 +664,7 @@ export function createStablePluginConnectedAccountsHost(
                         try {
                             const summary = await owner.getBinding({
                                 ...authorizedPurpose(seed, scope),
+                                ...(options.observation ? { observation: true } : {}),
                                 ...(exactPurposeBindingSubjectId
                                     ? { exactPurposeBindingSubjectId }
                                     : {}),
@@ -819,7 +822,7 @@ export function createStablePluginConnectedAccountsHost(
                     let registrationComplete = false;
                     let scheduled = false;
                     let initialDeliveryPending = true;
-                    let invalidationPending = false;
+                    let pendingAuthorityChanged: boolean | null = null;
                     let deliveryWaiters: Array<() => void> = [];
                     let activeDeliveryWaiters: Array<() => void> = [];
                     const resolveDeliveryWaiters = (waiters: readonly (() => void)[]) => {
@@ -830,17 +833,18 @@ export function createStablePluginConnectedAccountsHost(
                             disposed
                             || !registrationComplete
                             || scheduled
-                            || (!initialDeliveryPending && !invalidationPending)
+                            || (!initialDeliveryPending && pendingAuthorityChanged === null)
                         ) return;
                         scheduled = true;
                         queueMicrotask(async () => {
                             const isInitialDelivery = initialDeliveryPending;
+                            const authorityChanged = !isInitialDelivery && pendingAuthorityChanged === true;
                             if (isInitialDelivery) {
                                 initialDeliveryPending = false;
                             } else {
                                 activeDeliveryWaiters = deliveryWaiters;
                                 deliveryWaiters = [];
-                                invalidationPending = false;
+                                pendingAuthorityChanged = null;
                             }
                             if (disposed) {
                                 resolveDeliveryWaiters(activeDeliveryWaiters);
@@ -856,8 +860,8 @@ export function createStablePluginConnectedAccountsHost(
                                 return;
                             }
                             try {
-                                const delivery = (listener as (event: Readonly<{ kind: 'resync' }>) => unknown)(
-                                    Object.freeze({ kind: 'resync' }),
+                                const delivery = (listener as (event: PluginConnectedAccountBindingEvent) => unknown)(
+                                    Object.freeze({ kind: 'resync', authorityChanged }),
                                 );
                                 if (
                                     delivery
@@ -877,9 +881,9 @@ export function createStablePluginConnectedAccountsHost(
                             }
                         });
                     };
-                    const schedule = (): Promise<void> => {
+                    const schedule = (authorityChanged: boolean): Promise<void> => {
                         if (disposed) return Promise.resolve();
-                        invalidationPending = true;
+                        pendingAuthorityChanged = pendingAuthorityChanged === true || authorityChanged;
                         const delivered = new Promise<void>((resolve) => {
                             deliveryWaiters.push(resolve);
                         });
@@ -897,7 +901,7 @@ export function createStablePluginConnectedAccountsHost(
                                 seed.retireReadObservation();
                                 return Promise.resolve();
                             }
-                            return schedule();
+                            return schedule(change?.authorityChanged !== false);
                         },
                     });
                     const abort = () => subscription.dispose();
