@@ -149,6 +149,27 @@ describe('CustomModal', () => {
         expect(screen.findByType(BaseModal).props.focusReturnFallback).toBe('activation-time');
     });
 
+    it('returns to the chrome it opened with when a step retires its own', async () => {
+        function SteppedChromeModal(props: CustomModalInjectedProps & Readonly<{ label: string }>) {
+            React.useEffect(() => {
+                props.setChrome?.({ kind: 'card', footer: React.createElement('StepFooter') });
+                return () => props.setChrome?.(null);
+            }, [props.setChrome]);
+            return React.createElement('SteppedChromeModal', props);
+        }
+        const screen = await renderCustomModal({
+            component: SteppedChromeModal,
+            props: { label: 'x' },
+            chrome: { kind: 'card', title: 'Configured title', dimensions: { size: 'md' } },
+        });
+        expect(screen.findByType(ModalCardFrame).props.title).toBe('Configured title');
+        await act(async () => { screen.findByType(SteppedChromeModal).props.setChrome?.(null); });
+        // The sheet's next step publishes over the configured chrome, not over nothing.
+        await act(async () => { screen.findByType(SteppedChromeModal).props.setChrome?.({ kind: 'card', footer: React.createElement('NextStepFooter') }); });
+        expect(screen.findByType(ModalCardFrame).props.title).toBe('Configured title');
+        expect(screen.findByType(ModalCardFrame).props.dimensions?.size).toBe('md');
+    });
+
     it('preserves the raw rendering path when no chrome is requested', async () => {
         const screen = await renderCustomModal({
             type: 'custom',
