@@ -1,7 +1,7 @@
 import type { ModelMode } from '@/sync/domains/permissions/permissionTypes';
 import type { TranslationKey, TranslationKeyNoParams } from '@/text';
 import type { Href } from 'expo-router';
-import type { ConnectedAccountServiceKey, ConnectedServiceId } from '@happier-dev/protocol';
+import type { ConnectedAccountServiceKey, ConnectedServiceId } from '@happier-dev/protocol/connect/connected-service-bindings';
 
 import {
     AGENT_IDS as SHARED_AGENT_IDS,
@@ -9,6 +9,7 @@ import {
     isBundledAgentId,
     resolveAgentIdFromFlavor,
     resolveAgentIdFromSessionMetadata,
+    resolveBundledAgentIdFromContributionIdentity,
     type AgentCore as SharedAgentCore,
     type AgentId,
     type AgentModelConfig,
@@ -20,8 +21,9 @@ import {
     type SessionMetadataAgentId,
     type VendorResumeIdField,
 } from '@happier-dev/agents';
+export { formatAgentLikeIdForDisplay } from '@happier-dev/agents/presentation';
 
-import { BUNDLED_CANONICAL_AGENTS_CORE } from './generatedBundledPluginEntries';
+import { BUNDLED_CANONICAL_AGENTS_CORE, BUNDLED_CANONICAL_AGENT_DECLARATIONS, type BundledAgentDeclaration } from './generatedBundledPluginEntries';
 
 export type { AgentId, BundledAgentId, SessionMetadataAgentId };
 
@@ -269,6 +271,12 @@ export function getAgentCore(id: AgentId): AgentCoreConfig | null {
     return (CANONICAL_AGENTS_CORE as Partial<Record<AgentId, AgentCoreConfig>>)[id] ?? null;
 }
 
+export function getBundledAgentDeclaration(id: AgentId): BundledAgentDeclaration | null {
+    return Object.values(BUNDLED_CANONICAL_AGENT_DECLARATIONS).find(
+        (declaration) => resolveBundledAgentIdFromContributionIdentity(declaration.identity) === id,
+    ) ?? null;
+}
+
 export function getAllAgentProviderOwnedEnvironmentKeys(
     projectedAgentsById?: Readonly<Record<string, Readonly<{
         id?: string;
@@ -312,25 +320,4 @@ export function resolveAgentIdFromConnectedServiceId(serviceId: string | null | 
         if (supportsConnectedService(core)) return core.id;
     }
     return null;
-}
-
-export function formatAgentLikeIdForDisplay(id: string | null | undefined): string {
-    const trimmed = String(id ?? '').trim();
-    if (!trimmed) {
-        return 'Unknown Backend';
-    }
-
-    const tokenized = trimmed
-        .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
-        .split(/[.\-_\\s]+/)
-        .map((token) => token.trim())
-        .filter((token) => token.length > 0);
-
-    if (tokenized.length === 0) {
-        return 'Unknown Backend';
-    }
-
-    return tokenized
-        .map((token) => token.charAt(0).toUpperCase() + token.slice(1))
-        .join(' ');
 }

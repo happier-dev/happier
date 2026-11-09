@@ -5,6 +5,7 @@ import {
     DEFAULT_AGENT_ID,
     getAllAgentProviderOwnedEnvironmentKeys,
     getAgentCore as getExpoAgentCore,
+    getBundledAgentDeclaration,
     isBundledAgentId,
     resolveAgentIdFromCliDetectKey,
     resolveAgentIdFromConnectedServiceId,
@@ -43,6 +44,7 @@ import {
 
 export { AGENT_IDS, AGENT_CORE_CONFIGS, DEFAULT_AGENT_ID };
 export { getAllAgentProviderOwnedEnvironmentKeys };
+export { getBundledAgentDeclaration };
 export type { AgentId, BundledAgentId, MachineLoginKey };
 
 export type AgentCatalogEntry = Readonly<{

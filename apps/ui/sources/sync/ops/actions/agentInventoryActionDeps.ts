@@ -8,8 +8,7 @@ import type { AgentInventoryProbeInput } from '@happier-dev/protocol/actions/act
 import { AgentModelsProbeObservationSchema, projectProbedConfigOptionDefinitions } from '@happier-dev/protocol/capabilities';
 import type { ConnectedServicesProfileOption } from '@happier-dev/agents';
 
-import { isBundledAgentId } from '@/agents/catalog/catalog';
-import { BUNDLED_CANONICAL_AGENT_DECLARATIONS } from '@/agents/registry/generatedBundledPluginEntries';
+import { getBundledAgentDeclaration } from '@/agents/catalog/catalog';
 import { qualifyPluginContributionReferenceV1 } from '@happier-dev/protocol/plugins/contribution-identity';
 import { probeAgentInventory, type AgentInventoryProbeTarget } from './agentInventoryProbe';
 import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
@@ -321,7 +320,7 @@ export async function listSpawnConnectedServicesForActions(args: SpawnConnectedS
             }
         }
         if (!agentId) return { ok: false, errorCode: 'unknown_agent', errorMessage: 'unknown_agent' };
-        const bundled = isBundledAgentId(agentId) ? BUNDLED_CANONICAL_AGENT_DECLARATIONS[agentId] : null;
+        const bundled = getBundledAgentDeclaration(agentId);
         const projectedConnectedAccounts = projectedAgent?.connectedAccounts
             ?? (bundled?.connectedAccounts ?? []).map(purpose => ({ ...purpose,
                 service: qualifyPluginContributionReferenceV1(purpose.service, bundled!.identity.pluginId),

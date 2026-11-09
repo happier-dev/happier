@@ -5,6 +5,7 @@ import { buildSessionModelPickerSections } from '@/components/sessions/modelPick
 import {
     readAccountAgentProviderDeclarations,
     readAccountAgentProviderRequirements,
+    readAccountAgentConnectedAccountServiceKeys,
     readAccountProviderDeclarations,
     readProviderConnectionPickerKind,
     readProviderContributionIcon,
@@ -13,6 +14,13 @@ import {
 } from './accountProviderDeclarations';
 
 describe('admitted Provider declarations', () => {
+    it('resolves connected services for a legacy bundled routing id through its declared identity', () => {
+        expect(readAccountAgentConnectedAccountServiceKeys('backend:ohMyPi', { kind: 'account' }))
+            .toContain('happier.agent.claude/anthropic');
+        expect(readAccountAgentConnectedAccountServiceKeys('backend:ohMyPi', { kind: 'machine', projection: null }))
+            .toBeNull();
+    });
+
     it('supplements Account facts with admitted dynamic declarations without weakening exact Machine reads', () => {
         const bundled = readAccountProviderDeclarations({ kind: 'account' }).find(row => row.definition.id === 'deepseek')!;
         const requirements = readAccountAgentProviderRequirements('agent:happier.agent.codex/codex', { kind: 'account' })!;

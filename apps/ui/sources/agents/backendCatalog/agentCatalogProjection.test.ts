@@ -7,7 +7,8 @@ vi.mock('@/text', async () => {
     });
 });
 
-vi.mock('@/agents/catalog/catalog', () => ({
+vi.mock('@/agents/catalog/catalog', async () => ({
+    getBundledAgentDeclaration: (await import('@/agents/registry/registryCore')).getBundledAgentDeclaration,
     AGENT_IDS: ['antigravity', 'codex', 'claude', 'ohMyPi'],
     isBundledAgentId: (agentId: string) => agentId === 'antigravity' || agentId === 'codex' || agentId === 'claude' || agentId === 'ohMyPi',
     getAgentCore: (agentId: string) => ({

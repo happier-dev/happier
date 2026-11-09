@@ -1,19 +1,21 @@
 import type {
-    AcpBackendDefinitionV1,
-    PluginAgentCliMetadata,
-    PluginContributionIdentityV1,
+    AcpBackendDefinitionV1} from '@happier-dev/protocol/acp/catalog/settingsV1';
+import type {
+    PluginAgentCliMetadata} from '@happier-dev/protocol/plugins/contributions/agentCliMetadata';
+import type {
+    PluginContributionIdentityV1} from '@happier-dev/protocol/plugins/contribution-identity';
+import type {
     PluginProjectedAgentConnectedAccountPurposeV2,
     PluginProjectionInstalledPackageV2,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import type { AcpCatalogSnapshotV1 } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
 import { AgentExecutionTargetV1Schema, CUSTOM_ACP_AGENT_CONTRIBUTION_IDENTITY_V1 } from '@happier-dev/protocol/agents/executionTargetV1';
 
-import { AGENT_IDS, getAgentCore, isBundledAgentId, type AgentId } from '@/agents/catalog/catalog';
+import { AGENT_IDS, getAgentCore, getBundledAgentDeclaration, isBundledAgentId, type AgentId } from '@/agents/catalog/catalog';
 import { formatAgentLikeIdForDisplay } from '@/agents/catalog/formatAgentLikeIdForDisplay';
 import { getAgentLocalAuthPlugin } from '@/agents/catalog/localAuth/agentLocalAuthCatalog';
 import { createProjectedAgentLocalAuthPlugin } from '@/agents/catalog/localAuth/createProjectedAgentLocalAuthPlugin';
 import type { BundledAgentUiBehaviorDescriptor } from '@/agents/registry/generatedBundledPluginEntries.uiBehaviorOverrides';
-import { BUNDLED_CANONICAL_AGENT_DECLARATIONS } from '@/agents/registry/generatedBundledPluginEntries';
 import { qualifyPluginContributionReferenceV1 } from '@happier-dev/protocol/plugins/contribution-identity';
 import {
     resolveBundledAgentUiBehaviorProjection,
@@ -27,6 +29,9 @@ import type { AgentLocalAuthPlugin } from '@/agents/catalog/localAuth/agentLocal
 import { t } from '@/text';
 import { LEGACY_COMPAT_PRIMARY_AGENT_ID_NORMALIZED } from './legacyCompatAgents';
 import { resolveBackendTargetKeyV2 } from './backendTargetKeyV2';
+import { BackendTargetKeyV2Schema, parseBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import { resolveBundledAgentIdFromContributionIdentity } from '@/agents/catalog/resolveBundledAgentIdFromContributionIdentity';
 import {
     getAgentBackendCompatibilityTargetKeys,
     readBackendTargetEnabled,
@@ -75,11 +80,20 @@ const CANONICAL_AGENT_ID_BY_NORMALIZED = new Map<string, AgentId>(
 );
 
 function normalizeAgentId(agentId: string | null | undefined): string {
-    const trimmed = String(agentId ?? '').trim();
+    let trimmed = String(agentId ?? '').trim();
     if (!trimmed) return '';
+    const selectedKey = trimmed.includes(':') ? BackendTargetKeyV2Schema.safeParse(trimmed) : null;
+    if (selectedKey?.success) {
+        const target = parseBackendTargetKeyV2(selectedKey.data);
+        if (target.kind === 'backend') trimmed = target.backendId;
+        else if (!target.definitionId) trimmed = resolveBundledAgentIdFromContributionIdentity(target.identity)
+            ?? buildQualifiedPluginContributionKey(target.identity);
+    }
     if (isBundledAgentId(trimmed)) return trimmed;
     return CANONICAL_AGENT_ID_BY_NORMALIZED.get(trimmed.toLowerCase()) ?? trimmed;
 }
+
+export { normalizeAgentId as normalizeAgentCatalogId };
 
 function readMergedProviderProjection(
     agentId: string,
@@ -428,8 +442,8 @@ export function resolveAgentCatalogProjection(agentId: string, params: Readonly<
     const iconAgentId = resolveProviderIconAgentId(normalizedProviderId, mergedProviderProjection, settingsBackendProjection);
     // A current daemon declaration wins, including explicit removals. Only a
     // canonical bundled Agent without a daemon row uses static display facts.
-    const declaration = !mergedProviderProjection && isBuiltIn && isBundledAgentId(normalizedProviderId)
-        ? BUNDLED_CANONICAL_AGENT_DECLARATIONS[normalizedProviderId] : null;
+    const declaration = !mergedProviderProjection && isBuiltIn
+        ? getBundledAgentDeclaration(normalizedProviderId) : null;
     const identity = mergedProviderProjection?.identity ?? declaration?.identity ?? null;
     const backendTargetKey = resolveProviderTargetKeyFromSettingsBackend(
         normalizedProviderId,

@@ -7,6 +7,7 @@ import { areProviderContributionKeysEqualV1, canonicalizeProviderContributionKey
 import type { PluginProjectionV2 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { qualifyPluginContributionReferenceV1 } from '@happier-dev/protocol/plugins/contribution-identity';
 import { resolveProjectedConnectedAccountServiceKeys } from '@/sync/domains/connectedServices/qualifiedConnectedAccountServiceOptions';
+import { getBundledAgentDeclaration } from '@/agents/registry/registryCore';
 import {
     BUNDLED_ACCOUNT_PROVIDER_DECLARATIONS,
     BUNDLED_CANONICAL_AGENT_DECLARATIONS,
@@ -128,7 +129,7 @@ function readExactAccountAgentDeclaration(agentTargetKey: string, context: Provi
         const declaration = projection.agentsById[target.backendId];
         return declaration ? { kind: 'projected', declaration } : null;
     }
-    const declaration = Object.entries(BUNDLED_CANONICAL_AGENT_DECLARATIONS).find(([routingId]) => routingId === target.backendId)?.[1];
+    const declaration = getBundledAgentDeclaration(target.backendId);
     return declaration ? { kind: 'bundled', declaration } : null;
 }
 
