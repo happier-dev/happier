@@ -238,6 +238,44 @@ describe('createCliActionExecutorHarness', () => {
       expect(wire.sockets.every(socket => !socket.connected && socket.listenerCount() === 0)).toBe(true);
     });
 
+  it('waits for forwarded approval execution after an approved-only decision', async () => {
+    const actionId = 'browser.diagnostics.snapshot';
+    const artifactId = 'forwarded-held-execution';
+    const receipt = { v: 1, machineId: 'machine', generatedAt: 1, refreshState: 'idle', events: [], diagnostics: [] };
+    let request = ApprovalRequestV2Schema.parse({ v: 2, createdAtMs: 1, updatedAtMs: 2,
+      createdBy: { surface: 'cli' }, requestedSurface: 'cli', actionId,
+      actionArgs: { browserSessionId: 'session', viewId: 'view' }, summary: 'Browser diagnostics',
+      approval: { flow: 'blocking', result: 'required' }, status: 'approved',
+      decision: { kind: 'approve', decidedAtMs: 2 },
+      executionOriginV1: { v: 1, authority: 'present_user', surface: 'cli', caller: { kind: 'host' },
+        serverId: 'home', actionId, requestId: 'browser-request' } });
+    let notified = false;
+    let read = false;
+    let settled = false;
+    const lifetime = new AbortController();
+    // The daemon transport, Artifact persistence and terminal prompt are
+    // boundaries. The real consumer must observe the later native receipt.
+    const harness = createCliActionExecutorHarness({ token: 'token', sessionId: 'session', mode: 'plain', ctx: null,
+      serverHttpBaseUrl: 'https://approval-home.example.test',
+      onApprovalRequested: async () => {
+        notified = true;
+        return { ok: true, result: { ok: true, artifactId, status: 'approved' } };
+      } }, { ...createUnavailableActionTransportDeps(),
+      runtimeActionExecute: async () => ({ kind: 'approval_request_created', artifactId, actionId }),
+      approvalsGet: async () => { read = true; return request; } });
+    const pending = harness.executor.execute(actionId, { browserSessionId: 'session', viewId: 'view' },
+      { surface: 'cli', signal: lifetime.signal });
+    void pending.then(() => { settled = true; }, () => { settled = true; });
+    try {
+      await vi.waitFor(() => expect(notified && read).toBe(true));
+      expect(settled).toBe(false);
+      request = ApprovalRequestV2Schema.parse({ ...request, status: 'executed', updatedAtMs: 3,
+        execution: { ok: true, effectAttempted: true, executedAtMs: 3, result: receipt } });
+      for (const socket of wire.sockets) socket.update({ t: 'account-change' });
+      await expect(pending).resolves.toEqual({ ok: true, result: receipt });
+    } finally { lifetime.abort(); await pending.catch(() => undefined); }
+  });
+
   it.each(['rejected', 'executed'] as const)('closes an open deferred approval prompt after a remote %s decision', async status => {
     const artifactId = 'remote-deferred-approval';
     const receipt = { v: 1, machineId: 'machine', generatedAt: 1, refreshState: 'idle', events: [], diagnostics: [] };

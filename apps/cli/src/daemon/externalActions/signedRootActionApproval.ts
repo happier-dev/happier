@@ -1,5 +1,6 @@
 import type { ActionExecuteResult, ActionExecutorContext } from '@happier-dev/protocol';
 import { getActionSpec, type SignedRootActionId } from '@happier-dev/protocol/actions/actionSpecs';
+import type { ActionApprovalRequestCreatedResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { logger } from '@/ui/logger';
 
 /** Private operands remain with the daemon; the terminal receives their approval id. */
@@ -11,10 +12,20 @@ export function createSignedRootActionApprovalAcknowledgement() {
       actionId: SignedRootActionId;
       surface: 'cli' | 'mcp';
       signal: AbortSignal;
+      onApprovalRequested?: (approval: ActionApprovalRequestCreatedResult) => void;
       run(signal: AbortSignal, progress?: ActionExecutorContext['operationOwnerUpdate']): Promise<ActionExecuteResult>;
     }>): Promise<ActionExecuteResult> {
       const spec = getActionSpec(args.actionId);
       if (args.surface !== 'cli' || spec.approvalInputCustody !== 'live_only') return await args.run(args.signal);
+      if (spec.approvalResultCustody === 'live_only') {
+        // A receipt cannot recover this output. Report Ask without giving up
+        // the original request that owns the native completion and result.
+        return await args.run(args.signal, { update: ({ progress }) => {
+          if (progress?.phase === 'waiting_for_approval' && progress.approval?.actionId === args.actionId) {
+            args.onApprovalRequested?.(progress.approval);
+          }
+        } });
+      }
       const invocation = new AbortController();
       const cancel = () => invocation.abort(args.signal.reason);
       const stop = () => invocation.abort(shutdown.signal.reason);

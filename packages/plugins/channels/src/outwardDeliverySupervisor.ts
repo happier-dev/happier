@@ -109,6 +109,7 @@ export type ConversationOutwardDeliveryCycleOptions = Readonly<{
   bindingIds?: readonly string[];
   observeSession?: (sessionId: string, bindingId: string) => Promise<void>;
   observeDiscussion?: (discussionId: string, bindingId: string) => void;
+  observePendingIngress?: (rowId: string) => void;
 }>;
 
 export type ConversationOutwardDeliveryCycleResult = Readonly<{
@@ -415,7 +416,7 @@ export async function runConversationOutwardDeliveryCycle(
   try {
     // Delete custody is settled before generic redrive so a retained ready row
     // cannot race into a provider effect after connection authority is gone.
-    if (await finalizeConversationConnectionDeletesForInvocation(context)) noteDeadline(now());
+    if (await finalizeConversationConnectionDeletesForInvocation(context, input.observePendingIngress)) noteDeadline(now());
   } catch (error) {
     // The retained finalizing row remains the recovery source for the next wake.
     workFailed('delete-finalization', { error });
@@ -917,6 +918,7 @@ export function createConversationOutwardDeliverySupervisor(
     let retentionSweep: ConversationOutwardRetentionSweepState | undefined;
     const wake = createSupervisorWake(supervisorController.signal);
     const observations: Array<{ dispose(): void }> = [];
+    const pendingIngressObservations = new Map<string, { dispose(): void }>();
     let discoverBindings = true;
     const changedBindingIds = new Set<string>();
     const retryBindingIds = new Set<string>();
@@ -977,6 +979,7 @@ export function createConversationOutwardDeliverySupervisor(
           wake.reset();
           const observedBindings = new Map<string, string>();
           const observedDiscussions = new Map<string, string>();
+          const observedPendingIngress = new Set<string>();
           let nextWakeAt: number | undefined;
           let continuationStalled = false;
           const workerContext = {
@@ -997,6 +1000,16 @@ export function createConversationOutwardDeliverySupervisor(
                 observedDiscussions.set(bindingId, discussionId);
                 sessions.observeDiscussion(discussionId, bindingId);
               },
+              observePendingIngress: rowId => {
+                observedPendingIngress.add(rowId);
+                if (pendingIngressObservations.has(rowId)) return;
+                pendingIngressObservations.set(rowId, account.collection(CHANNEL_STATE_COLLECTION).watch({
+                  kind: 'row', rowId,
+                }, invalidate));
+                // The finalizer read this blocker before subscribing. Rejoin
+                // once under observation, then park until its owner settles it.
+                invalidate();
+              },
               ...(deliveryCursor === undefined ? {} : { deliveryCursor }),
               ...(retentionSweep === undefined ? {} : { retentionSweep }),
             });
@@ -1016,6 +1029,11 @@ export function createConversationOutwardDeliverySupervisor(
               nextWakeAt = Math.min(nextWakeAt ?? Infinity, retentionSweep.notBefore);
             }
             if (fullBindingDiscovery && cycle.nextBindingIds !== 'all') sessions.reconcile(observedBindings, observedDiscussions);
+            for (const [rowId, observation] of pendingIngressObservations) {
+              if (observedPendingIngress.has(rowId)) continue;
+              observation.dispose();
+              pendingIngressObservations.delete(rowId);
+            }
           } catch (error) {
             // Leave the cursor unchanged so a transient failure cannot skip
             // a durable row. The next wake repeats canonical discovery.
@@ -1043,6 +1061,8 @@ export function createConversationOutwardDeliverySupervisor(
         }
       } finally {
         for (const observation of observations) observation.dispose();
+        for (const observation of pendingIngressObservations.values()) observation.dispose();
+        pendingIngressObservations.clear();
         sessions.dispose();
         wake.dispose();
         context.signal.removeEventListener('abort', abortFromContext);

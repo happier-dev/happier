@@ -20,11 +20,14 @@ import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/
 import axios from '@/api/client/credentialAxios';
 import { EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1 } from '@happier-dev/protocol/rpc/methods';
 import { handleActionsCommand } from '@/cli/commands/actions';
+import { createQualifiedConnectedAccountAttemptTransactionAdapters } from '@/daemon/connectedServices/qualifiedConnectedAccountAttemptTransactionAdapters';
+import { registerConnectedAccountAttemptTransactionRoutes } from '../../../../server/sources/app/api/routes/connect/connectedAccountAttemptTransactions/registerConnectedAccountAttemptTransactionRoutes';
 
-it('delivers fresh beginConnect configuration through CLI, Home and the installed daemon approval executor', async () => {
+it('delivers public and private authentication completions through CLI, Home and the installed daemon approval executor', async () => {
   const cleanup: Array<() => unknown | Promise<unknown>> = [];
-  onTestFinished(async () => { for (const close of cleanup.reverse()) await close(); });
-  const home = await createDeploymentSocketHome({ encryptionMode: 'e2ee',
+  const invocation = new AbortController();
+  onTestFinished(async () => { invocation.abort(); for (const close of cleanup.reverse()) await close(); });
+  const home = await createDeploymentSocketHome({ encryptionMode: 'e2ee', configureApp: registerConnectedAccountAttemptTransactionRoutes,
     prepareMachineContent: (key, metadata) => createMachineContentCodec({ encryptionMode: 'e2ee', encryptionKey: key,
       encryptionVariant: 'dataKey' }).encodeStored(metadata) });
   cleanup.push(() => home.close());
@@ -109,13 +112,14 @@ it('delivers fresh beginConnect configuration through CLI, Home and the installe
     controlToken: runtime.controlToken, machineId: home.machineId, accountId: home.accountId });
   let decision: ActionExecuteResult | undefined;
   let approvalId: string | undefined;
+  let requestedDecision: 'approve' | 'reject' = 'approve';
   const client = runWithServerHttpBaseUrl(home.baseUrl, () => createConnectedAccountDaemonClient({ credentials, machineId: home.machineId,
     onApprovalRequested: async (artifactId, signal, decide) => {
       approvalId = artifactId;
       const read = await createCliActionExecutorFromCredentials({ credentials, machineId: home.machineId })
         .execute('approval.request.get', { artifactId }, { surface: 'cli', actionCaller: { kind: 'host' }, signal });
       expect(read.ok).toBe(true);
-      decision = await decide('approve'); return decision;
+      decision = await decide(requestedDecision); return decision;
     },
   }));
   cleanup.push(() => client.dispose());
@@ -128,6 +132,12 @@ it('delivers fresh beginConnect configuration through CLI, Home and the installe
   expect(recorded).toMatchObject({ status: 'executed', execution: { ok: true } });
   expect(recorded.execution?.result).toEqual({ redacted: true });
   expect(effects).toBe(1);
+  // The substituted native producer must publish its real Home address, as
+  // beginConnect does, before an operand-free continuation can route to it.
+  await runWithServerHttpBaseUrl(home.baseUrl, () => createQualifiedConnectedAccountAttemptTransactionAdapters({
+    credentials, getAccountEncryptionMode: async () => 'e2ee', getMachineId: () => home.machineId,
+  }).address.acknowledge({ attemptId: 'connect-attempt', kind: 'manual', phase: 'awaitingManual',
+    createdAtMs: Date.now(), intent: 'connect', service, modeId: 'password' }));
   // Manual input is retained by its original invocation. Approval can be
   // acknowledged before that invocation finishes its native authentication.
   nativeResult = ConnectedAccountAttemptResponseSchema.parse({ status: 'connected', attemptId: 'connect-attempt',
@@ -137,17 +147,39 @@ it('delivers fresh beginConnect configuration through CLI, Home and the installe
   decision = undefined;
   const manual = client.authenticate({ operation: 'submitManual', attemptId: 'connect-attempt',
     fields: { token: 'private-manual-client-token' } });
-  void manual.catch(() => undefined);
+  let manualError: unknown;
+  void manual.catch(error => { manualError = error; });
   try {
-    await expect.poll(() => effects).toBe(2);
+    await expect.poll(() => effects === 2 || manualError !== undefined, { timeout: 10_000 }).toBe(true);
+    if (manualError) throw manualError;
     finishManual();
     await expect(manual).resolves.toEqual(nativeResult);
   } finally { finishManual(); await manual.catch(() => undefined); }
   nativeCompletion = undefined;
+  requestedDecision = 'reject';
+  await expect(client.authenticate({ operation: 'submitManual', attemptId: 'connect-attempt',
+    fields: { token: 'private-rejected-token' } })).rejects.toMatchObject({ code: 'approval_rejected' });
+  requestedDecision = 'approve';
+  const cancellation = new AbortController();
+  const cancelledClient = runWithServerHttpBaseUrl(home.baseUrl, () => createConnectedAccountDaemonClient({ credentials,
+    machineId: home.machineId, signal: cancellation.signal,
+    onApprovalRequested: () => { cancellation.abort(); },
+  }));
+  try {
+    await expect(cancelledClient.authenticate({ operation: 'submitManual', attemptId: 'connect-attempt',
+      // The existing transport contract cannot retract an issued mutation.
+      fields: { token: 'private-cancelled-token' } })).rejects.toMatchObject({ code: 'outcome_unknown' });
+  } finally { await cancelledClient.dispose(); }
+  expect(effects).toBe(2);
   // Generic Actions use the same real CLI -> daemon approval path. Private
   // input and output must settle after --yes without a second client.
   let output = '';
-  const stdout = vi.spyOn(process.stdout, 'write').mockImplementation(chunk => { output += String(chunk); return true; });
+  const stdout = vi.spyOn(process.stdout, 'write').mockImplementation((chunk, encodingOrCallback, callback) => {
+    output += String(chunk);
+    if (typeof encodingOrCallback === 'function') encodingOrCallback();
+    else callback?.();
+    return true;
+  });
   const notices = vi.spyOn(console, 'error').mockImplementation(() => {});
   const previousExitCode = process.exitCode;
   cleanup.push(() => { stdout.mockRestore(); notices.mockRestore(); process.exitCode = previousExitCode; });
@@ -158,9 +190,11 @@ it('delivers fresh beginConnect configuration through CLI, Home and the installe
   ] as const) {
     output = '';
     notices.mockClear();
-    await handleActionsCommand(['invoke', id, '--input-json', JSON.stringify(input), '--yes', '--json'], {
+    const commandLifetime = new AbortController();
+    const command = handleActionsCommand(['invoke', id, '--input-json', JSON.stringify(input), '--yes', '--json'], {
       readCredentialsFn: async () => credentials,
-    });
+    }, AbortSignal.any([invocation.signal, commandLifetime.signal]));
+    try { await command; } finally { commandLifetime.abort(); await command; }
     expect(JSON.parse(output)).toMatchObject({ ok: true, kind: 'actions_invoke', data: nativeResult });
     expect(notices.mock.calls.map(([message]) => JSON.parse(String(message))))
       .toContainEqual(expect.objectContaining({ data: { kind: 'approval_request_created',
@@ -171,8 +205,9 @@ it('delivers fresh beginConnect configuration through CLI, Home and the installe
     const completed = await createCliActionExecutorFromCredentials({ credentials, machineId: home.machineId })
       .execute('approval.request.get', { artifactId: notice.data.artifactId }, { surface: 'cli', actionCaller: { kind: 'host' } });
     if (!completed.ok) throw new Error('Missing generic Action approval receipt');
-    expect(ApprovalRequestGetResultV1Schema.parse(completed.result).request)
-      .toMatchObject({ status: 'executed', actionId: id, execution: { ok: true, result: { redacted: true } } });
+    const genericReceipt = ApprovalRequestGetResultV1Schema.parse(completed.result).request;
+    expect(genericReceipt).toMatchObject({ status: 'executed', actionId: id, execution: { ok: true } });
+    expect(JSON.stringify(genericReceipt)).not.toContain('private-');
   }
   expect(effects).toBe(4);
 }, 120_000);

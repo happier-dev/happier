@@ -23,7 +23,8 @@ import { requiresOriginalAccountMachineActionProof } from '@/api/externalActionE
 import { requiresManagedMachineDaemonIngress } from './externalActions/reconcileExternalActionTarget';
 import { projectExternalActionRunNowIdempotencyKeyV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import type { SessionStopIntent } from '@happier-dev/protocol/sessions/metadata/sessionExplicitStopV1';
-import { projectActionExecuteFailure, readUnexpectedActionErrorDiagnosticV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { projectActionExecuteFailure, readUnexpectedActionErrorDiagnosticV1,
+  type ActionApprovalRequestCreatedResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { isPluginError } from '@happier-dev/protocol/plugins/errors';
 import { canExecuteSessionRuntimeAction } from './sessionRuntimeActionAdmission';
 import { classifyActionTransportFailure, classifyServerEndpointError } from '@/api/client/classifyServerEndpointError';
@@ -1248,6 +1249,20 @@ export function createDaemonControlApp({
         });
       }
       const lifetime = createDaemonControlRequestLifetime(request, reply);
+      const streamsApproval = request.headers.accept?.split(',').some(value => value.trim() === 'application/x-ndjson');
+      const writeFrame = (result: ActionExecuteResult) => {
+        if (!reply.sent) {
+          reply.hijack();
+          reply.raw.writeHead(200, { 'content-type': 'application/x-ndjson' });
+        }
+        reply.raw.write(`${JSON.stringify(result)}\n`);
+      };
+      const settle = (result: ActionExecuteResult) => {
+        if (!streamsApproval) return result;
+        writeFrame(result);
+        reply.raw.end();
+        return reply;
+      };
       try {
         return await lifetime.run(async () => {
           const surface = parsed.data.surface ?? 'cli';
@@ -1282,7 +1297,10 @@ export function createDaemonControlApp({
               serverIdentityId: origin.serverIdentityId, accountId: externalActionApi.currentAccountId,
               machineId, installationId,
             }) : undefined;
-          return await approvalAcknowledgement.execute({ actionId: parsed.data.actionId, surface, signal: lifetime.signal,
+          const result = await approvalAcknowledgement.execute({ actionId: parsed.data.actionId, surface, signal: lifetime.signal,
+            ...(streamsApproval ? { onApprovalRequested: (approval: ActionApprovalRequestCreatedResult) => {
+              writeFrame({ ok: true, result: approval });
+            } } : {}),
             run: async (signal, operationOwnerUpdate) => {
               const execution = await executeExternalAction({
                 actionId: parsed.data.actionId,
@@ -1322,6 +1340,7 @@ export function createDaemonControlApp({
               return execution.response.execution;
             },
           });
+          return settle(result);
         });
       } catch (error) {
         const { sideEffectClass } = getActionSpec(parsed.data.actionId);
@@ -1330,7 +1349,7 @@ export function createDaemonControlApp({
           requestIssued: true, cancelled: lifetime.signal.aborted,
         }) ?? 'internal_error';
         logger.debug('[CONTROL SERVER] Root Action request ended', { requestId: request.id, actionId: parsed.data.actionId, errorCode });
-        return { ok: false, errorCode, error: errorCode };
+        return settle({ ok: false, errorCode, error: errorCode });
       } finally {
         lifetime.dispose();
       }

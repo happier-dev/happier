@@ -4350,12 +4350,16 @@ describe('Conversation provider observation ingress', () => {
     });
   });
 
-  it('mediates an admitted /answer through the canonical exact-turn user-action Action', async () => {
+  it.each([false, true])('mediates an admitted /answer through the canonical exact-turn user-action Action (reconnect: %s)', async (reconnect) => {
     const actionCalls: Array<Readonly<{ actionId: string; input: JsonValue }>> = [];
+    let available = !reconnect;
     const harness = createIngressHarness({
       execute: async (actionId, input): Promise<JsonValue> => {
         actionCalls.push({ actionId, input });
         if (actionId === 'session.permission.remote.pending.list') {
+          if (!available) {
+            throw new PluginError({ code: 'ownerMachineUnavailable', message: 'Owner unavailable', retryable: false });
+          }
           return {
             requests: [{
               kind: 'user_action',
@@ -4383,10 +4387,19 @@ describe('Conversation provider observation ingress', () => {
         throw new Error(`Unexpected Action '${actionId}'.`);
       },
     });
-    await expect(ingestConversationProviderObservationForInvocation(observation({
+    const command = observation({
       messageRevision: 'user-action-command:1',
       messageText: '/answer question-request-1 [{"questionIndex":0,"values":["fast"]}]',
-    }), harness.context)).resolves.toBeUndefined();
+    });
+    if (reconnect) {
+      await expect(ingestConversationProviderObservationForInvocation(command, harness.context)).rejects.toMatchObject({
+        code: 'channels_ingress_admission_unsettled', retryable: true,
+      });
+      available = true;
+      markIngressObligationAttempting(harness.rows);
+      actionCalls.length = 0;
+    }
+    await expect(ingestConversationProviderObservationForInvocation(command, harness.context)).resolves.toBeUndefined();
 
     // A user-action answer is mediated control, never ordinary Session text.
     expect(harness.send).not.toHaveBeenCalled();
@@ -4823,25 +4836,38 @@ describe('Conversation provider observation ingress', () => {
     )).toBe(false);
   });
 
-  it('retries an approval whose request is absent from a truncated pending projection', async () => {
+  it.each(['truncated', 'unavailable'] as const)('retries an approval whose pending projection is %s', async (projection) => {
     const actionIds: string[] = [];
+    let complete = false;
     const harness = createIngressHarness({
       execute: async (actionId): Promise<JsonValue> => {
         actionIds.push(actionId);
         if (actionId === 'session.permission.remote.pending.list') {
+          if (complete) {
+            return { requests: [pendingPermissionRequest({ requestId: 'permission-request-1', turnId: 'turn-9',
+              createdAtMs: 1, allowedScopes: ['request'] })], truncated: false, nextCursor: null };
+          }
+          if (projection === 'unavailable') {
+            throw new PluginError({ code: 'ownerMachineUnavailable', message: 'Owner unavailable', retryable: false });
+          }
           return { requests: [], truncated: true };
         }
-        throw new Error(`A truncated projection must not reach ${actionId}.`);
+        if (complete && actionId === 'session.permission.remote.respond') {
+          return { status: 'applied', settlementId: 'settlement-1', requestId: 'permission-request-1',
+            decision: 'deny', effect: { kind: 'deny' } };
+        }
+        throw new Error(`An incomplete projection must not reach ${actionId}.`);
       },
     });
     setBindingApprovalEnabled(harness.rows);
+    const command = observation({
+      messageRevision: `approval-${projection}:1`,
+      messageText: '/deny permission-request-1',
+    });
 
     // An unsettled admission stays retryable at the ingest boundary; the
     // obligation is what carries the bounded retry, not a mediation-local timer.
-    await expect(ingestConversationProviderObservationForInvocation(observation({
-      messageRevision: 'approval-truncated:1',
-      messageText: '/deny permission-request-1',
-    }), harness.context)).rejects.toMatchObject({
+    await expect(ingestConversationProviderObservationForInvocation(command, harness.context)).rejects.toMatchObject({
       code: 'channels_ingress_admission_unsettled',
       retryable: true,
     });
@@ -4857,6 +4883,14 @@ describe('Conversation provider observation ingress', () => {
     expect([...harness.rows.values()].some(
       (row) => row.value['record-kind'] === 'outward-delivery',
     )).toBe(false);
+
+    complete = true;
+    markIngressObligationAttempting(harness.rows);
+    await expect(ingestConversationProviderObservationForInvocation(command, harness.context)).resolves.toBeUndefined();
+    expect(actionIds).toEqual(['session.permission.remote.pending.list', 'session.permission.remote.pending.list',
+      'session.permission.remote.respond']);
+    const recovered = [...harness.rows.values()].find(row => row.value['record-kind'] === 'ingress-obligation');
+    expect(recovered?.value.payload).toMatchObject({ lifecycle: { phase: 'terminal' }, disposition: 'approvalConsumed' });
   });
 
   it('settles an approval as no-longer-pending on a complete negative projection', async () => {

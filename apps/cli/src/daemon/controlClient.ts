@@ -12,7 +12,8 @@ import {
   readProcessInstanceFingerprintSync,
 } from '@happier-dev/cli-common/processInstance';
 import type { ActionExecuteResult, ActionExecutorContext } from '@happier-dev/protocol';
-import { projectActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { ActionExecuteResultSchema, ActionApprovalRequestCreatedResultSchema, projectActionExecuteFailure,
+  type ActionApprovalRequestCreatedResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { logger } from '@/ui/logger';
 import type { ConnectedServiceUxDiagnosticV1 } from '@happier-dev/protocol/connect/connectedServiceUxDiagnostics';
 import {
@@ -654,7 +655,8 @@ export async function requestDaemonPluginActionExecution(request: Readonly<{
 
 export async function requestDaemonSignedRootActionExecution(
   request: SignedRootActionExecuteRequest,
-  options: DaemonControlRequestOptions & Readonly<{ authorityCeiling?: 'account_automation' }> = {},
+  options: DaemonControlRequestOptions & Readonly<{ authorityCeiling?: 'account_automation';
+    onApprovalRequested?: (approval: ActionApprovalRequestCreatedResult) => void }> = {},
 ): Promise<ActionExecuteResult> {
   if (options.signal?.aborted) return { ok: false, errorCode: 'cancelled', error: 'cancelled' };
   const { SIGNED_ROOT_ACTION_EXECUTE_PATH } = await import('./externalActions/signedRootActionControl');
@@ -672,6 +674,11 @@ export async function requestDaemonSignedRootActionExecution(
     || request.actionId === 'plugins.list';
   const result = await daemonPost(SIGNED_ROOT_ACTION_EXECUTE_PATH, request, {
     ...options,
+    ...(options.onApprovalRequested ? { onJsonLine(value: unknown) {
+      const execution = ActionExecuteResultSchema.parse(value);
+      const approval = execution.ok ? ActionApprovalRequestCreatedResultSchema.safeParse(execution.result) : null;
+      if (approval?.success) options.onApprovalRequested!(approval.data);
+    } } : {}),
     // Creation, Stop/refresh completion and wait observation have domain-owned lifetimes;
     // client and contributed Actions may also wait for approval and completion.
     timeoutMs: options.timeoutMs !== undefined ? options.timeoutMs

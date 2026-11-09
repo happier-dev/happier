@@ -92,6 +92,8 @@ export const PluginActionExecutionV2Schema = lazyZodSchema(() => z.discriminated
   z.strictObject({
     target: z.literal('account'),
     account: PluginClientExecutionReferenceV1Schema,
+    /** Retain ordinary UI authoring when invoked from a UI host; headless hosts remain portable. */
+    invokingUi: z.optional(z.literal(true)),
   }),
   z.strictObject({
     target: z.literal('client'),

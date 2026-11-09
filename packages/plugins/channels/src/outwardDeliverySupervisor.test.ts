@@ -1295,7 +1295,7 @@ describe('Channels outward-delivery supervisor', () => {
     }
   });
 
-  it('treats an unreachable Session as empty and admits new pending work on its ordinary Session change', async () => {
+  it('retains an unreachable Session permission and delivers the same request on its ordinary Session change', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(0);
     const generation = new AbortController();
@@ -1310,7 +1310,7 @@ describe('Channels outward-delivery supervisor', () => {
       if (action === 'session.permission.remote.pending.list') {
         permissionReads.push(Date.now());
         if (!available) throw new PluginError({ code: 'ownerMachineUnavailable', message: 'Owner unavailable', retryable: false });
-        return { requests: [pendingPermissionRequest({ requestId: 'permission-request-2', turnId: 'turn-2',
+        return { requests: [pendingPermissionRequest({ requestId: 'permission-request-1', turnId: 'turn-1',
           createdAtMs: 1, allowedScopes: ['request'] })], truncated: false, nextCursor: null };
       }
       return { ok: true, projection: 'externalShareableV1', sessionId: 'session-1',
@@ -1331,7 +1331,7 @@ describe('Channels outward-delivery supervisor', () => {
     try {
       await vi.advanceTimersByTimeAsync(0);
       await vi.waitFor(() => expect(deliveries.rows.get(retained.record.custodyId)?.value.payload)
-        .toMatchObject({ state: 'notSent', reason: 'policySuppressed' }), { interval: 0 });
+        .toMatchObject({ state: 'ready' }), { interval: 0 });
       await vi.advanceTimersByTimeAsync(0);
       const settledReads = permissionReads.length;
       await vi.advanceTimersByTimeAsync(60_000);
@@ -1342,7 +1342,7 @@ describe('Channels outward-delivery supervisor', () => {
       await vi.waitFor(() => expect([...deliveries.rows.values()].some(row => isChannelStateJsonRecord(row.value.payload)
         && row.value.payload.state === 'delivered'
         && isChannelStateJsonRecord(row.value.payload.source)
-        && row.value.payload.source.requestId === 'permission-request-2')).toBe(true), { interval: 0 });
+        && row.value.payload.source.requestId === 'permission-request-1')).toBe(true), { interval: 0 });
       expect(deliver).toHaveBeenCalledTimes(1);
     } finally { generation.abort(); await running; await supervisor.dispose(); vi.useRealTimers(); }
   });
@@ -3803,6 +3803,10 @@ describe('Channels outward-delivery supervisor', () => {
       expect(state.rows.get(bindingId)?.deleted).not.toBe(true);
       expect(state.rows.get(connectionId)?.deleted).not.toBe(true);
       const heldReads = reads.mock.calls.length;
+      const unrelatedIngress = [...state.rows.values()].find(row => row.value['record-kind'] === 'ingress-obligation');
+      if (unrelatedIngress === undefined) throw new Error('Expected retained ingress.');
+      await state.put({ ...unrelatedIngress.value, id: 'unrelated-ingress', 'connection-id': 'unrelated-connection' },
+        { expectedRevision: 'absent' });
       await vi.advanceTimersByTimeAsync(60_000);
       expect(reads).toHaveBeenCalledTimes(heldReads);
       if (blocker === 'delivery') {
@@ -3811,7 +3815,8 @@ describe('Channels outward-delivery supervisor', () => {
       } else {
         const row = [...state.rows.values()].find(row => row.value['record-kind'] === 'ingress-obligation');
         if (row === undefined || !isChannelStateJsonRecord(row.value.payload)) throw new Error('Expected in-flight ingress.');
-        await state.put({ ...row.value, terminal: true, attention: false,
+        const { 'due-at': _dueAt, ...withoutDueAt } = row.value;
+        await state.put({ ...withoutDueAt, terminal: true, attention: false,
           payload: { ...row.value.payload, normalizedIngress: null,
             lifecycle: { phase: 'terminal', attemptCount: 1, dueAt: null }, disposition: 'admitted' },
         }, { expectedRevision: row.revision });

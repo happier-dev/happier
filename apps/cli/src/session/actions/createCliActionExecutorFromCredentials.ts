@@ -96,6 +96,7 @@ import type {
 import { createCliActionExecutor } from './createCliActionExecutor';
 import { isControllerDeploymentMutationAction } from './createCliActionDeps';
 import { consumeDeferredCliApprovalResult, isOriginalCliApprovalPreservedAtAccount, type RecordedApprovalExecutionObservationArgs } from './createCliActionExecutorHarness';
+import { executeLiveCliApprovalRequest } from './approvals/deferredResult';
 import { readControllerDeploymentDispatch } from './controllerDeploymentDispatch';
 import { createCredentialedWorkflowActionAdmissionReader } from '@/daemon/workflows/workflowActionAdmission';
 import { readWorkflowActionPolicyContext } from '@/daemon/workflows/workflowActionContext';
@@ -126,7 +127,8 @@ import { decodeJwtPayload, readAccountIdFromToken } from '@/cloud/decodeJwtPaylo
 import { readProjectAccountRows } from '@/workspaces/projectAccountRows';
 import { resolveWorkspaceRefById } from '@/workspaces/workspaceRefsV1';
 import { FilesystemPreparedCopyInputSchema, FilesystemTargetCopyInputSchema, FilesystemUploadOutputSchema } from '@happier-dev/protocol/actions/filesystemActionFamily';
-import { ActionApprovalRequestCreatedResultSchema, ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { ActionApprovalRequestCreatedResultSchema, ActionExecuteFailureSchema,
+  type ActionApprovalRequestCreatedResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { resolveActionApprovalFlow } from '@happier-dev/protocol/actions/actionSpecs';
 import { resolveActionApprovalRouting } from '@happier-dev/protocol/actions/actionApprovalPolicy';
 import { isActionEnabledByActionsSettings } from '@happier-dev/protocol/actions/actionSettings';
@@ -1969,19 +1971,27 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
           if (fixedServerId && !daemonControlTarget) return actionFailure('daemon_unavailable');
           const { requestDaemonSignedRootActionExecution } = await import('@/daemon/controlClient');
           if (signal?.aborted) return actionFailure('cancelled');
-          const result = await requestDaemonSignedRootActionExecution({
+          const run = (requestSignal?: AbortSignal,
+            onApprovalRequested?: (approval: ActionApprovalRequestCreatedResult) => void) => requestDaemonSignedRootActionExecution({
             actionId: parsedActionId.data,
             input: admittedInput,
             ...(target ? { target } : {}),
             ...(context?.actionRequestId ? { actionRequestId: context.actionRequestId } : {}),
           }, {
-            ...(signal ? { signal } : {}),
+            signal: requestSignal,
+            ...(onApprovalRequested ? { onApprovalRequested } : {}),
             ...(liveResultCustody ? { timeoutMs: null } : {}),
             ...(daemonControlTarget ? { target: daemonControlTarget } : {}),
             ...(pairedTerminal && context.authority === 'account_automation'
               ? { authorityCeiling: 'account_automation' as const }
               : {}),
           });
+          const result = spec.approvalInputCustody === 'live_only' && spec.approvalResultCustody === 'live_only'
+            && params.onApprovalRequested
+            ? await executeLiveCliApprovalRequest({ onApprovalRequested: params.onApprovalRequested,
+              execute: async (actionId, input, actionContext) => (await resolveExecutor(credentials)).execute(actionId, input, actionContext),
+              context: signal ? { ...context, signal } : context, run })
+            : await run(signal);
           return await consumeDeferredCliApprovalResult(result, { onApprovalRequested: params.onApprovalRequested,
             token: credentials.token, serverHttpBaseUrl: resolveActionServerApiUrl(),
             execute: async (actionId, input, actionContext) => (await resolveExecutor(credentials)).execute(actionId, input, actionContext),

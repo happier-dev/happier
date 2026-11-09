@@ -3140,6 +3140,7 @@ async function appendFinalizingBindingDependents(input: Readonly<{
 async function finalizeConversationConnectionDelete(input: Readonly<{
   connectionId: string;
   context: ConversationStorageContext;
+  observePendingIngress?: (rowId: string) => void;
 }>): Promise<true | void> {
   const collection = requireChannelsAccountStorage(input.context).collection(CHANNEL_STATE_COLLECTION);
   const connectionStored = await collection.get(input.connectionId, { signal: input.context.signal });
@@ -3244,7 +3245,10 @@ async function finalizeConversationConnectionDelete(input: Readonly<{
       });
       if (settlement.kind === 'invalid'
         || settlement.connectionId !== input.connectionId) return;
-      if (settlement.kind === 'blocked') return;
+      if (settlement.kind === 'blocked') {
+        input.observePendingIngress?.(row.rowId);
+        return;
+      }
       if (settlement.kind === 'readyToSettle') {
         mutations.push({ kind: 'put', value: settlement.value, expectedRevision: row.revision });
       } else {
@@ -3291,6 +3295,7 @@ function finalizingBindingDeleteIsAuthorized(current: ConversationBindingUpdateR
 async function finalizeConversationBindingDelete(input: Readonly<{
   bindingId: string;
   context: ConversationStorageContext;
+  observePendingIngress?: (rowId: string) => void;
 }>): Promise<true | void> {
   const collection = requireChannelsAccountStorage(input.context).collection(CHANNEL_STATE_COLLECTION);
   const bindingStored = await collection.get(input.bindingId, { signal: input.context.signal });
@@ -3356,7 +3361,10 @@ async function finalizeConversationBindingDelete(input: Readonly<{
       if (settlement.kind === 'invalid'
         || settlement.connectionId !== current.binding.connectionId
         || settlement.bindingId !== input.bindingId) return;
-      if (settlement.kind === 'blocked') return;
+      if (settlement.kind === 'blocked') {
+        input.observePendingIngress?.(row.rowId);
+        return;
+      }
       if (settlement.kind === 'readyToSettle') {
         mutations.push({ kind: 'put', value: settlement.value, expectedRevision: row.revision });
       } else {
@@ -3413,6 +3421,7 @@ async function finalizeConversationBindingDelete(input: Readonly<{
  */
 export async function finalizeConversationConnectionDeletesForInvocation(
   context: ConversationStorageContext,
+  observePendingIngress?: (rowId: string) => void,
 ): Promise<boolean> {
   if (context.signal.aborted) return false;
   const collection = requireChannelsAccountStorage(context).collection(CHANNEL_STATE_COLLECTION);
@@ -3456,7 +3465,7 @@ export async function finalizeConversationConnectionDeletesForInvocation(
         try {
           const current = readConversationConnectionUpdateRow({ row, connectionId });
           if (!finalizingDeleteIsAuthorized(current)) continue;
-          if (await finalizeConversationConnectionDelete({ connectionId, context })) continueFinalization = true;
+          if (await finalizeConversationConnectionDelete({ connectionId, context, observePendingIngress })) continueFinalization = true;
         } catch (error) {
           // Retain the canonical rows untouched; the next existing wake re-reads
           // them rather than treating an unavailable or malformed row as deleted.
@@ -3500,7 +3509,7 @@ export async function finalizeConversationConnectionDeletesForInvocation(
         const current = readConversationBindingUpdateRow({ row, bindingId });
         if (!finalizingBindingDeleteIsAuthorized(current)) continue;
         if (!await isConversationConnectionPlacedForInvocation(context, current.binding.connectionId)) continue;
-        if (await finalizeConversationBindingDelete({ bindingId, context })) continueFinalization = true;
+        if (await finalizeConversationBindingDelete({ bindingId, context, observePendingIngress })) continueFinalization = true;
       } catch (error) {
         // Retain the canonical rows untouched; the next existing wake re-reads
         // them rather than treating an unavailable or malformed row as deleted.
