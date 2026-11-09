@@ -12,6 +12,7 @@ import * as formatters from './contextFormatters';
 import { voiceHooks } from './voiceHooks';
 import { buildRealtimeConversationTurnMeta } from '@/voice/transcript/VoiceTranscriptProjector';
 import type { Message } from '@happier-dev/session-core/messages';
+import { buildSessionListRenderableFromSession } from '@/sync/domains/session/listing/sessionListRenderable';
 
 const original = storage.getState();
 afterEach(() => {
@@ -72,6 +73,48 @@ it('keeps Voice turns out of coding summaries and reconnect context while retain
         [coding, voice], prefs);
     expect(initialContext).toContain(coding.text);
     expect(initialContext).not.toContain(voice.text);
+});
+
+it.each(['announcement', 'model_context'] as const)
+('does not speak the transient dictated request as the Session title (%s)', (delivery) => {
+    const providerId = 'cost.title-transport';
+    const address = { serverId: 'voice-title-home', sessionId: 'voice-title-session' };
+    const dictated = 'NOW ASK IT TO CREATE ANOTHER FILE CALLED SECOND NOTES DOT TEXT WITH THE WORD GOOD BY INSIDE';
+    const session = createSessionFixture({ id: address.sessionId, serverId: address.serverId, encryptionMode: 'plain',
+        metadata: { path: '/project' } });
+    const messages: Message[] = [{ id: 'dictated', kind: 'user-text', localId: null, createdAt: 1, text: dictated }];
+    const voice = voiceSettings.voiceSettingsParse({ providerId: 'local_conversation',
+        privacy: { shareSessionSummary: true, sharePermissionRequests: true, shareFilePaths: false },
+        ui: { updates: { activeSession: 'snippets' } } });
+    const publish = (current: typeof session) => storage.setState({ settings: { ...original.settings, voice },
+        sessions: { [session.id]: current }, sessionListRowsByServerId: {
+            [address.serverId]: { [session.id]: buildSessionListRenderableFromSession(current, undefined, messages) },
+        } });
+    publish(session);
+    useVoiceTargetStore.getState().setPrimaryActionSessionAddress(address);
+    const spoken: string[] = [];
+    const snapshot = { adapterId: providerId, sessionId: address.sessionId, status: 'connected' as const,
+        mode: 'idle' as const, canStop: true };
+    // Provider transport is the external boundary; request policy, metadata and speech stay real.
+    registerVoiceAdapters([{ id: providerId, engineKind: 'realtime', start: async () => {}, stop: async () => {},
+        toggle: async () => {}, interrupt: async () => {}, setMuted: async () => {}, sendContextUpdate: () => {},
+        getSnapshot: () => snapshot, subscribe: () => () => {}, resolveContextChannel: () => ({
+            hostAuthoredContext: 'session_context', sendContextualUpdate: () => {},
+            sendTextMessage: text => { spoken.push(text); },
+            ...(delivery === 'announcement' ? { announceAssistantText: (text: string) => { spoken.push(text); } } : {}),
+        }) }]);
+    setVoiceSessionSnapshot(snapshot);
+    voiceHooks.onAgentRequest(address, 'permission-unnamed', 'permission', 'Bash', {});
+    expect(spoken).toHaveLength(1);
+    expect(spoken[0]).toContain('permission');
+    expect(spoken[0]).not.toContain(dictated);
+
+    const authored = 'Second notes: KEEP This Name';
+    publish({ ...session, metadata: { ...session.metadata, summary: { text: authored, updatedAt: 2 } } });
+    spoken.length = 0;
+    voiceHooks.onAgentRequest(address, 'permission-named', 'permission', 'Bash', {});
+    expect(spoken).toHaveLength(1);
+    expect(spoken[0]).toContain(authored);
 });
 
 it.each(['off', 'local_conversation'])('does no context work for message/ready/request arrivals without a sink (%s), then delivers to a live sink', (providerId) => {

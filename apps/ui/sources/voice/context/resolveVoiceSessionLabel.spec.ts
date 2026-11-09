@@ -28,33 +28,31 @@ describe('resolveVoiceSessionLabel', () => {
     }));
   });
 
-  it('names raw authored metadata while rejecting transient list and display-only projections', () => {
+  it('names authored metadata while rejecting transient list and display-only title fields', () => {
     const prefs = { voiceShareSessionSummary: true, voiceShareFilePaths: false };
     const session = createSessionFixture({ metadata: { path: '/project' } });
     const row = buildSessionListRenderableFromSession(session, undefined, [
       { id: 'dictated', kind: 'user-text', localId: null, createdAt: 1, text: 'A transient request' },
     ]);
-    expect(resolveVoiceSessionAuthoredLabel(session, prefs)).toBeNull();
-    expect(resolveVoiceSessionAuthoredLabel(row, prefs)).toBeNull();
-    expect(resolveVoiceSessionAuthoredLabel({ ...session, metadataProjection: 'displayOnly',
-      metadata: { summaryText: 'A transient request' } }, prefs)).toBeNull();
-    expect(resolveVoiceSessionAuthoredLabel({ ...session,
-      metadata: { summary: { text: 'Release /home/alice/project', updatedAt: 2 } } }, prefs))
+    expect(resolveVoiceSessionAuthoredLabel(session.metadata, prefs)).toBeNull();
+    expect(resolveVoiceSessionAuthoredLabel(row.metadata, prefs)).toBeNull();
+    expect(resolveVoiceSessionAuthoredLabel({ summaryText: 'A transient request' }, prefs)).toBeNull();
+    expect(resolveVoiceSessionAuthoredLabel({ summary: { text: 'Release /home/alice/project', updatedAt: 2 } }, prefs))
       .toBe('Release <path_redacted>');
-    expect(resolveVoiceSessionAuthoredLabel({ ...session, metadata: { name: 'Release planning' } }, prefs))
+    expect(resolveVoiceSessionAuthoredLabel({ name: 'Release planning' }, prefs))
       .toBe('Release planning');
-    expect(resolveVoiceSessionAuthoredLabel({ ...session, metadata: { summaryText: 'Saved title' } },
+    expect(resolveVoiceSessionAuthoredLabel({ summary: { text: 'Saved title', updatedAt: 2 } },
       { ...prefs, voiceShareSessionSummary: false })).toBeNull();
   });
 
-  it('prefers the visible lookup session metadata over stale raw session metadata', () => {
+  it('uses the owner title instead of a projected lookup label', () => {
     storage.setState((state: any) => ({
       ...state,
       sessions: {
         s_matrix: {
           id: 's_matrix',
           metadata: {
-            summaryText: 'Raw session summary!',
+            summary: { text: 'Authored session title', updatedAt: 1 },
             path: '/Users/alice/project-alpha',
           },
         },
@@ -91,7 +89,7 @@ describe('resolveVoiceSessionLabel', () => {
         voiceShareSessionSummary: true,
         voiceShareFilePaths: true,
       }),
-    ).toBe('Lookup session summary');
+    ).toBe('Authored session title');
   });
 
   it('trims the session id before resolving the label', () => {
@@ -101,7 +99,7 @@ describe('resolveVoiceSessionLabel', () => {
         s_matrix: {
           id: 's_matrix',
           metadata: {
-            summaryText: 'Raw session summary!',
+            summary: { text: 'Authored session title', updatedAt: 1 },
             path: '/Users/alice/project-alpha',
           },
         },
@@ -138,7 +136,7 @@ describe('resolveVoiceSessionLabel', () => {
         voiceShareSessionSummary: true,
         voiceShareFilePaths: true,
       }),
-    ).toBe('Trimmed session summary');
+    ).toBe('Authored session title');
   });
 
   it('does not disclose a raw session name when summary sharing is disabled', () => {
@@ -161,7 +159,7 @@ describe('resolveVoiceSessionLabel', () => {
         voiceShareSessionSummary: false,
         voiceShareFilePaths: true,
       }),
-    ).toBe('project-alpha');
+    ).toBe('the current session');
   });
 
   it.each([undefined, null, 'true', 1, {}, []])(
@@ -184,23 +182,23 @@ describe('resolveVoiceSessionLabel', () => {
     },
   );
 
-  it('uses only the layout-v1 owner view for private path labels', () => {
+  it('uses only the layout-v1 owner view for authored titles', () => {
     storage.setState((state: any) => ({
       ...state,
       sessions: {
         s_private: {
           id: 's_private',
           metadataLayoutVersion: 1,
-          metadata: { v: 1, path: '/shared/private-lookalike' },
-          ownerMetadataView: { path: '/owner/real-project' },
+          metadata: { v: 1, summary: { text: 'Shared lookalike', updatedAt: 1 } },
+          ownerMetadataView: { summary: { text: 'Owner title', updatedAt: 1 } },
         },
       },
     }));
 
     expect(resolveVoiceSessionLabel('s_private', {
-      voiceShareSessionSummary: false,
+      voiceShareSessionSummary: true,
       voiceShareFilePaths: true,
-    })).toBe('real-project');
+    })).toBe('Owner title');
 
     storage.setState((state: any) => ({
       ...state,
@@ -214,7 +212,7 @@ describe('resolveVoiceSessionLabel', () => {
     }));
 
     expect(resolveVoiceSessionLabel('s_private', {
-      voiceShareSessionSummary: false,
+      voiceShareSessionSummary: true,
       voiceShareFilePaths: true,
     })).toBe('the current session');
   });

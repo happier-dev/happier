@@ -76,7 +76,7 @@ export function createNativeVoicePermissionInput(params: Readonly<{
       sessionId: selected.address.sessionId, isCurrentAttemptTarget: true });
     const request = selected.request;
     const summary = summarizeAgentRequestForVoiceHuman(request.kind, request.id, request.tool, request.arguments, prefs,
-      resolveVoiceSessionLabel(selected.address, prefs, { fallbackLabel: t('voice.readiness.requestingSession') }));
+      resolveVoiceSessionLabel(selected.address, prefs, { fallbackLabel: '' }));
     await readPrompt(selected, `${summary} ${prefs.voiceCanApproveRequests ? question() : t('voice.readiness.permissionTapRequired')}`,
       true);
   };

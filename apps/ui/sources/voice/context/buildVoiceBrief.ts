@@ -24,6 +24,7 @@ import { readWorkflowRunWorkStatusFacts } from '@/components/work/status/workflo
 import { isWorkStatusNeedsYou, resolveWorkStatusTone } from '@/components/work/status/resolveWorkStatusTone';
 import { presentExecutionRunFailure } from '@/components/sessions/presentation/sessionRuntimeIssuePresentation';
 import { resolveVoiceSessionAuthoredLabel } from './resolveVoiceSessionLabel';
+import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 
 export type VoiceBriefSource = Pick<InboxModel, 'sessionPresentation' | 'workGroups' | 'automationAttentionItems'
     | 'workflowAttention' | 'automationAttention' | 'isLoading' | 'showCaughtUp'> & Readonly<{
@@ -92,7 +93,7 @@ export function buildVoiceBrief(input: Readonly<{ inbox: VoiceBriefSource; setti
         if (resolveVoiceSessionUpdatePolicyV1({ accountSettings: input.settings, includeInVoice, isCurrentAttemptTarget }).level === 'none') return;
         const prefs = getVoiceContextFormatterPrefs({ settings: input.settings, sessionId: address.sessionId, sessionAddress: address,
             includeInVoice, isCurrentAttemptTarget });
-        const label = resolveVoiceSessionAuthoredLabel(candidate.presentationSource?.baseSession ?? candidate.session, prefs);
+        const label = resolveVoiceSessionAuthoredLabel(readSessionOwnerMetadataView(candidate.presentationSource?.baseSession ?? candidate.session), prefs);
         speechByKey.set(sessionAddressKey(address), {
             ...(label ? { title: label } : {}),
             ...(prefs.voiceSharePermissionRequests ? { requests: requests.map(([kind, id, tool, args]) => summarizeAgentRequestForVoiceHuman(kind, id, tool, args, prefs, label ?? undefined)).filter((value): value is string => Boolean(value)) } : {}),

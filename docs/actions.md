@@ -2679,6 +2679,12 @@ preference owner selects the offer; it neither changes the saved default nor
 launches a replacement without the person's choice. Stale or unknown readiness
 does not establish a runnable alternative.
 
+Voice leaves automatic Session naming to the coding Session's `change_title`
+owner unless the person supplies a name. Spoken Session labels use the canonical
+authored title (`summary.text`, then retained `name`); a transient first-message
+list title or folder name is not a spoken title. Creation and send acknowledgments
+stay brief and distinguish accepted work from completed work.
+
 In development source, ordinary `session.spawn_new` accepts optional
 `machineSetupPlanInput` with Home, Machine, sources and exclusions only; removal,
 app execution and software updates retain their separate Actions. The spawn review

@@ -31,7 +31,6 @@ import { buildVoiceBrief, type VoiceBriefSource } from './buildVoiceBrief';
 import { getVoiceSessionLifecycleController } from '@/voice/session/voiceSessionLifecycleControllerStore';
 import { getVoiceSessionSnapshot } from '@/voice/session/voiceSessionStore';
 import { resolveVoiceSessionLabel } from '@/voice/context/resolveVoiceSessionLabel';
-import { t } from '@/text';
 
 /**
  * Centralized voice assistant hooks for multi-session context updates.
@@ -336,7 +335,7 @@ export const voiceHooks = {
       sink,
       sessionId,
       summarizeAgentRequestForVoiceHuman(requestKind, requestId, toolName, toolArgs, prefs,
-        resolveVoiceSessionLabel(address, prefs, { fallbackLabel: t('voice.readiness.requestingSession') })),
+        resolveVoiceSessionLabel(address, prefs, { fallbackLabel: '' })),
     );
     reportAnnouncedSessionUpdate(
       sink,

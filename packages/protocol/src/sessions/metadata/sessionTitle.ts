@@ -1,5 +1,5 @@
 /** A Happier Session title survives native Agent conversation replacement. */
-export function hasSessionTitleInMetadata(sessionMetadata: unknown): boolean {
+export function readSessionTitleInMetadata(sessionMetadata: unknown): string | null {
   const metadata = sessionMetadata && typeof sessionMetadata === 'object' && !Array.isArray(sessionMetadata)
     ? sessionMetadata as Record<string, unknown>
     : null;
@@ -8,5 +8,12 @@ export function hasSessionTitleInMetadata(sessionMetadata: unknown): boolean {
     ? summary.text
     : null;
   // summary.text is current; name covers retained named Sessions.
-  return [summaryText, metadata?.name].some(title => typeof title === 'string' && title.trim().length > 0);
+  for (const title of [summaryText, metadata?.name]) {
+    if (typeof title === 'string' && title.trim().length > 0) return title.trim();
+  }
+  return null;
+}
+
+export function hasSessionTitleInMetadata(sessionMetadata: unknown): boolean {
+  return readSessionTitleInMetadata(sessionMetadata) !== null;
 }
