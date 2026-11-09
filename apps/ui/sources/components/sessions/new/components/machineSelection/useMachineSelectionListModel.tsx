@@ -149,7 +149,7 @@ export type MachineSelectionPresentation = Readonly<{
     subtitle?: string;
 }>;
 
-function supportsManagedMachineSelection(purpose: MachineDestinationPurposeV1): boolean {
+export function supportsManagedMachineSelection(purpose: MachineDestinationPurposeV1): boolean {
     return purpose === 'session' || purpose === 'finite' || purpose === 'service-start';
 }
 

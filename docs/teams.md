@@ -392,8 +392,12 @@ The person path is "Defaults for members" in Team settings (Team layer) and on t
 New Session's Machine dropdown, permission options, exact-model picker and connected-account
 purpose chooser (Team resources only, since a Team default is chosen for other people), and saves
 through the same `teams.policy.set` Action; `memberDefaults.ts` builds the Team replacement or Group
-patch. Group disagreement shown there is read from `resolveManagedSessionDefaults`. Managed
-presets are not offered there yet; a stored preset is shown by kind.
+patch. Group disagreement shown there is read from `resolveManagedSessionDefaults`. Machine choices
+reuse New Session's preset reader and selectable-offer projection, including Team pool-backed
+creation presets. Only saved presets can be defaults; one-off configurations are excluded. The menu
+loads presets while open, and a closed field reads only its selected preset for its name. Selecting
+a preset stores its existing Home/preset identity without acquiring a Machine; an unavailable stored
+target remains in place until explicitly changed or cleared.
 
 Defaults preselect choices without copying them into Account settings. Locked policy values
 outrank explicit choices; otherwise precedence is explicit choice, agreeing Group, Team,

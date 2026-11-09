@@ -120,7 +120,9 @@ export function useTeamBinding(serverIdRaw: string, teamIdRaw: string): TeamBind
                 return Object.freeze({
                     kind: 'bound' as const,
                     scope: resolution.scope,
-                    address,
+                    // A route may retain a URL alias after credential restoration promotes
+                    // the Home identity. Writes must address the same snapshot as its reads.
+                    address: { serverId: resolution.scope.serverId, teamId: address.teamId },
                     homeName,
                     state: resolveTeamViewState(snapshot),
                     snapshot,

@@ -13,7 +13,6 @@ import {
 import { useEnabledAgentIds } from '@/agents/hooks/useEnabledAgentIds';
 import { AgentCatalogIdentityIcon } from '@/agents/presentation/AgentCatalogIdentityIcon';
 import { ConnectedAccountPurposeTargetChooser } from '@/components/settings/connectedServices/account/ConnectedAccountPurposeTargetChooser';
-import { MachineSelector } from '@/components/sessions/new/components/MachineSelector';
 import { useExactModelChoice } from '@/components/sessions/modelPicker/useExactModelChoice';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { renderDropdownItemTriggerRightElement } from '@/components/ui/forms/dropdown/renderDropdownItemTriggerRightElement';
@@ -25,17 +24,12 @@ import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { useHomeTeamCredentialModelCatalog } from '@/hooks/teams/useHomeTeamCredentialModelCatalog';
-import { useMachineListForServer } from '@/sync/domains/state/storage';
-import type { Machine } from '@/sync/domains/state/storageTypes';
 import { getPermissionModeOptionsForAgentType } from '@/sync/domains/permissions/permissionModeOptions';
 import { setTeamPolicy } from '@/sync/ops/teams/teamOperations';
 import { isTeamActionApprovalPendingError } from '@/sync/ops/teams/teamActionClient';
 import { t } from '@/text';
-import {
-  getMachineDisplayName,
-  resolveMachineDisplayNames,
-} from '@/utils/sessions/machineDisplayNames';
 
+import { TeamMemberMachineDefaultRow } from './TeamMemberMachineDefaultRow';
 import type { TeamSectionContext } from '../teamSectionContext';
 import { teamMutationFailureLabel } from '../teamMutationPresentation';
 import {
@@ -45,13 +39,11 @@ import {
   withConnectedService,
   withModel,
   withPermissionMode,
-  withPlacement,
   type MemberDefaultsAccess,
   type MemberDefaultsConflicts,
   type MemberDefaultsScope,
 } from './memberDefaults';
 
-const EMPTY_MACHINES: readonly Machine[] = Object.freeze([]);
 /** The "None" row of a defaults menu; a trimmed id so the page field can show it. */
 const NONE_ID = '__none__';
 
@@ -189,10 +181,11 @@ export const TeamMemberDefaultsSection = React.memo(
           title={t('teams.settings.memberDefaults.title')}
           description={description}
         >
-          <MachineDefaultRow
+          <TeamMemberMachineDefaultRow
             state={row}
             conflict={memberDefaultsConflicts(stored, scope, '').placement}
             testID={`${props.testID}-machine`}
+            onApprovalPending={context.requestApproval}
           />
           {agents.map((entry) => (
             <AgentDefaultsItem
@@ -212,95 +205,6 @@ export const TeamMemberDefaultsSection = React.memo(
     );
   },
 );
-
-const MachineDefaultRow = React.memo(function MachineDefaultRow(
-  props: Readonly<{
-    state: RowState;
-    conflict: boolean;
-    testID: string;
-  }>,
-) {
-  const { state } = props;
-  const machines = useMachineListForServer(state.serverId) ?? EMPTY_MACHINES;
-  const placement = state.defaults.placement;
-  const selectedMachine =
-    placement?.kind === 'machine' &&
-    placement.target.serverId === state.serverId
-      ? (machines.find(
-          (machine) => machine.id === placement.target.machineId,
-        ) ?? null)
-      : null;
-  // A Machine this viewer can't see, or a preset, still stands; it is named, never shown as None.
-  const unseen =
-    placement === undefined || selectedMachine
-      ? null
-      : t(
-          placement.kind === 'preset'
-            ? 'teams.settings.memberDefaults.preset'
-            : 'teams.settings.memberDefaults.unavailableMachine',
-        );
-  const note = props.conflict ? props.state.conflictNote : null;
-
-  if (!state.editable) {
-    const name = selectedMachine
-      ? (resolveMachineDisplayNames(machines).get(selectedMachine.id) ??
-        getMachineDisplayName(selectedMachine) ??
-        selectedMachine.id)
-      : null;
-    return (
-      <Item
-        testID={props.testID}
-        title={t('teams.settings.memberDefaults.machine')}
-        subtitle={note ?? undefined}
-        subtitleLines={0}
-        detail={name ?? unseen ?? t('teams.settings.memberDefaults.none')}
-        icon={<MachineMark />}
-        mode="info"
-        showChevron={false}
-      />
-    );
-  }
-  return (
-    <MachineSelector
-      presentation="dropdown"
-      dropdownInCallerSection
-      serverId={state.serverId}
-      machines={machines}
-      selectedMachine={selectedMachine}
-      showFavorites={false}
-      showRecent={false}
-      // A default names where sessions should start later, not where one can start now.
-      disableOfflineMachines={false}
-      includeSelectedUnavailableMachine
-      dropdownTitle={t('teams.settings.memberDefaults.machine')}
-      dropdownSubtitle={[unseen, note].filter(Boolean).join(' ') || undefined}
-      dropdownTestID={props.testID}
-      testIdPrefix={props.testID}
-      dropdownClearOption={{
-        title: t('teams.settings.memberDefaults.none'),
-        current: placement === undefined,
-        onSelect: () => {
-          if (!state.disabled && placement !== undefined)
-            state.save(withPlacement(state.defaults, undefined));
-        },
-      }}
-      onSelect={(machine) => {
-        if (state.disabled || machine.id === selectedMachine?.id) return;
-        state.save(
-          withPlacement(state.defaults, {
-            kind: 'machine',
-            target: { serverId: state.serverId, machineId: machine.id },
-          }),
-        );
-      }}
-    />
-  );
-});
-
-function MachineMark() {
-  const { theme } = useUnistyles();
-  return <Icon name="desktop" size={24} color={theme.colors.text.secondary} />;
-}
 
 /** One Agent's defaults: collapsed it says which are set; open, one row per choice. */
 const AgentDefaultsItem = React.memo(function AgentDefaultsItem(

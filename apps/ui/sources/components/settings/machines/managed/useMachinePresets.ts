@@ -397,6 +397,26 @@ type PresetDetailMutation =
     | Readonly<{ actionId: 'machines.presets.archive' | 'machines.presets.restore'; input: MachinePresetActionInputV1<'machines.presets.archive'> }>
     | Readonly<{ actionId: 'machines.presets.update'; input: MachinePresetActionInputV1<'machines.presets.update'> }>;
 
+/** A selected preset's label needs that record, without its managed-Machine history or the inventory. */
+export function useMachinePreset(serverId: string, presetId: string,
+    onApprovalPending?: (approval: ActionApprovalRegistration) => void) {
+    const { binding, resolution } = useServerCredentialAccountScopeBinding(serverId);
+    const homeId = getServerProfileById(serverId)?.serverIdentityId ?? null;
+    const client = React.useMemo(() => binding && homeId ? createMachinePresetCollectionClient(binding.scope, homeId) : null,
+        [binding, homeId]);
+    const read = React.useMemo(() => client && homeId
+        ? async (options: MachinePresetCollectionOptions<ManagedMachinePresetV1>): Promise<MachinePresetCollectionSettledResult<ManagedMachinePresetV1>> => {
+            const result = await client.read('machines.presets.get', { homeId, id: presetId }, {
+                signal: options.signal, onApprovalPending: options.onApprovalPending, onApprovalSettled: options.onApprovalSettled,
+            });
+            if (result.kind === 'failed') return result;
+            return result.value.kind === 'refused' ? { kind: 'failed', code: result.value.code }
+                : { kind: 'succeeded', value: result.value.preset };
+        } : null, [client, homeId, presetId]);
+    const { state, refresh } = useMachinePresetQuery({ serverId, homeId, presetId, binding, resolution, read, onApprovalPending });
+    return { state, refresh };
+}
+
 /** Mounted detail reads the one preset and actual admitted rows; archive never rewrites those rows. */
 export function useMachinePresetDetail(serverId: string, presetId: string,
     onApprovalPending?: (approval: ActionApprovalRegistration) => void) {
