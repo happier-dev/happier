@@ -311,8 +311,6 @@ it.each(['button', 'escape', 'scrim', 'agent'] as const)('dismisses reopened Pri
     await screen.pressByTestIdAsync('reopened-prices-2.open');
     expect(visibleCards()).toHaveLength(1);
     const rowId = 'reopened-prices-2.editor.model.gpt-5.6-luna';
-    // The rows arrive once the sheet's entrance has played.
-    await vi.waitFor(() => expect(screen.findByTestId(`${rowId}.set`)).not.toBeNull());
     await screen.pressByTestIdAsync(`${rowId}.set`);
     const originalRate = screen.findByTestId(`${rowId}.input`)!.props.value;
     await act(async () => { screen.findByTestId(`${rowId}.input`)!.props.onChangeText('0.0135'); });
@@ -405,8 +403,6 @@ it.each(['page', 'sheet'] as const)('exposes model price disclosure and its edit
         : <UsageModelPricesEditor slice={props.slice} serverId="home" testID="price-controls" />, false, entry === 'sheet');
     if (entry === 'sheet') await screen.pressByTestIdAsync('price-controls.open');
     const rowId = `${entry === 'sheet' ? 'price-controls.editor' : 'price-controls'}.model.parity-private-model`;
-    // A sheet's rows arrive once its entrance has played.
-    await vi.waitFor(() => expect(screen.findByTestId(`${rowId}.set`)).not.toBeNull());
     await screen.pressByTestIdAsync(`${rowId}.set`);
     expect(screen.findByTestId(`${rowId}.input`)).not.toBeNull();
     const rate = reader!.readCurrentUiContext()!.commands.find(command => command.title === `parity-private-model: ${t('usage.board.page.priceInput')}`);

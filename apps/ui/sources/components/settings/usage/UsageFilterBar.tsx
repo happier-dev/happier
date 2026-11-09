@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { View, type LayoutChangeEvent } from 'react-native';
+import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { collectionListStyles } from '@/components/ui/lists/collection/CollectionList';
 import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
@@ -49,8 +49,8 @@ export function UsageFilterBar(
   const { page } = props;
   const shownMetric = props.metric ?? 'tokens';
   const phone = useDeviceType() === 'phone';
-  // Scopes fold into the one Filters chooser only on a phone; a desktop keeps one chip per scope and wraps
-  // Tokens/Cost and the cost basis onto the trailing edge of a second row when the column is narrow (lab d2filter).
+  // Scopes fold into the one Filters chooser only on a phone; a desktop keeps one chip per scope and puts
+  // Tokens/Cost and the cost basis on their own right-aligned row on every view, so the bar keeps one shape (R138).
   const condensed = phone;
   const periodTabs = React.useMemo(
     () =>
@@ -61,16 +61,6 @@ export function UsageFilterBar(
     [],
   );
   const { theme } = useUnistyles();
-  // Views without Tokens/Cost (Plans, Coach, Sources) fit the bar on fewer rows. At one width the bar keeps the tallest
-  // height it has drawn, so switching views never lifts the page under the pointer; a new width measures afresh (R137).
-  const [floor, setFloor] = React.useState<Readonly<{ width: number; height: number }> | null>(null);
-  const onBarLayout = React.useCallback((event: LayoutChangeEvent) => {
-    const { width, height } = event.nativeEvent.layout;
-    if (!(width > 0) || !(height > 0)) return;
-    setFloor(current => current === null || Math.abs(current.width - width) >= 1 ? (current === null ? { width, height } : null)
-      : height > current.height ? { width, height } : current);
-  }, []);
-  const floorStyle = floor ? { minHeight: floor.height } : null;
   // Coverage is said once, as a dot in Sources, while a source the page reads is incomplete.
   const coverageIncomplete = props.coverageIncomplete;
   const filters = React.useMemo(
@@ -227,7 +217,7 @@ export function UsageFilterBar(
   );
   if (phone)
     return (
-      <View testID={props.testID} style={[styles.phone, floorStyle]} onLayout={onBarLayout}>
+      <View testID={props.testID} style={styles.phone}>
         {period}
         {/* One Filters chip, then Tokens/Cost and the cost basis: the row wraps rather than hiding the
             basis select past the screen edge (a scroller clipped it mid-word at 390). */}
@@ -238,13 +228,15 @@ export function UsageFilterBar(
       </View>
     );
   return (
-    <View testID={props.testID} style={[styles.bar, floorStyle]} onLayout={onBarLayout}>
-      {period}
-      {props.scopeFilters.length > 0 ? <View style={styles.rule} /> : null}
-      <View style={styles.chips}>{chips}</View>
-      <View style={styles.grow} />
-      {/* What the widgets show and in which money stay together on the trailing edge, even when the bar wraps. */}
-      <View style={styles.trailing}>{trailing}</View>
+    <View testID={props.testID} style={styles.stack}>
+      <View style={styles.bar}>
+        {period}
+        {props.scopeFilters.length > 0 ? <View style={styles.rule} /> : null}
+        <View style={styles.chips}>{chips}</View>
+      </View>
+      {/* What the widgets show and in which money sit on their own right-aligned row on every view, so a view without
+          Tokens/Cost keeps the bar's shape and the page never moves on arrival (R138). */}
+      {props.onMetricChange || costFilter ? <View testID={`${props.testID}.trailing`} style={styles.trailing}>{trailing}</View> : null}
     </View>
   );
 }
@@ -296,13 +288,13 @@ function UsageScopeSections(props: Readonly<{
 }
 
 const styles = StyleSheet.create((theme) => ({
+  stack: { gap: theme.space.s8, paddingVertical: theme.space.s4 },
   bar: {
     flexDirection: 'row',
     alignItems: 'center',
     flexWrap: 'wrap',
     gap: theme.space.s10,
     rowGap: theme.space.s8,
-    paddingVertical: theme.space.s4,
   },
   period: { flexShrink: 0 },
   periodPhone: { alignSelf: 'stretch' },
@@ -317,9 +309,8 @@ const styles = StyleSheet.create((theme) => ({
     flexWrap: 'wrap',
     gap: theme.space.s6,
   },
-  grow: { flexGrow: 1 },
   segment: { flexShrink: 0 },
-  trailing: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s10, marginLeft: 'auto' },
+  trailing: { flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: theme.space.s10 },
   swatch: { width: 8, height: 8, borderRadius: 2 },
   phone: { gap: theme.space.s10 },
   phoneChips: {

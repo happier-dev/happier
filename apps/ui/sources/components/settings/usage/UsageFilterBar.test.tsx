@@ -97,22 +97,18 @@ describe('UsageFilterBar', () => {
     await screen.unmount();
   });
 
-  it('keeps its tallest height at one width, so a view without Tokens/Cost does not lift the page (R137)', async () => {
+  it('puts Tokens/Cost and the basis on their own row on every desktop view, so views share one bar shape (R138)', async () => {
     Object.assign(viewport, { width: 1280, height: 900 });
     vi.stubGlobal('navigator', { userAgent: 'Mozilla/5.0 (X11; Linux x86_64)', maxTouchPoints: 0 });
-    const toggled = { metric: 'tokens' as const, onMetricChange: () => {} };
-    const screen = await renderBar([], toggled);
-    const bar = () => screen.findHostByTestId('filters')!;
-    const layout = (width: number, height: number) => act(async () => { bar().props.onLayout({ nativeEvent: { layout: { width, height } } }); });
-    const minHeight = () => [bar().props.style].flat(Infinity).reduce((found: unknown, style: { minHeight?: number } | null) => style?.minHeight ?? found, undefined);
-    await layout(1000, 80);
-    await screen.update(<UsageFilterBar {...barProps([])} metric={null} onMetricChange={null} />);
-    await layout(1000, 40);
-    expect(minHeight()).toBe(80);
-    // A new width measures afresh.
-    await layout(1200, 40);
-    expect(minHeight()).toBeUndefined();
-    await screen.unmount();
+    for (const overrides of [{ metric: 'tokens' as const, onMetricChange: () => {} }, { metric: null, onMetricChange: null }]) {
+      const screen = await renderBar([], { ...overrides, costBasisOptions: ['auto', 'reported'] });
+      const row = screen.findHostByTestId('filters.trailing');
+      expect(row).not.toBeNull();
+      expect(screen.findAllByType(SelectionListFilterChip).some(chip => chip.props.filter.id === 'costBasis')).toBe(true);
+      // Decided by the layout, never by a remembered measurement.
+      expect(screen.findHostByTestId('filters')!.props.onLayout).toBeUndefined();
+      await screen.unmount();
+    }
   });
 
   it('keeps the cost basis chip in Tokens and Cost alike, so the bar keeps its shape on every toggle', async () => {

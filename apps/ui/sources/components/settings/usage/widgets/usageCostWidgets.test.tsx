@@ -104,7 +104,9 @@ describe('one selected money basis across Usage bodies', () => {
     const screen = await renderScreen(<UsageBreakdownsWidget {...props} id="usage_breakdowns" testID="agents" />);
     const row = screen.findByType(RankedRows).props.rows.find((row: { id: string }) => row.id === 'claude');
     expect(row.value).toBeNull();
-    expect(row.annotation).toContain(t('usage.board.page.costUnpricedCaption'));
+    // The row says it in the Daily legend's words, so the row, the hatched day and the missing total read as one (R138).
+    expect(row.annotation).toContain(t('usage.board.page.factUnpriced'));
+    expect(row.annotation).not.toContain(t('usage.board.page.costUnpricedCaption'));
   });
   it('keeps exact cache-hit precision in percentage units rather than the fractional numeric model', async () => {
     const props = mountedCosts();

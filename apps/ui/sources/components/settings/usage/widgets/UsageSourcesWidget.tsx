@@ -10,6 +10,7 @@ import { Modal } from '@/modal';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Switch } from '@/components/ui/forms/Switch';
 import { ItemRowActions } from '@/components/ui/lists/ItemRowActions';
+import { ItemLoadStateRows } from '@/components/ui/lists/ItemLoadStateRows';
 import type { ItemAction } from '@/components/ui/lists/itemActions';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
@@ -154,7 +155,6 @@ export function UsageSourcesMachines(
   const states = stateProjection?.lifetime === props.lifetime && stateProjection.key === projectionKey ? stateProjection.states : null;
   const countIn = (state: UsageSourcesMachineState) => online.filter(machine => (states?.get(machine.id)?.state ?? 'looking') === state).length;
   const emptyCount = countIn('none');
-  const lookingCount = countIn('looking');
   const unreadable = online.filter(machine => states?.get(machine.id)?.state === 'unreadable');
   // The server disclosure is said once for the page, beside the sources it governs.
   const consentable = online.some(machine => states?.get(machine.id)?.consentable === true);
@@ -207,8 +207,7 @@ export function UsageSourcesMachines(
           />
         ))}
       </OutsideBrowsePage>
-      {lookingCount + unreadable.length + emptyCount + offlineCount > 0 ? <View style={styles.groups}>
-        {lookingCount > 0 ? groupLine('lookingMachines', lookingCount, t('usage.board.sources.machineLooking')) : null}
+      {unreadable.length + emptyCount + offlineCount > 0 ? <View style={styles.groups}>
         {unreadable.length > 0 ? (
           <SurfaceFreshnessLine
             testID={`${props.testID}.unreadableMachines`}
@@ -349,6 +348,19 @@ const MachineSources = React.memo(function MachineSources(
   React.useEffect(() => { props.onState(props.machineId, { state, consentable }, state === 'unreadable' ? retry : undefined); },
     [props.onState, props.machineId, state, consentable, retry]);
   React.useEffect(() => { if (state === 'content') measure(); }, [state, measure]);
+  // A machine still being read holds a section's room (its header and the shared loading rows), so the page does not
+  // move when its sources arrive (R138); a machine with nothing to show later joins its group's single line.
+  if (state === 'looking') return (
+    <View testID={`${props.testID}.looking`} style={[styles.machine, styles.machineDivided]}>
+      <View style={styles.machineHeader}>
+        <Icon name="desktop" size={ICON_SIZE.sm} color={theme.colors.text.secondary} />
+        <Text style={styles.machineName} numberOfLines={1}>{props.machineName}</Text>
+        <ActivitySpinner size={ICON_SIZE.xs} color={theme.colors.text.tertiary} />
+      </View>
+      <ItemLoadStateRows state={{ kind: 'loading' }} rows={3} lines={2}
+        accessibilityLabel={`${props.machineName} · ${t('usage.board.sources.machineLooking')}`} />
+    </View>
+  );
   if (state !== 'content') return null;
   const rowProps = (source: UsageSourceV1) => ({
     source, snapshot, machineName: props.machineName, lifetime: props.lifetime, online: props.online,

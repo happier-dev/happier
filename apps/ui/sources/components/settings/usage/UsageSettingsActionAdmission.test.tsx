@@ -382,13 +382,21 @@ describe('Usage settings UI Action admission', () => {
         expect(harness.artifacts(serverId).list().map(artifact => artifact.id)).toEqual(beforeRetiredPress);
         await screen.unmount();
     });
-    it('holds the price rows\' room until the sheet has entered, so its entrance is seen (R137 Prices)', async () => {
+    it('draws the rows the sheet can show in its opening commit and the rest in one deferred commit (R138 Prices cost)', async () => {
         const { slice } = priceSlice();
-        const screen = await renderScreen(<UsageModelPricesEditor slice={slice} serverId={serverId} testID="prices" rowsAfterMs={60_000} />);
-        // The provenance line is there at once; the rows' room is held by the shared loading rows until the entrance ends.
-        expect(screen.findByTestId('prices.provenance.refresh')).not.toBeNull();
-        expect(screen.findByTestId('prices.model.qa-private-model.set')).toBeNull();
-        expect(screen.findByTestId('prices.rowsEntering')).not.toBeNull();
+        // Scale-shaped: a heavy Account prices a few dozen models.
+        const contribution = slice.accounting.contributions[0]!;
+        const models = Array.from({ length: 40 }, (_, index) => `qa-model-${String(index).padStart(2, '0')}`);
+        const many = { ...slice, accounting: { ...slice.accounting, contributions: models.map(modelId => ({ ...contribution, id: modelId, modelId })) } };
+        const commits: string[] = [];
+        const screen = await renderScreen(<React.Profiler id="prices" onRender={(_id, phase) => { commits.push(phase); }}>
+            <UsageModelPricesEditor slice={many} serverId={serverId} testID="prices" />
+        </React.Profiler>);
+        await waitForHomeGovernance(() => expect(screen.findByTestId('prices.rowsBelowFold')).toBeNull());
+        expect(models.every(modelId => screen.findByTestId(`prices.model.${modelId}.set`) !== null)).toBe(true);
+        // The opening commit mounts, then the deferred rows land; recorded for the lane's before/after.
+        expect(commits[0]).toBe('mount');
+        console.info(`[R138 prices] commits to settle with ${models.length} rows: ${commits.length}`);
         await screen.unmount();
     });
     it.each([false, true])('sets and resets a model price through its Account owner (explicit Ask: %s)', async requireApproval => {

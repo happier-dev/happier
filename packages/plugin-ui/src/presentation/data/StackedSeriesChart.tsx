@@ -634,7 +634,8 @@ export function StackedSeriesChart(props: StackedSeriesChartProps) {
           {bucket.values.every(entry => entry.value === null) ? <View pointerEvents="none" aria-hidden importantForAccessibility="no-hide-descendants"
             testID={props.testID ? `${props.testID}-gap-${bucket.id}` : undefined}
             style={{ position: 'absolute', left: 0, right: 0, top: Math.max(0, geometry.yAt(0) - HAPPIER_DATA_METRICS.blockGapPx),
-              height: Math.min(height, HAPPIER_DATA_METRICS.blockGapPx), opacity: HAPPIER_DATA_METRICS.barRestOpacity }}>
+              // The hatch draws in the secondary-text ink, so a day with no figure reads in light and dark alike (R138).
+              height: Math.min(height, HAPPIER_DATA_METRICS.blockGapPx) }}>
             <HatchSwatch ink={props.theme.colors.secondaryText} />
           </View> : null}
           {range ? <View pointerEvents="none" aria-hidden importantForAccessibility="no-hide-descendants"
@@ -763,7 +764,7 @@ export function StackedSeriesChart(props: StackedSeriesChartProps) {
       })}
       {gapKey ? <View testID={props.testID ? `${props.testID}-gap-key` : undefined}
         style={{ flexDirection: 'row', alignItems: 'center', gap: HAPPIER_DATA_METRICS.axisGapPx }}>
-        <View style={{ width: 8, height: 8, borderRadius: 2, overflow: 'hidden', opacity: HAPPIER_DATA_METRICS.barRestOpacity }}>
+        <View style={{ width: 8, height: 8, borderRadius: 2, overflow: 'hidden' }}>
           <HatchSwatch ink={props.theme.colors.secondaryText} />
         </View>
         <HappierText style={text.caption}>{gapKey}</HappierText>

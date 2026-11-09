@@ -10,9 +10,8 @@ import { collectionListStyles } from '@/components/ui/lists/collection/Collectio
 import { ExpandableItem } from '@/components/ui/lists/ExpandableItem';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemLoadStateRows } from '@/components/ui/lists/ItemLoadStateRows';
-import { motionTokens } from '@/components/ui/motion/motionTokens';
 import { ITEM_ROW_PADDING_HORIZONTAL } from '@/components/ui/lists/itemDensityMetrics';
-import { useResolvedItemDensity } from '@/components/ui/lists/useResolvedItemDensity';
+import { usePageRowMetrics, useResolvedItemDensity } from '@/components/ui/lists/useResolvedItemDensity';
 import { SelectionList } from '@/components/ui/selectionList/SelectionList';
 import { SelectionListFilterChip } from '@/components/ui/selectionList/SelectionListFilterChips';
 import { Text } from '@/components/ui/text/Text';
@@ -56,35 +55,36 @@ const RATE_TITLE = {
   cacheWrite: 'usage.board.page.priceCacheWrite',
 } as const;
 
+/** The price sheet's scroll height; the rows it can show at once draw with the sheet. */
+const USAGE_MODEL_PRICES_SHEET_MAX_HEIGHT_PX = 640;
+
 /**
  * The model prices behind every API-equivalent figure (U10): where they come from and how old they
  * are, which models have none, and a per-model "Set price", "Price as…" and "Reset". Every edit is
  * the Account's own `usage.modelPrices` setting through the ordinary settings Action, so history
  * re-prices at query time; reported and invoiced money never change.
  */
-export function UsageModelPricesEditor(props: Readonly<{ slice: UsageQueryResultSlice; serverId: string; testID: string;
-  /** Hold the rows' room this long before drawing them, so a sheet's entrance plays before their render work. */
-  rowsAfterMs?: number }>) {
+export function UsageModelPricesEditor(props: Readonly<{ slice: UsageQueryResultSlice; serverId: string; testID: string }>) {
   const overrides = useSetting('usageModelPriceOverridesV1');
-  const [rowsShown, setRowsShown] = React.useState(props.rowsAfterMs === undefined);
-  React.useEffect(() => {
-    if (rowsShown) return;
-    const timer = setTimeout(() => setRowsShown(true), props.rowsAfterMs);
-    return () => clearTimeout(timer);
-  }, [rowsShown, props.rowsAfterMs]);
+  // The opening commit draws only the rows the sheet can show; the rest follow in React's deferred, interruptible render,
+  // so the sheet's entrance never waits on rows below its fold, and no row the reader can see is ever a placeholder (R138).
+  const firstScreen = Math.ceil(USAGE_MODEL_PRICES_SHEET_MAX_HEIGHT_PX / usePageRowMetrics().minHeightPx);
   const model = React.useMemo(() => buildUsagePriceEditorModel(props.slice, overrides), [props.slice, overrides]);
   const rows = React.useMemo(() => [...model.rows].filter(row => row.modelId !== null)
     // What needs a decision first: unpriced, then the viewer's own prices, then the catalog.
     .sort((left, right) => rank(left) - rank(right)), [model.rows]);
+  const mounted = React.useDeferredValue(rows.length, Math.min(rows.length, firstScreen));
   return (
     <View style={styles.body} testID={props.testID}>
       <UsagePriceProvenance provenance={model.provenance} serverId={props.serverId} testID={`${props.testID}.provenance`} />
-      {!rowsShown ? <ItemLoadStateRows testID={`${props.testID}.rowsEntering`} state={{ kind: 'loading' }} rows={rows.length} lines={2}
-        accessibilityLabel={t('usage.board.page.pricesTitle')} /> : <View style={styles.rows}>
-        {rows.map((row, index) => <UsageModelPriceRow key={row.modelId!} row={row} overrides={overrides}
+      <View style={styles.rows}>
+        {rows.slice(0, mounted).map((row, index) => <UsageModelPriceRow key={row.modelId!} row={row} overrides={overrides}
           mappingTargets={model.mappingTargets} serverId={props.serverId} last={index === rows.length - 1}
           testID={`${props.testID}.model.${row.modelId}`} />)}
-      </View>}
+        {/* Below the fold until the deferred render lands: the rows' room is held so the sheet never resizes. */}
+        {mounted < rows.length ? <ItemLoadStateRows testID={`${props.testID}.rowsBelowFold`} state={{ kind: 'loading' }}
+          rows={rows.length - mounted} lines={2} accessibilityLabel={t('usage.board.page.pricesTitle')} /> : null}
+      </View>
     </View>
   );
 }
@@ -147,9 +147,7 @@ export function useUsageModelPricesAction(slice: UsageQueryResultSlice | null, s
 function UsageModelPricesSheet(props: Readonly<{ slice: UsageQueryResultSlice; serverId: string; testID: string }> & CustomModalInjectedProps) {
   return (
     <ScrollView style={styles.sheet} contentContainerStyle={styles.sheetContent}>
-      {/* The rows wait for the modal's own entrance; drawn in the same frame, their render work hid it (R137). */}
-      <UsageModelPricesEditor slice={props.slice} serverId={props.serverId} testID={props.testID}
-        rowsAfterMs={motionTokens.overlay.modal.enterMs} />
+      <UsageModelPricesEditor slice={props.slice} serverId={props.serverId} testID={props.testID} />
     </ScrollView>
   );
 }
@@ -221,7 +219,7 @@ function UsagePriceProvenance(
  * the rates in the tabular column. The row opens in place to change them — rates, Price as… and Reset
  * live there, not as buttons repeated on every row.
  */
-function UsageModelPriceRow(
+const UsageModelPriceRow = React.memo(function UsageModelPriceRow(
   props: Readonly<{
     row: UsagePriceEditorRow;
     overrides: UsageModelPriceOverridesV1;
@@ -305,7 +303,7 @@ function UsageModelPriceRow(
       />
     </ExpandableItem>
   );
-}
+});
 
 /**
  * The open row: four rates in $ per million tokens (input and output needed, cache rates optional),
@@ -496,7 +494,7 @@ function UsageModelPriceMapChip(
 
 const styles = StyleSheet.create((theme) => ({
   body: { gap: theme.space.s4 },
-  sheet: { maxHeight: 640 },
+  sheet: { maxHeight: USAGE_MODEL_PRICES_SHEET_MAX_HEIGHT_PX },
   // The provenance line starts on the title's edge; the model rows carry their own row inset.
   sheetContent: { paddingBottom: theme.space.s16 },
   provenance: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s12 },

@@ -99,6 +99,7 @@ function machineBoundary(initial: UsageSourceV1 = found, initialDiscovery?: read
   let current = initial;
   let discovery = initialDiscovery;
   let discoveryFails = false;
+  let discoveryHeld: Promise<never> | null = null;
   const settings = ActionsSettingsV1Schema.parse({
     v: 1,
     approvalWaivedSurfaces: {
@@ -115,6 +116,7 @@ function machineBoundary(initial: UsageSourceV1 = found, initialDiscovery?: read
       rpc: async (request) => {
         calls.push(request.actionId);
         if (request.actionId === 'usage.sources.discover' && discoveryFails) throw new Error('machine unavailable');
+        if (request.actionId === 'usage.sources.discover' && discoveryHeld) await discoveryHeld;
         if (request.actionId === 'usage.sources.consent.set') {
           current = {
             ...current,
@@ -141,7 +143,8 @@ function machineBoundary(initial: UsageSourceV1 = found, initialDiscovery?: read
       isApprovalRequiredByActionsSettings(id, settings, context),
   } as Partial<ActionExecutorDeps> as ActionExecutorDeps);
   return { calls, executor, setDiscovery: (sources: readonly UsageSourceV1[]) => { discovery = sources; },
-    failDiscovery: (fails = true) => { discoveryFails = fails; } };
+    failDiscovery: (fails = true) => { discoveryFails = fails; },
+    holdDiscovery: () => { discoveryHeld = new Promise<never>(() => {}); } };
 }
 
 async function mount(executor: ReturnType<typeof machineBoundary>['executor'], input = { agents: [] as string[], machines: ['mac'], sources: [] as string[] }, otherMachine = false) {
@@ -300,6 +303,16 @@ describe('Usage Sources body', () => {
     await vi.waitFor(() => expect(screen.findByTestId('sources.emptyMachines')).toBeTruthy());
     expect(screen.findByTestId('sources.emptyMachines')?.props.accessibilityLabel).toContain('1');
     expect(screen.findByTestId('sources.unreadableMachines')).toBeFalsy();
+  });
+  it('holds a still-looking machine\'s room with its header and the shared loading rows (R138 Sources)', async () => {
+    const boundary = machineBoundary(found, [found]);
+    boundary.holdDiscovery();
+    const screen = await mount(boundary.executor);
+    await vi.waitFor(() => expect(screen.findByTestId('sources.machine.mac.looking')).toBeTruthy());
+    expect(screen.getTextContent()).toContain('MacBook Pro');
+    // The grouped "Looking" line is replaced by the held section, never said twice.
+    expect(screen.findByTestId('sources.lookingMachines')).toBeFalsy();
+    await screen.unmount();
   });
   it('leads with what is counted: Happier sessions live, then each counted source with the time it was read', async () => {
     const counted = { ...found, consent: 'enabled', status: 'ready', coverage: 'complete', asOfMs: Date.UTC(2026, 9, 16, 12, 0) } as UsageSourceV1;

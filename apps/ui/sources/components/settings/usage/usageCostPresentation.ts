@@ -4,11 +4,15 @@ import { type UsageObservationCost } from '@happier-dev/protocol/usage/usageAnal
 import { usageCostKindPhrase } from '@/sync/domains/usage/resolveUsageCostModeLabel';
 import { t } from '@/text';
 
-/** A row names its actual reported/priced/estimated basis, including a labelled mixed aggregate. */
+/**
+ * A row names its actual reported/priced/estimated basis, including a labelled mixed aggregate. A row whose total
+ * is unavailable says why in the Daily legend's and Cost facts' words ("Without an API price"), so the row, the
+ * hatched day and the missing total read as one (R138).
+ */
 export function usagePageCostRow(cost: UsageObservationCost, selection: UsagePageCostSelection | null) {
   const basis = resolveUsageCostBasisForSelection(cost, selection);
   return basis ? { ...basis, label: usageCostKindPhrase(basis.kind) }
-    : selection ? { label: t('usage.board.page.costUnpricedCaption') } : null;
+    : selection ? { label: t('usage.board.page.factUnpriced') } : null;
 }
 
 /** Chart coordinates of the same selected page facts; unavailable money stays unavailable. */
