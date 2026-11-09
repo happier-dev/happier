@@ -23,7 +23,7 @@ describe('current UI context host ActionSpecs', () => {
       expect(ActionIdSchema.safeParse(id).success, id).toBe(true);
       expect(ActionSpecSchema.safeParse(spec).success, id).toBe(true);
       expect(spec.executionPlacement).toBe('client');
-      expect(spec.surfaces).toMatchObject({ ui: true, agent: true, mcp: true, cli: false, rpc: false });
+      expect(spec.surfaces).toMatchObject({ ui: true, agent: true, mcp: true, cli: true, rpc: false });
       expect(spec.inputSchema.safeParse(JSON.parse(spec.examples?.mcp?.argsExample ?? 'null')).success, id).toBe(true);
       expect(spec.inputSchema.safeParse(JSON.parse(spec.examples?.voice?.argsExample ?? 'null')).success, id).toBe(true);
       expect(clientActionUnavailable(id)).toEqual({ ok: true, result: { status: 'unavailable' } });
@@ -47,17 +47,34 @@ describe('current UI context host ActionSpecs', () => {
     expect(getActionSpec('workflow.authoring.draft.discard').safety).toBe('danger');
     expect(getActionSpec('workflow.authoring.draft.discard').requiredAuthority).toBe('present_user');
   });
-  it('never lets an agent approval waiver bypass human authority for draft Discard', async () => {
+  it('distinguishes review buffer clearing and reading from setting a JSON result value', () => {
+    const schema = getActionSpec('workflow.run.review.draft.set').inputSchema;
+    const address = { scope: { serverId: 'home-a', accountId: 'account-a' }, draftId: 'invocation-a',
+      runId: 'run-a', expectedContentRevision: '7' };
+    expect(schema.safeParse({ ...address, value: null }).success).toBe(true);
+    for (const operation of ['clear', 'show_newer'] as const) {
+      expect(schema.safeParse({ ...address, operation }).success, operation).toBe(true);
+      expect(schema.safeParse({ ...address, operation, value: null }).success).toBe(false);
+      expect(schema.safeParse({ ...address, operation, unexpected: true }).success).toBe(false);
+    }
+    expect(schema.safeParse({ ...address, operation: 'complete' }).success).toBe(false);
+    expect(schema.safeParse(address).success).toBe(false);
+  });
+  it('lets an approved (bypass) agent Discard reach the draft owner; agents ask by default', async () => {
     const actionId = 'workflow.authoring.draft.discard';
+    let reached = 0;
     expect(resolveActionApprovalRouting({ actionId, spec: getActionSpec(actionId), requiredByPolicy: false,
       context: { surface: 'agent', authority: 'account_automation' } })).toMatchObject({ required: false });
     const executor = createActionExecutor({
-      workflowAuthoringAction: async () => { throw new Error('Unapproved Discard reached the draft'); },
+      workflowAuthoringAction: async () => { reached += 1; return { discarded: true }; },
     } as unknown as ActionExecutorDeps);
+    expect(resolveActionApprovalRouting({ actionId, spec: getActionSpec(actionId),
+      context: { surface: 'agent', authority: 'account_automation' } }).required).toBe(true);
     expect(await executor.execute('workflow.authoring.draft.discard',
       { scope: { serverId: 'home-a', accountId: 'account-a' }, draftId: 'draft-a' },
       { surface: 'agent', authority: 'account_automation', bypassApprovals: true }))
-      .toMatchObject({ ok: false, errorCode: 'present_user_required' });
+      .not.toMatchObject({ ok: false, errorCode: 'present_user_required' });
+    expect(reached).toBe(1);
   });
   it('publishes admitted Home layout and pool reorder invocation metadata', () => {
     for (const actionId of ['home.hub.layout.get', 'home.hub.layout.update', 'connectedServices.pools.reorder'] as const) {
@@ -124,7 +141,7 @@ describe('current UI context host ActionSpecs', () => {
     expect(spec.inputSchema.safeParse(input).success).toBe(true);
     expect(spec.inputSchema.safeParse({ ...input, prompt: 'do not submit' }).success).toBe(false);
     expect(spec.inputSchema.safeParse({ ...input, address: { ...input.address, machineId: 'caller-chosen' } }).success).toBe(false);
-    expect(spec.inputHints?.fields.map(field => field.path)).toEqual(['scope', 'draftId', 'stepId', 'address']);
+    expect(spec.inputHints?.fields.map(field => field.path)).toEqual(['scope', 'draftId', 'stepId', 'address', 'clientId']);
     const executor = createActionExecutor({ isActionApprovalRequired: () => false } as unknown as ActionExecutorDeps);
     expect(await executor.execute(actionId, input, { surface: 'agent', authority: 'account_automation' }))
       .toEqual({ ok: true, result: { status: 'unavailable' } });
@@ -184,7 +201,7 @@ describe('current UI context host ActionSpecs', () => {
   it('admits Find operations only on a mounted client and rejects corpus disclosure', () => {
     const spec = getActionSpec('ui.find' as never);
     expect(spec.executionPlacement).toBe('client');
-    expect(spec.surfaces).toMatchObject({ ui: true, agent: true, mcp: true, cli: false, rpc: false });
+    expect(spec.surfaces).toMatchObject({ ui: true, agent: true, mcp: true, cli: true, rpc: false });
     expect(spec.inputSchema.safeParse({ op: 'set', query: 'literal\\query', options: { regex: false, matchCase: true }, target: 'chat:1' }).success).toBe(true);
     expect(spec.inputSchema.safeParse({ op: 'read', query: 'ignored' }).success).toBe(false);
     expect(spec.inputSchema.safeParse({ op: 'step', direction: 0 }).success).toBe(false);

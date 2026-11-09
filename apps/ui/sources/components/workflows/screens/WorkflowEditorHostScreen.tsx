@@ -1454,8 +1454,11 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
         setHighlightedBlockIds(changedBlockIds ?? NO_HIGHLIGHTED_BLOCKS);
         setContentScopeKey(accountScopeKey);
     });
+    const hydrationWasPresented = React.useRef(presented);
     React.useEffect(() => {
-        if (sourceKind !== 'saved' || sourceDefinitionId === null) return;
+        const resumed = presented && !hydrationWasPresented.current;
+        hydrationWasPresented.current = presented;
+        if (!presented || sourceKind !== 'saved' || sourceDefinitionId === null) return;
         // A saved copy owns its new identity; never rehydrate the route's original.
         const accepted = saved !== null && contentScopeKey === accountScopeKey;
         if (accepted && saved.definitionId !== sourceDefinitionId) return;
@@ -1486,14 +1489,14 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
         const unsubscribe = accepted ? subscribeHomeAccountChange(event => {
             if (affectsSelectedWorkflowDefinition(event, lifetime, sourceDefinitionId)) refresh();
         }, { serverIds: [lifetime.scope.serverId], reconnect: 'refresh' }) : () => {};
-        if (!accepted || agentRevision !== null || agentSeedId !== null) refresh();
+        if (!accepted || agentRevision !== null || agentSeedId !== null || resumed) refresh();
         return () => {
             cancelled = true;
             controller?.abort();
             unsubscribe();
             if (hydrationRefreshRef.current === refresh) hydrationRefreshRef.current = null;
         };
-    }, [accountLifetime, accountScopeKey, agentRevision, agentSeedId, contentScopeKey, saved?.definitionId, sourceDefinitionId, sourceKind]);
+    }, [accountLifetime, accountScopeKey, agentRevision, agentSeedId, contentScopeKey, presented, saved?.definitionId, sourceDefinitionId, sourceKind]);
     React.useEffect(() => {
         if (!agentRevision || !activeAccountScope || agentRevision.definitionId !== editableDefinitionId) return;
         const key = `${accountScopeKey}:${agentRevision.definitionId}:${agentRevision.revision.headerVersion}:${agentRevision.revision.bodyVersion}`;

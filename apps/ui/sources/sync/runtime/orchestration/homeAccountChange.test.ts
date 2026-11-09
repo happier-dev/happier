@@ -140,7 +140,9 @@ describe('Home Account change subscriptions', () => {
         const releaseSource = subscribeHomeAccountChange(sourceObserver, {
             serverIds: ['source-topic-home'], usageSourcesMachineIds: ['source-machine'],
         });
-        const releaseGeneric = subscribeHomeAccountChange(genericObserver, { serverIds: ['source-topic-home'] });
+        const scopedObserver = vi.fn();
+        const releaseScoped = subscribeHomeAccountChange(scopedObserver, { serverIds: ['source-topic-home'] });
+        const releaseGeneric = subscribeHomeAccountChange(genericObserver);
         try {
             expect(getHomeAccountChangeDemandedServerIds()).toContain('source-topic-home');
             for (let index = 0; index < 20; index++) {
@@ -150,8 +152,10 @@ describe('Home Account change subscriptions', () => {
             publishHomeAccountChange('another-home', [], { usageSourcesMachineIds: ['source-machine'] });
             publishHomeAccountChange('another-home', undefined, { source: 'connected' });
             expect.soft(sourceObserver, 'Unrelated Home facts must not wake the Source consumer').not.toHaveBeenCalled();
-            // serverIds previously owned connection demand only. Generic observers
-            // keep their existing cross-Home observation contract.
+            // DFIX-C D6: explicit Home demand also scopes delivery; unscoped
+            // observers retain their cross-Home observation contract.
+            expect(scopedObserver).toHaveBeenCalledTimes(21);
+            expect(scopedObserver.mock.calls.every(([event]) => event.serverId === 'source-topic-home')).toBe(true);
             expect(genericObserver).toHaveBeenCalledWith(expect.objectContaining({ serverId: 'source-topic-home', changeKinds: ['session'] }));
             expect(genericObserver).toHaveBeenCalledWith(expect.objectContaining({ serverId: 'another-home', source: 'connected' }));
 
@@ -168,7 +172,7 @@ describe('Home Account change subscriptions', () => {
             releaseSource();
             publishHomeAccountChange('source-topic-home', [], { usageSourcesMachineIds: ['source-machine'] });
             expect(sourceObserver).toHaveBeenCalledTimes(3);
-        } finally { releaseSource(); releaseGeneric(); }
+        } finally { releaseSource(); releaseScoped(); releaseGeneric(); }
         expect(getHomeAccountChangeDemandedServerIds()).toEqual(beforeDemand);
     });
 

@@ -4,6 +4,8 @@ import type { ApiUpdateContainer } from '@/sync/api/types/apiTypes';
 import { handleUpdateContainer } from './socket';
 import { parseUpdateContainer } from './socketParse';
 import { subscribeHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
+import { storage } from '@/sync/domains/state/storage';
+import { WorkflowDefinitionArtifactHeaderV1Schema } from '@happier-dev/protocol/workflows/workflowDefinitionV1';
 
 function buildBaseParams(overrides: Partial<Omit<Parameters<typeof handleUpdateContainer>[0], 'updateData'>> = {}) {
     return {
@@ -36,6 +38,26 @@ function buildBaseParams(overrides: Partial<Omit<Parameters<typeof handleUpdateC
 }
 
 describe('socket AccountChange wake', () => {
+    it.each(['workflow-definition.v1', 'document'])('classifies deletion from the opened Artifact header before discarding it (%s)', async kind => {
+        const previous = storage.getState();
+        const id = '00000000-0000-4000-8000-000000000001';
+        const header = WorkflowDefinitionArtifactHeaderV1Schema.parse({ kind: 'workflow-definition.v1', definitionId: id,
+            revision: { headerVersion: 1, bodyVersion: 1 }, metadata: { title: 'Workflow' } });
+        const rawHeader = kind === 'workflow-definition.v1' ? header : { kind, title: 'Document' };
+        storage.setState({ artifacts: { [id]: { id, header: { ...rawHeader, title: 'Workflow' }, rawHeader, title: 'Workflow', isDecrypted: true,
+            sourceServerId: 'receipt-home', headerVersion: 1, createdAt: 0, updatedAt: 0, seq: 0 } } });
+        const early = vi.fn();
+        const dispose = subscribeHomeAccountChange(early);
+        try {
+            const updateData = parseUpdateContainer({ id: 'workflow-delete', seq: 14, createdAt: 1,
+                body: { t: 'delete-artifact', artifactId: id } });
+            if (!updateData) throw new Error('Expected an admitted Artifact deletion');
+            await handleUpdateContainer({ ...buildBaseParams(), sourceServerId: 'receipt-home', updateData });
+            expect(early).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ entityIds: [id] }));
+            expect(early.mock.calls[0]?.[0].deletedWorkflowDefinitionIds).toEqual(kind === 'workflow-definition.v1' ? [id] : undefined);
+            expect(storage.getState().artifacts[id]).toBeUndefined();
+        } finally { dispose(); storage.setState(previous); }
+    });
     it('marks primary Artifact receipts as feed-backed while preserving immediate deletion observers', async () => {
         const covered = vi.fn();
         const early = vi.fn();
@@ -49,7 +71,8 @@ describe('socket AccountChange wake', () => {
                 onAccountChangeWake: () => {} });
             expect(covered).not.toHaveBeenCalled();
             expect(early).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ source: 'socket', changesCatchUp: true,
-                entityIds: ['deleted-artifact'], deletedArtifactIds: ['deleted-artifact'] }));
+                entityIds: ['deleted-artifact'] }));
+            expect(early.mock.calls[0]?.[0].deletedWorkflowDefinitionIds).toBeUndefined();
         } finally { releases.forEach(release => release()); }
     });
 

@@ -111,11 +111,12 @@ export function useNewSessionWorkflowStart(params: Readonly<{ panelProps: NewSes
         const base = createWorkflowRunActionChip({
             label: selection?.name ?? t('workflows.start.workflow'),
             pending: selection !== null,
+            currentUiContextCommandScope: 'new-session.workflow',
             title: t('workflows.start.workflow'), testID: 'new-session-workflow-chip',
             renderContent: ({ requestClose, maxHeight }) => <WorkflowStartPicker onSelect={select} onRequestClose={requestClose} maxHeight={maxHeight}
                 currentUiContextCommandScope="new-session.workflow" />,
         });
-        return { ...base, currentUiContextCommandScope: 'new-session.workflow',
+        return { ...base,
             render: (context) => <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                 {base.render(context)}
                 {selection ? <HappierPressable testID="new-session-workflow-remove" accessibilityRole="button"

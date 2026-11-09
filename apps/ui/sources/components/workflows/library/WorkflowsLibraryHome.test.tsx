@@ -67,6 +67,14 @@ vi.mock('react-native', async () => {
     });
     return { ...native, Pressable };
 });
+// Native layout boundary: react-test-renderer has no host layout, so the page's real tracker places the windowed
+// Library at the top of its viewport and it mounts what that viewport reaches, as a user sees it.
+vi.mock('@/components/widgets/nearViewport', async (importOriginal) => {
+    const original = await importOriginal<typeof import('@/components/widgets/nearViewport')>();
+    return { ...original, createScrollViewNearViewportTracker: (...args: Parameters<typeof original.createScrollViewNearViewportTracker>) => ({
+        ...original.createScrollViewNearViewportTracker(...args), measureSpan: async () => ({ top: 0 }),
+    }) };
+});
 vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock({ pathname: '/workflows', router: { push: routerPush } }).module);
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
 vi.mock('@/text', async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock());
@@ -266,7 +274,7 @@ describe('workflow library page anatomy', () => {
             </DestinationInstanceHost>
         </AppPaneProvider>;
         const screen = await renderScreen(destination(false), { wrapper: Wrapper });
-        await vi.waitFor(() => expect(screen.findHostByTestId('workflows-home:row:10000000-0000-4000-8000-000000000099')).not.toBeNull());
+        await vi.waitFor(() => expect(screen.findHostByTestId('workflows-home:row:10000000-0000-4000-8000-000000000000')).not.toBeNull());
         const descriptor = () => screen.findByType(AppPaneScopeHost).props.mainColumn;
         const consumer = await renderPaneMainColumnConsumer(descriptor());
         expect(consumer.read().current?.identity.name).toBe('workflows.title');
@@ -431,7 +439,9 @@ describe('workflow library page anatomy', () => {
         const rows = () => [...rowCosts].filter(([id]) => /^workflows-home:row:10000000-0000-4000-8000-\d{12}$/.test(id));
         await vi.waitFor(() => expect(execute.mock.calls.some(([id]) => id === 'workflow.run.summaries')).toBe(true));
         await act(async () => {});
-        expect(rows()).toHaveLength(500);
+        // 500 definitions, windowed: only the rows near the page's viewport mount.
+        expect(rows().length).toBeGreaterThan(0);
+        expect(rows().length).toBeLessThan(100);
         const reset = () => { for (const [, counter] of rows()) counter.reset(); };
         reset(); execute.mockClear();
         const serverId = storage.getState().profileScope!.serverId;
@@ -703,7 +713,7 @@ describe('workflow library page anatomy', () => {
             .toBe('Saved workflow');
         // The deletion socket may arrive after this caller's named acknowledgement.
         await act(async () => publishHomeAccountChange(storage.getState().profileScope!.serverId, [ids[0]!], {
-            source: 'socket', changeKinds: ['artifact'], deletedArtifactIds: [ids[0]!],
+            source: 'socket', changeKinds: ['artifact'], deletedWorkflowDefinitionIds: [ids[0]!],
         }));
         expect(screen.findAllByType(SurfaceStateCard).find(node => node.props.testID === 'workflows-home:deleted')?.props.reason)
             .toBe('Saved workflow');
@@ -991,6 +1001,42 @@ describe('workflow library page anatomy', () => {
         await vi.waitFor(() => expect(screen.findByTestId('workflows-home:firstVisit') !== null).toBe(!hasHistory));
         if (hasHistory) await vi.waitFor(() => expect(screen.findByTestId('workflows-home:empty')).not.toBeNull());
     });
+    it('keeps a saved row retained in the window while it is carried, and releases it after', async () => {
+        const definitionId = '10000000-0000-4000-8000-000000000011';
+        execute.mockImplementation(async (actionId: string) => actionId === 'workflow.definition.list'
+            ? { ok: true, result: { definitions: [{
+                kind: 'workflow-definition.v1', definitionId, revision: { headerVersion: 1, bodyVersion: 1 },
+                metadata: { title: 'Carried workflow' }, ownerAccountId: 'account-a', access: 'owner',
+                contentStatus: 'available', stepCount: 1, triggers: [], nextRunAt: null,
+            }] } }
+            : { ok: true, result: { definitions: [], summaries: [], remainingSourceArtifactIds: [] } });
+        const { Collection } = await import('@happier-dev/plugin-ui');
+        const { useEntityDragDropRuntime } = await import('@/components/ui/treeDragDrop/entityDragDropHooks');
+        // The realm runtime is a module value; its source id is otherwise private to the row.
+        const runtime = useEntityDragDropRuntime();
+        const registerSource = vi.spyOn(runtime, 'registerSource');
+        const screen = await renderScreen(<WorkflowsLibraryHome />, { wrapper: Wrapper });
+        const collection = () => screen.findAllByType(Collection)[0]!;
+        await vi.waitFor(() => expect(collection().props.model.keys).toContain(definitionId));
+        await vi.waitFor(() => expect(registerSource.mock.calls.some(([source]) => {
+            const item = source.getItem();
+            return item?.kind === 'workflow' && item.workflowId === definitionId;
+        })).toBe(true));
+        expect(collection().props.retainedRowKeys).toBeUndefined();
+        const source = registerSource.mock.calls.map(([candidate]) => candidate).find(candidate => {
+            const item = candidate.getItem();
+            return item?.kind === 'workflow' && item.workflowId === definitionId;
+        })!;
+        registerSource.mockRestore();
+        let carry: ReturnType<typeof runtime.begin> = null;
+        await act(async () => { carry = runtime.begin(source.id, 'pointer'); });
+        expect(carry).not.toBeNull();
+        await vi.waitFor(() => expect(collection().props.retainedRowKeys).toEqual([definitionId]));
+        await act(async () => { carry?.cancel('test'); });
+        await vi.waitFor(() => expect(collection().props.retainedRowKeys).toBeUndefined());
+        await screen.unmount();
+    });
+
     it('lays saved rows on one page sheet like the sections below, and marks built-ins by purpose with their step count', async () => {
         execute.mockImplementation(async (actionId: string) => {
             if (actionId === 'workflow.definition.list') return { ok: true, result: { definitions: ['10000000-0000-4000-8000-000000000005', '10000000-0000-4000-8000-000000000006', '10000000-0000-4000-8000-000000000007'].map((definitionId) => (

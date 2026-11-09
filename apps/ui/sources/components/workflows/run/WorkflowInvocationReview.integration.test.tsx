@@ -503,6 +503,63 @@ describe('Review through the real Account Action owner and HTTP storage boundary
         expect(h.screen.findByTestId('workflow-review-field-summary')!.props.value).toBe('Newer agent publication');
         expect(h.operations.filter(operation => operation.operation === 'invocations.complete_review')).toEqual([]);
     });
+    it('clears edits and shows newer content through the mounted review Action without completing the hold', async () => {
+        const h = await harness();
+        const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
+        const { getActiveServerSnapshot } = await import('@/sync/domains/server/serverRuntime');
+        const scope = { serverId: getActiveServerSnapshot().serverId, accountId };
+        const executor = createDefaultActionExecutor();
+        const context = { surface: 'agent' as const, authority: 'account_automation' as const, serverId: scope.serverId };
+        const address = { scope, draftId: heldId, runId, expectedContentRevision: '7' };
+        await act(async () => {
+            expect(await executor.execute('workflow.run.review.draft.set', { ...address,
+                value: { ...originalValue, summary: 'Prepared edit' } }, context))
+                .toEqual({ ok: true, result: { status: 'applied' } });
+        });
+        await workflowRunDetailActions.publishDraft({ runId, invocation: { recordId: heldId }, expectedContentRevision: '7',
+            value: { ...originalValue, summary: 'Newer publication' } });
+        await h.refresh();
+        const latest = { ...address, expectedContentRevision: h.rows.get(heldId)!.index.contentRevision };
+        for (const operation of ['clear', 'show_newer'] as const) {
+            expect(await executor.execute('workflow.run.review.draft.set', { ...address, operation }, context))
+                .toMatchObject({ ok: true, result: { status: 'refused', reason: 'stale_content_revision' } });
+        }
+        expect(h.screen.findByTestId('workflow-review-field-summary')!.props.value).toBe('Prepared edit');
+        await act(async () => {
+            expect(await executor.execute('workflow.run.review.draft.set', { ...latest, operation: 'clear' }, context))
+                .toEqual({ ok: true, result: { status: 'applied' } });
+        });
+        expect(h.readDraft()).toBeUndefined();
+        expect(h.screen.getTextContent()).toContain(originalValue.summary);
+        expect(h.screen.getTextContent()).not.toContain('Newer publication');
+        expect(h.screen.findByTestId('workflow-review-newer')).not.toBeNull();
+        await h.reopen();
+        await act(async () => {
+            expect(await executor.execute('workflow.run.review.draft.set', { ...latest, operation: 'clear' }, context))
+                .toEqual({ ok: true, result: { status: 'unchanged' } });
+            expect(await executor.execute('workflow.run.review.draft.set', { ...latest,
+                value: { ...originalValue, summary: 'Edits replaced by showing newer' } }, context))
+                .toEqual({ ok: true, result: { status: 'applied' } });
+            expect(await executor.execute('workflow.run.review.draft.set', { ...latest, operation: 'show_newer' }, context))
+                .toEqual({ ok: true, result: { status: 'applied' } });
+        });
+        expect(h.readDraft()).toBeUndefined();
+        expect(h.screen.getTextContent()).toContain('Newer publication');
+        expect(h.screen.findByTestId('workflow-review-newer')).toBeNull();
+        await h.reopen();
+        expect(h.screen.getTextContent()).toContain('Newer publication');
+        expect(await executor.execute('workflow.run.review.draft.set', { ...latest, operation: 'show_newer' }, context))
+            .toEqual({ ok: true, result: { status: 'unchanged' } });
+        h.boundary.access = 'view';
+        await h.refreshAccess();
+        for (const operation of ['clear', 'show_newer'] as const) {
+            expect(await executor.execute('workflow.run.review.draft.set', { ...latest, operation }, context))
+                .toMatchObject({ ok: true, result: { status: 'refused', reason: 'workflow_draft_read_only' } });
+        }
+        expect(h.rows.get(heldId)!.index.lifecycle).toBe('waiting_for_review');
+        expect(h.operations.filter(operation => operation.operation === 'invocations.complete_review')).toEqual([]);
+        expect(h.onSettled).not.toHaveBeenCalled();
+    });
     it('completes a hold with exactly the mounted Action draft after refusing a stale edit', async () => {
         const h = await harness();
         const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
@@ -673,8 +730,13 @@ describe('Review through the real Account Action owner and HTTP storage boundary
         expect(h.screen.findByTestId('workflow-review-use-newer')?.props.disabled).toBe(false);
         await h.screen.pressByTestIdAsync('workflow-review-use-newer');
         expect(h.screen.getTextContent()).toContain('Readable newer publication');
-        await h.screen.pressByTestIdAsync('workflow-review-show-full');
-        expect(h.screen.findByTestId('workflow-review-full-value')).not.toBeNull();
+        if (compact) {
+            expect(h.screen.findByTestId('workflow-review-show-full')).toBeNull();
+            expect(h.screen.findByTestId('workflow-review-value-summary')).not.toBeNull();
+        } else {
+            await h.screen.pressByTestIdAsync('workflow-review-show-full');
+            expect(h.screen.findByTestId('workflow-review-full-value')).not.toBeNull();
+        }
         expect(h.screen.findByTestId('workflow-review-use')).toBeNull();
         expect(h.operations.filter(op => op.operation === 'invocations.complete_review')).toHaveLength(0);
         expect(admissions()).toHaveLength(0);

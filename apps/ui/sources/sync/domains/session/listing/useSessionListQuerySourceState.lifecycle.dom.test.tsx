@@ -3,7 +3,7 @@ import * as React from 'react';
 import { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { SessionListQueryV1 } from '@happier-dev/protocol';
+import type { SessionListQueryV1 } from '@happier-dev/protocol/sessions/listing/query';
 import { UpdateContainerSchema } from '@happier-dev/protocol/updates';
 
 import { createSessionListQuerySourceHarness, waitForSessionListQueryState, type SessionListQuerySourceHarness } from '@/dev/testkit/harness/sessionListQuerySourceHarness';
@@ -18,7 +18,7 @@ vi.mock('socket.io-client', async (importOriginal) => (
 
 const QUERY: SessionListQueryV1 = {
     v: 1, storage: 'active', includeInactive: false, scope: 'all_accessible',
-    attention: 'any', audiences: [], tagIds: [], includeAttention: true,
+    attention: 'any', audiences: [], tagIds: [], includeAttention: true, limit: 1,
 };
 const FOLLOWING_QUERY: SessionListQueryV1 = { ...QUERY, scope: 'following' };
 
@@ -119,8 +119,8 @@ describe('useSessionListQuerySourceState committed controller lifecycle', () => 
         const screen = await mount(homes(homeA, homeB));
         const artifactReceipts: string[] = [];
         const unsubscribe = subscribeHomeAccountChange(event => {
-            if (event.serverId === homeA && event.changeKinds?.includes('artifact')) {
-                artifactReceipts.push(...event.deletedArtifactIds ?? []);
+            if (event.serverId === homeA && event.source === 'socket' && event.changeKinds?.includes('artifact')) {
+                artifactReceipts.push(...event.entityIds ?? []);
             }
         });
         try {
@@ -156,7 +156,9 @@ describe('useSessionListQuerySourceState committed controller lifecycle', () => 
             await waitForSessionListQueryState(() => expect(screen.state.current?.statesByServerId[homeA]?.addresses)
                 .toEqual([{ serverId: homeA, sessionId: 'newly-accessible-session' }]));
             expect(boundary.queryRequests.slice(requestsBefore).map(request => request.serverId)).toEqual([homeA]);
-            expect(trustReads()).toBeGreaterThan(trustBefore);
+            // The finite re-read borrows the live socket's admitted encryption
+            // identity; an unrelated Account wake does not withdraw that identity.
+            expect(trustReads()).toBe(trustBefore);
             expect(screen.state.current!.statesByServerId[homeB]).toBe(retainedB);
         } finally {
             unsubscribe();
@@ -246,7 +248,12 @@ describe('useSessionListQuerySourceState committed controller lifecycle', () => 
         try {
             await screen.ready(homeA, homeB);
             boundary.setReachable(homeB, false);
-            await act(async () => { boundary.loseTransport(homeB); });
+            await act(async () => {
+                boundary.loseTransport(homeB);
+                // HTTP reachability owns query availability independently of the
+                // realtime socket. Let an actual read observe the unreachable Home.
+                await screen.state.current?.refresh();
+            });
             await waitForSessionListQueryState(() => expect(screen.state.current?.statesByServerId[homeB]?.phase).toBe('offline'));
             // A later user retry is distinct from the coalesced transport-loss revalidation.
             vi.useFakeTimers({ toFake: ['Date'] });

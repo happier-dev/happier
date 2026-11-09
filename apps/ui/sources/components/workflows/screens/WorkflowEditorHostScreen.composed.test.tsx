@@ -1040,6 +1040,52 @@ async function serveMountedDraftActionHome(definition = createWorkflowDefinition
 }
 
 describe('WorkflowEditorHostScreen composition', () => {
+    it.each([false, true])('retained saved editor suspends reads while hidden and catches up on presentation (dirty=%s)', async dirty => {
+        const boundary = await serveMountedDraftActionHome();
+        const renderDestination = (visible: boolean) => <DestinationInstanceHost tabId="retained-saved-editor"
+            ref={{ kind: 'workflows', params: { workspacePathname: `/workflows/${SAVED_TRIGGER_WORKFLOW_ID}` } }}
+            pathname={`/workflows/${SAVED_TRIGGER_WORKFLOW_ID}`} focused={visible} visible={visible}
+            navigation={{ push: routerSpy.push, replace: routerSpy.replace, back: routerSpy.back, canGoBack: routerSpy.canGoBack }}>
+            <WorkflowEditorHostScreen source={{ kind: 'saved', definitionId: SAVED_TRIGGER_WORKFLOW_ID }} />
+        </DestinationInstanceHost>;
+        const screen = await renderScreen(renderDestination(false));
+        const reads = () => boundary.requests.filter(request => request.method === 'GET'
+            && request.path === `/v1/artifacts/${SAVED_TRIGGER_WORKFLOW_ID}`).length;
+        expect(reads()).toBe(0);
+        await screen.update(renderDestination(true));
+        await vi.waitFor(() => expect(readBodyProps()?.draftStore.get()?.name).toBe('Saved workflow'));
+        const initialDraft = readBodyProps()!.draftStore.get()!;
+        if (dirty) await act(async () => readBodyProps()!.onChange({ ...initialDraft, name: 'My unfinished draft' }));
+        await screen.update(renderDestination(false));
+        const { getWorkflowDefinition } = await import('@/sync/domains/workflows/workflowDefinitionActions');
+        const { encodePlainArtifactStoredContent } = await import('@happier-dev/protocol/storage/artifactStoredContent');
+        const { publishHomeAccountChange } = await import('@/sync/runtime/orchestration/homeAccountChange');
+        const original = await getWorkflowDefinition({ definitionId: SAVED_TRIGGER_WORKFLOW_ID });
+        // Publish at the HTTP boundary as another client would; a local acknowledged
+        // write can legitimately satisfy its next read without another HTTP request.
+        boundary.artifact.headerVersion = 2;
+        boundary.artifact.bodyVersion = 2;
+        boundary.artifact.header = encodePlainArtifactStoredContent({ kind: 'workflow-definition.v1',
+            definitionId: original.definitionId, revision: { headerVersion: 2, bodyVersion: 2 },
+            metadata: original.metadata, previewSteps: [] });
+        boundary.artifact.body = encodePlainArtifactStoredContent({ body: JSON.stringify({ kind: 'workflow-definition.v1',
+            definition: { ...original.definition, defaults: { ...original.definition.defaults, permissionMode: 'read-only' } } }) });
+        const before = reads();
+        for (let index = 0; index < 3; index++) {
+            await act(async () => publishHomeAccountChange(boundary.scope.serverId, [SAVED_TRIGGER_WORKFLOW_ID], { changeKinds: ['artifact'] }));
+        }
+        await flushHookEffects();
+        expect(reads() - before).toBe(0);
+        await screen.update(renderDestination(true));
+        await vi.waitFor(() => {
+            if (dirty) expect(readBodyProps()!.saveConflict).toMatchObject({ currentRevision: { headerVersion: 2, bodyVersion: 2 } });
+            else expect(readBodyProps()!.draftStore.get()!.defaults.permissionMode).toBe('read-only');
+        });
+        expect(reads() - before).toBe(1);
+        expect(readBodyProps()!.draftStore.get()!.draftId).toBe(initialDraft.draftId);
+        if (dirty) expect(readBodyProps()!.draftStore.get()!.name).toBe('My unfinished draft');
+    });
+
     it.each(['new', 'saved'] as const)('publishes the retained desktop $source editor when focus moves from a later destination', async source => {
         nativeRouteBoundary.width = 1920;
         const boundary = await serveMountedDraftActionHome();

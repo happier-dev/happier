@@ -50,10 +50,13 @@ export const WorkflowDraftEditInputV1Schema = lazyZodSchema(() => z.strictObject
   ...draftAddress, expectedDraftRevision: z.number().check(z.int(), z.nonnegative()),
   ops: z.optional(z.array(WorkflowDefinitionEditOpV1Schema)), settings: z.optional(WorkflowDraftSettingsPatchV1Schema),
 }).check(z.refine(input => (input.ops?.length ?? 0) > 0 || Object.keys(input.settings ?? {}).length > 0)));
-export const WorkflowReviewDraftSetInputV1Schema = lazyZodSchema(() => z.strictObject({
-  ...draftAddress, runId: WorkflowRunIdV1Schema, expectedContentRevision: WorkflowDecimalV1Schema,
-  value: StrictJsonValueSchema,
-}));
+export const WorkflowReviewDraftSetInputV1Schema = lazyZodSchema(() => {
+  const address = { ...draftAddress, runId: WorkflowRunIdV1Schema, expectedContentRevision: WorkflowDecimalV1Schema };
+  return z.union([
+    z.strictObject({ ...address, value: StrictJsonValueSchema }),
+    z.strictObject({ ...address, operation: z.enum(['clear', 'show_newer']) }),
+  ]);
+});
 export const WorkflowDraftMutationResultV1Schema = lazyZodSchema(() => z.discriminatedUnion('status', [
   z.strictObject({ status: z.literal('applied'), draftRevision: z.optional(z.number().check(z.int(), z.nonnegative())),
     changedBlockIds: z.optional(z.array(z.string())) }),
@@ -177,13 +180,15 @@ function createWorkflowAuthoringActionSpecs() {
 }, {
   id: 'workflow.run.review.draft.set', approval: {result: 'required'}, title: 'Prepare open Workflow review value',
   cli: { commands: [{ path: ['workflow', 'run', 'review', 'draft', 'set'], visibility: 'canonical' }] },
-  description: 'Set the displayed human review buffer of the exact open hold at expectedContentRevision. Retains Keep my edits / Use newer semantics. Does not publish or accept the result.',
+  description: 'Prepare the exact open hold at expectedContentRevision: set value, clear edits while keeping the reading, or show_newer to read the latest publication and clear edits. Does not publish or accept the result.',
   safety: 'safe', sideEffectClass: 'external', executionPlacement: 'client', placements: [], surfaces: mountedSurfaces,
   bindings: { mcpToolName: 'workflow_run_review_draft_set', voiceClientToolName: 'prepareWorkflowReviewValue' },
   inputSchema: WorkflowReviewDraftSetInputV1Schema, outputSchema: WorkflowDraftMutationResultV1Schema,
   inputHints: { fields: [...addressHints, { path: 'runId', title: 'Open Run id', widget: 'text', required: true },
     { path: 'expectedContentRevision', title: 'Observed hold content revision', widget: 'text', required: true },
-    { path: 'value', title: 'Proposed review value', widget: 'json', required: true }] },
+    { path: 'value', title: 'Proposed review value (omit for an operation)', widget: 'json', required: false },
+    { path: 'operation', title: 'Buffer operation (omit when setting value)', widget: 'select', required: false,
+      options: [{ value: 'clear', label: 'Clear edits' }, { value: 'show_newer', label: 'Show newer publication' }] }] },
   examples: { mcp: { argsExample: reviewExample }, voice: { argsExample: reviewExample } },
 }] as const satisfies readonly PreNormalizedActionSpec[];
 }

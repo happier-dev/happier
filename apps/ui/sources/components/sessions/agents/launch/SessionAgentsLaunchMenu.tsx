@@ -180,6 +180,7 @@ export const SessionAgentsLaunchMenu = React.memo((props: Readonly<{
             footer={choosingWorkflow ? <RoundButton testID="session-agents-launch:workflow-all" size="small" display="inverted" title={t('agentStart.menu.allWorkflows')}
                 onPress={() => select(ALL_WORKFLOWS_ITEM_ID)} /> : undefined}
             renderContent={open && choosingWorkflow ? ({ maxHeight, requestClose }) => <WorkflowStartPicker hasOriginSession
+                currentUiContextCommandScope="session.agents.workflow"
                 maxHeight={maxHeight} onSelectReference={launcher.startWorkflow}
                 onRequestClose={() => requestClose('selection')} /> : undefined}
             onSelect={select}

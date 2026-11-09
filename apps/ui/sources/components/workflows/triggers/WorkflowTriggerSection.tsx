@@ -153,7 +153,7 @@ export function WorkflowTriggerSection(props: WorkflowTriggerSectionProps): Reac
     const shared = useWorkflowDefinitionLibrary({ enabled: definitionIds.length > 0, definitionIds, accountLifetime: props.accountLifetime });
     const sharedTriggers = shared.definitions.flatMap(definition => definition.triggers.flatMap(trigger =>
         trigger.automationId && trigger.triggerId && trigger.automationId !== props.set?.automationId
-            ? [{ ...trigger, automationId: trigger.automationId, triggerId: trigger.triggerId, nextWorkflowRunAt: definition.nextRunAt }] : []));
+            ? [{ ...trigger, automationId: trigger.automationId, triggerId: trigger.triggerId }] : []));
     const [historyKey, setHistoryKey] = React.useState<string | null>(null);
     const toggleHistory = (key: string) => setHistoryKey(current => current === key ? null : key);
     const sourcePeople = useWorkflowSourcePeople(rows.length > 0 ? [props.set?.sourceSavedBy] : [], props.accountLifetime);
@@ -260,7 +260,7 @@ export function WorkflowTriggerSection(props: WorkflowTriggerSectionProps): Reac
                             label={t('workflows.destination.history.title')} active={historyKey === key}
                             onPress={() => toggleHistory(key)} />} />
                     {historyKey === key ? <WorkflowTriggerRunHistory automationId={trigger.automationId}
-                        nextRunAt={trigger.nextWorkflowRunAt}
+                        nextRunAt={trigger.kind === 'schedule' ? trigger.nextRunAt : null}
                         triggerId={trigger.triggerId} accountLifetime={props.accountLifetime} triggerName={title} /> : null}
                 </React.Fragment>;
             })}

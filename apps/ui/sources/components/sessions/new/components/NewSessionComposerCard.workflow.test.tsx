@@ -22,6 +22,12 @@ import { OverlayPortalHost, OverlayPortalProvider } from '@/components/ui/popove
 import { AgentInputActionMenuPopoverContent } from '@/components/sessions/agentInput/components/AgentInputActionMenuPopoverContent';
 import { SelectableRow } from '@/components/ui/lists/SelectableRow';
 import { NewSessionEmbeddedHostProvider, type NewSessionEmbeddedHost } from '../navigation/newSessionHost';
+import { AgentInput } from '@/components/sessions/agentInput';
+import { useSessionWorkflowRunChip } from '@/components/sessions/agents/launch/useSessionWorkflowRunChip';
+import { useDiscussionWorkflowRun } from '@/components/discussions/useDiscussionWorkflowRun';
+import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
+import { SessionAgentsLaunchMenu } from '@/components/sessions/agents/launch/SessionAgentsLaunchMenu';
+import type { SessionAgentLauncher } from '@/components/sessions/agents/launch/useSessionAgentLauncher';
 
 const platformState = vi.hoisted(() => ({ os: 'web' as 'web' | 'android', width: 1440 }));
 let home: Awaited<ReturnType<typeof serveActionHomes>> | null = null;
@@ -96,6 +102,7 @@ const workflowPopoverOptions = {
     </CurrentContextWrapper>,
     // Supply only the native ref boundary; menu placement and selection remain real.
     createNodeMock: () => ({
+        offsetTop: 0, offsetHeight: 44,
         measureInWindow: (callback: (x: number, y: number, width: number, height: number) => void) => callback(80, 120, 44, 44),
         getBoundingClientRect: () => ({ x: 80, y: 120, left: 80, top: 120, width: 44, height: 44, right: 124, bottom: 164 }),
         focus: () => {}, blur: () => {}, addEventListener: () => {}, removeEventListener: () => {},
@@ -116,7 +123,84 @@ async function openWorkflowPicker(screen: Awaited<ReturnType<typeof renderScreen
     await act(async () => { reportPopoverContentLayout(screen.tree, { width: 420, height: 400 }); });
 }
 
+function SessionWorkflowComposer() {
+    const chip = useSessionWorkflowRunChip({ sessionId: 'session-workflow', serverId });
+    return <AgentInput value="" onChangeText={() => {}} placeholder="Question" autocompleteKinds={[]}
+        autocompleteSuggestions={async () => []} extraActionChips={[chip]} />;
+}
+
+function DiscussionWorkflowComposer() {
+    const accountLifetime = captureActiveServerAccountScopeLifetime();
+    if (!accountLifetime) throw new Error('Discussion Account is unavailable');
+    const { chip } = useDiscussionWorkflowRun({ discussion: { serverId, discussionId: 'discussion-workflow' },
+        accountLifetime, paneScopeId: 'discussion-workflow' });
+    return <AgentInput value="" onChangeText={() => {}} placeholder="Question" autocompleteKinds={[]}
+        autocompleteSuggestions={async () => []} extraActionChips={[chip]} />;
+}
+
 describe('New workflow entry', () => {
+    it.each([
+        ['session.workflow', SessionWorkflowComposer],
+        ['discussion.workflow', DiscussionWorkflowComposer],
+    ] as const)('operates the mounted %s chooser through the shared agent command surface', async (scope, Composer) => {
+        const { renderMountedCurrentUiContext } = await import('@/dev/testkit/harness/mountedCurrentUiContext');
+        const { readCurrentUiContextActionReader } = await import('@/components/appShell/currentUiContext/currentUiContextActionRuntime');
+        const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
+        const { ACTION_ID_FAMILIES_V1 } = await import('@happier-dev/protocol/actions/actionIds');
+        await withPopoverWebGlobals(async () => {
+            const screen = await renderMountedCurrentUiContext(<OverlayPortalProvider><Composer /><OverlayPortalHost /></OverlayPortalProvider>,
+                { createNodeMock: workflowPopoverOptions.createNodeMock });
+            const executor = createDefaultActionExecutor();
+            const commands = () => readCurrentUiContextActionReader({ surface: 'agent' })?.readCurrentUiContext()?.commands ?? [];
+            const invoke = async (suffix: string, input?: { id: string } | { value: string }) => {
+                const command = commands().find(row => row.description?.startsWith(`${scope}.${suffix}`));
+                expect(command, `${scope}.${suffix}`).toBeDefined();
+                await act(async () => { expect(await executor.execute(ACTION_ID_FAMILIES_V1.current_ui_context[1],
+                    { commandId: command!.id, ...(input ? { input } : {}) }, { surface: 'agent' })).toMatchObject({ ok: true }); });
+            };
+            try {
+                expect(commands().some(row => row.description?.startsWith(`${scope}.activate`))).toBe(false);
+                await invoke('open');
+                expect(screen.findByTestId('workflow-choice:builtin:plan-with-a-panel')).not.toBeNull();
+                await invoke('search', { value: 'no matching workflow' });
+                expect(screen.findByTestId('workflow-choice:builtin:plan-with-a-panel')).toBeNull();
+                await invoke('close');
+                expect(commands().some(row => row.description?.startsWith(`${scope}.activate`))).toBe(false);
+                await invoke('open');
+                await invoke('activate', { id: 'builtin:plan-with-a-panel' });
+                expect(commands().some(row => row.description?.startsWith(`${scope}.activate`))).toBe(false);
+            } finally { await screen.unmount(); }
+        });
+    });
+
+    it('operates the Session launch-menu Workflow chooser through mounted commands', async () => {
+        const { renderMountedCurrentUiContext } = await import('@/dev/testkit/harness/mountedCurrentUiContext');
+        const { readCurrentUiContextActionReader } = await import('@/components/appShell/currentUiContext/currentUiContextActionRuntime');
+        const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
+        const { ACTION_ID_FAMILIES_V1 } = await import('@happier-dev/protocol/actions/actionIds');
+        const startWorkflow = vi.fn();
+        const launcher: SessionAgentLauncher = { unavailableReason: null, intents: [], agentIds: [], providerLaunch: null,
+            openConversation: vi.fn(), openRun: vi.fn(), openDetails: vi.fn(), openStartDraft: vi.fn(),
+            startBuiltinWorkflow: vi.fn(), startPluginWorkflow: vi.fn(), startWorkflow };
+        await withPopoverWebGlobals(async () => {
+            const screen = await renderMountedCurrentUiContext(<OverlayPortalProvider><SessionAgentsLaunchMenu launcher={launcher} />
+                <OverlayPortalHost /></OverlayPortalProvider>, { createNodeMock: workflowPopoverOptions.createNodeMock });
+            try {
+                await screen.pressByTestIdAsync('session-agents-launch-button');
+                await act(async () => { reportPopoverContentLayout(screen.tree, { width: 420, height: 400 }); });
+                await screen.pressByTestIdAsync('session-agents-launch:run-workflow');
+                await act(async () => { reportPopoverContentLayout(screen.tree, { width: 420, height: 400 }); });
+                const command = readCurrentUiContextActionReader({ surface: 'agent' })?.readCurrentUiContext()?.commands
+                    .find(row => row.description?.startsWith('session.agents.workflow.activate'));
+                expect(command).toBeDefined();
+                await act(async () => { expect(await createDefaultActionExecutor().execute(ACTION_ID_FAMILIES_V1.current_ui_context[1],
+                    { commandId: command!.id, input: { id: 'builtin:plan-with-a-panel' } }, { surface: 'agent' })).toMatchObject({ ok: true }); });
+                expect(startWorkflow).toHaveBeenCalledWith(expect.objectContaining({ source: { kind: 'catalog', workflow: 'builtin:plan-with-a-panel' } }));
+                expect(screen.findByTestId('workflow-choice:builtin:plan-with-a-panel')).toBeNull();
+            } finally { await screen.unmount(); }
+        });
+    });
+
     it.each([1440, 390])('seats the selected workflow on its own ground and retains its removable chip at %s', async width => {
         const previousWidth = platformState.width;
         platformState.width = width;

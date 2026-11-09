@@ -123,8 +123,8 @@ export type HomeAccountChangeEvent = Readonly<{
     changedWorkflowDefinitionIds?: readonly string[];
     /** Present when Automation rows are the only saved-definition change: the rows showing them re-read. */
     workflowDefinitionAutomationIds?: readonly string[];
-    /** An acknowledged local Artifact deletion; no replay guarantee. */
-    deletedArtifactIds?: readonly string[];
+    /** Positive opened-header or explicit Workflow-delete evidence, never inferred from generic ids. */
+    deletedWorkflowDefinitionIds?: readonly string[];
     /** Already-readable titles for client-local feedback only; never sent to the server. */
     deletedArtifactTitles?: Readonly<Record<string, string>>;
 }>;
@@ -161,7 +161,7 @@ type HomeAccountChangeDetails = Readonly<{
     workflowDefinitionsAffect?: boolean;
     workflowPluginSourcesAffect?: boolean;
     workflowDefinitionAutomationIds?: readonly string[];
-    deletedArtifactIds?: readonly string[];
+    deletedWorkflowDefinitionIds?: readonly string[];
     deletedArtifactTitles?: Readonly<Record<string, string>>;
 }>;
 
@@ -562,7 +562,7 @@ export function publishHomeAccountChangeForRouting(
         ...(definitionsAffect && !coarse && details?.source !== 'connected' && details?.source !== 'snapshot'
             && workflowDefinitionAutomationIds?.length
             ? { workflowDefinitionAutomationIds: Object.freeze([...new Set(workflowDefinitionAutomationIds)]) } : {}),
-        ...(details?.deletedArtifactIds ? { deletedArtifactIds: Object.freeze([...new Set(details.deletedArtifactIds)]) } : {}),
+        ...(details?.deletedWorkflowDefinitionIds ? { deletedWorkflowDefinitionIds: Object.freeze([...new Set(details.deletedWorkflowDefinitionIds)]) } : {}),
         ...(details?.deletedArtifactTitles ? { deletedArtifactTitles: Object.freeze({ ...details.deletedArtifactTitles }) } : {}),
     });
     for (const [observer, { includeCatchUpPending, serverIds, usageSourcesMachineIds, reconnect, artifactKinds }] of [...homeAccountChangeObservers]) {

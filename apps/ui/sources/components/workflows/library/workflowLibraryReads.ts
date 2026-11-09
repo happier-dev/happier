@@ -154,7 +154,7 @@ function createDefinitionLibraryReader(captureLifetime: () => ServerAccountScope
                 if (lifetime === null || !areServerProfileIdentifiersEquivalent(event.serverId, lifetime.scope.serverId)) return;
                 // The Home producer classifies saved/source/access changes once;
                 // unrelated content never queues an inventory recheck.
-                const deletedDefinitionId = event.deletedArtifactIds?.find(id => definitionIds === undefined || definitionIds.includes(id));
+                const deletedDefinitionId = event.deletedWorkflowDefinitionIds?.find(id => definitionIds === undefined || definitionIds.includes(id));
                 if (deletedDefinitionId !== undefined) {
                     if (definitionsInFlight?.lifetime === lifetime) definitionsInFlight.deletionInvalidated = true;
                     const scopeKey = serverAccountScopeKeySuffix(lifetime.scope);
@@ -165,7 +165,7 @@ function createDefinitionLibraryReader(captureLifetime: () => ServerAccountScope
                         deletedDefinitionTitle: event.deletedArtifactTitles?.[deletedDefinitionId]
                             ?? current.definitions.find(row => row.definitionId === deletedDefinitionId)?.metadata?.title
                             ?? (current.deletedDefinitionId === deletedDefinitionId ? current.deletedDefinitionTitle : null),
-                        definitions: current.definitions.filter(row => !event.deletedArtifactIds?.includes(row.definitionId)) });
+                        definitions: current.definitions.filter(row => !event.deletedWorkflowDefinitionIds?.includes(row.definitionId)) });
                     deletionRetirement = lifetime.onRetire(() => dismissDeletion(deletedDefinitionId));
                     deletionExpiry = setTimeout(() => dismissDeletion(deletedDefinitionId), DELETION_RECEIPT_VISIBLE_MS);
                 }

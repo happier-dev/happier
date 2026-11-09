@@ -69,7 +69,7 @@ async function callDefinitionAction<TResult>(params: Readonly<{
         // once for every client, including the client that saved them.
         publishHomeAccountChange(lifetime.scope.serverId, undefined,
             { workflowDefinitionsAffect: false,
-                ...(params.deletedArtifactId === undefined ? {} : { deletedArtifactIds: [params.deletedArtifactId],
+                ...(params.deletedArtifactId === undefined ? {} : { deletedWorkflowDefinitionIds: [params.deletedArtifactId],
                     ...(params.deletedArtifactTitle === undefined ? {} : {
                         deletedArtifactTitles: { [params.deletedArtifactId]: params.deletedArtifactTitle },
                     }) }) });

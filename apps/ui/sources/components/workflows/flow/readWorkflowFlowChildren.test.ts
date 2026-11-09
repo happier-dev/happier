@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { WorkflowDefinitionV1Schema } from '@happier-dev/protocol/workflows/workflowV1';
 import { readWorkflowFlowChildren } from './readWorkflowFlowChildren';
 import { projectWorkflowFlow } from './workflowFlowProjection';
@@ -8,6 +8,33 @@ const definition = (blocks: readonly unknown[]) => WorkflowDefinitionV1Schema.pa
 const call = (id: string, workflowRef: string) => ({ kind: 'workflow', id, workflowRef, input: {} });
 
 describe('editor Flow definition reads', () => {
+    it('reads only a changed nested reference, retaining unchanged children and dropping removed descendants', async () => {
+        const nested = 'b559d6d3-cd30-4508-a9ba-4c7521a597a8';
+        const parent = definition([call('saved', savedRef)]);
+        const oldNested = definition([call('plan', 'builtin:plan-with-a-panel')]);
+        const readArtifact = vi.fn(async (id: string) => ({ definition: id === savedRef
+            ? definition([call('nested', nested)]) : oldNested }));
+        const previousChildren = await readWorkflowFlowChildren(parent, { readArtifact });
+        const changed = definition([{ kind: 'wait', id: 'new', document: { text: 'New', references: [], attachments: [] } }]);
+        readArtifact.mockClear();
+        readArtifact.mockResolvedValue({ definition: changed });
+        const children = await readWorkflowFlowChildren(parent, { readArtifact, previousChildren,
+            changedDefinitionIds: new Set([nested]), pluginSourcesChanged: false });
+        expect(readArtifact.mock.calls.map(([id]) => id)).toEqual([nested]);
+        expect(children[savedRef]).toBe(previousChildren[savedRef]);
+        expect(children[nested]).toBe(changed);
+        expect(children['builtin:plan-with-a-panel']).toBeUndefined();
+    });
+    it('demands each exact plugin reference once, including repeated nested calls', async () => {
+        const workflow = 'plugin:example.recipe/check';
+        const child = definition([{ kind: 'wait', id: 'held', document: { text: 'Continue?', references: [], attachments: [] } }]);
+        // Plugin discovery is the external Action boundary; recursive routing stays real.
+        const readPluginWorkflows = vi.fn(async () => [{ workflow, pluginId: 'example.recipe', version: '1.0.0',
+            title: 'Check', definition: child }]);
+        const children = await readWorkflowFlowChildren(definition([call('left', workflow), call('right', workflow)]), { readPluginWorkflows });
+        expect(children[workflow]).toEqual(child);
+        expect(readPluginWorkflows.mock.calls).toEqual([[workflow]]);
+    });
     it('resolves referenced saved and built-in children through the canonical resolver and expands reused calls separately', async () => {
         const parent = definition([call('left', savedRef), call('right', savedRef)]);
         const child = definition([call('plan', 'builtin:plan-with-a-panel')]);

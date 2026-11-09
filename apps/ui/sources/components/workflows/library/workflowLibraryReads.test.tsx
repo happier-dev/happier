@@ -303,7 +303,8 @@ it('refreshes only changed saved Flow children and retains their unchanged sibli
         document: { text: 'Changed', references: [], attachments: [] } }] });
     const stored = home.artifacts(serverId).read(definitionId)!;
     const revision = { headerVersion: stored.headerVersion + 1, bodyVersion: stored.bodyVersion! + 1 };
-    home.artifacts(serverId).replaceStoredRow({ ...stored, ...revision,
+    // A remote revision cannot reuse the earlier body's bound attribution.
+    home.artifacts(serverId).replaceStoredRow({ ...stored, ...revision, provenance: null, provenanceDataEncryptionKey: null,
         header: encodePlainArtifactStoredContent({ kind: 'workflow-definition.v1', definitionId, revision, metadata: { title: 'Saved' } }),
         body: encodePlainArtifactStoredContent({ body: JSON.stringify({ kind: 'workflow-definition.v1', definition: changed }) }) });
     const beforeRelevant = bodyReads().length;

@@ -2,7 +2,7 @@ import * as React from 'react';
 
 import type { AgentInputExtraActionChip } from '@/components/sessions/agentInput/agentInputContracts';
 import { createWorkflowRunActionChip } from '@/components/sessions/agentInput/sessionActions/createWorkflowRunActionChip';
-import { WorkflowStartPicker, type WorkflowStartSelection } from '@/components/workflows/run/WorkflowStartPicker';
+import { WorkflowStartPicker, type WorkflowStartReference } from '@/components/workflows/run/WorkflowStartPicker';
 import { t } from '@/text';
 
 import { useSessionBuiltinWorkflowStart } from './useSessionBuiltinWorkflowStart';
@@ -15,22 +15,19 @@ import { useSessionBuiltinWorkflowStart } from './useSessionBuiltinWorkflowStart
 export function useSessionWorkflowRunChip(params: Readonly<{
     sessionId: string;
     serverId?: string | null;
-    /** The composer draft, read only when a choice is made. */
-    readDraft: () => string;
     disabled?: boolean;
 }>): AgentInputExtraActionChip {
     const start = useSessionBuiltinWorkflowStart({ sessionId: params.sessionId, serverId: params.serverId });
-    const readDraftRef = React.useRef(params.readDraft);
-    readDraftRef.current = params.readDraft;
-    const select = React.useCallback((selection: WorkflowStartSelection) => {
-        start(selection, { retainedDraft: readDraftRef.current() });
+    const select = React.useCallback((selection: WorkflowStartReference) => {
+        start(selection);
     }, [start]);
     return React.useMemo(() => createWorkflowRunActionChip({
         label: t('workflows.start.runPattern'),
         title: t('workflows.start.runPatternTitle'),
         testID: 'session-workflow-run-chip',
+        currentUiContextCommandScope: 'session.workflow',
         disabled: params.disabled,
-        renderContent: ({ requestClose, maxHeight }) => <WorkflowStartPicker hasOriginSession onSelect={select}
-            onRequestClose={requestClose} maxHeight={maxHeight} />,
+        renderContent: ({ requestClose, maxHeight }) => <WorkflowStartPicker hasOriginSession onSelectReference={select}
+            onRequestClose={requestClose} maxHeight={maxHeight} currentUiContextCommandScope="session.workflow" />,
     }), [params.disabled, select]);
 }

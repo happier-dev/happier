@@ -12,14 +12,18 @@ export function createWorkflowRunActionChip(params: Readonly<{
     title: string;
     testID: string;
     disabled?: boolean;
+    pending?: boolean;
+    currentUiContextCommandScope?: AgentInputExtraActionChip['currentUiContextCommandScope'];
     onIntent?: () => void;
     renderContent: (args: AgentInputContentPopoverRenderArgs) => ReactNode;
 }>): AgentInputExtraActionChip {
     const chip = createExecutionRunStartContentChip({ ...params,
         key: 'workflow-start-definition', controlId: 'workflow', placementId: 'workflow', icon: 'git-branch' });
     return { ...chip, controlId: 'workflow', onIntent: params.onIntent,
+        currentUiContextCommandScope: params.currentUiContextCommandScope,
         // A phone shows the picker as the shared bottom sheet rather than a card over the header (lab T4-Rp).
         // Wide enough for the list beside its preview (lab T4-R); narrower windows keep the list alone.
-        collapsedContentPopover: { ...chip.collapsedContentPopover!, scrollEnabled: false, phonePresentation: 'sheet',
+        // The overflow row is named once, by its title: the chip's own "Run…" stays on the chip, never a second line under it.
+        collapsedContentPopover: { ...chip.collapsedContentPopover!, label: params.title, scrollEnabled: false, phonePresentation: 'sheet',
             maxWidthCap: WORKFLOW_START_PICKER_MAX_WIDTH_PX } };
 }

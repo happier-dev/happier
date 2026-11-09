@@ -126,8 +126,12 @@ export function WorkflowInvocationReview(props: Readonly<{
         if (next) buffers.drafts.set(invocation.id, next); else buffers.drafts.delete(invocation.id);
         setDraft(next);
     }, [buffers, invocation.id]);
-    const draftOwner = React.useRef({ props, contract, contractResult, changeDraft });
-    draftOwner.current = { props, contract, contractResult, changeDraft };
+    const changeReading = React.useCallback((next: WorkflowReviewReading) => {
+        buffers.readings.set(invocation.id, next);
+        setReading(next);
+    }, [buffers, invocation.id]);
+    const draftOwner = React.useRef({ props, contract, contractResult, changeDraft, changeReading });
+    draftOwner.current = { props, contract, contractResult, changeDraft, changeReading };
     React.useLayoutEffect(() => {
         const lifetime = accountLifetime;
         if (!lifetime) return;
@@ -152,6 +156,20 @@ export function WorkflowInvocationReview(props: Readonly<{
                 if (!latest.props.callerAccess.canEdit) return { status: 'refused', reason: 'workflow_draft_read_only' };
                 if (busy.current) return { status: 'refused', reason: 'review_pending' };
                 if (parsed.data.expectedContentRevision !== latest.props.contentRevision) return { status: 'refused', reason: 'stale_content_revision' };
+                if ('operation' in parsed.data) {
+                    const id = latest.props.invocation.id;
+                    const hasDraft = latest.props.buffers.drafts.has(id);
+                    if (parsed.data.operation === 'clear') {
+                        if (!hasDraft) return { status: 'unchanged' };
+                    } else {
+                        if (!hasDraft && latest.props.buffers.readings.get(id)?.revision === latest.props.contentRevision) {
+                            return { status: 'unchanged' };
+                        }
+                        latest.changeReading({ value: latest.props.progress.result, revision: latest.props.contentRevision });
+                    }
+                    latest.changeDraft(undefined);
+                    return { status: 'applied' };
+                }
                 if (latest.props.progress.resultContract !== undefined && !latest.contractResult.success) return { status: 'refused', reason: 'invalid_review_contract' };
                 const decoded = decodeExecutionRunResultObservation({ encoding: 'typed', value: parsed.data.value }, latest.contract);
                 if (!decoded.ok) return { status: 'refused', reason: decoded.reason };
@@ -250,7 +268,7 @@ export function WorkflowInvocationReview(props: Readonly<{
             generation={props.generation ? { ...props.generation,
                 onStop: props.generation.onStop ? () => perform(async () => { await props.generation?.onStop?.(); }) : undefined } : undefined}
             contentRevision={props.contentRevision} lifecycle={invocation.lifecycle} isCurrent={invocation.lifecycle !== 'superseded'}
-            reading={reading} onChangeReading={(next) => { buffers.readings.set(invocation.id, next); setReading(next); }}
+            reading={reading} onChangeReading={changeReading}
             draft={draft} onChangeDraft={changeDraft} onComplete={complete} onDiscuss={props.onDiscuss} onEditPlan={editPlan} onRunPlan={runPlan}
             startedPlanRunId={startedPlanRunId} earlierPlanRunId={earlierPlanRunId}
             onOpenPlanRun={props.onOpenRun} planProposalValid={proposal !== null}

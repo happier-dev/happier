@@ -1334,6 +1334,7 @@ export async function handleUpdateContainer(params: {
 
     if (!shouldContinue()) return;
     const projectionServerId = resolveSocketProjectionServerId(sourceServerId);
+    let deletedWorkflowDefinitionIds: readonly string[] | undefined;
     const getProjectionAddress = (sessionId: string) => normalizeSessionAddress(projectionServerId, sessionId);
     const getSessionProjection = (sessionId: string) => {
         const address = getProjectionAddress(sessionId);
@@ -1348,7 +1349,7 @@ export async function handleUpdateContainer(params: {
     const messageSessionId = updateData.body.t === 'new-message' || updateData.body.t === 'message-updated'
         ? updateData.body.sid : null;
     const requiresContentCarrier = messageSessionId !== null
-        && 'delivery' in updateData.body && updateData.body.delivery === 'full'
+        && 'delivery' in updateData.body && updateData.body.delivery !== 'hint'
         && isSessionFullContentConsumerActiveForRealtime(messageSessionId, sourceServerId)
         && Boolean(getSessionApplyBaseForSource(messageSessionId));
     const shouldContinueMessage = () => {
@@ -1435,6 +1436,7 @@ export async function handleUpdateContainer(params: {
                 callbacks: messageApplyCallbacks,
             }),
             rawMessageNormalizationState: getSocketRawMessageNormalizationState(updateData.body.sid, sourceServerId),
+            transcriptStreamSegmentAssembler: socketTranscriptStreamSegmentAssembler,
             isMutableToolCall: (sessionId, toolUseId) => storage.getState().isMutableToolCall(sessionId, toolUseId),
             invalidateScmStatus: (sessionId) => scmStatusSync.invalidateFromMutation(sessionId, sourceServerId),
             isSessionMessagesLoaded,
@@ -1526,6 +1528,7 @@ export async function handleUpdateContainer(params: {
             sessionReceivedMessages,
             onNormalizedMessagesApplied: (sessionId, messages) => ingestWorkspaceMutationMessages(sessionId, messages, sourceServerId),
             rawMessageNormalizationState: getSocketRawMessageNormalizationState(updateData.body.sid, sourceServerId),
+            transcriptStreamSegmentAssembler: socketTranscriptStreamSegmentAssembler,
             isMutableToolCall: (sessionId, toolUseId) => storage.getState().isMutableToolCall(sessionId, toolUseId),
             invalidateScmStatus: (sessionId) => scmStatusSync.invalidateFromMutation(sessionId, sourceServerId),
             isSessionMessagesLoaded,
@@ -2334,6 +2337,10 @@ export async function handleUpdateContainer(params: {
         log.log('📦 Received delete-artifact update');
         const artifactUpdate = updateData.body;
         const artifactId = artifactUpdate.artifactId;
+        const opened = storage.getState().artifacts[artifactId];
+        if (opened?.sourceServerId && sourceServerId
+            && areServerProfileIdentifiersEquivalent(opened.sourceServerId, sourceServerId)
+            && opened.rawHeader?.kind === 'workflow-definition.v1') deletedWorkflowDefinitionIds = [artifactId];
 
         handleDeleteArtifactSocketUpdate({
             artifactId,
@@ -2477,7 +2484,7 @@ export async function handleUpdateContainer(params: {
         // Keep early/deletion observers immediate; feed-backed readers consume the planned page once.
         publishHomeAccountChange(sourceServerId, [updateData.body.artifactId], {
             source: 'socket', ...(onAccountChangeWake ? { changesCatchUp: true as const } : {}), changeKinds: ['artifact'],
-            ...(updateData.body.t === 'delete-artifact' ? { deletedArtifactIds: [updateData.body.artifactId] } : {}) });
+            ...(deletedWorkflowDefinitionIds ? { deletedWorkflowDefinitionIds } : {}) });
     }
 }
 

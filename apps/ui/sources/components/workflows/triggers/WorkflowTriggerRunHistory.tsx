@@ -20,7 +20,7 @@ export const WorkflowTriggerRunHistory = React.memo(function WorkflowTriggerRunH
     accountLifetime?: ServerAccountScopeLifetime | null;
     /** The trigger's name: it names a Run whose own title cannot be read. */
     triggerName?: string;
-    /** Saved scheduler occurrence; shared summaries describe the workflow's next run. */
+    /** Exact saved scheduler occurrence for this trigger, absent on older summaries. */
     nextRunAt?: number | null;
 }>) {
     const read = useWorkflowRunWindow(`trigger:${props.triggerId}`, { accountLifetime: props.accountLifetime });
