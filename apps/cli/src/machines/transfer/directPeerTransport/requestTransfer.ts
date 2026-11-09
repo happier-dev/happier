@@ -12,9 +12,9 @@ import { estimateJsonUtf8BytesBounded } from '@/transfers/shared/estimateJsonUtf
 import { isSafeDirectTransferEndpointCandidate } from '@happier-dev/protocol/machines/transfer/directPeerUrls';
 import { TransferChunkEnvelopeSchema, TransferEndpointCandidateSchema } from '@happier-dev/protocol/machines/transfer/transferStream';
 import type { TransferEndpointCandidate } from '@happier-dev/protocol';
-import { z } from 'zod/mini';
 
 import {
+  DirectPeerTransferResponseSchema,
   DIRECT_PEER_RECIPIENT_PUBLIC_KEY_HEADER,
   extractDirectPeerRequestAuth,
 } from './protocol';
@@ -28,13 +28,6 @@ const DIRECT_PEER_OPEN_BODY_STREAMING_THRESHOLD_BYTES = 8 * 1024;
 const DIRECT_PEER_REQUEST_RETRY_ATTEMPTS = 3;
 const DIRECT_PEER_REQUEST_RETRY_DELAY_MS = 150;
 
-const DirectPeerTransferResponseSchema = z.strictObject({
-    transferId: z.string().check(z.minLength(1)),
-    manifestHash: z.string().check(z.minLength(1)),
-    totalChunks: z.number().check(z.int(), z.positive()),
-    sizeBytes: z.optional(z.number().check(z.int(), z.nonnegative())),
-    name: z.optional(z.string().check(z.minLength(1))),
-  });
 
 function readDirectPeerChunkBytes(): number {
   return resolveDirectPeerTransferChunkBytes();
@@ -79,6 +72,10 @@ function isRetryableDirectPeerTransferRequestError(error: unknown): boolean {
     return true;
   }
   if (error.message.includes('status 503')) {
+    return true;
+  }
+  // Native fetch reports a connection closed during body consumption this way.
+  if (error.cause instanceof Error && 'code' in error.cause && error.cause.code === 'UND_ERR_SOCKET') {
     return true;
   }
   return error.message.includes('fetch failed');

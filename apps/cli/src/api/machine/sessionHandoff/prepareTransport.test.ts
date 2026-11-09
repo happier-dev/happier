@@ -7,6 +7,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { createSessionHandoffAgentBundlePayloadSource } from '../../../session/handoff/agentBundle/file';
 import { buildSessionHandoffAgentBundleTransferId } from '../../../session/handoff/agentBundle/transferPublication';
 import { resolvePrepareAgentBundle } from './prepareTransport';
+import { createMachineTransferRouteCache } from '../../../machines/transfer/transferRouteCache';
 
 describe('resolvePrepareAgentBundle', () => {
   it('keeps finite session-bundle transport independent from the workspace machine carrier', async () => {
@@ -59,6 +60,14 @@ describe('resolvePrepareAgentBundle', () => {
     const handoffId = 'handoff_binary_agent_bundle';
     const transferId = buildSessionHandoffAgentBundleTransferId(handoffId);
     const onProgress = vi.fn();
+    const transferRouteCache = createMachineTransferRouteCache({ serverId: 'source-server' });
+    const endpointCandidates = [{
+      kind: 'http' as const,
+      url: `http://127.0.0.1:46001/machine-transfers/direct/${Buffer.from(transferId).toString('base64url')}`,
+      authorizationToken: 'test-token',
+      expiresAt: Date.now() + 30_000,
+    }];
+    transferRouteCache.recordDirectPeerRouteUnavailable({ remoteMachineId: 'machine_source', endpointCandidates }, 'previously unavailable');
 
     try {
       const bundle = await resolvePrepareAgentBundle({
@@ -77,12 +86,7 @@ describe('resolvePrepareAgentBundle', () => {
             transferId,
             sizeBytes: payloadSource.sizeBytes,
             manifestHash: payloadSource.manifestHash,
-            endpointCandidates: [{
-              kind: 'http',
-              url: `http://127.0.0.1:46001/machine-transfers/direct/${Buffer.from(transferId).toString('base64url')}`,
-              authorizationToken: 'test-token',
-              expiresAt: Date.now() + 30_000,
-            }],
+            endpointCandidates,
           },
         },
         directPeerTransfer: {
@@ -95,6 +99,7 @@ describe('resolvePrepareAgentBundle', () => {
           clearPublishedTransfer: vi.fn(),
         },
         receivedAgentBundlePath: receivedBundlePath,
+        transferRouteCache,
         onProgress,
       } as Parameters<typeof resolvePrepareAgentBundle>[0] & { receivedAgentBundlePath: string });
 

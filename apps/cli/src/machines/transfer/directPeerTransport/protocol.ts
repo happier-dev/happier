@@ -1,7 +1,17 @@
+import { z } from 'zod/mini';
+import { lazyZodSchema } from '@happier-dev/protocol/lazyZodSchema';
 import { createHash } from 'node:crypto';
 
 import { normalizeDirectPeerTransferEndpointBaseUrl } from '@happier-dev/protocol/machines/transfer/directPeerUrls';
 import type { TransferEndpointCandidate } from '@happier-dev/protocol';
+
+export const DirectPeerTransferResponseSchema = lazyZodSchema(() => z.strictObject({
+    transferId: z.string().check(z.minLength(1)),
+    manifestHash: z.string().check(z.minLength(1)),
+    totalChunks: z.number().check(z.int(), z.positive()),
+    sizeBytes: z.optional(z.number().check(z.int(), z.nonnegative())),
+    name: z.optional(z.string().check(z.minLength(1))),
+  }));
 
 export const DIRECT_PEER_AUTH_SCHEME = 'Bearer';
 export const DIRECT_PEER_RECIPIENT_PUBLIC_KEY_HEADER = 'x-happier-transfer-recipient-public-key';

@@ -15,12 +15,10 @@ import {
   type DirectPeerOnDemandTransferScope,
   isDirectPeerTransferProtocolError,
 } from '../../../machines/transfer/directPeerTransport';
-import { requestDirectPeerTransferToFileWithRetry } from '../../../machines/transfer/requestDirectPeerTransferToFileWithRetry';
 import {
   type MachineTransferChannel,
   requestServerRoutedTransferToFile,
 } from '../../../machines/transfer/serverRoutedTransport';
-import { createMachineTransferRouteCache } from '../../../machines/transfer/transferRouteCache';
 import { createFileTransferPayloadSource, resolveTransferPayloadSizeBytes, resolveTransferPayloadManifestHash, type TransferPayloadSource } from '../../../machines/transfer/transferPayloadSource';
 import { readSessionHandoffAgentBundleFile } from '../../../session/handoff/agentBundle/file';
 import {
@@ -103,13 +101,11 @@ export async function materializePrepareManagedWorkspaceSeed(params: Readonly<{
         let transferred = false;
         if (params.actualTransportStrategy === 'direct_peer' && params.directPeerTransfer?.requestPayloadFile) {
           try {
-            await requestDirectPeerTransferToFileWithRetry({
-              requestTransferToFile: params.directPeerTransfer.requestPayloadFile,
+            await params.directPeerTransfer.requestPayloadFile({
               transferId: request.transferId, destinationPath: request.destinationPath,
               endpointCandidates: publication.endpointCandidates ?? params.request.endpointCandidates,
               expectedSizeBytes, expectedManifestHash,
               ...(params.transferTimeoutMs === undefined ? {} : { timeoutMs: params.transferTimeoutMs }),
-              onRetry: params.assertCanContinue,
             });
             transferred = true;
           } catch (error) {
@@ -198,9 +194,7 @@ export async function resolvePrepareAgentBundle(params: Readonly<{
   handoffMetadataV2?: SessionHandoffMetadataV2;
   machineTransferChannel?: MachineTransferChannel;
   directPeerTransfer?: SessionHandoffDirectPeerTransferHandle;
-  transferRouteCache?: ReturnType<typeof createMachineTransferRouteCache>;
   transferTimeoutMs?: number;
-  invalidateDirectPeerRouteCacheForHandoffMachines?: (machineIds: readonly (string | undefined)[]) => void;
   receivedAgentBundlePath: string;
   onProgress?: (receivedBytes: number) => Promise<void> | void;
   signal?: AbortSignal;
@@ -257,31 +251,9 @@ export async function resolvePrepareAgentBundle(params: Readonly<{
             }
             throw new Error(directPeerTransferUnavailable().error);
           }
-          params.invalidateDirectPeerRouteCacheForHandoffMachines?.([
-            params.request.sourceMachineId,
-            params.request.targetMachineId,
-          ]);
-          const cachedRoute = params.transferRouteCache?.readDirectPeerRoute({
-            remoteMachineId: params.request.sourceMachineId,
-            endpointCandidates,
-          });
-          if (cachedRoute?.status === 'unavailable') {
-            if (canFallbackToServerRouted && params.machineTransferChannel) {
-              return await requestServerRoutedPrepareAgentBundle({
-                transferId: transferPublication.transferId,
-                sourceMachineId: params.request.sourceMachineId,
-                destinationPath: params.receivedAgentBundlePath,
-                machineTransferChannel: params.machineTransferChannel,
-                transferTimeoutMs: params.transferTimeoutMs,
-                ...(params.onProgress ? { onProgress: params.onProgress } : {}),
-              });
-            }
-            throw new Error(directPeerTransferUnavailable().error);
-          }
           const timeoutMs = params.transferTimeoutMs;
           try {
-              await requestDirectPeerTransferToFileWithRetry({
-                requestTransferToFile: params.directPeerTransfer!.requestPayloadFile!,
+              await params.directPeerTransfer!.requestPayloadFile!({
                 transferId: transferPublication.transferId,
                 endpointCandidates,
                 destinationPath: params.receivedAgentBundlePath,
@@ -289,31 +261,12 @@ export async function resolvePrepareAgentBundle(params: Readonly<{
                 expectedManifestHash: transferPublication.manifestHash,
                 ...(typeof timeoutMs === 'number' ? { timeoutMs } : {}),
                 ...(params.onProgress ? { onProgress: params.onProgress } : {}),
-                maxAttempts: 8,
-                retryDelayMs: 250,
-                onRetry: async () => {
-                  params.invalidateDirectPeerRouteCacheForHandoffMachines?.([
-                    params.request.sourceMachineId,
-                    params.request.targetMachineId,
-                  ]);
-                },
-              });
-              params.transferRouteCache?.recordDirectPeerRouteViable({
-                remoteMachineId: params.request.sourceMachineId,
-                endpointCandidates,
               });
               return await readSessionHandoffAgentBundleFile(params.receivedAgentBundlePath);
             } catch (error) {
               if (isSessionHandoffDirectPeerProtocolError(error)) {
                 throw error;
               }
-              params.transferRouteCache?.recordDirectPeerRouteUnavailable(
-                {
-                  remoteMachineId: params.request.sourceMachineId,
-                  endpointCandidates,
-                },
-                error instanceof Error ? error.message : 'Direct peer transfer failed',
-              );
               if (canFallbackToServerRouted && params.machineTransferChannel) {
                 return await requestServerRoutedPrepareAgentBundle({
                   transferId: transferPublication.transferId,
