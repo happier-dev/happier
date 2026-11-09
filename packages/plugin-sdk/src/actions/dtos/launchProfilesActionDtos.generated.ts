@@ -473,11 +473,7 @@ export type LaunchProfilesActionInputById = {
                 } | {
                     kind: 'sessionMachine';
                 };
-                claudeHelperModels?: undefined | {
-                    fast?: string | undefined;
-                    default?: string | undefined;
-                    strongest?: string | undefined;
-                };
+                roleModels?: Record<string, string> | undefined;
                 modelSettings?: Record<string, {
                     temperature?: null | number | undefined;
                     maxTokens?: null | number | undefined;
@@ -639,11 +635,7 @@ export type LaunchProfilesActionInputById = {
                 } | {
                     kind: 'sessionMachine';
                 };
-                claudeHelperModels?: undefined | {
-                    fast?: string | undefined;
-                    default?: string | undefined;
-                    strongest?: string | undefined;
-                };
+                roleModels?: Record<string, string> | undefined;
                 modelSettings?: Record<string, {
                     temperature?: null | number | undefined;
                     maxTokens?: null | number | undefined;

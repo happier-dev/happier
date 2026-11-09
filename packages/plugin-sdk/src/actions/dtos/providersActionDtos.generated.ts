@@ -281,11 +281,7 @@ export type ProvidersActionInputById = {
         } | {
             kind: 'sessionMachine';
         };
-        claudeHelperModels?: null | undefined | {
-            fast?: string | undefined;
-            default?: string | undefined;
-            strongest?: string | undefined;
-        };
+        roleModels?: Record<string, string> | null | undefined;
     }, true>;
     readonly "providers.connections.endpoint.set": AccountOperand<{
         machineId: string;
@@ -1425,13 +1421,17 @@ export type ProvidersActionInputById = {
                         }[];
                     };
                     authIsolation: {
-                        suppressConnectedServiceIds: ('anthropic' | 'bitbucket' | 'claude-subscription' | 'gemini' | 'github' | 'openai' | 'openai-codex')[];
+                        suppressConnectedServiceIds: string[];
                         ownedEnvKeys: string[];
                         optionalOwnedEnvKeys?: string[] | undefined;
                     };
                     materialization: 'configFile' | 'engineConfig' | 'spawnEnv';
                     applyPolicy: 'live' | 'next_prompt' | 'restart_session' | 'unsupported';
                     supportsFreeformModelIds: boolean;
+                    modelRoles?: undefined | {
+                        id: string;
+                        title: string;
+                    }[];
                     supportsReasoningEffort?: true | undefined;
                 };
                 deployment: {
@@ -1537,13 +1537,17 @@ export type ProvidersActionInputById = {
                         }[];
                     };
                     authIsolation: {
-                        suppressConnectedServiceIds: ('anthropic' | 'bitbucket' | 'claude-subscription' | 'gemini' | 'github' | 'openai' | 'openai-codex')[];
+                        suppressConnectedServiceIds: string[];
                         ownedEnvKeys: string[];
                         optionalOwnedEnvKeys?: string[] | undefined;
                     };
                     materialization: 'configFile' | 'engineConfig' | 'spawnEnv';
                     applyPolicy: 'live' | 'next_prompt' | 'restart_session' | 'unsupported';
                     supportsFreeformModelIds: boolean;
+                    modelRoles?: undefined | {
+                        id: string;
+                        title: string;
+                    }[];
                     supportsReasoningEffort?: true | undefined;
                 };
                 deployment: {
@@ -1572,6 +1576,18 @@ export type ProvidersActionInputById = {
                             required?: boolean | undefined;
                             materializationKinds?: ('environment' | 'files' | 'httpHeaders')[] | undefined;
                             credentialKinds?: ('oauth' | 'token')[] | undefined;
+                            operationRestriction?: undefined | {
+                                summary: string | {
+                                    key: string;
+                                    fallback: string;
+                                    params?: Record<string, number | string> | undefined;
+                                };
+                                sentence: string | {
+                                    key: string;
+                                    fallback: string;
+                                    params?: Record<string, number | string> | undefined;
+                                };
+                            };
                             endpointTemplateIds?: string[] | undefined;
                             staticModels?: undefined | {
                                 id: string;
@@ -1622,6 +1638,17 @@ export type ProvidersActionInputById = {
                                     structuredOutput?: 'supported' | 'unknown' | 'unsupported' | undefined;
                                 };
                             }[];
+                            catalogObservation?: undefined | {
+                                agent: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                            } | {
+                                provider: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                            };
                         }[];
                         connectedAccountPurposeBindingPolicy?: undefined | {
                             minimumBound: 1;
@@ -1842,6 +1869,18 @@ export type ProvidersActionResultById = {
                             fallback: string;
                             params?: Record<string, number | string> | undefined;
                         };
+                        operationRestriction?: undefined | {
+                            summary: string | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, number | string> | undefined;
+                            };
+                            sentence: string | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, number | string> | undefined;
+                            };
+                        };
                         materializationKinds?: ('environment' | 'files' | 'httpHeaders')[] | undefined;
                     }[];
                     connectedAccountPurposeBindingPolicy?: undefined | {
@@ -1862,6 +1901,18 @@ export type ProvidersActionResultById = {
                         key: string;
                         fallback: string;
                         params?: Record<string, number | string> | undefined;
+                    };
+                    operationRestriction?: undefined | {
+                        summary: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                        sentence: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
                     };
                     materializationKinds?: ('environment' | 'files' | 'httpHeaders')[] | undefined;
                 }[];
@@ -1938,11 +1989,7 @@ export type ProvidersActionResultById = {
             } | {
                 kind: 'sessionMachine';
             };
-            claudeHelperModels?: undefined | {
-                fast?: string | undefined;
-                default?: string | undefined;
-                strongest?: string | undefined;
-            };
+            roleModels?: Record<string, string> | undefined;
         }[];
         available: {
             contributionKey: string;
@@ -2224,6 +2271,18 @@ export type ProvidersActionResultById = {
                             fallback: string;
                             params?: Record<string, number | string> | undefined;
                         };
+                        operationRestriction?: undefined | {
+                            summary: string | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, number | string> | undefined;
+                            };
+                            sentence: string | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, number | string> | undefined;
+                            };
+                        };
                         materializationKinds?: ('environment' | 'files' | 'httpHeaders')[] | undefined;
                     }[];
                     connectedAccountPurposeBindingPolicy?: undefined | {
@@ -2244,6 +2303,18 @@ export type ProvidersActionResultById = {
                         key: string;
                         fallback: string;
                         params?: Record<string, number | string> | undefined;
+                    };
+                    operationRestriction?: undefined | {
+                        summary: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                        sentence: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
                     };
                     materializationKinds?: ('environment' | 'files' | 'httpHeaders')[] | undefined;
                 }[];
@@ -2320,11 +2391,7 @@ export type ProvidersActionResultById = {
             } | {
                 kind: 'sessionMachine';
             };
-            claudeHelperModels?: undefined | {
-                fast?: string | undefined;
-                default?: string | undefined;
-                strongest?: string | undefined;
-            };
+            roleModels?: Record<string, string> | undefined;
         };
         created?: boolean | undefined;
     } | {
@@ -2463,6 +2530,18 @@ export type ProvidersActionResultById = {
                             fallback: string;
                             params?: Record<string, number | string> | undefined;
                         };
+                        operationRestriction?: undefined | {
+                            summary: string | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, number | string> | undefined;
+                            };
+                            sentence: string | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, number | string> | undefined;
+                            };
+                        };
                         materializationKinds?: ('environment' | 'files' | 'httpHeaders')[] | undefined;
                     }[];
                     connectedAccountPurposeBindingPolicy?: undefined | {
@@ -2483,6 +2562,18 @@ export type ProvidersActionResultById = {
                         key: string;
                         fallback: string;
                         params?: Record<string, number | string> | undefined;
+                    };
+                    operationRestriction?: undefined | {
+                        summary: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                        sentence: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
                     };
                     materializationKinds?: ('environment' | 'files' | 'httpHeaders')[] | undefined;
                 }[];
@@ -2559,11 +2650,7 @@ export type ProvidersActionResultById = {
             } | {
                 kind: 'sessionMachine';
             };
-            claudeHelperModels?: undefined | {
-                fast?: string | undefined;
-                default?: string | undefined;
-                strongest?: string | undefined;
-            };
+            roleModels?: Record<string, string> | undefined;
         };
         created?: boolean | undefined;
     } | {
@@ -2702,6 +2789,18 @@ export type ProvidersActionResultById = {
                             fallback: string;
                             params?: Record<string, number | string> | undefined;
                         };
+                        operationRestriction?: undefined | {
+                            summary: string | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, number | string> | undefined;
+                            };
+                            sentence: string | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, number | string> | undefined;
+                            };
+                        };
                         materializationKinds?: ('environment' | 'files' | 'httpHeaders')[] | undefined;
                     }[];
                     connectedAccountPurposeBindingPolicy?: undefined | {
@@ -2722,6 +2821,18 @@ export type ProvidersActionResultById = {
                         key: string;
                         fallback: string;
                         params?: Record<string, number | string> | undefined;
+                    };
+                    operationRestriction?: undefined | {
+                        summary: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                        sentence: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
                     };
                     materializationKinds?: ('environment' | 'files' | 'httpHeaders')[] | undefined;
                 }[];
@@ -2798,11 +2909,7 @@ export type ProvidersActionResultById = {
             } | {
                 kind: 'sessionMachine';
             };
-            claudeHelperModels?: undefined | {
-                fast?: string | undefined;
-                default?: string | undefined;
-                strongest?: string | undefined;
-            };
+            roleModels?: Record<string, string> | undefined;
         };
         created?: boolean | undefined;
     } | {
@@ -2941,6 +3048,18 @@ export type ProvidersActionResultById = {
                             fallback: string;
                             params?: Record<string, number | string> | undefined;
                         };
+                        operationRestriction?: undefined | {
+                            summary: string | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, number | string> | undefined;
+                            };
+                            sentence: string | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, number | string> | undefined;
+                            };
+                        };
                         materializationKinds?: ('environment' | 'files' | 'httpHeaders')[] | undefined;
                     }[];
                     connectedAccountPurposeBindingPolicy?: undefined | {
@@ -2961,6 +3080,18 @@ export type ProvidersActionResultById = {
                         key: string;
                         fallback: string;
                         params?: Record<string, number | string> | undefined;
+                    };
+                    operationRestriction?: undefined | {
+                        summary: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                        sentence: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
                     };
                     materializationKinds?: ('environment' | 'files' | 'httpHeaders')[] | undefined;
                 }[];
@@ -3037,11 +3168,7 @@ export type ProvidersActionResultById = {
             } | {
                 kind: 'sessionMachine';
             };
-            claudeHelperModels?: undefined | {
-                fast?: string | undefined;
-                default?: string | undefined;
-                strongest?: string | undefined;
-            };
+            roleModels?: Record<string, string> | undefined;
         };
         created?: boolean | undefined;
     } | {
@@ -3180,6 +3307,18 @@ export type ProvidersActionResultById = {
                             fallback: string;
                             params?: Record<string, number | string> | undefined;
                         };
+                        operationRestriction?: undefined | {
+                            summary: string | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, number | string> | undefined;
+                            };
+                            sentence: string | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, number | string> | undefined;
+                            };
+                        };
                         materializationKinds?: ('environment' | 'files' | 'httpHeaders')[] | undefined;
                     }[];
                     connectedAccountPurposeBindingPolicy?: undefined | {
@@ -3200,6 +3339,18 @@ export type ProvidersActionResultById = {
                         key: string;
                         fallback: string;
                         params?: Record<string, number | string> | undefined;
+                    };
+                    operationRestriction?: undefined | {
+                        summary: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                        sentence: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
                     };
                     materializationKinds?: ('environment' | 'files' | 'httpHeaders')[] | undefined;
                 }[];
@@ -3276,11 +3427,7 @@ export type ProvidersActionResultById = {
             } | {
                 kind: 'sessionMachine';
             };
-            claudeHelperModels?: undefined | {
-                fast?: string | undefined;
-                default?: string | undefined;
-                strongest?: string | undefined;
-            };
+            roleModels?: Record<string, string> | undefined;
         };
         created?: boolean | undefined;
     } | {
@@ -3419,6 +3566,18 @@ export type ProvidersActionResultById = {
                             fallback: string;
                             params?: Record<string, number | string> | undefined;
                         };
+                        operationRestriction?: undefined | {
+                            summary: string | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, number | string> | undefined;
+                            };
+                            sentence: string | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, number | string> | undefined;
+                            };
+                        };
                         materializationKinds?: ('environment' | 'files' | 'httpHeaders')[] | undefined;
                     }[];
                     connectedAccountPurposeBindingPolicy?: undefined | {
@@ -3439,6 +3598,18 @@ export type ProvidersActionResultById = {
                         key: string;
                         fallback: string;
                         params?: Record<string, number | string> | undefined;
+                    };
+                    operationRestriction?: undefined | {
+                        summary: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                        sentence: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
                     };
                     materializationKinds?: ('environment' | 'files' | 'httpHeaders')[] | undefined;
                 }[];
@@ -3515,11 +3686,7 @@ export type ProvidersActionResultById = {
             } | {
                 kind: 'sessionMachine';
             };
-            claudeHelperModels?: undefined | {
-                fast?: string | undefined;
-                default?: string | undefined;
-                strongest?: string | undefined;
-            };
+            roleModels?: Record<string, string> | undefined;
         };
         created?: boolean | undefined;
     } | {
@@ -3658,6 +3825,18 @@ export type ProvidersActionResultById = {
                             fallback: string;
                             params?: Record<string, number | string> | undefined;
                         };
+                        operationRestriction?: undefined | {
+                            summary: string | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, number | string> | undefined;
+                            };
+                            sentence: string | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, number | string> | undefined;
+                            };
+                        };
                         materializationKinds?: ('environment' | 'files' | 'httpHeaders')[] | undefined;
                     }[];
                     connectedAccountPurposeBindingPolicy?: undefined | {
@@ -3678,6 +3857,18 @@ export type ProvidersActionResultById = {
                         key: string;
                         fallback: string;
                         params?: Record<string, number | string> | undefined;
+                    };
+                    operationRestriction?: undefined | {
+                        summary: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                        sentence: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
                     };
                     materializationKinds?: ('environment' | 'files' | 'httpHeaders')[] | undefined;
                 }[];
@@ -3754,11 +3945,7 @@ export type ProvidersActionResultById = {
             } | {
                 kind: 'sessionMachine';
             };
-            claudeHelperModels?: undefined | {
-                fast?: string | undefined;
-                default?: string | undefined;
-                strongest?: string | undefined;
-            };
+            roleModels?: Record<string, string> | undefined;
         };
         created?: boolean | undefined;
     } | {
@@ -3897,6 +4084,18 @@ export type ProvidersActionResultById = {
                             fallback: string;
                             params?: Record<string, number | string> | undefined;
                         };
+                        operationRestriction?: undefined | {
+                            summary: string | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, number | string> | undefined;
+                            };
+                            sentence: string | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, number | string> | undefined;
+                            };
+                        };
                         materializationKinds?: ('environment' | 'files' | 'httpHeaders')[] | undefined;
                     }[];
                     connectedAccountPurposeBindingPolicy?: undefined | {
@@ -3917,6 +4116,18 @@ export type ProvidersActionResultById = {
                         key: string;
                         fallback: string;
                         params?: Record<string, number | string> | undefined;
+                    };
+                    operationRestriction?: undefined | {
+                        summary: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                        sentence: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
                     };
                     materializationKinds?: ('environment' | 'files' | 'httpHeaders')[] | undefined;
                 }[];
@@ -3993,11 +4204,7 @@ export type ProvidersActionResultById = {
             } | {
                 kind: 'sessionMachine';
             };
-            claudeHelperModels?: undefined | {
-                fast?: string | undefined;
-                default?: string | undefined;
-                strongest?: string | undefined;
-            };
+            roleModels?: Record<string, string> | undefined;
         };
         created?: boolean | undefined;
     } | {
@@ -4136,6 +4343,18 @@ export type ProvidersActionResultById = {
                             fallback: string;
                             params?: Record<string, number | string> | undefined;
                         };
+                        operationRestriction?: undefined | {
+                            summary: string | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, number | string> | undefined;
+                            };
+                            sentence: string | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, number | string> | undefined;
+                            };
+                        };
                         materializationKinds?: ('environment' | 'files' | 'httpHeaders')[] | undefined;
                     }[];
                     connectedAccountPurposeBindingPolicy?: undefined | {
@@ -4156,6 +4375,18 @@ export type ProvidersActionResultById = {
                         key: string;
                         fallback: string;
                         params?: Record<string, number | string> | undefined;
+                    };
+                    operationRestriction?: undefined | {
+                        summary: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                        sentence: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
                     };
                     materializationKinds?: ('environment' | 'files' | 'httpHeaders')[] | undefined;
                 }[];
@@ -4232,11 +4463,7 @@ export type ProvidersActionResultById = {
             } | {
                 kind: 'sessionMachine';
             };
-            claudeHelperModels?: undefined | {
-                fast?: string | undefined;
-                default?: string | undefined;
-                strongest?: string | undefined;
-            };
+            roleModels?: Record<string, string> | undefined;
         };
         created?: boolean | undefined;
     } | {
@@ -4375,6 +4602,18 @@ export type ProvidersActionResultById = {
                             fallback: string;
                             params?: Record<string, number | string> | undefined;
                         };
+                        operationRestriction?: undefined | {
+                            summary: string | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, number | string> | undefined;
+                            };
+                            sentence: string | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, number | string> | undefined;
+                            };
+                        };
                         materializationKinds?: ('environment' | 'files' | 'httpHeaders')[] | undefined;
                     }[];
                     connectedAccountPurposeBindingPolicy?: undefined | {
@@ -4395,6 +4634,18 @@ export type ProvidersActionResultById = {
                         key: string;
                         fallback: string;
                         params?: Record<string, number | string> | undefined;
+                    };
+                    operationRestriction?: undefined | {
+                        summary: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                        sentence: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
                     };
                     materializationKinds?: ('environment' | 'files' | 'httpHeaders')[] | undefined;
                 }[];
@@ -4471,11 +4722,7 @@ export type ProvidersActionResultById = {
             } | {
                 kind: 'sessionMachine';
             };
-            claudeHelperModels?: undefined | {
-                fast?: string | undefined;
-                default?: string | undefined;
-                strongest?: string | undefined;
-            };
+            roleModels?: Record<string, string> | undefined;
         };
         created?: boolean | undefined;
     } | {
@@ -4567,6 +4814,7 @@ export type ProvidersActionResultById = {
             };
             name?: string | undefined;
         }[];
+        catalogObserved?: boolean | undefined;
     };
     readonly "providers.models.projection": {
         status: 'error';
@@ -4616,7 +4864,7 @@ export type ProvidersActionResultById = {
             };
             manualModelPolicy: 'allowed' | 'catalog-only';
             supportsFreeformModelIds: boolean;
-            suppressedConnectedServiceIds: ('anthropic' | 'bitbucket' | 'claude-subscription' | 'gemini' | 'github' | 'openai' | 'openai-codex')[];
+            suppressedConnectedServiceIds: string[];
             rows: {
                 ref: {
                     agentTargetKey: string;
@@ -5450,7 +5698,7 @@ export type ProvidersActionResultById = {
             };
             manualModelPolicy: 'allowed' | 'catalog-only';
             supportsFreeformModelIds: boolean;
-            suppressedConnectedServiceIds: ('anthropic' | 'bitbucket' | 'claude-subscription' | 'gemini' | 'github' | 'openai' | 'openai-codex')[];
+            suppressedConnectedServiceIds: string[];
             rows: {
                 ref: {
                     agentTargetKey: string;

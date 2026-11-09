@@ -65,6 +65,7 @@ export type LocalDaemonServicesActionInputById = {
         serverId: string;
         machineId: string;
         environmentId?: string | undefined;
+        composeService?: string | undefined;
     };
     readonly "machines.services.discovery": {
         serverId: string;

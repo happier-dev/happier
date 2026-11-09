@@ -740,6 +740,6 @@ export type MachinePoolsActionResultById = {
         kind: 'unavailable';
         poolId: string;
         reason: 'empty' | 'managed_preset_unavailable' | 'no_available_machine' | 'presence_unavailable' | 'worker_status_unavailable';
-        code?: 'acquisition_disabled' | 'admission_unavailable' | 'controller_retired' | 'controller_unavailable' | 'credential_unavailable' | 'enrollment_attendance_required' | 'enrollment_identity_review_required' | 'enrollment_retired' | 'intent_changed' | 'invalid_request' | 'managed_not_found' | 'managed_power_required' | 'permission_denied' | 'preset_archived' | 'preset_limit_reached' | 'preset_not_found' | 'provider_unavailable' | 'request_conflict' | 'resource_mismatch' | undefined;
+        code?: 'acquisition_disabled' | 'admission_unavailable' | 'controller_retired' | 'controller_unavailable' | 'credential_unavailable' | 'enrollment_attendance_required' | 'enrollment_identity_review_required' | 'enrollment_retired' | 'intent_changed' | 'invalid_request' | 'managed_not_found' | 'managed_power_required' | 'permission_denied' | 'pool_no_available_machine' | 'preset_archived' | 'preset_limit_reached' | 'preset_not_found' | 'provider_unavailable' | 'request_conflict' | 'resource_mismatch' | undefined;
     };
 };

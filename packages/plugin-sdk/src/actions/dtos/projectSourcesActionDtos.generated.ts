@@ -65,8 +65,8 @@ export type ProjectSourcesActionInputById = {
             };
             repository: {
                 nameWithOwner: string;
-                defaultBranch?: null | string | undefined;
                 visibility?: 'internal' | 'private' | 'public' | undefined;
+                defaultBranch?: null | string | undefined;
                 webUrl?: string | undefined;
                 cloneUrl?: string | undefined;
                 sshUrl?: string | undefined;
@@ -105,8 +105,8 @@ export type ProjectSourcesActionInputById = {
                 };
                 repository: {
                     nameWithOwner: string;
-                    defaultBranch?: null | string | undefined;
                     visibility?: 'internal' | 'private' | 'public' | undefined;
+                    defaultBranch?: null | string | undefined;
                     webUrl?: string | undefined;
                     cloneUrl?: string | undefined;
                     sshUrl?: string | undefined;
@@ -242,8 +242,8 @@ export type ProjectSourcesActionResultById = {
                 };
                 repository: {
                     nameWithOwner: string;
-                    defaultBranch?: null | string | undefined;
                     visibility?: 'internal' | 'private' | 'public' | undefined;
+                    defaultBranch?: null | string | undefined;
                     webUrl?: string | undefined;
                     cloneUrl?: string | undefined;
                     sshUrl?: string | undefined;
@@ -362,8 +362,8 @@ export type ProjectSourcesActionResultById = {
                 };
                 repository: {
                     nameWithOwner: string;
-                    defaultBranch?: null | string | undefined;
                     visibility?: 'internal' | 'private' | 'public' | undefined;
+                    defaultBranch?: null | string | undefined;
                     webUrl?: string | undefined;
                     cloneUrl?: string | undefined;
                     sshUrl?: string | undefined;
@@ -481,8 +481,8 @@ export type ProjectSourcesActionResultById = {
                 };
                 repository: {
                     nameWithOwner: string;
-                    defaultBranch?: null | string | undefined;
                     visibility?: 'internal' | 'private' | 'public' | undefined;
+                    defaultBranch?: null | string | undefined;
                     webUrl?: string | undefined;
                     cloneUrl?: string | undefined;
                     sshUrl?: string | undefined;
@@ -555,8 +555,8 @@ export type ProjectSourcesActionResultById = {
                 };
                 repository: {
                     nameWithOwner: string;
-                    defaultBranch?: null | string | undefined;
                     visibility?: 'internal' | 'private' | 'public' | undefined;
+                    defaultBranch?: null | string | undefined;
                     webUrl?: string | undefined;
                     cloneUrl?: string | undefined;
                     sshUrl?: string | undefined;
@@ -626,8 +626,8 @@ export type ProjectSourcesActionResultById = {
                 };
                 repository: {
                     nameWithOwner: string;
-                    defaultBranch?: null | string | undefined;
                     visibility?: 'internal' | 'private' | 'public' | undefined;
+                    defaultBranch?: null | string | undefined;
                     webUrl?: string | undefined;
                     cloneUrl?: string | undefined;
                     sshUrl?: string | undefined;
@@ -704,8 +704,8 @@ export type ProjectSourcesActionResultById = {
                 };
                 repository: {
                     nameWithOwner: string;
-                    defaultBranch?: null | string | undefined;
                     visibility?: 'internal' | 'private' | 'public' | undefined;
+                    defaultBranch?: null | string | undefined;
                     webUrl?: string | undefined;
                     cloneUrl?: string | undefined;
                     sshUrl?: string | undefined;
@@ -775,8 +775,8 @@ export type ProjectSourcesActionResultById = {
                 };
                 repository: {
                     nameWithOwner: string;
-                    defaultBranch?: null | string | undefined;
                     visibility?: 'internal' | 'private' | 'public' | undefined;
+                    defaultBranch?: null | string | undefined;
                     webUrl?: string | undefined;
                     cloneUrl?: string | undefined;
                     sshUrl?: string | undefined;
@@ -850,8 +850,8 @@ export type ProjectSourcesActionResultById = {
                 };
                 repository: {
                     nameWithOwner: string;
-                    defaultBranch?: null | string | undefined;
                     visibility?: 'internal' | 'private' | 'public' | undefined;
+                    defaultBranch?: null | string | undefined;
                     webUrl?: string | undefined;
                     cloneUrl?: string | undefined;
                     sshUrl?: string | undefined;
@@ -921,8 +921,8 @@ export type ProjectSourcesActionResultById = {
                 };
                 repository: {
                     nameWithOwner: string;
-                    defaultBranch?: null | string | undefined;
                     visibility?: 'internal' | 'private' | 'public' | undefined;
+                    defaultBranch?: null | string | undefined;
                     webUrl?: string | undefined;
                     cloneUrl?: string | undefined;
                     sshUrl?: string | undefined;
@@ -996,8 +996,8 @@ export type ProjectSourcesActionResultById = {
                 };
                 repository: {
                     nameWithOwner: string;
-                    defaultBranch?: null | string | undefined;
                     visibility?: 'internal' | 'private' | 'public' | undefined;
+                    defaultBranch?: null | string | undefined;
                     webUrl?: string | undefined;
                     cloneUrl?: string | undefined;
                     sshUrl?: string | undefined;
@@ -1067,8 +1067,8 @@ export type ProjectSourcesActionResultById = {
                 };
                 repository: {
                     nameWithOwner: string;
-                    defaultBranch?: null | string | undefined;
                     visibility?: 'internal' | 'private' | 'public' | undefined;
+                    defaultBranch?: null | string | undefined;
                     webUrl?: string | undefined;
                     cloneUrl?: string | undefined;
                     sshUrl?: string | undefined;
@@ -1142,8 +1142,8 @@ export type ProjectSourcesActionResultById = {
                 };
                 repository: {
                     nameWithOwner: string;
-                    defaultBranch?: null | string | undefined;
                     visibility?: 'internal' | 'private' | 'public' | undefined;
+                    defaultBranch?: null | string | undefined;
                     webUrl?: string | undefined;
                     cloneUrl?: string | undefined;
                     sshUrl?: string | undefined;

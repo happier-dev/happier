@@ -7,18 +7,27 @@ import type { SessionTargetV1 } from './pluginActionDtoSupport.generated.js';
 export type SessionPermissionsActionInputById = {
     readonly "session.permission.respond": {
         [x: string]: unknown;
-        decision: 'abort' | 'allow' | 'approved' | 'approved_execpolicy_amendment' | 'approved_for_session' | 'denied' | 'deny';
         sessionId?: string | undefined;
+        decision?: 'abort' | 'allow' | 'approved' | 'approved_execpolicy_amendment' | 'approved_for_session' | 'denied' | 'deny' | undefined;
         requestId?: string | undefined;
         turnId?: string | undefined;
         reason?: string | undefined;
-        mode?: 'acceptEdits' | 'bypassPermissions' | 'default' | 'plan' | undefined;
+        mode?: 'acceptEdits' | 'bypassPermissions' | 'default' | 'plan' | 'read-only' | undefined;
         allowedTools?: string[] | undefined;
         execPolicyAmendment?: undefined | {
             command: string[];
         };
         updatedPermissions?: unknown;
         answers?: unknown;
+        answerDetails?: Record<string, Readonly<{
+            freeText?: string | undefined;
+            note?: string | undefined;
+        }>> | undefined;
+        nativeChoice?: undefined | {
+            requirementId: string;
+            choiceId: string;
+            feedback?: string | undefined;
+        };
     };
     readonly "session.approval_reviewer.set": {
         sessionId: string;
@@ -41,8 +50,13 @@ export type SessionPermissionsActionInputById = {
             namespace: string;
             principalId: string;
         };
-        decision: 'allow' | 'deny';
-        scope: 'request' | 'session';
+        decision?: 'allow' | 'deny' | undefined;
+        scope?: 'request' | 'session' | undefined;
+        nativeChoice?: undefined | {
+            requirementId: string;
+            choiceId: string;
+            feedback?: string | undefined;
+        };
     };
     readonly "session.user_action.remote.answer": {
         sessionId: string;
@@ -70,17 +84,20 @@ export type SessionPermissionsActionInputById = {
         mode: 'continue' | 'wait';
         type: 'blocked' | 'decision';
         questions: ({
-            id: string;
-            prompt: string;
-            type: 'multipleChoice' | 'singleChoice';
             choices: {
                 id: string;
                 label?: string | undefined;
                 description?: string | undefined;
             }[];
+            id: string;
+            prompt: string;
+            type: 'multipleChoice' | 'singleChoice';
+            minSelections?: number | undefined;
+            maxSelections?: number | undefined;
             description?: string | undefined;
             required?: boolean | undefined;
             allowCustom?: boolean | undefined;
+            allowNote?: boolean | undefined;
         } | {
             id: string;
             prompt: string;
@@ -88,6 +105,7 @@ export type SessionPermissionsActionInputById = {
             description?: string | undefined;
             initialValue?: string | undefined;
             required?: boolean | undefined;
+            allowNote?: boolean | undefined;
         })[];
         sessionId?: string | undefined;
         assumption?: string | undefined;
@@ -108,6 +126,8 @@ export type SessionPermissionsActionInputById = {
         answers?: undefined | {
             question: string;
             values?: string[] | undefined;
+            freeText?: string | undefined;
+            note?: string | undefined;
             answer?: string | undefined;
         }[];
     };
@@ -146,6 +166,41 @@ export type SessionPermissionsActionResultById = {
                 title: string;
                 detail: string;
             };
+            nativeChoices?: undefined | {
+                requirementId: string;
+                source: string;
+                choices: {
+                    id: string;
+                    label: string;
+                    decision: 'abort' | 'approved' | 'approved_execpolicy_amendment' | 'approved_for_session' | 'denied';
+                    scope: 'localPersistent' | 'once' | 'session';
+                    response: {
+                        approved: boolean;
+                        reason?: string | undefined;
+                        answeringClientCategory?: 'android' | 'desktop' | 'ios' | 'web' | undefined;
+                        mode?: 'acceptEdits' | 'bypassPermissions' | 'default' | 'plan' | 'read-only' | undefined;
+                        allowedTools?: string[] | undefined;
+                        decision?: 'abort' | 'approved' | 'approved_execpolicy_amendment' | 'approved_for_session' | 'denied' | undefined;
+                        execPolicyAmendment?: undefined | {
+                            command: string[];
+                        };
+                        updatedPermissions?: unknown;
+                    };
+                    rulePreview?: string | undefined;
+                    allowsFeedback?: boolean | undefined;
+                }[];
+                origin?: undefined | {
+                    sessionId: string;
+                    subagentId?: string | undefined;
+                    subagentLabel?: string | undefined;
+                };
+            };
+            nativeChoiceAvailability?: undefined | {
+                choiceId: string;
+                allowed: boolean;
+                reason?: 'owner_required' | undefined;
+            }[];
+            permissionOwnerLabel?: string | undefined;
         } | {
             kind: 'user_action';
             requestId: string;

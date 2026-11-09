@@ -1419,8 +1419,8 @@ export type WorkflowsActionInputById = {
             environmentId: string;
             targetLinkId: string;
             deploymentId: string;
-            configRevision: number;
             installationId: string;
+            configRevision: number;
         };
     } | {
         managedTarget: {
@@ -1812,13 +1812,13 @@ export type WorkflowsActionInputById = {
             paths?: string[] | undefined;
         };
         actionApproval?: 'ask' | 'automatic' | undefined;
-        inputs?: Record<string, unknown> | undefined;
         executionTarget?: undefined | {
             kind: 'detached_run';
         } | {
             kind: 'session';
         };
         approvalProfileId?: null | string | undefined;
+        inputs?: Record<string, unknown> | undefined;
         visibleTeamId?: null | string | undefined;
         roleOverrides?: undefined | {
             roleId: string;
@@ -2035,13 +2035,13 @@ export type WorkflowsActionInputById = {
                 paths?: string[] | undefined;
             };
             actionApproval?: 'ask' | 'automatic' | undefined;
-            inputs?: Record<string, unknown> | undefined;
             executionTarget?: undefined | {
                 kind: 'detached_run';
             } | {
                 kind: 'session';
             };
             approvalProfileId?: null | string | undefined;
+            inputs?: Record<string, unknown> | undefined;
             visibleTeamId?: null | string | undefined;
             roleOverrides?: undefined | {
                 roleId: string;
@@ -2274,13 +2274,13 @@ export type WorkflowsActionInputById = {
             kind: 'workflow';
             ref: string;
         };
-        inputs?: Record<string, unknown> | undefined;
         executionTarget?: undefined | {
             kind: 'detached_run';
         } | {
             kind: 'session';
         };
         approvalProfileId?: null | string | undefined;
+        inputs?: Record<string, unknown> | undefined;
         visibleTeamId?: null | string | undefined;
         roleOverrides?: undefined | {
             roleId: string;
@@ -2503,13 +2503,13 @@ export type WorkflowsActionInputById = {
                 };
                 kind: 'sessionLifecycle';
             };
-            inputs?: Record<string, unknown> | undefined;
             executionTarget?: undefined | {
                 kind: 'detached_run';
             } | {
                 kind: 'session';
             };
             approvalProfileId?: null | string | undefined;
+            inputs?: Record<string, unknown> | undefined;
             visibleTeamId?: null | string | undefined;
             roleOverrides?: undefined | {
                 roleId: string;

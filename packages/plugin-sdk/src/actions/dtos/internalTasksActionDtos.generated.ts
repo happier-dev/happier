@@ -93,8 +93,8 @@ export type InternalTasksActionInputById = {
                 title?: string | undefined;
             }[];
             labels?: string[] | undefined;
-            notes?: string | undefined;
             dueAt?: number | undefined;
+            notes?: string | undefined;
             blockedBy?: (Readonly<{
                 source: Readonly<{
                     pluginId: string;

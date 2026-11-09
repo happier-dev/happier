@@ -9804,9 +9804,9 @@ export type UsageActionResultById = {
                         details: {
                             code?: string | undefined;
                             scope?: 'daily' | 'five_hour' | 'model' | 'monthly' | 'primary' | 'requests' | 'rolling' | 'secondary' | 'session' | 'seven_day' | 'tokens' | 'unknown' | 'weekly' | undefined;
+                            note?: null | string | undefined;
                             providerLimitId?: string | undefined;
                             limitCategory?: 'auth_invalid' | 'capacity' | 'disabled' | 'plan_invalid' | 'rate_limit' | 'temporary_throttle' | 'unknown' | 'usage_limit' | 'validation_failed' | undefined;
-                            note?: null | string | undefined;
                             rawScope?: string | undefined;
                         };
                         label: string;

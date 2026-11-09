@@ -2778,6 +2778,14 @@ export type SessionControlActionResultById = {
             };
         };
         ok?: true | undefined;
+        compaction?: undefined | {
+            status: 'supported';
+        } | {
+            status: 'unknown';
+        } | {
+            status: 'unsupported';
+            reason: 'unsupported';
+        };
         acceptedWorkspace?: undefined | {
             checkout: {
                 serverId: string;
@@ -3055,6 +3063,41 @@ export type SessionControlActionResultById = {
             kind: 'permission' | 'user_action';
             tool: string;
             turnId?: string | undefined;
+            nativeChoices?: undefined | {
+                requirementId: string;
+                source: string;
+                choices: {
+                    id: string;
+                    label: string;
+                    decision: 'abort' | 'approved' | 'approved_execpolicy_amendment' | 'approved_for_session' | 'denied';
+                    scope: 'localPersistent' | 'once' | 'session';
+                    response: {
+                        approved: boolean;
+                        reason?: string | undefined;
+                        answeringClientCategory?: 'android' | 'desktop' | 'ios' | 'web' | undefined;
+                        mode?: 'acceptEdits' | 'bypassPermissions' | 'default' | 'plan' | 'read-only' | undefined;
+                        allowedTools?: string[] | undefined;
+                        decision?: 'abort' | 'approved' | 'approved_execpolicy_amendment' | 'approved_for_session' | 'denied' | undefined;
+                        execPolicyAmendment?: undefined | {
+                            command: string[];
+                        };
+                        updatedPermissions?: unknown;
+                    };
+                    rulePreview?: string | undefined;
+                    allowsFeedback?: boolean | undefined;
+                }[];
+                origin?: undefined | {
+                    sessionId: string;
+                    subagentId?: string | undefined;
+                    subagentLabel?: string | undefined;
+                };
+            };
+            nativeChoiceAvailability?: undefined | {
+                choiceId: string;
+                allowed: boolean;
+                reason?: 'owner_required' | undefined;
+            }[];
+            permissionOwnerLabel?: string | undefined;
         }[];
         agentState?: null | undefined | {
             [x: string]: unknown;
@@ -3409,6 +3452,14 @@ export type SessionControlActionResultById = {
                         };
                     };
                     ok?: true | undefined;
+                    compaction?: undefined | {
+                        status: 'supported';
+                    } | {
+                        status: 'unknown';
+                    } | {
+                        status: 'unsupported';
+                        reason: 'unsupported';
+                    };
                     acceptedWorkspace?: undefined | {
                         checkout: {
                             serverId: string;
@@ -3686,6 +3737,41 @@ export type SessionControlActionResultById = {
                         kind: 'permission' | 'user_action';
                         tool: string;
                         turnId?: string | undefined;
+                        nativeChoices?: undefined | {
+                            requirementId: string;
+                            source: string;
+                            choices: {
+                                id: string;
+                                label: string;
+                                decision: 'abort' | 'approved' | 'approved_execpolicy_amendment' | 'approved_for_session' | 'denied';
+                                scope: 'localPersistent' | 'once' | 'session';
+                                response: {
+                                    approved: boolean;
+                                    reason?: string | undefined;
+                                    answeringClientCategory?: 'android' | 'desktop' | 'ios' | 'web' | undefined;
+                                    mode?: 'acceptEdits' | 'bypassPermissions' | 'default' | 'plan' | 'read-only' | undefined;
+                                    allowedTools?: string[] | undefined;
+                                    decision?: 'abort' | 'approved' | 'approved_execpolicy_amendment' | 'approved_for_session' | 'denied' | undefined;
+                                    execPolicyAmendment?: undefined | {
+                                        command: string[];
+                                    };
+                                    updatedPermissions?: unknown;
+                                };
+                                rulePreview?: string | undefined;
+                                allowsFeedback?: boolean | undefined;
+                            }[];
+                            origin?: undefined | {
+                                sessionId: string;
+                                subagentId?: string | undefined;
+                                subagentLabel?: string | undefined;
+                            };
+                        };
+                        nativeChoiceAvailability?: undefined | {
+                            choiceId: string;
+                            allowed: boolean;
+                            reason?: 'owner_required' | undefined;
+                        }[];
+                        permissionOwnerLabel?: string | undefined;
                     }[];
                     agentState?: null | undefined | {
                         [x: string]: unknown;

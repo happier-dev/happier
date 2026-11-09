@@ -2242,6 +2242,16 @@ export type WidgetsActionInputById = {
                     kind: 'widget';
                     instance: {
                         v: 1;
+                        bindings: Record<string, {
+                            kind: 'context';
+                            slot: string;
+                        } | {
+                            kind: 'value';
+                            value: unknown;
+                        } | {
+                            kind: 'viewer';
+                            purpose: string;
+                        }>;
                         definition: {
                             kind: 'artifact';
                             artifactId: string;
@@ -2365,16 +2375,6 @@ export type WidgetsActionInputById = {
                                 localId: string;
                             };
                         };
-                        bindings: Record<string, {
-                            kind: 'context';
-                            slot: string;
-                        } | {
-                            kind: 'value';
-                            value: unknown;
-                        } | {
-                            kind: 'viewer';
-                            purpose: string;
-                        }>;
                         displayName?: string | undefined;
                         networkOverride?: undefined | {
                             network?: 'none' | 'open' | undefined;
@@ -2396,9 +2396,9 @@ export type WidgetsActionInputById = {
                     kind: 'viewer';
                     purpose: string;
                 }> | undefined;
-                titleKey?: string | undefined;
                 frameStyle?: 'card' | 'plain' | undefined;
                 dividers?: 'hairline' | 'none' | undefined;
+                titleKey?: string | undefined;
             };
             description?: string | undefined;
             origin?: undefined | {
@@ -2485,6 +2485,16 @@ export type WidgetsActionInputById = {
                     kind: 'widget';
                     instance: {
                         v: 1;
+                        bindings: Record<string, {
+                            kind: 'context';
+                            slot: string;
+                        } | {
+                            kind: 'value';
+                            value: unknown;
+                        } | {
+                            kind: 'viewer';
+                            purpose: string;
+                        }>;
                         definition: {
                             kind: 'artifact';
                             artifactId: string;
@@ -2608,16 +2618,6 @@ export type WidgetsActionInputById = {
                                 localId: string;
                             };
                         };
-                        bindings: Record<string, {
-                            kind: 'context';
-                            slot: string;
-                        } | {
-                            kind: 'value';
-                            value: unknown;
-                        } | {
-                            kind: 'viewer';
-                            purpose: string;
-                        }>;
                         displayName?: string | undefined;
                         networkOverride?: undefined | {
                             network?: 'none' | 'open' | undefined;
@@ -2639,9 +2639,9 @@ export type WidgetsActionInputById = {
                     kind: 'viewer';
                     purpose: string;
                 }> | undefined;
-                titleKey?: string | undefined;
                 frameStyle?: 'card' | 'plain' | undefined;
                 dividers?: 'hairline' | 'none' | undefined;
+                titleKey?: string | undefined;
             };
             origin?: undefined | {
                 kind: 'corePage' | 'home' | 'pluginArea' | 'project';
@@ -13736,7 +13736,6 @@ export type WidgetsActionResultById = {
     readonly "widgets.definition.list": {
         definitions: {
             name: string;
-            inputSchema: PluginJsonSchemaV2;
             inputs: {
                 fields: readonly {
                     path: string;
@@ -13800,6 +13799,7 @@ export type WidgetsActionResultById = {
                 description?: string | undefined;
                 submitLabel?: string | undefined;
             };
+            inputSchema: PluginJsonSchemaV2;
             sizeDeclaration: {
                 sizes: ('full' | 'large' | 'medium' | 'small' | 'tall' | 'wide')[];
                 defaultSize: 'full' | 'large' | 'medium' | 'small' | 'tall' | 'wide';
@@ -14537,6 +14537,16 @@ export type WidgetsActionResultById = {
                     kind: 'widget';
                     instance: {
                         v: 1;
+                        bindings: Record<string, {
+                            kind: 'context';
+                            slot: string;
+                        } | {
+                            kind: 'value';
+                            value: JsonValue;
+                        } | {
+                            kind: 'viewer';
+                            purpose: string;
+                        }>;
                         definition: {
                             kind: 'artifact';
                             artifactId: string;
@@ -14663,16 +14673,6 @@ export type WidgetsActionResultById = {
                                 localId: string;
                             };
                         };
-                        bindings: Record<string, {
-                            kind: 'context';
-                            slot: string;
-                        } | {
-                            kind: 'value';
-                            value: JsonValue;
-                        } | {
-                            kind: 'viewer';
-                            purpose: string;
-                        }>;
                         displayName?: string | undefined;
                         networkOverride?: undefined | {
                             network?: 'none' | 'open' | undefined;
@@ -14798,6 +14798,16 @@ export type WidgetsActionResultById = {
                     kind: 'widget';
                     instance: {
                         v: 1;
+                        bindings: Record<string, {
+                            kind: 'context';
+                            slot: string;
+                        } | {
+                            kind: 'value';
+                            value: JsonValue;
+                        } | {
+                            kind: 'viewer';
+                            purpose: string;
+                        }>;
                         definition: {
                             kind: 'artifact';
                             artifactId: string;
@@ -14924,16 +14934,6 @@ export type WidgetsActionResultById = {
                                 localId: string;
                             };
                         };
-                        bindings: Record<string, {
-                            kind: 'context';
-                            slot: string;
-                        } | {
-                            kind: 'value';
-                            value: JsonValue;
-                        } | {
-                            kind: 'viewer';
-                            purpose: string;
-                        }>;
                         displayName?: string | undefined;
                         networkOverride?: undefined | {
                             network?: 'none' | 'open' | undefined;
@@ -15055,6 +15055,16 @@ export type WidgetsActionResultById = {
                     kind: 'widget';
                     instance: {
                         v: 1;
+                        bindings: Record<string, {
+                            kind: 'context';
+                            slot: string;
+                        } | {
+                            kind: 'value';
+                            value: JsonValue;
+                        } | {
+                            kind: 'viewer';
+                            purpose: string;
+                        }>;
                         definition: {
                             kind: 'artifact';
                             artifactId: string;
@@ -15181,16 +15191,6 @@ export type WidgetsActionResultById = {
                                 localId: string;
                             };
                         };
-                        bindings: Record<string, {
-                            kind: 'context';
-                            slot: string;
-                        } | {
-                            kind: 'value';
-                            value: JsonValue;
-                        } | {
-                            kind: 'viewer';
-                            purpose: string;
-                        }>;
                         displayName?: string | undefined;
                         networkOverride?: undefined | {
                             network?: 'none' | 'open' | undefined;
@@ -15312,6 +15312,16 @@ export type WidgetsActionResultById = {
                     kind: 'widget';
                     instance: {
                         v: 1;
+                        bindings: Record<string, {
+                            kind: 'context';
+                            slot: string;
+                        } | {
+                            kind: 'value';
+                            value: JsonValue;
+                        } | {
+                            kind: 'viewer';
+                            purpose: string;
+                        }>;
                         definition: {
                             kind: 'artifact';
                             artifactId: string;
@@ -15438,16 +15448,6 @@ export type WidgetsActionResultById = {
                                 localId: string;
                             };
                         };
-                        bindings: Record<string, {
-                            kind: 'context';
-                            slot: string;
-                        } | {
-                            kind: 'value';
-                            value: JsonValue;
-                        } | {
-                            kind: 'viewer';
-                            purpose: string;
-                        }>;
                         displayName?: string | undefined;
                         networkOverride?: undefined | {
                             network?: 'none' | 'open' | undefined;
@@ -15569,6 +15569,16 @@ export type WidgetsActionResultById = {
                     kind: 'widget';
                     instance: {
                         v: 1;
+                        bindings: Record<string, {
+                            kind: 'context';
+                            slot: string;
+                        } | {
+                            kind: 'value';
+                            value: JsonValue;
+                        } | {
+                            kind: 'viewer';
+                            purpose: string;
+                        }>;
                         definition: {
                             kind: 'artifact';
                             artifactId: string;
@@ -15695,16 +15705,6 @@ export type WidgetsActionResultById = {
                                 localId: string;
                             };
                         };
-                        bindings: Record<string, {
-                            kind: 'context';
-                            slot: string;
-                        } | {
-                            kind: 'value';
-                            value: JsonValue;
-                        } | {
-                            kind: 'viewer';
-                            purpose: string;
-                        }>;
                         displayName?: string | undefined;
                         networkOverride?: undefined | {
                             network?: 'none' | 'open' | undefined;

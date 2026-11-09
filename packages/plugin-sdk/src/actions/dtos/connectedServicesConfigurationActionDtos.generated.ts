@@ -386,6 +386,18 @@ export type ConnectedServicesConfigurationActionInputById = {
         };
         machineId?: string | undefined;
     };
+    readonly "connectedServices.pools.get": {
+        group: {
+            service: {
+                pluginId: 'happier';
+                localId: 'mcp-sign-in';
+            } | {
+                pluginId: string;
+                localId: string;
+            };
+            groupId: string;
+        };
+    };
     readonly "connectedServices.pools.create": {
         service: {
             pluginId: 'happier';
@@ -397,10 +409,8 @@ export type ConnectedServicesConfigurationActionInputById = {
         group: {
             groupId: string;
             policy?: undefined | {
-                v?: 1 | undefined;
                 strategy?: 'expiry_first' | 'least_limited' | 'manual' | 'priority' | undefined;
                 autoSwitch?: boolean | undefined;
-                claudeCodeAutoContinueAtUsageLimit?: boolean | undefined;
                 autoUseQuotaResetsWhenExhausted?: boolean | undefined;
                 autoDisablePlanInvalidAccounts?: boolean | undefined;
                 quotaLimitSelection?: undefined | {
@@ -425,6 +435,8 @@ export type ConnectedServicesConfigurationActionInputById = {
                 preTurnProbeOrder?: 'candidates_first_then_current' | 'current_first_then_candidates' | undefined;
                 recoveryMode?: 'off' | 'switch_or_wait' | 'switch_then_resume' | 'wait_until_reset' | undefined;
                 resumePromptMode?: 'custom' | 'off' | 'standard' | undefined;
+                v?: 2 | undefined;
+                nativeUsageLimitContinuation?: boolean | undefined;
             };
             displayName?: null | string | undefined;
         };
@@ -440,10 +452,8 @@ export type ConnectedServicesConfigurationActionInputById = {
         };
         expectedGeneration: number;
         policy?: undefined | {
-            v?: 1 | undefined;
             strategy?: 'expiry_first' | 'least_limited' | 'manual' | 'priority' | undefined;
             autoSwitch?: boolean | undefined;
-            claudeCodeAutoContinueAtUsageLimit?: boolean | undefined;
             autoUseQuotaResetsWhenExhausted?: boolean | undefined;
             autoDisablePlanInvalidAccounts?: boolean | undefined;
             quotaLimitSelection?: undefined | {
@@ -468,6 +478,8 @@ export type ConnectedServicesConfigurationActionInputById = {
             preTurnProbeOrder?: 'candidates_first_then_current' | 'current_first_then_candidates' | undefined;
             recoveryMode?: 'off' | 'switch_or_wait' | 'switch_then_resume' | 'wait_until_reset' | undefined;
             resumePromptMode?: 'custom' | 'off' | 'standard' | undefined;
+            v?: 2 | undefined;
+            nativeUsageLimitContinuation?: boolean | undefined;
         };
         displayName?: null | string | undefined;
         expectedIncarnation?: string | undefined;
@@ -767,6 +779,8 @@ export type ConnectedServicesConfigurationActionResultById = {
                     email?: null | string | undefined;
                     organizationId?: null | string | undefined;
                 };
+                accessMode?: 'apiKey' | 'subscription' | undefined;
+                includesApiKey?: true | undefined;
                 displayName?: string | undefined;
                 authenticationProvenance?: undefined | {
                     authenticatedAt: number;
@@ -803,6 +817,8 @@ export type ConnectedServicesConfigurationActionResultById = {
                     email?: null | string | undefined;
                     organizationId?: null | string | undefined;
                 };
+                accessMode?: 'apiKey' | 'subscription' | undefined;
+                includesApiKey?: true | undefined;
                 displayName?: string | undefined;
                 authenticationProvenance?: undefined | {
                     authenticatedAt: number;
@@ -838,7 +854,6 @@ export type ConnectedServicesConfigurationActionResultById = {
                 incarnation: string;
                 displayName: null | string;
                 policy: {
-                    v: 1;
                     strategy: 'expiry_first' | 'least_limited' | 'manual' | 'priority';
                     autoSwitch: boolean;
                     switchOn: {
@@ -856,7 +871,7 @@ export type ConnectedServicesConfigurationActionResultById = {
                     preTurnProbeOrder: 'candidates_first_then_current' | 'current_first_then_candidates';
                     recoveryMode: 'off' | 'switch_or_wait' | 'switch_then_resume' | 'wait_until_reset';
                     resumePromptMode: 'custom' | 'off' | 'standard';
-                    claudeCodeAutoContinueAtUsageLimit?: boolean | undefined;
+                    v: 2;
                     autoUseQuotaResetsWhenExhausted?: boolean | undefined;
                     autoDisablePlanInvalidAccounts?: boolean | undefined;
                     quotaLimitSelection?: undefined | {
@@ -866,6 +881,7 @@ export type ConnectedServicesConfigurationActionResultById = {
                         mode: 'selected';
                         providerLimitIds: string[];
                     };
+                    nativeUsageLimitContinuation?: boolean | undefined;
                 };
                 activeConnectedAccountId: null | string;
                 generation: number;
@@ -1089,6 +1105,7 @@ export type ConnectedServicesConfigurationActionResultById = {
                             fallback: string;
                             params?: Record<string, number | string> | undefined;
                         };
+                        apiKey?: true | undefined;
                         setup?: undefined | {
                             url: string;
                             checklist: (string | {
@@ -2341,7 +2358,7 @@ export type ConnectedServicesConfigurationActionResultById = {
                         exportName: string;
                     };
                     native?: undefined | {
-                        systemTool: 'gh';
+                        systemTool: string;
                     };
                 };
                 capabilities: string[];
@@ -2357,7 +2374,18 @@ export type ConnectedServicesConfigurationActionResultById = {
                     fallback: string;
                 };
                 ui?: undefined | {
-                    category: 'cloud-machines';
+                    category?: 'cloud-machines' | undefined;
+                    iconResourceId?: string | undefined;
+                    shortName?: string | undefined;
+                    setup?: undefined | {
+                        order?: number | undefined;
+                        firstRun?: boolean | undefined;
+                        catalogDescription?: string | undefined | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                    };
                 };
                 usageIdentity?: undefined | {
                     providerId?: string | undefined;
@@ -2457,6 +2485,8 @@ export type ConnectedServicesConfigurationActionResultById = {
             };
             accountId: string;
         };
+        includesApiKey?: true | undefined;
+        accessMode?: 'apiKey' | 'subscription' | undefined;
     } | {
         status: 'outcomeUnknown';
         attemptId: string;
@@ -2563,6 +2593,8 @@ export type ConnectedServicesConfigurationActionResultById = {
             };
             accountId: string;
         };
+        includesApiKey?: true | undefined;
+        accessMode?: 'apiKey' | 'subscription' | undefined;
     } | {
         status: 'outcomeUnknown';
         attemptId: string;
@@ -2669,6 +2701,8 @@ export type ConnectedServicesConfigurationActionResultById = {
             };
             accountId: string;
         };
+        includesApiKey?: true | undefined;
+        accessMode?: 'apiKey' | 'subscription' | undefined;
     } | {
         status: 'outcomeUnknown';
         attemptId: string;
@@ -2775,6 +2809,8 @@ export type ConnectedServicesConfigurationActionResultById = {
             };
             accountId: string;
         };
+        includesApiKey?: true | undefined;
+        accessMode?: 'apiKey' | 'subscription' | undefined;
     } | {
         status: 'outcomeUnknown';
         attemptId: string;
@@ -2881,6 +2917,8 @@ export type ConnectedServicesConfigurationActionResultById = {
             };
             accountId: string;
         };
+        includesApiKey?: true | undefined;
+        accessMode?: 'apiKey' | 'subscription' | undefined;
     } | {
         status: 'outcomeUnknown';
         attemptId: string;
@@ -2987,6 +3025,8 @@ export type ConnectedServicesConfigurationActionResultById = {
             };
             accountId: string;
         };
+        includesApiKey?: true | undefined;
+        accessMode?: 'apiKey' | 'subscription' | undefined;
     } | {
         status: 'outcomeUnknown';
         attemptId: string;
@@ -3093,6 +3133,8 @@ export type ConnectedServicesConfigurationActionResultById = {
             };
             accountId: string;
         };
+        includesApiKey?: true | undefined;
+        accessMode?: 'apiKey' | 'subscription' | undefined;
     } | {
         status: 'outcomeUnknown';
         attemptId: string;
@@ -3199,6 +3241,8 @@ export type ConnectedServicesConfigurationActionResultById = {
             };
             accountId: string;
         };
+        includesApiKey?: true | undefined;
+        accessMode?: 'apiKey' | 'subscription' | undefined;
     } | {
         status: 'outcomeUnknown';
         attemptId: string;
@@ -3305,6 +3349,8 @@ export type ConnectedServicesConfigurationActionResultById = {
             };
             accountId: string;
         };
+        includesApiKey?: true | undefined;
+        accessMode?: 'apiKey' | 'subscription' | undefined;
     } | {
         status: 'outcomeUnknown';
         attemptId: string;
@@ -3411,6 +3457,8 @@ export type ConnectedServicesConfigurationActionResultById = {
             };
             accountId: string;
         };
+        includesApiKey?: true | undefined;
+        accessMode?: 'apiKey' | 'subscription' | undefined;
     } | {
         status: 'outcomeUnknown';
         attemptId: string;
@@ -3645,6 +3693,7 @@ export type ConnectedServicesConfigurationActionResultById = {
                 fallback: string;
                 params?: Record<string, number | string> | undefined;
             };
+            apiKey?: true | undefined;
             setup?: undefined | {
                 url: string;
                 checklist: (string | {
@@ -5346,9 +5395,9 @@ export type ConnectedServicesConfigurationActionResultById = {
                 details: {
                     code?: string | undefined;
                     scope?: 'daily' | 'five_hour' | 'model' | 'monthly' | 'primary' | 'requests' | 'rolling' | 'secondary' | 'session' | 'seven_day' | 'tokens' | 'unknown' | 'weekly' | undefined;
+                    note?: null | string | undefined;
                     providerLimitId?: string | undefined;
                     limitCategory?: 'auth_invalid' | 'capacity' | 'disabled' | 'plan_invalid' | 'rate_limit' | 'temporary_throttle' | 'unknown' | 'usage_limit' | 'validation_failed' | undefined;
-                    note?: null | string | undefined;
                     rawScope?: string | undefined;
                 };
                 label: string;
@@ -5891,7 +5940,7 @@ export type ConnectedServicesConfigurationActionResultById = {
     readonly "connectedServices.purposes.default.set": {
         applied: true;
     };
-    readonly "connectedServices.pools.create": {
+    readonly "connectedServices.pools.get": {
         group: {
             v: 1;
             ref: {
@@ -5907,7 +5956,6 @@ export type ConnectedServicesConfigurationActionResultById = {
             incarnation: string;
             displayName: null | string;
             policy: {
-                v: 1;
                 strategy: 'expiry_first' | 'least_limited' | 'manual' | 'priority';
                 autoSwitch: boolean;
                 switchOn: {
@@ -5925,7 +5973,7 @@ export type ConnectedServicesConfigurationActionResultById = {
                 preTurnProbeOrder: 'candidates_first_then_current' | 'current_first_then_candidates';
                 recoveryMode: 'off' | 'switch_or_wait' | 'switch_then_resume' | 'wait_until_reset';
                 resumePromptMode: 'custom' | 'off' | 'standard';
-                claudeCodeAutoContinueAtUsageLimit?: boolean | undefined;
+                v: 2;
                 autoUseQuotaResetsWhenExhausted?: boolean | undefined;
                 autoDisablePlanInvalidAccounts?: boolean | undefined;
                 quotaLimitSelection?: undefined | {
@@ -5935,6 +5983,97 @@ export type ConnectedServicesConfigurationActionResultById = {
                     mode: 'selected';
                     providerLimitIds: string[];
                 };
+                nativeUsageLimitContinuation?: boolean | undefined;
+            };
+            activeConnectedAccountId: null | string;
+            generation: number;
+            runtimeStateRevision: number;
+            state: {
+                [x: string]: unknown;
+                status?: 'error' | 'exhausted' | 'ready' | 'switching' | 'unknown' | undefined;
+                lastSwitchAt?: null | number | undefined;
+                lastSwitchReason?: null | string | undefined;
+                activeSince?: null | undefined | {
+                    accountId: string;
+                    atMs: number;
+                };
+            };
+            createdAt: number;
+            updatedAt: number;
+            members: {
+                v: 1;
+                connectedAccountId: string;
+                priority: number;
+                enabled: boolean;
+                state: {
+                    [x: string]: unknown;
+                    cooldownUntilMs?: null | number | undefined;
+                    exhaustedUntilMs?: null | number | undefined;
+                    quotaExhaustedUntilMs?: null | number | undefined;
+                    rateLimitedUntilMs?: null | number | undefined;
+                    capacityLimitedUntilMs?: null | number | undefined;
+                    authInvalidUntilMs?: null | number | undefined;
+                    planUnavailableUntilMs?: null | number | undefined;
+                    modelUnavailableUntilMsByModelId?: Record<string, number> | undefined;
+                    autoDisabledReason?: 'model_not_entitled' | null | undefined;
+                    validationBlockedUntilMs?: null | number | undefined;
+                    lastFailureKind?: null | string | undefined;
+                    lastFailureProviderLimitId?: null | string | undefined;
+                    lastFailureCode?: null | string | undefined;
+                    lastObservedPlanType?: null | string | undefined;
+                    lastObservedAtMs?: null | number | undefined;
+                    providerResetsAtMs?: null | number | undefined;
+                    credentialHealthStatus?: 'connected' | 'needs_reauth' | 'refresh_failed_retryable' | 'refreshing' | null | undefined;
+                };
+                createdAt: number;
+                updatedAt: number;
+            }[];
+        };
+    };
+    readonly "connectedServices.pools.create": {
+        group: {
+            v: 1;
+            ref: {
+                service: {
+                    pluginId: 'happier';
+                    localId: 'mcp-sign-in';
+                } | {
+                    pluginId: string;
+                    localId: string;
+                };
+                groupId: string;
+            };
+            incarnation: string;
+            displayName: null | string;
+            policy: {
+                strategy: 'expiry_first' | 'least_limited' | 'manual' | 'priority';
+                autoSwitch: boolean;
+                switchOn: {
+                    usageLimit: boolean;
+                    authExpired: boolean;
+                    accountChanged: boolean;
+                    refreshFailure: boolean;
+                };
+                cooldownMs: number;
+                honorProviderResetsAt: boolean;
+                autoRestorePrimaryWhenReset: boolean;
+                softSwitchRemainingPercent: number;
+                probeIfSnapshotOlderThanMs: number;
+                preTurnProbeMode: 'always_for_group' | 'never' | 'when_stale';
+                preTurnProbeOrder: 'candidates_first_then_current' | 'current_first_then_candidates';
+                recoveryMode: 'off' | 'switch_or_wait' | 'switch_then_resume' | 'wait_until_reset';
+                resumePromptMode: 'custom' | 'off' | 'standard';
+                v: 2;
+                autoUseQuotaResetsWhenExhausted?: boolean | undefined;
+                autoDisablePlanInvalidAccounts?: boolean | undefined;
+                quotaLimitSelection?: undefined | {
+                    mode: 'all';
+                    providerLimitIds: string[];
+                } | {
+                    mode: 'selected';
+                    providerLimitIds: string[];
+                };
+                nativeUsageLimitContinuation?: boolean | undefined;
             };
             activeConnectedAccountId: null | string;
             generation: number;
@@ -5997,7 +6136,6 @@ export type ConnectedServicesConfigurationActionResultById = {
             incarnation: string;
             displayName: null | string;
             policy: {
-                v: 1;
                 strategy: 'expiry_first' | 'least_limited' | 'manual' | 'priority';
                 autoSwitch: boolean;
                 switchOn: {
@@ -6015,7 +6153,7 @@ export type ConnectedServicesConfigurationActionResultById = {
                 preTurnProbeOrder: 'candidates_first_then_current' | 'current_first_then_candidates';
                 recoveryMode: 'off' | 'switch_or_wait' | 'switch_then_resume' | 'wait_until_reset';
                 resumePromptMode: 'custom' | 'off' | 'standard';
-                claudeCodeAutoContinueAtUsageLimit?: boolean | undefined;
+                v: 2;
                 autoUseQuotaResetsWhenExhausted?: boolean | undefined;
                 autoDisablePlanInvalidAccounts?: boolean | undefined;
                 quotaLimitSelection?: undefined | {
@@ -6025,6 +6163,7 @@ export type ConnectedServicesConfigurationActionResultById = {
                     mode: 'selected';
                     providerLimitIds: string[];
                 };
+                nativeUsageLimitContinuation?: boolean | undefined;
             };
             activeConnectedAccountId: null | string;
             generation: number;
@@ -6096,7 +6235,6 @@ export type ConnectedServicesConfigurationActionResultById = {
             incarnation: string;
             displayName: null | string;
             policy: {
-                v: 1;
                 strategy: 'expiry_first' | 'least_limited' | 'manual' | 'priority';
                 autoSwitch: boolean;
                 switchOn: {
@@ -6114,7 +6252,7 @@ export type ConnectedServicesConfigurationActionResultById = {
                 preTurnProbeOrder: 'candidates_first_then_current' | 'current_first_then_candidates';
                 recoveryMode: 'off' | 'switch_or_wait' | 'switch_then_resume' | 'wait_until_reset';
                 resumePromptMode: 'custom' | 'off' | 'standard';
-                claudeCodeAutoContinueAtUsageLimit?: boolean | undefined;
+                v: 2;
                 autoUseQuotaResetsWhenExhausted?: boolean | undefined;
                 autoDisablePlanInvalidAccounts?: boolean | undefined;
                 quotaLimitSelection?: undefined | {
@@ -6124,6 +6262,7 @@ export type ConnectedServicesConfigurationActionResultById = {
                     mode: 'selected';
                     providerLimitIds: string[];
                 };
+                nativeUsageLimitContinuation?: boolean | undefined;
             };
             activeConnectedAccountId: null | string;
             generation: number;
@@ -6186,7 +6325,6 @@ export type ConnectedServicesConfigurationActionResultById = {
             incarnation: string;
             displayName: null | string;
             policy: {
-                v: 1;
                 strategy: 'expiry_first' | 'least_limited' | 'manual' | 'priority';
                 autoSwitch: boolean;
                 switchOn: {
@@ -6204,7 +6342,7 @@ export type ConnectedServicesConfigurationActionResultById = {
                 preTurnProbeOrder: 'candidates_first_then_current' | 'current_first_then_candidates';
                 recoveryMode: 'off' | 'switch_or_wait' | 'switch_then_resume' | 'wait_until_reset';
                 resumePromptMode: 'custom' | 'off' | 'standard';
-                claudeCodeAutoContinueAtUsageLimit?: boolean | undefined;
+                v: 2;
                 autoUseQuotaResetsWhenExhausted?: boolean | undefined;
                 autoDisablePlanInvalidAccounts?: boolean | undefined;
                 quotaLimitSelection?: undefined | {
@@ -6214,6 +6352,7 @@ export type ConnectedServicesConfigurationActionResultById = {
                     mode: 'selected';
                     providerLimitIds: string[];
                 };
+                nativeUsageLimitContinuation?: boolean | undefined;
             };
             activeConnectedAccountId: null | string;
             generation: number;
@@ -6276,7 +6415,6 @@ export type ConnectedServicesConfigurationActionResultById = {
             incarnation: string;
             displayName: null | string;
             policy: {
-                v: 1;
                 strategy: 'expiry_first' | 'least_limited' | 'manual' | 'priority';
                 autoSwitch: boolean;
                 switchOn: {
@@ -6294,7 +6432,7 @@ export type ConnectedServicesConfigurationActionResultById = {
                 preTurnProbeOrder: 'candidates_first_then_current' | 'current_first_then_candidates';
                 recoveryMode: 'off' | 'switch_or_wait' | 'switch_then_resume' | 'wait_until_reset';
                 resumePromptMode: 'custom' | 'off' | 'standard';
-                claudeCodeAutoContinueAtUsageLimit?: boolean | undefined;
+                v: 2;
                 autoUseQuotaResetsWhenExhausted?: boolean | undefined;
                 autoDisablePlanInvalidAccounts?: boolean | undefined;
                 quotaLimitSelection?: undefined | {
@@ -6304,6 +6442,7 @@ export type ConnectedServicesConfigurationActionResultById = {
                     mode: 'selected';
                     providerLimitIds: string[];
                 };
+                nativeUsageLimitContinuation?: boolean | undefined;
             };
             activeConnectedAccountId: null | string;
             generation: number;

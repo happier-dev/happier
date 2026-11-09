@@ -4187,7 +4187,7 @@ export type DiscoveryActionResultById = {
                     };
                     manualModelPolicy: 'allowed' | 'catalog-only';
                     supportsFreeformModelIds: boolean;
-                    suppressedConnectedServiceIds: ('anthropic' | 'bitbucket' | 'claude-subscription' | 'gemini' | 'github' | 'openai' | 'openai-codex')[];
+                    suppressedConnectedServiceIds: string[];
                     rows: {
                         ref: {
                             agentTargetKey: string;

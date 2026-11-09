@@ -1,11 +1,18 @@
 import type {
     ActionApprovalRequestCreatedResult,
     PluginAccountActionContext,
+    PluginActionInputById,
     PluginActionResultById,
     PluginInvocableActionId,
 } from '@happier-dev/plugin-sdk/actions';
 import { isPluginActionApprovalRequestCreated, parsePluginHostActionInvocation } from '@happier-dev/plugin-sdk/actions';
 import { SessionStatusActionResultV1Schema } from '@happier-dev/plugin-sdk/sessions';
+
+/** Read exactly the selected pool through the captured Account, without a Machine. */
+export async function readSelectedAccountPool(context: PluginAccountActionContext,
+    group: PluginActionInputById['connectedServices.pools.get']['group']) {
+    return context.services.actions.execute('connectedServices.pools.get', { group }, { signal: context.signal });
+}
 
 /** Development-source example: only the host supplies Home/Account identity
  * and exact Session operands; neither comes from a plugin input bag. */

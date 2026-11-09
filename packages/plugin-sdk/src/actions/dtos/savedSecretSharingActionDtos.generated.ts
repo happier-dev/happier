@@ -1154,11 +1154,7 @@ export type SavedSecretSharingActionInputById = {
                             } | {
                                 kind: 'sessionMachine';
                             };
-                            claudeHelperModels?: undefined | {
-                                fast?: string | undefined;
-                                default?: string | undefined;
-                                strongest?: string | undefined;
-                            };
+                            roleModels?: Record<string, string> | undefined;
                             modelSettings?: Record<string, {
                                 temperature?: null | number | undefined;
                                 maxTokens?: null | number | undefined;
@@ -1858,6 +1854,8 @@ export type SavedSecretSharingActionInputById = {
                     email?: null | string | undefined;
                     organizationId?: null | string | undefined;
                 };
+                accessMode?: 'apiKey' | 'subscription' | undefined;
+                includesApiKey?: true | undefined;
                 displayName?: string | undefined;
                 scopes?: string[] | undefined;
                 authenticationProvenance?: undefined | {
@@ -1916,6 +1914,8 @@ export type SavedSecretSharingActionInputById = {
                     email?: null | string | undefined;
                     organizationId?: null | string | undefined;
                 };
+                accessMode?: 'apiKey' | 'subscription' | undefined;
+                includesApiKey?: true | undefined;
                 displayName?: string | undefined;
                 scopes?: string[] | undefined;
                 authenticationProvenance?: undefined | {

@@ -47,9 +47,9 @@ export type FilesystemActionInputById = {
             serverId: string;
             machineId: string;
             rootPath: string;
-            sourceId: string;
             sizeBytes: number;
             sha256: string;
+            sourceId: string;
             kind: 'entry_tree';
             entryTree: {
                 operationId: string;

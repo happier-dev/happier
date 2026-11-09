@@ -105,6 +105,8 @@ export type MachineAgentSignInActionResultById = {
             };
             accountId: string;
         };
+        includesApiKey?: true | undefined;
+        accessMode?: 'apiKey' | 'subscription' | undefined;
     } | {
         status: 'outcomeUnknown';
         attemptId: string;
@@ -248,6 +250,8 @@ export type MachineAgentSignInActionResultById = {
             };
             accountId: string;
         };
+        includesApiKey?: true | undefined;
+        accessMode?: 'apiKey' | 'subscription' | undefined;
     } | {
         status: 'outcomeUnknown';
         attemptId: string;

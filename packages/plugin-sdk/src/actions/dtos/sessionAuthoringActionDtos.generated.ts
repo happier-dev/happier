@@ -6,6 +6,12 @@ import type { JsonValue } from '../../identity.js';
 export type SessionAuthoringActionInputById = {
     readonly "session.authoring.open": ({
         seed: {
+            actionDefault?: undefined | {
+                pluginId: string;
+                configuredActionId: string;
+                label: string;
+                launchMode: 'review' | 'start';
+            };
             sessionName?: string | undefined;
             initialSessionFacts?: undefined | {
                 bot?: undefined | {
