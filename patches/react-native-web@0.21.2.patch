@@ -1,8 +1,112 @@
 diff --git a/dist/cjs/modules/useElementLayout/index.js b/dist/cjs/modules/useElementLayout/index.js
-index f302870429..be974eea7f 100644
+index f302870..3b15e7f 100644
 --- a/dist/cjs/modules/useElementLayout/index.js
 +++ b/dist/cjs/modules/useElementLayout/index.js
-@@ -63,6 +63,7 @@ function getResizeObserver() {
+@@ -4,7 +4,6 @@ var _interopRequireDefault = require("@babel/runtime/helpers/interopRequireDefau
+ exports.__esModule = true;
+ exports.default = useElementLayout;
+ var _useLayoutEffect = _interopRequireDefault(require("../useLayoutEffect"));
+-var _UIManager = _interopRequireDefault(require("../../exports/UIManager"));
+ var _canUseDom = _interopRequireDefault(require("../canUseDom"));
+ /**
+  * Copyright (c) Nicolas Gallagher.
+@@ -18,6 +17,60 @@ var _canUseDom = _interopRequireDefault(require("../canUseDom"));
+ var DOM_LAYOUT_HANDLER_NAME = '__reactLayoutHandler';
+ var didWarn = !_canUseDom.default;
+ var resizeObserver = null;
++// UIManager.measure reports a box relative to its parent by walking every offset parent of the
++// node and of the parent. RNW positions every View, so a View's offset parent is almost always its
++// parent, or (under a static parent) the parent's own offset parent. Then every shared term of the
++// two walks cancels, and the node and its parent alone give the same x and y. Under ~60 positioned
++// ancestors (a transcript row) that is about 8 offset reads per layout instead of about 250. Other
++// cases keep the walk. The page position (`left`, `top`) is not part of React Native's layout, so it
++// is computed only when read.
++var getRect = node => {
++  var height = node.offsetHeight;
++  var width = node.offsetWidth;
++  var left = node.offsetLeft;
++  var top = node.offsetTop;
++  node = node.offsetParent;
++  while (node && node.nodeType === 1 /* Node.ELEMENT_NODE */) {
++    left += node.offsetLeft + node.clientLeft - node.scrollLeft;
++    top += node.offsetTop + node.clientTop - node.scrollTop;
++    node = node.offsetParent;
++  }
++  top -= window.scrollY;
++  left -= window.scrollX;
++  return {
++    width,
++    height,
++    top,
++    left
++  };
++};
++function measureInParent(node, callback) {
++  var parent = node.parentNode;
++  if (parent == null) {
++    return;
++  }
++  setTimeout(() => {
++    if (!node.isConnected || !parent.isConnected) {
++      return;
++    }
++    var offsetParent = node.offsetParent;
++    var x;
++    var y;
++    if (offsetParent != null && offsetParent === parent) {
++      x = node.offsetLeft + parent.clientLeft - parent.scrollLeft;
++      y = node.offsetTop + parent.clientTop - parent.scrollTop;
++    } else if (offsetParent != null && offsetParent === parent.offsetParent) {
++      x = node.offsetLeft - parent.offsetLeft;
++      y = node.offsetTop - parent.offsetTop;
++    } else {
++      var parentRect = getRect(parent);
++      var rect = getRect(node);
++      x = rect.left - parentRect.left;
++      y = rect.top - parentRect.top;
++    }
++    callback(x, y, node.offsetWidth, node.offsetHeight);
++  }, 0);
++}
+ function getResizeObserver() {
+   if (_canUseDom.default && typeof window.ResizeObserver !== 'undefined') {
+     if (resizeObserver == null) {
+@@ -28,18 +81,25 @@ function getResizeObserver() {
+           if (typeof onLayout === 'function') {
+             // We still need to measure the view because browsers don't yet provide
+             // border-box dimensions in the entry
+-            _UIManager.default.measure(node, (x, y, width, height, left, top) => {
++            measureInParent(node, (x, y, width, height) => {
++              // A node that is not rendered (display: none on it or an ancestor, as in a
++              // retained hidden pane) has no layout to report. React Native lays out no
++              // descendant of a display: none view; publishing 0x0 here made every layout
++              // owner re-decide its geometry on hide and again on show. The observer
++              // reports again once the node is shown. A rendered 0x0 box still reports, and
++              // an engine without checkVisibility keeps reporting as before.
++              if (width === 0 && height === 0 && typeof node.checkVisibility === 'function' && !node.checkVisibility()) {
++                return;
++              }
++              var layout = { x, y, width, height };
++              var page = null;
++              var readPage = () => page || (page = getRect(node));
++              Object.defineProperty(layout, 'left', { enumerable: true, get: () => readPage().left });
++              Object.defineProperty(layout, 'top', { enumerable: true, get: () => readPage().top });
+               var event = {
+                 // $FlowFixMe
+                 nativeEvent: {
+-                  layout: {
+-                    x,
+-                    y,
+-                    width,
+-                    height,
+-                    left,
+-                    top
+-                  }
++                  layout
+                 },
+                 timeStamp: Date.now()
+               };
+@@ -63,6 +123,7 @@ function getResizeObserver() {
  }
  function useElementLayout(ref, onLayout) {
    var observer = getResizeObserver();
@@ -10,7 +114,7 @@ index f302870429..be974eea7f 100644
    (0, _useLayoutEffect.default)(() => {
      var node = ref.current;
      if (node != null) {
-@@ -70,22 +71,14 @@ function useElementLayout(ref, onLayout) {
+@@ -70,22 +131,14 @@ function useElementLayout(ref, onLayout) {
      }
    }, [ref, onLayout]);
  
@@ -42,10 +146,111 @@ index f302870429..be974eea7f 100644
 \ No newline at end of file
 +module.exports = exports.default;
 diff --git a/dist/modules/useElementLayout/index.js b/dist/modules/useElementLayout/index.js
-index cd75e40a82..b2bf053bfa 100644
+index cd75e40..c242556 100644
 --- a/dist/modules/useElementLayout/index.js
 +++ b/dist/modules/useElementLayout/index.js
-@@ -58,6 +58,7 @@ function getResizeObserver() {
+@@ -8,11 +8,64 @@
+  */
+ 
+ import useLayoutEffect from '../useLayoutEffect';
+-import UIManager from '../../exports/UIManager';
+ import canUseDOM from '../canUseDom';
+ var DOM_LAYOUT_HANDLER_NAME = '__reactLayoutHandler';
+ var didWarn = !canUseDOM;
+ var resizeObserver = null;
++// UIManager.measure reports a box relative to its parent by walking every offset parent of the
++// node and of the parent. RNW positions every View, so a View's offset parent is almost always its
++// parent, or (under a static parent) the parent's own offset parent. Then every shared term of the
++// two walks cancels, and the node and its parent alone give the same x and y. Under ~60 positioned
++// ancestors (a transcript row) that is about 8 offset reads per layout instead of about 250. Other
++// cases keep the walk. The page position (`left`, `top`) is not part of React Native's layout, so it
++// is computed only when read.
++var getRect = node => {
++  var height = node.offsetHeight;
++  var width = node.offsetWidth;
++  var left = node.offsetLeft;
++  var top = node.offsetTop;
++  node = node.offsetParent;
++  while (node && node.nodeType === 1 /* Node.ELEMENT_NODE */) {
++    left += node.offsetLeft + node.clientLeft - node.scrollLeft;
++    top += node.offsetTop + node.clientTop - node.scrollTop;
++    node = node.offsetParent;
++  }
++  top -= window.scrollY;
++  left -= window.scrollX;
++  return {
++    width,
++    height,
++    top,
++    left
++  };
++};
++function measureInParent(node, callback) {
++  var parent = node.parentNode;
++  if (parent == null) {
++    return;
++  }
++  setTimeout(() => {
++    if (!node.isConnected || !parent.isConnected) {
++      return;
++    }
++    var offsetParent = node.offsetParent;
++    var x;
++    var y;
++    if (offsetParent != null && offsetParent === parent) {
++      x = node.offsetLeft + parent.clientLeft - parent.scrollLeft;
++      y = node.offsetTop + parent.clientTop - parent.scrollTop;
++    } else if (offsetParent != null && offsetParent === parent.offsetParent) {
++      x = node.offsetLeft - parent.offsetLeft;
++      y = node.offsetTop - parent.offsetTop;
++    } else {
++      var parentRect = getRect(parent);
++      var rect = getRect(node);
++      x = rect.left - parentRect.left;
++      y = rect.top - parentRect.top;
++    }
++    callback(x, y, node.offsetWidth, node.offsetHeight);
++  }, 0);
++}
+ function getResizeObserver() {
+   if (canUseDOM && typeof window.ResizeObserver !== 'undefined') {
+     if (resizeObserver == null) {
+@@ -23,18 +76,25 @@ function getResizeObserver() {
+           if (typeof onLayout === 'function') {
+             // We still need to measure the view because browsers don't yet provide
+             // border-box dimensions in the entry
+-            UIManager.measure(node, (x, y, width, height, left, top) => {
++            measureInParent(node, (x, y, width, height) => {
++              // A node that is not rendered (display: none on it or an ancestor, as in a
++              // retained hidden pane) has no layout to report. React Native lays out no
++              // descendant of a display: none view; publishing 0x0 here made every layout
++              // owner re-decide its geometry on hide and again on show. The observer
++              // reports again once the node is shown. A rendered 0x0 box still reports, and
++              // an engine without checkVisibility keeps reporting as before.
++              if (width === 0 && height === 0 && typeof node.checkVisibility === 'function' && !node.checkVisibility()) {
++                return;
++              }
++              var layout = { x, y, width, height };
++              var page = null;
++              var readPage = () => page || (page = getRect(node));
++              Object.defineProperty(layout, 'left', { enumerable: true, get: () => readPage().left });
++              Object.defineProperty(layout, 'top', { enumerable: true, get: () => readPage().top });
+               var event = {
+                 // $FlowFixMe
+                 nativeEvent: {
+-                  layout: {
+-                    x,
+-                    y,
+-                    width,
+-                    height,
+-                    left,
+-                    top
+-                  }
++                  layout
+                 },
+                 timeStamp: Date.now()
+               };
+@@ -58,6 +118,7 @@ function getResizeObserver() {
  }
  export default function useElementLayout(ref, onLayout) {
    var observer = getResizeObserver();
@@ -53,7 +258,7 @@ index cd75e40a82..b2bf053bfa 100644
    useLayoutEffect(() => {
      var node = ref.current;
      if (node != null) {
-@@ -65,21 +66,13 @@ export default function useElementLayout(ref, onLayout) {
+@@ -65,21 +126,13 @@ export default function useElementLayout(ref, onLayout) {
      }
    }, [ref, onLayout]);
  
@@ -84,10 +289,107 @@ index cd75e40a82..b2bf053bfa 100644
 +  }, [ref, observer, hasOnLayout]);
 +}
 diff --git a/src/modules/useElementLayout/index.js b/src/modules/useElementLayout/index.js
-index 6099899ca6..225dc7641c 100644
+index 6099899..da188f7 100644
 --- a/src/modules/useElementLayout/index.js
 +++ b/src/modules/useElementLayout/index.js
-@@ -67,6 +67,7 @@ export default function useElementLayout(
+@@ -11,7 +11,6 @@ import type { ElementRef } from 'react';
+ import type { LayoutEvent } from '../../types';
+ 
+ import useLayoutEffect from '../useLayoutEffect';
+-import UIManager from '../../exports/UIManager';
+ import canUseDOM from '../canUseDom';
+ 
+ const DOM_LAYOUT_HANDLER_NAME = '__reactLayoutHandler';
+@@ -19,6 +18,60 @@ const DOM_LAYOUT_HANDLER_NAME = '__reactLayoutHandler';
+ let didWarn = !canUseDOM;
+ let resizeObserver = null;
+ 
++// UIManager.measure reports a box relative to its parent by walking every offset parent of the
++// node and of the parent. RNW positions every View, so a View's offset parent is almost always its
++// parent, or (under a static parent) the parent's own offset parent. Then every shared term of the
++// two walks cancels, and the node and its parent alone give the same x and y. Under ~60 positioned
++// ancestors (a transcript row) that is about 8 offset reads per layout instead of about 250. Other
++// cases keep the walk. The page position (`left`, `top`) is not part of React Native's layout, so it
++// is computed only when read.
++const getRect = node => {
++  const height = node.offsetHeight;
++  const width = node.offsetWidth;
++  let left = node.offsetLeft;
++  let top = node.offsetTop;
++  node = node.offsetParent;
++  while (node && node.nodeType === 1 /* Node.ELEMENT_NODE */) {
++    left += node.offsetLeft + node.clientLeft - node.scrollLeft;
++    top += node.offsetTop + node.clientTop - node.scrollTop;
++    node = node.offsetParent;
++  }
++  top -= window.scrollY;
++  left -= window.scrollX;
++  return {
++    width,
++    height,
++    top,
++    left
++  };
++};
++function measureInParent(node, callback) {
++  const parent = node.parentNode;
++  if (parent == null) {
++    return;
++  }
++  setTimeout(() => {
++    if (!node.isConnected || !parent.isConnected) {
++      return;
++    }
++    const offsetParent = node.offsetParent;
++    let x;
++    let y;
++    if (offsetParent != null && offsetParent === parent) {
++      x = node.offsetLeft + parent.clientLeft - parent.scrollLeft;
++      y = node.offsetTop + parent.clientTop - parent.scrollTop;
++    } else if (offsetParent != null && offsetParent === parent.offsetParent) {
++      x = node.offsetLeft - parent.offsetLeft;
++      y = node.offsetTop - parent.offsetTop;
++    } else {
++      const parentRect = getRect(parent);
++      const rect = getRect(node);
++      x = rect.left - parentRect.left;
++      y = rect.top - parentRect.top;
++    }
++    callback(x, y, node.offsetWidth, node.offsetHeight);
++  }, 0);
++}
+ function getResizeObserver(): ?ResizeObserver {
+   if (canUseDOM && typeof window.ResizeObserver !== 'undefined') {
+     if (resizeObserver == null) {
+@@ -29,11 +82,25 @@ function getResizeObserver(): ?ResizeObserver {
+           if (typeof onLayout === 'function') {
+             // We still need to measure the view because browsers don't yet provide
+             // border-box dimensions in the entry
+-            UIManager.measure(node, (x, y, width, height, left, top) => {
++            measureInParent(node, (x, y, width, height) => {
++              // A node that is not rendered (display: none on it or an ancestor, as in a
++              // retained hidden pane) has no layout to report. React Native lays out no
++              // descendant of a display: none view; publishing 0x0 here made every layout
++              // owner re-decide its geometry on hide and again on show. The observer
++              // reports again once the node is shown. A rendered 0x0 box still reports, and
++              // an engine without checkVisibility keeps reporting as before.
++              if (width === 0 && height === 0 && typeof node.checkVisibility === 'function' && !node.checkVisibility()) {
++                return;
++              }
++              const layout = { x, y, width, height };
++              let page = null;
++              const readPage = () => page || (page = getRect(node));
++              Object.defineProperty(layout, 'left', { enumerable: true, get: () => readPage().left });
++              Object.defineProperty(layout, 'top', { enumerable: true, get: () => readPage().top });
+               const event: LayoutEvent = {
+                 // $FlowFixMe
+                 nativeEvent: {
+-                  layout: { x, y, width, height, left, top }
++                  layout
+                 },
+                 timeStamp: Date.now()
+               };
+@@ -67,6 +134,7 @@ export default function useElementLayout(
    onLayout?: ?(e: LayoutEvent) => void
  ) {
    const observer = getResizeObserver();
@@ -95,7 +397,7 @@ index 6099899ca6..225dc7641c 100644
  
    useLayoutEffect(() => {
      const node = ref.current;
-@@ -75,21 +76,13 @@ export default function useElementLayout(
+@@ -75,21 +143,13 @@ export default function useElementLayout(
      }
    }, [ref, onLayout]);
  
