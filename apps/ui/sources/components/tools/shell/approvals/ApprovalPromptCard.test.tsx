@@ -431,6 +431,14 @@ describe('ApprovalPromptCard', () => {
             expect(ids.some((id) => id.startsWith('approval-prompt-computer-action-capture'))).toBe(true);
         });
 
+        it('asks for a window with the card as its only facts, like the approval page', async () => {
+            const screen = await renderCard({ ...computerClickApproval(false), actionId: 'computer.target.select',
+                actionArgs: { machineId: 'machine-exact', requestedTarget: 'Lumen', access: 'see' },
+                preview: { computerApprovalDisplay: { machineDisplayName: 'MacBook Pro', requiresTargetSelection: true } } }, { chrome: 'inline' });
+            expect(screen.findByTestId('approval-prompt-computer-action-choose')).not.toBeNull();
+            expect(screen.findByTestId('approvals.fields-table')).toBeNull();
+        });
+
         it('leaves the picture out when the owner has no capture yet', async () => {
             const screen = await renderCard(computerClickApproval(false), { chrome: 'inline' });
             const ids = collectRenderedTestIds(screen.tree.toJSON());

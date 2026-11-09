@@ -245,6 +245,7 @@ const BuiltInApprovalPromptCard = React.memo(function BuiltInApprovalPromptCard(
         actionArgs: props.approval.actionArgs,
         approvedInput: props.approval.v === 2 && props.approval.status !== 'open' && props.approval.decision?.kind === 'approve'
             ? props.approval.decision.narrowedInput : undefined,
+        executionResult: props.approval.v === 2 && props.approval.execution?.ok ? props.approval.execution.result : undefined,
         preview: props.approval.preview,
         sessionId,
         serverId: transcriptSource.serverId,
@@ -461,7 +462,9 @@ const BuiltInApprovalPromptCard = React.memo(function BuiltInApprovalPromptCard(
             ) : promptDocUpdate ? (
                 <PromptDocApprovalDiff request={promptDocUpdate} serverId={transcriptSource.serverId ?? null}
                     testID="approval-prompt-prompt-doc-diff" />
-            ) : actionFields && (actionFields.rows.length > 0 || failureOutcome || toolOutput) ? (
+            // A Computer ask's card already says what and where; only a failure or output adds to it (as on the approval page).
+            ) : computerAction && !failureOutcome && !toolOutput ? null
+            : actionFields && (actionFields.rows.length > 0 || failureOutcome || toolOutput) ? (
                 <ActionApprovalFieldsCard presentation={actionFields} request={props.approval} serverId={approvalHome.serverId}
                     failureTechnicalDetails={failureOutcome?.technicalDetails}
                     outputText={toolOutput}

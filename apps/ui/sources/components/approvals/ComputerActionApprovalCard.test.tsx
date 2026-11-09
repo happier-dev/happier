@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
+import { Text } from '@/components/ui/text/Text';
 import { renderHook, renderScreen } from '@/dev/testkit';
 import { act } from 'react-test-renderer';
 import { useComputerApprovalChoice } from './useComputerApprovalChoice';
@@ -42,6 +43,50 @@ describe('describeComputerActionApproval', () => {
             preview: { computerApprovalDisplay: shared } });
         const screen = await renderScreen(<ComputerActionApprovalCard presentation={presentation!} />);
         expect(screen.getTextContent()).toContain(label);
+    });
+
+    describe('the picture a capture produced', () => {
+        const captured = { target: { kind: 'display', displayId: ':0' }, sourceId: 'computer:1', status: 'captured', captureId: 'capture_2',
+            geometry: { captureWidth: 1280, captureHeight: 800, nativeWidth: 1280, nativeHeight: 800, originX: 0, originY: 0, scaleX: 1, scaleY: 1,
+                crop: { x: 0, y: 0, width: 1280, height: 800 } } };
+        const produced = { ...captureMedia, mediaId: 'media_2' };
+        const request = { actionId: 'computer.capture', actionArgs: { machineId: 'machine_1' } };
+
+        it('replaces the picture from before the request', () => {
+            expect(describeComputerActionApproval({ ...request, preview: { computerApprovalDisplay: shared },
+                result: { ...captured, media: produced } })?.captureMedia?.mediaId).toBe('media_2');
+        });
+
+        it('settles a capture that asked for a window: it no longer reads as a choice still to make', () => {
+            expect(describeComputerActionApproval({ ...request, preview: { computerApprovalDisplay: unchosen },
+                result: { ...captured, media: produced } })).toMatchObject({ requiresTargetSelection: false, target: { kind: 'display' },
+                captureMedia: { mediaId: 'media_2' } });
+            expect(describeComputerActionApproval({ ...request, preview: { computerApprovalDisplay: unchosen },
+                result: { ...captured, target: { kind: 'window', displayId: ':0', pid: 7, windowId: 9 }, media: produced } }))
+                .toMatchObject({ requiresTargetSelection: false, target: null, captureMedia: { mediaId: 'media_2' } });
+        });
+
+        it.each([
+            ['an ephemeral frame', { ...captured, frame: { mimeType: 'image/png', base64: 'aGVsbG8=' } }],
+            ['a failed capture', { target: captured.target, sourceId: 'computer:1', status: 'failed', code: 'capture_failed' }],
+            ['no result yet', undefined],
+        ])('keeps what the request knew for %s', (_name, result) => {
+            expect(describeComputerActionApproval({ ...request, preview: { computerApprovalDisplay: shared }, result })?.captureMedia?.mediaId).toBe('media_1');
+        });
+
+        it('reads a produced picture only from a capture', () => {
+            expect(describeComputerActionApproval({ actionId: 'computer.query', actionArgs: { machineId: 'machine_1' },
+                preview: { computerApprovalDisplay: shared }, result: { ...captured, media: produced } })?.captureMedia?.mediaId).toBe('media_1');
+        });
+
+        it('shows a window whose title the request never knew under the machine line', async () => {
+            const presentation = describeComputerActionApproval({ ...request, preview: { computerApprovalDisplay: unchosen },
+                result: { ...captured, target: { kind: 'window', displayId: ':0', pid: 7, windowId: 9 }, media: produced } });
+            const screen = await renderScreen(<ComputerActionApprovalCard presentation={presentation!} media={<Text testID="picture">picture</Text>} />);
+            expect(screen.findByTestId('picture')).not.toBeNull();
+            expect(screen.getTextContent()).toContain('computerUse.approval.windowOn');
+            expect(screen.getTextContent()).not.toContain('computerUse.approval.chooseFirst');
+        });
     });
 
     it('describes omitted selection access by the request default rather than the previous share', () => {
@@ -166,6 +211,32 @@ describe('ComputerActionApprovalCard', () => {
         expect(text).toContain('ana@lumen.dev');
         expect(text).not.toContain('456');
         expect(text).not.toContain(':77');
+    });
+
+    it('reads a display as the screen of its Machine and asks one act line, never the display id', async () => {
+        const presentation = describeComputerActionApproval({
+            actionId: 'computer.input',
+            actionArgs: { machineId: 'machine_1', captureId: 'capture_1', operation: { kind: 'click', x: 640, y: 400 } },
+            preview: { computerApprovalDisplay: { ...shared, target: { kind: 'display', title: 'primary' } } },
+        });
+        const screen = await renderScreen(<ComputerActionApprovalCard presentation={presentation!} testID="c" />);
+        const text = screen.getTextContent();
+        expect(text).toContain('computerUse.approval.actOnScreen');
+        expect(text).toContain('computerUse.approval.screenOf');
+        expect(text).not.toContain('primary');
+        expect(text).not.toContain('640');
+    });
+
+    it('starts at where when its host already asks the act line', async () => {
+        const presentation = describeComputerActionApproval({
+            actionId: 'computer.input', actionArgs: { machineId: 'machine_1', captureId: 'capture_1', operation: { kind: 'click', x: 1, y: 2 } },
+            preview: { computerApprovalDisplay: shared },
+        });
+        const screen = await renderScreen(<ComputerActionApprovalCard presentation={presentation!} titled testID="c" />);
+        const text = screen.getTextContent();
+        expect(text).not.toContain('computerUse.approval.actIn');
+        expect(text).not.toContain('computerUse.approval.act.click');
+        expect(text).toContain('computerUse.approval.targetOn');
     });
 
     it('leads with choosing the window when none is shared', async () => {

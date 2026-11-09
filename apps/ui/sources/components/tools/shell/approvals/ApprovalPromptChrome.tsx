@@ -32,13 +32,19 @@ export const ApprovalPromptRoomContext = React.createContext<ApprovalPromptRoom 
 /**
  * Shares `available` height between measured cards. Every card first gets its minimum (head and decision);
  * the room left goes to the cards with the fewest hidden facts first, so a short request shows whole and the
- * long one scrolls its facts. What no card can use stays unspent.
+ * long one scrolls its facts. What no card can use stays unspent. When even the minimums do not fit, the
+ * decisions cannot all be in view, so cutting facts would buy nothing: each card takes what the tray can show
+ * and the tray scrolls between them.
  */
 export function shareApprovalPromptRoom(available: number,
   heights: ReadonlyMap<string, ApprovalPromptCardHeights>): Map<string, number> {
   const bounds = new Map<string, number>();
   let spare = available;
-  for (const [cardId, card] of heights) { bounds.set(cardId, card.minimum); spare -= card.minimum; }
+  for (const [, card] of heights) spare -= card.minimum;
+  for (const [cardId, card] of heights) {
+    bounds.set(cardId, spare <= 0 ? Math.max(card.minimum, Math.min(card.natural, available)) : card.minimum);
+  }
+  if (spare <= 0) return bounds;
   const byExtra = [...heights].sort(([, a], [, b]) => (a.natural - a.minimum) - (b.natural - b.minimum));
   byExtra.forEach(([cardId, card], index) => {
     const fair = Math.max(0, spare) / (byExtra.length - index);

@@ -1,5 +1,5 @@
 import * as React from 'react';
-import type { ComputerAccessV1, ComputerApprovalDisplayV1, ComputerTargetV1 } from '@happier-dev/protocol';
+import type { ComputerAccessV1, ComputerApprovalDisplayV1, ComputerTargetV1 } from '@happier-dev/protocol/computer/v1';
 import { resolveComputerAccess } from '@happier-dev/protocol/computer/v1';
 
 import { noteSessionComputerMachine } from '@/sync/domains/computer/sessionComputerMachines';
@@ -35,6 +35,8 @@ export function useComputerApprovalChoice(input: Readonly<{
     actionArgs: unknown;
     /** Saved decision input for history presentation only; never replaces the signed proposal. */
     approvedInput?: unknown;
+    /** What the Action returned, once it ran (the picture an executed capture produced). */
+    executionResult?: unknown;
     preview: unknown;
     sessionId: string;
     serverId?: string | null;
@@ -45,8 +47,8 @@ export function useComputerApprovalChoice(input: Readonly<{
     const borrowedLifetime = useSessionViewerSourceAccountLifetime();
     const accountLifetime = input.accountLifetime === undefined ? borrowedLifetime : input.accountLifetime;
     const described = React.useMemo(
-        () => describeComputerActionApproval({ actionId: input.actionId, actionArgs: input.approvedInput ?? input.actionArgs, preview: input.preview }),
-        [input.actionArgs, input.actionId, input.approvedInput, input.preview],
+        () => describeComputerActionApproval({ actionId: input.actionId, actionArgs: input.approvedInput ?? input.actionArgs, preview: input.preview, result: input.executionResult }),
+        [input.actionArgs, input.actionId, input.approvedInput, input.executionResult, input.preview],
     );
     const { sessionId, resolveOpenPicker } = input;
     const serverId = input.serverId ?? accountLifetime?.scope.serverId ?? null;
@@ -81,8 +83,8 @@ export function useComputerApprovalChoice(input: Readonly<{
     );
     const machineName = described?.machineName ?? null;
     React.useEffect(() => {
-        if (machineId) noteSessionComputerMachine({ sessionId, machineId, machineName });
-    }, [machineId, machineName, sessionId]);
+        if (machineId) noteSessionComputerMachine({ sessionId, serverId, accountLifetime, machineId, machineName });
+    }, [accountLifetime, machineId, machineName, serverId, sessionId]);
 
     const chooseTarget = React.useCallback(() => {
         if (currentOwner.current !== owner || !described || described.act === 'fill' || !accountLifetime?.isCurrent()) return;

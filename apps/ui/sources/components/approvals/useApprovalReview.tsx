@@ -361,6 +361,8 @@ export function useApprovalReview(props: ApprovalReviewInput) {
     approvedInput: parsed?.kind === 'built_in' && parsed.request.v === 2
       && parsed.request.status !== 'open' && parsed.request.decision?.kind === 'approve'
       ? parsed.request.decision.narrowedInput : undefined,
+    executionResult: parsed?.kind === 'built_in' && parsed.request.v === 2 && parsed.request.execution?.ok
+      ? parsed.request.execution.result : undefined,
     preview: parsed?.kind === 'built_in' ? parsed.request.preview : null,
     sessionId,
     serverId: approvalServerId,

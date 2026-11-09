@@ -103,7 +103,7 @@ export const ComputerActionApprovalCard = React.memo(function ComputerActionAppr
                     />
                 </View>
             ) : null}
-            {presentation.target && presentation.captureMedia && props.media ? <View accessibilityLabel={t('computerUse.approval.cropA11y', { target: readComputerTargetPhrase(presentation.target) })}>{props.media}</View> : null}
+            {presentation.captureMedia && props.media ? <View accessibilityLabel={presentation.target ? t('computerUse.approval.cropA11y', { target: readComputerTargetPhrase(presentation.target) }) : undefined}>{props.media}</View> : null}
             {presentation.sent ? (
                 <View style={styles.sent}>
                     <Text style={styles.label}>

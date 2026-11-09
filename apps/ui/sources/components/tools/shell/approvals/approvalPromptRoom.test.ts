@@ -26,8 +26,18 @@ describe('shareApprovalPromptRoom', () => {
         expect([bounds.get('a'), bounds.get('b')]).toEqual([100, 120]);
     });
 
-    it('never gives a request less than its head and decision', () => {
+    it('keeps every request readable when their decisions cannot all fit: the tray scrolls between them', () => {
+        const bounds = shareApprovalPromptRoom(196, new Map([
+            ['failed', { natural: 76, minimum: 76 }],
+            ['navigate', { natural: 130, minimum: 105 }],
+            ['choose-window', { natural: 178, minimum: 95 }],
+            ['long', { natural: 560, minimum: 95 }],
+        ]));
+        expect([bounds.get('failed'), bounds.get('navigate'), bounds.get('choose-window'), bounds.get('long')]).toEqual([76, 130, 178, 196]);
+    });
+
+    it('never gives a request less than its head and decision, nor more than the tray can show', () => {
         const bounds = shareApprovalPromptRoom(150, new Map([['a', { natural: 400, minimum: 110 }], ['b', { natural: 500, minimum: 110 }]]));
-        expect([bounds.get('a'), bounds.get('b')]).toEqual([110, 110]);
+        expect([bounds.get('a'), bounds.get('b')]).toEqual([150, 150]);
     });
 });

@@ -1,5 +1,6 @@
 import {
     ComputerApprovalDisplayV1Schema,
+    ComputerCaptureResponseV1Schema,
     ComputerInputRequestV1Schema,
     ComputerTargetRequestV1Schema,
     ComputerTargetSelectRequestV1Schema,
@@ -34,7 +35,20 @@ function readDisplay(preview: unknown): ComputerApprovalDisplayV1 | null {
     return parsed.success ? parsed.data : null;
 }
 
-export function describeComputerActionApproval(input: Readonly<{ actionId: string; actionArgs: unknown; preview: unknown }>): ComputerActionApproval | null {
+/** The picture a finished `computer.capture` stored; a person-only frame claims no Session media and shows nothing here. */
+function readProducedCapture(actionId: string, result: unknown) {
+    if (actionId !== 'computer.capture' || result === undefined) return null;
+    const parsed = ComputerCaptureResponseV1Schema.safeParse(result);
+    return parsed.success && parsed.data.status === 'captured' && 'media' in parsed.data ? parsed.data : null;
+}
+
+export function describeComputerActionApproval(input: Readonly<{
+    actionId: string;
+    actionArgs: unknown;
+    preview: unknown;
+    /** What the Action returned once it ran: an executed capture shows the picture it produced. */
+    result?: unknown;
+}>): ComputerActionApproval | null {
     if (!isComputerApprovalAction(input.actionId)) return null;
     const display = readDisplay(input.preview);
     if (!display) return null;
@@ -68,8 +82,12 @@ export function describeComputerActionApproval(input: Readonly<{ actionId: strin
     }
     const parsed = ComputerTargetRequestV1Schema.safeParse(input.actionArgs);
     if (!parsed.success) return null;
+    const produced = readProducedCapture(input.actionId, input.result);
     return { access: 'see', act: input.actionId === 'computer.capture' ? 'see' : 'read',
-        machineId: parsed.data.machineId, ...facts, sent: null };
+        machineId: parsed.data.machineId, ...facts, sent: null,
+        // It ran, so the choice is made. The request may never have known a window's title; a display needs none.
+        ...(produced ? { requiresTargetSelection: false, captureMedia: produced.media,
+            target: facts.target ?? (produced.target.kind === 'display' ? { kind: 'display' as const, title: '' } : null) } : {}) };
 }
 
 /** The owner's picker answer replaces the unchosen display, without retargeting confidential entry. */
