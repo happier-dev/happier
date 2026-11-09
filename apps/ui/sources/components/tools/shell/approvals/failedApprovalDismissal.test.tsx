@@ -14,7 +14,7 @@ const {
     useFailedApprovalDismissal,
 } = await import('./failedApprovalDismissal');
 const initialState = storage.getState();
-const { dismissFailedApproval, migrateFailedApprovalDismissals, failedApprovalDismissalScopeKey } = await import('@/sync/domains/state/failedApprovalUiState');
+const { dismissFailedApproval, failedApprovalDismissalScopeKey } = await import('@/sync/domains/state/failedApprovalUiState');
 const { UiStatePersistenceError } = await import('@/sync/domains/state/persistentUiState');
 
 afterEach(() => {
@@ -33,10 +33,10 @@ function request(artifactId: string, settled: 'open' | 'failed'): OpenApprovalAr
 }
 
 describe('failed approval dismissal', () => {
-    it.each(['dismissal', 'migration'] as const)('preserves earlier durable dismissals when a %s read transiently refuses', async operation => {
+    it('preserves earlier durable dismissals when a read transiently refuses', async () => {
         const { getPersistenceStorage } = await import('@/sync/domains/state/persistenceStorage');
         const adapter = getPersistenceStorage();
-        const scopeKey = failedApprovalDismissalScopeKey({ serverId: `dg8-read-${operation}`, accountId: 'alice' });
+        const scopeKey = failedApprovalDismissalScopeKey({ serverId: 'dg8-read-dismissal', accountId: 'alice' });
         const destination = `ui-state:failed-approval-dismissals-v1:${scopeKey}`;
         adapter.set(destination, JSON.stringify({ old: 10 }));
         const read = adapter.getString.bind(adapter);
@@ -50,19 +50,15 @@ describe('failed approval dismissal', () => {
         try {
             let error: unknown;
             try {
-                if (operation === 'dismissal') dismissFailedApproval(scopeKey, 'new');
-                else migrateFailedApprovalDismissals(scopeKey, { legacy: 20 });
+                dismissFailedApproval(scopeKey, 'new');
             } catch (caught) { error = caught; }
             expect(JSON.parse(read(destination)!)).toEqual({ old: 10 });
             expect(error).toBeInstanceOf(UiStatePersistenceError);
             expect(write).not.toHaveBeenCalled();
             expect(reads).toBe(1);
             // A later explicit intent can succeed after storage recovers; the failed intent never retries itself.
-            if (operation === 'dismissal') dismissFailedApproval(scopeKey, 'new');
-            else migrateFailedApprovalDismissals(scopeKey, { legacy: 20 });
-            expect(JSON.parse(read(destination)!)).toEqual(operation === 'dismissal'
-                ? { old: 10, new: expect.any(Number) }
-                : { old: 10, legacy: 20 });
+            dismissFailedApproval(scopeKey, 'new');
+            expect(JSON.parse(read(destination)!)).toEqual({ old: 10, new: expect.any(Number) });
         } finally { refusedRead.mockRestore(); write.mockRestore(); warning.mockRestore(); }
     });
 
@@ -106,12 +102,13 @@ describe('failed approval dismissal', () => {
             actionsSettingsV1: { v: 1, actions: { 'settings.set': { disabledSurfaces: ['ui'] } } } }) }));
         const requests = [request('open-1', 'open'), request('failed-1', 'failed'), request('failed-2', 'failed')];
         const approvalsBefore = JSON.stringify(requests);
+        const initialLocalSettings = storage.getState().localSettings;
         let hook = await renderHook(() => ({ shown: useComposerApprovalRequests(requests), dismissal: useFailedApprovalDismissal() }));
         expect(hook.getCurrent().shown.map(item => item.artifact.id)).toEqual(['open-1', 'failed-1', 'failed-2']);
 
         await act(async () => { hook.getCurrent().dismissal.dismiss('failed-1'); });
         expect(hook.getCurrent().shown.map(item => item.artifact.id)).toEqual(['open-1', 'failed-2']);
-        expect(storage.getState().localSettings.dismissedFailedApprovalsV1['failed-1']).toBeUndefined();
+        expect(storage.getState().localSettings).toBe(initialLocalSettings);
         const { clearPersistenceStorage, getPersistenceStorage } = await import('@/sync/domains/state/persistenceStorage');
         const key = 'ui-state:failed-approval-dismissals-v1:["dismissal-home","dismissal-account"]';
         const raw = getPersistenceStorage().getString(key)!;
@@ -128,7 +125,8 @@ describe('failed approval dismissal', () => {
     });
 
     it('never hides an open approval, even one carrying a stale dismissal', async () => {
-        await act(async () => { storage.getState().applyLocalSettings({ dismissedFailedApprovalsV1: { 'open-1': 1 } }); });
+        storage.setState({ profileScope: { serverId: 'open-stale-dismissal', accountId: 'alice' } });
+        dismissFailedApproval(failedApprovalDismissalScopeKey(storage.getState().profileScope!), 'open-1');
         const requests = [request('open-1', 'open')];
         const hook = await renderHook(() => useComposerApprovalRequests(requests));
         expect(hook.getCurrent().map(item => item.artifact.id)).toEqual(['open-1']);
@@ -160,15 +158,14 @@ describe('failed approval dismissal', () => {
         expect(hook.getCurrent().dismissed[artifact.id]).toBeUndefined();
     });
 
-    it('qualifies only legacy dismissal ids actually observed in this Home/Account', async () => {
-        storage.setState({ profileScope: { serverId: 'legacy-dismissal-home', accountId: 'alice' },
-            localSettings: { ...storage.getState().localSettings,
-                dismissedFailedApprovalsV1: { 'legacy-failed': 12, 'unknown-owner': 13 } } });
-        const hook = await renderHook(() => ({ shown: useComposerApprovalRequests([request('legacy-failed', 'failed')]),
+    it('shows a settled failure until the interaction owner records its dismissal', async () => {
+        const localSettings = { ...storage.getState().localSettings, dismissedFailedApprovalsV1: { 'dev-failed': 12 } };
+        storage.setState({ profileScope: { serverId: 'no-dev-import', accountId: 'alice' }, localSettings });
+        const hook = await renderHook(() => ({ shown: useComposerApprovalRequests([request('dev-failed', 'failed')]),
             dismissal: useFailedApprovalDismissal() }));
-        expect(hook.getCurrent().shown).toEqual([]);
-        expect(hook.getCurrent().dismissal.dismissed).toEqual({ 'legacy-failed': 12 });
-        expect(storage.getState().localSettings.dismissedFailedApprovalsV1).toEqual({ 'unknown-owner': 13 });
+        expect(hook.getCurrent().shown.map(row => row.artifact.id)).toEqual(['dev-failed']);
+        expect(hook.getCurrent().dismissal.dismissed).toEqual({});
+        expect(storage.getState().localSettings).toBe(localSettings);
     });
 
     it.each(['partial', 'unreadable'] as const)('preserves dismissal through a %s inventory observation until actual deletion', async publication => {
@@ -211,22 +208,4 @@ describe('failed approval dismissal', () => {
         expect(storage.getState().artifacts[raced.id]).toBeDefined();
     });
 
-    it('retains unqualified timestamps if the device refuses their scoped migration', async () => {
-        storage.setState({ profileScope: { serverId: 'refused-dismissal-home', accountId: 'alice' },
-            localSettings: { ...storage.getState().localSettings, dismissedFailedApprovalsV1: { 'refused-failure': 21 } } });
-        const { getPersistenceStorage } = await import('@/sync/domains/state/persistenceStorage');
-        const adapter = getPersistenceStorage();
-        const write = adapter.set.bind(adapter);
-        const failure = vi.spyOn(adapter, 'set').mockImplementation((key, value) => {
-            if (key.startsWith('ui-state:failed-approval-dismissals-v1:')) throw new Error('private storage details');
-            write(key, value);
-        });
-        const warning = vi.spyOn(console, 'warn').mockImplementation(() => {});
-        try {
-            const hook = await renderHook(() => useComposerApprovalRequests([request('refused-failure', 'failed')]));
-            expect(hook.getCurrent()).toEqual([]);
-            expect(storage.getState().localSettings.dismissedFailedApprovalsV1).toEqual({ 'refused-failure': 21 });
-            expect(warning.mock.calls.flat().join(' ')).not.toContain('private storage details');
-        } finally { failure.mockRestore(); warning.mockRestore(); }
-    });
 });

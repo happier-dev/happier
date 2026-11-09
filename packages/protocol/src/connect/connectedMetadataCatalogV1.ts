@@ -4,14 +4,13 @@ export type { ConnectedMetadataCleanupV1 } from "./connectedAccountPresentationS
 import * as z from 'zod/mini';
 import type { AccountScopedCryptoMaterial } from '../crypto/accountScopedCipher.js';
 import { transferredAccountSettingsSourceNeedsCleanupV1 } from '../account/settings/accountSettingsLegacyCleanup.js';
-import { type ConnectedPresentationRecordV1, type ConnectedAcknowledgementsRecordV1, type ConnectedPresentationCatalogSnapshotV1, type ConnectedAcknowledgementsCatalogSnapshotV1, type ConnectedDisclosureEntryV1, type LegacyConnectedMetadataInventoryV1, type ConnectedPresentationRowReadResponseV1Schema, type ConnectedAcknowledgementsRowReadResponseV1Schema, type ConnectedMetadataRowMutationResponseV1Schema, openConnectedPresentationContentV1, openConnectedAcknowledgementsContentV1, readLegacyConnectedMetadataV1, CONNECTED_PRESENTATION_SOURCE_ROOTS_V1, CONNECTED_ACKNOWLEDGEMENTS_SOURCE_ROOTS_V1, CONNECTED_DISCLOSURE_SOURCE_ROOT_V1, type ConnectedMetadataDiagnosticV1 } from './connectedAccountPresentationRowsV1.js';
+import { type ConnectedPresentationRecordV1, type ConnectedAcknowledgementsRecordV1, type ConnectedPresentationCatalogSnapshotV1, type ConnectedAcknowledgementsCatalogSnapshotV1, type LegacyConnectedMetadataInventoryV1, type ConnectedPresentationRowReadResponseV1Schema, type ConnectedAcknowledgementsRowReadResponseV1Schema, type ConnectedMetadataRowMutationResponseV1Schema, openConnectedPresentationContentV1, openConnectedAcknowledgementsContentV1, readLegacyConnectedMetadataV1, CONNECTED_PRESENTATION_SOURCE_ROOTS_V1, CONNECTED_ACKNOWLEDGEMENTS_SOURCE_ROOTS_V1, type ConnectedMetadataDiagnosticV1 } from './connectedAccountPresentationRowsV1.js';
 
 export type ConnectedMetadataCatalogV1 = Readonly<{
     presentation: ConnectedPresentationCatalogSnapshotV1; acknowledgements: ConnectedAcknowledgementsCatalogSnapshotV1;
-    disclosure: readonly ConnectedDisclosureEntryV1[]; cleanup?: ConnectedMetadataCleanupV1;
+    cleanup?: ConnectedMetadataCleanupV1;
 }>;
-const CONNECTED_METADATA_SOURCE_ROOTS_V1 = [...CONNECTED_PRESENTATION_SOURCE_ROOTS_V1, ...CONNECTED_ACKNOWLEDGEMENTS_SOURCE_ROOTS_V1,
-    CONNECTED_DISCLOSURE_SOURCE_ROOT_V1] as const;
+const CONNECTED_METADATA_SOURCE_ROOTS_V1 = [...CONNECTED_PRESENTATION_SOURCE_ROOTS_V1, ...CONNECTED_ACKNOWLEDGEMENTS_SOURCE_ROOTS_V1] as const;
 /** Every host decides published rows' remaining source pass from its admitted raw Settings document. */
 export function connectedMetadataSourceNeedsCleanupV1(input: Readonly<{
     rawSettings: Readonly<Record<string, unknown>> | null | undefined; cleanupPending: boolean;
@@ -29,7 +28,6 @@ export type ConnectedMetadataSourceTransferV1 = Readonly<{
         Readonly<{ status: 'applied'; settingsVersion: number }> | Readonly<{ status: 'conflict'; currentSettingsVersion: number }>
         | Readonly<{ status: 'outcomeUnknown'; lastKnownSettingsVersion: number }> | Readonly<{ status: 'rejected' }>>;
     normalizeHistory?(input: Readonly<{ activeTransferredRoots: readonly string[] }>): Promise<Readonly<{ status: 'complete' }> | Readonly<{ status: 'cleanup-pending'; versions: readonly number[] }>>;
-    persistDisclosure?(entries: readonly ConnectedDisclosureEntryV1[]): Promise<void>;
 }>;
 export type ConnectedMetadataLoadInputV1 = Readonly<{
     mode: 'plain' | 'e2ee'; material: AccountScopedCryptoMaterial | null; signal?: AbortSignal;
@@ -72,7 +70,7 @@ function acknowledgementSnapshot(input: ConnectedMetadataLoadInputV1, row: Ackno
     return { status: 'ready', entries: opened.record.entries, revision: row.revision, diagnostics: [] };
 }
 function unavailable(reason: string): ConnectedMetadataCatalogV1 {
-    return { presentation: { status: 'unavailable', reason }, acknowledgements: { status: 'unavailable', reason }, disclosure: [] };
+    return { presentation: { status: 'unavailable', reason }, acknowledgements: { status: 'unavailable', reason } };
 }
 export function connectedMetadataDiagnosticsForRootsV1(diagnostics: readonly ConnectedMetadataDiagnosticV1[], roots: readonly string[]) {
     return diagnostics.filter(diagnostic => roots.includes(diagnostic.root) || diagnostic.root === 'inventory' || diagnostic.root === 'accountSettings');
@@ -85,7 +83,7 @@ export async function loadConnectedMetadataCatalogV1(input: ConnectedMetadataLoa
     let rows = await readRows(input);
     if (input.signal?.aborted) return unavailable('cancelled');
     let catalog: ConnectedMetadataCatalogV1 = { presentation: presentationSnapshot(input, rows.presentation),
-        acknowledgements: acknowledgementSnapshot(input, rows.acknowledgements), disclosure: [] };
+        acknowledgements: acknowledgementSnapshot(input, rows.acknowledgements) };
     if (!input.transfer) return catalog;
     const transfer = input.transfer;
     const missingPresentation = rows.presentation?.status === 'absent';
@@ -106,8 +104,7 @@ export async function loadConnectedMetadataCatalogV1(input: ConnectedMetadataLoa
     if (input.signal?.aborted) return unavailable('cancelled');
     let inventory: LegacyConnectedMetadataInventoryV1 = { entities: [], agents: [] };
     let inventoryUnavailable = false;
-    const hasRetainedMetadata = [...CONNECTED_PRESENTATION_SOURCE_ROOTS_V1, ...CONNECTED_ACKNOWLEDGEMENTS_SOURCE_ROOTS_V1,
-        CONNECTED_DISCLOSURE_SOURCE_ROOT_V1].some(root => Object.hasOwn(source.raw, root));
+    const hasRetainedMetadata = [...CONNECTED_PRESENTATION_SOURCE_ROOTS_V1, ...CONNECTED_ACKNOWLEDGEMENTS_SOURCE_ROOTS_V1].some(root => Object.hasOwn(source.raw, root));
     if (hasRetainedMetadata) {
         try { inventory = await transfer.readInventory(); } catch { inventoryUnavailable = true; }
     }
@@ -141,13 +138,12 @@ export async function loadConnectedMetadataCatalogV1(input: ConnectedMetadataLoa
     if (attempted) {
         rows = await readRows(input);
         if (input.signal?.aborted) return unavailable('cancelled');
-        catalog = { presentation: presentationSnapshot(input, rows.presentation), acknowledgements: acknowledgementSnapshot(input, rows.acknowledgements), disclosure: [] };
+        catalog = { presentation: presentationSnapshot(input, rows.presentation), acknowledgements: acknowledgementSnapshot(input, rows.acknowledgements) };
     }
     if (missingPresentation && rows.presentation?.status === 'absent') catalog = { ...catalog, presentation: { status: 'partial', entries: retained.presentation.entries, revision: 'absent',
         diagnostics: presentationDiagnostics.length ? presentationDiagnostics : [{ root: CONNECTED_PRESENTATION_SOURCE_ROOTS_V1[0], reason: presentationFailure ?? 'authority-not-confirmed' }] } };
     if (missingAcknowledgements && rows.acknowledgements?.status === 'absent') catalog = { ...catalog, acknowledgements: { status: 'partial', entries: retained.acknowledgements.entries, revision: 'absent',
         diagnostics: acknowledgementDiagnostics.length ? acknowledgementDiagnostics : [{ root: CONNECTED_ACKNOWLEDGEMENTS_SOURCE_ROOTS_V1[0], reason: acknowledgementFailure ?? 'authority-not-confirmed' }] } };
-    catalog = { ...catalog, disclosure: retained.disclosure };
     if (!published) await input.onReadyBeforeCleanup?.(catalog);
     if (input.hasPendingCleanup?.()) return catalog;
     const raw = { ...source.raw };
@@ -160,16 +156,6 @@ export async function loadConnectedMetadataCatalogV1(input: ConnectedMetadataLoa
                 pending = { status: 'cleanup-pending', reason: 'source-unavailable' }; continue;
             }
             delete raw[root]; activeRoots.push(root);
-        }
-    }
-    if (Object.hasOwn(raw, CONNECTED_DISCLOSURE_SOURCE_ROOT_V1)) {
-        if (connectedMetadataDiagnosticsForRootsV1(retained.diagnostics, [CONNECTED_DISCLOSURE_SOURCE_ROOT_V1]).length || !transfer.persistDisclosure) pending = { status: 'cleanup-pending', reason: 'disclosure-unavailable' };
-        else {
-            try {
-                await transfer.persistDisclosure(retained.disclosure);
-                if (input.signal?.aborted) return { ...catalog, cleanup: { status: 'cleanup-pending', reason: 'cancelled' } };
-                delete raw[CONNECTED_DISCLOSURE_SOURCE_ROOT_V1];
-            } catch { pending = { status: 'cleanup-pending', reason: 'disclosure-unavailable' }; }
         }
     }
     if (input.signal?.aborted) return { ...catalog, cleanup: { status: 'cleanup-pending', reason: 'cancelled' } };

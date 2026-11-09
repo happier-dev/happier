@@ -1,3 +1,4 @@
+import { readThemeProfileLegacyAccountScope, useThemeProfileLegacyAccountScope } from '@/sync/domains/state/themeProfileMigrationUiState';
 import * as React from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { getStorage } from '@/sync/domains/state/storageStore';
@@ -13,7 +14,7 @@ import type { ThemeProfilesLocalStateV1, ThemeProfilesStateSnapshot } from '@/th
 
 const themeProfileScope = {
     settings: ['themeProfiles'],
-    localSettings: ['themeProfiles', 'themeProfileSelection', 'themeProfileLegacyAccountScope'],
+    localSettings: ['themeProfiles', 'themeProfileSelection'],
 } satisfies StorageSubscriptionScope;
 
 const pendingThemeKeys = ['themeProfiles', THEME_PROFILE_MIGRATION_PENDING_KEY] as const;
@@ -24,9 +25,9 @@ export function useThemeProfilesSnapshot(): ThemeProfilesStateSnapshot {
         profiles: state.settings.themeProfiles,
         legacy: state.localSettings.themeProfiles,
         selection: state.localSettings.themeProfileSelection,
-        legacyScope: state.localSettings.themeProfileLegacyAccountScope,
         scope: state.settingsScope,
     })), themeProfileScope);
+    const legacyScope = useThemeProfileLegacyAccountScope();
     const scope = input.scope;
     const subscribe = React.useCallback((listener: () => void) => scope
         ? subscribePendingAccountSettingsPersistenceMutations(listener, { scope, keys: pendingThemeKeys })
@@ -35,9 +36,9 @@ export function useThemeProfilesSnapshot(): ThemeProfilesStateSnapshot {
         ? readPendingAccountSettingsPersistenceMutationToken(scope, pendingThemeKeys) : null, [scope]);
     const pendingToken = React.useSyncExternalStore(subscribe, readPendingToken, readPendingToken);
     const pending = React.useMemo(() => scope ? loadPendingAccountSettingsState(scope) : null, [scope, pendingToken]);
-    return React.useMemo(() => resolveAccountThemeProfilesSnapshot({ ...input,
+    return React.useMemo(() => resolveAccountThemeProfilesSnapshot({ ...input, legacyScope,
         pendingProfiles: pending?.settings.themeProfiles, pendingIntent: pending?.themeProfileMigration,
-    }), [input, pending]);
+    }), [input, pending, legacyScope]);
 }
 
 /** Event-time reads use the same Account, pending checkpoint, and device projection as subscribers. */
@@ -48,7 +49,7 @@ export function readThemeProfilesSnapshot(): ThemeProfilesStateSnapshot {
         profiles: state.settings.themeProfiles,
         legacy: state.localSettings.themeProfiles,
         selection: state.localSettings.themeProfileSelection,
-        legacyScope: state.localSettings.themeProfileLegacyAccountScope,
+        legacyScope: readThemeProfileLegacyAccountScope(),
         scope: state.settingsScope,
         pendingProfiles: pending?.settings.themeProfiles,
         pendingIntent: pending?.themeProfileMigration,

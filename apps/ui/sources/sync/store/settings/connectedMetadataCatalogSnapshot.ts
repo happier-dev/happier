@@ -24,7 +24,7 @@ const emptyLabels: Readonly<Record<string, string>> = Object.freeze({});
 const emptyAcknowledgements: Readonly<Record<string, boolean>> = Object.freeze({});
 const loading: ConnectedMetadataCatalogSnapshot = Object.freeze({
     presentation: Object.freeze({ status: 'loading' as const }),
-    acknowledgements: Object.freeze({ status: 'loading' as const }), disclosure: Object.freeze([]),
+    acknowledgements: Object.freeze({ status: 'loading' as const }),
     labelsByKey: emptyLabels, acknowledgementsByKey: emptyAcknowledgements,
     presentationStale: true, acknowledgementsStale: true,
 });
@@ -100,5 +100,5 @@ export function applyConnectedMetadataCatalogSnapshot(scope: ServerAccountScope,
 /** Refresh is transport work; only explicit invalidation withdraws retained admission. */
 export function beginConnectedMetadataCatalogLoad(scope: ServerAccountScope, invalidate = false): void {
     if (!invalidate && snapshots.has(serverAccountScopeKeySuffix(scope))) return;
-    applyConnectedMetadataCatalogSnapshot(scope, { presentation: { status: 'loading' }, acknowledgements: { status: 'loading' }, disclosure: [] }, true);
+    applyConnectedMetadataCatalogSnapshot(scope, { presentation: { status: 'loading' }, acknowledgements: { status: 'loading' } }, true);
 }

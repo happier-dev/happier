@@ -5,8 +5,13 @@ import { buildSessionListCollapseContextKey, buildSessionListCollapseKey, readSe
 import { buildSessionListViewCredentialScopeKey } from '@/components/sessions/shell/search/useSessionListViewFilters';
 import { clearPersistenceStorage, getPersistenceStorage } from './persistenceStorage';
 import { createPersistentUiState } from './persistentUiState';
-import { collapsedGroupsState } from './disclosureUiState';
+import { collapsedGroupsState, sessionInfoDisclosuresState } from './disclosureUiState';
+import { readLastNewSessionAgentPickerView, readOrdinaryNewSessionDraftId, rememberLastNewSessionAgentPickerView, rememberOrdinaryNewSessionDraftId } from './newSessionTargetUiState';
+import { serverAccountScopeKeySuffix } from '@/sync/domains/scope/serverAccountScope';
 import { loadLocalSettings } from './settingsPersistence';
+import { selectCollectionSpace } from '@/sync/domains/session/listing/sessionListSpaces';
+import { accountSettingsScopeKeySuffix } from '@/sync/domains/settings/scope/accountSettingsScope';
+import { writeComposerBannerCollapse } from './composerBannerUiState';
 
 let browser: Awaited<ReturnType<typeof installBrowserRuntimeForTests>>;
 let webStorage: ReturnType<typeof import('../../../../../../node_modules/react-native-mmkv/src/createMMKV.web').createMMKV>;
@@ -50,12 +55,39 @@ describe('disclosure keys through the real MMKV web boundary', () => {
         expect(createPersistentUiState('collapsed-groups-v1', value => value).read(pinnedKey)).toBeUndefined();
     });
 
-    it('imports retained list seeds before web storage and does no repeated migration scans or writes', () => {
-        const legacyKey = String.raw`sessionList:"[\"home/alice/global\",\"active\",\"projects\",null]":pinned`;
-        const context = buildSessionListCollapseContextKey({ retentionScopeKey: 'home/alice/global', corpusStorage: 'active' }, 'projects');
+    it('persists and restores every introduced interaction key on web', async () => {
+        for (const key of ['instructions', 'memory', 'context', 'voice', 'roles', 'notes', 'about']) {
+            sessionInfoDisclosuresState.set(key, false);
+        }
+        const scope = { serverId: 'home-a', accountId: 'alice' };
+        const other = { ...scope, accountId: 'bob' };
+        const draftId = '4a506d8a-85bd-4c42-a662-6f502f3acc45';
+        rememberLastNewSessionAgentPickerView(scope, { kind: 'favoriteModels' });
+        rememberLastNewSessionAgentPickerView(null, null);
+        rememberOrdinaryNewSessionDraftId(scope, draftId);
+        await selectCollectionSpace(scope, 'sessionWork', 'my-work');
+        writeComposerBannerCollapse({ usageLimitRecovery: true });
+        expect(readLastNewSessionAgentPickerView(scope)).toEqual({ kind: 'favoriteModels' });
+        expect(readOrdinaryNewSessionDraftId(other)).toBeNull();
+        expect(createPersistentUiState('new-session-picker-view-v1', value => value).read('legacy-unscoped')).toBeNull();
+        expect(createPersistentUiState('session-info-disclosures-v1', value => value).readAll()).toEqual(
+            Object.fromEntries(['instructions', 'memory', 'context', 'voice', 'roles', 'notes', 'about'].map(key => [key, false])),
+        );
+        expect(createPersistentUiState('new-session-picker-view-v1', value => value).read(serverAccountScopeKeySuffix(scope)))
+            .toEqual({ kind: 'favoriteModels' });
+        expect(createPersistentUiState('new-session-ordinary-draft-v1', value => value).read(serverAccountScopeKeySuffix(scope)))
+            .toBe(draftId);
+        expect(createPersistentUiState('collection-space-v1', value => value)
+            .read(JSON.stringify([accountSettingsScopeKeySuffix(scope), 'sessionWork']))).toBe('my-work');
+        expect(createPersistentUiState('composer-banner-collapse-v1', value => value).read('collapsed'))
+            .toEqual({ usageLimitRecovery: true });
+    });
+
+    it('imports retained disclosure keys verbatim and does no repeated migration scans or writes', () => {
+        const legacyKey = 'retained-project-group';
         getPersistenceStorage().set('local-settings', JSON.stringify({ collapsedGroupKeysV1: { [legacyKey]: true } }));
         loadLocalSettings();
-        expect(readSessionListCollapsedGroups(collapsedGroupsState.readAll(), context)).toEqual({ pinned: true });
+        expect(collapsedGroupsState.read(legacyKey)).toBe(true);
         expect(JSON.parse(getPersistenceStorage().getString('local-settings')!)).not.toHaveProperty('collapsedGroupKeysV1');
         const scan = vi.spyOn(getPersistenceStorage(), 'getAllKeys');
         const write = vi.spyOn(getPersistenceStorage(), 'set');

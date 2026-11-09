@@ -25,7 +25,6 @@ import { getPersistenceStorage } from './persistenceStorage';
 import { loadSettings } from './settingsPersistence';
 import { loadHomeViewState, migrateHomeViewStateFromSettings } from '@/sync/domains/server/serverProfiles';
 import { stripServerSelectionSettingsProjection } from '@/sync/domains/server/selection/serverSelectionSettingsAdapter';
-import { migrateMachineAdministrationTargetObservations } from './machineAdministrationUiState';
 import { migrateNewSessionUiState, migrateNewSessionUiStateScope } from './newSessionTargetUiState';
 
 import { publishAccountSettingsPersistenceMutation } from './accountSettingsPersistenceSubscriptions';
@@ -225,11 +224,10 @@ function saveAccountSettingsEnvelope(
     if (isPlainRecord(previousEnvelope)) {
         // A refused import must leave its source intact, including when an
         // unrelated preference save arrives before the next startup/read.
-        migrateMachineAdministrationTargetObservations(scope, previousEnvelope.settings);
         migrateNewSessionUiState(scope, previousEnvelope.settings);
     }
     const sanitizedSettings = stripMigratedSessionOrganizationSettings(
-        migrateNewSessionUiState(scope, migrateMachineAdministrationTargetObservations(scope, settings)) as Record<string, unknown>,
+        migrateNewSessionUiState(scope, settings) as Record<string, unknown>,
     ) as Settings;
     const persistedSettings = loadHomeViewState()
         ? stripServerSelectionSettingsProjection(sanitizedSettings)
@@ -273,7 +271,7 @@ export function loadAccountSettings(scope: AccountSettingsScope): { settings: un
         return { settings: {}, version: null };
     }
     try {
-        const migrated = migrateNewSessionUiState(scope, migrateMachineAdministrationTargetObservations(scope, parsed.settings));
+        const migrated = migrateNewSessionUiState(scope, parsed.settings);
         if (migrated !== parsed.settings) {
             getPersistenceStorage().set(accountSettingsKey(scope), JSON.stringify({ ...parsed, settings: migrated }));
             parsed.settings = migrated;

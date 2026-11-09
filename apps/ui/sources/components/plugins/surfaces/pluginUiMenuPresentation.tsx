@@ -1,10 +1,11 @@
 import * as React from 'react';
+import { View } from 'react-native';
 import type { MenuItem } from '@happier-dev/plugin-ui/components';
 import type { PluginUiPresentationHost } from '@happier-dev/plugin-ui/advanced';
 import { matchesHappierMenuQuery, resolveHappierMenuContent, resolveHappierMenuRadioGroups, resolveHappierMarkColor } from '@happier-dev/plugin-ui/presentation';
 import { useHappierUiTheme } from '@happier-dev/plugin-ui/environment';
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
-import { Icon, TaskStatusGlyph, HappierStatusDot } from '@happier-dev/plugin-ui/components';
+import { Avatar, Icon, TaskStatusGlyph, HappierStatusDot } from '@happier-dev/plugin-ui/components';
 import { CompactSearchField } from '@/components/ui/forms/CompactSearchField';
 import { t } from '@/text';
 
@@ -34,6 +35,9 @@ export function PluginUiMenuPresentation({ input }: Readonly<{ input: MenuInput 
         destructive: item.destructive,
         category,
         ...(item.taskStatus !== undefined ? { icon: <TaskStatusGlyph category={item.taskStatus} /> }
+            : item.person !== undefined ? { icon: <View aria-hidden importantForAccessibility="no-hide-descendants">
+                <Avatar name={item.person} size="small" testID="menu-item-face" />
+            </View> }
             : item.swatch !== undefined ? { icon: <HappierStatusDot color={resolveHappierMarkColor(theme, item.swatch)} /> }
                 : item.icon ? { icon: <Icon name={item.icon} size="small" tone={item.destructive ? 'danger' : 'secondary'} /> } : {}),
         ...(item.kind === 'checkbox' ? { checked: item.checked, multiSelect: true }

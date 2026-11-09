@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { useActiveServerAccountScope, useIsDataReady, useLocalSetting } from '@/sync/domains/state/storage';
+import { useActiveServerAccountScope, useIsDataReady } from '@/sync/domains/state/storage';
 import type { WorkspaceAction, WorkspaceTab, WorkspaceState } from './workspaceState';
 import { createWorkspaceState, reduceWorkspaceState } from './workspaceState';
 import { randomUUID } from '@/platform/randomUUID';
@@ -7,7 +7,7 @@ import { workspaceLayoutsState } from '@/sync/domains/state/filePaneUiState';
 import { UiStatePersistenceError, usePersistentUiStateValue } from '@/sync/domains/state/persistentUiState';
 import { reconcileWorkspaceSyncedTabs, type SharedWorkspaceTabs } from './workspaceSyncedTabs';
 import {
-    parseWorkspaceLayout, readScopedWorkspaceLayout, serializeWorkspaceLayout, workspaceLayoutScopeKey,
+    parseWorkspaceLayout, serializeWorkspaceLayout, workspaceLayoutScopeKey,
 } from './workspacePersistence';
 
 export function useWorkspaceState(input: Readonly<{
@@ -28,16 +28,12 @@ export function useWorkspaceState(input: Readonly<{
 }> {
     const scope = useActiveServerAccountScope();
     const isDataReady = useIsDataReady();
-    const layouts = useLocalSetting('workspaceLayoutV1');
     const windowId = input.windowId ?? 'main';
     const scopeKey = scope && windowId
         ? workspaceLayoutScopeKey({ serverId: scope.serverId, accountId: scope.accountId, windowId })
         : null;
     const persistedLayout = usePersistentUiStateValue(workspaceLayoutsState, scopeKey);
-    // The settings input remains a read-only rescue if the one-way durable copy
-    // was refused. A current dedicated layout always takes precedence.
-    const readLayout = () => parseWorkspaceLayout(persistedLayout)
-        ?? (scopeKey ? readScopedWorkspaceLayout(layouts, scopeKey) : null);
+    const readLayout = () => parseWorkspaceLayout(persistedLayout);
     const canRestore = isDataReady && scopeKey !== null;
     const currentScopeRef = React.useRef(scopeKey);
     currentScopeRef.current = scopeKey;

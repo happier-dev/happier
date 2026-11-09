@@ -1,4 +1,7 @@
-import type { SessionInitialAccessDraftV1, SessionAuthoringExecutionTargetV2, TemporaryComputerActivationRefV1 } from '@happier-dev/protocol';
+import { readThemeProfileLegacyAccountScope } from '@/sync/domains/state/themeProfileMigrationUiState';
+import type { SessionInitialAccessDraftV1} from '@happier-dev/protocol/sessions/access/sessionInitialAccessDraftV1';
+import type { SessionSpaceMembershipTargetV1 } from '@happier-dev/protocol/actions';
+import type { SessionAuthoringExecutionTargetV2, TemporaryComputerActivationRefV1 } from '@happier-dev/protocol/sessions/authoring/fieldCatalog';
 import { z } from 'zod/mini';
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
 import { array, nullable, optional } from 'zod/mini';
@@ -14,6 +17,10 @@ import {
     parseThemeProfilesLocalState,
 } from '@/theme/profiles/themeProfilePersistence';
 import type { ThemeProfilesLocalStateV1 } from '@/theme/profiles/themeProfileTypes';
+import { resolveAccountThemeProfiles } from '../settings/themeProfiles';
+import { loadPendingAccountSettingsState } from './pendingAccountSettingsPersistence';
+import { loadStartupAccountSettings } from './startupAccountSettings';
+import { loadSettings } from './settingsPersistence';
 import { Purchases, purchasesDefaults, purchasesParse } from '../purchases/purchases';
 import { ACCOUNT_SETTING_ARTIFACTS } from '../settings/registry/account/accountSettingArtifacts';
 import { LOCAL_ACCOUNT_SETTING_ARTIFACTS } from '../settings/registry/local/localAccountSettingDefinitions';
@@ -38,7 +45,6 @@ import {
     type NewSessionAutomationDraft,
 } from '@/sync/domains/automations/automationDraft';
 import { ReviewCommentDraftSchema } from '@/sync/domains/input/reviewComments/reviewCommentMeta';
-import { SessionActionDraftSchema } from '@/sync/domains/sessionActions/sessionActionDraftMeta';
 import {
     normalizeBackendNewSessionOptionStateByTargetKey,
     type BackendNewSessionOptionStateByTargetKey,
@@ -68,7 +74,7 @@ import { readRuntimeDescriptorV1, type RuntimeDescriptorV1 } from '@happier-dev/
 import { PluginUiNewSessionSeedOriginV1Schema, StoredPluginUiNewSessionSeedOriginV1Schema, type PluginUiNewSessionSeedOriginV1, type PluginUiSessionPlacementCandidateV1 } from '@happier-dev/protocol/plugins/ui';
 import type { SessionTeamCredentialBindingIntentListV1 } from '@happier-dev/protocol/teams';
 import { getPersistenceStorage } from './persistenceStorage';
-import { loadLocalSettingsSnapshot } from './settingsPersistence';
+import { loadLocalSettingsSnapshot, saveLocalSettings } from './settingsPersistence';
 import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
 import { log } from '@/log';
 import { prepareSessionPersistenceScopeForActivation } from './sessionPersistence';
@@ -76,7 +82,6 @@ import { scopedSessionLocalStateKey, sessionDraftValuesStorageKey } from './sess
 export { loadProfile, saveProfile } from './profilePersistence';
 export { clearPersistence } from './persistenceLifecycle';
 export {
-    loadSessionActionDrafts,
     loadSessionDrafts,
     loadSessionLastViewed,
     loadSessionModelModeUpdatedAts,
@@ -86,7 +91,6 @@ export {
     loadSessionReviewCommentsDrafts,
     loadWorkspaceReviewCommentsDrafts,
     prepareSessionPersistenceScopeForActivation,
-    saveSessionActionDrafts,
     saveSessionDrafts,
     saveSessionLastViewed,
     saveSessionModelModeUpdatedAts,
@@ -95,7 +99,6 @@ export {
     saveSessionPermissionModes,
     saveSessionReviewCommentsDrafts,
     saveWorkspaceReviewCommentsDrafts,
-    type SessionActionDraftsByAddressKey,
     type SessionReviewCommentDraftsBySessionId,
     type WorkspaceReviewCommentDraftsByWorkspaceCacheKey,
 } from './sessionPersistence';
@@ -207,6 +210,8 @@ export interface NewSessionDraft {
     /** Local replay identity and admitted resource reference, never another allocation owner. */
     managedMachineAcquisition?: ManagedMachineAcquisitionDraft | null;
     organizationPlacement?: SessionOrganizationPlacementV1;
+    /** Deliberately captured, editable Space context; device-local draft custody. */
+    spaceMembership?: SessionSpaceMembershipTargetV1 | null;
     access?: SessionInitialAccessDraftV1 | null;
     primaryTeamId?: string | null;
     /** Device-local complete slot list of exact resource revision intents; never cached credentials. */
@@ -614,14 +619,21 @@ export function loadThemeRuntimeLocalState(): ThemeRuntimeLocalState {
     const { settings, storedValue: parsed } = loadLocalSettingsSnapshot();
     const parsedProfiles = parseThemeProfilesLocalState(isRecord(parsed) ? parsed.themeProfiles : undefined);
     const migratedProfiles = migrateThemeProfileLocalStateTokenIds(parsedProfiles.state);
-    const themeProfiles = migratedProfiles.state;
+    const { scope, settings: accountSettings } = loadStartupAccountSettings();
+    const pendingThemeState = scope ? loadPendingAccountSettingsState(scope) : null;
+    const themeProfiles = resolveAccountThemeProfiles({
+        ...(pendingThemeState ? { pendingIntent: pendingThemeState.themeProfileMigration,
+            pendingProfiles: pendingThemeState.settings.themeProfiles } : {}),
+        profiles: accountSettings.themeProfiles, legacy: migratedProfiles.state,
+        selection: settings.themeProfileSelection, legacyScope: readThemeProfileLegacyAccountScope(), scope,
+    });
 
     if (parsedProfiles.changed || migratedProfiles.changed) {
         const healedSettings = localSettingsParse({
             ...(isRecord(parsed) ? parsed : {}),
-            themeProfiles,
+            themeProfiles: migratedProfiles.state,
         });
-        getPersistenceStorage().set('local-settings', JSON.stringify(healedSettings));
+        saveLocalSettings(healedSettings);
     }
 
     return {

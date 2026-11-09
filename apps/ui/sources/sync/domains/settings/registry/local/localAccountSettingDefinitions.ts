@@ -49,9 +49,7 @@ export const ServerSelectionGroupSchema = z.object({
  */
 const localAccountSettingInputs = {
     machineAdministrationTargetsLocalV1: {
-        schema: z.pipe(MachineAdministrationTargetsV1Schema, z.transform(targets => Object.fromEntries(
-            Object.entries(targets).filter(([key]) => key !== 'machines.managed' && !key.startsWith('plugin.lastRunOn:')),
-        ))),
+        schema: MachineAdministrationTargetsV1Schema,
         default: {},
         description: 'Remembered Administration targets on this device, scoped to the Account and Home',
         storageScope: 'local',

@@ -6,8 +6,14 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { Dropdown } from '@happier-dev/plugin-ui';
+import { ContextMenu, Dropdown, Menu } from '@happier-dev/plugin-ui';
+import { Dimensions } from 'react-native';
+import * as AuthorComponents from '@happier-dev/plugin-ui/components';
 import { PluginUiProvider } from '@happier-dev/plugin-ui/advanced';
+import {
+    CollectionAddMenuExample,
+    type CollectionAddMenuExampleProps,
+} from '../../../../../../packages/plugin-ui/fixtures/external-authoring/src/collectionAddMenuSurface';
 
 import {
     PluginUiPresentationHostProviderInternal,
@@ -126,6 +132,42 @@ function DropdownHarness() {
     );
 }
 
+function SubmenuHarness({ component: MenuComponent = Menu, onSelect }: Readonly<{
+    component?: typeof Menu;
+    onSelect: (id: string) => void;
+}>) {
+    const [open, setOpen] = React.useState(false);
+    const context = React.useMemo(() => createSurfaceContext(), []);
+    const host = React.useMemo(() => createPluginUiPrivatePresentationHost(), []);
+    // A variable also reaches the pre-change type without suppressing a diagnostic:
+    // RED observes the missing behavior through the real public component and host.
+    const items = [{ id: 'move', label: 'Move to', submenu: {
+        title: 'Choose folder', items: [{ id: 'work', label: 'Work', person: 'Ada Lovelace' }, { id: 'personal', label: 'Personal', disabled: true }],
+    } }];
+    return <PluginUiProvider hostApi={createHostApiStub(context)} context={context}>
+        <PluginUiPresentationHostProviderInternal host={host}>
+            <MenuComponent open={open} onOpenChange={setOpen} trigger="More" triggerAccessibilityLabel="More actions"
+                testID="plugin-submenu" items={items} onSelect={onSelect} />
+        </PluginUiPresentationHostProviderInternal>
+    </PluginUiProvider>;
+}
+
+// The author fixture uses only public components; this harness supplies the real
+// binding that an installed same-realm surface receives.
+function AddMenuHarness(props: CollectionAddMenuExampleProps & Readonly<{ withoutPresenter?: boolean }>) {
+    const context = React.useMemo(() => createSurfaceContext(), []);
+    const hostApi = React.useMemo(() => createHostApiStub(context), [context]);
+    const host = React.useMemo(() => {
+        const bound = createPluginUiPrivatePresentationHost({ displayName: 'Author plugin' });
+        return props.withoutPresenter ? { ...bound, collectionAddMenu: undefined } : bound;
+    }, [props.withoutPresenter]);
+    return <PluginUiProvider hostApi={hostApi} context={context}>
+        <PluginUiPresentationHostProviderInternal host={host}>
+            <CollectionAddMenuExample onSelect={props.onSelect} customTrigger={props.customTrigger} disabled={props.disabled} />
+        </PluginUiPresentationHostProviderInternal>
+    </PluginUiProvider>;
+}
+
 function dispatchPointerPress(target: HTMLElement): void {
     const event = { bubbles: true, cancelable: true, button: 0, clientX: 4, clientY: 4 };
     target.dispatchEvent(new MouseEvent('mousedown', { ...event, buttons: 1 }));
@@ -182,10 +224,11 @@ describe('plugin Dropdown through the private presentation host (real RNW)', () 
         originalCancelAnimationFrame = null;
     });
 
-    async function renderDropdown(): Promise<HTMLButtonElement> {
-        container = document.createElement('div');
-        document.body.appendChild(container);
-        root = createRoot(container);
+    async function renderContent(content: React.ReactNode): Promise<HTMLDivElement> {
+        const mountedContainer = document.createElement('div');
+        container = mountedContainer;
+        document.body.appendChild(mountedContainer);
+        root = createRoot(mountedContainer);
         originalGetBoundingClientRect = HTMLElement.prototype.getBoundingClientRect;
         originalRequestAnimationFrame = globalThis.requestAnimationFrame;
         originalCancelAnimationFrame = globalThis.cancelAnimationFrame;
@@ -194,13 +237,150 @@ describe('plugin Dropdown through the private presentation host (real RNW)', () 
         globalThis.cancelAnimationFrame = (handle: number) => window.clearTimeout(handle);
 
         await act(async () => {
-            root?.render(<DropdownHarness />);
+            root?.render(content);
         });
+        return mountedContainer;
+    }
 
-        const trigger = container.querySelector<HTMLButtonElement>('[data-testid="plugin-dropdown-more"]');
+    async function renderDropdown(content: React.ReactNode = <DropdownHarness />, triggerTestID = 'plugin-dropdown-more'): Promise<HTMLButtonElement> {
+        const mountedContainer = await renderContent(content);
+        const trigger = mountedContainer.querySelector<HTMLButtonElement>(`[data-testid="${triggerTestID}"]`);
         if (!trigger) throw new Error('missing plugin Dropdown trigger');
         return trigger;
     }
+
+    it.each([Menu, Dropdown, ContextMenu])('opens public submenus with Right and returns with Left before selecting a leaf (%s)', async (component) => {
+        const onSelect = vi.fn();
+        const trigger = await renderDropdown(<SubmenuHarness component={component} onSelect={onSelect} />, 'plugin-submenu');
+        await act(async () => { dispatchPointerPress(trigger); await waitForPopoverCommit(); });
+        const parent = document.querySelector<HTMLElement>('[role="menuitem"][aria-haspopup="menu"]');
+        expect(parent).not.toBeNull();
+        await act(async () => {
+            parent!.focus();
+            parent!.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true }));
+        });
+        await vi.waitFor(() => expect(document.querySelector('[role="menuitem"][aria-label="Work"]')).not.toBeNull());
+        expect(document.querySelector('[role="menuitem"][aria-label="Work"] [data-testid="menu-item-face"]')).not.toBeNull();
+        expect(onSelect).not.toHaveBeenCalled();
+        await act(async () => {
+            const leaf = document.querySelector<HTMLElement>('[role="menuitem"][aria-label="Work"]')!;
+            leaf.focus();
+            leaf.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true, cancelable: true }));
+        });
+        await vi.waitFor(() => expect(document.querySelector('[role="menuitem"][aria-label="Work"]')).toBeNull());
+        expect(trigger.getAttribute('aria-expanded')).toBe('true');
+        await act(async () => { dispatchPointerPress(parent!); });
+        await vi.waitFor(() => expect(document.querySelector('[role="menuitem"][aria-label="Work"]')).not.toBeNull());
+        await act(async () => { document.querySelector<HTMLElement>('[role="menuitem"][aria-label="Work"]')!.click(); });
+        await vi.waitFor(() => expect(onSelect).toHaveBeenCalledWith('work', expect.anything()));
+        expect(trigger.getAttribute('aria-expanded')).toBe('false');
+    });
+
+    it('pushes public submenu choices inside one phone sheet and Back returns to the parent', async () => {
+        const dimensions = vi.spyOn(Dimensions, 'get').mockReturnValue({ width: 390, height: 844, scale: 1, fontScale: 1 });
+        try {
+            const onSelect = vi.fn();
+            const trigger = await renderDropdown(<SubmenuHarness onSelect={onSelect} />, 'plugin-submenu');
+            await act(async () => { dispatchPointerPress(trigger); await waitForPopoverCommit(); });
+            const sheet = document.querySelector('[role="dialog"][aria-label="More actions"]');
+            expect(sheet).not.toBeNull();
+            const openChild = async () => { await act(async () => {
+                document.querySelector<HTMLElement>('[role="menuitem"][aria-haspopup="menu"]')!.click();
+            }); };
+            await openChild();
+            await vi.waitFor(() => expect(document.querySelector('[data-testid="popover-sheet.back"]')).not.toBeNull());
+            expect(document.querySelectorAll('[role="dialog"]')).toHaveLength(1);
+            expect(sheet?.textContent).toContain('Choose folder');
+            expect(sheet?.textContent).toContain('Work');
+            expect(onSelect).not.toHaveBeenCalled();
+            await act(async () => { document.querySelector<HTMLElement>('[data-testid="popover-sheet.back"]')!.click(); });
+            await vi.waitFor(() => expect(document.querySelector('[data-testid="popover-sheet.back"]')).toBeNull());
+            expect(trigger.getAttribute('aria-expanded')).toBe('true');
+            await openChild();
+            await act(async () => { document.querySelector<HTMLElement>('[role="menuitem"][aria-label="Work"]')!.click(); });
+            await vi.waitFor(() => expect(onSelect).toHaveBeenCalledWith('work', expect.anything()));
+            expect(trigger.getAttribute('aria-expanded')).toBe('false');
+        } finally { dimensions.mockRestore(); }
+    });
+
+    it('lets an external author use the grouped searchable Add menu and notice through the real host', async () => {
+        expect(AuthorComponents).toHaveProperty('CollectionAddMenu', expect.any(Function));
+        const onSelect = vi.fn();
+        const trigger = await renderDropdown(<AddMenuHarness onSelect={onSelect} />, 'author-add-trigger');
+        expect(trigger.getAttribute('aria-label')).toBe('Add a source');
+        expect(trigger.getAttribute('aria-expanded')).toBe('false');
+        expect(document.querySelector('[data-testid="author-add-menu:notice"]')).toBeNull();
+        expect(onSelect).not.toHaveBeenCalled();
+        await act(async () => {
+            // jsdom raw mouse events do not execute the browser's pointer-focus default.
+            trigger.focus();
+            dispatchPointerPress(trigger);
+            await waitForPopoverCommit();
+        });
+        expect(trigger.getAttribute('aria-expanded')).toBe('true');
+        expect(document.querySelector('[data-testid="author-add-menu:notice"]')?.textContent)
+            .toBe('Some sources need setup before they can be added.');
+        expect(document.body.textContent).toContain('Cloud');
+        expect(document.body.textContent).toContain('On this computer');
+        const search = document.querySelector<HTMLInputElement>('input[placeholder="Find sources"]');
+        expect(search).not.toBeNull();
+        const disabled = document.querySelector<HTMLElement>('[data-testid="author-source-8"]');
+        expect(disabled).not.toBeNull();
+        await act(async () => { if (disabled) dispatchPointerPress(disabled); });
+        expect(onSelect).not.toHaveBeenCalled();
+        await act(async () => {
+            const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+            setter?.call(search, 'Local inference');
+            search?.dispatchEvent(new Event('input', { bubbles: true }));
+        });
+        expect(document.querySelector('[data-testid="author-source-0"]')).toBeNull();
+        const choice = document.querySelector<HTMLElement>('[data-testid="author-source-9"]');
+        expect(choice).not.toBeNull();
+        await act(async () => { if (choice) dispatchPointerPress(choice); await waitForPopoverCommit(); });
+        expect(onSelect).toHaveBeenCalledExactlyOnceWith('source-9', expect.objectContaining({
+            anchor: expect.objectContaining({ kind: 'view' }),
+        }));
+        expect(document.querySelector('[data-testid="author-add-menu:notice"]')).toBeNull();
+        expect(trigger.getAttribute('aria-expanded')).toBe('false');
+    });
+
+    it('keeps an author invitation and a short list on the same dropdown, including Escape focus return', async () => {
+        const onSelect = vi.fn();
+        const trigger = await renderDropdown(<AddMenuHarness onSelect={onSelect} customTrigger />, 'author-custom-add-trigger');
+        await act(async () => {
+            trigger.focus();
+            dispatchPointerPress(trigger);
+            await waitForPopoverCommit();
+        });
+        expect(document.querySelector('[data-testid="author-source-0"]')).not.toBeNull();
+        expect(document.querySelector('input[placeholder="Find sources"]')).toBeNull();
+        const row = document.querySelector<HTMLElement>('[data-testid="author-source-0"]');
+        await act(async () => { row?.focus(); });
+        await act(async () => {
+            document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+            await waitForPopoverCommit();
+        });
+        expect(document.querySelector('[data-testid="author-add-menu:notice"]')).toBeNull();
+        expect(document.activeElement).toBe(trigger);
+        expect(onSelect).not.toHaveBeenCalled();
+    });
+
+    it('reports unavailable presentation rather than drawing a substitute menu without the host binding', async () => {
+        await renderContent(<AddMenuHarness onSelect={() => undefined} withoutPresenter />);
+        expect(container?.querySelector('[data-testid="author-add-menu-unavailable"]')?.textContent)
+            .toBe('Adding items is unavailable on this host.');
+        expect(document.querySelector('[data-testid="author-add-trigger"]')).toBeNull();
+    });
+
+    it('keeps the default Add trigger labelled and disabled without opening or selecting', async () => {
+        const onSelect = vi.fn();
+        const trigger = await renderDropdown(<AddMenuHarness onSelect={onSelect} disabled />, 'author-add-trigger');
+        expect(trigger.getAttribute('aria-label')).toBe('Add a source');
+        expect(trigger.disabled).toBe(true);
+        await act(async () => { dispatchPointerPress(trigger); await waitForPopoverCommit(); });
+        expect(document.querySelector('[data-testid="author-add-menu:notice"]')).toBeNull();
+        expect(onSelect).not.toHaveBeenCalled();
+    });
 
     it('opens with Enter and returns exact trigger focus after pointer-open Escape', async () => {
         const trigger = await renderDropdown();

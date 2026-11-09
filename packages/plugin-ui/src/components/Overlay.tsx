@@ -1,3 +1,4 @@
+import { Avatar } from './Avatar.js';
 import { useCallback, useContext, useLayoutEffect, useMemo, useRef, type MutableRefObject, type ReactElement, type ReactNode, type RefObject } from 'react';
 import { View } from 'react-native';
 
@@ -6,6 +7,7 @@ import {
   useOptionalPluginUiPopoverScrollSource,
   type PluginUiPopoverContentControls,
   type PluginUiPopoverPresentation,
+  type PluginUiMenuPresentation,
 } from '../presentationHost/context.js';
 import { HappierPressable, type HappierPressableStyleState } from '../presentation/interaction/Pressable.js';
 import { HappierScrollArea, HappierStack } from '../presentation/layout/Layout.js';
@@ -150,6 +152,7 @@ type PopoverPresentationProps = PopoverProps & Readonly<{
   renderContent?: (controls: PluginUiPopoverContentControls) => ReactNode;
   /** Private: how many choices are in force, drawn as a count on a `well` trigger. */
   triggerCount?: number;
+  menu?: PluginUiMenuPresentation;
 }>;
 
 /** A group heading starts on the rows' own text edge, with the menu's row rhythm above it. */
@@ -218,6 +221,7 @@ function PopoverPresentation({
   renderContent,
   sheet,
   triggerCount,
+  menu,
 }: PopoverPresentationProps): ReactElement {
   // TypeScript callers cannot supply an element, and this keeps the same
   // one-owner contract for untyped/plugin-bundle callers before React Native
@@ -426,6 +430,7 @@ function PopoverPresentation({
             initialFocusRef,
             placement: placement ?? 'auto',
             presentation,
+            ...(menu === undefined ? {} : { menu }),
             width: fieldTrigger ? 'anchor' : 'content',
             autoFocusOnOpen: shouldAutoFocusOnOpen,
             ...(sheet === undefined ? {} : { sheet }),
@@ -452,6 +457,8 @@ type MenuItemBase = Readonly<{
   taskStatus?: TaskStatusCategory;
   /** A colour this item names (a label colour menu), drawn as its swatch in place of `icon`. */
   swatch?: HappierMarkColor;
+  /** The person this item names, drawn as their `Avatar` in place of `icon`. The label stays its accessible name. */
+  person?: string;
   /** Supporting identity or consequence, kept separate from the action label. */
   subtitle?: string;
   disabled?: boolean;
@@ -462,18 +469,22 @@ export type MenuItem = MenuItemBase & (
       kind?: 'action';
       checked?: never;
       radioGroupId?: never;
+      /** Nested choices use the host's shared submenu: hover/Right on desktop, an in-sheet push on phones. */
+      submenu?: Readonly<{ items: readonly MenuItem[]; title?: string }>;
     }>
   | Readonly<{
       kind: 'checkbox';
       /** Checkbox rows always publish an explicit checked state. */
       checked: boolean;
       radioGroupId?: never;
+      submenu?: never;
     }>
   | Readonly<{
       kind: 'radio';
       radioGroupId: string;
       /** Radio checks derive only from MenuProps.radioGroups. */
       checked?: never;
+      submenu?: never;
     }>
 );
 
@@ -706,6 +717,11 @@ function MenuRows({
         })}
       >
         {item.taskStatus !== undefined ? <TaskStatusGlyph category={item.taskStatus} />
+          : item.person !== undefined ? (
+            <View aria-hidden importantForAccessibility="no-hide-descendants">
+              <Avatar name={item.person} size="small" testID="menu-item-face" />
+            </View>
+          )
           : item.swatch !== undefined ? (
             <View style={{ width: resolveHappierIconSize('small'), alignItems: 'center' }}>
               <HappierStatusDot color={resolveHappierMarkColor(theme, item.swatch)} />
@@ -809,6 +825,8 @@ function MenuPresentation({
     ? 'bottom'
     : popover.placement;
   const triggerMode: OverlayTriggerMode = kind === 'context' ? 'context' : 'toggle';
+  const hasSubmenus = popover.open && (ungroupedItems.some(item => item.submenu !== undefined)
+    || groups.some(group => group.items.some(item => item.submenu !== undefined)));
 
   return (
     <PopoverPresentation
@@ -817,6 +835,8 @@ function MenuPresentation({
       onOpenChange={onOpenChange}
       autoFocusOnOpen
       triggerMode={triggerMode}
+      {...(hasSubmenus ? { menu: { items: ungroupedItems, groups, radioGroups, showGroupLabels, search, onSelect,
+        accessibilityLabel: popover.triggerAccessibilityLabel, keepOpen: sheet !== undefined } } : {})}
       presentation={kind}
       initialFocusRef={initialFocusRef}
       {...(sheet === undefined ? {} : { sheet })}

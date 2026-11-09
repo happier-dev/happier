@@ -826,16 +826,20 @@ describe('connected-service configuration Action owner', () => {
             .toMatchObject({ status: 'revoked', account, metadataCleanup: { status: 'cleanup-pending' } });
         expect(effects).toEqual(['qualified-before-delete', 'revoked', 'cleanup']);
     });
-    it('exposes safe typed acknowledgement and device-disclosure reset Actions without changing credential authority', async () => {
+    it('does not advertise unused device-disclosure Actions', () => {
+        for (const id of ['connectedServices.disclosure.set', 'connectedServices.disclosure.reset']) {
+            expect(ActionIdSchema.safeParse(id).success).toBe(false);
+        }
+    });
+    it('exposes safe typed acknowledgement and label Actions without changing credential authority', async () => {
         for (const id of ['connectedServices.acknowledgements.set', 'connectedServices.acknowledgements.reset',
-            'connectedServices.labels.set', 'connectedServices.labels.reset',
-            'connectedServices.disclosure.set', 'connectedServices.disclosure.reset']) {
+            'connectedServices.labels.set', 'connectedServices.labels.reset']) {
             const parsed = ActionIdSchema.safeParse(id);
             expect(parsed.success).toBe(true);
             if (!parsed.success) continue;
             const spec = getActionSpec(parsed.data);
             expect(spec.safety).toBe('safe');
-            expect(spec.executionPlacement).toBe(id.includes('.disclosure.') ? 'client' : 'account');
+            expect(spec.executionPlacement).toBe('account');
         }
         const writes: unknown[] = [];
         const host: ConnectedServiceConfigurationActionHostV1 = {
@@ -845,22 +849,17 @@ describe('connected-service configuration Action owner', () => {
             async resetQuota() { throw new Error('metadata_must_not_change_quota'); },
             async setConnectedLabel(input) { writes.push(input); },
             async setConnectedAcknowledgement(input) { writes.push(input); },
-            async setConnectedDisclosure(input) { writes.push(input); },
         };
         const group = { kind: 'group' as const, service, groupId: 'work' };
         const warning = { kind: 'warning' as const, warningId: '', scope: { kind: 'machine' as const, machineId: 'exact:machine' } };
-        const disclosure = { kind: 'group-member' as const, group: { service, groupId: 'work' }, accountId: 'default' };
         for (const [id, input] of [
             ['connectedServices.labels.set', { subject: group, label: 'Personal group' }],
             ['connectedServices.labels.reset', { subject: group }],
             ['connectedServices.acknowledgements.set', { subject: warning, acknowledged: false }],
             ['connectedServices.acknowledgements.reset', { subject: warning }],
-            ['connectedServices.disclosure.set', { subject: disclosure, collapsed: false }],
-            ['connectedServices.disclosure.reset', { subject: disclosure }],
         ] as const) expect(await executeConnectedServiceConfigurationActionV1(host, id, input)).toEqual({ applied: true });
         expect(writes).toEqual([{ subject: group, label: 'Personal group' }, { subject: group, label: null },
-            { subject: warning, acknowledged: false }, { subject: warning, acknowledged: null },
-            { subject: disclosure, collapsed: false }, { subject: disclosure, collapsed: null }]);
+            { subject: warning, acknowledged: false }, { subject: warning, acknowledged: null }]);
     });
     it('writes agent defaults through the purpose catalog while preserving Team selections and awaiting acknowledgement', async () => {
         const teamPurpose = { consumer: { pluginId: 'happier.resource.cloud', localId: 'worker' }, purpose: 'api' };

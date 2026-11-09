@@ -84,14 +84,10 @@ describe('navigation placements', () => {
         expect(reorderNavigationPlacement(preferences, ['files', 'git'], 'terminal', { anchorId: null, placement: 'before' })).toBeNull();
     });
 
-    it('reads unknown stored fields tolerantly and seeds legacy values only when the surface is absent', () => {
-        const legacy = { sessionCockpitBarSurfaceIds: [], compactAppDestinationPreferencesV1: { orderedDestinationIds: ['plugins', 'sessions'], hiddenDestinationIds: ['search'] } };
-        const seeded = readNavigationSurfacePlacements(legacy);
-        expect(seeded.appRail).toEqual({ orderedIds: ['plugins', 'sessions'], placements: { search: 'hidden' } });
-        expect(seeded.sessionTabBar).toEqual({ orderedIds: [], placements: { browse: 'overflow', git: 'overflow', companion: 'overflow', terminal: 'overflow' } });
-        expect(readNavigationSurfacePlacements({ ...legacy, navigationSurfacePlacementsV1: { sessionTabBar: { orderedIds: ['plugin:future'], placements: { 'plugin:future': 'pinned' }, future: true }, futureSurface: {} } }).sessionTabBar)
-            .toEqual({ orderedIds: ['plugin:future'], placements: { 'plugin:future': 'pinned' } });
-        expect(readNavigationSurfacePlacements({ sessionCockpitBarSurfaceIds: null }).sessionTabBar?.orderedIds).toEqual(['browse', 'git', 'companion', 'terminal']);
+    it('leaves absent navigation surfaces to catalog policy rather than development-era settings', () => {
+        const settings = { navigationSurfacePlacementsV1: {}, sessionCockpitBarSurfaceIds: [],
+            compactAppDestinationPreferencesV1: { orderedDestinationIds: ['plugins'], hiddenDestinationIds: ['search'] } };
+        expect(readNavigationSurfacePlacements(settings)).toEqual({});
     });
 
     it('uses measured room and reserves a trigger only when overflow exists', () => {

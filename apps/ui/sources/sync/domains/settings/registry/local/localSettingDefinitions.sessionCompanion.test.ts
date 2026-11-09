@@ -6,8 +6,6 @@ import { LOCAL_SETTING_DEFINITIONS } from './localSettingDefinitions';
 
 const preference: SessionCompanionPreferencesV1[string] = {
     v: 1,
-    visible: true,
-    collapsed: false,
     edge: 'trailing',
     density: 'compact',
     items: [{ kind: 'builtin', id: 'session_summary' }],

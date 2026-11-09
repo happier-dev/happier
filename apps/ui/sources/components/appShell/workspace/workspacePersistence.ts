@@ -90,16 +90,6 @@ export function workspaceLayoutScopeKey(scope: WorkspaceLayoutScope): string {
     return JSON.stringify([scope.serverId, scope.accountId, scope.windowId]);
 }
 
-export function readScopedWorkspaceLayout(layouts: Readonly<Record<string, unknown>>, scopeKey: string): WorkspaceState | null {
-    return Object.hasOwn(layouts, scopeKey) ? parseWorkspaceLayout(layouts[scopeKey]) : null;
-}
-
-export function writeScopedWorkspaceLayout(
-    layouts: Readonly<Record<string, unknown>>, scopeKey: string, state: WorkspaceState,
-): Readonly<Record<string, unknown>> {
-    return { ...layouts, [scopeKey]: serializeWorkspaceLayout(state) };
-}
-
 export function parseWorkspaceLayout(value: unknown): WorkspaceState | null {
     const candidate = record(value);
     const rawTabs = record(candidate?.tabs);

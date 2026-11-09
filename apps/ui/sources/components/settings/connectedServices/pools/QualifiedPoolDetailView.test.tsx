@@ -1029,6 +1029,21 @@ describe('QualifiedPoolDetailView', () => {
         expect(patch).not.toHaveBeenCalled();
     });
 
+    it('edits the personal pool label through the same inline name editor without patching its definition', async () => {
+        const onSetLabel = vi.fn(async () => true);
+        const key = connectedEntitySubjectKeyV1({ kind: 'group', service: SERVICE, groupId: 'primary' });
+        const { screen, group } = await renderPoolDetail({}, { onSetLabel, labelsByKey: { [key]: 'Night shift' } });
+        await act(async () => { moreMenu(screen).props.onSelect('editLabel'); });
+        const field = screen.findByTestId('connected-services-pool-detail:name-field');
+        expect(field?.props.value).toBe('Night shift');
+        await act(async () => { field!.props.onChangeText('  Weekend pool  '); });
+        await pressRow(screen, 'connected-services-pool-detail:name-save');
+        expect(onSetLabel).toHaveBeenCalledWith('Weekend pool');
+        expect(patch).not.toHaveBeenCalled();
+        expect(group.displayName).toBe('Team pool');
+        expect(screen.findByTestId('connected-services-pool-detail:name-field')).toBeNull();
+    });
+
     it('renames the pool inline only after saving the draft', async () => {
         const { screen, group } = await renderPoolDetail();
         await pressRow(screen, 'connected-services-pool-detail:rename');

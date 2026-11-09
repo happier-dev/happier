@@ -187,36 +187,12 @@ export function reorderNavigationPlacement(
     return { orderedIds, placements: preferences.placements };
 }
 
-export function navigationPreferencesFromLegacyAppDestinations(preferences: Readonly<{
-    orderedDestinationIds: readonly string[]; hiddenDestinationIds: readonly string[];
-}>): NavigationPlacementPreferences {
-    return { orderedIds: uniqueIds(preferences.orderedDestinationIds), placements: Object.fromEntries(uniqueIds(preferences.hiddenDestinationIds).map(id => [id, 'hidden' as const])) };
-}
-
-export function navigationPlacementsFromLegacyPins(
-    pins: readonly string[] | null | undefined,
-    defaults: readonly string[] = SESSION_COCKPIT_DEFAULT_BAR_SURFACE_IDS,
-): NavigationPlacementPreferences {
-    const phoneIds = uniqueIds(pins ?? defaults);
-    return {
-        orderedIds: phoneIds,
-        placements: Object.fromEntries([...new Set([...defaults, ...phoneIds])].map(id => [id, phoneIds.includes(id) ? 'pinned' as const : 'overflow' as const])),
-    };
-}
-
-/** Legacy settings are read-only seeds. An explicit surface, even empty, always wins. */
+/** Read only the current device placement owner; absent surfaces use catalog policy. */
 export function readNavigationSurfacePlacements(local: Readonly<{
     navigationSurfacePlacementsV1?: unknown;
-    sessionCockpitBarSurfaceIds?: readonly string[] | null;
-    compactAppDestinationPreferencesV1?: Readonly<{ orderedDestinationIds: readonly string[]; hiddenDestinationIds: readonly string[] }>;
 }>): NavigationSurfacePlacementsV1 {
     const parsed = StoredNavigationSurfacePlacementsV1Schema.safeParse(local.navigationSurfacePlacementsV1 ?? {});
-    const stored = parsed.success ? parsed.data : {};
-    return {
-        ...stored,
-        appRail: stored.appRail ?? navigationPreferencesFromLegacyAppDestinations(local.compactAppDestinationPreferencesV1 ?? { orderedDestinationIds: [], hiddenDestinationIds: [] }),
-        sessionTabBar: stored.sessionTabBar ?? navigationPlacementsFromLegacyPins(local.sessionCockpitBarSurfaceIds),
-    };
+    return parsed.success ? parsed.data : {};
 }
 
 /** Fit the measured prefix, accounting for separators and a single overflow trigger. */
@@ -245,20 +221,4 @@ function normalizeSurfaceId(value: unknown): string | null {
 /** Historical Project companion aliases enter the unified item vocabulary at this input adapter. */
 export function normalizeProjectNavigationItemId(id: string): string {
     return id === 'git' ? 'changes' : id === 'browse' || id === 'files' ? 'code' : id;
-}
-
-/** Settings initialization only. Presence, including an explicit empty value, completes the seed. */
-export function seedProjectPhoneNavigationPlacements(input: unknown): unknown {
-    if (!input || typeof input !== 'object' || Array.isArray(input)) return input;
-    const source = input as Record<string, unknown>;
-    const parsed = StoredNavigationSurfacePlacementsV1Schema.safeParse(source.navigationSurfacePlacementsV1 ?? {});
-    if (!parsed.success || parsed.data.detailPages?.project?.phone?.items !== undefined) return input;
-    const desktop = parsed.data.projectTabBar;
-    const items: NavigationPlacementPreferences = desktop ? {
-        orderedIds: [...new Set(desktop.orderedIds.map(normalizeProjectNavigationItemId))],
-        placements: Object.fromEntries(Object.entries(desktop.placements).map(([id, placement]) => [normalizeProjectNavigationItemId(id), placement])),
-    } : EMPTY_NAVIGATION_PLACEMENT_PREFERENCES;
-    const stored = (source.navigationSurfacePlacementsV1 ?? {}) as NavigationSurfacePlacementsV1;
-    return { ...source, navigationSurfacePlacementsV1: mergeNavigationSurfacePlacements(stored, navigationPlacementPatch(
-        { pageKind: 'project', device: 'phone', section: 'items' }, items)) };
 }

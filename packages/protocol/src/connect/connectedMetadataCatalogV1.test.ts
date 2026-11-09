@@ -108,11 +108,11 @@ describe('connected metadata catalog destination authority', () => {
         expect(sourceRemoved).toBe(false);
     });
 
-    it('activates complete labels independently and retires only admitted roots while preserving malformed acknowledgement and unimported disclosure', async () => {
+    it('activates complete labels independently and retires only admitted roots while preserving malformed acknowledgement and unrelated source data', async () => {
         let row: ReturnType<typeof ConnectedPresentationRowReadResponseV1Schema.parse> = { status: 'absent' };
         let source: Readonly<Record<string, unknown>> = { connectedServicesProfileLabelByKey: { 'openai-codex/default': 'Work' },
             connectedServicesDefaultAuthPoolAdoptionDismissedByKey: { unknown: true },
-            connectedServicesCollapsedItemKeysV1: { 'openai-codex:account:default': true }, unknown: { preserve: true } };
+            unknown: { preserve: true } };
         let retiredRoots: readonly string[] = [];
         const catalog = await loadConnectedMetadataCatalogV1({ ...input(), readPresentationRow: async () => row,
             readAcknowledgementsRow: async () => ({ status: 'absent' }), transfer: {
@@ -125,7 +125,7 @@ describe('connected metadata catalog destination authority', () => {
         expect(catalog.presentation).toMatchObject({ status: 'ready', revision: 0, entries: [{ subject, label: 'Work' }] });
         expect(catalog.acknowledgements).toMatchObject({ status: 'partial', revision: 'absent' });
         expect(source).toEqual({ connectedServicesDefaultAuthPoolAdoptionDismissedByKey: { unknown: true },
-            connectedServicesCollapsedItemKeysV1: { 'openai-codex:account:default': true }, unknown: { preserve: true } });
+            unknown: { preserve: true } });
         expect(retiredRoots).toEqual(['connectedServicesProfileLabelByKey']);
         expect(catalog.cleanup).toMatchObject({ status: 'cleanup-pending' });
     });

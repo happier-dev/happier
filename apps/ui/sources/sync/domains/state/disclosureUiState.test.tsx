@@ -11,13 +11,29 @@ import { collapsedGroupsState, replaceCollapsedGroupKeys, sessionInfoDisclosures
 afterEach(() => { standardCleanup(); vi.restoreAllMocks(); clearPersistenceStorage(); });
 
 describe('keyed disclosure state', () => {
-    it('restores Setup disclosure at the real keyed consumer without rebuilding a Settings carrier', async () => {
+    it('preserves retained collapsed keys verbatim without rewriting development Session List keys', () => {
+        const context = buildSessionListCollapseContextKey({ retentionScopeKey: 'home/alice/global', corpusStorage: 'active' }, 'projects');
+        const developmentKey = `sessionList:${JSON.stringify(context)}:pinned`;
+        const currentKey = buildSessionListCollapseKey(context, 'pinned');
+        getPersistenceStorage().set('local-settings', JSON.stringify({ collapsedGroupKeysV1: { 'retained-project': true, [developmentKey]: true } }));
+        loadLocalSettings();
+        expect(collapsedGroupsState.read('retained-project')).toBe(true);
+        expect(collapsedGroupsState.read(developmentKey)).toBe(true);
+        expect(collapsedGroupsState.read(currentKey)).toBeUndefined();
+        replaceCollapsedGroupKeys({ [developmentKey]: false });
+        expect(collapsedGroupsState.read(developmentKey)).toBe(false);
+        expect(collapsedGroupsState.read(currentKey)).toBeUndefined();
+    });
+
+    it('uses only keyed device state for Setup disclosures, ignoring never-shipped Settings seeds', async () => {
         getPersistenceStorage().set('local-settings', JSON.stringify({ sessionInfoExpandedSectionsV1: { memory: true } }));
         const loaded = loadLocalSettings();
         const section = await renderHook(() => useSessionInfoSectionExpanded('memory'));
-        expect(section.getCurrent()).toBe(true);
+        expect(section.getCurrent()).toBeUndefined();
         expect(loaded).not.toHaveProperty('sessionInfoExpandedSectionsV1');
         expect(loaded).not.toHaveProperty('collapsedGroupKeysV1');
+        await act(async () => sessionInfoDisclosuresState.set('memory', false));
+        expect(section.getCurrent()).toBe(false);
     });
     it('keeps mounted list-context and Bot readers idle for unrelated group keys', async () => {
         const context = buildSessionListCollapseContextKey({ retentionScopeKey: 'home/alice/global', corpusStorage: 'active' }, 'projects');

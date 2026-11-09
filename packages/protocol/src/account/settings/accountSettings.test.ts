@@ -332,24 +332,13 @@ describe('accountSettings', () => {
     expect(accountSettingsParse(raw).workspaceFileViewerPreferencesV1).toEqual(value);
   });
 
-  it('round-trips evidence-scoped Coach suppression without a competing Automation schedule preference', () => {
-    const preferences = { v: 1, suppressions: [
-      { evidenceKey: 'coach:evidence-a', kind: 'dismissed' },
-      { evidenceKey: 'coach:evidence-b', kind: 'snoozed', untilMs: 900 },
-    ] };
-    const defaults = { disabledChecks: [], modelSuggestion: 'suggest_with_estimates' };
-    expect(accountSettingsParse({ usageCoachPreferencesV1: preferences }).usageCoachPreferencesV1).toEqual({ ...preferences, ...defaults });
-    expect(accountSettingsParse({ usageCoachPreferencesV1: { ...preferences, digestCadence: 'weekly' } }).usageCoachPreferencesV1).toEqual({ ...preferences, ...defaults });
-    expect(accountSettingsParse({}).usageCoachPreferencesV1).toEqual({ v: 1, suppressions: [], ...defaults });
-    const configured = { ...preferences, disabledChecks: ['mcp_overhead', 'outside_usage'], modelSuggestion: 'complete_only' };
-    const { suppressions: legacySuppressions, ...currentPreferences } = configured;
-    expect(legacySuppressions).toHaveLength(2);
-    const admitted = ACCOUNT_SETTING_DEFINITIONS.usageCoachPreferencesV1.parseMutationValue(currentPreferences);
-    expect(admitted.success).toBe(true);
-    expect(ACCOUNT_SETTING_DEFINITIONS.usageCoachPreferencesV1.parseMutationValue(configured).success).toBe(false);
+  it('stores only deliberate Coach preferences and leaves suppression state to the Coach KV owner', () => {
+    const configured = { v: 1, disabledChecks: ['mcp_overhead', 'outside_usage'], modelSuggestion: 'complete_only' };
     expect(accountSettingsParse({ usageCoachPreferencesV1: configured }).usageCoachPreferencesV1).toEqual(configured);
+    expect(accountSettingsParse({}).usageCoachPreferencesV1).toEqual({ v: 1, disabledChecks: [], modelSuggestion: 'suggest_with_estimates' });
+    expect(ACCOUNT_SETTING_DEFINITIONS.usageCoachPreferencesV1.parseMutationValue(configured).success).toBe(true);
+    expect(ACCOUNT_SETTING_DEFINITIONS.usageCoachPreferencesV1.parseMutationValue({ ...configured, suppressions: [] }).success).toBe(false);
     expect(ACCOUNT_SETTING_DEFINITIONS.usageCoachPreferencesV1.parseMutationValue({ ...configured, disabledChecks: ['invented'] }).success).toBe(false);
-    expect(ACCOUNT_SETTING_DEFINITIONS.usageCoachPreferencesV1.parseMutationValue({ ...preferences, digestCadence: 'weekly' }).success).toBe(false);
   });
   it('keeps quota advice opt-in and round-trips authored personal and qualified pool targets without changing recovery policy', () => {
     const defaults = accountSettingsParse({});

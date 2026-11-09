@@ -6,6 +6,7 @@ import { stripLocalOnlyAccountSettings } from '@/sync/domains/settings/localOnly
 import {
     clearMachineAdministrationTargetPreference,
     clearPluginMachineExecutionOriginPreference,
+    readMachineAdministrationTargetPreference,
     readPluginMachineExecutionTargetPreference,
     setMachineAdministrationTargetPreference,
     setPluginMachineExecutionOriginPreference,
@@ -15,6 +16,16 @@ describe('machine administration selection preferences', () => {
     const pluginId = 'acme.plugin';
     const origin = { serverIdentityId: 'srv_one', sourceRef: { machineId: 'machine-a', pluginId,
         sourceCustody: { kind: 'development' as const, registeredRootId: '/registered/source' } } };
+    it('keeps a deliberate managed-Machine choice at its declared key without importing it as an observation', () => {
+        const scope = { serverId: 'srv_one', accountId: 'managed-preference-test' };
+        const target = { serverIdentityId: 'srv_one', machineId: 'machine-a' };
+        const next = setMachineAdministrationTargetPreference({}, 'machines.managed', target);
+        expect(next).toEqual({ 'machines.managed': target });
+        saveAccountSettings(scope, { ...settingsDefaults, machineAdministrationTargetsLocalV1: next }, 1);
+        const restored = settingsParse(loadAccountSettings(scope).settings).machineAdministrationTargetsLocalV1;
+        expect(readMachineAdministrationTargetPreference(restored, 'machines.managed')).toEqual(target);
+        expect(clearMachineAdministrationTargetPreference(restored, 'machines.managed')).toEqual({});
+    });
     it('accepts a canonical maximum-length plugin id as a named local target', () => {
         const longId = `${'a'.repeat(250)}.tools`;
         const next = setPluginMachineExecutionOriginPreference({}, longId, { ...origin, sourceRef: { ...origin.sourceRef, pluginId: longId } });

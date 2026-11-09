@@ -722,8 +722,6 @@ const ACTION_TITLE_KEYS = {
     'connectedServices.labels.set': 'actionPresentation.titles.connectedServices_labels_set',
     'connectedServices.labels.reset': 'actionPresentation.titles.connectedServices_labels_reset',
     'connectedServices.acknowledgements.reset': 'actionPresentation.titles.connectedServices_acknowledgements_reset',
-    'connectedServices.disclosure.set': 'actionPresentation.titles.connectedServices_disclosure_set',
-    'connectedServices.disclosure.reset': 'actionPresentation.titles.connectedServices_disclosure_reset',
     'usage.sources.discover': 'actionPresentation.titles.usage_sources_discover',
     'usage.sources.get': 'actionPresentation.titles.usage_sources_get',
     'usage.sources.dismiss': 'actionPresentation.titles.usage_sources_dismiss',

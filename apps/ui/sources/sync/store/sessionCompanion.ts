@@ -3,9 +3,8 @@ import { useShallow } from 'zustand/react/shallow';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
 import { buildRealmQualifiedSessionCompanionPreferenceKey } from '@/components/sessions/companion/state/sessionCompanionPreferenceKey';
-import { HIDDEN_SESSION_COMPANION_PREFERENCE_V1, isUnreadableSessionCompanionPreference } from '@/components/sessions/companion/state/sessionCompanionPreference';
+import { HIDDEN_SESSION_COMPANION_PREFERENCE_V1 } from '@/components/sessions/companion/state/sessionCompanionPreference';
 import { createPersistentUiState, UiStatePersistenceError, usePersistentUiStateValue } from '../domains/state/persistentUiState';
-import { subscribePersistenceStorageCleared } from '../domains/state/persistenceStorage';
 import { getStorage } from '../domains/state/storageStore';
 import type { LocalSettings } from '../domains/settings/localSettings';
 import { resolveSessionLocalPreferenceRealm } from '../domains/settings/sessionLocalPreferenceKey';
@@ -14,7 +13,8 @@ import { normalizeTrimmedString } from '../domains/session/listing/normalizeTrim
 import { resolveSessionListLookupSessionServerScopeFromState } from '../domains/session/listing/sessionListLookupState';
 import type { StorageState } from './types';
 
-export type SessionCompanionPreferenceEntry = LocalSettings['sessionCompanionPreferencesBySessionV1'][string];
+export type SessionCompanionPreferenceEntry = AuthoredPreference & Interaction;
+type AuthoredPreference = LocalSettings['sessionCompanionPreferencesBySessionV1'][string];
 export type SessionCompanionPreferenceSlot = Readonly<{
     /** null when the current Account/Home cannot prove this Session's realm. */
     storageKey: string | null;
@@ -31,8 +31,6 @@ const interactionState = createPersistentUiState<Interaction>('session-companion
     }
     return { visible: value.visible, collapsed: value.collapsed };
 });
-const importedKeys = new Set<string>();
-subscribePersistenceStorageCleared(() => importedKeys.clear());
 
 function writeInteraction(key: string, value: Interaction): void {
     try { interactionState.set(key, value); }
@@ -42,26 +40,12 @@ function writeInteraction(key: string, value: Interaction): void {
     }
 }
 
-function importInteraction(key: string, legacy: SessionCompanionPreferenceEntry | undefined): Interaction | undefined {
-    const current = interactionState.read(key);
-    if (current !== undefined || importedKeys.has(key)) return current;
-    importedKeys.add(key);
-    // Only a first-use readable predecessor seeds the new owner; no startup scan or default write.
-    if (legacy !== undefined && !isUnreadableSessionCompanionPreference(legacy)) {
-        const seed = { visible: legacy.visible, collapsed: legacy.collapsed };
-        writeInteraction(key, seed);
-        return seed;
-    }
-    return undefined;
+function overlayInteraction(stored: AuthoredPreference | undefined, interaction: Interaction | undefined): SessionCompanionPreferenceEntry | undefined {
+    if (!stored && !interaction) return undefined;
+    return { ...HIDDEN_SESSION_COMPANION_PREFERENCE_V1, ...stored, items: stored?.items ?? [], visible: interaction?.visible ?? false, collapsed: interaction?.collapsed ?? false };
 }
 
-function overlayInteraction(stored: SessionCompanionPreferenceEntry | undefined, interaction: Interaction | undefined): SessionCompanionPreferenceEntry | undefined {
-    if (!interaction || isUnreadableSessionCompanionPreference(stored)) return stored;
-    if (stored?.visible === interaction.visible && stored.collapsed === interaction.collapsed) return stored;
-    return { v: 1, edge: 'trailing', density: 'compact', items: [], ...stored, ...interaction };
-}
-
-function readRawSlot(state: CompanionState, sessionId: string | null, activeServerId: string | null | undefined, explicitServerId?: string | null): SessionCompanionPreferenceSlot {
+function readRawSlot(state: CompanionState, sessionId: string | null, activeServerId: string | null | undefined, explicitServerId?: string | null): Readonly<{ storageKey: string | null; stored: AuthoredPreference | undefined }> {
     const normalizedSessionId = sessionId ? normalizeSessionId(sessionId) : null;
     if (!normalizedSessionId) return { storageKey: null, stored: undefined };
     const resolvedServerId = normalizeTrimmedString(explicitServerId)
@@ -80,7 +64,7 @@ function readRawSlot(state: CompanionState, sessionId: string | null, activeServ
 /** Hooks and admitted Actions share the same realm-qualified state owner. */
 export function readSessionCompanionPreferenceSlotFromState(state: CompanionState, sessionId: string | null, activeServerId: string | null | undefined, serverId?: string | null): SessionCompanionPreferenceSlot {
     const slot = readRawSlot(state, sessionId, activeServerId, serverId);
-    return slot.storageKey ? { ...slot, stored: overlayInteraction(slot.stored, importInteraction(slot.storageKey, slot.stored)) } : slot;
+    return slot.storageKey ? { ...slot, stored: overlayInteraction(slot.stored, interactionState.read(slot.storageKey)) } : slot;
 }
 
 export function useSessionCompanionPreferenceSlot(sessionId: string | null, serverId?: string | null): SessionCompanionPreferenceSlot {
@@ -88,9 +72,6 @@ export function useSessionCompanionPreferenceSlot(sessionId: string | null, serv
     // Keep selector snapshots stable; compose the separately keyed interaction subscription afterward.
     const slot = getStorage()(useShallow(state => readRawSlot(state, sessionId, activeServer.serverId, serverId)));
     const interaction = usePersistentUiStateValue(interactionState, slot.storageKey);
-    React.useEffect(() => {
-        if (slot.storageKey) importInteraction(slot.storageKey, slot.stored);
-    }, [slot.storageKey, slot.stored]);
     return React.useMemo(() => ({ ...slot, stored: overlayInteraction(slot.stored, interaction) }), [slot, interaction]);
 }
 
@@ -105,17 +86,16 @@ export function useMutateSessionCompanionPreference(): (
         const state = getStorage().getState();
         const slot = readRawSlot(state, sessionId, activeServer.serverId, serverId);
         if (!slot.storageKey) return false;
-        const next = updater(overlayInteraction(slot.stored, importInteraction(slot.storageKey, slot.stored)));
+        const next = updater(overlayInteraction(slot.stored, interactionState.read(slot.storageKey)));
         if (next === null) return false;
-        // Old clients retain readable carriers. Current interaction writes never update those fields.
-        const authored = { ...next, visible: slot.stored?.visible ?? false, collapsed: slot.stored?.collapsed ?? false };
-        if (!sameStrictJsonValue(slot.stored ?? HIDDEN_SESSION_COMPANION_PREFERENCE_V1, authored)) {
+        const { visible, collapsed, ...authored } = next;
+        if (!sameStrictJsonValue(slot.stored ?? { v: 1, edge: 'trailing', density: 'compact', items: [] }, authored)) {
             state.applyLocalSettings({ sessionCompanionPreferencesBySessionV1: {
                 ...state.localSettings.sessionCompanionPreferencesBySessionV1,
                 [slot.storageKey]: authored,
             } }, { source: 'ui' });
         }
-        writeInteraction(slot.storageKey, { visible: next.visible, collapsed: next.collapsed });
+        writeInteraction(slot.storageKey, { visible, collapsed });
         return true;
     }, [activeServer.serverId]);
 }

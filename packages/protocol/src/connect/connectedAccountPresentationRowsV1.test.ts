@@ -159,17 +159,6 @@ describe('connected Account presentation and acknowledgement authority', () => {
         expect(raw).toEqual(before);
     });
 
-    it('retains independent sparse pool-member disclosure with exact group and account identities', () => {
-        const first = { kind: 'group-member' as const, group: { service, groupId: 'work-team' }, accountId: 'default' };
-        const second = { ...first, accountId: 'personal' };
-        const result = readLegacyConnectedMetadataV1({ connectedServicesCollapsedItemKeysV1: {
-            'openai-codex:pool:work-team:default': false,
-            'openai-codex:pool:work-team:personal': true,
-        } }, { ...inventory, disclosureSubjects: [first, second] });
-        expect(result.status).toBe('ready');
-        expect(result.disclosure).toEqual([{ subject: first, collapsed: false }, { subject: second, collapsed: true }]);
-    });
-
     it('opens both Account modes while refusing wrong envelopes or locked material', () => {
         const record = { v: 1 as const, entries: [{ v: 1 as const, subject: account, label: 'Work' }] };
         const acks = { v: 1 as const, entries: [{ v: 1 as const, subject: { kind: 'warning' as const, warningId: 'installation',
@@ -204,24 +193,17 @@ describe('connected Account presentation and acknowledgement authority', () => {
     it('prepares exact deleted subject source cleanup without removing ambiguous neighbors or genuine preferences', () => {
         const ambiguous = { kind: 'account' as const, account: { service, accountId: 'folder%2Faccount' } };
         const otherAmbiguous = { kind: 'account' as const, account: { service, accountId: 'folder/account' } };
-        const members = ['default', 'personal'].map(accountId => ({ kind: 'group-member' as const, group: { service, groupId: 'work-team' }, accountId }));
-        const beforeDelete = { ...inventory, entities: [...inventory.entities, ambiguous, otherAmbiguous], disclosureSubjects: members };
+        const beforeDelete = { ...inventory, entities: [...inventory.entities, ambiguous, otherAmbiguous] };
         const raw = { connectedServicesProfileLabelByKey: { 'openai-codex/default': 'Work', 'openai-codex/folder%2Faccount': 'Ambiguous', unknown: 42 },
-            connectedServicesCollapsedItemKeysV1: { 'openai-codex:account:default': false, 'openai-codex:pool:work-team:default': true,
-                'openai-codex:pool:work-team:personal': false, unknown: true },
             connectedServicesDefaultAuthPoolAdoptionDismissedByKey: { 'codex:openai-codex:work-team': false, unknown: true },
             dismissedCLIWarnings: { global: { installation: false }, perMachine: {} },
             connectedServicesDefaultProfileByServiceId: { 'openai-codex': 'default' } };
         const original = structuredClone(raw);
         expect(removeLegacyConnectedMetadataSubjectV1({ raw, inventory: beforeDelete, subject: account }).raw).toEqual({ ...raw,
-            connectedServicesProfileLabelByKey: { 'openai-codex/folder%2Faccount': 'Ambiguous', unknown: 42 },
-            connectedServicesCollapsedItemKeysV1: { 'openai-codex:pool:work-team:personal': false, unknown: true } });
+            connectedServicesProfileLabelByKey: { 'openai-codex/folder%2Faccount': 'Ambiguous', unknown: 42 } });
         expect(removeLegacyConnectedMetadataSubjectV1({ raw, inventory: beforeDelete, subject: group }).raw).toEqual({ ...raw,
-            connectedServicesCollapsedItemKeysV1: { 'openai-codex:account:default': false, unknown: true },
             connectedServicesDefaultAuthPoolAdoptionDismissedByKey: { unknown: true } });
         expect(removeLegacyConnectedMetadataSubjectV1({ raw, inventory: beforeDelete, subject: ambiguous }).raw).toEqual(raw);
-        expect(removeLegacyConnectedMetadataSubjectV1({ raw: { ...raw, connectedServicesCollapsedItemKeysV1: null }, inventory: beforeDelete, subject: group }).raw)
-            .toEqual({ ...raw, connectedServicesCollapsedItemKeysV1: null, connectedServicesDefaultAuthPoolAdoptionDismissedByKey: { unknown: true } });
         expect(raw).toEqual(original);
     });
 

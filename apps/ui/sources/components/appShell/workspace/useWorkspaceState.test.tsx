@@ -8,10 +8,8 @@ import { act } from 'react-test-renderer';
 import { renderHook, standardCleanup } from '@/dev/testkit';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
-import type { StorageState } from '@/sync/store/types';
 import { createWorkspaceState, reduceWorkspaceState, type WorkspaceState } from './workspaceState';
 import { workspaceLayoutScopeKey } from './workspacePersistence';
-import { admitWorkspaceSingletonState } from './workspaceDestinationPolicy';
 import type { CompactAppDestination } from '../destinations/compactAppDestinationCatalog';
 
 const initialTab = {
@@ -25,19 +23,25 @@ const storedTab = {
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
 installDisconnectedServerSocketBoundary();
 await loadSyncSingletonForTests();
+const { admitWorkspaceSingletonState } = await import('./workspaceDestinationPolicy');
 const { getStorage } = await import('@/sync/domains/state/storage');
+const { workspaceLayoutsState } = await import('@/sync/domains/state/filePaneUiState');
 const originalState = getStorage().getState();
 const storageState = {
     get ready() { return getStorage().getState().isDataReady; },
     set ready(value: boolean) { act(() => getStorage().setState({ isDataReady: value })); },
     get scope() { return getStorage().getState().profileScope!; },
     set scope(value: { serverId: string; accountId: string }) { act(() => getStorage().setState({ profileScope: value })); },
-    get layouts() { return getStorage().getState().localSettings.workspaceLayoutV1; },
+    get layouts() { return workspaceLayoutsState.readAll(); },
     set layouts(value: Record<string, unknown>) {
-        act(() => getStorage().setState({ localSettings: { ...getStorage().getState().localSettings, workspaceLayoutV1: value } }));
+        act(() => {
+            for (const key of Object.keys(workspaceLayoutsState.readAll())) workspaceLayoutsState.remove(key);
+            for (const [key, layout] of Object.entries(value)) workspaceLayoutsState.set(key, layout);
+        });
+        saveLayouts?.mockClear();
     },
 };
-let saveLayouts: MockInstance<StorageState['applyLocalSettings']>;
+let saveLayouts: MockInstance<typeof workspaceLayoutsState.set>;
 const pluginKind = 'plugin:acme.notes:notes';
 const pluginCatalog = [{ id: pluginKind, kind: 'plugin', container: 'appPage', destination: { pluginId: 'acme.notes', localId: 'notes' },
     title: 'Notes', icon: 'file', order: 40, placement: { kind: 'rail', region: 'plugins' },
@@ -50,26 +54,65 @@ const admission = (catalog: readonly CompactAppDestination[]) => (state: Workspa
 };
 
 describe('useWorkspaceState', () => {
+    it('persists a new native window layout before its first navigation intent', async () => {
+        storageState.ready = true;
+        const key = workspaceLayoutScopeKey({ ...storageState.scope, windowId: 'native-layout' });
+        const { useWorkspaceState } = await import('./useWorkspaceState');
+        const hook = await renderHook(() => useWorkspaceState({ initialTab: storedTab,
+            windowId: 'native-layout', persistInitial: true }));
+        try { expect(workspaceLayoutsState.read(key)).toMatchObject({ tabs: { 'session-a': storedTab } }); }
+        finally { await hook.unmount(); }
+    });
+    it('restores main independently of an ephemeral webview session identity', async () => {
+        storageState.ready = true;
+        vi.stubGlobal('window', { sessionStorage: { getItem: () => 'ephemeral-renderer', setItem() {} } });
+        const key = workspaceLayoutScopeKey({ ...storageState.scope, windowId: 'main' });
+        storageState.layouts = { [key]: createWorkspaceState(storedTab) };
+        const { useWorkspaceState } = await import('./useWorkspaceState');
+        const hook = await renderHook(() => useWorkspaceState({ initialTab }));
+        try {
+            expect(hook.getCurrent().windowId).toBe('main');
+            expect(hook.getCurrent().state.tabs['session-a']).toEqual(storedTab);
+        } finally { await hook.unmount(); vi.unstubAllGlobals(); }
+    });
     beforeEach(() => {
         storageState.ready = false;
         storageState.scope = { serverId: 'home', accountId: 'alice' };
         storageState.layouts = {};
-        saveLayouts = vi.spyOn(getStorage().getState(), 'applyLocalSettings');
+        saveLayouts = vi.spyOn(workspaceLayoutsState, 'set');
+    });
+    it('ignores never-shipped settings layouts and persists workspace intents without rewriting device preferences', async () => {
+        storageState.ready = true;
+        const key = workspaceLayoutScopeKey({ ...storageState.scope, windowId: 'dedicated-layout' });
+        getStorage().setState({ localSettings: { ...getStorage().getState().localSettings,
+            ...{ workspaceLayoutV1: { [key]: createWorkspaceState(storedTab) } } } });
+        const { getPersistenceStorage } = await import('@/sync/domains/state/persistenceStorage');
+        const { useWorkspaceState } = await import('./useWorkspaceState');
+        const hook = await renderHook(() => useWorkspaceState({ initialTab, windowId: 'dedicated-layout' }));
+        const settingsWrite = vi.spyOn(getStorage().getState(), 'applyLocalSettings');
+        const writes = vi.spyOn(getPersistenceStorage(), 'set');
+        try {
+            expect(hook.getCurrent().state).toEqual(createWorkspaceState(initialTab));
+            act(() => hook.getCurrent().dispatch({ type: 'openTab', groupId: 'group:1', tab: storedTab }));
+            expect(settingsWrite).not.toHaveBeenCalled();
+            expect(JSON.parse(getPersistenceStorage().getString(`ui-state:workspace-layouts-v1:${key}`)!))
+                .toMatchObject({ tabs: { 'session-a': storedTab } });
+            expect(writes.mock.calls.filter(([key]) => key === 'local-settings')).toHaveLength(0);
+        } finally { writes.mockRestore(); settingsWrite.mockRestore(); await hook.unmount(); }
     });
     it.each(['QuotaExceededError', 'SecurityError'])('keeps workspace navigation usable after a %s storage refusal and saves the next intent', async (name) => {
         storageState.ready = true;
         const { getPersistenceStorage } = await import('@/sync/domains/state/persistenceStorage');
-        const { loadLocalSettings } = await import('@/sync/domains/state/settingsPersistence');
         const { useWorkspaceState } = await import('./useWorkspaceState');
         const hook = await renderHook(() => useWorkspaceState({ initialTab, windowId: 'window-a' }));
         act(() => hook.getCurrent().dispatch({ type: 'openTab', groupId: 'group:1', tab: storedTab }));
         const scopeKey = workspaceLayoutScopeKey({ ...storageState.scope, windowId: 'window-a' });
-        const saved = loadLocalSettings().workspaceLayoutV1;
+        const saved = workspaceLayoutsState.readAll();
         const mmkv = getPersistenceStorage();
         const write = mmkv.set.bind(mmkv);
         // MMKV is the OS/browser storage boundary; settings parsing and the real store stay live.
         const set = vi.spyOn(mmkv, 'set').mockImplementation((key, value) => {
-            if (key === 'local-settings') throw Object.assign(new Error('private storage detail'), { name });
+            if (key.startsWith('ui-state:workspace-layouts-v1:')) throw Object.assign(new Error('private storage detail'), { name });
             write(key, value);
         });
         const warning = vi.spyOn(console, 'warn').mockImplementation(() => {});
@@ -78,12 +121,12 @@ describe('useWorkspaceState', () => {
                 target: { kind: 'session', params: { id: 'session-b', serverId: 'home' } } }));
             expect(hook.getCurrent().state.tabs['session-a'].target.params.id).toBe('session-b');
             expect(hook.getCurrent().getState()).toBe(hook.getCurrent().state);
-            expect(loadLocalSettings().workspaceLayoutV1).toEqual(saved);
+            expect(workspaceLayoutsState.readAll()).toEqual(saved);
             expect(warning.mock.calls.flat().join(' ')).not.toContain('private storage detail');
             expect(warning).toHaveBeenCalled();
             set.mockImplementation(write);
             act(() => hook.getCurrent().dispatch({ type: 'setPinned', tabId: 'session-a', pinned: false }));
-            expect((loadLocalSettings().workspaceLayoutV1[scopeKey] as WorkspaceState).tabs['session-a'])
+            expect((workspaceLayoutsState.read(scopeKey) as WorkspaceState).tabs['session-a'])
                 .toMatchObject({ pinned: false, target: { params: { id: 'session-b' } } });
         } finally {
             set.mockRestore();
@@ -316,23 +359,34 @@ describe('useWorkspaceState', () => {
         await hook.unmount();
     });
 
-    it('never presents a previous Account tab while switching Account scopes', async () => {
+    it.each([
+        { realm: 'Account', scope: { serverId: 'home', accountId: 'bob' }, windowId: 'window-a' },
+        { realm: 'Home', scope: { serverId: 'other-home', accountId: 'alice' }, windowId: 'window-a' },
+        { realm: 'window', scope: { serverId: 'home', accountId: 'alice' }, windowId: 'window-b' },
+    ])('never presents a previous realm tab while switching $realm scopes', async transition => {
         storageState.ready = true;
         const aliceScopeKey = workspaceLayoutScopeKey({ ...storageState.scope, windowId: 'window-a' });
         storageState.layouts = { [aliceScopeKey]: createWorkspaceState(storedTab) };
-        const observed: Array<{ accountId: string; tabIds: string[]; ready: boolean }> = [];
+        let windowId = 'window-a';
+        const observed: Array<{ scopeKey: string; tabIds: string[] }> = [];
         const { useWorkspaceState } = await import('./useWorkspaceState');
         const hook = await renderHook(() => {
-            const result = useWorkspaceState({ initialTab, windowId: 'window-a' });
-            observed.push({ accountId: storageState.scope.accountId, tabIds: Object.keys(result.state.tabs), ready: result.isReady });
+            const result = useWorkspaceState({ initialTab, windowId });
+            observed.push({ scopeKey: workspaceLayoutScopeKey({ ...storageState.scope, windowId }), tabIds: Object.keys(result.state.tabs) });
             return result;
         });
         expect(hook.getCurrent().state.tabs['session-a']).toBeTruthy();
 
-        storageState.scope = { serverId: 'home', accountId: 'bob' };
+        windowId = transition.windowId;
+        storageState.scope = transition.scope;
         await hook.rerender(undefined);
-        expect(observed.filter((entry) => entry.accountId === 'bob').every((entry) => !entry.tabIds.includes('session-a'))).toBe(true);
+        const nextKey = workspaceLayoutScopeKey({ ...transition.scope, windowId });
+        expect(observed.filter((entry) => entry.scopeKey === nextKey).every((entry) => !entry.tabIds.includes('session-a'))).toBe(true);
         expect(hook.getCurrent().state.tabs.new).toBeTruthy();
+        windowId = 'window-a';
+        storageState.scope = { serverId: 'home', accountId: 'alice' };
+        await hook.rerender(undefined);
+        expect(hook.getCurrent().state.tabs['session-a']).toBeTruthy();
         expect(saveLayouts).not.toHaveBeenCalled();
         await hook.unmount();
     });

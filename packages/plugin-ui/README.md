@@ -538,6 +538,28 @@ it takes the same semantic menu props plus `sheet: { title, footer?, header? }` 
 optional `triggerCount`, or a `content` render in place of menu rows. The shared
 host owns sheet presentation, focus and dismissal. `Item.titleEllipsizeMode="middle"`
 keeps a long title on one line with its suffix visible and its full accessible name intact.
+
+In **0.3 development source**, `Menu`, `Dropdown` and `ContextMenu` accept nested
+action rows through `MenuItem.submenu`:
+
+```tsx
+<Menu open={open} onOpenChange={setOpen} trigger="More"
+  triggerAccessibilityLabel="More actions"
+  items={[{ id: 'move', label: 'Move to', submenu: {
+    title: 'Choose folder',
+    items: [{ id: 'work', label: 'Work' }, { id: 'personal', label: 'Personal' }],
+  } }]}
+  onSelect={id => moveToFolder(id)} />
+```
+
+Give every row a distinct id across the tree. Only choosing a leaf calls
+`onSelect`; a submenu row opens its choices. The same-realm RN/RNW presentation
+host uses Happier's shared dropdown owner for hover, Right/Left keys and focus
+return. On a phone the menu becomes one sheet, nested choices push inside it,
+and Back returns to their parent. Checkbox leaves stay open; `SheetMenu` keeps
+all choices open until its explicit close control. These overlays require the
+existing presentation host; a standalone hosted-web frame does not provide it.
+
 ### Bot identity and page layout (0.3 development source)
 
 Use `BotFace` with a Bot's public saved `face` value, a stable `seed` and a

@@ -5,6 +5,7 @@ import type { ServerAccountScope } from '../scope/serverAccountScope';
 import { sessionDraftValuesStorageKey } from './sessionLocalStateKeys';
 import { localSettingsDefaults, localSettingsParse } from '../settings/localSettings';
 import { getPersistenceStorage } from './persistenceStorage';
+import { loadSessionActionDrafts } from './sessionPersistence';
 import type { ManagedConfigurationFactsV1 } from '@happier-dev/protocol/machines/managed/managedConfigurationV1';
 
 const store = vi.hoisted(() => new Map<string, string>());
@@ -71,8 +72,6 @@ import {
     saveSessionReviewCommentsDrafts,
     loadWorkspaceReviewCommentsDrafts,
     saveWorkspaceReviewCommentsDrafts,
-    loadSessionActionDrafts,
-    saveSessionActionDrafts,
     loadSessionPermissionModes,
     saveSessionPermissionModes,
     loadLocalPetSourcesBySourceKey,
@@ -98,6 +97,46 @@ const sessionLocalScopeB: ServerAccountScope = { serverId: 'server-a', accountId
 describe('persistence', () => {
     beforeEach(async () => {
         await clearPersistence();
+    });
+
+    it('imports the 0.2 Session surface carrier once without overwriting current device state', () => {
+        // 0.2 420e7887 localSettingDefinitions + hooks emit this server-qualified map.
+        store.set('local-settings', JSON.stringify({ sessionLastMobileSurfaceBySessionId: {
+            'home:session-a': 'browse', 'session-a': 'git', 'home:session-b': 'terminal',
+        }, uiMultiPanePanelsEnabled: false }));
+        store.set('ui-state:session-mobile-surfaces-v1:home:session-b', JSON.stringify('chat'));
+        const settings = loadLocalSettings();
+        expect(store.get('ui-state:session-mobile-surfaces-v1:home:session-a')).toBe(JSON.stringify('browse'));
+        expect(store.get('ui-state:session-mobile-surfaces-v1:home:session-b')).toBe(JSON.stringify('chat'));
+        expect(settings).not.toHaveProperty('sessionLastMobileSurfaceBySessionId');
+        expect(settings.uiMultiPanePanelsEnabled).toBe(false);
+        expect(JSON.parse(store.get('local-settings')!)).not.toHaveProperty('sessionLastMobileSurfaceBySessionId');
+        // Deleting a migrated observation must not resurrect it on the next load.
+        getPersistenceStorage().delete('ui-state:session-mobile-surfaces-v1:home:session-a');
+        loadLocalSettings();
+        expect(store.has('ui-state:session-mobile-surfaces-v1:home:session-a')).toBe(false);
+    });
+
+    it('retains unimported predecessor surfaces through a refused copy and a later preference save', () => {
+        const legacy = { 'home:session-a': 'terminal' };
+        store.set('local-settings', JSON.stringify({ sessionLastMobileSurfaceBySessionId: legacy }));
+        const device = getPersistenceStorage();
+        const write = device.set.bind(device);
+        const refused = vi.spyOn(device, 'set').mockImplementation((key, value) => {
+            if (key.startsWith('ui-state:session-mobile-surfaces-v1:')) throw new Error('device refused');
+            write(key, value);
+        });
+        try {
+            const loaded = loadLocalSettings();
+            saveLocalSettings({ ...loaded, uiMultiPanePanelsEnabled: false });
+            expect(JSON.parse(store.get('local-settings')!).sessionLastMobileSurfaceBySessionId).toEqual(legacy);
+            store.set('local-settings', JSON.stringify({ ...JSON.parse(store.get('local-settings')!), themeProfiles: true }));
+            loadThemeRuntimeLocalState();
+            expect(JSON.parse(store.get('local-settings')!).sessionLastMobileSurfaceBySessionId).toEqual(legacy);
+        } finally { refused.mockRestore(); }
+        loadLocalSettings();
+        expect(store.get('ui-state:session-mobile-surfaces-v1:home:session-a')).toBe(JSON.stringify('terminal'));
+        expect(JSON.parse(store.get('local-settings')!)).not.toHaveProperty('sessionLastMobileSurfaceBySessionId');
     });
 
     it('recovers known pending preferences with retired fields while admitting new deltas strictly', () => {
@@ -293,6 +332,55 @@ describe('persistence', () => {
     });
 
     describe('theme runtime local state', () => {
+        it('keeps collision-remapped legacy activation distinct from an explicit account selection across startup', async () => {
+            const owner = await import('./accountSettingsPersistence');
+            const profile = { schemaVersion: 1, id: 'ocean', name: 'Cloud ocean', createdAt: '2026-10-01', updatedAt: '2026-10-01',
+                base: { light: 'light', dark: 'dark' }, overrides: { light: {}, dark: {} } };
+            owner.saveAccountSettings(sessionLocalScopeA, settingsParse({ themeProfiles: [profile] }), 1);
+            store.set('active-account-settings-scope', JSON.stringify(sessionLocalScopeA));
+            store.set('local-settings', JSON.stringify({ themeProfiles: { profiles: [{ ...profile, name: 'Local ocean' }], activeProfileIds: { light: null, dark: 'ocean' } } }));
+            expect(loadLocalSettings().themeProfileSelection).toBeNull();
+            expect(loadThemeRuntimeLocalState().themeProfiles.activeProfileIds.dark).toBe('ocean_2');
+            saveLocalSettings({ ...loadLocalSettings(), themeProfileSelection: { light: null, dark: 'ocean' } });
+            expect(loadThemeRuntimeLocalState().themeProfiles.activeProfileIds.dark).toBe('ocean');
+            saveLocalSettings({ ...loadLocalSettings(), themeProfileSelection: { light: null, dark: { legacyProfileId: 'ocean' } } });
+            expect(loadThemeRuntimeLocalState().themeProfiles.activeProfileIds.dark).toBe('ocean_2');
+            expect(loadLocalSettings().themeProfiles.profiles[0]?.name).toBe('Local ocean');
+        });
+
+        it('loads the active account cache with device activation and isolates a switched account at startup', async () => {
+            const owner = await import('./accountSettingsPersistence');
+            const profile = { schemaVersion: 1, id: 'ocean', name: 'Ocean', createdAt: '2026-10-01', updatedAt: '2026-10-01',
+                base: { light: 'light', dark: 'dark' }, overrides: { light: {}, dark: {} } };
+            owner.saveAccountSettings(sessionLocalScopeA, settingsParse({ themeProfiles: [profile] }), 1);
+            store.set('active-account-settings-scope', JSON.stringify(sessionLocalScopeA));
+            store.set('local-settings', JSON.stringify({ themePreference: 'dark', themeProfileSelection: { light: null, dark: 'ocean' } }));
+            expect(loadThemeRuntimeLocalState().themeProfiles).toMatchObject({ profiles: [profile], activeProfileIds: { light: null, dark: 'ocean' } });
+            store.set('local-settings', JSON.stringify({ themeProfiles: { profiles: [profile], activeProfileIds: { light: null, dark: 'ocean' } },
+                themeProfileLegacyAccountScope: sessionLocalScopeA }));
+            store.set('active-account-settings-scope', JSON.stringify(sessionLocalScopeB));
+            expect(loadThemeRuntimeLocalState().themeProfiles.profiles).toEqual([]);
+            store.delete('active-account-settings-scope');
+            expect(loadThemeRuntimeLocalState().themeProfiles.profiles).toEqual([]);
+        });
+
+        it('keeps the predecessor theme binding intact when UI state storage refuses its import', () => {
+            const profile = { schemaVersion: 1, id: 'retained', name: 'Retained', createdAt: '2026-10-01', updatedAt: '2026-10-01',
+                base: { light: 'light', dark: 'dark' }, overrides: { light: {}, dark: {} } };
+            const source = { themeProfiles: { profiles: [profile], activeProfileIds: { light: null, dark: 'retained' } },
+                themeProfileLegacyAccountScope: sessionLocalScopeA };
+            store.set('local-settings', JSON.stringify(source));
+            store.set('active-account-settings-scope', JSON.stringify(sessionLocalScopeB));
+            const set = vi.spyOn(getPersistenceStorage(), 'set').mockImplementation(() => { throw new Error('storage unavailable'); });
+            try {
+                expect(loadThemeRuntimeLocalState().themeProfiles.profiles).toEqual([]);
+                expect(JSON.parse(store.get('local-settings')!)).toEqual(source);
+            } finally { set.mockRestore(); }
+            expect(loadThemeRuntimeLocalState().themeProfiles.profiles).toEqual([]);
+            expect(JSON.parse(store.get('local-settings')!)).not.toHaveProperty('themeProfileLegacyAccountScope');
+            expect(JSON.parse(store.get('ui-state:theme-profile-migration-v1:legacy-account-scope')!)).toEqual(sessionLocalScopeA);
+        });
+
         const defaultThemeState = {
             themePreference: localSettingsDefaults.themePreference,
             themeProfiles: localSettingsDefaults.themeProfiles,
@@ -319,7 +407,7 @@ describe('persistence', () => {
             saveLocalSettings(settings);
 
             expect(loadThemeRuntimeLocalState()).toEqual({ ...defaultThemeState, themePreference: 'dark' });
-            expect(loadLocalSettings().appPaneScopesV1['session:one']?.right).toMatchObject({ isOpen, selectedDestination });
+            expect(loadLocalSettings()).not.toHaveProperty('appPaneScopesV1');
         });
 
         it('returns defaults when the stored local-settings record cannot be read', () => {
@@ -810,19 +898,7 @@ describe('persistence', () => {
             expect(loadSessionActionDrafts(sessionLocalScopeA)).toEqual({});
         });
 
-        it('roundtrips canonical addressed drafts and drops invalid entries', () => {
-            saveSessionActionDrafts({
-                '["server-a","s1"]': [{
-                    id: 'd1',
-                    address: { serverId: 'server-a', sessionId: 's1' },
-                    accountId: 'account-a',
-                    actionId: 'review.start',
-                    createdAt: 1,
-                    status: 'editing',
-                    input: { a: 1 },
-                    error: null,
-                }],
-            }, sessionLocalScopeA);
+        it('decodes canonical addressed drafts and drops invalid entries', () => {
 
             // Inject invalid session id and invalid draft shape alongside the valid one.
             store.set('session-action-drafts-v1:scope:v2:8:server-a9:account-a', JSON.stringify({

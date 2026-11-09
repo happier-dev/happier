@@ -1,17 +1,25 @@
-import { localSettingsDefaults, localSettingsParse, type LocalSettings } from '../settings/localSettings';
+import { migrateThemeProfileLegacyScopeFromSettings } from '@/sync/domains/state/themeProfileMigrationUiState';
+import { applyLocalSettings, localSettingsDefaults, localSettingsParse, type LocalSettings } from '../settings/localSettings';
+import { areAccountSettingsJsonValuesEqual } from '../settings/accountSettingsStructuralEquality';
 import { purchasesDefaults, purchasesParse, type Purchases } from '../purchases/purchases';
 import type { Settings } from '../settings/settings';
 import { loadHomeViewState } from '../server/serverProfiles';
 import { stripServerSelectionSettingsProjection } from '../server/selection/serverSelectionSettingsAdapter';
-import { getPersistenceStorage, subscribePersistenceStorageCleared } from './persistenceStorage';
-import { seedProjectPhoneNavigationPlacements } from '../settings/mobileSurfacePinning';
-import { migrateDisclosureUiStateFromSettings, migrateRetainedSessionListCollapseKeys } from './disclosureUiState';
+import { getPersistenceStorage, getPersistenceStorageWebKey, subscribePersistenceStorageCleared } from './persistenceStorage';
+import { isEmbedWindowContext } from '@/embed/isEmbedWindowContext';
+import { migrateDisclosureUiStateFromSettings } from './disclosureUiState';
 import { UiStatePersistenceError } from './persistentUiState';
+import { migrateSessionMobileSurfacesFromSettings } from './navigationUiState';
+import { migrateNewSessionUiState } from './newSessionTargetUiState';
+import { migrateProgressHealthUiState } from './onboardingUiState';
+import { migratePetCompanionPositionFromSettings } from '../pets/companionPosition/companionPosition';
 import { migrateSessionMruFromSettings } from '../session/navigation/recentSessions';
-import { migrateCollectionSpaceUiStateFromSettings } from '../session/listing/sessionListSpaces';
+import { migrateComposerBannerUiStateFromSettings } from './composerBannerUiState';
 
 type LocalAttentionSettingsMutationListener = () => void;
 const localAttentionSettingsMutationListeners = new Set<LocalAttentionSettingsMutationListener>();
+const localSettingsChangeListeners = new Set<(delta: Partial<LocalSettings>) => void>();
+let stopLocalSettingsWebObserver: (() => void) | null = null;
 let localAttentionSettingsMutationToken = 0;
 let legacyDisclosureImportComplete = false;
 subscribePersistenceStorageCleared(() => {
@@ -44,6 +52,45 @@ function localSettingsKey(): string {
     return 'local-settings';
 }
 
+/** Other webviews publish one sparse, normalized preference delta without echoing a write. */
+export function subscribeLocalSettingsChanges(listener: (delta: Partial<LocalSettings>) => void): () => void {
+    if (isEmbedWindowContext() || typeof window === 'undefined' || typeof document === 'undefined') return () => {};
+    localSettingsChangeListeners.add(listener);
+    if (!stopLocalSettingsWebObserver) {
+        const eventTarget = window;
+        const onStorage = (event: StorageEvent) => {
+            if (event.key !== getPersistenceStorageWebKey(localSettingsKey()) || event.storageArea !== eventTarget.localStorage) return;
+            const parse = (value: string | null): LocalSettings => {
+                try { return localSettingsParse(value === null ? undefined : JSON.parse(value)); }
+                catch (error) {
+                    console.error('Failed to parse external local settings', error);
+                    return { ...localSettingsDefaults };
+                }
+            };
+            const previous = parse(event.oldValue);
+            const next = parse(event.newValue);
+            const delta: Partial<LocalSettings> = {};
+            for (const key of Object.keys(next) as Array<keyof LocalSettings>) {
+                if (!areAccountSettingsJsonValuesEqual(previous[key], next[key])) {
+                    Object.assign(delta, { [key]: next[key] });
+                }
+            }
+            if (Object.keys(delta).length === 0) return;
+            publishLocalAttentionSettingsChange(previous, next);
+            for (const onChange of localSettingsChangeListeners) onChange(delta);
+        };
+        eventTarget.addEventListener('storage', onStorage);
+        stopLocalSettingsWebObserver = () => eventTarget.removeEventListener('storage', onStorage);
+    }
+    return () => {
+        localSettingsChangeListeners.delete(listener);
+        if (localSettingsChangeListeners.size === 0) {
+            stopLocalSettingsWebObserver?.();
+            stopLocalSettingsWebObserver = null;
+        }
+    };
+}
+
 function purchasesKey(): string {
     return 'purchases';
 }
@@ -66,18 +113,23 @@ export function loadSettings(): { settings: unknown; version: number | null } {
 
 export function saveSettings(settings: Settings, version: number) {
     const mmkv = getPersistenceStorage();
+    // Retained bootstrap memory must be durably admitted before a parsed
+    // preference snapshot can replace its legacy Settings envelope.
+    const previous = loadSettings();
+    migrateNewSessionUiState(null, previous.settings);
+    const sanitized = migrateNewSessionUiState(null, settings) as Settings;
     const persistedSettings = loadHomeViewState()
-        ? stripServerSelectionSettingsProjection(settings)
-        : settings;
+        ? stripServerSelectionSettingsProjection(sanitized)
+        : sanitized;
     mmkv.set(settingsKey(), JSON.stringify({ settings: persistedSettings, version }));
 }
 
-/** Retain the stored value only for owner-level startup healing of theme profiles. */
 function migrateDeviceUiStateFromSettings(input: unknown): unknown {
     let storedValue = input;
     let retainedFailedSource = false;
-    for (const migrate of [migrateDisclosureUiStateFromSettings, migrateSessionMruFromSettings,
-        migrateCollectionSpaceUiStateFromSettings]) {
+    for (const migrate of [migrateSessionMobileSurfacesFromSettings, migrateDisclosureUiStateFromSettings,
+        migrateProgressHealthUiState, migrateSessionMruFromSettings, migrateComposerBannerUiStateFromSettings,
+        migratePetCompanionPositionFromSettings]) {
         try { storedValue = migrate(storedValue); }
         catch {
             // Independent device domains must still import when one retained
@@ -89,6 +141,7 @@ function migrateDeviceUiStateFromSettings(input: unknown): unknown {
     return storedValue;
 }
 
+/** Strict source access distinguishes absent state from an unavailable legacy import. */
 function readMigratedLocalSettingsStoredValue(requireReadableSource = false): unknown {
     const localSettings = getPersistenceStorage().getString(localSettingsKey());
     let storedValue: unknown = localSettings ? undefined : {};
@@ -99,10 +152,12 @@ function readMigratedLocalSettingsStoredValue(requireReadableSource = false): un
             console.error('Failed to parse local settings', error);
         }
     }
+    const originalStoredValue = storedValue;
+    // The predecessor binding must be admitted before its library becomes readable.
+    storedValue = migrateThemeProfileLegacyScopeFromSettings(storedValue);
     try {
-        migrateRetainedSessionListCollapseKeys();
-        const migrated = seedProjectPhoneNavigationPlacements(migrateDeviceUiStateFromSettings(storedValue));
-        if (migrated !== storedValue) {
+        const migrated = migrateDeviceUiStateFromSettings(storedValue);
+        if (migrated !== originalStoredValue) {
             getPersistenceStorage().set(localSettingsKey(), JSON.stringify(migrated));
             storedValue = migrated;
         }
@@ -113,6 +168,7 @@ function readMigratedLocalSettingsStoredValue(requireReadableSource = false): un
     return storedValue;
 }
 
+/** Retain the stored value only for owner-level startup healing of theme profiles. */
 export function loadLocalSettingsSnapshot(): Readonly<{ settings: LocalSettings; storedValue: unknown }> {
     try {
         const storedValue = readMigratedLocalSettingsStoredValue();
@@ -123,23 +179,23 @@ export function loadLocalSettingsSnapshot(): Readonly<{ settings: LocalSettings;
     return { settings: { ...localSettingsDefaults }, storedValue: undefined };
 }
 
+export function loadLocalSettings(): LocalSettings {
+    return loadLocalSettingsSnapshot().settings;
+}
+
+/** A clear cannot retire a copied choice while its source can still replay it. */
 export function completeLegacyDisclosureImportBeforeRemoval(): void {
     if (legacyDisclosureImportComplete) return;
     let storedValue: unknown;
     try {
-        migrateRetainedSessionListCollapseKeys();
         storedValue = readMigratedLocalSettingsStoredValue(true);
     }
     catch (error) { throw new UiStatePersistenceError(error); }
     if (storedValue && typeof storedValue === 'object'
-        && (Object.hasOwn(storedValue, 'collapsedGroupKeysV1') || Object.hasOwn(storedValue, 'sessionInfoExpandedSectionsV1'))) {
+        && (Object.hasOwn(storedValue, 'collapsedGroupKeysV1'))) {
         throw new UiStatePersistenceError(new Error('Retained disclosure state could not be imported before clearing it'));
     }
     legacyDisclosureImportComplete = true;
-}
-
-export function loadLocalSettings(): LocalSettings {
-    return loadLocalSettingsSnapshot().settings;
 }
 
 /** Only the storage adapter rejected a fully serialized local-settings write. */
@@ -160,10 +216,27 @@ export function saveLocalSettings(settings: LocalSettings) {
     persistLocalSettings(settings, storedValue, previous);
 }
 
+/** Deliberate preference edits merge with storage, which can be newer than this renderer's snapshot. */
+export function saveLocalSettingsDelta(delta: Partial<LocalSettings>): Readonly<{
+    previousSettings: LocalSettings;
+    nextSettings: LocalSettings;
+}> {
+    const storedValue = readMigratedLocalSettingsStoredValue();
+    const previousSettings = localSettingsParse(storedValue);
+    const nextSettings = applyLocalSettings(previousSettings, delta);
+    if (areAccountSettingsJsonValuesEqual(previousSettings, nextSettings)) {
+        return { previousSettings, nextSettings: previousSettings };
+    }
+    persistLocalSettings(nextSettings, storedValue, previousSettings);
+    return { previousSettings, nextSettings };
+}
+
 function persistLocalSettings(settings: LocalSettings, storedValue: unknown, previous: LocalSettings): void {
     const mmkv = getPersistenceStorage();
     let retained: unknown = settings;
-    for (const legacyKey of ['sessionMruOrderV1', 'collectionSpaceV1', 'collapsedGroupKeysV1', 'sessionInfoExpandedSectionsV1']) {
+    for (const legacyKey of ['sessionMruOrderV1', 'sessionComposerCollapsedBannerKinds',
+        'sessionLastMobileSurfaceBySessionId', 'collapsedGroupKeysV1', 'brandHeroSeenAt', 'hasCompletedAuthOnce',
+        'acknowledgedCliVersions', 'petsDismissedCompanionTrayItemKeys', 'petsCompanionPosition']) {
         if (storedValue && typeof storedValue === 'object' && Object.hasOwn(storedValue, legacyKey)) {
             retained = { ...(retained as LocalSettings), [legacyKey]: Reflect.get(storedValue, legacyKey) };
         }

@@ -1,4 +1,6 @@
+import { readThemeProfileLegacyAccountScope, writeThemeProfileLegacyAccountScope } from '@/sync/domains/state/themeProfileMigrationUiState';
 import type { CustomerInfo } from '../../domains/purchases/types';
+import type { PushTokensRemoteAlertProjectionV2 } from '@happier-dev/protocol/push/pushTokenRegistration';
 import type { MachineDisplayRenderable } from '../../domains/machines/machineDisplayRenderable';
 import type { SessionListRenderableSession } from '../../domains/session/listing/sessionListRenderable';
 import type { Machine, Session } from '../../domains/state/storageTypes';
@@ -10,6 +12,7 @@ import {
     loadAccountSettings,
     prepareAccountSettingsScopeForActivation,
     saveAccountSettings,
+    saveActiveAccountSettingsScope,
 } from '../../domains/state/accountSettingsPersistence';
 import {
     areAccountSettingsScopesEqual,
@@ -22,7 +25,8 @@ import {
     prepareAccountProfileScopeForActivation,
     saveAccountPurchases,
 } from '../../domains/state/accountProfilePersistence';
-import { loadLocalSettings, loadPurchases, loadSettings, saveLocalSettings, savePurchases, saveSettings } from '../../domains/state/settingsPersistence';
+import { loadLocalSettings, loadPurchases, saveLocalSettings, saveLocalSettingsDelta, savePurchases, saveSettings, subscribeLocalSettingsChanges } from '../../domains/state/settingsPersistence';
+import { loadStartupAccountSettings } from '../../domains/state/startupAccountSettings';
 import { getActiveServerSnapshot } from '../../domains/server/serverRuntime';
 import type { ConcurrentSessionListCacheByServerId } from '../../domains/session/listing/concurrentSessionListCache';
 import {
@@ -79,13 +83,15 @@ export type SettingsDomain = {
     savedSecretReferenceSettings: Readonly<Record<string, unknown>>;
     settingsVersion: number | null;
     settingsScope: AccountSettingsScope | null;
+    /** Server-produced status for the accepted Settings version; never persisted as a preference. */
+    settingsRemoteAlertPolicyStatus: PushTokensRemoteAlertProjectionV2['accountRemoteAlerts']['status'] | null;
     localSettings: LocalSettings;
     purchases: Purchases;
     applySettingsLocal: (delta: Partial<Settings>) => void;
-    applySettings: (settings: Settings, version: number) => void;
+    applySettings: (settings: Settings, version: number, remoteAlertPolicyStatus?: PushTokensRemoteAlertProjectionV2['accountRemoteAlerts']['status']) => void;
     activateSettingsScope: (scope: AccountSettingsScope, legacyScopes?: readonly AccountSettingsScope[]) => Promise<void>;
     clearSettingsScope: () => void;
-    applySettingsForScope: (scope: AccountSettingsScope, settings: Settings, version: number) => void;
+    applySettingsForScope: (scope: AccountSettingsScope, settings: Settings, version: number, remoteAlertPolicyStatus?: PushTokensRemoteAlertProjectionV2['accountRemoteAlerts']['status']) => void;
     /**
      * `persist: false` applies a runtime-only value (the embed's text scale): the store changes, the
      * device's saved local settings and their change events do not.
@@ -175,6 +181,7 @@ function buildSettingsProjectionState<S extends SettingsDomain & SettingsDomainD
     incomingSettings: Settings,
     nextVersion: number | null,
     nextScope: AccountSettingsScope | null,
+    remoteAlertPolicyStatus?: PushTokensRemoteAlertProjectionV2['accountRemoteAlerts']['status'],
 ): S {
     // Single seam for every settings writer. A server echo re-parses the whole settings document,
     // so every object/array-valued key arrives as a fresh reference even when nothing changed;
@@ -201,7 +208,11 @@ function buildSettingsProjectionState<S extends SettingsDomain & SettingsDomainD
 
     const settingsScope = state.settingsScope === nextScope || areAccountSettingsScopesEqual(state.settingsScope, nextScope)
         ? state.settingsScope : nextScope;
+    const nextRemoteAlertPolicyStatus = remoteAlertPolicyStatus
+        ?? (settingsScope === state.settingsScope && nextVersion === state.settingsVersion
+            ? state.settingsRemoteAlertPolicyStatus : null);
     if (nextSettings === state.settings && nextVersion === state.settingsVersion && settingsScope === state.settingsScope
+        && nextRemoteAlertPolicyStatus === state.settingsRemoteAlertPolicyStatus
         && nextSessionListIndexByServerId === state.sessionListIndexByServerId) return state;
 
     return {
@@ -210,6 +221,7 @@ function buildSettingsProjectionState<S extends SettingsDomain & SettingsDomainD
         savedSecretReferenceSettings: projectSavedSecretReferenceSettings(nextSettings, state.settings, state.savedSecretReferenceSettings),
         settingsVersion: nextVersion,
         settingsScope,
+        settingsRemoteAlertPolicyStatus: nextRemoteAlertPolicyStatus,
         sessionListIndexByServerId: nextSessionListIndexByServerId,
     };
 }
@@ -229,12 +241,14 @@ function shouldAcceptScopedSettings(scope: AccountSettingsScope, nextVersion: nu
 
 export function createSettingsDomain<S extends SettingsDomain & SettingsDomainDependencies>({
     set,
+    get,
 }: {
     set: StoreSet<S>;
     get: StoreGet<S>;
 }): SettingsDomain {
-    const { settings: rawSettings, version } = loadSettings();
-    const parsedSettings = settingsParse(rawSettings);
+    // The realm's singleton store observes external writes before taking its initial snapshot.
+    subscribeLocalSettingsChanges(delta => get().applyLocalSettings(delta, { persist: false }));
+    const { settings: parsedSettings } = loadStartupAccountSettings();
     const homeViewState = loadHomeViewState();
     const settings = homeViewState
         ? {
@@ -248,8 +262,9 @@ export function createSettingsDomain<S extends SettingsDomain & SettingsDomainDe
     const localSettings = loadLocalSettings();
     const purchases = loadPurchases();
 
-    function projectSettings(state: S, incoming: Settings, nextVersion: number | null, nextScope: AccountSettingsScope | null): S {
-        const projected = buildSettingsProjectionState(state, incoming, nextVersion, nextScope);
+    function projectSettings(state: S, incoming: Settings, nextVersion: number | null, nextScope: AccountSettingsScope | null,
+        remoteAlertPolicyStatus?: PushTokensRemoteAlertProjectionV2['accountRemoteAlerts']['status']): S {
+        const projected = buildSettingsProjectionState(state, incoming, nextVersion, nextScope, remoteAlertPolicyStatus);
         const selected = projected.settings.preferredLanguage;
         safeSetPreferredLanguageFromSettings(selected);
         if (!areTranslationsReadyForSettings(selected)) {
@@ -273,8 +288,9 @@ export function createSettingsDomain<S extends SettingsDomain & SettingsDomainDe
     return {
         settings,
         savedSecretReferenceSettings: projectSavedSecretReferenceSettings(settings),
-        settingsVersion: version,
+        settingsVersion: null,
         settingsScope: null,
+        settingsRemoteAlertPolicyStatus: null,
         localSettings,
         purchases,
         applySettingsLocal: (delta) =>
@@ -290,18 +306,21 @@ export function createSettingsDomain<S extends SettingsDomain & SettingsDomainDe
                 }
                 return projectSettings(state, newSettings, state.settingsVersion, state.settingsScope);
             }),
-        applySettings: (nextSettings, nextVersion) =>
+        applySettings: (nextSettings, nextVersion, remoteAlertPolicyStatus) =>
             set((state) => {
+                if (state.settingsVersion === nextVersion && remoteAlertPolicyStatus !== undefined) {
+                    return projectSettings(state, state.settings, nextVersion, state.settingsScope, remoteAlertPolicyStatus);
+                }
                 if (state.settingsScope) {
                     if (state.settingsVersion == null || state.settingsVersion < nextVersion) {
                         saveAccountSettings(state.settingsScope, nextSettings, nextVersion);
-                        return projectSettings(state, nextSettings, nextVersion, state.settingsScope);
+                        return projectSettings(state, nextSettings, nextVersion, state.settingsScope, remoteAlertPolicyStatus);
                     }
                     return state;
                 }
                 if (state.settingsVersion == null || state.settingsVersion < nextVersion) {
                     saveSettings(nextSettings, nextVersion);
-                    return projectSettings(state, nextSettings, nextVersion, null);
+                    return projectSettings(state, nextSettings, nextVersion, null, remoteAlertPolicyStatus);
                 }
                 return state;
             }),
@@ -310,6 +329,10 @@ export function createSettingsDomain<S extends SettingsDomain & SettingsDomainDe
             prepareAccountProfileScopeForActivation(scope, legacyScopes);
             set((state) => {
                 const loaded = loadParsedAccountSettings(scope);
+                if (legacyScopes.some(legacyScope => areAccountSettingsScopesEqual(
+                    readThemeProfileLegacyAccountScope(), legacyScope,
+                ))) writeThemeProfileLegacyAccountScope(scope);
+                saveActiveAccountSettingsScope(scope);
                 const projected = projectSettings(state, loaded.settings, loaded.version, scope);
                 const purchases = reconcilePurchasesReferences(state.purchases, loadAccountPurchases(scope));
                 return purchases === state.purchases ? projected : { ...projected, purchases };
@@ -317,37 +340,42 @@ export function createSettingsDomain<S extends SettingsDomain & SettingsDomainDe
         },
         clearSettingsScope: () =>
             set((state) => {
+                saveActiveAccountSettingsScope(null);
                 const projected = projectSettings(state, settingsDefaults, null, null);
                 const purchases = reconcilePurchasesReferences(state.purchases, purchasesDefaults);
                 return purchases === state.purchases ? projected : { ...projected, purchases };
             }),
-        applySettingsForScope: (scope, nextSettings, nextVersion) =>
+        applySettingsForScope: (scope, nextSettings, nextVersion, remoteAlertPolicyStatus) =>
             set((state) => {
                 if (!shouldAcceptScopedSettings(scope, nextVersion)) {
+                    if (state.settingsVersion === nextVersion && remoteAlertPolicyStatus !== undefined
+                        && areAccountSettingsScopesEqual(state.settingsScope, scope)) {
+                        return projectSettings(state, state.settings, nextVersion, scope, remoteAlertPolicyStatus);
+                    }
                     return state;
                 }
                 saveAccountSettings(scope, nextSettings, nextVersion);
                 if (!areAccountSettingsScopesEqual(state.settingsScope, scope)) {
                     return state;
                 }
-                return projectSettings(state, nextSettings, nextVersion, scope);
+                return projectSettings(state, nextSettings, nextVersion, scope, remoteAlertPolicyStatus);
             }),
         applyLocalSettings: (delta, options) =>
             set((state) => {
                 const previousLocalSettings = state.localSettings;
-                const incomingLocalSettings = applyLocalSettings(state.localSettings, delta);
+                const persistedChange = options?.persist !== false ? saveLocalSettingsDelta(delta) : null;
+                const incomingLocalSettings = persistedChange?.nextSettings ?? applyLocalSettings(state.localSettings, delta);
+                if (persistedChange && persistedChange.nextSettings !== persistedChange.previousSettings) {
+                    emitLocalSettingChangedEvents({
+                        previousSettings: persistedChange.previousSettings,
+                        nextSettings: persistedChange.nextSettings,
+                        source: options?.source,
+                    });
+                }
                 if (areAccountSettingsJsonValuesEqual(incomingLocalSettings, previousLocalSettings)) {
                     return state;
                 }
                 const updatedLocalSettings = reconcileLocalSettingsReferences(previousLocalSettings, incomingLocalSettings);
-                if (options?.persist !== false) {
-                    saveLocalSettings(updatedLocalSettings);
-                    emitLocalSettingChangedEvents({
-                        previousSettings: previousLocalSettings,
-                        nextSettings: updatedLocalSettings,
-                        source: options?.source,
-                    });
-                }
                 return {
                     ...state,
                     localSettings: updatedLocalSettings,

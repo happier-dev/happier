@@ -46,19 +46,40 @@ export const RETIRED_DESKTOP_OVERLAY_SETTING_KEYS = [
 ] as const;
 
 const deprecatedLocalSettingKeys = [
+    'workspaceLayoutV1',
+    'machineVitalsRangeV1',
     'sessionMruOrderV1',
+    'personalizeProgressV1',
+    'brandHeroSeenAt',
+    'homeWelcomeSeenAt',
+    'hasCompletedAuthOnce',
+    'homesReconcileAcknowledgedHomeIds',
+    'acknowledgedCliVersions',
+    'petsDismissedCompanionTrayItemKeys',
     'collapsedGroupKeysV1',
     'sessionInfoExpandedSectionsV1',
+    'sessionComposerCollapsedBannerKinds',
     'collectionSpaceV1',
+    'terminalNativeRendererQuarantine',
+    'machinesRailSeenV1',
+    'sessionListFocusedFolderV1',
     'widgetViewerInputSelectionsV1',
     'uiSurfaceExecutableApprovalsV1',
     'editorFocusModeEnabled',
+    'appPaneScopesV1',
+    'recentWorkspaceFilesV1',
+    'filesEditorAiSuggestionUsageV1',
+    'sessionLastMobileSurfaceBySessionId',
+    'projectLastMobileSurfaceByWorkspaceRefId',
+    'projectLastActiveRootPathByWorkspaceRefId',
+    'projectLastActiveWorktreeIdByWorkspaceRefId',
     'commandPaletteEnabled',
     'keyboardShortcutsV2Enabled',
     'keyboardSingleKeyShortcutsEnabled',
     'keyboardShortcutDisabledCommandIdsV1',
     'keyboardShortcutOverridesV1',
     'sessionsListStorageTab',
+    'sessionsListStorageFilter',
     ...RETIRED_DESKTOP_OVERLAY_SETTING_KEYS,
     'desktopOverlayShowWhenRunning',
     'desktopOverlayShowWhenAttentionRequired',
@@ -73,6 +94,7 @@ const deprecatedLocalSettingKeys = [
     'desktopOverlayAutoHideDelayMs',
     'desktopOverlayShowPreviewText',
     'desktopPetOverlayVisibilityModeOverride',
+    'desktopPetOverlayOffset',
 ] as const;
 
 // 0.2 persisted the chosen pixels together with a proportional-scaling basis.
@@ -186,9 +208,6 @@ function normalizeLocalSettingsParseInput(settings: unknown): unknown {
     const migrated = migrateLegacyDesktopOverlayParseInput({
         ...(settings as Record<string, unknown>),
     });
-    if (migrated.sessionsListStorageFilter === undefined && migrated.sessionsListStorageTab === 'direct') {
-        migrated.sessionsListStorageFilter = 'direct';
-    }
     for (const { pxKey, basisKey, defaults, basis } of LEGACY_SCALED_PANE_SETTINGS) {
         if (migrated[basisKey] === basis && defaults.some(value => value === migrated[pxKey])) delete migrated[pxKey];
     }

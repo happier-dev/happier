@@ -25,18 +25,6 @@ const parseMachineVitalsRange = (value: unknown) => {
 export const MACHINE_VITALS_RANGE_UI_KEY = 'range';
 export const machineVitalsRangeState = createPersistentUiState('machine-vitals-range-v1', parseMachineVitalsRange);
 
-/** Preserve the existing device-wide lens while retiring its Settings carrier. */
-export function migrateMachineVitalsRangeFromSettings(input: unknown): unknown {
-    if (!input || typeof input !== 'object' || Array.isArray(input)) return input;
-    const stored = input as Record<string, unknown>;
-    if (!Object.hasOwn(stored, 'machineVitalsRangeV1')) return input;
-    const range = parseMachineVitalsRange(stored.machineVitalsRangeV1);
-    if (range !== undefined && machineVitalsRangeState.readStrict(MACHINE_VITALS_RANGE_UI_KEY, parseMachineVitalsRange) === undefined)
-        machineVitalsRangeState.set(MACHINE_VITALS_RANGE_UI_KEY, range);
-    const { machineVitalsRangeV1: _legacyRange, ...retained } = stored;
-    return retained;
-}
-
 /** 0.2's device-local Session map is imported once, before Settings retires it. */
 export function migrateSessionMobileSurfacesFromSettings(input: unknown): unknown {
     if (!input || typeof input !== 'object' || Array.isArray(input)) return input;

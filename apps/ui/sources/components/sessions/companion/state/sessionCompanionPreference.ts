@@ -71,12 +71,14 @@ const sessionCompanionItemRefSchema = SessionCompanionPresentationItemRefV1Store
 
 const sessionCompanionPreferenceV1Schema = z.object({
     v: z.literal(1),
-    visible: z.boolean(),
-    collapsed: z.boolean(),
+    visible: z._default(z.boolean(), false),
+    collapsed: z._default(z.boolean(), false),
     edge: z.enum(['leading', 'trailing']),
     density: z.enum(['compact', 'comfortable']),
     items: z.array(sessionCompanionItemRefSchema),
 });
+
+const sessionCompanionAuthoredPreferenceV1Schema = z.omit(sessionCompanionPreferenceV1Schema, { visible: true, collapsed: true });
 
 /**
  * Entries are admitted independently. One corrupt Session preference must not
@@ -87,12 +89,12 @@ export const SessionCompanionPreferencesV1Schema = z.catch((<I extends z.core.$Z
         if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
         const admitted: Record<string, unknown> = {};
         for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
-            if (sessionCompanionPreferenceV1Schema.safeParse(entry).success) {
+            if (sessionCompanionAuthoredPreferenceV1Schema.safeParse(entry).success) {
                 admitted[key] = entry;
             }
         }
         return admitted;
-    }), z.record(z.string(), sessionCompanionPreferenceV1Schema)), {});
+    }), z.record(z.string(), sessionCompanionAuthoredPreferenceV1Schema)), {});
 
 export type SessionCompanionPreferencesV1 = z.infer<typeof SessionCompanionPreferencesV1Schema>;
 

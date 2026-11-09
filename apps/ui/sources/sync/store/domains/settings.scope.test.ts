@@ -1,3 +1,4 @@
+import { readThemeProfileLegacyAccountScope, writeThemeProfileLegacyAccountScope } from '@/sync/domains/state/themeProfileMigrationUiState';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { settingsDefaults, type Settings } from '@/sync/domains/settings/settings';
@@ -13,6 +14,7 @@ import {
     saveAccountPurchases,
 } from '@/sync/domains/state/accountProfilePersistence';
 import { clearPersistence } from '@/sync/domains/state/persistence';
+import { readLastUsedBackendSelection } from '@/sync/domains/state/newSessionTargetUiState';
 
 const store = vi.hoisted(() => new Map<string, string>());
 
@@ -107,6 +109,44 @@ function requireScopedMethods(state: ScopedSettingsDomain): asserts state is Sco
 }
 
 describe('createSettingsDomain scoped account settings', () => {
+    it('keeps policy status transient, scoped and monotonic with the accepted Settings version', async () => {
+        const scope = { serverId: 'policy-home', accountId: 'policy-account' };
+        const otherScope = { serverId: 'other-home', accountId: 'other-account' };
+        const { getState } = createTestStore();
+        await getState().activateSettingsScope(scope);
+        getState().applySettingsForScope(scope, settingsDefaults, 4, 'current');
+        expect(getState().settingsRemoteAlertPolicyStatus).toBe('current');
+        getState().applySettingsForScope(scope, settingsDefaults, 5, 'stale');
+        expect(getState().settingsRemoteAlertPolicyStatus).toBe('stale');
+        getState().applySettingsForScope(scope, settingsDefaults, 4, 'current');
+        expect(getState().settingsRemoteAlertPolicyStatus).toBe('stale');
+        getState().applySettingsForScope(otherScope, settingsDefaults, 99, 'current');
+        expect(getState().settingsRemoteAlertPolicyStatus).toBe('stale');
+        expect(loadAccountSettings(scope).settings).not.toHaveProperty('settingsRemoteAlertPolicyStatus');
+        // An unmarked newer server fact withdraws the optimization, and a fresh
+        // baseline may fill metadata for a version already hydrated from disk.
+        getState().applySettingsForScope(scope, settingsDefaults, 6);
+        expect(getState().settingsRemoteAlertPolicyStatus).toBeNull();
+        getState().applySettingsForScope(scope, settingsDefaults, 6, 'current');
+        expect(getState().settingsRemoteAlertPolicyStatus).toBe('current');
+        await getState().activateSettingsScope(otherScope);
+        expect(getState().settingsRemoteAlertPolicyStatus).toBeNull();
+        getState().clearSettingsScope();
+        expect(getState().settingsRemoteAlertPolicyStatus).toBeNull();
+    });
+
+    it('moves a legacy theme binding with a Home alias and persists startup scope through clear', async () => {
+        const oldScope = { serverId: 'legacy-server', accountId: 'account-a' };
+        const nextScope = { serverId: 'current-server', accountId: 'account-a' };
+        const { getState } = createTestStore();
+        writeThemeProfileLegacyAccountScope(oldScope);
+        await getState().activateSettingsScope(nextScope, [oldScope]);
+        expect(readThemeProfileLegacyAccountScope()).toEqual(nextScope);
+        expect(JSON.parse(store.get('active-account-settings-scope')!)).toEqual(nextScope);
+        getState().clearSettingsScope();
+        expect(store.has('active-account-settings-scope')).toBe(false);
+    });
+
     const scopeA = { serverId: 'server-a', accountId: 'account-a' };
     const scopeB = { serverId: 'server-b', accountId: 'account-b' };
 
@@ -152,19 +192,20 @@ describe('createSettingsDomain scoped account settings', () => {
 
         expect(getState().settingsScope).toEqual(scopeA);
         expect(getState().settingsVersion).toBeNull();
-        expect(getState().settings.lastUsedAgent).toBe('codex');
+        expect(readLastUsedBackendSelection(scopeA).lastUsedAgent).toBe('codex');
+        expect(getState().settings.lastUsedAgent).toBeNull();
         expect(getState().settings.terminalConnectLegacySecretExportEnabled).toBe(true);
         expect(getState().settings.analyticsOptOut).toBe(settingsDefaults.analyticsOptOut);
         expect(store.has('settings')).toBe(false);
         expect(store.has('pending-settings')).toBe(false);
         expect(loadAccountSettings(scopeA)).toMatchObject({
             settings: expect.objectContaining({
-                lastUsedAgent: 'codex',
                 terminalConnectLegacySecretExportEnabled: true,
                 analyticsOptOut: settingsDefaults.analyticsOptOut,
             }),
             version: null,
         });
+        expect(loadAccountSettings(scopeA).settings).not.toHaveProperty('lastUsedAgent');
         expect(loadPendingAccountSettings(scopeA)).toEqual({ analyticsOptOut: true, showLineNumbers: true });
     });
 
@@ -180,7 +221,8 @@ describe('createSettingsDomain scoped account settings', () => {
 
         await getState().activateSettingsScope(scopeA, [legacyScope]);
 
-        expect(getState().settings.lastUsedAgent).toBe('codex');
+        expect(readLastUsedBackendSelection(scopeA).lastUsedAgent).toBe('codex');
+        expect(getState().settings.lastUsedAgent).toBeNull();
         expect(loadPendingAccountSettings(scopeA)).toEqual({});
     });
 
@@ -222,7 +264,8 @@ describe('createSettingsDomain scoped account settings', () => {
         requireScopedMethods(getState());
 
         await getState().activateSettingsScope(scopeA);
-        expect(getState().settings.lastUsedAgent).toBe('codex');
+        expect(readLastUsedBackendSelection(scopeA).lastUsedAgent).toBe('codex');
+        expect(getState().settings.lastUsedAgent).toBeNull();
 
         store.set('settings', JSON.stringify({
             settings: {
@@ -236,17 +279,18 @@ describe('createSettingsDomain scoped account settings', () => {
 
         await getState().activateSettingsScope(scopeA);
 
-        expect(getState().settings.lastUsedAgent).toBe('codex');
+        expect(readLastUsedBackendSelection(scopeA).lastUsedAgent).toBe('codex');
+        expect(getState().settings.lastUsedAgent).toBeNull();
         expect(getState().settings.analyticsOptOut).toBe(settingsDefaults.analyticsOptOut);
         expect(store.has('settings')).toBe(false);
         expect(store.has('pending-settings')).toBe(false);
         expect(loadAccountSettings(scopeA)).toMatchObject({
             settings: expect.objectContaining({
-                lastUsedAgent: 'codex',
                 analyticsOptOut: settingsDefaults.analyticsOptOut,
             }),
             version: null,
         });
+        expect(loadAccountSettings(scopeA).settings).not.toHaveProperty('lastUsedAgent');
     });
 
     it('ignores older remote settings only within the same scope', async () => {

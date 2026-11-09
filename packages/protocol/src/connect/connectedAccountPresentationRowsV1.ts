@@ -1,7 +1,7 @@
-import { QualifiedConnectedEntityRefSchema, QualifiedAcknowledgementSubjectSchema, ConnectedPresentationEntryV1Schema, ConnectedAcknowledgementEntryV1Schema, ConnectedPresentationRecordV1Schema, ConnectedAcknowledgementsRecordV1Schema, StoredConnectedPresentationContentV1Schema, StoredConnectedAcknowledgementsContentV1Schema, StoredConnectedRecordEnvelopeV1Schema, QualifiedConnectedDisclosureSubjectSchema, connectedEntitySubjectKeyV1, connectedAcknowledgementSubjectKeyV1 } from "./connectedAccountPresentationSchemasV1.js";
-import type { QualifiedConnectedEntityRef, QualifiedAcknowledgementSubject, ConnectedPresentationEntryV1, ConnectedAcknowledgementEntryV1, ConnectedPresentationRecordV1, ConnectedAcknowledgementsRecordV1, ConnectedPresentationContentV1, ConnectedAcknowledgementsContentV1, StoredConnectedPresentationContentV1, StoredConnectedAcknowledgementsContentV1, ConnectedMetadataDiagnosticV1, QualifiedConnectedDisclosureSubject, LegacyConnectedMetadataInventoryV1, LegacyConnectedMetadataResultV1 } from "./connectedAccountPresentationSchemasV1.js";
-export { QualifiedConnectedEntityRefSchema, QualifiedAcknowledgementSubjectSchema, ConnectedPresentationEntryV1Schema, ConnectedAcknowledgementEntryV1Schema, ConnectedPresentationRecordV1Schema, ConnectedAcknowledgementsRecordV1Schema, StoredConnectedPresentationRecordV1Schema, StoredConnectedAcknowledgementsRecordV1Schema, ConnectedPresentationContentV1Schema, ConnectedAcknowledgementsContentV1Schema, StoredConnectedPresentationContentV1Schema, StoredConnectedAcknowledgementsContentV1Schema, ConnectedMetadataRowFailureV1Schema, ConnectedPresentationRowReadResponseV1Schema, ConnectedAcknowledgementsRowReadResponseV1Schema, ConnectedPresentationRowMutationV1Schema, ConnectedAcknowledgementsRowMutationV1Schema, ConnectedMetadataRowMutationResponseV1Schema, ConnectedPresentationRowMutationResponseV1Schema, ConnectedAcknowledgementsRowMutationResponseV1Schema, AccountEncryptionMigrateConnectedPresentationDirectiveV1Schema, AccountEncryptionMigrateConnectedAcknowledgementsDirectiveV1Schema, AccountEncryptionMigrateConnectedPresentationResultV1Schema, AccountEncryptionMigrateConnectedAcknowledgementsResultV1Schema, QualifiedConnectedDisclosureSubjectSchema, connectedEntitySubjectKeyV1, connectedAcknowledgementSubjectKeyV1 } from "./connectedAccountPresentationSchemasV1.js";
-export type { QualifiedConnectedEntityRef, QualifiedAcknowledgementSubject, ConnectedPresentationEntryV1, ConnectedAcknowledgementEntryV1, ConnectedPresentationRecordV1, ConnectedAcknowledgementsRecordV1, ConnectedPresentationContentV1, ConnectedAcknowledgementsContentV1, StoredConnectedPresentationContentV1, StoredConnectedAcknowledgementsContentV1, ConnectedMetadataDiagnosticV1, ConnectedPresentationCatalogSnapshotV1, ConnectedAcknowledgementsCatalogSnapshotV1, ConnectedPresentationRowMutationV1, ConnectedAcknowledgementsRowMutationV1, AccountEncryptionMigrateConnectedPresentationDirectiveV1, AccountEncryptionMigrateConnectedAcknowledgementsDirectiveV1, AccountEncryptionMigrateConnectedPresentationResultV1, AccountEncryptionMigrateConnectedAcknowledgementsResultV1, QualifiedConnectedDisclosureSubject, LegacyConnectedMetadataInventoryV1, ConnectedDisclosureEntryV1, LegacyConnectedMetadataResultV1 } from "./connectedAccountPresentationSchemasV1.js";
+import { QualifiedConnectedEntityRefSchema, QualifiedAcknowledgementSubjectSchema, ConnectedPresentationEntryV1Schema, ConnectedAcknowledgementEntryV1Schema, ConnectedPresentationRecordV1Schema, ConnectedAcknowledgementsRecordV1Schema, StoredConnectedPresentationContentV1Schema, StoredConnectedAcknowledgementsContentV1Schema, StoredConnectedRecordEnvelopeV1Schema, connectedEntitySubjectKeyV1, connectedAcknowledgementSubjectKeyV1 } from "./connectedAccountPresentationSchemasV1.js";
+import type { QualifiedConnectedEntityRef, QualifiedAcknowledgementSubject, ConnectedPresentationEntryV1, ConnectedAcknowledgementEntryV1, ConnectedPresentationRecordV1, ConnectedAcknowledgementsRecordV1, ConnectedPresentationContentV1, ConnectedAcknowledgementsContentV1, StoredConnectedPresentationContentV1, StoredConnectedAcknowledgementsContentV1, ConnectedMetadataDiagnosticV1, LegacyConnectedMetadataInventoryV1, LegacyConnectedMetadataResultV1 } from "./connectedAccountPresentationSchemasV1.js";
+export { QualifiedConnectedEntityRefSchema, QualifiedAcknowledgementSubjectSchema, ConnectedPresentationEntryV1Schema, ConnectedAcknowledgementEntryV1Schema, ConnectedPresentationRecordV1Schema, ConnectedAcknowledgementsRecordV1Schema, StoredConnectedPresentationRecordV1Schema, StoredConnectedAcknowledgementsRecordV1Schema, ConnectedPresentationContentV1Schema, ConnectedAcknowledgementsContentV1Schema, StoredConnectedPresentationContentV1Schema, StoredConnectedAcknowledgementsContentV1Schema, ConnectedMetadataRowFailureV1Schema, ConnectedPresentationRowReadResponseV1Schema, ConnectedAcknowledgementsRowReadResponseV1Schema, ConnectedPresentationRowMutationV1Schema, ConnectedAcknowledgementsRowMutationV1Schema, ConnectedMetadataRowMutationResponseV1Schema, ConnectedPresentationRowMutationResponseV1Schema, ConnectedAcknowledgementsRowMutationResponseV1Schema, AccountEncryptionMigrateConnectedPresentationDirectiveV1Schema, AccountEncryptionMigrateConnectedAcknowledgementsDirectiveV1Schema, AccountEncryptionMigrateConnectedPresentationResultV1Schema, AccountEncryptionMigrateConnectedAcknowledgementsResultV1Schema, connectedEntitySubjectKeyV1, connectedAcknowledgementSubjectKeyV1 } from "./connectedAccountPresentationSchemasV1.js";
+export type { QualifiedConnectedEntityRef, QualifiedAcknowledgementSubject, ConnectedPresentationEntryV1, ConnectedAcknowledgementEntryV1, ConnectedPresentationRecordV1, ConnectedAcknowledgementsRecordV1, ConnectedPresentationContentV1, ConnectedAcknowledgementsContentV1, StoredConnectedPresentationContentV1, StoredConnectedAcknowledgementsContentV1, ConnectedMetadataDiagnosticV1, ConnectedPresentationCatalogSnapshotV1, ConnectedAcknowledgementsCatalogSnapshotV1, ConnectedPresentationRowMutationV1, ConnectedAcknowledgementsRowMutationV1, AccountEncryptionMigrateConnectedPresentationDirectiveV1, AccountEncryptionMigrateConnectedAcknowledgementsDirectiveV1, AccountEncryptionMigrateConnectedPresentationResultV1, AccountEncryptionMigrateConnectedAcknowledgementsResultV1, LegacyConnectedMetadataInventoryV1, LegacyConnectedMetadataResultV1 } from "./connectedAccountPresentationSchemasV1.js";
 import * as z from 'zod/mini';
 import tweetnacl from 'tweetnacl';
 
@@ -23,7 +23,6 @@ export const CONNECTED_PRESENTATION_ACCOUNT_CIPHER_KIND_V1 = 'account_connected_
 export const CONNECTED_ACKNOWLEDGEMENTS_ACCOUNT_CIPHER_KIND_V1 = 'account_connected_acknowledgement_catalog' as const;
 export const CONNECTED_PRESENTATION_SOURCE_ROOTS_V1 = ['connectedServicesProfileLabelByKey'] as const;
 export const CONNECTED_ACKNOWLEDGEMENTS_SOURCE_ROOTS_V1 = ['connectedServicesDefaultAuthPoolAdoptionDismissedByKey', 'dismissedCLIWarnings'] as const;
-export const CONNECTED_DISCLOSURE_SOURCE_ROOT_V1 = 'connectedServicesCollapsedItemKeysV1' as const;
 export const CONNECTED_METADATA_ROWS_ROUTE_V1 = '/v1/account/entity-rows/connected-metadata' as const;
 export const CONNECTED_PRESENTATION_ROWS_ROUTE_V1 = `${CONNECTED_METADATA_ROWS_ROUTE_V1}/presentation` as const;
 export const CONNECTED_ACKNOWLEDGEMENTS_ROWS_ROUTE_V1 = `${CONNECTED_METADATA_ROWS_ROUTE_V1}/acknowledgements` as const;
@@ -105,11 +104,6 @@ function serviceKeys(service: PluginContributionIdentityV1): readonly string[] {
 function objectRecord(value: unknown): value is Readonly<Record<string, unknown>> {
     return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
-export function connectedDisclosureSubjectKeyV1(subject: QualifiedConnectedDisclosureSubject): string {
-    const parsed = QualifiedConnectedDisclosureSubjectSchema.parse(subject);
-    return parsed.kind === 'account' ? connectedEntitySubjectKeyV1(parsed)
-        : JSON.stringify(['group-member', parsed.group.service.pluginId, parsed.group.service.localId, parsed.group.groupId, parsed.accountId]);
-}
 function addCandidate<Subject>(candidates: Map<string, Map<string, Subject>>, address: string, identity: string, subject: Subject): void {
     const existing = candidates.get(address) ?? new Map<string, Subject>();
     existing.set(identity, subject); candidates.set(address, existing);
@@ -143,12 +137,11 @@ function readQualifiedLegacyValues<Subject, Value extends string | boolean>(inpu
 function buildLegacyConnectedMetadataCandidates(raw: Readonly<Record<string, unknown>>, inventory: LegacyConnectedMetadataInventoryV1, diagnostics: ConnectedMetadataDiagnosticV1[]) {
     const labelCandidates = new Map<string, Map<string, QualifiedConnectedEntityRef>>();
     const acknowledgementCandidates = new Map<string, Map<string, QualifiedAcknowledgementSubject>>();
-    const disclosureCandidates = new Map<string, Map<string, QualifiedConnectedDisclosureSubject>>();
     const sourceHasEntries = (root: string) => { const value = raw[root]; return objectRecord(value) && Object.keys(value).length > 0; };
     for (const entity of inventory.entities) {
         const parsed = QualifiedConnectedEntityRefSchema.safeParse(entity);
         if (!parsed.success) {
-            for (const root of [CONNECTED_PRESENTATION_SOURCE_ROOTS_V1[0], CONNECTED_ACKNOWLEDGEMENTS_SOURCE_ROOTS_V1[0], CONNECTED_DISCLOSURE_SOURCE_ROOT_V1]) {
+            for (const root of [CONNECTED_PRESENTATION_SOURCE_ROOTS_V1[0], CONNECTED_ACKNOWLEDGEMENTS_SOURCE_ROOTS_V1[0]]) {
                 if (sourceHasEntries(root)) diagnostics.push({ root, reason: 'invalid-inventory' });
             }
             continue;
@@ -159,7 +152,6 @@ function buildLegacyConnectedMetadataCandidates(raw: Readonly<Record<string, unk
                 for (const key of [connectedServiceProfileKey({ serviceId, profileId: subject.account.accountId }), `${serviceId}/${subject.account.accountId}`]) {
                     addCandidate(labelCandidates, key, connectedEntitySubjectKeyV1(subject), subject);
                 }
-                addCandidate(disclosureCandidates, `${serviceId}:account:${subject.account.accountId}`, connectedDisclosureSubjectKeyV1(subject), subject);
             }
         } else {
             for (const agent of inventory.agents) {
@@ -174,21 +166,12 @@ function buildLegacyConnectedMetadataCandidates(raw: Readonly<Record<string, unk
             }
         }
     }
-    for (const subject of inventory.disclosureSubjects ?? []) {
-        const parsed = QualifiedConnectedDisclosureSubjectSchema.safeParse(subject);
-        if (!parsed.success) { diagnostics.push({ root: CONNECTED_DISCLOSURE_SOURCE_ROOT_V1, reason: 'invalid-inventory' }); continue; }
-        const value = parsed.data;
-        for (const serviceId of serviceKeys(value.kind === 'account' ? value.account.service : value.group.service)) {
-            const key = value.kind === 'account' ? `${serviceId}:account:${value.account.accountId}` : `${serviceId}:pool:${value.group.groupId}:${value.accountId}`;
-            addCandidate(disclosureCandidates, key, connectedDisclosureSubjectKeyV1(value), value);
-        }
-    }
-    return { labelCandidates, acknowledgementCandidates, disclosureCandidates };
+    return { labelCandidates, acknowledgementCandidates };
 }
 export function readLegacyConnectedMetadataV1(raw: unknown, inventory: LegacyConnectedMetadataInventoryV1): LegacyConnectedMetadataResultV1 {
     const diagnostics: ConnectedMetadataDiagnosticV1[] = [];
-    if (!objectRecord(raw)) return { status: 'partial', presentation: { v: 1, entries: [] }, acknowledgements: { v: 1, entries: [] }, disclosure: [], diagnostics: [{ root: 'accountSettings', reason: 'invalid-stored-content' }] };
-    const { labelCandidates, acknowledgementCandidates, disclosureCandidates } = buildLegacyConnectedMetadataCandidates(raw, inventory, diagnostics);
+    if (!objectRecord(raw)) return { status: 'partial', presentation: { v: 1, entries: [] }, acknowledgements: { v: 1, entries: [] }, diagnostics: [{ root: 'accountSettings', reason: 'invalid-stored-content' }] };
+    const { labelCandidates, acknowledgementCandidates } = buildLegacyConnectedMetadataCandidates(raw, inventory, diagnostics);
     const labels = readQualifiedLegacyValues<QualifiedConnectedEntityRef, string>({ raw, root: CONNECTED_PRESENTATION_SOURCE_ROOTS_V1[0], candidates: labelCandidates, kind: 'string', diagnostics });
     const acknowledgements: ConnectedAcknowledgementEntryV1[] = readQualifiedLegacyValues<QualifiedAcknowledgementSubject, boolean>({ raw, root: CONNECTED_ACKNOWLEDGEMENTS_SOURCE_ROOTS_V1[0], candidates: acknowledgementCandidates, kind: 'boolean', diagnostics })
         .map(entry => ({ v: 1, subject: entry.subject, acknowledged: entry.value }));
@@ -211,10 +194,8 @@ export function readLegacyConnectedMetadataV1(raw: unknown, inventory: LegacyCon
             if (Object.keys(warnings).some(key => key !== 'global' && key !== 'perMachine')) diagnostics.push({ root: warningRoot, reason: 'unknown-stored-fields' });
         }
     }
-    const disclosure = readQualifiedLegacyValues<QualifiedConnectedDisclosureSubject, boolean>({ raw, root: CONNECTED_DISCLOSURE_SOURCE_ROOT_V1, candidates: disclosureCandidates, kind: 'boolean', diagnostics })
-        .map(entry => ({ subject: entry.subject, collapsed: entry.value }));
     return { status: diagnostics.length ? 'partial' : 'ready', presentation: { v: 1, entries: labels.map(entry => ({ v: 1, subject: entry.subject, label: entry.value })) },
-        acknowledgements: { v: 1, entries: acknowledgements }, disclosure, diagnostics };
+        acknowledgements: { v: 1, entries: acknowledgements }, diagnostics };
 }
 export function removeLegacyConnectedMetadataSubjectV1(input: Readonly<{ raw: Readonly<Record<string, unknown>>; inventory: LegacyConnectedMetadataInventoryV1; subject: QualifiedConnectedEntityRef }>): Readonly<{ raw: Readonly<Record<string, unknown>>; diagnostics: readonly ConnectedMetadataDiagnosticV1[] }> {
     const subject = QualifiedConnectedEntityRefSchema.parse(input.subject);
@@ -235,11 +216,6 @@ export function removeLegacyConnectedMetadataSubjectV1(input: Readonly<{ raw: Re
     removeQualified<QualifiedConnectedEntityRef, string>(CONNECTED_PRESENTATION_SOURCE_ROOTS_V1[0], candidates.labelCandidates, 'string', candidate => connectedEntitySubjectKeyV1(candidate) === subjectKey);
     removeQualified<QualifiedAcknowledgementSubject, boolean>(CONNECTED_ACKNOWLEDGEMENTS_SOURCE_ROOTS_V1[0], candidates.acknowledgementCandidates, 'boolean', candidate => subject.kind === 'group' && candidate.kind === 'adoption'
         && connectedEntitySubjectKeyV1({ kind: 'group', service: candidate.service, groupId: candidate.groupId }) === subjectKey);
-    removeQualified<QualifiedConnectedDisclosureSubject, boolean>(CONNECTED_DISCLOSURE_SOURCE_ROOT_V1, candidates.disclosureCandidates, 'boolean', candidate => {
-        if (subject.kind === 'account') return sameQualifiedConnectedAccountRef(candidate.kind === 'account' ? candidate.account
-            : { service: candidate.group.service, accountId: candidate.accountId }, subject.account);
-        return candidate.kind === 'group-member' && connectedEntitySubjectKeyV1({ kind: 'group', ...candidate.group }) === subjectKey;
-    });
     return { raw, diagnostics };
 }
 export function removeConnectedMetadataSubjectV1(input: Readonly<{ presentation: ConnectedPresentationRecordV1; acknowledgements: ConnectedAcknowledgementsRecordV1; subject: QualifiedConnectedEntityRef }>) {

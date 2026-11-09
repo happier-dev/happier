@@ -31,7 +31,7 @@ preserves selection. An addressed tab Close retains the shell, while the opaque
 current-UI Close window command requests its normal native Close and guard.
 
 The Account's `workspace:tabs:v1` record shares intentional open-tab membership,
-order, pins and split membership. The local `workspaceLayoutV1` owner retains
+order, pins and split membership. The keyed device `workspaceLayoutsState` owner retains
 window/device layout, active tab/group, MRU, maximize and destination presentation.
 Receiving a shared record is not a navigation command: an already-open tab keeps
 its destination target and instance, including an unsaved editor. A newly arriving

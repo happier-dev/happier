@@ -71,6 +71,19 @@ async function renderController(options: Readonly<{
 }
 
 describe('useSessionCompanionController', () => {
+    it('reads authored preferences without importing development visibility carriers or writing on mount', async () => {
+        const before = storage.getState();
+        const writes = vi.spyOn(getPersistenceStorage(), 'set');
+        try {
+            const hook = await renderController({ seed: { [COMPANION_KEY_ACCOUNT_A]: {
+                v: 1, visible: true, collapsed: true, edge: 'leading', density: 'compact', items: [widget('mine')],
+            } } });
+            expect(hook.getCurrent().preference).toMatchObject({ visible: false, collapsed: false, edge: 'leading', items: [widget('mine')] });
+            expect(writes).not.toHaveBeenCalled();
+            await hook.unmount();
+        } finally { writes.mockRestore(); storage.setState(before); }
+    });
+
     it('persists an interaction on the implicit Companion without creating authored Settings', async () => {
         const previousState = storage.getState();
         const hook = await renderController();
@@ -91,8 +104,9 @@ describe('useSessionCompanionController', () => {
 
     it('persists collapse and visibility per realm without Settings writes and restores them on reopen', async () => {
         const previousState = storage.getState();
-        const legacy = { v: 1, visible: true, collapsed: false, edge: 'trailing', density: 'compact', items: [SESSION_SUMMARY_COMPANION_ITEM] };
+        const legacy = { v: 1, edge: 'trailing', density: 'compact', items: [SESSION_SUMMARY_COMPANION_ITEM] };
         const hook = await renderController({ seed: { [COMPANION_KEY_ACCOUNT_A]: legacy } });
+        await act(async () => { hook.getCurrent().show(); });
         const settings = storage.getState().localSettings;
         const otherRenders = vi.fn();
         const otherSession = await renderHook(() => {
@@ -142,12 +156,12 @@ describe('useSessionCompanionController', () => {
         try {
             const hook = await renderController({
                 seed: {
-                    'session-1': { v: 1, visible: true, collapsed: false, edge: 'leading', density: 'comfortable', items: [] },
+                    'session-1': { v: 1, edge: 'leading', density: 'comfortable', items: [] },
                     [COMPANION_KEY_ACCOUNT_B]: {
-                        v: 1, visible: true, collapsed: false, edge: 'leading', density: 'comfortable', items: [widget('other')],
+                        v: 1, edge: 'leading', density: 'comfortable', items: [widget('other')],
                     },
                     [COMPANION_KEY_ACCOUNT_A]: {
-                        v: 1, visible: true, collapsed: false, edge: 'trailing', density: 'compact', items: [widget('mine')],
+                        v: 1, edge: 'trailing', density: 'compact', items: [widget('mine')],
                     },
                 },
             });
@@ -167,7 +181,7 @@ describe('useSessionCompanionController', () => {
                 accountId: null,
                 seed: {
                     [COMPANION_KEY_ACCOUNT_A]: {
-                        v: 1, visible: true, collapsed: false, edge: 'trailing', density: 'compact', items: [widget('mine')],
+                        v: 1, edge: 'trailing', density: 'compact', items: [widget('mine')],
                     },
                 },
             });
@@ -181,7 +195,7 @@ describe('useSessionCompanionController', () => {
             });
 
             expect(readCompanionSettings()[COMPANION_KEY_ACCOUNT_A]).toEqual({
-                v: 1, visible: true, collapsed: false, edge: 'trailing', density: 'compact', items: [widget('mine')],
+                v: 1, edge: 'trailing', density: 'compact', items: [widget('mine')],
             });
             await hook.unmount();
         } finally {
@@ -213,8 +227,8 @@ describe('useSessionCompanionController', () => {
 
             expect(Object.keys(readCompanionSettings())).toEqual([COMPANION_KEY_ACCOUNT_A]);
             expect(readCompanionSettings()[COMPANION_KEY_ACCOUNT_A]).toEqual({
-                v: 1, visible: false, collapsed: false, edge: 'trailing', density: 'compact',
-                items: [SESSION_SUMMARY_COMPANION_ITEM],
+                v: 1, edge: 'trailing', density: 'compact',
+                items: [SESSION_SUMMARY_COMPANION_ITEM, ...(['environment', 'running', 'usage', 'links'] as const).map(id => ({ kind: 'builtin', id }))],
             });
             expect(hook.getCurrent().preference.visible).toBe(true);
             await hook.unmount();
@@ -250,10 +264,10 @@ describe('useSessionCompanionController', () => {
                         ...state.localSettings,
                         sessionCompanionPreferencesBySessionV1: {
                             'session-companion:v1:session:13:active-server9:account-a:9:session-9': {
-                                v: 1, visible: true, collapsed: false, edge: 'leading', density: 'compact', items: [widget('elsewhere')],
+                                v: 1, edge: 'leading', density: 'compact', items: [widget('elsewhere')],
                             },
                             [COMPANION_KEY_ACCOUNT_A]: {
-                                v: 1, visible: true, collapsed: false, edge: 'trailing', density: 'compact', items: [widget('added-later')],
+                                v: 1, edge: 'trailing', density: 'compact', items: [widget('added-later')],
                             },
                         },
                     },
@@ -267,7 +281,7 @@ describe('useSessionCompanionController', () => {
             const settings = readCompanionSettings();
             expect(settings['session-companion:v1:session:13:active-server9:account-a:9:session-9']).toBeDefined();
             expect(settings[COMPANION_KEY_ACCOUNT_A]).toEqual({
-                v: 1, visible: true, collapsed: false, edge: 'trailing', density: 'compact',
+                v: 1, edge: 'trailing', density: 'compact',
                 items: [widget('added-later'), widget('from-stale-render')],
             });
             await hook.unmount();
@@ -282,7 +296,7 @@ describe('useSessionCompanionController', () => {
             const hook = await renderController({
                 seed: {
                     [COMPANION_KEY_ACCOUNT_A]: {
-                        v: 1, visible: true, collapsed: false, edge: 'trailing', density: 'compact',
+                        v: 1, edge: 'trailing', density: 'compact',
                         items: [SESSION_SUMMARY_COMPANION_ITEM, widget('mine')],
                     },
                 },
@@ -322,7 +336,7 @@ describe('useSessionCompanionController', () => {
             const hook = await renderController({
                 seed: {
                     [COMPANION_KEY_ACCOUNT_A]: {
-                        v: 1, visible: true, collapsed: false, edge: 'trailing', density: 'compact', items: [widget('mine')],
+                        v: 1, edge: 'trailing', density: 'compact', items: [widget('mine')],
                     },
                 },
             });

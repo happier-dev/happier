@@ -1,3 +1,4 @@
+import { readThemeProfileLegacyAccountScope } from '@/sync/domains/state/themeProfileMigrationUiState';
 import { Appearance, Platform } from 'react-native';
 import * as SystemUI from 'expo-system-ui';
 import { setStatusBarStyle } from 'expo-status-bar';
@@ -13,13 +14,18 @@ import {
 } from '@/components/settings/appearance/themePreferenceTransition';
 import {
     loadLocalSettings as defaultLoadLocalSettings,
+    loadThemeRuntimeLocalState,
     saveLocalSettings as defaultSaveLocalSettings,
 } from '@/sync/domains/state/persistence';
 import type { LocalSettings } from '@/sync/domains/settings/localSettings';
+import { loadPendingAccountSettingsState } from '@/sync/domains/state/accountSettingsPersistence';
+import { loadStartupAccountSettings } from '@/sync/domains/state/startupAccountSettings';
+import { canUseLegacyThemeProfiles, encodeThemeProfileSelection } from '@/sync/domains/settings/themeProfiles';
 import { applyLocalSettings, localSettingsDefaults } from '@/sync/domains/settings/localSettings';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { addBreadcrumbIfEnabled } from '@/utils/system/sentry';
 import {
+    DEFAULT_THEME_PROFILES_LOCAL_STATE,
     findActiveThemeProfileForMode,
     setActiveThemeProfileForMode,
 } from './themeProfilePersistence';
@@ -81,6 +87,7 @@ type ThemeRuntimeStartupThemes = Readonly<{
 
 type ActivateThemeProfileInput = Readonly<{
     profileId: string | null;
+    resolveProfileId?: () => string | null;
     profileMode?: ThemeProfileMode | 'all';
     themePreference?: ThemePreference;
     forceAnimate?: boolean;
@@ -411,8 +418,20 @@ const resolveActivationModes = (input: Readonly<{
 };
 
 export const activateThemeProfile = async (input: ActivateThemeProfileInput): Promise<void> => {
-    const loadLocalSettings = input.loadLocalSettings ?? defaultLoadLocalSettings;
-    const saveLocalSettings = input.saveLocalSettings ?? defaultSaveLocalSettings;
+    const loadLocalSettings = input.loadLocalSettings ?? (() => ({ ...defaultLoadLocalSettings(), ...loadThemeRuntimeLocalState() }));
+    const saveLocalSettings = input.saveLocalSettings ?? ((settings: LocalSettings) => {
+        const local = defaultLoadLocalSettings();
+        const { scope, settings: account } = loadStartupAccountSettings();
+        const pending = scope ? loadPendingAccountSettingsState(scope) : null;
+        const legacy = canUseLegacyThemeProfiles(readThemeProfileLegacyAccountScope(), scope)
+            ? local.themeProfiles : DEFAULT_THEME_PROFILES_LOCAL_STATE;
+        defaultSaveLocalSettings({
+            ...settings,
+            themeProfiles: local.themeProfiles,
+            themeProfileSelection: encodeThemeProfileSelection(account.themeProfiles, legacy, settings.themeProfiles.activeProfileIds,
+                pending?.themeProfileMigration, pending?.settings.themeProfiles),
+        });
+    });
     const currentSettings = loadLocalSettings();
     const resolveNextThemeProfiles = (
         themeProfiles: ThemeProfilesLocalStateV1,
@@ -422,7 +441,7 @@ export const activateThemeProfile = async (input: ActivateThemeProfileInput): Pr
             profileMode: input.profileMode,
             themePreference: input.themePreference ?? fallbackThemePreference,
         }).reduce(
-            (nextThemeProfiles, mode) => setActiveThemeProfileForMode(nextThemeProfiles, mode, input.profileId),
+            (nextThemeProfiles, mode) => setActiveThemeProfileForMode(nextThemeProfiles, mode, input.resolveProfileId ? input.resolveProfileId() : input.profileId),
             themeProfiles,
         )
     );

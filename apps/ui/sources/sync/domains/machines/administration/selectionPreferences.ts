@@ -74,17 +74,11 @@ export const MACHINE_ADMINISTRATION_SELECTION_KEYS_V1 = Object.freeze({
     managedMachines: 'machines.managed',
 } as const);
 
-// The unreleased machines.managed carrier contained navigation history. Keep
-// new deliberate defaults distinct so import-before-removal never consumes one.
-function targetPreferenceStorageKey(key: string): string {
-    return key === MACHINE_ADMINISTRATION_SELECTION_KEYS_V1.managedMachines ? 'machines.managed.default' : key;
-}
-
 export function readMachineAdministrationTargetPreference(
     current: MachineAdministrationTargetsV1,
     key: string,
 ): MachineAdministrationTargetV1 | null {
-    return current[targetPreferenceStorageKey(key)] ?? null;
+    return current[key] ?? null;
 }
 
 /**
@@ -97,7 +91,7 @@ export function setMachineAdministrationTargetPreference(
 ): MachineAdministrationTargetsV1 {
     return MachineAdministrationTargetsV1Schema.parse({
         ...current,
-        [targetPreferenceStorageKey(key)]: target,
+        [key]: target,
     });
 }
 
@@ -106,7 +100,7 @@ export function clearMachineAdministrationTargetPreference(
     key: string,
 ): MachineAdministrationTargetsV1 {
     const targets = { ...current };
-    delete targets[targetPreferenceStorageKey(key)];
+    delete targets[key];
     return MachineAdministrationTargetsV1Schema.parse(targets);
 }
 

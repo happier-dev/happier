@@ -40,7 +40,7 @@ describe('session companion preference schema', () => {
         const stored = { ...visible, savedBy: 'other-client', items: [storedItem] };
         const expected = { ...visible, items: [item] };
         expect(normalizeSessionCompanionPreference(stored)).toEqual(expected);
-        expect(SessionCompanionPreferencesV1Schema.parse({ 'realm:good': stored, 'realm:missing': { ...stored, density: undefined } })).toEqual({ 'realm:good': expected });
+        expect(SessionCompanionPreferencesV1Schema.parse({ 'realm:good': stored, 'realm:missing': { ...stored, density: undefined } })).toEqual({ 'realm:good': { v: expected.v, edge: expected.edge, density: expected.density, items: expected.items } });
         expect(normalizeSessionCompanionPreference({ ...stored, items: [{ ...storedItem, instance: { ...storedItem.instance, id: undefined } }] })).toEqual(HIDDEN_SESSION_COMPANION_PREFERENCE_V1);
         expect(SessionCompanionPresentationItemRefV1Schema.safeParse(storedItem).success).toBe(false);
     });

@@ -21,7 +21,7 @@ import { ConnectedMetadataCleanupV1Schema } from './connectedAccountPresentation
 import { CONNECTED_SERVICE_CONFIGURATION_ACTION_IDS_V1 } from './configurationActionIdsV1.js';
 import { ConnectedServiceQuotaGetInputV1Schema, ConnectedServiceQuotaGetResultV1Schema } from './providerAccountUsageHistorySchemasV1.js';
 import { ConnectedServicePoolSelectionGetRequestV1Schema, ConnectedServicePoolSelectionGetResponseV1Schema } from './connectedServicePoolSelection.js';
-import { QualifiedAcknowledgementSubjectSchema, QualifiedConnectedDisclosureSubjectSchema, QualifiedConnectedEntityRefSchema } from './connectedAccountPresentationSchemasV1.js';
+import { QualifiedAcknowledgementSubjectSchema, QualifiedConnectedEntityRefSchema } from './connectedAccountPresentationSchemasV1.js';
 import { ProviderAccountSubscriptionMonthlyPriceV1Schema } from './accountSubscription.js';
 import { CONNECTED_ACCOUNT_AUTHENTICATION_ACTION_INPUT_SCHEMAS, CONNECTED_ACCOUNT_AUTHENTICATION_ACTION_OUTPUT_SCHEMAS } from './authenticationActionsV1.js';
 import { QualifiedConnectedAccountPurposeV1Schema } from './connectedAccountPurposeIdentity.js';
@@ -120,8 +120,6 @@ export const CONNECTED_SERVICE_CONFIGURATION_ACTION_INPUT_SCHEMAS_V1 = {
   'connectedServices.labels.set': z.strictObject({ subject: QualifiedConnectedEntityRefSchema, label: z.string() }),
   'connectedServices.labels.reset': z.strictObject({ subject: QualifiedConnectedEntityRefSchema }),
   'connectedServices.acknowledgements.reset': z.strictObject({ subject: QualifiedAcknowledgementSubjectSchema }),
-  'connectedServices.disclosure.set': z.strictObject({ subject: QualifiedConnectedDisclosureSubjectSchema, collapsed: z.boolean() }),
-  'connectedServices.disclosure.reset': z.strictObject({ subject: QualifiedConnectedDisclosureSubjectSchema }),
 } as const;
 export const CONNECTED_SERVICE_CONFIGURATION_ACTION_OUTPUT_SCHEMAS_V1 = {
   ...CONNECTED_ACCOUNT_AUTHENTICATION_ACTION_OUTPUT_SCHEMAS,
@@ -167,8 +165,6 @@ export const CONNECTED_SERVICE_CONFIGURATION_ACTION_OUTPUT_SCHEMAS_V1 = {
   'connectedServices.labels.set': Success,
   'connectedServices.labels.reset': Success,
   'connectedServices.acknowledgements.reset': Success,
-  'connectedServices.disclosure.set': Success,
-  'connectedServices.disclosure.reset': Success,
 } as const;
 
 /** Only an explicitly selected native Account configuration requires a Machine. */

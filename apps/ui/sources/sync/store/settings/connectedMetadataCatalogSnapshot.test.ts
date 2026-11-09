@@ -16,7 +16,6 @@ const ready: ConnectedMetadataCatalogV1 = {
     presentation: { status: 'ready', entries: [{ v: 1, subject: { kind: 'account', account }, label: 'Current label' },
         { v: 1, subject: { kind: 'group', service, groupId: 'primary' }, label: 'Pool label' }], revision: 3, diagnostics: [] },
     acknowledgements: { status: 'ready', entries: [{ v: 1, subject: acknowledgement, acknowledged: true }], revision: 4, diagnostics: [] },
-    disclosure: [],
 };
 
 describe('Connected metadata catalog publication', () => {
@@ -66,12 +65,12 @@ describe('Connected metadata catalog publication', () => {
         applyConnectedMetadataCatalogSnapshot(scope, ready, true);
         const restored = getConnectedMetadataCatalog(scope);
         applyConnectedMetadataCatalogSnapshot(scope, { presentation: { status: 'unavailable', reason: 'unreachable' },
-            acknowledgements: { status: 'unavailable', reason: 'unreachable' }, disclosure: [] }, true);
+            acknowledgements: { status: 'unavailable', reason: 'unreachable' } }, true);
         expect(getConnectedMetadataCatalog(scope).labelsByKey).toBe(restored.labelsByKey);
         applyConnectedMetadataCatalogSnapshot(scope, ready, false);
         expect(getConnectedMetadataCatalog(scope).presentation.status).toBe('unavailable');
         applyConnectedMetadataCatalogSnapshot(scope, { presentation: { status: 'unavailable', reason: 'account-mode-mismatch' },
-            acknowledgements: { status: 'unavailable', reason: 'unauthorized' }, disclosure: [] }, true);
+            acknowledgements: { status: 'unavailable', reason: 'unauthorized' } }, true);
         expect(getConnectedMetadataCatalog(scope)).toMatchObject({ labelsByKey: {}, acknowledgementsByKey: {} });
     });
 
@@ -80,7 +79,7 @@ describe('Connected metadata catalog publication', () => {
         applyConnectedMetadataCatalogSnapshot(scope, ready, true);
         applyConnectedMetadataCatalogSnapshot(scope, { presentation: { status: 'partial', entries: [], revision: 6,
             diagnostics: [{ root: 'presentation', reason: 'invalid-entry' }] },
-            acknowledgements: { status: 'ready', entries: [], revision: 7, diagnostics: [] }, disclosure: [] }, true);
+            acknowledgements: { status: 'ready', entries: [], revision: 7, diagnostics: [] } }, true);
         expect(getConnectedMetadataCatalog(scope)).toMatchObject({ labelsByKey: {}, acknowledgementsByKey: {},
             presentation: { status: 'partial' }, presentationStale: true, acknowledgementsStale: false });
     });

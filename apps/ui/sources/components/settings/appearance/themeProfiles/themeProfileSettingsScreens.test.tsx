@@ -1,16 +1,22 @@
+import { readThemeProfileLegacyAccountScope, writeThemeProfileLegacyAccountScope } from '@/sync/domains/state/themeProfileMigrationUiState';
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
+import { installBrowserClipboardBoundary } from '@/dev/testkit';
 import 'fake-indexeddb/auto';
 
 import { flattenTestStyle, flushHookEffects, renderSettingsView, standardCleanup } from '@/dev/testkit';
 import { localSettingsDefaults } from '@/sync/domains/settings/localSettings';
+import { Modal } from '@/modal';
+import { darkTheme } from '@/theme';
 import { settingsParse } from '@/sync/domains/settings/settings';
+import { resolveAccountThemeProfiles } from '@/sync/domains/settings/themeProfiles';
 import { THEME_PROFILE_MAX_PROFILES } from '@/theme/profiles/themeProfileConstants';
 import type { ThemeProfilesLocalStateV1, ThemeProfileV1 } from '@/theme/profiles/themeProfileTypes';
 import { exportThemeProfileToJson } from '@/theme/profiles/themeProfileImportExport';
 import { getBuiltInThemeProfileDefinition } from '@/theme/profiles/builtInThemeProfiles';
 import { parseThemeProfilesLocalState } from '@/theme/profiles/themeProfilePersistence';
+import { loadLocalSettings } from '@/sync/domains/state/persistence';
 import { storage } from '@/sync/domains/state/storageStore';
 import { createSecretSettingsTestHarness } from '@/components/settings/secrets/secretSettingsTestHarness';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
@@ -50,6 +56,8 @@ vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
     return createReactNativeWebMock({
         Appearance: { getColorScheme: () => 'light' },
+        Share: { sharedAction: 'sharedAction', dismissedAction: 'dismissedAction',
+            share: vi.fn(async () => ({ action: 'sharedAction' })) },
     });
 });
 
@@ -133,11 +141,19 @@ vi.mock('@/text', async () => {
 });
 
 const setThemeProfiles = (state: ThemeProfilesLocalStateV1) => {
-    // Match the persisted-settings read boundary, including legacy profile normalization.
-    storage.getState().applyLocalSettings({ themeProfiles: parseThemeProfilesLocalState(state).state });
+    const parsed = parseThemeProfilesLocalState(state).state;
+    account.replaceSettings(settingsParse({ ...account.persistedSettings, themeProfiles: parsed.profiles }));
+    storage.getState().applyLocalSettings({ themeProfiles: { profiles: [], activeProfileIds: { light: null, dark: null } },
+        themeProfileSelection: parsed.activeProfileIds });
+    writeThemeProfileLegacyAccountScope(null);
 };
 
-const getThemeProfiles = (): ThemeProfilesLocalStateV1 => storage.getState().localSettings.themeProfiles;
+const getThemeProfiles = (): ThemeProfilesLocalStateV1 => {
+    const state = storage.getState();
+    return resolveAccountThemeProfiles({ profiles: state.settings.themeProfiles,
+        legacy: state.localSettings.themeProfiles, selection: state.localSettings.themeProfileSelection,
+        legacyScope: readThemeProfileLegacyAccountScope(), scope: state.settingsScope });
+};
 const emptyThemeProfiles = (): ThemeProfilesLocalStateV1 => ({ activeProfileIds: { light: null, dark: null }, profiles: [] });
 const maxProfiles = (): ThemeProfileV1[] => (
     Array.from({ length: THEME_PROFILE_MAX_PROFILES }, (_, index) => baseProfile(`theme_${index}`))
@@ -190,9 +206,31 @@ async function renderExportScreen() {
     return renderSettingsView(React.createElement(ThemeProfileExportScreen), { flushOptions: { cycles: 0 } });
 }
 
+// RoundButton's synchronous press adapter deliberately returns void. Wait for the Action's
+// observable feedback rather than treating the platform press as a completed Account CAS.
+async function saveEditor(screen: Awaited<ReturnType<typeof renderEditorScreen>>) {
+    const dismissed = shared.routerDismissTo.mock.calls.length;
+    const errors = vi.mocked(Modal.alert).mock.calls.length;
+    await screen.pressByTestIdAsync('settings-theme-profile-save');
+    await vi.waitFor(() => expect(shared.routerDismissTo.mock.calls.length > dismissed
+        || vi.mocked(Modal.alert).mock.calls.length > errors).toBe(true));
+}
+
+async function submitImport(screen: Awaited<ReturnType<typeof renderImportScreen>>) {
+    const returned = shared.routerBack.mock.calls.length;
+    const errors = vi.mocked(Modal.alert).mock.calls.length;
+    await screen.pressByTestIdAsync('settings-theme-profile-import-submit');
+    await vi.waitFor(() => expect(shared.routerBack.mock.calls.length > returned
+        || vi.mocked(Modal.alert).mock.calls.length > errors
+        || screen.findByTestId('settings-theme-profile-import-warnings') !== null
+        || screen.findByTestId('settings-theme-profile-import-json.error') !== null).toBe(true));
+}
+
 let account: Awaited<ReturnType<typeof createSecretSettingsTestHarness>>;
 beforeEach(async () => {
-    account = await createSecretSettingsTestHarness();
+    account = await createSecretSettingsTestHarness({ settings: settingsParse({}) });
+    writeThemeProfileLegacyAccountScope(null);
+    installBrowserClipboardBoundary(async text => { await shared.clipboardSetStringAsync(text); });
     storage.getState().applyLocalSettings({ ...localSettingsDefaults, themePreference: 'light', themeProfiles: emptyThemeProfiles() });
 });
 afterEach(async () => {
@@ -354,8 +392,9 @@ describe('Theme profile editor', () => {
             startViewTransition: (update: () => Promise<void>) => ({
                 ready: Promise.resolve().then(async () => {
                     storage.getState().applyLocalSettings({ themePreference: 'dark', uiFontScale: 1.2 });
-                    setThemeProfiles({ activeProfileIds: { light: null, dark: null },
-                        profiles: [edited, baseProfile('arrived-during-transition')] });
+                    account.replaceSettings(settingsParse({ ...account.persistedSettings,
+                        themeProfiles: [{ ...edited, overrides: { light: {}, dark: { 'background.canvas': '#654321' } } }, baseProfile('arrived-during-transition')]
+                    }), { version: (storage.getState().settingsVersion ?? 0) + 1 });
                     await update();
                 }),
             }),
@@ -363,11 +402,13 @@ describe('Theme profile editor', () => {
         vi.stubGlobal('document', dom.window.document);
         onTestFinished(() => { vi.unstubAllGlobals(); dom.window.close(); });
 
-        await screen.pressByTestIdAsync('settings-theme-profile-save');
+        await saveEditor(screen);
 
         expect(getThemeProfiles().profiles.map(profile => profile.id)).toEqual(['ocean', 'arrived-during-transition']);
         expect(storage.getState().localSettings).toMatchObject({ themePreference: 'dark', uiFontScale: 1.2 });
         expect(shared.setTheme).toHaveBeenLastCalledWith('dark');
+        const darkUpdate = shared.updateTheme.mock.calls.findLast(([name]) => name === 'dark')?.[1];
+        expect(darkUpdate?.(darkTheme).colors.background.canvas).toBe('#654321');
         // Web roots subscribe to the resolved theme; only native uses this imperative adapter.
         expect(shared.setRootViewBackgroundColor).not.toHaveBeenCalled();
         expect(shared.setStatusBarStyle).toHaveBeenLastCalledWith('light', true);
@@ -386,6 +427,53 @@ describe('Theme profile editor', () => {
         expect(screen.findRowByTitle('settingsAppearance.themeProfiles.editorMode')).toBeNull();
     });
 
+
+    it('keeps a legacy draft on its original theme when account fetch remaps its route id', async () => {
+        const local = { ...baseProfile('ocean'), name: 'Local ocean' };
+        storage.setState({ settingsScope: null });
+        storage.getState().applyLocalSettings({ themeProfileSelection: null,
+            themeProfiles: parseThemeProfilesLocalState({ profiles: [local], activeProfileIds: { light: 'ocean', dark: null } }).state,
+        });
+        writeThemeProfileLegacyAccountScope(account.scope);
+        expect(loadLocalSettings().themeProfiles).toEqual(storage.getState().localSettings.themeProfiles);
+        const screen = await renderEditorScreen('ocean');
+        await act(async () => { storage.setState({ settingsScope: account.scope }); });
+        await act(async () => { screen.changeTextByTestId('settings-theme-profile-name', 'Unsaved local draft'); });
+        const cloud = { ...baseProfile('ocean'), name: 'Cloud ocean', overrides: { light: { 'background.canvas': '#abcdef' }, dark: {} } };
+        await act(async () => { account.replaceSettings(settingsParse({ ...account.persistedSettings, themeProfiles: [cloud] }),
+            { version: (storage.getState().settingsVersion ?? 0) + 1 }); });
+        expect(screen.findByTestId('settings-theme-profile-name')?.props.value).toBe('Unsaved local draft');
+        await saveEditor(screen);
+        expect(account.persistedSettings.themeProfiles.find(profile => profile.id === cloud.id)?.name).toBe('Cloud ocean');
+        expect(account.persistedSettings.themeProfiles.find(profile => profile.name === 'Unsaved local draft')?.id).not.toBe(cloud.id);
+        expect(account.persistedSettings.themeProfiles.some(profile => profile.name === 'Unsaved local draft'),
+            JSON.stringify({ errors: vi.mocked(Modal.alert).mock.calls,
+                backup: storage.getState().localSettings.themeProfiles, account: account.persistedSettings.themeProfiles })).toBe(true);
+    });
+
+    it('preserves a legacy draft and refuses its save after the captured legacy source retires', async () => {
+        const local = { ...baseProfile('ocean'), name: 'Local ocean' };
+        storage.getState().applyLocalSettings({ themeProfileSelection: null,
+            themeProfiles: parseThemeProfilesLocalState({ profiles: [local], activeProfileIds: { light: 'ocean', dark: null } }).state,
+        });
+        writeThemeProfileLegacyAccountScope(account.scope);
+        expect(loadLocalSettings().themeProfiles).toEqual(storage.getState().localSettings.themeProfiles);
+        const screen = await renderEditorScreen('ocean');
+        await act(async () => { screen.changeTextByTestId('settings-theme-profile-name', 'Unsaved local draft'); });
+        const cloud = { ...baseProfile('ocean'), name: 'Cloud ocean' };
+        await act(async () => {
+            account.replaceSettings(settingsParse({ ...account.persistedSettings,
+                themeProfiles: [cloud, { ...local, id: 'ocean_2' }] }));
+            storage.getState().applyLocalSettings({ themeProfiles: emptyThemeProfiles(), themeProfileSelection: { light: 'ocean_2', dark: null } });
+        });
+        expect(screen.findByTestId('settings-theme-profile-name')?.props.value).toBe('Unsaved local draft');
+        const before = account.persistedSettings.themeProfiles;
+        await saveEditor(screen);
+        expect(account.persistedSettings.themeProfiles).toEqual(before);
+        expect(shared.routerDismissTo).not.toHaveBeenCalled();
+        expect(screen.findByTestId('settings-theme-profile-name')?.props.value).toBe('Unsaved local draft');
+    });
+
     it('applies draft colors to the live interface preview before save', async () => {
         setThemeProfiles({ activeProfileIds: { light: 'ocean', dark: null }, profiles: [baseProfile('ocean')] });
         const screen = await renderEditorScreen('ocean');
@@ -393,8 +481,8 @@ describe('Theme profile editor', () => {
 
         await act(async () => {
             screen.changeTextByTestId('settings-theme-color-input-light-background.canvas', '#123456');
-            await new Promise((resolve) => setTimeout(resolve, 170));
         });
+        await act(async () => { await new Promise((resolve) => setTimeout(resolve, 170)); });
 
         const swatch = screen.findByTestId('settings-theme-color-swatch-light-background.canvas');
         expect(swatch?.props.color).toBeUndefined();
@@ -408,7 +496,7 @@ describe('Theme profile editor', () => {
         expect(screen.findByTestId('settings-theme-profile-name')).not.toBeNull();
         expect(getThemeProfiles().profiles).toEqual([]);
 
-        await screen.pressByTestIdAsync('settings-theme-profile-save');
+        await saveEditor(screen);
 
         const saved = getThemeProfiles();
         expect(saved.profiles).toHaveLength(1);
@@ -419,7 +507,7 @@ describe('Theme profile editor', () => {
     it('starts a new draft as the light or dark theme the app is using, and leaves the editor once it is saved and used', async () => {
         storage.getState().applyLocalSettings({ themePreference: 'dark' });
         const screen = await renderEditorScreen('new');
-        await screen.pressByTestIdAsync('settings-theme-profile-save');
+        await saveEditor(screen);
 
         const saved = getThemeProfiles();
         // "Starts from: Dark" must not save as a light theme just because it has no colors yet.
@@ -431,7 +519,7 @@ describe('Theme profile editor', () => {
     it('saves the selected asset appearance and assigns that theme slot without changing appearance mode', async () => {
         const screen = await renderEditorScreen('new');
         await screen.pressByTestIdAsync('settings-theme-profile-asset-appearance:dark');
-        await screen.pressByTestIdAsync('settings-theme-profile-save');
+        await saveEditor(screen);
 
         const saved = getThemeProfiles().profiles[0] as (ThemeProfileV1 & { assetAppearance?: string }) | undefined;
         expect(saved?.assetAppearance).toBe('dark');
@@ -448,6 +536,19 @@ describe('Theme profile editor', () => {
 
         expect(screen.findByTestId('settings-theme-profile-name.error')).not.toBeNull();
         expect(screen.findByTestId('settings-theme-profile-save')?.props.disabled).toBe(true);
+    });
+
+    it('keeps a saved new-route draft editable when its first save fills the library', async () => {
+        setThemeProfiles({ activeProfileIds: { light: null, dark: null }, profiles: maxProfiles().slice(0, -1) });
+        const screen = await renderEditorScreen('new');
+        await saveEditor(screen);
+        expect(getThemeProfiles().profiles, JSON.stringify(vi.mocked(Modal.alert).mock.calls)).toHaveLength(THEME_PROFILE_MAX_PROFILES);
+        await act(async () => { screen.changeTextByTestId('settings-theme-profile-name', 'Edited after first save'); });
+        expect(screen.findByTestId('settings-theme-profile-limit-error')).toBeNull();
+        expect(screen.findByTestId('settings-theme-profile-save')?.props.disabled).toBe(false);
+        await saveEditor(screen);
+        expect(getThemeProfiles().profiles).toHaveLength(THEME_PROFILE_MAX_PROFILES);
+        expect(getThemeProfiles().profiles.some(profile => profile.name === 'Edited after first save')).toBe(true);
     });
 
     it('blocks saving a new draft after the profile limit is reached', async () => {
@@ -631,7 +732,7 @@ describe('Theme profile editor', () => {
         await act(async () => {
             screen.changeTextByTestId('settings-theme-color-input-light-background.canvas', '#123456');
         });
-        await screen.pressByTestIdAsync('settings-theme-profile-save');
+        await saveEditor(screen);
 
         const saved = getThemeProfiles();
         expect(saved.activeProfileIds).toEqual({ light: 'ocean', dark: null });
@@ -648,13 +749,9 @@ describe('Theme profile editor', () => {
         const screen = await renderEditorScreen('noir');
         shared.setTheme.mockClear();
 
-        await act(async () => {
-            await new Promise((resolve) => setTimeout(resolve, 170));
-        });
+        await vi.waitFor(() => expect(shared.setTheme).toHaveBeenCalledWith('dark'));
 
-        expect(shared.setTheme).toHaveBeenCalledWith('dark');
-
-        await screen.pressByTestIdAsync('settings-theme-profile-save');
+        await saveEditor(screen);
 
         expect(storage.getState().localSettings.themePreference).toBe('light');
         expect(getThemeProfiles().activeProfileIds).toEqual({ light: null, dark: 'noir' });
@@ -714,7 +811,7 @@ describe('Theme profile import and export screens', () => {
         await act(async () => {
             screen.changeTextByTestId('settings-theme-profile-import-json', json);
         });
-        await screen.pressByTestIdAsync('settings-theme-profile-import-submit');
+        await submitImport(screen);
 
         expect(getThemeProfiles().profiles[0]?.overrides.light['background.canvas']).toBe('#123456');
         expect(shared.routerBack).toHaveBeenCalled();
@@ -726,7 +823,7 @@ describe('Theme profile import and export screens', () => {
         const screen = await renderImportScreen();
 
         await screen.pressByTestIdAsync('settings-theme-profile-import-file');
-        await screen.pressByTestIdAsync('settings-theme-profile-import-submit');
+        await submitImport(screen);
 
         expect(getThemeProfiles().profiles[0]?.overrides.light['background.canvas']).toBe('#123456');
     });
@@ -738,7 +835,7 @@ describe('Theme profile import and export screens', () => {
         const screen = await renderImportScreen();
 
         await screen.pressByTestIdAsync('settings-theme-profile-import-file');
-        await screen.pressByTestIdAsync('settings-theme-profile-import-submit');
+        await submitImport(screen);
 
         expect(getThemeProfiles().profiles[0]?.overrides.light['background.canvas']).toBe('#123456');
     });
@@ -760,7 +857,7 @@ describe('Theme profile import and export screens', () => {
         await act(async () => {
             screen.changeTextByTestId('settings-theme-profile-import-json', json);
         });
-        await screen.pressByTestIdAsync('settings-theme-profile-import-submit');
+        await submitImport(screen);
 
         expect(screen.findByTestId('settings-theme-profile-import-warnings')).not.toBeNull();
         expect(getThemeProfiles().profiles).toHaveLength(1);
@@ -773,7 +870,7 @@ describe('Theme profile import and export screens', () => {
         await act(async () => {
             screen.changeTextByTestId('settings-theme-profile-import-json', '{not json}');
         });
-        await screen.pressByTestIdAsync('settings-theme-profile-import-submit');
+        await submitImport(screen);
 
         expect(screen.findByTestId('settings-theme-profile-import-json.error')).not.toBeNull();
         expect(getThemeProfiles().profiles).toHaveLength(0);
@@ -798,6 +895,16 @@ describe('Theme profile import and export screens', () => {
         shared.params = { profileId: 'ocean' };
         const screen = await renderExportScreen();
 
+        const { Platform, Share } = await import('react-native');
+        const previousPlatform = Platform.OS;
+        Platform.OS = 'ios';
+        const share = vi.spyOn(Share, 'share').mockImplementation(async content => {
+            if (!('url' in content) || !content.url) throw new Error('Expected an iOS share URL');
+            shared.nativeSharedJson = new TextDecoder().decode(new Uint8Array(fs.files.get(content.url)!));
+            await shared.sharingShareAsync(content.url);
+            return { action: Share.sharedAction };
+        });
+        onTestFinished(() => { Platform.OS = previousPlatform; share.mockRestore(); });
         await screen.pressByTestIdAsync('settings-theme-profile-export-download');
         // RoundButton's synchronous onPress does not return the async export promise.
         await vi.waitFor(() => expect(shared.sharingShareAsync).toHaveBeenCalledOnce());

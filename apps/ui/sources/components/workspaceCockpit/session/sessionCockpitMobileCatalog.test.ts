@@ -2,13 +2,21 @@ import { describe, expect, it } from 'vitest';
 import { normalizePluginUiDestinationBindingV1 } from '@happier-dev/protocol/plugins/ui';
 
 import type { PluginUiSurfacePlacementProjection } from '@/sync/domains/plugins/ui/projection';
-import { navigationPlacementsFromLegacyPins } from '@/sync/domains/settings/mobileSurfacePinning';
+import type { NavigationPlacementPreferences } from '@/sync/domains/settings/mobileSurfacePinning';
 
 import {
     resolveSessionCockpitMobileCatalog,
     resolveSessionCockpitMobileNavigatorSurfaces,
     resolveSessionCockpitMobileTabVisibility,
+    type SessionCockpitMobileCatalogEntry,
 } from './sessionCockpitMobileCatalog';
+
+function pinnedPreferences(catalog: readonly SessionCockpitMobileCatalogEntry[], pins: readonly string[]): NavigationPlacementPreferences {
+    return {
+        orderedIds: pins,
+        placements: Object.fromEntries(catalog.map(entry => [entry.id, pins.includes(entry.id) ? 'pinned' : 'overflow'])),
+    };
+}
 
 function createMobilePluginPlacement(input: Readonly<{
     pluginId: string;
@@ -174,7 +182,7 @@ describe('sessionCockpitMobileCatalog', () => {
         // A pin puts the plugin on the bar, after the tools already there.
         expect(resolveSessionCockpitMobileTabVisibility({
             catalog,
-            preferences: navigationPlacementsFromLegacyPins(['browse', 'git', 'plugin:acme.review:session-review']),
+            preferences: pinnedPreferences(catalog, ['browse', 'git', 'plugin:acme.review:session-review']),
             slotCount: 7,
             alwaysSwipe: false,
         })).toMatchObject({
@@ -187,12 +195,12 @@ describe('sessionCockpitMobileCatalog', () => {
         const catalog = resolveSessionCockpitMobileCatalog({ browserFeatureEnabled: true, terminalTabAvailable: true, boardFeatureEnabled: true });
         const pins = ['browse', 'git', 'companion', 'terminal', 'tabs', 'navigation', 'board'];
         // 390 pt holds 7 slots: Chat, More and five tools. Seven pinned tools do not fit.
-        const scrolling = resolveSessionCockpitMobileTabVisibility({ catalog, preferences: navigationPlacementsFromLegacyPins(pins), slotCount: 7, alwaysSwipe: false });
+        const scrolling = resolveSessionCockpitMobileTabVisibility({ catalog, preferences: pinnedPreferences(catalog, pins), slotCount: 7, alwaysSwipe: false });
         expect(scrolling.mode).toBe('scroll');
         expect(scrolling.visible.map((entry) => entry.id)).toEqual(['chat', ...pins]);
         expect(scrolling.held).toEqual([]);
 
-        const swiping = resolveSessionCockpitMobileTabVisibility({ catalog, preferences: navigationPlacementsFromLegacyPins(pins), slotCount: 7, alwaysSwipe: true });
+        const swiping = resolveSessionCockpitMobileTabVisibility({ catalog, preferences: pinnedPreferences(catalog, pins), slotCount: 7, alwaysSwipe: true });
         expect(swiping.mode).toBe('more');
         expect(swiping.visible.map((entry) => entry.id)).toEqual(['chat', 'browse', 'git', 'companion', 'terminal', 'tabs']);
         expect(swiping.held.map((entry) => entry.id)).toEqual(['navigation', 'board']);
@@ -206,7 +214,7 @@ describe('sessionCockpitMobileCatalog', () => {
 
         expect(resolveSessionCockpitMobileTabVisibility({
             catalog,
-            preferences: navigationPlacementsFromLegacyPins(['plugin:removed:panel', 'not-a-surface', 'git']),
+            preferences: pinnedPreferences(catalog, ['plugin:removed:panel', 'not-a-surface', 'git']),
             slotCount: 7,
             alwaysSwipe: false,
         })).toMatchObject({

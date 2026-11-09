@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { CollectionEntityKindV1Schema, CollectionSpaceSelectionV1Schema, CollectionSpaceSelectionValueV1Schema,
+import { CollectionSpaceSelectionValueV1Schema,
     type CollectionSpaceSelectionV1, type CollectionEntityKindV1 } from '@happier-dev/protocol/collections/spaces/collectionSpacesV1';
 import { accountSettingsScopeKeySuffix, type AccountSettingsScope } from '@/sync/domains/settings/scope/accountSettingsScope';
 import { createPersistentUiState, usePersistentUiStateValue } from '@/sync/domains/state/persistentUiState';
@@ -28,22 +28,4 @@ export function useCollectionSpaceSelection(scopeKey: string, entityKind: Collec
 /** Device-local navigation; mounted controls and admitted Actions share this synchronous owner. */
 export function selectCollectionSpace(scope: AccountSettingsScope, entityKind: CollectionEntityKindV1, spaceId: string): void {
     selections.set(key(accountSettingsScopeKeySuffix(scope), entityKind), spaceId);
-}
-
-/** Import each exact predecessor scope/entity independently; a current destination wins. */
-export function migrateCollectionSpaceUiStateFromSettings(settings: unknown): unknown {
-    if (!settings || typeof settings !== 'object' || Array.isArray(settings)) return settings;
-    const record = settings as Record<string, unknown>;
-    if (!Object.hasOwn(record, 'collectionSpaceV1')) return settings;
-    const parsed = CollectionSpaceSelectionV1Schema.parse(record.collectionSpaceV1);
-    for (const [scopeKey, byEntity] of Object.entries(parsed.byAccountScope)) {
-        for (const entityKind of CollectionEntityKindV1Schema.options) {
-            const selection = byEntity[entityKind];
-            if (selection && selections.readStrict(key(scopeKey, entityKind)) === undefined) {
-                selections.set(key(scopeKey, entityKind), selection.spaceId);
-            }
-        }
-    }
-    const { collectionSpaceV1: _legacy, ...retained } = record;
-    return retained;
 }

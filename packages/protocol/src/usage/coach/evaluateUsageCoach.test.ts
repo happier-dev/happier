@@ -21,11 +21,11 @@ const composition: UsagePromptComposition = { v: 1, evidenceId: 'prompt', sessio
 describe('evidence-bound usage coach', () => {
     it('does not inspect disabled check evidence, including model Off', () => {
         const detail = { coverage: 'partial' as const, get modelRequests(): never { throw new Error('Disabled model was evaluated'); } };
-        expect(result({ detail, preferences: { v: 1, suppressions: [], disabledChecks: [], modelSuggestion: 'off' } }, 'model_misfit').status).toBe('disabled');
-        expect(result({ detail, preferences: { v: 1, suppressions: [], disabledChecks: ['model_misfit'], modelSuggestion: 'suggest_with_estimates' } }, 'model_misfit').status).toBe('disabled');
+        expect(result({ detail, preferences: { v: 1, disabledChecks: [], modelSuggestion: 'off' } }, 'model_misfit').status).toBe('disabled');
+        expect(result({ detail, preferences: { v: 1, disabledChecks: ['model_misfit'], modelSuggestion: 'suggest_with_estimates' } }, 'model_misfit').status).toBe('disabled');
         expect(result({ detail, preferences: null }, 'model_misfit').status).toBe('insufficient_evidence');
         const disabled = evaluateUsageCoach({ ...base, composition: [{ ...composition, components: [{ ...component, byteLength: -1 }] }],
-            preferences: { v: 1, suppressions: [], disabledChecks: [...USAGE_COACH_DETECTOR_IDS], modelSuggestion: 'suggest_with_estimates' } });
+            preferences: { v: 1, disabledChecks: [...USAGE_COACH_DETECTOR_IDS], modelSuggestion: 'suggest_with_estimates' } });
         expect(disabled.evaluations.every(row => row.status === 'disabled')).toBe(true);
         expect(disabled.findings).toEqual([]);
         expect(UsageCoachEvaluationSchema.safeParse(disabled).success).toBe(true);
@@ -71,7 +71,7 @@ describe('evidence-bound usage coach', () => {
         expect(read(requests, partial)).toMatchObject({ status: 'finding', finding: { coverage: 'partial',
             modelComparison: { costCoverage: 'partial', providerAttribution: 'unknown', modelCost: 4, candidateCost: 1 } } });
         expect(result({ accounting: partial, detail: { coverage: 'partial', modelRequests: requests },
-            preferences: { v: 1, suppressions: [], disabledChecks: [], modelSuggestion: 'complete_only' } }, 'model_misfit').status).toBe('insufficient_evidence');
+            preferences: { v: 1, disabledChecks: [], modelSuggestion: 'complete_only' } }, 'model_misfit').status).toBe('insufficient_evidence');
         const account = { service: { pluginId: 'example.auth', localId: 'native' }, accountId: 'request-account' };
         const attributed = { ...accounting, contributions: accounting.contributions!.map(row => ({ ...row,
             providerSource: 'native' as const, connectedAccount: account })) };
@@ -99,7 +99,7 @@ describe('evidence-bound usage coach', () => {
         const large = result({ accounting: { ...accounting, contributions: history },
             detail: { coverage: 'partial', modelRequests: [...requests, ...Array.from({ length: 128 }, (_, index) => ({
                 ...requests[0]!, evidenceId: `unmatched-${index}`, turnId: `unmatched-${index}`,
-            }))] }, preferences: { v: 1, suppressions: [],
+            }))] }, preferences: { v: 1,
                 disabledChecks: USAGE_COACH_DETECTOR_IDS.filter(id => id !== 'model_misfit'), modelSuggestion: 'suggest_with_estimates' },
         }, 'model_misfit');
         expect(large).toEqual(original);
@@ -334,7 +334,7 @@ describe('evidence-bound usage coach', () => {
         expect(UsageCoachEvaluationSchema.safeParse(replaceFinding({ ...finding, period: { startMs: 0, endMs: 999 } })).success).toBe(false);
         expect(UsageCoachEvaluationSchema.safeParse(replaceFinding({ ...finding, evidenceKey: 'plugin-owned-opaque-key' })).success).toBe(true);
     });
-    it('applies Account preferences only to exact finding evidence and expires snooze at the explicit clock', () => {
+    it('applies Coach KV suppressions only to exact finding evidence and expires snooze at the explicit clock', () => {
         const evaluation = evaluateUsageCoach({ ...base, composition: [{ ...composition, components: [component, component] }] });
         const key = evaluation.findings[0]!.evidenceKey;
         const preferences = { v: 1 as const, disabledChecks: [], modelSuggestion: 'suggest_with_estimates' as const,

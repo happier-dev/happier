@@ -6,15 +6,13 @@ import {
     ConnectedMetadataRowMutationResponseV1Schema, sealConnectedPresentationContentV1, sealConnectedAcknowledgementsContentV1,
     applyConnectedPresentationMutationV1, applyConnectedSubscriptionPriceMutationV1, applyConnectedAcknowledgementMutationV1, removeConnectedMetadataSubjectV1,
     removeLegacyConnectedMetadataSubjectV1,
-    connectedEntitySubjectKeyV1, connectedDisclosureSubjectKeyV1,
+    connectedEntitySubjectKeyV1,
     type ConnectedPresentationRecordV1, type ConnectedAcknowledgementsRecordV1,
     type QualifiedConnectedEntityRef, type QualifiedAcknowledgementSubject, type LegacyConnectedMetadataInventoryV1,
-    type QualifiedConnectedDisclosureSubject, type ConnectedDisclosureEntryV1,
 } from '@happier-dev/protocol/connect/connectedAccountPresentationRowsV1';
 import type { AccountScopedCryptoMaterial } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import type { CapturedAccountSettingsRequest } from './accountSettingsRequest';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
-import { collapsedGroupsState, removeCollapsedGroupKey, replaceCollapsedGroupKeys } from '@/sync/domains/state/disclosureUiState';
 import { classifyAccountStorageReadFailure, resolveAccountStorageContext, resolveAccountStorageContextForDisclosure } from '@/sync/encryption/accountStorageContext';
 import { resolveAccountScopedCryptoMaterialFromCredentials } from '@/sync/domains/connectedServices/resolveAccountScopedCryptoMaterialFromCredentials';
 import { readAccountSettingsBaseline } from '@/sync/engine/settings/accountSettingsBaseline';
@@ -27,9 +25,7 @@ import { classifyHttpMutationRequestFailure } from '@/sync/http/mutationRequestO
 import { AGENT_IDS, BUNDLED_AGENT_CONTRIBUTION_IDENTITIES } from '@happier-dev/agents/agent-ids';
 import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { AgentExecutionTargetV1Schema } from '@happier-dev/protocol/agents/executionTargetV1';
-import { resolveConnectedServiceCollapseKey, setConnectedServiceItemCollapsed } from '@/sync/domains/connectedServices/resolveConnectedServiceCollapseKey';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
-import { sameQualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualifiedConnectedAccountPersistence';
 import { applyAcknowledgedConnectedMetadata } from '@/sync/store/settings/connectedMetadataCatalogSnapshot';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import type { CapturedServerReadTransport } from '@/sync/runtime/orchestration/serverScopedRpc/capturedServerReadTransport';
@@ -132,11 +128,7 @@ async function readInventory(context: ConnectedMetadataAccountContext): Promise<
         const target = AgentExecutionTargetV1Schema.safeParse({ kind: 'agent', identity: BUNDLED_AGENT_CONTRIBUTION_IDENTITIES[legacyAgentId] });
         // Contribution templates without a configured definition are not legacy executable targets.
         return target.success ? [{ legacyAgentId, agentTargetKey: buildBackendTargetKeyV2(target.data) }] : [];
-    }), disclosureSubjects: [
-        ...profile.connectedAccountsV4.map(account => ({ kind: 'account' as const, account: account.ref })),
-        ...profile.connectedAccountGroupsV4.flatMap(group => group.members.map(member => ({ kind: 'group-member' as const,
-            group: group.ref, accountId: member.connectedAccountId }))),
-    ] };
+    }) };
 }
 type Write<Record> = Readonly<{ record: Record; expectedRevision: number | 'absent'; sourceSettingsVersion?: number }>;
 async function writeRow(context: ConnectedMetadataAccountContext, route: string, body: unknown, signal?: AbortSignal): Promise<MutationResult> {
@@ -191,23 +183,6 @@ function writeAcknowledgements(context: ConnectedMetadataAccountContext, input: 
 type Publication = Readonly<{ onReady?: (projection: ConnectedMetadataCatalogV1, isCurrent: () => boolean) => void; hasPendingCleanup?: () => boolean;
     /** This Account's previous read left its source or history cleanup pending. */
     sourceCleanupPending?: boolean }>;
-function disclosureKey(context: ConnectedMetadataAccountContext, subject: QualifiedConnectedDisclosureSubject): string {
-    return resolveConnectedServiceCollapseKey({ scope: { serverId: context.serverId, accountId: context.accountId },
-        service: subject.kind === 'account' ? subject.account.service : subject.group.service,
-        profileId: subject.kind === 'account' ? subject.account.accountId : subject.accountId,
-        ...(subject.kind === 'group-member' ? { groupId: subject.group.groupId } : {}) });
-}
-async function persistDisclosure(context: ConnectedMetadataAccountContext, entries: readonly ConnectedDisclosureEntryV1[]): Promise<void> {
-    context.assertCurrent();
-    let keys = { ...collapsedGroupsState.readAll() };
-    for (const entry of entries) {
-        const key = disclosureKey(context, entry.subject);
-        // An existing device choice wins over an Account-source import.
-        if (!Object.hasOwn(keys, key)) keys = setConnectedServiceItemCollapsed(keys, key, entry.collapsed, entry.subject.kind === 'group-member');
-    }
-    // The incumbent owner synchronously persists through MMKV before returning.
-    replaceCollapsedGroupKeys(keys);
-}
 export async function readConnectedMetadataCatalogInContext(context: ConnectedMetadataAccountContext, signal?: AbortSignal,
     publication?: Publication, maintenance = true): Promise<ConnectedMetadataCatalogV1> {
     return readConnectedMetadataCatalog(context, signal, publication, maintenance);
@@ -232,7 +207,6 @@ async function readConnectedMetadataCatalog(context: ConnectedMetadataAccountCon
                 context.assertCurrent(); return { raw: source.raw ?? {}, version: source.version };
             },
             readInventory: () => readInventory(context),
-            persistDisclosure: entries => persistDisclosure(context, entries),
             initializePresentation: input => writePresentation(context, input, signal),
             initializeAcknowledgements: input => writeAcknowledgements(context, input, signal),
             replaceSource: async input => {
@@ -266,7 +240,7 @@ export async function readConnectedMetadataCatalogProjection(scope: ServerAccoun
         return await withAccount(scope, context => { assertCurrent?.(); return readConnectedMetadataCatalogInContext(context, signal, publication); }, signal);
     } catch (error) {
         const reason = classifyAccountStorageReadFailure(error, signal);
-        return { presentation: { status: 'unavailable', reason }, acknowledgements: { status: 'unavailable', reason }, disclosure: [] };
+        return { presentation: { status: 'unavailable', reason }, acknowledgements: { status: 'unavailable', reason } };
     }
 }
 function requireUpdated(result: MutationResult): void {
@@ -329,7 +303,6 @@ export async function setConnectedAcknowledgementInContext(context: ConnectedMet
 /** Invocation-local capture, not a persisted cleanup ledger or a new authority. */
 export type PreparedConnectedMetadataCleanup = Readonly<{
     subjectKey: string;
-    disclosureKeys: readonly string[];
     source?: Readonly<{ originalRaw: Readonly<Record<string, unknown>>; raw: Readonly<Record<string, unknown>>;
         version: number; mode: 'plain' | 'e2ee'; incomplete: boolean }>;
     failure?: unknown;
@@ -337,14 +310,8 @@ export type PreparedConnectedMetadataCleanup = Readonly<{
 export async function prepareConnectedMetadataCleanupInContext(context: ConnectedMetadataAccountContext,
     subject: QualifiedConnectedEntityRef, signal?: AbortSignal): Promise<PreparedConnectedMetadataCleanup> {
     const subjectKey = connectedEntitySubjectKeyV1(subject);
-    let disclosureKeys: readonly string[] = [];
     try {
         const inventory = await readInventory(context);
-        disclosureKeys = (inventory.disclosureSubjects ?? []).filter(candidate => subject.kind === 'account'
-            ? sameQualifiedConnectedAccountRef(candidate.kind === 'account' ? candidate.account
-                : { service: candidate.group.service, accountId: candidate.accountId }, subject.account)
-            : candidate.kind === 'group-member' && connectedEntitySubjectKeyV1({ kind: 'group', ...candidate.group }) === subjectKey)
-            .map(candidate => disclosureKey(context, candidate));
         // Establish absent row authority while the subject can still be qualified.
         const catalog = await readConnectedMetadataCatalogInContext(context, signal);
         const failure = catalog.cleanup?.status === 'cleanup-pending'
@@ -353,14 +320,12 @@ export async function prepareConnectedMetadataCleanupInContext(context: Connecte
             const source = await context.readRawSettingsSnapshot();
             context.assertCurrent();
             const next = removeLegacyConnectedMetadataSubjectV1({ raw: source.raw, inventory, subject });
-            return { subjectKey, disclosureKeys, source: { originalRaw: source.raw, raw: next.raw,
+            return { subjectKey, source: { originalRaw: source.raw, raw: next.raw,
                 version: source.version, mode, incomplete: next.diagnostics.length > 0 },
                 ...(failure ? { failure } : {}) };
         });
     } catch (failure) {
-        // Local keys qualified before a later source refusal remain usable only
-        // in this same captured Account. The primary delete is still independent.
-        return { subjectKey, disclosureKeys, failure };
+        return { subjectKey, failure };
     }
 }
 export async function cleanupConnectedMetadataInContext(context: ConnectedMetadataAccountContext,
@@ -387,7 +352,6 @@ export async function cleanupConnectedMetadataInContext(context: ConnectedMetada
             throw new ConnectedMetadataRowOperationError('connected_metadata_cleanup_not_prepared');
         }
         context.assertCurrent();
-        for (const key of prepared.disclosureKeys) removeCollapsedGroupKey(key);
         if (prepared.source) {
             const source = prepared.source;
             if (JSON.stringify(source.raw) !== JSON.stringify(source.originalRaw)) {
@@ -406,18 +370,4 @@ export async function cleanupConnectedMetadataInContext(context: ConnectedMetada
 }
 export function setConnectedLabel(input: Readonly<{ subject: QualifiedConnectedEntityRef; label: string | null }>, scope?: ServerAccountScope): Promise<void> {
     return withAccount(scope, context => setConnectedLabelInContext(context, input));
-}
-export async function setConnectedDisclosureInContext(context: ConnectedMetadataAccountContext,
-    input: Readonly<{ subject: QualifiedConnectedDisclosureSubject; collapsed: boolean | null }>): Promise<void> {
-    if (input.collapsed !== null) {
-        const inventory = await readInventory(context);
-        if (!inventory.disclosureSubjects?.some(subject => connectedDisclosureSubjectKeyV1(subject) === connectedDisclosureSubjectKeyV1(input.subject))) {
-            throw new ConnectedMetadataRowOperationError('connected_metadata_subject_not_owned');
-        }
-    }
-    context.assertCurrent();
-    const key = disclosureKey(context, input.subject);
-    const next = input.collapsed === null ? {} : setConnectedServiceItemCollapsed({}, key, input.collapsed, input.subject.kind === 'group-member');
-    if (Object.hasOwn(next, key)) collapsedGroupsState.set(key, next[key]);
-    else removeCollapsedGroupKey(key);
 }

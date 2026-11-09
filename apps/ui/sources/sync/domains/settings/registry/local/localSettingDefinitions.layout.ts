@@ -1,36 +1,19 @@
-import { HAPPIER_NEEDS_YOU_HIGHLIGHTS } from '@happier-dev/plugin-ui/presentation';
 import { z } from 'zod/mini';
 
 import { SessionCompanionPreferencesV1Schema } from '@/components/sessions/companion/state/sessionCompanionPreference';
-import { normalizeSessionMobileSurface, type SessionMobileSurface } from '@/components/workspaceCockpit/session/sessionCockpitState';
-import { normalizeProjectMobileSurface, type ProjectMobileSurface } from '@/components/workspaceCockpit/project/projectCockpitState';
 import { StoredNavigationSurfacePlacementsV1Schema } from '../../mobileSurfacePinning';
 import { DEFAULT_RIGHT_PREFERRED_PX, DEFAULT_SESSION_WIDTH_PX } from '@/components/ui/panels/paneBreakpoints';
+import { HAPPIER_NEEDS_YOU_HIGHLIGHTS } from '@happier-dev/plugin-ui/presentation';
 
 import {
-    EMPTY_PERSISTED_PANE_SCOPE_STATE,
     objectKeyCount,
-    paneScopeStateSchema,
     serializePaneSizePxBucket,
 } from './localSettingDefinitions.shared';
-
-const sessionMobileSurfaceSchema = z.custom<SessionMobileSurface>((value) => (
-    typeof value === 'string' && normalizeSessionMobileSurface(value) === value
-));
-const projectMobileSurfaceSchema = z.custom<ProjectMobileSurface>((value) => (
-    typeof value === 'string' && normalizeProjectMobileSurface(value) === value
-));
 
 const TERMINAL_ARROW_PAD_PLACEMENT_SCHEMA = z.strictObject({
     side: z.enum(['left', 'right']),
     y: z.number().check(z.minimum(0), z.maximum(1)),
     tucked: z.boolean(),
-});
-
-const compactAppDestinationIdSchema = z.string().check(z.trim(), z.minLength(1), z.maxLength(256));
-const compactAppDestinationPreferencesSchema = z.strictObject({
-    orderedDestinationIds: z._default(z.array(compactAppDestinationIdSchema).check(z.maxLength(128)), []),
-    hiddenDestinationIds: z._default(z.array(compactAppDestinationIdSchema).check(z.maxLength(128)), []),
 });
 
 export const LAYOUT_LOCAL_SETTING_DEFINITIONS = {
@@ -172,36 +155,6 @@ export const LAYOUT_LOCAL_SETTING_DEFINITIONS = {
         description: 'Where the phone terminal arrow pad rests, per orientation',
         storageScope: 'local',
     },
-    terminalNativeRendererQuarantine: {
-        schema: z.catch(z.nullable(z.strictObject({
-            renderer: z.enum(['ios-ghosttykit', 'android-termux']),
-            expiresAtMs: z.number().check(z.positive()),
-        })), null),
-        default: null,
-        description: 'Temporary native terminal renderer quarantine after an attributed fatal failure',
-        storageScope: 'local',
-    },
-    sessionsListStorageFilter: {
-        schema: z.enum(['all', 'persisted', 'direct']),
-        default: 'all',
-        description: 'Selected session list storage filter',
-        storageScope: 'local',
-        analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'device_user' },
-    },
-    sessionLastMobileSurfaceBySessionId: {
-        schema: z._default(z.record(z.string(), sessionMobileSurfaceSchema), {}),
-        default: {},
-        description: 'Last active mobile session surface by realm-qualified session key',
-        storageScope: 'local',
-        analytics: {
-            trackCurrentState: true,
-            trackChanges: true,
-            valueKind: 'count',
-            privacy: 'count_only',
-            identityScope: 'device_user',
-            serializeCurrent: objectKeyCount,
-        },
-    },
     sessionCompanionPreferencesBySessionV1: {
         schema: SessionCompanionPreferencesV1Schema,
         default: {},
@@ -224,134 +177,4 @@ export const LAYOUT_LOCAL_SETTING_DEFINITIONS = {
         description: 'Device-local ordering and pinned, overflow or hidden placement for navigation surfaces',
         storageScope: 'local',
     },
-    sessionCockpitBarSurfaceIds: {
-        // The person's Session bar in order; null until they change it (host defaults apply).
-        // No count cap: the bar's width decides what fits, the rest scrolls or waits in More.
-        schema: z.catch(z.nullable(z.array(z.string().check(z.trim(), z.minLength(1)))), null),
-        default: null,
-        description: 'Tools the person keeps on the Session mobile cockpit bar, in order',
-        storageScope: 'local',
-        analytics: {
-            trackCurrentState: true,
-            trackChanges: true,
-            valueKind: 'count',
-            privacy: 'count_only',
-            identityScope: 'device_user',
-            serializeCurrent: (value: readonly string[] | null) => value?.length ?? 0,
-        },
-    },
-    compactAppDestinationPreferencesV1: {
-        schema: compactAppDestinationPreferencesSchema,
-        default: { orderedDestinationIds: [], hiddenDestinationIds: [] },
-        description: 'User ordering and visibility preferences for compact App destinations',
-        storageScope: 'local',
-        analytics: {
-            trackCurrentState: true,
-            trackChanges: true,
-            valueKind: 'count',
-            privacy: 'count_only',
-            identityScope: 'device_user',
-            serializeCurrent: (value: Readonly<{
-                orderedDestinationIds: readonly string[];
-                hiddenDestinationIds: readonly string[];
-            }>) => value.orderedDestinationIds.length + value.hiddenDestinationIds.length,
-        },
-    },
-    projectLastMobileSurfaceByWorkspaceRefId: {
-        schema: z._default(z.record(z.string(), projectMobileSurfaceSchema), {}),
-        default: {},
-        description: 'Last active mobile project surface by realm-qualified workspace key',
-        storageScope: 'local',
-        analytics: {
-            trackCurrentState: true,
-            trackChanges: true,
-            valueKind: 'count',
-            privacy: 'count_only',
-            identityScope: 'device_user',
-            serializeCurrent: objectKeyCount,
-        },
-    },
-    projectLastActiveRootPathByWorkspaceRefId: {
-        schema: z._default(z.record(z.string(), z.string()), {}),
-        default: {},
-        description: 'Last active project root path by Home-qualified workspace ref key',
-        storageScope: 'local',
-        analytics: {
-            trackCurrentState: true,
-            trackChanges: true,
-            valueKind: 'count',
-            privacy: 'count_only',
-            identityScope: 'device_user',
-            serializeCurrent: objectKeyCount,
-        },
-    },
-    projectLastActiveWorktreeIdByWorkspaceRefId: {
-        schema: z._default(z.record(z.string(), z.string()), {}),
-        default: {},
-        description: 'Last active project worktree id by Home-qualified workspace ref key',
-        storageScope: 'local',
-        analytics: {
-            trackCurrentState: true,
-            trackChanges: true,
-            valueKind: 'count',
-            privacy: 'count_only',
-            identityScope: 'device_user',
-            serializeCurrent: objectKeyCount,
-        },
-    },
-    appPaneScopesV1: {
-        schema: z._default(z.record(z.string(), z.catch(paneScopeStateSchema, EMPTY_PERSISTED_PANE_SCOPE_STATE)), {}),
-        default: {},
-        description: 'Persisted app pane scope state by scope id',
-        storageScope: 'local',
-        analytics: {
-            trackCurrentState: true,
-            trackChanges: true,
-            valueKind: 'count',
-            privacy: 'count_only',
-            identityScope: 'device_user',
-            serializeCurrent: objectKeyCount,
-        },
-    },
-    workspaceLayoutV1: {
-        schema: z._default(z.record(z.string(), z.unknown()), {}),
-        default: {},
-        description: 'Current workspace layout by Account and window on this device',
-        storageScope: 'local',
-        analytics: {
-            trackCurrentState: true,
-            trackChanges: true,
-            valueKind: 'count',
-            privacy: 'count_only',
-            identityScope: 'device_user',
-            serializeCurrent: objectKeyCount,
-        },
-    },
-    sessionComposerCollapsedBannerKinds: {
-        schema: z._default(z.record(z.string(), z.boolean()), {}),
-        default: {},
-        description: 'Composer banner kinds collapsed on this device, honored only while sessionComposerRememberBannerVisibility is enabled',
-        storageScope: 'local',
-        analytics: {
-            trackCurrentState: true,
-            trackChanges: true,
-            valueKind: 'count',
-            privacy: 'count_only',
-            identityScope: 'device_user',
-            serializeCurrent: objectKeyCount,
-        },
-    },
-    acknowledgedCliVersions: {
-        schema: z.record(z.string(), z.string()),
-        default: {},
-        description: 'Acknowledged CLI versions per machine',
-        storageScope: 'local',
-        analytics: {
-            trackCurrentState: true,
-            trackChanges: true,
-            valueKind: 'count',
-            privacy: 'count_only',
-            identityScope: 'device_user',
-            serializeCurrent: objectKeyCount,
-        },
-    },} as const;
+} as const;

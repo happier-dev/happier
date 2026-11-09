@@ -1,3 +1,4 @@
+import { readThemeProfileLegacyAccountScope, writeThemeProfileLegacyAccountScope } from '@/sync/domains/state/themeProfileMigrationUiState';
 import { describe, expect, it, onTestFinished, vi } from 'vitest';
 import { registerNativeThemePreferenceTransitionController } from '@/components/settings/appearance/themePreferenceTransition';
 
@@ -18,6 +19,9 @@ vi.mock('react-native-unistyles', async () => {
 
 import { darkTheme, lightTheme, type Theme } from '@/theme';
 import { localSettingsDefaults, type LocalSettings } from '@/sync/domains/settings/localSettings';
+import { loadLocalSettings, saveLocalSettings } from '@/sync/domains/state/persistence';
+import { loadActiveAccountSettingsScope, saveAccountSettings, saveActiveAccountSettingsScope, savePendingAccountSettings } from '@/sync/domains/state/accountSettingsPersistence';
+import { settingsParse } from '@/sync/domains/settings/settings';
 import {
     activateThemeProfile,
     applyThemeRuntimeSelection,
@@ -78,6 +82,55 @@ const pairedProfileState = {
 } as unknown as ThemeProfilesLocalStateV1;
 
 describe('theme profile runtime', () => {
+    it('stores only the device selection when activating a profile through the default persistence path', async () => {
+        const previous = loadLocalSettings();
+        onTestFinished(() => saveLocalSettings(previous));
+        saveLocalSettings({ ...localSettingsDefaults, themePreference: 'dark' });
+        await activateThemeProfile({ profileId: 'nightDark', profileMode: 'dark', reduceMotion: true, platform: 'web' });
+        const saved = loadLocalSettings();
+        expect(saved.themeProfileSelection).toEqual({ light: null, dark: 'nightDark' });
+        expect(saved.themeProfiles).toEqual(localSettingsDefaults.themeProfiles);
+    });
+
+    it('retains legacy origin when activating a device theme before the account library arrives', async () => {
+        const previous = loadLocalSettings();
+        onTestFinished(() => saveLocalSettings(previous));
+        saveLocalSettings({ ...localSettingsDefaults, themePreference: 'light', themeProfiles: profileState });
+        await activateThemeProfile({ profileId: 'ocean', profileMode: 'light', reduceMotion: true, platform: 'web' });
+        expect(loadLocalSettings().themeProfileSelection).toEqual({
+            light: { legacyProfileId: 'ocean' }, dark: { legacyProfileId: 'ocean' },
+        });
+    });
+
+    it('stores a pending acknowledged profile as account selection while its legacy backup remains', async () => {
+        const previous = loadLocalSettings();
+        const previousScope = loadActiveAccountSettingsScope();
+        const previousLegacyScope = readThemeProfileLegacyAccountScope();
+        const scope = { serverId: 'runtime-pending-server', accountId: 'runtime-pending-account' };
+        onTestFinished(() => {
+            saveLocalSettings(previous);
+            saveActiveAccountSettingsScope(previousScope);
+            writeThemeProfileLegacyAccountScope(previousLegacyScope);
+            savePendingAccountSettings(scope, {}, null);
+        });
+        const original = profileState.profiles[0];
+        const cloud = { ...original, name: 'Account ocean' };
+        const committed = { ...original, id: 'ocean_2', name: 'Edited ocean' };
+        saveAccountSettings(scope, settingsParse({ themeProfiles: [cloud] }), 1);
+        saveActiveAccountSettingsScope(scope);
+        saveLocalSettings({ ...localSettingsDefaults, themePreference: 'light', themeProfiles: profileState,
+            themeProfileSelection: { light: { legacyProfileId: original.id }, dark: null } });
+        writeThemeProfileLegacyAccountScope(scope);
+        savePendingAccountSettings(scope, { themeProfiles: [cloud, committed] }, {
+            edits: [{ target: { kind: 'legacy', id: original.id }, profile: committed }],
+            legacyProfileIds: { [original.id]: committed.id }, acknowledged: true,
+        });
+        const legacyBackup = loadLocalSettings().themeProfiles;
+        await activateThemeProfile({ profileId: committed.id, profileMode: 'light', reduceMotion: true, platform: 'web' });
+        expect(loadLocalSettings().themeProfileSelection).toEqual({ light: committed.id, dark: null });
+        expect(loadLocalSettings().themeProfiles).toEqual(legacyBackup);
+    });
+
     it('falls back to canonical base themes when startup effective theme resolution fails', () => {
         const result = resolveThemeRuntimeStartupThemes({
             themeProfiles: profileState,
@@ -378,6 +431,29 @@ describe('theme profile runtime', () => {
         expect(platformRuntime.setTheme).toHaveBeenLastCalledWith('dark');
         expect(platformRuntime.setRootViewBackgroundColor).toHaveBeenLastCalledWith('#0a0a0a');
         expect(platformRuntime.setStatusBarStyle).toHaveBeenLastCalledWith('light', true);
+    });
+
+    it('resolves the selected profile alias again inside the native transition mutation', async () => {
+        let target = 'ocean';
+        let currentSettings: LocalSettings = { ...localSettingsDefaults, themePreference: 'light',
+            themeProfiles: { profiles: profileState.profiles, activeProfileIds: { light: null, dark: null } } };
+        onTestFinished(registerNativeThemePreferenceTransitionController({ run: mutation => {
+            target = 'ocean_2';
+            currentSettings = { ...currentSettings, themeProfiles: {
+                profiles: [...profileState.profiles, { ...profileState.profiles[0], id: target }],
+                activeProfileIds: { light: null, dark: null },
+            } };
+            mutation();
+        } }));
+        const input = {
+            profileId: 'ocean', resolveProfileId: () => target,
+            profileMode: 'light' as const, forceAnimate: true, reduceMotion: false,
+            systemTheme: 'light' as const, platform: 'ios',
+            loadLocalSettings: () => currentSettings,
+            saveLocalSettings: (next: LocalSettings) => { currentSettings = next; },
+        };
+        await activateThemeProfile(input);
+        expect(currentSettings.themeProfiles.activeProfileIds).toEqual({ light: 'ocean_2', dark: null });
     });
 
     it('activates built-in presets without adding them to the custom profile collection', async () => {

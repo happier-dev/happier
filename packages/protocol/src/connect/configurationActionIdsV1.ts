@@ -48,6 +48,4 @@ export const CONNECTED_SERVICE_CONFIGURATION_ACTION_IDS_V1 = [
   'connectedServices.labels.set',
   'connectedServices.labels.reset',
   'connectedServices.acknowledgements.reset',
-  'connectedServices.disclosure.set',
-  'connectedServices.disclosure.reset',
 ] as const;

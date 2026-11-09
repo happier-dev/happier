@@ -4,7 +4,7 @@ import { StyleSheet } from 'react-native-unistyles';
 
 import { CockpitTabBar, CockpitTabBarAction, type CockpitTabBarTabDefinition } from '@/components/navigation/mobile/chrome/bars/CockpitTabBar';
 import { SessionAgentCatalogIdentityIcon } from '@/components/sessions/presentation/SessionAgentCatalogIdentityIcon';
-import { ChatHeaderView } from '@/components/sessions/transcript/ChatHeaderView';
+import { SessionPaneHeader } from '@/components/sessions/shell/view/SessionPaneHeader';
 import { layout } from '@/components/ui/layout/layout';
 import { resolveFloatingTabBarSlotCount } from '@/components/ui/navigation/FloatingTabBarSurface';
 import { resolveTabBarMetrics } from '@/components/ui/navigation/tabBarMetrics';
@@ -17,7 +17,6 @@ import {
 } from '@/components/workspaceCockpit/session/sessionCockpitMobileCatalog';
 import type { SessionMobileSurface } from '@/components/workspaceCockpit/session/sessionCockpitState';
 import { useSetting } from '@/sync/domains/state/storage';
-import { navigationPlacementsFromLegacyPins } from '@/sync/domains/settings/mobileSurfacePinning';
 import { t } from '@/text';
 
 /**
@@ -64,7 +63,10 @@ function PinnedBar(props: Readonly<{ alwaysSwipe: boolean; pinned: readonly stri
     const catalog = React.useMemo(() => resolveSessionCockpitMobileCatalog({ terminalTabAvailable: true }), []);
     const visibility = resolveSessionCockpitMobileTabVisibility({
         catalog,
-        preferences: navigationPlacementsFromLegacyPins(props.pinned),
+        preferences: props.pinned === null ? null : {
+            orderedIds: props.pinned,
+            placements: Object.fromEntries(catalog.map(entry => [entry.id, props.pinned?.includes(entry.id) ? 'pinned' as const : 'overflow' as const])),
+        },
         slotCount: resolveFloatingTabBarSlotCount({ windowWidth, maxWidth: layout.maxWidth, tabMinWidth }),
         alwaysSwipe: props.alwaysSwipe,
     });
@@ -85,7 +87,7 @@ export function PhoneBarSpecimen(props: Readonly<{ frame: string | null }>) {
     const frame: Frame = props.frame === 'overflow' || props.frame === 'always' ? props.frame : 'rest';
     return (
         <View style={styles.root}>
-            <ChatHeaderView title="Fix settings modal remount" subtitle="happier · MacBook Pro" onBackPress={() => {}} />
+            <SessionPaneHeader title="Fix settings modal remount" subtitle="happier · MacBook Pro" onBackPress={() => {}} />
             <ScrollView contentContainerStyle={styles.body}>
                 <Text style={styles.copy}>
                     It remounts because SettingsModal’s key includes the window width, so every resize throws its state away.

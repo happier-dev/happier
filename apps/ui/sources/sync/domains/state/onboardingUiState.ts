@@ -1,6 +1,5 @@
 import { z } from 'zod/mini';
 import { createPersistentUiState, UiStatePersistenceError, usePersistentUiStateValue } from './persistentUiState';
-import { migrateTerminalNativeRendererQuarantineFromSettings } from './terminalRendererUiState';
 
 const ProgressSchema = z.object({ savedSteps: z.array(z.string()), resumeAt: z.nullable(z.string()) });
 const TimestampSchema = z.nullable(z.number());
@@ -85,19 +84,10 @@ export function migrateProgressHealthUiState(input: unknown): unknown {
         if (retained === record) retained = { ...record };
         delete retained[legacyKey];
     };
-    move('personalizeProgressV1', personalizeProgressState, 'progress', value => ProgressSchema.parse(value));
     move('brandHeroSeenAt', onboardingHistoryState, 'brandHeroSeenAt', value => TimestampSchema.parse(value));
-    move('homeWelcomeSeenAt', onboardingHistoryState, 'homeWelcomeSeenAt', value => TimestampSchema.parse(value));
     move('hasCompletedAuthOnce', onboardingAuthHistoryState, 'completed', value => AuthHistorySchema.parse(value));
-    move('homesReconcileAcknowledgedHomeIds', homesJourneyAcknowledgementsState, 'acknowledged', value => HomeIdsSchema.parse(value));
     move('acknowledgedCliVersions', cliVersionAcknowledgementsState, 'machines', value => VersionsSchema.parse(value));
     move('petsDismissedCompanionTrayItemKeys', petActivityDismissalsState, 'tray', value => DismissalKeysSchema.parse(value));
-    try {
-        retained = migrateTerminalNativeRendererQuarantineFromSettings(retained) as Record<string, unknown>;
-    } catch (error) {
-        if (!(error instanceof UiStatePersistenceError)) throw error;
-        refused = true;
-    }
     if (refused) console.warn('[ui-state] Retained device history could not be imported; keeping its source.');
     return retained;
 }

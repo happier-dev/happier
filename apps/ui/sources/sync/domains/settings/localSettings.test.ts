@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { THEME_PROFILE_MAX_OVERRIDES_PER_MODE } from '@/theme/profiles/themeProfileConstants';
+import { ACTIVITY_SURFACE_LOCAL_SETTING_DEFINITIONS } from './registry/local/localSettingDefinitions.activitySurfaces';
 import { applyLocalSettings, localSettingsDefaults, localSettingsParse } from './localSettings';
 
 describe('localSettingsParse', () => {
@@ -8,6 +9,76 @@ describe('localSettingsParse', () => {
         expect(localSettingsParse({ themePreference: 'dark' })).toMatchObject({ themePreference: 'dark', chatLinkOpenLocation: 'browser' });
         expect(localSettingsParse({ chatLinkOpenLocation: 'managed' })).toMatchObject({ chatLinkOpenLocation: 'managed' });
         expect(localSettingsParse({ chatLinkOpenLocation: 'invalid' })).toMatchObject({ chatLinkOpenLocation: 'browser' });
+    });
+
+    it.each([
+        [{ desktopOverlayPresentationMode: 'floating_overlay' }, 'floating'],
+        [{ desktopOverlayAnchor: 'bottom_left' }, 'floating'],
+        [{ desktopOverlayAnchor: 'bottom_center' }, 'floating'],
+        [{ desktopOverlayAnchor: 'bottom_right' }, 'floating'],
+        [{ desktopOverlayAnchor: 'left_center' }, 'left'],
+        [{ desktopOverlayAnchor: 'right_center' }, 'right'],
+        [{ desktopOverlayAnchor: 'top_left' }, 'top'],
+        [{ desktopOverlayAnchor: 'top_center' }, 'top'],
+        [{ desktopOverlayAnchor: 'top_right' }, 'top'],
+    ] as const)('migrates legacy notch placement %j to %s once', (legacy, dock) => {
+        const migrated = localSettingsParse({ ...legacy, themePreference: 'dark' });
+        expect(migrated).toMatchObject({ desktopOverlayDock: dock, themePreference: 'dark' });
+        expect(localSettingsParse(migrated).desktopOverlayDock).toBe(dock);
+        expect(localSettingsParse({ ...legacy, desktopOverlayDock: 'right' }).desktopOverlayDock).toBe('right');
+    });
+
+    it('retires legacy placement preferences from parsed and newly applied settings', () => {
+        const retired = {
+            desktopOverlayPresentationMode: 'floating_overlay', desktopOverlayPlacementMode: 'custom',
+            desktopOverlayAnchor: 'bottom_left', desktopOverlayOffsetX: 12, desktopOverlayOffsetY: 34,
+            desktopOverlayEnableDragReposition: true, desktopOverlayLockPosition: false,
+        };
+        for (const settings of [localSettingsParse(retired), applyLocalSettings(localSettingsParse({}), retired)]) {
+            for (const key of Object.keys(retired)) expect(settings).not.toHaveProperty(key);
+        }
+    });
+    it('restores local Bot window choices and defaults older or malformed records without losing theme', () => {
+        expect(localSettingsParse({ themePreference: 'dark' })).toMatchObject({
+            desktopBotConversationPresentation: 'overlay', desktopWindowBotRailEnabled: true, themePreference: 'dark',
+        });
+        const saved = localSettingsParse({ desktopBotConversationPresentation: 'window', desktopWindowBotRailEnabled: false });
+        expect(localSettingsParse(saved)).toMatchObject({ desktopBotConversationPresentation: 'window', desktopWindowBotRailEnabled: false });
+        expect(localSettingsParse({ desktopBotConversationPresentation: 'future', desktopWindowBotRailEnabled: 'off', themePreference: 'dark' }))
+            .toMatchObject({ desktopBotConversationPresentation: 'overlay', desktopWindowBotRailEnabled: true, themePreference: 'dark' });
+    });
+    it('retains a deliberate named display preference when that display is disconnected', () => {
+        const saved = localSettingsParse({ desktopOverlayDisplayMode: 'named:edid-610-41056-12345678' });
+        expect(saved).toMatchObject({ desktopOverlayDisplayMode: 'named:edid-610-41056-12345678' });
+        expect(localSettingsParse({})).toMatchObject({ desktopOverlayDisplayMode: 'automatic' });
+    });
+    it('defaults capture sound on and window text off for older records without losing device choices', () => {
+        expect(localSettingsParse({ themePreference: 'dark' })).toMatchObject({
+            screenCaptureSound: true, screenCaptureIncludeWindowText: false, themePreference: 'dark',
+        });
+        expect(localSettingsParse({ screenCaptureSound: false, screenCaptureIncludeWindowText: true })).toMatchObject({
+            screenCaptureSound: false, screenCaptureIncludeWindowText: true,
+        });
+        expect(localSettingsParse({ screenCaptureSound: 'off', screenCaptureIncludeWindowText: 'on', themePreference: 'dark' })).toMatchObject({
+            screenCaptureSound: true, screenCaptureIncludeWindowText: false, themePreference: 'dark',
+        });
+    });
+
+    it('keeps predecessor activation provenance until an explicit device selection', () => {
+        const legacy = { profiles: [], activeProfileIds: { light: null, dark: 'nightDark' } };
+        expect(localSettingsParse({ themeProfiles: legacy }).themeProfileSelection).toBeNull();
+        expect(localSettingsParse({ themeProfiles: legacy, themeProfileSelection: { light: 'paperLight', dark: null } }).themeProfileSelection)
+            .toEqual({ light: 'paperLight', dark: null });
+    });
+
+    it('defaults side-rail tabs on and preserves the device opt-out and unrelated preferences', () => {
+        expect(localSettingsParse({})).toMatchObject({ systemTabBarEnabled: true });
+        expect(localSettingsParse({ systemTabBarEnabled: false, themePreference: 'dark' })).toMatchObject({
+            systemTabBarEnabled: false, themePreference: 'dark',
+        });
+        expect(localSettingsParse({ systemTabBarEnabled: 'off', themePreference: 'dark' })).toMatchObject({
+            systemTabBarEnabled: true, themePreference: 'dark',
+        });
     });
     it('keeps remote image consent device-local, tolerant and scoped to the chosen document', () => {
         expect(localSettingsParse({}).remoteImageConsentV1).toEqual([]);
@@ -88,15 +159,9 @@ describe('localSettingsParse', () => {
         })).toMatchObject({
             uiItemDensity: 'compact',
             terminalArrowPadPlacement: { portrait: placement, landscape: null },
-            terminalNativeRendererQuarantine: { renderer: 'ios-ghosttykit', expiresAtMs: 1000 },
         });
     });
 
-    it('retains canonical Project page preferences and every predecessor companion value in the existing map', () => {
-        const values = { overview: 'overview', code: 'code', changes: 'changes', scripts: 'scripts', services: 'services', context: 'context',
-            browse: 'browse', git: 'git', tabs: 'tabs', terminal: 'terminal', browser: 'browser' };
-        expect(localSettingsParse({ projectLastMobileSurfaceByWorkspaceRefId: values }).projectLastMobileSurfaceByWorkspaceRefId).toEqual(values);
-    });
     it('keeps connected-account identity privacy device-local and opt-in across old persisted settings', () => {
         expect(localSettingsParse({}).hideConnectedAccountIdentities).toBe(false);
         expect(localSettingsParse({ hideConnectedAccountIdentities: true }).hideConnectedAccountIdentities).toBe(true);
@@ -110,22 +175,18 @@ describe('localSettingsParse', () => {
         expect(applyLocalSettings(optedOut, { localNotificationsEnabled: true }).deviceRemoteAlertsEnabled).toBe(false);
     });
 
-    it('defaults focused session folder state to null', () => {
-        expect(localSettingsParse(null).sessionListFocusedFolderV1).toBeNull();
-    });
-    it('restores known focused-folder fields from stored records with extras without accepting missing identity', () => {
+    it('ignores retired folder-focus navigation without discarding unrelated local settings', () => {
         const focused = { serverId: 'home-a', workspace: { t: 'workspaceScope', serverId: 'home-a', machineId: 'machine-a', rootPath: '/repo' }, folderId: 'folder-a' };
-        const stored = { ...focused, savedBy: 'other-client', workspace: { ...focused.workspace, savedBy: 'other-client' } };
-        expect(localSettingsParse({ sessionListFocusedFolderV1: stored }).sessionListFocusedFolderV1).toEqual(focused);
-        expect(localSettingsParse({ sessionListFocusedFolderV1: { ...stored, workspace: { ...stored.workspace, rootPath: undefined } } }).sessionListFocusedFolderV1).toBeNull();
+        const restored = localSettingsParse({ sessionListFocusedFolderV1: focused, sidebarCollapsed: true });
+        expect(restored).not.toHaveProperty('sessionListFocusedFolderV1');
+        expect(restored.sidebarCollapsed).toBe(true);
     });
-
     it('keeps interaction memory out of the current preference projection', () => {
         const selection = { v: 1, byAccountScope: { 'home/account': { sessionWork: { spaceId: 'my-work' }, workflow: { spaceId: 'flows' } } } };
         const restored = localSettingsParse({ collectionSpaceV1: selection, collapsedGroupKeysV1: { group_a: true },
-            sessionInfoExpandedSectionsV1: { memory: true },
+            sessionComposerCollapsedBannerKinds: { usageLimitRecovery: true }, sessionInfoExpandedSectionsV1: { memory: true },
             sidebarCollapsed: true });
-        for (const key of ['collectionSpaceV1', 'collapsedGroupKeysV1', 'sessionInfoExpandedSectionsV1']) {
+        for (const key of ['collectionSpaceV1', 'collapsedGroupKeysV1', 'sessionComposerCollapsedBannerKinds', 'sessionInfoExpandedSectionsV1']) {
             expect(restored).not.toHaveProperty(key);
         }
         expect(restored.sidebarCollapsed).toBe(true);
@@ -155,9 +216,6 @@ describe('localSettingsParse', () => {
         expect(parsed.uiItemDensity).toBe('compact');
     });
 
-    it('defaults the mobile brand hero dismissal timestamp to null', () => {
-        expect(localSettingsParse(null).brandHeroSeenAt).toBeNull();
-    });
 
 
     it('includes multi-pane and pane tab defaults', () => {
@@ -168,7 +226,7 @@ describe('localSettingsParse', () => {
         expect(parsed.uiItemDensity).toBe('cozy');
         expect(parsed.detailsPaneTabsBehavior).toBe('preview');
         expect(parsed.settingsNavSidebarWidthPx).toBe(230);
-        expect(parsed.sessionsListStorageFilter).toBe('all');
+        expect(parsed).not.toHaveProperty('sessionsListStorageFilter');
         expect(parsed.activityBadgesEnabled).toBe(true);
         expect(parsed.activityBadgeShowUnread).toBe(true);
         expect(parsed.activityBadgeShowPendingPermissionRequests).toBe(true);
@@ -269,7 +327,7 @@ describe('localSettingsParse', () => {
         }).terminalRendererPreference).toBe('auto');
     });
 
-    it('keeps a bounded native-renderer fatal quarantine local and self-healing', () => {
+    it('keeps observed native-renderer failure state out of the preference projection', () => {
         const active = localSettingsParse({
             terminalNativeRendererQuarantine: {
                 renderer: 'ios-ghosttykit',
@@ -283,12 +341,9 @@ describe('localSettingsParse', () => {
             },
         }) as Record<string, unknown>;
 
-        expect(active.terminalNativeRendererQuarantine).toEqual({
-            renderer: 'ios-ghosttykit',
-            expiresAtMs: 1_800_000_000_000,
-        });
-        expect(malformed.terminalNativeRendererQuarantine).toBeNull();
-        expect((localSettingsDefaults as Record<string, unknown>).terminalNativeRendererQuarantine).toBeNull();
+        expect(active).not.toHaveProperty('terminalNativeRendererQuarantine');
+        expect(malformed).not.toHaveProperty('terminalNativeRendererQuarantine');
+        expect(localSettingsDefaults).not.toHaveProperty('terminalNativeRendererQuarantine');
     });
 
     it('returns defaults for non-object input', () => {
@@ -297,16 +352,17 @@ describe('localSettingsParse', () => {
         expect(localSettingsParse('nope')).toEqual(localSettingsDefaults);
     });
 
-    it('applies the mobile brand hero dismissal timestamp through local settings', () => {
-        const applied = applyLocalSettings(localSettingsDefaults, {
-            brandHeroSeenAt: 1_789_000_000_000,
-        });
-
-        expect(applied.brandHeroSeenAt).toBe(1_789_000_000_000);
-    });
-
-    it('falls back to null for malformed mobile brand hero dismissal timestamps', () => {
-        expect(localSettingsParse({ brandHeroSeenAt: 'yesterday' }).brandHeroSeenAt).toBeNull();
+    it('keeps device progress and history outside the preference projection', () => {
+        const retired = { personalizeProgressV1: { savedSteps: ['look'], resumeAt: 'work' },
+            brandHeroSeenAt: 1_789_000_000_000, homeWelcomeSeenAt: 1_789_000_000_000,
+            hasCompletedAuthOnce: true, homesReconcileAcknowledgedHomeIds: ['home-a'],
+            acknowledgedCliVersions: { 'machine-a': '0.2.17' }, petsDismissedCompanionTrayItemKeys: ['waiting:a'] };
+        const parsed = localSettingsParse({ ...retired, themePreference: 'dark' });
+        expect(parsed.themePreference).toBe('dark');
+        for (const key of Object.keys(retired)) {
+            expect(parsed).not.toHaveProperty(key);
+            expect(localSettingsDefaults).not.toHaveProperty(key);
+        }
     });
 
     it('defaults theme profiles to an empty local-only state', () => {
@@ -484,16 +540,16 @@ describe('localSettingsParse', () => {
         expect(tooBig.uiFontScale).toBeLessThanOrEqual(2.5);
     });
 
-    it('accepts direct sessions list tab selection', () => {
-        const parsed = localSettingsParse({ sessionsListStorageTab: 'direct' });
-        expect(parsed.sessionsListStorageFilter).toBe('direct');
+    it('retires orphaned storage selections instead of seeding an unchangeable direct filter', () => {
+        const parsed = localSettingsParse({ sessionsListStorageTab: 'direct', sessionsListStorageFilter: 'direct' });
+        expect(parsed).not.toHaveProperty('sessionsListStorageFilter');
         expect(parsed).not.toHaveProperty('sessionsListStorageTab');
     });
 
     it('does not carry the retired persisted tab forward because the unified list defaults to all', () => {
         const parsed = localSettingsParse({ sessionsListStorageTab: 'persisted' });
 
-        expect(parsed.sessionsListStorageFilter).toBe('all');
+        expect(parsed).not.toHaveProperty('sessionsListStorageFilter');
         expect(parsed).not.toHaveProperty('sessionsListStorageTab');
     });
 
@@ -837,7 +893,9 @@ describe('localSettingsParse', () => {
         expect(applied.homeScreenWidgetsShowMachinePath).toBe(false);
     });
 
-    it.each(['editorFocusModeEnabled', 'uiSurfaceExecutableApprovalsV1'])(
+    it.each(['editorFocusModeEnabled', 'uiSurfaceExecutableApprovalsV1', 'appPaneScopesV1', 'recentWorkspaceFilesV1', 'filesEditorAiSuggestionUsageV1',
+        'sessionLastMobileSurfaceBySessionId', 'projectLastMobileSurfaceByWorkspaceRefId',
+        'projectLastActiveRootPathByWorkspaceRefId', 'projectLastActiveWorktreeIdByWorkspaceRefId'])(
         'drops the retired local setting %s while parsing and applying settings', (key) => {
         const parsed = localSettingsParse({ [key]: true });
         expect(parsed).not.toHaveProperty(key);

@@ -5,14 +5,84 @@ import { loadLocalSettings, saveLocalSettings } from './settingsPersistence';
 import { collapsedGroupsState, removeCollapsedGroupKey, replaceCollapsedGroupKeys } from './disclosureUiState';
 import { UiStatePersistenceError } from './persistentUiState';
 import { localSettingsDefaults } from '@/sync/domains/settings/localSettings';
-import { buildSessionListCollapseContextKey, buildSessionListCollapseKey, readSessionListCollapsedGroups } from '@/sync/domains/session/listing/sessionListCollapseState';
-import { installLegacyNativeMmkvBoundaryForTest } from '@/dev/testkit/harness/persistentUiState';
 
 afterEach(() => { vi.restoreAllMocks(); clearPersistenceStorage(); });
 
-const initializedProjectNavigation = { navigationSurfacePlacementsV1: { detailPages: { project: { phone: { items: { orderedIds: [], placements: {} } } } } } };
 
 describe('retained workspace settings migration', () => {
+    it('does not import never-shipped settings history or write UI state while loading it', () => {
+        const device = getPersistenceStorage();
+        device.set('local-settings', JSON.stringify({
+            themePreference: 'dark',
+            machinesRailSeenV1: { look: {}, guardSeenAt: 100 },
+            workspaceLayoutV1: { workspace: { v: 1 } },
+            terminalNativeRendererQuarantine: { renderer: 'ios-ghosttykit', expiresAtMs: 1_700_086_400_000 },
+            machineVitalsRangeV1: '7d',
+            personalizeProgressV1: { savedSteps: ['look'], resumeAt: 'work' },
+            homeWelcomeSeenAt: 1_700_000_000_002,
+        }));
+        const writes = vi.spyOn(device, 'set');
+        expect(loadLocalSettings().themePreference).toBe('dark');
+        expect(writes.mock.calls.filter(([key]) => key.startsWith('ui-state:'))).toHaveLength(0);
+        saveLocalSettings({ ...loadLocalSettings(), themePreference: 'light' });
+        const saved = JSON.parse(device.getString('local-settings')!);
+        for (const key of ['machinesRailSeenV1', 'workspaceLayoutV1', 'terminalNativeRendererQuarantine',
+            'machineVitalsRangeV1', 'personalizeProgressV1', 'homeWelcomeSeenAt']) expect(saved).not.toHaveProperty(key);
+        expect(loadLocalSettings().themePreference).toBe('light');
+    });
+
+    it('moves companion geometry to device UI state once and lets an existing destination win', () => {
+        const device = getPersistenceStorage();
+        const position = { schemaVersion: 1, surface: 'mobile-app-shell', normalizedX: 0.21, normalizedY: 0.67,
+            lastViewport: { width: 390, height: 844, margin: 12, keyboardHeight: 0,
+                safeAreaInsets: { top: 59, right: 0, bottom: 34, left: 0 } } };
+        const destinationKey = 'ui-state:pet-companion-position-v1:mobile-app-shell';
+        device.set('local-settings', JSON.stringify({ petsCompanionPosition: position, themePreference: 'dark' }));
+        loadLocalSettings();
+        expect(JSON.parse(device.getString(destinationKey)!)).toEqual(position);
+        expect(JSON.parse(device.getString('local-settings')!)).toEqual({ themePreference: 'dark' });
+        const writes = vi.spyOn(device, 'set');
+        loadLocalSettings();
+        expect(writes).not.toHaveBeenCalled();
+        writes.mockRestore();
+        device.set('local-settings', JSON.stringify({ petsCompanionPosition: { ...position, normalizedX: 0.9 } }));
+        loadLocalSettings();
+        expect(JSON.parse(device.getString(destinationKey)!)).toEqual(position);
+        expect(JSON.parse(device.getString('local-settings')!)).not.toHaveProperty('petsCompanionPosition');
+    });
+
+    it('keeps companion position source on destination refusal across preference saves and imports on recovery', () => {
+        const device = getPersistenceStorage();
+        const position = { schemaVersion: 1, surface: 'mobile-app-shell', normalizedX: 0.21, normalizedY: 0.67, lastViewport: null };
+        const destinationKey = 'ui-state:pet-companion-position-v1:mobile-app-shell';
+        device.set('local-settings', JSON.stringify({ petsCompanionPosition: position }));
+        const write = device.set.bind(device);
+        const refusal = vi.spyOn(device, 'set').mockImplementation((key, value) => {
+            if (key === destinationKey) throw new Error('Device storage refused');
+            write(key, value);
+        });
+        vi.spyOn(console, 'warn').mockImplementation(() => {});
+        const loaded = loadLocalSettings();
+        expect(device.getString(destinationKey)).toBeUndefined();
+        saveLocalSettings({ ...loaded, themePreference: 'dark' });
+        expect(JSON.parse(device.getString('local-settings')!)).toMatchObject({ petsCompanionPosition: position, themePreference: 'dark' });
+        refusal.mockRestore();
+        loadLocalSettings();
+        expect(JSON.parse(device.getString(destinationKey)!)).toEqual(position);
+        expect(JSON.parse(device.getString('local-settings')!)).not.toHaveProperty('petsCompanionPosition');
+    });
+
+    it('retains opaque companion geometry instead of replacing it with a default during import', () => {
+        const device = getPersistenceStorage();
+        const opaque = { schemaVersion: 2, coordinates: [10, 20] };
+        device.set('local-settings', JSON.stringify({ petsCompanionPosition: opaque, themePreference: 'dark' }));
+        vi.spyOn(console, 'warn').mockImplementation(() => {});
+        loadLocalSettings();
+        saveLocalSettings({ ...localSettingsDefaults, themePreference: 'light' });
+        expect(JSON.parse(device.getString('local-settings')!)).toMatchObject({ petsCompanionPosition: opaque, themePreference: 'light' });
+        expect(device.getString('ui-state:pet-companion-position-v1:mobile-app-shell')).toBeUndefined();
+    });
+
     it('saves the mapped notch dock without keeping never-shipped position inputs', () => {
         const device = getPersistenceStorage();
         device.set('local-settings', JSON.stringify({ desktopOverlayPresentationMode: 'floating_overlay',
@@ -47,7 +117,6 @@ describe('retained workspace settings migration', () => {
         expect(loadLocalSettings().desktopOverlayDock).toBe('left');
         expect(JSON.parse(device.getString('local-settings')!)).not.toHaveProperty('desktopOverlayAnchor');
     });
-
     it('imports admitted navigation while another device-state seed is invalid', () => {
         const device = getPersistenceStorage();
         const opaqueHistory = { future: true };
@@ -56,7 +125,7 @@ describe('retained workspace settings migration', () => {
         vi.spyOn(console, 'warn').mockImplementation(() => {});
         loadLocalSettings();
         expect(JSON.parse(device.getString('ui-state:session-navigation-mru-v1:order') ?? 'null')).toEqual(['retained-home:session']);
-        expect(JSON.parse(device.getString('local-settings')!)).toEqual({ brandHeroSeenAt: opaqueHistory, themePreference: 'dark', ...initializedProjectNavigation });
+        expect(JSON.parse(device.getString('local-settings')!)).toEqual({ brandHeroSeenAt: opaqueHistory, themePreference: 'dark' });
     });
 
     it('does not treat an unreadable legacy source as completed admission before clearing', () => {
@@ -91,51 +160,6 @@ describe('retained workspace settings migration', () => {
         expect(collapsedGroupsState.read('afterClear')).toBe(false);
         expect(JSON.parse(storage.getString('local-settings')!)).not.toHaveProperty('collapsedGroupKeysV1');
         expect(reads.mock.calls.filter(([key]) => key === 'local-settings')).toHaveLength(2);
-    });
-
-    it('adopts native and Settings list-collapse seeds without replacing a current qualified choice', async () => {
-        await installLegacyNativeMmkvBoundaryForTest();
-        const storage = getPersistenceStorage();
-        const context = buildSessionListCollapseContextKey({ retentionScopeKey: 'home/alice/global', corpusStorage: 'active' }, 'projects');
-        // Captured pre-fix sessionListCollapseState writer (QA-FIXWAVE 2026-10-28).
-        const legacyPrefix = String.raw`sessionList:"[\"home/alice/global\",\"active\",\"projects\",null]":`;
-        const currentKey = buildSessionListCollapseKey(context, 'pinned');
-        storage.set(`ui-state:collapsed-groups-v1:${legacyPrefix}pinned`, 'true');
-        storage.set(`ui-state:collapsed-groups-v1:${currentKey}`, 'false');
-        storage.set('local-settings', JSON.stringify({ collapsedGroupKeysV1: { [`${legacyPrefix}recent`]: true,
-            'connectedServices:["home","account","plugin","service","account","profile"]': false } }));
-        loadLocalSettings();
-        expect(readSessionListCollapsedGroups(collapsedGroupsState.readAll(), context)).toEqual({ pinned: false, recent: true });
-        expect(storage.getString(`ui-state:collapsed-groups-v1:${legacyPrefix}pinned`)).toBeUndefined();
-        expect(storage.getString('ui-state:collapsed-groups-v1:connectedServices:["home","account","plugin","service","account","profile"]')).toBe('false');
-        expect(JSON.parse(storage.getString('local-settings')!)).not.toHaveProperty('collapsedGroupKeysV1');
-    });
-
-    it('retains a native list seed on refused migration and retries even without a LocalSettings blob', async () => {
-        const native = await installLegacyNativeMmkvBoundaryForTest();
-        const storage = getPersistenceStorage();
-        const context = buildSessionListCollapseContextKey({ retentionScopeKey: 'home/alice/global', corpusStorage: 'active' }, 'projects');
-        const legacyKey = String.raw`sessionList:"[\"home/alice/global\",\"active\",\"projects\",null]":pinned`;
-        storage.delete('local-settings');
-        storage.set(`ui-state:collapsed-groups-v1:${legacyKey}`, 'true');
-        const write = native.set;
-        const refusal = vi.spyOn(storage, 'set').mockImplementation((key, value) => {
-            if (key === `ui-state:collapsed-groups-v1:${buildSessionListCollapseKey(context, 'pinned')}`) throw new Error('device full');
-            write(key, value);
-        });
-        vi.spyOn(console, 'error').mockImplementation(() => {});
-        loadLocalSettings();
-        expect(storage.getString(`ui-state:collapsed-groups-v1:${legacyKey}`)).toBe('true');
-        storage.set('local-settings', JSON.stringify({ themePreference: 'dark' }));
-        expect(loadLocalSettings().themePreference).toBe('dark');
-        expect(() => replaceCollapsedGroupKeys({})).toThrow(UiStatePersistenceError);
-        refusal.mockImplementation(native.set);
-        loadLocalSettings();
-        expect(collapsedGroupsState.read(buildSessionListCollapseKey(context, 'pinned'))).toBe(true);
-        expect(storage.getString(`ui-state:collapsed-groups-v1:${legacyKey}`)).toBeUndefined();
-        replaceCollapsedGroupKeys({});
-        loadLocalSettings();
-        expect(collapsedGroupsState.read(buildSessionListCollapseKey(context, 'pinned'))).toBeUndefined();
     });
 
     it('still heals malformed LocalSettings through an explicit preference save', () => {
@@ -183,15 +207,12 @@ describe('retained workspace settings migration', () => {
         const qualified = 'connectedServices:["home","account","plugin","service","pool","group","member"]';
         storage.set(`ui-state:collapsed-groups-v1:${qualified}`, JSON.stringify(false));
         storage.set('local-settings', JSON.stringify({ themePreference: 'dark',
-            collapsedGroupKeysV1: { [qualified]: true, 'sessionList:retained-context:group': true, 'bots:home:group': false },
-            sessionInfoExpandedSectionsV1: { instructions: false, memory: true } }));
+            collapsedGroupKeysV1: { [qualified]: true, 'sessionList:retained-context:group': true, 'bots:home:group': false } }));
         loadLocalSettings();
         expect(JSON.parse(storage.getString(`ui-state:collapsed-groups-v1:${qualified}`)!)).toBe(false);
         expect(JSON.parse(storage.getString('ui-state:collapsed-groups-v1:sessionList:retained-context:group')!)).toBe(true);
         expect(JSON.parse(storage.getString('ui-state:collapsed-groups-v1:bots:home:group')!)).toBe(false);
-        expect(JSON.parse(storage.getString('ui-state:session-info-disclosures-v1:instructions')!)).toBe(false);
-        expect(JSON.parse(storage.getString('ui-state:session-info-disclosures-v1:memory')!)).toBe(true);
-        expect(JSON.parse(storage.getString('local-settings')!)).toEqual({ themePreference: 'dark', ...initializedProjectNavigation });
+        expect(JSON.parse(storage.getString('local-settings')!)).toEqual({ themePreference: 'dark' });
         const writes = vi.spyOn(storage, 'set');
         loadLocalSettings();
         expect(writes).not.toHaveBeenCalled();
@@ -199,8 +220,7 @@ describe('retained workspace settings migration', () => {
 
     it('keeps legacy disclosures across a refused import and an unrelated preference save, then retries', () => {
         const storage = getPersistenceStorage();
-        const raw = JSON.stringify({ collapsedGroupKeysV1: { 'migration-refused-group': true },
-            sessionInfoExpandedSectionsV1: { about: true } });
+        const raw = JSON.stringify({ collapsedGroupKeysV1: { 'migration-refused-group': true } });
         storage.set('local-settings', raw);
         const write = storage.set.bind(storage);
         const refusal = vi.spyOn(storage, 'set').mockImplementation((key, value) => {
@@ -209,47 +229,13 @@ describe('retained workspace settings migration', () => {
         });
         vi.spyOn(console, 'warn').mockImplementation(() => {});
         const loaded = loadLocalSettings();
-        expect(JSON.parse(storage.getString('local-settings')!)).toEqual({ ...JSON.parse(raw), ...initializedProjectNavigation });
+        expect(JSON.parse(storage.getString('local-settings')!)).toEqual({ ...JSON.parse(raw) });
         saveLocalSettings({ ...loaded, themePreference: 'dark' });
         expect(JSON.parse(storage.getString('local-settings')!)).toMatchObject(JSON.parse(raw));
         refusal.mockRestore();
         loadLocalSettings();
         expect(JSON.parse(storage.getString('ui-state:collapsed-groups-v1:migration-refused-group')!)).toBe(true);
-        expect(JSON.parse(storage.getString('ui-state:session-info-disclosures-v1:about')!)).toBe(true);
         expect(JSON.parse(storage.getString('local-settings')!)).not.toHaveProperty('collapsedGroupKeysV1');
     });
-});
 
-
-describe('Project phone placement initialization', () => {
-    it('initializes an empty phone branch before a later desktop preference is saved', () => {
-        const device = getPersistenceStorage();
-        device.set('local-settings', JSON.stringify({ themePreference: 'dark' }));
-        const initial = loadLocalSettings();
-        expect(initial.navigationSurfacePlacementsV1.detailPages?.project?.phone?.items)
-            .toEqual({ orderedIds: [], placements: {} });
-        saveLocalSettings({ ...initial, navigationSurfacePlacementsV1: {
-            ...initial.navigationSurfacePlacementsV1, projectTabBar: { orderedIds: ['changes'], placements: { changes: 'hidden' } },
-        } });
-        expect(loadLocalSettings().navigationSurfacePlacementsV1.detailPages?.project?.phone?.items)
-            .toEqual({ orderedIds: [], placements: {} });
-    });
-    it('seeds once at load, normalizes aliases and preserves phone edits after desktop changes and reload', () => {
-        const device = getPersistenceStorage();
-        const desktop = { orderedIds: ['overview', 'git', 'browse', 'plugin:acme.tools:notes'],
-            placements: { git: 'overflow', browse: 'hidden' } };
-        device.set('local-settings', JSON.stringify({ navigationSurfacePlacementsV1: { projectTabBar: desktop } }));
-        const initial = loadLocalSettings();
-        expect(initial.navigationSurfacePlacementsV1.detailPages?.project?.phone?.items).toEqual({
-            orderedIds: ['overview', 'changes', 'code', 'plugin:acme.tools:notes'], placements: { changes: 'overflow', code: 'hidden' } });
-        const saved = JSON.parse(device.getString('local-settings')!);
-        expect(saved.navigationSurfacePlacementsV1.projectTabBar).toEqual(desktop);
-        const phone = { orderedIds: [], placements: {} };
-        device.set('local-settings', JSON.stringify({ ...saved, navigationSurfacePlacementsV1: {
-            ...saved.navigationSurfacePlacementsV1, projectTabBar: { orderedIds: ['memory'], placements: {} },
-            detailPages: { project: { phone: { items: phone } } } } }));
-        const writes = vi.spyOn(device, 'set');
-        expect(loadLocalSettings().navigationSurfacePlacementsV1.detailPages?.project?.phone?.items).toEqual(phone);
-        expect(writes).not.toHaveBeenCalled();
-    });
 });

@@ -53,39 +53,3 @@ export function writeMachinesRailSeen(scope: ServerAccountScope | null, seen: Ma
         console.warn('[machines] Seen attention could not be persisted.');
     }
 }
-
-/** Import the unreleased Settings carrier before its tolerant reader drops history keys. */
-export function migrateMachineAdministrationTargetObservations(scope: ServerAccountScope, settings: unknown): unknown {
-    if (!settings || typeof settings !== 'object' || Array.isArray(settings)) return settings;
-    const record = settings as Record<string, unknown>;
-    const targets = record.machineAdministrationTargetsLocalV1;
-    if (!targets || typeof targets !== 'object' || Array.isArray(targets)) return settings;
-    const retained: Record<string, unknown> = {};
-    let changed = false;
-    for (const [key, value] of Object.entries(targets as Record<string, unknown>)) {
-        if (key !== 'machines.managed' && !key.startsWith('plugin.lastRunOn:')) { retained[key] = value; continue; }
-        const target = MachineAdministrationTargetV1Schema.safeParse(value);
-        if (target.success) {
-            const destination = serverAccountScopedResourceKey(scope, key);
-            // Never overwrite an observation already changed by the current owner.
-            if (machineAdministrationTargetObservationsState.readStrict(destination) === undefined) {
-                machineAdministrationTargetObservationsState.set(destination, target.data);
-            }
-        }
-        changed = true;
-    }
-    return changed ? { ...record, machineAdministrationTargetsLocalV1: retained } : settings;
-}
-
-export function migrateMachinesRailSeenFromSettings(settings: unknown): unknown {
-    if (!settings || typeof settings !== 'object' || Array.isArray(settings)) return settings;
-    const record = settings as Record<string, unknown>;
-    if (!Object.hasOwn(record, 'machinesRailSeenV1')) return settings;
-    // The old carrier has no Account identity. Retain its observations, but do
-    // not let an unscoped acknowledgement hide any exact Account/Home's actions.
-    if (machinesRailSeenState.readStrict('legacy-unscoped') === undefined) {
-        machinesRailSeenState.set('legacy-unscoped', z.catch(MachinesRailSeenSchema, EMPTY_MACHINES_RAIL_SEEN).parse(record.machinesRailSeenV1));
-    }
-    const { machinesRailSeenV1: _legacySeen, ...retained } = record;
-    return retained;
-}

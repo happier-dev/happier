@@ -10,6 +10,13 @@ export function failedApprovalDismissalScopeKey(scope: ServerAccountScope): stri
     return JSON.stringify([scope.serverId, scope.accountId]);
 }
 
+/** Refused reads abort the mutation; callers present the typed persistence failure. */
+export function dismissFailedApproval(scopeKey: string, artifactId: string): void {
+    const previous = failedApprovalDismissalsState.readStrict(scopeKey) ?? EMPTY_FAILED_APPROVAL_DISMISSALS;
+    if (Object.hasOwn(previous, artifactId)) return;
+    failedApprovalDismissalsState.set(scopeKey, { ...previous, [artifactId]: Date.now() });
+}
+
 /** Full inventory currentness can retire records even after an unreadable projection withdrew them. */
 export function reconcileFailedApprovalDismissals(
     scope: ServerAccountScope | null | undefined,

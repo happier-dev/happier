@@ -4,7 +4,7 @@ import type { QualifiedConnectedAccountPurposeBindingsV1 } from './connectedAcco
 import { writeAgentDefaultChoice, type AgentDefaultChoiceAgent } from './agentDefaultChoices.js';
 import { sameQualifiedConnectedAccountRef, QualifiedConnectedAccountRefSchema } from './qualifiedConnectedAccountPersistence.js';
 import type { ConnectedMetadataCleanupV1 } from './connectedMetadataCatalogV1.js';
-import type { QualifiedAcknowledgementSubject, QualifiedConnectedEntityRef, QualifiedConnectedDisclosureSubject } from './connectedAccountPresentationRowsV1.js';
+import type { QualifiedAcknowledgementSubject, QualifiedConnectedEntityRef } from './connectedAccountPresentationRowsV1.js';
 import { encodeQualifiedConnectedAccountV4StructuredQueryValue } from './qualifiedConnectedAccountsV4QueryCodec.js';
 import { buildQualifiedConnectedAccountGroupMutationRequestV4 } from './qualifiedConnectedAccountGroupRequestsV4.js';
 import { QualifiedConnectedAccountGroupRefSchema, QualifiedConnectedAccountGroupResponseV4Schema, QualifiedConnectedAccountSuccessV4Schema, QualifiedConnectedAccountCredentialDeleteV4Schema, sameQualifiedConnectedAccountGroupRef, type QualifiedConnectedAccountGroupRef } from './qualifiedConnectedAccountsV4.js';
@@ -101,7 +101,6 @@ export type ConnectedServiceConfigurationActionHostV1 = Readonly<{
   /** Capture transfer inventory while the entity still exists; failure never blocks the primary delete. */
   prepareConnectedMetadataCleanup?(input: Readonly<{ subject: QualifiedConnectedEntityRef }>): Promise<void>;
   cleanupConnectedMetadata?(input: Readonly<{ subject: QualifiedConnectedEntityRef }>): Promise<void>;
-  setConnectedDisclosure?(input: Readonly<{ subject: QualifiedConnectedDisclosureSubject; collapsed: boolean | null }>): Promise<void>;
   assertCurrent(): void;
 }>;
 
@@ -708,17 +707,6 @@ export async function executeConnectedServiceConfigurationActionV1(
     case 'connectedServices.labels.reset': {
       if (!host.setConnectedLabel) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action' };
       await host.setConnectedLabel({ subject: inputs[actionId].parse(input).subject, label: null });
-      return { applied: true };
-    }
-    case 'connectedServices.disclosure.set': {
-      if (!host.setConnectedDisclosure) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action' };
-      const args = inputs[actionId].parse(input);
-      await host.setConnectedDisclosure(args);
-      return { applied: true };
-    }
-    case 'connectedServices.disclosure.reset': {
-      if (!host.setConnectedDisclosure) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action' };
-      await host.setConnectedDisclosure({ subject: inputs[actionId].parse(input).subject, collapsed: null });
       return { applied: true };
     }
   }
