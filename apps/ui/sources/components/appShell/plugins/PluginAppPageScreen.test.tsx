@@ -706,6 +706,7 @@ async function loadPageHost(): Promise<React.ComponentType<PageHostProps>> {
     const { PluginAppPageScreen } = await import('./PluginAppPageScreen');
     const { AppShellPluginUiProjectionValueProvider } = await import('./AppShellPluginUiProjection');
     const { PhoneMainAppTabBar } = await import('@/components/appShell/destinations/PhoneDestinationsMenu');
+    const { InboxSummaryProvider } = await import('@/hooks/inbox/useInboxSummary');
     const { buildCommandPaletteCommands } = await import('@/components/appShell/commandPalette/buildCommandPaletteCommands');
     const { usePluginPageCatalogActivationHandler } = await import('@/components/plugins/pages/pluginPageNavigation');
 
@@ -770,7 +771,7 @@ async function loadPageHost(): Promise<React.ComponentType<PageHostProps>> {
                             subPath={props.location?.subPath ?? ''}
                         />
                     )}
-                    {props.showCompactSidebar ? <PhoneMainAppTabBar activeTab="sessions" onTabPress={() => {}} /> : null}
+                    {props.showCompactSidebar ? <InboxSummaryProvider><PhoneMainAppTabBar activeTab="sessions" onTabPress={() => {}} /></InboxSummaryProvider> : null}
                     {props.showCompactCommandPaletteActivation ? <CompactCommandPaletteActivation /> : null}
                 </AppTargetNavigationScope>
             </AppShellPluginUiProjectionValueProvider>
