@@ -1,3 +1,4 @@
+import { resolveCanonicalServerIdForUi } from '../../src/testkit/uiE2e/sessionFoldersDrag';
 import { test, expect, type Page } from '@playwright/test';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
@@ -22,6 +23,11 @@ import {
     getEmbeddedTerminalInput,
     readEmbeddedTerminalShellSize,
 } from '../../src/testkit/uiE2e/embeddedTerminalSmoke';
+
+import { sessionListRowTestId } from '../../src/testkit/uiE2e/sessionListRowTestId';
+
+let rowServerId: string;
+const rowTestId = (sessionId: string) => sessionListRowTestId(rowServerId, sessionId);
 
 const run = createRunDirs({ runLabel: 'ui-e2e' });
 
@@ -107,6 +113,8 @@ test.describe('ui e2e: embedded terminal (PTY)', () => {
                 HAPPIER_FEATURE_TERMINAL_EMBEDDED_PTY__ENABLED: '1',
             },
         });
+
+        rowServerId = await resolveCanonicalServerIdForUi(server.baseUrl);
 
         ui = await startUiWeb({
             testDir: suiteDir,
@@ -311,7 +319,7 @@ test.describe('ui e2e: embedded terminal (PTY)', () => {
 
             const secondSessionId = await spawnSessionFromDaemon({ daemon, directory: testDir });
 
-            const secondSessionItem = page.getByTestId(`session-list-item-${secondSessionId}`);
+            const secondSessionItem = page.getByTestId(rowTestId(secondSessionId));
             await expect(secondSessionItem).toHaveCount(1, { timeout: 120_000 });
             await secondSessionItem.click();
 
@@ -319,7 +327,7 @@ test.describe('ui e2e: embedded terminal (PTY)', () => {
             await expect(getVisibleSessionComposer(page)).toHaveCount(1, { timeout: 180_000 });
             await expect(page.getByTestId('session-bottompanel-surface-terminal')).toHaveCount(0, { timeout: 60_000 });
 
-            const firstSessionItem = page.getByTestId(`session-list-item-${sessionId}`);
+            const firstSessionItem = page.getByTestId(rowTestId(sessionId));
             await expect(firstSessionItem).toHaveCount(1, { timeout: 120_000 });
             await firstSessionItem.click();
 

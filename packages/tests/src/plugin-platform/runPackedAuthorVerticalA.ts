@@ -44,6 +44,8 @@ import {
   encodeQualifiedConnectedAccountV4StructuredQueryValue,
   encryptSecretStringV1,
   openAccountScopedBlobCiphertext,
+  parseSavedSecretRefV1,
+  resolveAccountSettingsPluginSecretBinding,
   resolveAccountSettingsPluginSecret,
   sealAccountScopedBlobCiphertext,
   type ConnectedAccountAttemptResponse,
@@ -2246,19 +2248,21 @@ export async function runPackedAuthorVerticalAWithTestServer(
             secret,
           });
           const secretTarget = { pluginId, localId: 'webhook.token' };
-          const existing = resolveAccountSettingsPluginSecret(current.settings, secretTarget);
+          const existingBinding = resolveAccountSettingsPluginSecretBinding(current.settings, secretTarget);
+          const existing = existingBinding && parseSavedSecretRefV1(existingBinding.savedSecretId).kind === 'personal'
+            ? resolveAccountSettingsPluginSecret(current.settings, secretTarget) : null;
           const now = Date.now();
           const settingsSecretKeys = deriveSettingsSecretsKeySetV1({
             type: 'legacy',
             secret,
           });
-          const mutation = applyAccountSettingsSavedSecretMutation(current.settings, {
-            kind: 'replacePluginSecret',
-            target: secretTarget,
-            expectedSecretId: existing?.binding.savedSecretId ?? null,
-            expectedSecretUpdatedAt: existing?.secret.updatedAt ?? null,
+          // Retained Settings-source fixture exercises legacy material reads.
+          // New plugin material is created through resource custody instead.
+          const fixtureSecretId = `packed-notification-token-${phase}-${randomUUID()}`;
+          const withFixtureSecret = applyAccountSettingsSavedSecretMutation(current.settings, {
+            kind: 'add',
             secret: {
-              id: `packed-notification-token-${phase}-${randomUUID()}`,
+              id: fixtureSecretId,
               name: 'Packed notification token',
               kind: 'token',
               encryptedValue: {
@@ -2272,6 +2276,13 @@ export async function runPackedAuthorVerticalAWithTestServer(
               createdAt: now,
               updatedAt: now,
             },
+          });
+          const mutation = applyAccountSettingsSavedSecretMutation(withFixtureSecret.settings, {
+            kind: 'bindPluginSecret',
+            target: secretTarget,
+            expectedSecretId: existingBinding?.savedSecretId ?? null,
+            expectedSecretUpdatedAt: existing?.secret.updatedAt ?? null,
+            secretId: fixtureSecretId,
           });
           const settingsVersion = await upsertEncryptedAccountSettingsV2({
             baseUrl: serverBaseUrl,

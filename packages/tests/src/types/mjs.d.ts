@@ -38,5 +38,6 @@ declare module '*.plan.mjs' {
     mode: ExtendedDbMode;
     databaseUrl: string;
     contractFile?: string;
+    containerId?: string;
   }): ExtendedDbCommandStep[];
 }

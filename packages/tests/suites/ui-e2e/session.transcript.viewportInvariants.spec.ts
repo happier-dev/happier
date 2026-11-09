@@ -1,3 +1,4 @@
+import { resolveCanonicalServerIdForUi } from '../../src/testkit/uiE2e/sessionFoldersDrag';
 import { test, expect, type Page } from '@playwright/test';
 import { mkdir } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
@@ -15,6 +16,11 @@ import {
 } from '../../src/testkit/uiE2e/createSessionFromNewSessionComposer';
 import { fakeClaudeEchoResponseText, fakeClaudeFixturePath } from '../../src/testkit/fakeClaude';
 import { gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../../src/testkit/uiE2e/pageNavigation';
+
+import { sessionListRowTestId } from '../../src/testkit/uiE2e/sessionListRowTestId';
+
+let rowServerId: string;
+const rowTestId = (sessionId: string) => sessionListRowTestId(rowServerId, sessionId);
 
 const run = createRunDirs({ runLabel: 'ui-e2e' });
 
@@ -490,6 +496,8 @@ test.describe('ui e2e: transcript viewport invariants', () => {
       },
     });
 
+    rowServerId = await resolveCanonicalServerIdForUi(server.baseUrl);
+
     ui = await startUiWeb({
       testDir: suiteDir,
       env: {
@@ -700,7 +708,7 @@ test.describe('ui e2e: transcript viewport invariants', () => {
 
     // Enter from the session list so the in-app back navigation below has history to return to.
     await gotoDomContentLoadedWithRetries(page, uiBaseUrl);
-    const listItem = page.getByTestId(`session-list-item-${sessionId}`);
+    const listItem = page.getByTestId(rowTestId(sessionId));
     await expect(listItem).toBeVisible({ timeout: 120_000 });
     await listItem.click();
     await expect(page.getByTestId('transcript-chat-list')).toHaveCount(1, { timeout: 120_000 });
@@ -727,8 +735,8 @@ test.describe('ui e2e: transcript viewport invariants', () => {
     // A → list → A without a full page load: the telemetry buffer survives, so the slice after
     // `baselineCount` is exactly the reopen entry trace.
     await page.getByTestId('session-header-back').click();
-    await expect(page.getByTestId(`session-list-item-${sessionId}`)).toBeVisible({ timeout: 60_000 });
-    await page.getByTestId(`session-list-item-${sessionId}`).click();
+    await expect(page.getByTestId(rowTestId(sessionId))).toBeVisible({ timeout: 60_000 });
+    await page.getByTestId(rowTestId(sessionId)).click();
     await expect(page.getByTestId('transcript-chat-list')).toHaveCount(1, { timeout: 120_000 });
     const snapshot = await waitForViewportTelemetryQuiescence(page);
 

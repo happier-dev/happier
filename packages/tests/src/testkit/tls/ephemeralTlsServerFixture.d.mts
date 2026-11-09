@@ -10,5 +10,5 @@ export type EphemeralTlsServerFixture = Readonly<{
 }>;
 
 export declare function createEphemeralTlsServerFixture(
-  input?: Readonly<{ additionalDnsNames?: readonly string[] }>,
+  input?: Readonly<{ additionalDnsNames?: readonly string[]; additionalIpAddresses?: readonly string[] }>,
 ): Promise<EphemeralTlsServerFixture>;

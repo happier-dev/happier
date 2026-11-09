@@ -1,4 +1,5 @@
 import type { Page } from '@playwright/test';
+import { sessionListRowTestId } from './sessionListRowTestId';
 
 export type DragDispatchResult = Readonly<{
   ok: boolean;
@@ -209,13 +210,14 @@ async function dispatchSessionTreePointerDrag(page: Page, params: Readonly<{
 }
 
 export async function dragSessionToTarget(page: Page, params: Readonly<{
+  serverId: string;
   sessionId: string;
   targetTestId: string;
   targetEdge: 'top' | 'middle' | 'bottom';
   scrollDuringDrag?: 'target-into-view' | 'autoscroll-bottom';
 }>): Promise<DragDispatchResult> {
   return dispatchSessionTreePointerDrag(page, {
-    sourceTestId: `session-list-item-${params.sessionId}`,
+    sourceTestId: sessionListRowTestId(params.serverId, params.sessionId),
     sourceChildTestId: 'session-item-reorder-handle',
     targetTestId: params.targetTestId,
     targetEdge: params.targetEdge,
@@ -288,13 +290,14 @@ export type DragGeometryProbe = Readonly<{
  * `getBoundingClientRect()` must be read mid-drag.
  */
 export async function dragSessionWithGeometryProbe(page: Page, params: Readonly<{
+  serverId: string;
   sessionId: string;
   targetTestId: string;
   targetEdge: 'top' | 'middle' | 'bottom';
   /** Optional scroll performed before the drag starts (regression for stale bounds). */
   preScroll?: 'target-into-view';
 }>): Promise<DragGeometryProbe> {
-  const sourceTestId = `session-list-item-${params.sessionId}`;
+  const sourceTestId = sessionListRowTestId(params.serverId, params.sessionId);
   await page.getByTestId(sourceTestId).scrollIntoViewIfNeeded();
   if (params.preScroll === 'target-into-view') {
     await page.getByTestId(params.targetTestId).scrollIntoViewIfNeeded();
@@ -477,6 +480,7 @@ export type LongTaskSummary = Readonly<{
  * probe never flakes on shared/slow runners.
  */
 export async function dragSessionWithLongTaskProbe(page: Page, params: Readonly<{
+  serverId: string;
   sessionId: string;
   targetTestId: string;
   targetEdge: 'top' | 'middle' | 'bottom';
@@ -508,6 +512,7 @@ export async function dragSessionWithLongTaskProbe(page: Page, params: Readonly<
   }
 
   const drag = await dragSessionToTarget(page, {
+    serverId: params.serverId,
     sessionId: params.sessionId,
     targetTestId: params.targetTestId,
     targetEdge: params.targetEdge,
@@ -531,26 +536,27 @@ export async function dragSessionWithLongTaskProbe(page: Page, params: Readonly<
 /**
  * The visible session-row order, top-to-bottom, captured from the DOM.
  *
- * Each entry is a session id parsed from a `session-list-item-<id>` testID,
- * ordered by on-screen vertical position. Used to prove the frozen-surface
+ * Each entry is a supplied Session id matched through its canonical base
+ * occurrence, ordered by on-screen vertical position. Used to prove the frozen-surface
  * contract: while a drag is active the visible row order must not reorder, even
  * if a background sync update lands.
  */
-export async function readVisibleSessionRowOrder(page: Page): Promise<readonly string[]> {
-  return page.evaluate(() => {
+export async function readVisibleSessionRowOrder(page: Page, params: Readonly<{ serverId: string; sessionIds: readonly string[] }>): Promise<readonly string[]> {
+  const sessionIdsByTestId = Object.fromEntries(params.sessionIds.map((sessionId) => [sessionListRowTestId(params.serverId, sessionId), sessionId]));
+  return page.evaluate((sessionIdsByTestId) => {
     const prefix = 'session-list-item-';
     const nodes = Array.from(
       document.querySelectorAll<HTMLElement>(`[data-testid^="${prefix}"]`),
     );
     return nodes
       .map((node) => ({
-        id: (node.getAttribute('data-testid') ?? '').slice(prefix.length),
+        id: sessionIdsByTestId[node.getAttribute('data-testid') ?? ''],
         y: node.getBoundingClientRect().top,
       }))
-      .filter((entry) => entry.id.length > 0)
+      .filter((entry): entry is { id: string; y: number } => typeof entry.id === 'string')
       .sort((a, b) => a.y - b.y)
       .map((entry) => entry.id);
-  });
+  }, sessionIdsByTestId);
 }
 
 /**
@@ -579,9 +585,10 @@ export type SteppedSessionDrag = Readonly<{
  * a controller to move/drop it across later Playwright steps.
  */
 export async function beginSteppedSessionDrag(page: Page, params: Readonly<{
+  serverId: string;
   sessionId: string;
 }>): Promise<SteppedSessionDrag> {
-  const sourceTestId = `session-list-item-${params.sessionId}`;
+  const sourceTestId = sessionListRowTestId(params.serverId, params.sessionId);
   await page.getByTestId(sourceTestId).scrollIntoViewIfNeeded();
   await page.getByTestId(sourceTestId).hover();
 

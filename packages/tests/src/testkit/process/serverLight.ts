@@ -16,7 +16,7 @@ import { terminateProcessTreeByPid } from './processTree';
 import { waitForOkHealth } from '../http';
 import { pnpmCommand } from './commands';
 import { resolveServerAppWorkspaceName } from './serverWorkspaceName';
-import { createServerLightTemplateCacheKey, prepareCachedDataDir } from './serverLightTemplateCache';
+import { createServerLightTemplateCacheKey, prepareCachedDataDir, resolveServerLightTemplateCacheRoot as resolveTemplateCacheRoot } from './serverLightTemplateCache.mjs';
 import { resolveTsxImportHookSpecifier } from './tsxImportHook';
 import { withTestProcessLease } from './testProcessLease';
 import {
@@ -671,8 +671,7 @@ function supportsServerLightTemplateCache(provider: TestDbProvider): provider is
 }
 
 export function resolveServerLightTemplateCacheRoot(rootDir: string = repoRootDir()): string {
-  const configuredDir = process.env.HAPPIER_E2E_SERVER_LIGHT_TEMPLATE_CACHE_DIR?.trim();
-  return configuredDir ? resolve(configuredDir) : resolve(rootDir, '.project', 'cache', 'e2e', 'server-light');
+  return resolveTemplateCacheRoot(rootDir);
 }
 
 async function runServerMigrationCommand(params: {
@@ -878,6 +877,8 @@ async function ensureServerGeneratedProviders(params: { testDir: string; env: No
 }
 export async function startServerLight(params: {
   testDir: string;
+  /** Source-loaded process fixtures can share their caller's startup budget. */
+  startupTimeoutMs?: number;
   extraEnv?: NodeJS.ProcessEnv;
   dbProvider?: TestDbProvider;
   dataDirMode?: 'fresh' | 'reuse-existing';
@@ -1073,7 +1074,7 @@ export async function startServerLight(params: {
     });
 
     try {
-      await Promise.race([waitForOkHealth(baseUrl, { timeoutMs: 90_000 }), exitedEarly]);
+      await Promise.race([waitForOkHealth(baseUrl, { timeoutMs: params.startupTimeoutMs ?? 90_000 }), exitedEarly]);
 
       removeTailListeners();
       if (exitHandler) proc.child.off('exit', exitHandler);

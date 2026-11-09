@@ -1,4 +1,4 @@
-import { existsSync } from 'node:fs';
+import { statSync } from 'node:fs';
 import { dirname, isAbsolute, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
@@ -49,7 +49,7 @@ function resolveSourceFile(root: string, subpath: string): string {
     resolve(requested, 'index.js'),
     resolve(requested, 'index.jsx'),
   ];
-  return candidates.find((candidate) => existsSync(candidate)) ?? requested;
+  return candidates.find((candidate) => statSync(candidate, { throwIfNoEntry: false })?.isFile()) ?? requested;
 }
 
 function resolveAppSourceRoot(importer?: string): string {
@@ -123,6 +123,9 @@ const appSourceAliasesPlugin: Plugin = {
     if (id === '@happier-tests/ui-machine-carrier') {
       return uiSource('dev/testkit/machineCarrierHttpIntegrationTestkit.ts');
     }
+    if (id === '@happier-tests/ui-scm-refine-admission') {
+      return uiSource('dev/testkit/scmRefineAdmissionIntegrationTestkit.ts');
+    }
     if (id === '@happier-tests/server-machine-carrier-grant') {
       return resolve(serverSourcesRoot, 'app/api/testkit/machineCarrierGrantIntegrationTestkit.ts');
     }
@@ -140,6 +143,10 @@ const expoNodeModuleStubsPlugin: Plugin = {
   name: 'happier-tests-expo-node-module-stubs',
   enforce: 'pre',
   resolveId(id, importer) {
+    if (/^\.\/xmlTags(?:\.js)?$/.test(id)
+      && /[\\/]react-native-svg[\\/]lib[\\/]module[\\/]xml\.js(?:\?.*)?$/.test(importer ?? '')) {
+      return uiDev('testkit/mocks/reactNativeSvg.ts');
+    }
     return workspaceSourcesPlugin.resolveId(id, importer)
       ?? resolveExpoNodeModuleStub(id, importer);
   },
@@ -147,6 +154,7 @@ const expoNodeModuleStubsPlugin: Plugin = {
 
 export function createUiProductionHooksVitestConfig(): UserConfig {
   return {
+    esbuild: { jsx: 'automatic' },
     define: {
       __DEV__: true,
     },
@@ -159,7 +167,7 @@ export function createUiProductionHooksVitestConfig(): UserConfig {
         deps: {
           // Production UI modules can reach React Navigation and Legend's React Native
           // entrypoints. Inline them so the node-safe aliases above see their Flow sources.
-          inline: [/@react-navigation\/native/, /@react-navigation\/elements/, /@legendapp\/list/],
+          inline: [/@react-navigation\/native/, /@react-navigation\/elements/, /@legendapp\/list/, /react-native-svg/],
         },
       },
       env: {
@@ -188,6 +196,8 @@ export function createUiProductionHooksVitestConfig(): UserConfig {
         { find: /(?:^|[\\/])node_modules[\\/]react-native-keyboard-controller[\\/].*$/, replacement: uiDev('reactNativeKeyboardControllerStub.ts') },
         { find: /^react-native\//, replacement: uiDev('reactNativeInternalStub.ts') },
         { find: /^react-native$/, replacement: uiDev('reactNativeStub.ts') },
+        { find: /^react-native-svg$/, replacement: uiDev('testkit/mocks/reactNativeSvg.ts') },
+        { find: /^(?:.*[\\/])?node_modules[\\/]react-native-svg[\\/](?!lib[\\/]module[\\/](?:xml\.js|utils[\\/]fetchData\.js)$).*$/, replacement: uiDev('testkit/mocks/reactNativeSvg.ts') },
         { find: 'react-native-safe-area-context', replacement: uiDev('reactNativeSafeAreaContextStub.ts') },
         { find: /expo-modules-core\/src\/index\.ts$/, replacement: uiDev('expoModulesCoreStub.ts') },
         { find: /^expo-modules-core(?:\/.*)?$/, replacement: uiDev('expoModulesCoreStub.ts') },
@@ -195,7 +205,8 @@ export function createUiProductionHooksVitestConfig(): UserConfig {
         { find: 'expo-localization', replacement: uiDev('expoLocalizationStub.ts') },
         { find: 'expo-video', replacement: uiDev('expoVideoStub.ts') },
         { find: 'expo-router/drawer', replacement: uiDev('expoRouterDrawerStub.ts') },
-        { find: 'expo-router', replacement: uiDev('expoRouterStub.ts') },
+        { find: /^expo-router\/build\/Route(?:\.js)?$/, replacement: uiDev('expoRouterRouteStub.ts') },
+        { find: /^expo-router$/, replacement: uiDev('expoRouterStub.ts') },
         { find: 'react-native-gesture-handler', replacement: uiDev('reactNativeGestureHandlerStub.ts') },
         { find: 'react-native-webview', replacement: uiDev('reactNativeWebviewStub.ts') },
         { find: /^expo$/, replacement: uiDev('expoStub.ts') },

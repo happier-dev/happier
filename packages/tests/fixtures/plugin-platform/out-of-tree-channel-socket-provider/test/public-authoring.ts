@@ -3,6 +3,10 @@ import {
     type PluginContributionRef,
     type PluginInvocationContext,
 } from '@happier-dev/plugin-sdk';
+import {
+    isPluginActionApprovalRequestCreated,
+    type AutomationConversationActionResultById,
+} from '@happier-dev/plugin-sdk/actions';
 import type { BackgroundServiceContext } from '@happier-dev/plugin-sdk/background-services';
 import {
     AutomationConversationAdmitInputV1Schema,
@@ -191,6 +195,7 @@ const coreTransportFactReport = {
 
 const publicSocketObservationIngress = {
     connectionId: 'connection-1',
+    authorityEpoch: 7,
     entry: {
         observation: {
             kind: 'fullText',
@@ -220,6 +225,7 @@ const publicSocketObservationIngress = {
 
 const publicSocketShellIngress = {
     connectionId: 'connection-1',
+    authorityEpoch: 7,
     entry: {
         observation: {
             kind: 'routableNonAdmission',
@@ -292,7 +298,7 @@ async function publicSocketLifecycle(context: BackgroundServiceContext): Promise
             {
                 connectionId: current.connectionId,
                 authorityEpoch: current.authorityEpoch,
-                fact: { kind: 'stopConfirmed', reason: 'notRunningOnReconcile' },
+                fact: { kind: 'providerReadiness', status: 'ready' },
             },
             { signal: context.signal },
         );
@@ -314,6 +320,7 @@ async function publicConversationTargetSelection(context: PluginInvocationContex
         { limit: 10 },
         { signal: context.signal },
     );
+    if (isPluginActionApprovalRequestCreated(targets)) return targets;
     const first = targets.items[0];
     if (!first) return targets.nextCursor;
     const verification = await context.services.actions.execute(
@@ -324,9 +331,12 @@ async function publicConversationTargetSelection(context: PluginInvocationContex
         },
         { signal: context.signal },
     );
+    if (isPluginActionApprovalRequestCreated(verification)) return verification;
     if (verification.kind === 'notVerified') {
-        const reason: 'notFound' | 'resultDeliveryUnsupported' =
-            verification.reason;
+        const reason: Extract<
+            AutomationConversationActionResultById['automation.conversation.target.verify'],
+            { kind: 'notVerified' }
+        >['reason'] = verification.reason;
         return reason;
     }
     return { automationId: first.automationId };
@@ -334,7 +344,7 @@ async function publicConversationTargetSelection(context: PluginInvocationContex
 
 /**
  * Public-authoring regression for the generated built-in Action map.  This
- * deliberately uses only the SDK root surface: a missing or widened map entry
+ * deliberately uses only public SDK entrypoints: a missing or widened map entry
  * loses the discriminated result below instead of being repaired with a
  * Channels-specific wrapper or cast.
  */
@@ -355,19 +365,20 @@ async function publicConversationAdmission(context: PluginInvocationContext) {
             opaqueContext: { conversationId: 'conversation-1', messageId: 'message-1' },
         },
     });
-    const result = AutomationConversationAdmitResultV1Schema.parse(
-        await context.services.actions.execute(
-            'automation.conversation.admit',
-            input,
-            { signal: context.signal },
-        ),
+    const executed = await context.services.actions.execute(
+        'automation.conversation.admit',
+        input,
+        { signal: context.signal },
     );
+    if (isPluginActionApprovalRequestCreated(executed)) return executed;
+    const result = AutomationConversationAdmitResultV1Schema.parse(executed);
 
     if (result.kind === 'blocked') {
         const checkpointSafe: false = result.checkpointSafe;
         return checkpointSafe;
     }
     const checkpointSafe: true = result.checkpointSafe;
+    if (result.kind === 'refused') return { reason: result.reason, checkpointSafe };
     return { runId: result.runId, checkpointSafe };
 }
 

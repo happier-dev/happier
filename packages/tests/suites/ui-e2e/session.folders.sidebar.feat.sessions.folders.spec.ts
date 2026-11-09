@@ -1,4 +1,4 @@
-import { test, expect, type Page } from '@playwright/test';
+import { test, expect } from '@playwright/test';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 
@@ -10,6 +10,7 @@ import { gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../..
 import { seedDismissedPendingSetupIntent } from '../../src/testkit/uiE2e/pendingSetupIntent';
 import { setUiFeatureToggle } from '../../src/testkit/uiE2e/setUiFeatureToggle';
 import { appendBrowserDiagnostics, collectBrowserDiagnostics } from '../../src/testkit/uiE2e/browserDiagnostics';
+import { openSessionListRowMenu } from '../../src/testkit/uiE2e/sessionListRowMenu';
 import { waitForInitialAppUi } from '../../src/testkit/uiE2e/waitForInitialAppUi';
 import { createTestAuthMtls } from '../../src/testkit/auth';
 import { startForwardedHeaderProxy } from '../../src/testkit/uiE2e/forwardedHeaderProxy';
@@ -20,6 +21,11 @@ import {
   resolveCanonicalServerIdForUi,
   setSessionFolderDragSettings,
 } from '../../src/testkit/uiE2e/sessionFoldersDrag';
+
+import { sessionListRowTestId } from '../../src/testkit/uiE2e/sessionListRowTestId';
+
+let rowServerId: string;
+const rowTestId = (sessionId: string) => sessionListRowTestId(rowServerId, sessionId);
 
 const run = createRunDirs({ runLabel: 'ui-e2e-session-folders-sidebar' });
 
@@ -32,16 +38,6 @@ const IDENTITY_HEADERS = {
   issuer: 'happier-ui-e2e-session-folders',
   fingerprint: `session-folders-${run.runId}`,
 } as const;
-
-async function openSessionRowMenu(params: Readonly<{ page: Page; sessionId: string }>): Promise<void> {
-  const row = params.page.getByTestId(`session-list-item-${params.sessionId}`);
-  await expect(row).toHaveCount(1, { timeout: 120_000 });
-  await row.hover();
-
-  const menuTrigger = row.getByTestId('session-item-more-menu');
-  await expect(menuTrigger).toHaveCount(1, { timeout: 60_000 });
-  await menuTrigger.click();
-}
 
 test.describe('ui e2e: session folders sidebar', () => {
   test.describe.configure({ mode: 'serial' });
@@ -106,6 +102,8 @@ test.describe('ui e2e: session folders sidebar', () => {
       fingerprint: IDENTITY_HEADERS.fingerprint,
     });
     token = auth.token;
+
+    rowServerId = await resolveCanonicalServerIdForUi(proxy.baseUrl);
 
     ui = await startUiWeb({
       testDir: suiteDir,
@@ -182,11 +180,11 @@ test.describe('ui e2e: session folders sidebar', () => {
         enabled: true,
       });
 
-      await expect(page.getByTestId(`session-list-item-${firstSessionId}`)).toHaveCount(1, { timeout: 120_000 });
+      await expect(page.getByTestId(rowTestId(firstSessionId))).toHaveCount(1, { timeout: 120_000 });
 
       await expect(page.getByTestId(`session-folder-header-${FOLDER_ID}`)).toHaveCount(0);
 
-      await openSessionRowMenu({ page, sessionId: firstSessionId });
+      await openSessionListRowMenu(page, { serverId: rowServerId, sessionId: firstSessionId });
       await expect(page.getByTestId('dropdown-option-ui_session_move-to-folder')).toHaveCount(1, { timeout: 60_000 });
       await page.getByTestId('dropdown-option-ui_session_move-to-folder').click();
       await expect(page.getByTestId('session-list-move-sheet')).toHaveCount(1, { timeout: 60_000 });
@@ -204,12 +202,12 @@ test.describe('ui e2e: session folders sidebar', () => {
       await page.getByTestId(`session-folder-header-${FOLDER_ID}`).click();
       await expect(page.getByTestId('session-folder-breadcrumb')).toHaveCount(1, { timeout: 60_000 });
       await expect(page.getByTestId('session-folder-clear-focus')).toHaveCount(1, { timeout: 60_000 });
-      await expect(page.getByTestId(`session-list-item-${firstSessionId}`)).toHaveCount(1, { timeout: 120_000 });
+      await expect(page.getByTestId(rowTestId(firstSessionId))).toHaveCount(1, { timeout: 120_000 });
 
       await page.getByTestId('session-folder-clear-focus').click();
-      await expect(page.getByTestId(`session-list-item-${firstSessionId}`)).toHaveCount(1, { timeout: 120_000 });
+      await expect(page.getByTestId(rowTestId(firstSessionId))).toHaveCount(1, { timeout: 120_000 });
 
-      await openSessionRowMenu({ page, sessionId: firstSessionId });
+      await openSessionListRowMenu(page, { serverId: rowServerId, sessionId: firstSessionId });
       await expect(page.getByTestId('dropdown-option-ui_session_move-to-folder')).toHaveCount(1, { timeout: 60_000 });
       await page.getByTestId('dropdown-option-ui_session_move-to-folder').click();
       await expect(page.getByTestId('session-list-move-sheet')).toHaveCount(1, { timeout: 60_000 });
@@ -217,10 +215,10 @@ test.describe('ui e2e: session folders sidebar', () => {
       await page.getByRole('option', { name: /Workspace root/i }).click();
 
       await page.getByTestId(`session-folder-header-${FOLDER_ID}`).click();
-      await expect(page.getByTestId(`session-list-item-${firstSessionId}`)).toHaveCount(0, { timeout: 120_000 });
+      await expect(page.getByTestId(rowTestId(firstSessionId))).toHaveCount(0, { timeout: 120_000 });
 
       await page.getByTestId('session-folder-clear-focus').click();
-      await expect(page.getByTestId(`session-list-item-${firstSessionId}`)).toHaveCount(1, { timeout: 120_000 });
+      await expect(page.getByTestId(rowTestId(firstSessionId))).toHaveCount(1, { timeout: 120_000 });
     } catch (error) {
       throw appendBrowserDiagnostics(error, diagnostics());
     }
@@ -252,7 +250,7 @@ test.describe('ui e2e: session folders sidebar', () => {
       await expect(page.getByTestId(`session-folder-header-${FOLDER_ID}`)).toHaveCount(0);
       const modifier = process.platform === 'darwin' ? 'Meta' : 'Control';
       for (const sessionId of sessionIds) {
-        const row = page.getByTestId(`session-list-item-${sessionId}`);
+        const row = page.getByTestId(rowTestId(sessionId));
         await expect(row).toHaveCount(1, { timeout: 120_000 });
         await row.click({ modifiers: [modifier] });
       }

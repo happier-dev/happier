@@ -22,6 +22,8 @@ import { buildAuthBootstrapStorageSnapshot } from '../../uiE2e/buildAuthBootstra
 import { installAuthBootstrapStorageSnapshot } from '../../uiE2e/readLegacyAuthSecretFromLocalStorage';
 import { createSessionFromNewSessionComposer } from '../../uiE2e/createSessionFromNewSessionComposer';
 import { spawnSessionFromDaemon } from '../../uiE2e/spawnSessionFromDaemon';
+import { sessionListRowTestId } from '../../uiE2e/sessionListRowTestId';
+import { resolveCanonicalServerIdForUi } from '../../uiE2e/sessionFoldersDrag';
 import { readStressConfig } from '../config/readStressConfig';
 import { seedPerfProfile } from '../scenarios/seedPerfProfile';
 import { perfFixtureId } from '../scenarios/perfProfile';
@@ -110,6 +112,7 @@ async function preparePerfJourneyEnvironment(options: PerfJourneyOptions, cleanu
       env: { ...process.env, EXPO_PUBLIC_HAPPIER_SERVER_URL: target.baseUrl, EXPO_PUBLIC_HAPPY_SERVER_URL: target.baseUrl } });
     cleanup.push(() => ui.stop());
     const auth = await createTestAuth(target.baseUrl);
+    const serverId = await resolveCanonicalServerIdForUi(target.baseUrl);
     const cliHome = join(fixtureDir, 'cli-home');
     const seededCli = await seedCliAuthForTestAccount({ cliHome, serverUrl: target.baseUrl, auth, mode: 'dataKey' });
     const tsx = resolveTsxImportHookSpecifier();
@@ -125,11 +128,11 @@ async function preparePerfJourneyEnvironment(options: PerfJourneyOptions, cleanu
     cleanup.push(() => daemon.stop());
     const seeded = await seedPerfProfile({ baseUrl: target.baseUrl, auth, seed: options.seed,
       concurrency: config.load.mixedSetupConcurrency ?? 8, workspaceDir, liveMachineId: seededCli.machineId });
-    return { workspaceDir, target, ui, auth, daemon, seeded, seededCli };
+    return { workspaceDir, target, ui, auth, daemon, seeded, seededCli, serverId };
 }
 
 async function capturePerfJourney(options: PerfJourneyOptions, environment: Awaited<ReturnType<typeof preparePerfJourneyEnvironment>>, signal: AbortSignal, cleanupFailures: unknown[]) {
-  const { workspaceDir, target, ui, auth, daemon, seeded, seededCli } = environment;
+  const { workspaceDir, target, ui, auth, daemon, seeded, seededCli, serverId } = environment;
   const cleanup: Array<() => Promise<unknown>> = [];
   let phase = 'browser-start';
   try {
@@ -145,7 +148,7 @@ async function capturePerfJourney(options: PerfJourneyOptions, environment: Awai
     const home = '[data-testid="home-header-start-new-session"], [data-testid="session-list-view-options-trigger"]';
     const homeReady = async () => {
       await page.locator(home).first().waitFor();
-      await expect(page.getByTestId(`session-list-item-${streamSessions[0]!.sessionId}`)).toContainText(streamSessions[0]!.title);
+      await expect(page.getByTestId(sessionListRowTestId(serverId, streamSessions[0]!.sessionId))).toContainText(streamSessions[0]!.title);
     };
     const goHome = async () => { await page.goto(ui.baseUrl, { waitUntil: 'domcontentloaded' }); await homeReady(); };
     const prepare: JourneyStep[] = options.journey === 'J1' && options.cache === 'cold' ? [] : [{ op: 'open' }, { op: 'home' }];
@@ -210,7 +213,7 @@ async function capturePerfJourney(options: PerfJourneyOptions, environment: Awai
         if (step.op === 'home') { await homeReady(); return true; }
         if (step.op === 'open-session' || step.op === 'open-stop-session') {
           const id = step.op === 'open-session' ? streamSessions[0]!.sessionId : stopSessionId!;
-          await page.getByTestId(`session-list-item-${id}`).click(); await page.getByTestId('transcript-chat-list').waitFor(); return true;
+          await page.getByTestId(sessionListRowTestId(serverId, id)).click(); await page.getByTestId('transcript-chat-list').waitFor(); return true;
         }
         if (step.op === 'stream-other' || step.op === 'stream-current') {
           const session = streamSessions[step.op === 'stream-other' ? 1 : 0]!;
@@ -230,7 +233,7 @@ async function capturePerfJourney(options: PerfJourneyOptions, environment: Awai
           await page.goBack(); await page.locator(home).first().waitFor();
           const origin = await page.evaluate(() => performance.timeOrigin);
           for (let cycle = 0; cycle <= options.heapCycles; cycle++) {
-            if (cycle) { await page.getByTestId(`session-list-item-${streamSessions[0]!.sessionId}`).click(); await page.getByTestId('transcript-chat-list').waitFor(); await page.goBack(); await homeReady(); }
+            if (cycle) { await page.getByTestId(sessionListRowTestId(serverId, streamSessions[0]!.sessionId)).click(); await page.getByTestId('transcript-chat-list').waitFor(); await page.goBack(); await homeReady(); }
             if (await page.evaluate(() => performance.timeOrigin) !== origin) { heap.unavailable = 'Navigation crossed document lifetime; samples cannot establish retained growth'; break; }
             try {
               await captureContext.capture.cdp.send('HeapProfiler.collectGarbage');

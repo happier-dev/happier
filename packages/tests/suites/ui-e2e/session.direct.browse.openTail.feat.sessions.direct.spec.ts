@@ -1,3 +1,4 @@
+import { resolveCanonicalServerIdForUi } from '../../src/testkit/uiE2e/sessionFoldersDrag';
 import { test, expect } from '@playwright/test';
 import { appendFile, mkdir, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
@@ -10,6 +11,11 @@ import { startCliAuthLoginForTerminalConnect, type StartedCliTerminalConnect } f
 import { enableDirectSessionsFeature } from '../../src/testkit/uiE2e/enableDirectSessionsFeature';
 import { createAccountAndReachConnectMachineState, gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../../src/testkit/uiE2e/pageNavigation';
 import { fakeClaudeFixturePath, waitForFakeClaudeInvocation } from '../../src/testkit/fakeClaude';
+
+import { sessionListRowTestId } from '../../src/testkit/uiE2e/sessionListRowTestId';
+
+let rowServerId: string;
+const rowTestId = (sessionId: string) => sessionListRowTestId(rowServerId, sessionId);
 
 const run = createRunDirs({ runLabel: 'ui-e2e' });
 
@@ -56,6 +62,8 @@ test.describe('ui e2e: direct sessions browse/open/tail', () => {
         HAPPIER_E2E_PROVIDER_SKIP_SERVER_SHARED_DEPS_BUILD: '1',
       },
     });
+
+    rowServerId = await resolveCanonicalServerIdForUi(server.baseUrl);
 
     ui = await startUiWeb({
       testDir: suiteDir,
@@ -262,10 +270,10 @@ test.describe('ui e2e: direct sessions browse/open/tail', () => {
     );
 
     await page.getByTestId('sessions-list-storage-tab:direct').click();
-    await expect(page.getByTestId(`session-list-item-${sessionId}`)).toHaveCount(0, { timeout: 120_000 });
+    await expect(page.getByTestId(rowTestId(sessionId))).toHaveCount(0, { timeout: 120_000 });
 
     await page.getByTestId('sessions-list-storage-tab:persisted').click();
-    await expect(page.getByTestId(`session-list-item-${sessionId}`)).toHaveCount(1, { timeout: 120_000 });
+    await expect(page.getByTestId(rowTestId(sessionId))).toHaveCount(1, { timeout: 120_000 });
     await expect(page.getByText('persist this direct session from ui')).toHaveCount(1, { timeout: 120_000 });
   });
 });

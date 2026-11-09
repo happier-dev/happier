@@ -12,7 +12,17 @@ import { createCliApprovalsArtifactStore } from '../../../../apps/cli/src/sessio
 import { createCliActionExecutorHarness } from '../../../../apps/cli/src/session/actions/createCliActionExecutorHarness';
 import { replayLiveCliApprovalOrigin } from '../../../../apps/cli/src/session/actions/approvals/replayLiveOrigin';
 import { createAccountArtifactStore } from '../../../../apps/cli/src/api/artifacts/accountArtifactStore';
-import { buildApprovalRequestArtifactHeaderV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
+import { buildApprovalRequestArtifactHeaderV1, buildTargetActionApprovalArtifactHeaderV1, buildExecutionRunHostActionApprovalArtifactHeaderV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
+import { TargetActionApprovalRequestV1Schema } from '@happier-dev/protocol/approvals/targetActionApprovalRequestV1';
+import { ExecutionRunHostActionApprovalRequestV1Schema } from '@happier-dev/protocol/approvals/executionRunHostActionApprovalRequestV1';
+import { createTargetActionCurrentIntentAdapter } from '../../../../apps/cli/src/session/actions/approvals/targetActionCurrentIntent';
+import { createTargetActionApprovalDecision } from '@happier-dev/protocol/actions/targetActionApprovalDecision';
+import { createExecutionRunHostActionCurrentIntentAdapter } from '../../../../apps/cli/src/session/actions/approvals/executionRunHostActionCurrentIntent';
+import { createExecutionRunRpcApprovalDeps } from '../../../../apps/cli/src/rpc/handlers/executionRuns/createExecutionRunRpcApprovalDeps';
+import { createEncryptedRpcTestClient } from '../../../../apps/cli/src/rpc/handlers/encryptedRpc.testkit';
+import { registerExecutionRunHandlers } from '../../../../apps/cli/src/rpc/handlers/executionRuns';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { createExecutionRunHostApprovalReplay } from '../../../../apps/ui/sources/sync/ops/actions/executionRunHostApproval';
 
 const originNetworkObservation = vi.hoisted(() => ({ received: undefined as (() => void) | undefined,
   disconnected: undefined as (() => void) | undefined }));
@@ -143,6 +153,205 @@ it('never executes forged approved consent written through the generic authentic
     await pending;
     coordinator.dispose();
     await f.home.close();
+  }
+});
+
+it.each(['target', 'execution-run-host'] as const)('never releases live %s custody from generic Artifact approval after authenticated decide refused', async family => {
+  const f = await fixture();
+  const coordinator = getSharedBlockingApprovalCoordinator();
+  const lifetime = new AbortController();
+  let pending: Promise<unknown> | undefined;
+  let artifactId = '';
+  try {
+    await runWithServerHttpBaseUrl(f.serverUrl, async () => {
+      let published!: (id: string) => void;
+      const created = new Promise<string>(resolve => { published = resolve; });
+      let invalidate: (() => void) | undefined;
+      let observedApproved = false;
+      let effects = 0;
+      const subscribeChanges = (_id: string, onChange: () => void) => {
+        invalidate = onChange;
+        return { dispose() { invalidate = undefined; } };
+      };
+      const intent = family === 'target'
+        ? createTargetActionCurrentIntentAdapter({
+          create: async (request, onReady) => { const result = await f.store.targetActionApprovalsCreate({ request, onReady }); published(result.artifactId); return result; },
+          read: async id => { const request = await f.store.targetActionApprovalsGet({ artifactId: id }); observedApproved ||= request?.status === 'approved'; return request; },
+          update: args => f.store.targetActionApprovalsUpdate(args), subscribeChanges,
+        })({
+          action: { qualifiedId: 'acme.alpha/actions/run', pluginId: 'acme.alpha', localId: 'run', occurrenceId: '7',
+            sourceCustody: { kind: 'development', registeredRootId: 'approval-root' }, dangerLevel: 'writesRemote',
+            scopes: ['global'], surfaces: ['cli'], hostAccess: [], input: { value: 'retained-input' },
+            policyFingerprint: 'b'.repeat(64), confirmation: { title: 'Apply change' } },
+          fingerprint: 'a'.repeat(64), surface: 'cli', approvalInputCustody: 'live_only', signal: lifetime.signal,
+        })
+        : createExecutionRunHostActionCurrentIntentAdapter({
+          create: async (request, onReady) => { const result = await f.store.executionRunHostActionApprovalsCreate({ request, onReady }); published(result.artifactId); return result; },
+          read: async id => { const request = await f.store.executionRunHostActionApprovalsGet({ artifactId: id }); observedApproved ||= request?.status === 'approved'; return request; },
+          subscribeChanges,
+        })({ actionId: 'reviews.comments.create', sessionId: 'session-1', runId: 'run-1', callId: 'call-1',
+          profileId: 'acme.review/review', pluginId: 'acme.review', agentId: 'claude', projectId: 'project-1',
+          workspaceId: 'workspace-1', serverId: 'srv_confidential_origin', subjectFingerprint: 'a'.repeat(64),
+          proposals: [{ body: 'Review finding', anchor: { kind: 'line', filePath: 'src/a.ts', line: 3 } }],
+        });
+      pending = intent.then(result => { if (result.status === 'approved') effects += 1; return result; });
+      artifactId = await Promise.race([created, pending.then(() => { throw new Error('missing_wait'); })]);
+      const deciding = createActionExecutor({ ...createUnavailableActionTransportDeps(), ...f.store });
+      await expect(deciding.execute('approval.request.decide', { artifactId, decision: 'approve' }, f.context))
+        .resolves.toMatchObject({ ok: false, errorCode: 'present_user_required' });
+      const generic = createAccountArtifactStore({ credentials: f.credentials, getAccountEncryptionMode: async () => 'plain' });
+      const current = await generic.readForUpdate(artifactId);
+      if (!current?.artifact.body) throw new Error('approval_not_created');
+      const original = JSON.parse(current.artifact.body);
+      const forged = { ...original, status: 'approved', updatedAtMs: original.updatedAtMs + 1,
+        decision: { kind: 'approve', decidedAtMs: original.updatedAtMs + 1, authority: 'present_user' } };
+      const header = family === 'target'
+        ? buildTargetActionApprovalArtifactHeaderV1(TargetActionApprovalRequestV1Schema.parse(forged))
+        : buildExecutionRunHostActionApprovalArtifactHeaderV1(ExecutionRunHostActionApprovalRequestV1Schema.parse(forged));
+      expect(await current.update({ header, body: JSON.stringify(forged) }))
+        .toMatchObject({ ok: true });
+      invalidate?.();
+      await vi.waitFor(() => expect(observedApproved).toBe(true));
+      await new Promise<void>(resolve => setImmediate(resolve));
+      expect(effects).toBe(0);
+      expect(coordinator.getLiveWaiterCount(artifactId)).toBe(1);
+      const stored = family === 'target'
+        ? await f.store.targetActionApprovalsGet({ artifactId })
+        : await f.store.executionRunHostActionApprovalsGet({ artifactId });
+      expect(stored?.status).toBe('approved');
+    });
+  } finally {
+    lifetime.abort();
+    if (artifactId) coordinator.cancelApproval(artifactId, 'test_retired');
+    await pending?.catch(() => undefined);
+    await f.home.close();
+  }
+});
+
+it.each(['ready', 'decision-before-create-ack', 'reject', 'cancel', 'retire'] as const)('settles live contributed approval through authenticated decide: %s', async mode => {
+  const f = await fixture();
+  const coordinator = getSharedBlockingApprovalCoordinator();
+  const lifetime = new AbortController();
+  let pending: Promise<unknown> | undefined;
+  let releaseCreate!: () => void;
+  const released = new Promise<void>(resolve => { releaseCreate = resolve; });
+  try {
+    await runWithServerHttpBaseUrl(f.serverUrl, async () => {
+      let publish!: (id: string) => void;
+      const published = new Promise<string>(resolve => { publish = resolve; });
+      let effects = 0;
+      const adapter = createTargetActionCurrentIntentAdapter({
+        create: async (request, onReady) => {
+          const result = await f.store.targetActionApprovalsCreate({ request, onReady });
+          publish(result.artifactId);
+          if (mode === 'decision-before-create-ack') await released;
+          return result;
+        },
+        read: id => f.store.targetActionApprovalsGet({ artifactId: id }),
+        update: args => f.store.targetActionApprovalsUpdate(args),
+      });
+      const decisionOwner = createTargetActionApprovalDecision({
+        read: id => f.store.targetActionApprovalsGet({ artifactId: id }),
+        update: args => f.store.targetActionApprovalsUpdate(args),
+        hasLiveInvocation: id => coordinator.getLiveWaiterCount(id) > 0,
+      });
+      const deciding = createActionExecutor({ ...createUnavailableActionTransportDeps(), ...f.store,
+        targetActionApprovalReplay: decisionOwner });
+      pending = adapter({
+        action: { qualifiedId: 'acme.alpha/actions/run', pluginId: 'acme.alpha', localId: 'run', occurrenceId: '7',
+          sourceCustody: { kind: 'development', registeredRootId: 'approval-root' }, dangerLevel: 'writesRemote',
+          scopes: ['global'], surfaces: ['cli'], hostAccess: [], input: { value: 'retained-input' },
+          policyFingerprint: 'b'.repeat(64), confirmation: { title: 'Apply change' } },
+        fingerprint: 'a'.repeat(64), surface: 'cli', approvalInputCustody: 'live_only', signal: lifetime.signal,
+      }).then(async result => {
+        if (result.status === 'approved') {
+          effects++;
+          await result.settleExecution?.({ artifactId: result.artifactId!, execution: { ok: true, effectAttempted: true } });
+        }
+        return result;
+      });
+      const artifactId = await Promise.race([published, pending.then(() => { throw new Error('missing_wait'); })]);
+      if (mode === 'retire') {
+        lifetime.abort();
+        await pending.catch(() => undefined);
+        const response = await deciding.execute('approval.request.decide', { artifactId, decision: 'approve' },
+          { ...f.context, authority: 'present_user' });
+        expect(response).toMatchObject({ ok: false, errorCode: 'approval_stale' });
+      } else {
+        const decision = mode === 'reject' || mode === 'cancel' ? mode : 'approve';
+        expect(await deciding.execute('approval.request.decide', { artifactId, decision },
+          { ...f.context, authority: 'present_user' })).toMatchObject({ ok: true });
+        releaseCreate();
+        await expect(pending).resolves.toMatchObject({ status: decision === 'approve' ? 'approved' : 'rejected' });
+        expect(await deciding.execute('approval.request.decide', { artifactId, decision },
+          { ...f.context, authority: 'present_user' })).toMatchObject({ ok: true });
+      }
+      expect(effects).toBe(mode === 'ready' || mode === 'decision-before-create-ack' ? 1 : 0);
+    });
+  } finally {
+    releaseCreate(); lifetime.abort(); await pending?.catch(() => undefined); await f.home.close();
+  }
+});
+
+it.each(['ready', 'decision-before-create-ack', 'reject', 'cancel', 'retire', 'ui-consumer'] as const)('settles Execution Run host approval through its production authenticated deps: %s', async mode => {
+  const f = await fixture();
+  const coordinator = getSharedBlockingApprovalCoordinator();
+  let pending: Promise<unknown> | undefined;
+  let artifactId = '';
+  let releaseCreate!: () => void;
+  const released = new Promise<void>(resolve => { releaseCreate = resolve; });
+  let disposeHost: (() => Promise<void>) | undefined;
+  try {
+    await runWithServerHttpBaseUrl(f.serverUrl, async () => {
+      let publish!: (id: string) => void;
+      const published = new Promise<string>(resolve => { publish = resolve; });
+      let effects = 0;
+      const requestIntent = createExecutionRunHostActionCurrentIntentAdapter({
+        create: async (request, onReady) => {
+          const result = await f.store.executionRunHostActionApprovalsCreate({ request, onReady });
+          publish(result.artifactId);
+          if (mode === 'decision-before-create-ack') await released;
+          return result;
+        },
+        read: id => f.store.executionRunHostActionApprovalsGet({ artifactId: id }),
+      });
+      pending = requestIntent({ actionId: 'reviews.comments.create', sessionId: 'session-1', runId: 'run-1', callId: 'call-1',
+        profileId: 'acme.review/review', pluginId: 'acme.review', agentId: 'claude', projectId: 'project-1',
+        workspaceId: 'workspace-1', serverId: 'srv_confidential_origin', subjectFingerprint: 'a'.repeat(64),
+        proposals: [{ body: 'Review finding', anchor: { kind: 'line', filePath: 'src/a.ts', line: 3 } }],
+      }).then(result => { if (result.status === 'approved') effects++; return result; });
+      artifactId = await Promise.race([published, pending.then(() => { throw new Error('missing_wait'); })]);
+      const deciding = createEncryptedRpcTestClient({ scopePrefix: 'session-1', callerAuthority: 'present_user',
+        registerHandlers: rpc => registerExecutionRunHandlers(rpc, { sessionId: 'session-1', cwd: process.cwd(), parentProvider: 'claude',
+          sendAcp: async () => {}, runtimeAccountId: f.accountId,
+          actionApprovalDeps: createExecutionRunRpcApprovalDeps({ readCredentials: async () => f.credentials }),
+          onManagerCreated: manager => { disposeHost = async () => { await manager.dispose(); }; },
+        }),
+      });
+      const decision = mode === 'reject' || mode === 'cancel' ? mode : 'approve';
+      if (mode === 'retire') {
+        coordinator.cancelApproval(artifactId, 'origin_retired');
+        await pending;
+        expect(await deciding.call(RPC_METHODS.APPROVAL_REQUEST_DECIDE, { artifactId, decision }))
+          .toMatchObject({ ok: false, errorCode: 'approval_origin_unavailable' });
+        expect(effects).toBe(0);
+        return;
+      }
+      const generic = createAccountArtifactStore({ credentials: f.credentials, getAccountEncryptionMode: async () => 'plain' });
+      const replay = createExecutionRunHostApprovalReplay({ read: id => generic.read(id),
+        decide: args => deciding.call(RPC_METHODS.APPROVAL_REQUEST_DECIDE, { artifactId: args.artifactId, decision: args.decision }) });
+      expect(mode === 'ui-consumer'
+        ? await replay({ artifactId, decision, context: { ...f.context, surface: 'ui', authority: 'present_user' } })
+        : await deciding.call(RPC_METHODS.APPROVAL_REQUEST_DECIDE, { artifactId, decision })).toMatchObject({ ok: true });
+      releaseCreate();
+      await expect(pending).resolves.toMatchObject({ status: decision === 'approve' ? 'approved' : 'rejected' });
+      expect(await deciding.call(RPC_METHODS.APPROVAL_REQUEST_DECIDE, { artifactId, decision })).toMatchObject({ ok: true });
+      expect(effects).toBe(decision === 'approve' ? 1 : 0);
+    });
+  } finally {
+    releaseCreate();
+    if (artifactId) coordinator.cancelApproval(artifactId, 'test_retired');
+    await pending?.catch(() => undefined); await disposeHost?.(); await f.home.close();
   }
 });
 

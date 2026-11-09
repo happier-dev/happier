@@ -61,7 +61,7 @@ const FORBIDDEN_HEALTH_SEMANTICS = /mode|scope|window|watermark|instance|checkpo
 
 const EXPECTED_HEALTH_ARMS = Object.freeze({
     walkFinished: { properties: ['kind'], required: ['kind'] },
-    partial: { properties: ['kind', 'omittedItemCount', 'reason'], required: ['kind', 'reason'] },
+    partial: { properties: ['failure', 'kind', 'omittedItemCount', 'reason'], required: ['kind', 'reason'] },
     moving: { properties: ['kind', 'reason'], required: ['kind', 'reason'] },
 });
 

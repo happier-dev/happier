@@ -9,7 +9,6 @@
  * genuinely authorable and `qa/QA-PROTOCOL.md` QB-01 has failed.
  */
 import { definePlugin } from '@happier-dev/plugin-sdk';
-import { withTriageSourceSettingsTranslationsV1 } from '@happier-dev/triage-sources/translations';
 import {
     TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1,
     TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1,
@@ -346,7 +345,6 @@ const plugin = definePlugin({
             defaultRank: 10,
             renderer: LEDGER_SETTINGS_RENDERER_ID,
         }],
-        translations: withTriageSourceSettingsTranslationsV1([{ locale: 'en', messages: {} }]),
     },
     contributesTo: {
         [TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1]: {

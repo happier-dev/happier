@@ -3977,7 +3977,26 @@ export function configureVerticalAManifest({
         execution: { target: 'daemon' },
         placementBindings: ['commandPalette'],
         dangerLevel: 'safe',
+        cli: {
+          path: ['vertical-a', 'roundtrip'],
+          aliases: [['vertical-a', pluginId.split('.').at(-1)]],
+        },
         ...(ownsRetainedCapabilities ? {
+          toolExposure: { agent: 'direct', mcp: 'direct', cli: 'direct' },
+          inputSchema: { type: 'object', additionalProperties: true },
+          resultSchema: { type: 'object', additionalProperties: true },
+          inputHints: {
+            description: 'Input forwarded to the one declared roundtrip action.',
+            fields: [{ path: 'operation', title: 'Operation', widget: 'text' }],
+          },
+          tool: {
+            name: 'vertical_a_roundtrip',
+            title: 'Vertical A roundtrip tool',
+            description: 'Invoke the packed Vertical A roundtrip action.',
+            examples: { mcp: { argsExample: '{"operation":"packed-tool-dispatch"}' } },
+            promptSnippet: 'Use vertical_a_roundtrip for the packed Vertical A action.',
+            promptGuidelines: ['Invoke the declared action through this presentation.'],
+          },
           hostAccess: [
             'packed-fetch',
             'packed-novel-account',
@@ -3986,36 +4005,6 @@ export function configureVerticalAManifest({
         } : {}),
       }],
       ...(ownsRetainedCapabilities ? {
-        tools: [{
-          id: 'roundtrip-tool',
-          name: 'vertical_a_roundtrip',
-          title: 'Vertical A roundtrip tool',
-          description: 'Invoke the packed Vertical A roundtrip action.',
-          safety: 'safe',
-          surfaces: ['agent', 'mcp', 'cli'],
-          inputSchema: {
-            type: 'object',
-            additionalProperties: true,
-          },
-          outputSchema: {
-            type: 'object',
-            additionalProperties: true,
-          },
-          inputHints: {
-            description: 'Input forwarded to the one declared roundtrip action.',
-            fields: [{
-              path: 'operation',
-              title: 'Operation',
-              widget: 'text',
-            }],
-          },
-          examples: {
-            mcp: { argsExample: '{"operation":"packed-tool-dispatch"}' },
-          },
-          promptSnippet: 'Use vertical_a_roundtrip for the packed Vertical A action.',
-          promptGuidelines: ['Invoke the declared action through this presentation.'],
-          action: 'roundtrip',
-        }],
         sessionHeaderActions: [{
           id: 'roundtrip-header',
           title: 'Run Vertical A roundtrip',
@@ -4055,17 +4044,6 @@ export function configureVerticalAManifest({
         title: 'Packed webhook',
         configurable: true,
         defaultEnabled: true,
-      }],
-      commands: [{
-        id: 'roundtrip-shared-command',
-        title: 'Vertical A shared roundtrip',
-        path: ['vertical-a', 'roundtrip'],
-        action: 'roundtrip',
-      }, {
-        id: 'roundtrip-command',
-        title: 'Vertical A roundtrip',
-        path: ['vertical-a', pluginId.split('.').at(-1)],
-        action: 'roundtrip',
       }],
       scmBackends: [{
         id: 'stacked',
@@ -8036,7 +8014,7 @@ async function runVerticalAWithCapturedOutputs(candidate, options = {}) {
     }
     const retainedToolName = 'vertical_a_roundtrip';
     const retainedCommand = Object.freeze({
-      commandId: `${plugin.pluginId}/roundtrip-command`,
+      commandId: `${plugin.pluginId}/roundtrip`,
       actionId: `${plugin.pluginId}/roundtrip`,
       path: Object.freeze(packedPluginCommandPath(plugin.pluginId)),
     });
@@ -8087,15 +8065,14 @@ async function runVerticalAWithCapturedOutputs(candidate, options = {}) {
     });
     const installedRetainedProjection = installedRetainedCapabilities?.projection?.projection;
     const installedPluginUiEntries = installedRetainedProjection?.familiesById?.pluginUi?.entriesById ?? {};
-    const installedTool = installedRetainedProjection?.toolsById?.[`${plugin.pluginId}/roundtrip-tool`];
+    const installedAction = installedRetainedProjection?.actionsById?.[`${plugin.pluginId}/roundtrip`];
     const installedStructuredMessage = installedPluginUiEntries[`structuredMessage:${plugin.pluginId}:roundtrip-result`];
     const installedHeaderAction = installedPluginUiEntries[`sessionHeaderAction:${plugin.pluginId}:roundtrip-header`];
     const installedHostedWeb = installedPluginUiEntries[
       `hostedWeb:${plugin.pluginId}:${retainedHostedWebRendererId}`
     ];
     if (
-      installedTool?.id !== 'roundtrip-tool'
-      || installedTool.exposesToAgent !== true
+      installedAction?.id !== 'roundtrip'
       || installedStructuredMessage?.kind !== 'acme.vertical-a/roundtrip-result.v1'
       || installedHeaderAction?.action !== 'roundtrip'
       || installedHostedWeb?.runtime?.state !== 'available'
@@ -10963,7 +10940,7 @@ async function runVerticalAWithCapturedOutputs(candidate, options = {}) {
     const uninstalledRetainedProjection = uninstalledRetainedCapabilities?.projection?.projection;
     const uninstalledPluginUiEntries = uninstalledRetainedProjection?.familiesById?.pluginUi?.entriesById ?? {};
     if (
-      uninstalledRetainedProjection?.toolsById?.[`${plugin.pluginId}/roundtrip-tool`] !== undefined
+      uninstalledRetainedProjection?.actionsById?.[`${plugin.pluginId}/roundtrip`] !== undefined
       || uninstalledPluginUiEntries[`structuredMessage:${plugin.pluginId}:roundtrip-result`] !== undefined
       || uninstalledPluginUiEntries[`sessionHeaderAction:${plugin.pluginId}:roundtrip-header`] !== undefined
       || uninstalledPluginUiEntries[
@@ -10977,7 +10954,7 @@ async function runVerticalAWithCapturedOutputs(candidate, options = {}) {
       id: 'packed-retained-capabilities-lifecycle',
       ok: true,
       pluginId: plugin.pluginId,
-      toolId: 'roundtrip-tool',
+      toolId: 'roundtrip',
       structuredMessageId: 'roundtrip-result',
       sessionHeaderActionId: 'roundtrip-header',
       hostedWebRendererId: retainedHostedWebRendererId,

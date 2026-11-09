@@ -90,9 +90,9 @@ describe("startServerLight planning helpers", () => {
     });
   });
 
-  it("renders generated server-light sqlite DATABASE_URL with a bounded multi-connection pool", () => {
+  it("renders generated server-light sqlite DATABASE_URL with the single-connection pool", () => {
     expect(renderServerLightSqliteDatabaseUrl({ dbPath: "/tmp/happier-e2e/happier-server-light.sqlite", platform: "linux" })).toBe(
-      "file:/tmp/happier-e2e/happier-server-light.sqlite?socket_timeout=30&connection_limit=4",
+      "file:/tmp/happier-e2e/happier-server-light.sqlite?socket_timeout=30&connection_limit=1",
     );
   });
 

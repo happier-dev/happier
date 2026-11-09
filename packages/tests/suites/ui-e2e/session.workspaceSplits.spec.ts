@@ -1,3 +1,4 @@
+import { resolveCanonicalServerIdForUi } from '../../src/testkit/uiE2e/sessionFoldersDrag';
 import { test, expect, type Page } from '@playwright/test';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
@@ -13,6 +14,11 @@ import { openSessionListRowMenuAndSelectItem } from '../../src/testkit/uiE2e/ses
 import { spawnSessionFromDaemon } from '../../src/testkit/uiE2e/spawnSessionFromDaemon';
 import { waitForInitialAppUi } from '../../src/testkit/uiE2e/waitForInitialAppUi';
 import { appendBrowserDiagnostics, collectBrowserDiagnostics } from '../../src/testkit/uiE2e/browserDiagnostics';
+
+import { sessionListRowTestId } from '../../src/testkit/uiE2e/sessionListRowTestId';
+
+let rowServerId: string;
+const rowTestId = (sessionId: string) => sessionListRowTestId(rowServerId, sessionId);
 
 const run = createRunDirs({ runLabel: 'ui-e2e' });
 
@@ -84,6 +90,8 @@ test.describe('ui e2e: workspace Session splits', () => {
                 HAPPIER_E2E_PROVIDER_USE_SERVER_SOURCE_ENTRYPOINT: '1',
             },
         });
+
+        rowServerId = await resolveCanonicalServerIdForUi(server.baseUrl);
 
         ui = await startUiWeb({
             testDir: suiteDir,
@@ -183,7 +191,7 @@ test.describe('ui e2e: workspace Session splits', () => {
                 await expect(panes).toHaveCount(1);
 
                 // The row uses the workspace owner; there is no nested Session layout or rail.
-                await openSessionListRowMenuAndSelectItem({ page, sessionId: sessionTwoId,
+                await openSessionListRowMenuAndSelectItem({ page, serverId: rowServerId, sessionId: sessionTwoId,
                     itemId: direction === 'right' ? 'workspace.open.right' : 'workspace.open.below' });
                 await expect(panes).toHaveCount(2, { timeout: 120_000 });
                 await expect(sessionComposer(page, sessionTwoId)).toBeVisible({ timeout: 180_000 });
@@ -226,7 +234,7 @@ test.describe('ui e2e: workspace Session splits', () => {
                 await expect(firstSurface.getByTestId('session-bottompanel-surface-terminal')).toBeVisible();
 
                 // Center adds a kept workspace tab, preserving the previous Session and its draft.
-                await page.getByTestId(`session-list-item-${sessionThreeId}`).dragTo(sessionSurface(page, sessionTwoId));
+                await page.getByTestId(rowTestId(sessionThreeId)).dragTo(sessionSurface(page, sessionTwoId));
                 await expect(sessionComposer(page, sessionThreeId)).toBeVisible({ timeout: 180_000 });
                 await expect(panes).toHaveCount(2);
                 await expect(page.getByTestId(`workspace-tab-${secondTab}`)).toBeVisible();

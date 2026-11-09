@@ -30,6 +30,8 @@ describe('extended-db container ownership', () => {
         : args?.[0] === 'inspect' ? 'healthy' : args?.[0] === 'port' ? '127.0.0.1:54321' : '',
     }));
     await runExtendedDbDockerScript.main(['node', 'runner', '--db', 'postgres', '--mode', 'contract', '--name', 'c31-owned']);
+    const contract = vi.mocked(spawnSync).mock.calls.find(([, args]) => Array.isArray(args) && args.includes('test:db-contract'));
+    expect(contract?.[2]?.env).toMatchObject({ HAPPIER_DB_CONTRACT_CONTAINER_ID: id });
     const removals = vi.mocked(spawnSync).mock.calls.filter(([command, args]) => command === 'docker' && args?.[0] === 'rm');
     expect(removals.map(([, args]) => args)).toEqual([['rm', '-f', id]]);
   });

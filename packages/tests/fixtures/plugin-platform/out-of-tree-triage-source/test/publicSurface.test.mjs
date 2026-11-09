@@ -83,7 +83,6 @@ test('QB-01: every shipped fixture module imports only published entry points', 
         '@happier-dev/plugin-sdk/scm',
         '@happier-dev/triage-protocol/v1',
         '@happier-dev/triage-sources/ui',
-        '@happier-dev/triage-sources/translations',
     ]);
     const imported = [];
 
@@ -115,7 +114,6 @@ test('QB-01: every shipped fixture module imports only published entry points', 
             '@happier-dev/plugin-sdk/scm',
             '@happier-dev/triage-protocol/v1',
             '@happier-dev/triage-sources/ui',
-            '@happier-dev/triage-sources/translations',
         ],
     );
 });

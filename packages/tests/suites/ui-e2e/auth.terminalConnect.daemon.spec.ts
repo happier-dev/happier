@@ -1,3 +1,4 @@
+import { resolveCanonicalServerIdForUi } from '../../src/testkit/uiE2e/sessionFoldersDrag';
 import { test, expect, type Page } from '@playwright/test';
 import { mkdir } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
@@ -16,6 +17,11 @@ import {
   reloadCreatedSessionFromNewSessionComposer,
   type CreatedSessionFromNewSessionComposer,
 } from '../../src/testkit/uiE2e/createSessionFromNewSessionComposer';
+
+import { sessionListRowTestId } from '../../src/testkit/uiE2e/sessionListRowTestId';
+
+let rowServerId: string;
+const rowTestId = (sessionId: string) => sessionListRowTestId(rowServerId, sessionId);
 
 const run = createRunDirs({ runLabel: 'ui-e2e' });
 
@@ -193,6 +199,7 @@ test.describe('ui e2e: auth + terminal connect', () => {
           HAPPIER_PRESENCE_TIMEOUT_TICK_MS: '1000',
         },
       });
+      rowServerId = await resolveCanonicalServerIdForUi(server.baseUrl);
       ui = await startUiWeb({
         testDir: suiteDir,
         env: {
@@ -516,9 +523,9 @@ test.describe('ui e2e: auth + terminal connect', () => {
       await restoreAccountUsingSecretKey(page, uiBaseUrl, accountSecretKeyFormatted);
 
       await page.goto(`${uiBaseUrl}/`, { waitUntil: 'domcontentloaded' });
-      const sessionItemSelector = `[data-testid="session-list-item-${createdSessionId}"]:visible`;
-      await expect(page.locator(sessionItemSelector)).toHaveCount(1, { timeout: 120_000 });
-      await page.locator(sessionItemSelector).click();
+      const sessionItem = page.getByTestId(rowTestId(createdSessionId));
+      await expect(sessionItem).toHaveCount(1, { timeout: 120_000 });
+      await sessionItem.click();
       await expect(getVisibleSessionComposer(page)).toHaveCount(1, { timeout: 120_000 });
       await expect
         .poll(async () => {

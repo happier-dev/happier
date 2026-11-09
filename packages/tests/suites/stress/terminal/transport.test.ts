@@ -99,7 +99,6 @@ describe('stress: canonical terminal base64 framing', () => {
       config: {
         bufferMaxBytes: TERMINAL_STREAM_MAX_FRAMES,
         bufferMaxEvents: TERMINAL_STREAM_MAX_FRAMES + 10,
-        bufferRetentionMs: 10 * 60_000,
         urlParseBufferLimit: 32_768,
         maxWriteChunkBytes: TERMINAL_STREAM_MAX_FRAMES + 10,
         defaultCols: 80,

@@ -1,3 +1,4 @@
+import { createTestResourceInvocationContext } from '@happier-dev/plugin-sdk/testing';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
@@ -66,8 +67,8 @@ test('external fixture projects Action, settings, placement, and approval contra
   const { manifest } = await loadDogfoodPlugin();
   const inspect = manifest.contributes.actions.find(({ id }) => id === 'inspect');
   assert.deepEqual(inspect.surfaces, ['cli', 'agent', 'ui']);
-  assert.deepEqual(inspect.scopes, ['global']);
-  assert.deepEqual(inspect.placementBindings, ['commandPalette']);
+  assert.deepEqual(inspect.scopes, ['global', 'session']);
+  assert.deepEqual(inspect.placementBindings, ['commandPalette', 'composer.primary', 'composer.more']);
   assert.equal(inspect.dangerLevel, 'safe');
   assert.equal(inspect.execution.target, 'daemon');
   assert.equal(inspect.inputSchema.properties.message.type, 'string');
@@ -234,6 +235,7 @@ test('external Composer declaration projects every independent r1.0 family', asy
     id: 'issue-control',
     label: 'Issue',
     icon: 'error',
+    defaultPlacement: 'pinned',
     state: { resource: 'issue-control-state' },
     compactRenderer: { renderer: 'issue-surface' },
     overflow: {
@@ -542,7 +544,7 @@ test('external Composer runtime proves prepare retry, acceptance timing, fresh r
     const controlState = testkit.registration('resources', 'issue-control-state');
     assert.ok(controlState);
     assert.deepEqual(
-      JSON.parse(new TextDecoder().decode(await controlState.read({}))),
+      JSON.parse(new TextDecoder().decode(await controlState.read(createTestResourceInvocationContext({})))),
       { enabled: true, label: 'External issues' },
     );
     const references = testkit.registration('composerReferences', 'issues');

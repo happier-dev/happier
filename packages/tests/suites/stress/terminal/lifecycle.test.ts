@@ -79,7 +79,6 @@ function terminalConfig(
   return {
     bufferMaxBytes: 64 * 1024,
     bufferMaxEvents: 32,
-    bufferRetentionMs: 60_000,
     urlParseBufferLimit: 8 * 1024,
     maxWriteChunkBytes: 64 * 1024,
     defaultCols: 80,
@@ -224,7 +223,7 @@ describe('stress: terminal bounded byte-stream lifecycle', () => {
       platform: 'linux',
     });
 
-    const active = await manager.ensure({ terminalKey: 'active-terminal', cwd: '/tmp' });
+      const active = await manager.ensure({ terminalKey: 'active-terminal', cwd: '/tmp' });
     expect(active.ok).toBe(true);
     if (!active.ok) throw new Error('expected active terminal');
 
@@ -233,7 +232,7 @@ describe('stress: terminal bounded byte-stream lifecycle', () => {
     expect(manager.close({ terminalId: active.terminalId })).toEqual({ ok: true });
     expect(activePty.killCount).toBe(1);
 
-    const final = await manager.ensure({ terminalKey: 'dispose-terminal', cwd: '/tmp' });
+      const final = await manager.ensure({ terminalKey: 'dispose-terminal', cwd: '/tmp' });
     expect(final.ok).toBe(true);
     if (!final.ok) throw new Error('expected final terminal');
     const finalPty = provider.spawned[1]?.pty;

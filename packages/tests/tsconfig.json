@@ -14,6 +14,7 @@
     "paths": {
       "@/*": ["./../../apps/cli/src/*"],
       "@happier-tests/ui-machine-carrier": ["./../../apps/ui/sources/dev/testkit/machineCarrierHttpIntegrationTestkit.d.mts"],
+      "@happier-tests/ui-scm-refine-admission": ["./../../apps/ui/sources/dev/testkit/scmRefineAdmissionIntegrationTestkit.d.mts"],
       "@happier-tests/server-machine-carrier-grant": ["./../../apps/server/sources/app/api/testkit/machineCarrierGrantIntegrationTestkit.d.mts"],
       // This program reaches CLI source through `@/*`; resolve its public SDK imports
       // through the same current source owner as direct test imports.
@@ -48,6 +49,8 @@
     "suites/core-e2e/voice.agentTranscriptPersistence.e2e.test.ts",
     "suites/core-e2e/accountDirectory.homeEnrollment.composedCaller.slow.e2e.test.ts",
     "suites/core-e2e/accountDirectory.homeEnrollment.destinationBinding.slow.e2e.test.ts",
-    "suites/core-e2e/accountService.sameServiceHomeBridge.slow.e2e.test.ts"
+    "suites/core-e2e/accountService.sameServiceHomeBridge.slow.e2e.test.ts",
+    "suites/core-layer/guardApproval.resourceProposal.layer.test.ts",
+    "suites/core-layer/teamCredentialModelPicker.test.ts"
   ]
 }

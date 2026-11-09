@@ -946,47 +946,31 @@ test('vertical-a preserves the scaffold development entry while selecting its bu
     }],
   }]);
   assert.equal(configured.contributes.notificationChannels[0].settings, undefined);
-  assert.deepEqual(configured.contributes.tools, [{
-    id: 'roundtrip-tool',
+  assert.deepEqual(configured.contributes.actions[0].toolExposure, { agent: 'direct', mcp: 'direct', cli: 'direct' });
+  assert.deepEqual(configured.contributes.actions[0].tool, {
     name: 'vertical_a_roundtrip',
     title: 'Vertical A roundtrip tool',
     description: 'Invoke the packed Vertical A roundtrip action.',
-    safety: 'safe',
-    surfaces: ['agent', 'mcp', 'cli'],
-    inputSchema: {
-      type: 'object',
-      additionalProperties: true,
-    },
-    outputSchema: {
-      type: 'object',
-      additionalProperties: true,
-    },
-    inputHints: {
-      description: 'Input forwarded to the one declared roundtrip action.',
-      fields: [{
-        path: 'operation',
-        title: 'Operation',
-        widget: 'text',
-      }],
-    },
     examples: {
       mcp: { argsExample: '{"operation":"packed-tool-dispatch"}' },
     },
     promptSnippet: 'Use vertical_a_roundtrip for the packed Vertical A action.',
     promptGuidelines: ['Invoke the declared action through this presentation.'],
-    action: 'roundtrip',
-  }]);
-  assert.deepEqual(configured.contributes.commands, [{
-    id: 'roundtrip-shared-command',
-    title: 'Vertical A shared roundtrip',
+  });
+  assert.deepEqual(configured.contributes.actions[0].inputSchema, { type: 'object', additionalProperties: true });
+  assert.deepEqual(configured.contributes.actions[0].resultSchema, { type: 'object', additionalProperties: true });
+  assert.deepEqual(configured.contributes.actions[0].inputHints, {
+    description: 'Input forwarded to the one declared roundtrip action.',
+    fields: [{
+      path: 'operation',
+      title: 'Operation',
+      widget: 'text',
+    }],
+  });
+  assert.deepEqual(configured.contributes.actions[0].cli, {
     path: ['vertical-a', 'roundtrip'],
-    action: 'roundtrip',
-  }, {
-    id: 'roundtrip-command',
-    title: 'Vertical A roundtrip',
-    path: ['vertical-a', 'vertical-a'],
-    action: 'roundtrip',
-  }]);
+    aliases: [['vertical-a', 'vertical-a']],
+  });
   assert.equal(Object.hasOwn(configured.contributes, 'structuredMessages'), false);
   assert.deepEqual(configured.contributes.sessionHeaderActions, [{
     id: 'roundtrip-header',
@@ -1298,7 +1282,7 @@ test('packed external Command lifecycle evidence requires the exact command/acti
     ok: true,
     kind: 'plugin_command',
     data: {
-      commandId: 'acme.vertical-a/roundtrip-command',
+      commandId: 'acme.vertical-a/roundtrip',
       actionId: 'acme.vertical-a/roundtrip',
       result: {
         pluginId: 'acme.vertical-a',
@@ -1310,7 +1294,7 @@ test('packed external Command lifecycle evidence requires the exact command/acti
   assert.deepEqual(
     assertPackedExternalPluginCommandInvocation({
       envelope: invocation,
-      commandId: 'acme.vertical-a/roundtrip-command',
+      commandId: 'acme.vertical-a/roundtrip',
       actionId: 'acme.vertical-a/roundtrip',
       pluginId: 'acme.vertical-a',
       version: '2.0.0',
@@ -1318,7 +1302,7 @@ test('packed external Command lifecycle evidence requires the exact command/acti
       phase: 'replacement',
     }),
     {
-      commandId: 'acme.vertical-a/roundtrip-command',
+      commandId: 'acme.vertical-a/roundtrip',
       actionId: 'acme.vertical-a/roundtrip',
       version: '2.0.0',
     },
@@ -1329,7 +1313,7 @@ test('packed external Command lifecycle evidence requires the exact command/acti
         ...invocation,
         data: { ...invocation.data, commandId: 'acme.vertical-a/other-command' },
       },
-      commandId: 'acme.vertical-a/roundtrip-command',
+      commandId: 'acme.vertical-a/roundtrip',
       actionId: 'acme.vertical-a/roundtrip',
       pluginId: 'acme.vertical-a',
       version: '2.0.0',

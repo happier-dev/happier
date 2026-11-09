@@ -74,6 +74,72 @@
                       "v": {
                         "const": 1
                       },
+                      "localInstanceKey": {
+                        "type": "string",
+                        "minLength": 1,
+                        "pattern": "^[^\\u0000-\\u001f\\u007f]+(?:\\u001f[^\\u0000-\\u001f\\u007f]+)?$",
+                        "x-happier-max-utf8-bytes": 128
+                      },
+                      "keyStability": {
+                        "anyOf": [
+                          {
+                            "const": "stable"
+                          },
+                          {
+                            "const": "locatorDerived"
+                          }
+                        ]
+                      },
+                      "configuration": {
+                        "type": "object",
+                        "properties": {
+                          "v": {
+                            "const": 1
+                          },
+                          "token": {
+                            "type": "string",
+                            "minLength": 1,
+                            "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                            "x-happier-max-utf8-bytes": 7336
+                          }
+                        },
+                        "required": [
+                          "v",
+                          "token"
+                        ],
+                        "additionalProperties": false
+                      },
+                      "locator": {
+                        "type": "object",
+                        "properties": {
+                          "v": {
+                            "const": 1
+                          },
+                          "displayLabel": {
+                            "type": "string",
+                            "minLength": 1,
+                            "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                            "x-happier-max-utf8-bytes": 7336
+                          },
+                          "displayPath": {
+                            "type": "string",
+                            "minLength": 1,
+                            "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                            "x-happier-max-utf8-bytes": 7336
+                          },
+                          "webUrl": {
+                            "type": "string",
+                            "minLength": 1,
+                            "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                            "x-happier-max-utf8-bytes": 7336
+                          }
+                        },
+                        "required": [
+                          "v",
+                          "displayLabel"
+                        ],
+                        "additionalProperties": false
+                      },
                       "binding": {
                         "anyOf": [
                           {
@@ -212,81 +278,15 @@
                             "additionalProperties": false
                           }
                         ]
-                      },
-                      "localInstanceKey": {
-                        "type": "string",
-                        "minLength": 1,
-                        "pattern": "^[^\\u0000-\\u001f\\u007f]+(?:\\u001f[^\\u0000-\\u001f\\u007f]+)?$",
-                        "x-happier-max-utf8-bytes": 128
-                      },
-                      "keyStability": {
-                        "anyOf": [
-                          {
-                            "const": "stable"
-                          },
-                          {
-                            "const": "locatorDerived"
-                          }
-                        ]
-                      },
-                      "configuration": {
-                        "type": "object",
-                        "properties": {
-                          "v": {
-                            "const": 1
-                          },
-                          "token": {
-                            "type": "string",
-                            "minLength": 1,
-                            "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
-                            "x-happier-max-utf8-bytes": 1024
-                          }
-                        },
-                        "required": [
-                          "v",
-                          "token"
-                        ],
-                        "additionalProperties": false
-                      },
-                      "locator": {
-                        "type": "object",
-                        "properties": {
-                          "v": {
-                            "const": 1
-                          },
-                          "displayLabel": {
-                            "type": "string",
-                            "minLength": 1,
-                            "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
-                            "x-happier-max-utf8-bytes": 512
-                          },
-                          "displayPath": {
-                            "type": "string",
-                            "minLength": 1,
-                            "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
-                            "x-happier-max-utf8-bytes": 512
-                          },
-                          "webUrl": {
-                            "type": "string",
-                            "minLength": 1,
-                            "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
-                            "x-happier-max-utf8-bytes": 384
-                          }
-                        },
-                        "required": [
-                          "v",
-                          "displayLabel"
-                        ],
-                        "additionalProperties": false
                       }
                     },
                     "required": [
                       "v",
-                      "binding",
                       "localInstanceKey",
                       "keyStability",
                       "configuration",
-                      "locator"
+                      "locator",
+                      "binding"
                     ],
                     "additionalProperties": false
                   }
@@ -476,7 +476,13 @@
                             "type": "string",
                             "minLength": 1,
                             "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
-                            "x-happier-max-utf8-bytes": 256
+                            "x-happier-max-utf8-bytes": 7187
+                          },
+                          "requiredPermissions": {
+                            "type": "string",
+                            "minLength": 1,
+                            "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                            "x-happier-max-utf8-bytes": 7187
                           },
                           "retryNotBeforeMs": {
                             "type": "integer",
@@ -520,6 +526,72 @@
                       "v": {
                         "const": 1
                       },
+                      "localInstanceKey": {
+                        "type": "string",
+                        "minLength": 1,
+                        "pattern": "^[^\\u0000-\\u001f\\u007f]+(?:\\u001f[^\\u0000-\\u001f\\u007f]+)?$",
+                        "x-happier-max-utf8-bytes": 128
+                      },
+                      "keyStability": {
+                        "anyOf": [
+                          {
+                            "const": "stable"
+                          },
+                          {
+                            "const": "locatorDerived"
+                          }
+                        ]
+                      },
+                      "configuration": {
+                        "type": "object",
+                        "properties": {
+                          "v": {
+                            "const": 1
+                          },
+                          "token": {
+                            "type": "string",
+                            "minLength": 1,
+                            "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                            "x-happier-max-utf8-bytes": 7336
+                          }
+                        },
+                        "required": [
+                          "v",
+                          "token"
+                        ],
+                        "additionalProperties": false
+                      },
+                      "locator": {
+                        "type": "object",
+                        "properties": {
+                          "v": {
+                            "const": 1
+                          },
+                          "displayLabel": {
+                            "type": "string",
+                            "minLength": 1,
+                            "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                            "x-happier-max-utf8-bytes": 7336
+                          },
+                          "displayPath": {
+                            "type": "string",
+                            "minLength": 1,
+                            "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                            "x-happier-max-utf8-bytes": 7336
+                          },
+                          "webUrl": {
+                            "type": "string",
+                            "minLength": 1,
+                            "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                            "x-happier-max-utf8-bytes": 7336
+                          }
+                        },
+                        "required": [
+                          "v",
+                          "displayLabel"
+                        ],
+                        "additionalProperties": false
+                      },
                       "binding": {
                         "anyOf": [
                           {
@@ -658,81 +730,15 @@
                             "additionalProperties": false
                           }
                         ]
-                      },
-                      "localInstanceKey": {
-                        "type": "string",
-                        "minLength": 1,
-                        "pattern": "^[^\\u0000-\\u001f\\u007f]+(?:\\u001f[^\\u0000-\\u001f\\u007f]+)?$",
-                        "x-happier-max-utf8-bytes": 128
-                      },
-                      "keyStability": {
-                        "anyOf": [
-                          {
-                            "const": "stable"
-                          },
-                          {
-                            "const": "locatorDerived"
-                          }
-                        ]
-                      },
-                      "configuration": {
-                        "type": "object",
-                        "properties": {
-                          "v": {
-                            "const": 1
-                          },
-                          "token": {
-                            "type": "string",
-                            "minLength": 1,
-                            "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
-                            "x-happier-max-utf8-bytes": 1024
-                          }
-                        },
-                        "required": [
-                          "v",
-                          "token"
-                        ],
-                        "additionalProperties": false
-                      },
-                      "locator": {
-                        "type": "object",
-                        "properties": {
-                          "v": {
-                            "const": 1
-                          },
-                          "displayLabel": {
-                            "type": "string",
-                            "minLength": 1,
-                            "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
-                            "x-happier-max-utf8-bytes": 512
-                          },
-                          "displayPath": {
-                            "type": "string",
-                            "minLength": 1,
-                            "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
-                            "x-happier-max-utf8-bytes": 512
-                          },
-                          "webUrl": {
-                            "type": "string",
-                            "minLength": 1,
-                            "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
-                            "x-happier-max-utf8-bytes": 384
-                          }
-                        },
-                        "required": [
-                          "v",
-                          "displayLabel"
-                        ],
-                        "additionalProperties": false
                       }
                     },
                     "required": [
                       "v",
-                      "binding",
                       "localInstanceKey",
                       "keyStability",
                       "configuration",
-                      "locator"
+                      "locator",
+                      "binding"
                     ],
                     "additionalProperties": false
                   }
@@ -922,7 +928,13 @@
                             "type": "string",
                             "minLength": 1,
                             "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
-                            "x-happier-max-utf8-bytes": 256
+                            "x-happier-max-utf8-bytes": 7187
+                          },
+                          "requiredPermissions": {
+                            "type": "string",
+                            "minLength": 1,
+                            "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                            "x-happier-max-utf8-bytes": 7187
                           },
                           "retryNotBeforeMs": {
                             "type": "integer",
@@ -979,7 +991,13 @@
                       "type": "string",
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
-                      "x-happier-max-utf8-bytes": 256
+                      "x-happier-max-utf8-bytes": 7187
+                    },
+                    "requiredPermissions": {
+                      "type": "string",
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "x-happier-max-utf8-bytes": 7187
                     },
                     "retryNotBeforeMs": {
                       "type": "integer",
@@ -1042,7 +1060,13 @@
                       "type": "string",
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
-                      "x-happier-max-utf8-bytes": 256
+                      "x-happier-max-utf8-bytes": 7187
+                    },
+                    "requiredPermissions": {
+                      "type": "string",
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "x-happier-max-utf8-bytes": 7187
                     },
                     "retryNotBeforeMs": {
                       "type": "integer",
@@ -1164,7 +1188,7 @@
                           "type": "string",
                           "minLength": 1,
                           "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
-                          "x-happier-max-utf8-bytes": 1024
+                          "x-happier-max-utf8-bytes": 7336
                         }
                       },
                       "required": [
@@ -1183,19 +1207,19 @@
                           "type": "string",
                           "minLength": 1,
                           "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
-                          "x-happier-max-utf8-bytes": 512
+                          "x-happier-max-utf8-bytes": 7336
                         },
                         "displayPath": {
                           "type": "string",
                           "minLength": 1,
                           "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
-                          "x-happier-max-utf8-bytes": 512
+                          "x-happier-max-utf8-bytes": 7336
                         },
                         "webUrl": {
                           "type": "string",
                           "minLength": 1,
                           "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
-                          "x-happier-max-utf8-bytes": 384
+                          "x-happier-max-utf8-bytes": 7336
                         }
                       },
                       "required": [
@@ -1287,6 +1311,34 @@
                     "binding"
                   ],
                   "additionalProperties": false
+                },
+                "completed": {
+                  "type": "object",
+                  "properties": {
+                    "kindIds": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "minLength": 1,
+                        "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                        "x-happier-max-utf8-bytes": 128
+                      },
+                      "minItems": 1
+                    },
+                    "sinceMs": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 8640000000000000
+                    }
+                  },
+                  "required": [
+                    "kindIds",
+                    "sinceMs"
+                  ],
+                  "additionalProperties": false
+                },
+                "query": {
+                  "type": "string"
                 },
                 "page": {
                   "type": "object",
@@ -1380,7 +1432,7 @@
                           "type": "string",
                           "minLength": 1,
                           "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
-                          "x-happier-max-utf8-bytes": 1024
+                          "x-happier-max-utf8-bytes": 7336
                         }
                       },
                       "required": [
@@ -1399,19 +1451,19 @@
                           "type": "string",
                           "minLength": 1,
                           "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
-                          "x-happier-max-utf8-bytes": 512
+                          "x-happier-max-utf8-bytes": 7336
                         },
                         "displayPath": {
                           "type": "string",
                           "minLength": 1,
                           "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
-                          "x-happier-max-utf8-bytes": 512
+                          "x-happier-max-utf8-bytes": 7336
                         },
                         "webUrl": {
                           "type": "string",
                           "minLength": 1,
                           "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
-                          "x-happier-max-utf8-bytes": 384
+                          "x-happier-max-utf8-bytes": 7336
                         }
                       },
                       "required": [
@@ -1504,6 +1556,34 @@
                   ],
                   "additionalProperties": false
                 },
+                "completed": {
+                  "type": "object",
+                  "properties": {
+                    "kindIds": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "minLength": 1,
+                        "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                        "x-happier-max-utf8-bytes": 128
+                      },
+                      "minItems": 1
+                    },
+                    "sinceMs": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 8640000000000000
+                    }
+                  },
+                  "required": [
+                    "kindIds",
+                    "sinceMs"
+                  ],
+                  "additionalProperties": false
+                },
+                "query": {
+                  "type": "string"
+                },
                 "page": {
                   "type": "object",
                   "properties": {
@@ -1520,7 +1600,7 @@
                           "type": "string",
                           "minLength": 1,
                           "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
-                          "x-happier-max-utf8-bytes": 40322
+                          "x-happier-max-utf8-bytes": 7187
                         }
                       },
                       "required": [
@@ -1604,19 +1684,19 @@
                                 "type": "string",
                                 "minLength": 1,
                                 "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
-                                "x-happier-max-utf8-bytes": 384
+                                "x-happier-max-utf8-bytes": 7187
                               },
                               "displayPath": {
                                 "type": "string",
                                 "minLength": 1,
                                 "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
-                                "x-happier-max-utf8-bytes": 512
+                                "x-happier-max-utf8-bytes": 7187
                               },
                               "routingToken": {
                                 "type": "string",
                                 "minLength": 1,
                                 "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
-                                "x-happier-max-utf8-bytes": 192
+                                "x-happier-max-utf8-bytes": 7187
                               }
                             },
                             "required": [
@@ -1634,39 +1714,97 @@
                                 "type": "string",
                                 "minLength": 1,
                                 "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
-                                "x-happier-max-utf8-bytes": 512
+                                "x-happier-max-utf8-bytes": 7187
                               },
                               "summary": {
                                 "type": "string",
                                 "minLength": 1,
                                 "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
-                                "x-happier-max-utf8-bytes": 512
+                                "x-happier-max-utf8-bytes": 7187
                               },
                               "scopeLabel": {
                                 "type": "string",
                                 "minLength": 1,
                                 "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
-                                "x-happier-max-utf8-bytes": 512
+                                "x-happier-max-utf8-bytes": 7187
                               },
                               "scopeDisplayName": {
                                 "type": "string",
                                 "minLength": 1,
                                 "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
-                                "x-happier-max-utf8-bytes": 512
+                                "x-happier-max-utf8-bytes": 7187
+                              },
+                              "scopeUnitId": {
+                                "type": "string",
+                                "minLength": 1,
+                                "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                "x-happier-max-utf8-bytes": 7336
                               },
                               "authorLabel": {
                                 "type": "string",
                                 "minLength": 1,
                                 "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
-                                "x-happier-max-utf8-bytes": 512
+                                "x-happier-max-utf8-bytes": 7187
+                              },
+                              "assigneeLabel": {
+                                "anyOf": [
+                                  {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                    "x-happier-max-utf8-bytes": 7187
+                                  },
+                                  {
+                                    "const": null
+                                  }
+                                ]
+                              },
+                              "labels": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string"
+                                }
+                              },
+                              "labelColors": {
+                                "type": "array",
+                                "items": {
+                                  "type": "object",
+                                  "properties": {
+                                    "name": {
+                                      "type": "string"
+                                    },
+                                    "colorToken": {
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                      "x-happier-max-utf8-bytes": 128
+                                    }
+                                  },
+                                  "required": [
+                                    "name",
+                                    "colorToken"
+                                  ],
+                                  "additionalProperties": false
+                                }
                               },
                               "designation": {
                                 "type": "string",
                                 "minLength": 1,
                                 "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
-                                "x-happier-max-utf8-bytes": 512
+                                "x-happier-max-utf8-bytes": 7187
                               },
                               "createdAtMs": {
+                                "type": "integer",
+                                "minimum": -9007199254740991,
+                                "maximum": 9007199254740991
+                              },
+                              "dueDate": {
+                                "type": "string",
+                                "minLength": 1,
+                                "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                "x-happier-max-utf8-bytes": 7187
+                              },
+                              "completedAtMs": {
                                 "type": "integer",
                                 "minimum": -9007199254740991,
                                 "maximum": 9007199254740991
@@ -1697,7 +1835,7 @@
                                     "type": "string",
                                     "minLength": 1,
                                     "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
-                                    "x-happier-max-utf8-bytes": 512
+                                    "x-happier-max-utf8-bytes": 7187
                                   },
                                   "stage": {
                                     "anyOf": [
@@ -1921,6 +2059,9 @@
                               "taskCapabilities": {
                                 "type": "object",
                                 "properties": {
+                                  "completedScan": {
+                                    "const": true
+                                  },
                                   "createFields": {
                                     "type": "array",
                                     "items": {
@@ -1961,6 +2102,92 @@
                                       ]
                                     },
                                     "uniqueItems": true
+                                  },
+                                  "initialStatuses": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "object",
+                                      "properties": {
+                                        "id": {
+                                          "type": "string",
+                                          "minLength": 1,
+                                          "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                          "x-happier-max-utf8-bytes": 128
+                                        },
+                                        "label": {
+                                          "type": "string",
+                                          "minLength": 1,
+                                          "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                          "x-happier-max-utf8-bytes": 7187
+                                        },
+                                        "state": {
+                                          "type": "object",
+                                          "properties": {
+                                            "presentation": {
+                                              "anyOf": [
+                                                {
+                                                  "const": "active"
+                                                },
+                                                {
+                                                  "const": "resolved"
+                                                },
+                                                {
+                                                  "const": "closed"
+                                                },
+                                                {
+                                                  "const": "suppressed"
+                                                },
+                                                {
+                                                  "const": "unknown"
+                                                }
+                                              ]
+                                            },
+                                            "nativeLabel": {
+                                              "type": "string",
+                                              "minLength": 1,
+                                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                              "x-happier-max-utf8-bytes": 7187
+                                            },
+                                            "stage": {
+                                              "anyOf": [
+                                                {
+                                                  "const": "backlog"
+                                                },
+                                                {
+                                                  "const": "unstarted"
+                                                },
+                                                {
+                                                  "const": "started"
+                                                }
+                                              ]
+                                            },
+                                            "completionReason": {
+                                              "anyOf": [
+                                                {
+                                                  "const": "completed"
+                                                },
+                                                {
+                                                  "const": "canceled"
+                                                }
+                                              ]
+                                            }
+                                          },
+                                          "required": [
+                                            "presentation"
+                                          ],
+                                          "additionalProperties": false
+                                        },
+                                        "isDefault": {
+                                          "const": true
+                                        }
+                                      },
+                                      "required": [
+                                        "id",
+                                        "label",
+                                        "state"
+                                      ],
+                                      "additionalProperties": false
+                                    }
                                   },
                                   "editFields": {
                                     "type": "array",
@@ -2018,7 +2245,7 @@
                                           "type": "string",
                                           "minLength": 1,
                                           "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
-                                          "x-happier-max-utf8-bytes": 512
+                                          "x-happier-max-utf8-bytes": 7187
                                         },
                                         "state": {
                                           "type": "object",
@@ -2046,7 +2273,7 @@
                                               "type": "string",
                                               "minLength": 1,
                                               "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
-                                              "x-happier-max-utf8-bytes": 512
+                                              "x-happier-max-utf8-bytes": 7187
                                             },
                                             "stage": {
                                               "anyOf": [
@@ -2076,6 +2303,195 @@
                                             "presentation"
                                           ],
                                           "additionalProperties": false
+                                        },
+                                        "requiredFields": {
+                                          "type": "array",
+                                          "items": {
+                                            "anyOf": [
+                                              {
+                                                "type": "object",
+                                                "properties": {
+                                                  "id": {
+                                                    "type": "string",
+                                                    "minLength": 1,
+                                                    "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                                    "x-happier-max-utf8-bytes": 128
+                                                  },
+                                                  "label": {
+                                                    "type": "string",
+                                                    "minLength": 1,
+                                                    "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                                    "x-happier-max-utf8-bytes": 7187
+                                                  },
+                                                  "kind": {
+                                                    "const": "text"
+                                                  }
+                                                },
+                                                "required": [
+                                                  "id",
+                                                  "label",
+                                                  "kind"
+                                                ],
+                                                "additionalProperties": false
+                                              },
+                                              {
+                                                "type": "object",
+                                                "properties": {
+                                                  "id": {
+                                                    "type": "string",
+                                                    "minLength": 1,
+                                                    "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                                    "x-happier-max-utf8-bytes": 128
+                                                  },
+                                                  "label": {
+                                                    "type": "string",
+                                                    "minLength": 1,
+                                                    "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                                    "x-happier-max-utf8-bytes": 7187
+                                                  },
+                                                  "kind": {
+                                                    "const": "number"
+                                                  }
+                                                },
+                                                "required": [
+                                                  "id",
+                                                  "label",
+                                                  "kind"
+                                                ],
+                                                "additionalProperties": false
+                                              },
+                                              {
+                                                "type": "object",
+                                                "properties": {
+                                                  "id": {
+                                                    "type": "string",
+                                                    "minLength": 1,
+                                                    "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                                    "x-happier-max-utf8-bytes": 128
+                                                  },
+                                                  "label": {
+                                                    "type": "string",
+                                                    "minLength": 1,
+                                                    "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                                    "x-happier-max-utf8-bytes": 7187
+                                                  },
+                                                  "kind": {
+                                                    "const": "choice"
+                                                  },
+                                                  "options": {
+                                                    "type": "array",
+                                                    "items": {
+                                                      "type": "object",
+                                                      "properties": {
+                                                        "id": {
+                                                          "type": "string",
+                                                          "minLength": 1,
+                                                          "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                                          "x-happier-max-utf8-bytes": 128
+                                                        },
+                                                        "label": {
+                                                          "type": "string",
+                                                          "minLength": 1,
+                                                          "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                                          "x-happier-max-utf8-bytes": 7187
+                                                        }
+                                                      },
+                                                      "required": [
+                                                        "id",
+                                                        "label"
+                                                      ],
+                                                      "additionalProperties": false
+                                                    }
+                                                  }
+                                                },
+                                                "required": [
+                                                  "id",
+                                                  "label",
+                                                  "kind",
+                                                  "options"
+                                                ],
+                                                "additionalProperties": false
+                                              },
+                                              {
+                                                "type": "object",
+                                                "properties": {
+                                                  "id": {
+                                                    "type": "string",
+                                                    "minLength": 1,
+                                                    "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                                    "x-happier-max-utf8-bytes": 128
+                                                  },
+                                                  "label": {
+                                                    "type": "string",
+                                                    "minLength": 1,
+                                                    "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                                    "x-happier-max-utf8-bytes": 7187
+                                                  },
+                                                  "kind": {
+                                                    "const": "choices"
+                                                  },
+                                                  "options": {
+                                                    "type": "array",
+                                                    "items": {
+                                                      "type": "object",
+                                                      "properties": {
+                                                        "id": {
+                                                          "type": "string",
+                                                          "minLength": 1,
+                                                          "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                                          "x-happier-max-utf8-bytes": 128
+                                                        },
+                                                        "label": {
+                                                          "type": "string",
+                                                          "minLength": 1,
+                                                          "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                                          "x-happier-max-utf8-bytes": 7187
+                                                        }
+                                                      },
+                                                      "required": [
+                                                        "id",
+                                                        "label"
+                                                      ],
+                                                      "additionalProperties": false
+                                                    }
+                                                  }
+                                                },
+                                                "required": [
+                                                  "id",
+                                                  "label",
+                                                  "kind",
+                                                  "options"
+                                                ],
+                                                "additionalProperties": false
+                                              },
+                                              {
+                                                "type": "object",
+                                                "properties": {
+                                                  "id": {
+                                                    "type": "string",
+                                                    "minLength": 1,
+                                                    "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                                    "x-happier-max-utf8-bytes": 128
+                                                  },
+                                                  "label": {
+                                                    "type": "string",
+                                                    "minLength": 1,
+                                                    "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                                    "x-happier-max-utf8-bytes": 7187
+                                                  },
+                                                  "kind": {
+                                                    "const": "unsupported"
+                                                  }
+                                                },
+                                                "required": [
+                                                  "id",
+                                                  "label",
+                                                  "kind"
+                                                ],
+                                                "additionalProperties": false
+                                              }
+                                            ]
+                                          }
                                         }
                                       },
                                       "required": [
@@ -2085,6 +2501,12 @@
                                       ],
                                       "additionalProperties": false
                                     }
+                                  },
+                                  "completingTransitionId": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                    "x-happier-max-utf8-bytes": 128
                                   }
                                 },
                                 "additionalProperties": false
@@ -2098,13 +2520,13 @@
                                       "type": "string",
                                       "minLength": 1,
                                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
-                                      "x-happier-max-utf8-bytes": 64
+                                      "x-happier-max-utf8-bytes": 7187
                                     },
                                     "label": {
                                       "type": "string",
                                       "minLength": 1,
                                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
-                                      "x-happier-max-utf8-bytes": 64
+                                      "x-happier-max-utf8-bytes": 7187
                                     },
                                     "importance": {
                                       "anyOf": [
@@ -2131,7 +2553,7 @@
                                               "type": "string",
                                               "minLength": 1,
                                               "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
-                                              "x-happier-max-utf8-bytes": 64
+                                              "x-happier-max-utf8-bytes": 7187
                                             }
                                           },
                                           "required": [
@@ -2150,7 +2572,7 @@
                                               "type": "string",
                                               "minLength": 1,
                                               "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
-                                              "x-happier-max-utf8-bytes": 64
+                                              "x-happier-max-utf8-bytes": 7187
                                             }
                                           },
                                           "required": [
@@ -2228,7 +2650,7 @@
                                               "type": "string",
                                               "minLength": 1,
                                               "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
-                                              "x-happier-max-utf8-bytes": 64
+                                              "x-happier-max-utf8-bytes": 7187
                                             },
                                             "tone": {
                                               "anyOf": [
@@ -2278,8 +2700,7 @@
                                     "value"
                                   ],
                                   "additionalProperties": false
-                                },
-                                "maxItems": 4
+                                }
                               },
                               "reviewRevision": {
                                 "type": "object",
@@ -2390,7 +2811,7 @@
                                         "type": "string",
                                         "minLength": 1,
                                         "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
-                                        "x-happier-max-utf8-bytes": 512
+                                        "x-happier-max-utf8-bytes": 7187
                                       }
                                     },
                                     "required": [
@@ -2616,7 +3037,13 @@
                                 "type": "string",
                                 "minLength": 1,
                                 "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
-                                "x-happier-max-utf8-bytes": 256
+                                "x-happier-max-utf8-bytes": 7187
+                              },
+                              "requiredPermissions": {
+                                "type": "string",
+                                "minLength": 1,
+                                "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                "x-happier-max-utf8-bytes": 7187
                               },
                               "retryNotBeforeMs": {
                                 "type": "integer",
@@ -2671,6 +3098,61 @@
                           "type": "integer",
                           "minimum": 0,
                           "maximum": 9007199254740991
+                        },
+                        "failure": {
+                          "type": "object",
+                          "properties": {
+                            "class": {
+                              "anyOf": [
+                                {
+                                  "const": "authentication"
+                                },
+                                {
+                                  "const": "permission"
+                                },
+                                {
+                                  "const": "rateLimit"
+                                },
+                                {
+                                  "const": "transient"
+                                },
+                                {
+                                  "const": "unsupportedContract"
+                                },
+                                {
+                                  "const": "unknown"
+                                }
+                              ]
+                            },
+                            "code": {
+                              "type": "string",
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "x-happier-max-utf8-bytes": 128
+                            },
+                            "detail": {
+                              "type": "string",
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "x-happier-max-utf8-bytes": 7187
+                            },
+                            "requiredPermissions": {
+                              "type": "string",
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "x-happier-max-utf8-bytes": 7187
+                            },
+                            "retryNotBeforeMs": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            }
+                          },
+                          "required": [
+                            "class",
+                            "code"
+                          ],
+                          "additionalProperties": false
                         }
                       },
                       "required": [
@@ -2710,7 +3192,7 @@
                       "type": "string",
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
-                      "x-happier-max-utf8-bytes": 40322
+                      "x-happier-max-utf8-bytes": 7187
                     }
                   },
                   "required": [
@@ -2783,19 +3265,19 @@
                                 "type": "string",
                                 "minLength": 1,
                                 "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
-                                "x-happier-max-utf8-bytes": 384
+                                "x-happier-max-utf8-bytes": 7187
                               },
                               "displayPath": {
                                 "type": "string",
                                 "minLength": 1,
                                 "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
-                                "x-happier-max-utf8-bytes": 512
+                                "x-happier-max-utf8-bytes": 7187
                               },
                               "routingToken": {
                                 "type": "string",
                                 "minLength": 1,
                                 "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
-                                "x-happier-max-utf8-bytes": 192
+                                "x-happier-max-utf8-bytes": 7187
                               }
                             },
                             "required": [
@@ -2813,39 +3295,97 @@
                                 "type": "string",
                                 "minLength": 1,
                                 "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
-                                "x-happier-max-utf8-bytes": 512
+                                "x-happier-max-utf8-bytes": 7187
                               },
                               "summary": {
                                 "type": "string",
                                 "minLength": 1,
                                 "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
-                                "x-happier-max-utf8-bytes": 512
+                                "x-happier-max-utf8-bytes": 7187
                               },
                               "scopeLabel": {
                                 "type": "string",
                                 "minLength": 1,
                                 "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
-                                "x-happier-max-utf8-bytes": 512
+                                "x-happier-max-utf8-bytes": 7187
                               },
                               "scopeDisplayName": {
                                 "type": "string",
                                 "minLength": 1,
                                 "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
-                                "x-happier-max-utf8-bytes": 512
+                                "x-happier-max-utf8-bytes": 7187
+                              },
+                              "scopeUnitId": {
+                                "type": "string",
+                                "minLength": 1,
+                                "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                "x-happier-max-utf8-bytes": 7336
                               },
                               "authorLabel": {
                                 "type": "string",
                                 "minLength": 1,
                                 "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
-                                "x-happier-max-utf8-bytes": 512
+                                "x-happier-max-utf8-bytes": 7187
+                              },
+                              "assigneeLabel": {
+                                "anyOf": [
+                                  {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                    "x-happier-max-utf8-bytes": 7187
+                                  },
+                                  {
+                                    "const": null
+                                  }
+                                ]
+                              },
+                              "labels": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string"
+                                }
+                              },
+                              "labelColors": {
+                                "type": "array",
+                                "items": {
+                                  "type": "object",
+                                  "properties": {
+                                    "name": {
+                                      "type": "string"
+                                    },
+                                    "colorToken": {
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                      "x-happier-max-utf8-bytes": 128
+                                    }
+                                  },
+                                  "required": [
+                                    "name",
+                                    "colorToken"
+                                  ],
+                                  "additionalProperties": false
+                                }
                               },
                               "designation": {
                                 "type": "string",
                                 "minLength": 1,
                                 "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
-                                "x-happier-max-utf8-bytes": 512
+                                "x-happier-max-utf8-bytes": 7187
                               },
                               "createdAtMs": {
+                                "type": "integer",
+                                "minimum": -9007199254740991,
+                                "maximum": 9007199254740991
+                              },
+                              "dueDate": {
+                                "type": "string",
+                                "minLength": 1,
+                                "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                "x-happier-max-utf8-bytes": 7187
+                              },
+                              "completedAtMs": {
                                 "type": "integer",
                                 "minimum": -9007199254740991,
                                 "maximum": 9007199254740991
@@ -2876,7 +3416,7 @@
                                     "type": "string",
                                     "minLength": 1,
                                     "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
-                                    "x-happier-max-utf8-bytes": 512
+                                    "x-happier-max-utf8-bytes": 7187
                                   },
                                   "stage": {
                                     "anyOf": [
@@ -3100,6 +3640,9 @@
                               "taskCapabilities": {
                                 "type": "object",
                                 "properties": {
+                                  "completedScan": {
+                                    "const": true
+                                  },
                                   "createFields": {
                                     "type": "array",
                                     "items": {
@@ -3140,6 +3683,92 @@
                                       ]
                                     },
                                     "uniqueItems": true
+                                  },
+                                  "initialStatuses": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "object",
+                                      "properties": {
+                                        "id": {
+                                          "type": "string",
+                                          "minLength": 1,
+                                          "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                          "x-happier-max-utf8-bytes": 128
+                                        },
+                                        "label": {
+                                          "type": "string",
+                                          "minLength": 1,
+                                          "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                          "x-happier-max-utf8-bytes": 7187
+                                        },
+                                        "state": {
+                                          "type": "object",
+                                          "properties": {
+                                            "presentation": {
+                                              "anyOf": [
+                                                {
+                                                  "const": "active"
+                                                },
+                                                {
+                                                  "const": "resolved"
+                                                },
+                                                {
+                                                  "const": "closed"
+                                                },
+                                                {
+                                                  "const": "suppressed"
+                                                },
+                                                {
+                                                  "const": "unknown"
+                                                }
+                                              ]
+                                            },
+                                            "nativeLabel": {
+                                              "type": "string",
+                                              "minLength": 1,
+                                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                              "x-happier-max-utf8-bytes": 7187
+                                            },
+                                            "stage": {
+                                              "anyOf": [
+                                                {
+                                                  "const": "backlog"
+                                                },
+                                                {
+                                                  "const": "unstarted"
+                                                },
+                                                {
+                                                  "const": "started"
+                                                }
+                                              ]
+                                            },
+                                            "completionReason": {
+                                              "anyOf": [
+                                                {
+                                                  "const": "completed"
+                                                },
+                                                {
+                                                  "const": "canceled"
+                                                }
+                                              ]
+                                            }
+                                          },
+                                          "required": [
+                                            "presentation"
+                                          ],
+                                          "additionalProperties": false
+                                        },
+                                        "isDefault": {
+                                          "const": true
+                                        }
+                                      },
+                                      "required": [
+                                        "id",
+                                        "label",
+                                        "state"
+                                      ],
+                                      "additionalProperties": false
+                                    }
                                   },
                                   "editFields": {
                                     "type": "array",
@@ -3197,7 +3826,7 @@
                                           "type": "string",
                                           "minLength": 1,
                                           "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
-                                          "x-happier-max-utf8-bytes": 512
+                                          "x-happier-max-utf8-bytes": 7187
                                         },
                                         "state": {
                                           "type": "object",
@@ -3225,7 +3854,7 @@
                                               "type": "string",
                                               "minLength": 1,
                                               "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
-                                              "x-happier-max-utf8-bytes": 512
+                                              "x-happier-max-utf8-bytes": 7187
                                             },
                                             "stage": {
                                               "anyOf": [
@@ -3255,6 +3884,195 @@
                                             "presentation"
                                           ],
                                           "additionalProperties": false
+                                        },
+                                        "requiredFields": {
+                                          "type": "array",
+                                          "items": {
+                                            "anyOf": [
+                                              {
+                                                "type": "object",
+                                                "properties": {
+                                                  "id": {
+                                                    "type": "string",
+                                                    "minLength": 1,
+                                                    "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                                    "x-happier-max-utf8-bytes": 128
+                                                  },
+                                                  "label": {
+                                                    "type": "string",
+                                                    "minLength": 1,
+                                                    "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                                    "x-happier-max-utf8-bytes": 7187
+                                                  },
+                                                  "kind": {
+                                                    "const": "text"
+                                                  }
+                                                },
+                                                "required": [
+                                                  "id",
+                                                  "label",
+                                                  "kind"
+                                                ],
+                                                "additionalProperties": false
+                                              },
+                                              {
+                                                "type": "object",
+                                                "properties": {
+                                                  "id": {
+                                                    "type": "string",
+                                                    "minLength": 1,
+                                                    "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                                    "x-happier-max-utf8-bytes": 128
+                                                  },
+                                                  "label": {
+                                                    "type": "string",
+                                                    "minLength": 1,
+                                                    "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                                    "x-happier-max-utf8-bytes": 7187
+                                                  },
+                                                  "kind": {
+                                                    "const": "number"
+                                                  }
+                                                },
+                                                "required": [
+                                                  "id",
+                                                  "label",
+                                                  "kind"
+                                                ],
+                                                "additionalProperties": false
+                                              },
+                                              {
+                                                "type": "object",
+                                                "properties": {
+                                                  "id": {
+                                                    "type": "string",
+                                                    "minLength": 1,
+                                                    "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                                    "x-happier-max-utf8-bytes": 128
+                                                  },
+                                                  "label": {
+                                                    "type": "string",
+                                                    "minLength": 1,
+                                                    "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                                    "x-happier-max-utf8-bytes": 7187
+                                                  },
+                                                  "kind": {
+                                                    "const": "choice"
+                                                  },
+                                                  "options": {
+                                                    "type": "array",
+                                                    "items": {
+                                                      "type": "object",
+                                                      "properties": {
+                                                        "id": {
+                                                          "type": "string",
+                                                          "minLength": 1,
+                                                          "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                                          "x-happier-max-utf8-bytes": 128
+                                                        },
+                                                        "label": {
+                                                          "type": "string",
+                                                          "minLength": 1,
+                                                          "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                                          "x-happier-max-utf8-bytes": 7187
+                                                        }
+                                                      },
+                                                      "required": [
+                                                        "id",
+                                                        "label"
+                                                      ],
+                                                      "additionalProperties": false
+                                                    }
+                                                  }
+                                                },
+                                                "required": [
+                                                  "id",
+                                                  "label",
+                                                  "kind",
+                                                  "options"
+                                                ],
+                                                "additionalProperties": false
+                                              },
+                                              {
+                                                "type": "object",
+                                                "properties": {
+                                                  "id": {
+                                                    "type": "string",
+                                                    "minLength": 1,
+                                                    "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                                    "x-happier-max-utf8-bytes": 128
+                                                  },
+                                                  "label": {
+                                                    "type": "string",
+                                                    "minLength": 1,
+                                                    "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                                    "x-happier-max-utf8-bytes": 7187
+                                                  },
+                                                  "kind": {
+                                                    "const": "choices"
+                                                  },
+                                                  "options": {
+                                                    "type": "array",
+                                                    "items": {
+                                                      "type": "object",
+                                                      "properties": {
+                                                        "id": {
+                                                          "type": "string",
+                                                          "minLength": 1,
+                                                          "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                                          "x-happier-max-utf8-bytes": 128
+                                                        },
+                                                        "label": {
+                                                          "type": "string",
+                                                          "minLength": 1,
+                                                          "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                                          "x-happier-max-utf8-bytes": 7187
+                                                        }
+                                                      },
+                                                      "required": [
+                                                        "id",
+                                                        "label"
+                                                      ],
+                                                      "additionalProperties": false
+                                                    }
+                                                  }
+                                                },
+                                                "required": [
+                                                  "id",
+                                                  "label",
+                                                  "kind",
+                                                  "options"
+                                                ],
+                                                "additionalProperties": false
+                                              },
+                                              {
+                                                "type": "object",
+                                                "properties": {
+                                                  "id": {
+                                                    "type": "string",
+                                                    "minLength": 1,
+                                                    "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                                    "x-happier-max-utf8-bytes": 128
+                                                  },
+                                                  "label": {
+                                                    "type": "string",
+                                                    "minLength": 1,
+                                                    "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                                    "x-happier-max-utf8-bytes": 7187
+                                                  },
+                                                  "kind": {
+                                                    "const": "unsupported"
+                                                  }
+                                                },
+                                                "required": [
+                                                  "id",
+                                                  "label",
+                                                  "kind"
+                                                ],
+                                                "additionalProperties": false
+                                              }
+                                            ]
+                                          }
                                         }
                                       },
                                       "required": [
@@ -3264,6 +4082,12 @@
                                       ],
                                       "additionalProperties": false
                                     }
+                                  },
+                                  "completingTransitionId": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                    "x-happier-max-utf8-bytes": 128
                                   }
                                 },
                                 "additionalProperties": false
@@ -3277,13 +4101,13 @@
                                       "type": "string",
                                       "minLength": 1,
                                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
-                                      "x-happier-max-utf8-bytes": 64
+                                      "x-happier-max-utf8-bytes": 7187
                                     },
                                     "label": {
                                       "type": "string",
                                       "minLength": 1,
                                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
-                                      "x-happier-max-utf8-bytes": 64
+                                      "x-happier-max-utf8-bytes": 7187
                                     },
                                     "importance": {
                                       "anyOf": [
@@ -3310,7 +4134,7 @@
                                               "type": "string",
                                               "minLength": 1,
                                               "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
-                                              "x-happier-max-utf8-bytes": 64
+                                              "x-happier-max-utf8-bytes": 7187
                                             }
                                           },
                                           "required": [
@@ -3329,7 +4153,7 @@
                                               "type": "string",
                                               "minLength": 1,
                                               "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
-                                              "x-happier-max-utf8-bytes": 64
+                                              "x-happier-max-utf8-bytes": 7187
                                             }
                                           },
                                           "required": [
@@ -3407,7 +4231,7 @@
                                               "type": "string",
                                               "minLength": 1,
                                               "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
-                                              "x-happier-max-utf8-bytes": 64
+                                              "x-happier-max-utf8-bytes": 7187
                                             },
                                             "tone": {
                                               "anyOf": [
@@ -3457,8 +4281,7 @@
                                     "value"
                                   ],
                                   "additionalProperties": false
-                                },
-                                "maxItems": 4
+                                }
                               },
                               "reviewRevision": {
                                 "type": "object",
@@ -3569,7 +4392,7 @@
                                         "type": "string",
                                         "minLength": 1,
                                         "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
-                                        "x-happier-max-utf8-bytes": 512
+                                        "x-happier-max-utf8-bytes": 7187
                                       }
                                     },
                                     "required": [
@@ -3795,7 +4618,13 @@
                                 "type": "string",
                                 "minLength": 1,
                                 "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
-                                "x-happier-max-utf8-bytes": 256
+                                "x-happier-max-utf8-bytes": 7187
+                              },
+                              "requiredPermissions": {
+                                "type": "string",
+                                "minLength": 1,
+                                "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                "x-happier-max-utf8-bytes": 7187
                               },
                               "retryNotBeforeMs": {
                                 "type": "integer",
@@ -3850,6 +4679,61 @@
                           "type": "integer",
                           "minimum": 0,
                           "maximum": 9007199254740991
+                        },
+                        "failure": {
+                          "type": "object",
+                          "properties": {
+                            "class": {
+                              "anyOf": [
+                                {
+                                  "const": "authentication"
+                                },
+                                {
+                                  "const": "permission"
+                                },
+                                {
+                                  "const": "rateLimit"
+                                },
+                                {
+                                  "const": "transient"
+                                },
+                                {
+                                  "const": "unsupportedContract"
+                                },
+                                {
+                                  "const": "unknown"
+                                }
+                              ]
+                            },
+                            "code": {
+                              "type": "string",
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "x-happier-max-utf8-bytes": 128
+                            },
+                            "detail": {
+                              "type": "string",
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "x-happier-max-utf8-bytes": 7187
+                            },
+                            "requiredPermissions": {
+                              "type": "string",
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "x-happier-max-utf8-bytes": 7187
+                            },
+                            "retryNotBeforeMs": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            }
+                          },
+                          "required": [
+                            "class",
+                            "code"
+                          ],
+                          "additionalProperties": false
                         }
                       },
                       "required": [
@@ -3928,7 +4812,13 @@
                       "type": "string",
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
-                      "x-happier-max-utf8-bytes": 256
+                      "x-happier-max-utf8-bytes": 7187
+                    },
+                    "requiredPermissions": {
+                      "type": "string",
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "x-happier-max-utf8-bytes": 7187
                     },
                     "retryNotBeforeMs": {
                       "type": "integer",
@@ -4041,7 +4931,7 @@
                       "type": "string",
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
-                      "x-happier-max-utf8-bytes": 1024
+                      "x-happier-max-utf8-bytes": 7336
                     }
                   },
                   "required": [
@@ -4060,19 +4950,19 @@
                       "type": "string",
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
-                      "x-happier-max-utf8-bytes": 512
+                      "x-happier-max-utf8-bytes": 7336
                     },
                     "displayPath": {
                       "type": "string",
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
-                      "x-happier-max-utf8-bytes": 512
+                      "x-happier-max-utf8-bytes": 7336
                     },
                     "webUrl": {
                       "type": "string",
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
-                      "x-happier-max-utf8-bytes": 384
+                      "x-happier-max-utf8-bytes": 7336
                     }
                   },
                   "required": [
@@ -4204,19 +5094,19 @@
                   "type": "string",
                   "minLength": 1,
                   "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
-                  "x-happier-max-utf8-bytes": 384
+                  "x-happier-max-utf8-bytes": 7187
                 },
                 "displayPath": {
                   "type": "string",
                   "minLength": 1,
                   "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
-                  "x-happier-max-utf8-bytes": 512
+                  "x-happier-max-utf8-bytes": 7187
                 },
                 "routingToken": {
                   "type": "string",
                   "minLength": 1,
                   "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
-                  "x-happier-max-utf8-bytes": 192
+                  "x-happier-max-utf8-bytes": 7187
                 }
               },
               "required": [
@@ -4280,19 +5170,19 @@
                       "type": "string",
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
-                      "x-happier-max-utf8-bytes": 384
+                      "x-happier-max-utf8-bytes": 7187
                     },
                     "displayPath": {
                       "type": "string",
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
-                      "x-happier-max-utf8-bytes": 512
+                      "x-happier-max-utf8-bytes": 7187
                     },
                     "routingToken": {
                       "type": "string",
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
-                      "x-happier-max-utf8-bytes": 192
+                      "x-happier-max-utf8-bytes": 7187
                     }
                   },
                   "required": [
@@ -4310,39 +5200,97 @@
                       "type": "string",
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
-                      "x-happier-max-utf8-bytes": 512
+                      "x-happier-max-utf8-bytes": 7187
                     },
                     "summary": {
                       "type": "string",
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
-                      "x-happier-max-utf8-bytes": 512
+                      "x-happier-max-utf8-bytes": 7187
                     },
                     "scopeLabel": {
                       "type": "string",
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
-                      "x-happier-max-utf8-bytes": 512
+                      "x-happier-max-utf8-bytes": 7187
                     },
                     "scopeDisplayName": {
                       "type": "string",
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
-                      "x-happier-max-utf8-bytes": 512
+                      "x-happier-max-utf8-bytes": 7187
+                    },
+                    "scopeUnitId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "x-happier-max-utf8-bytes": 7336
                     },
                     "authorLabel": {
                       "type": "string",
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
-                      "x-happier-max-utf8-bytes": 512
+                      "x-happier-max-utf8-bytes": 7187
+                    },
+                    "assigneeLabel": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "minLength": 1,
+                          "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                          "x-happier-max-utf8-bytes": 7187
+                        },
+                        {
+                          "const": null
+                        }
+                      ]
+                    },
+                    "labels": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "labelColors": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "name": {
+                            "type": "string"
+                          },
+                          "colorToken": {
+                            "type": "string",
+                            "minLength": 1,
+                            "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                            "x-happier-max-utf8-bytes": 128
+                          }
+                        },
+                        "required": [
+                          "name",
+                          "colorToken"
+                        ],
+                        "additionalProperties": false
+                      }
                     },
                     "designation": {
                       "type": "string",
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
-                      "x-happier-max-utf8-bytes": 512
+                      "x-happier-max-utf8-bytes": 7187
                     },
                     "createdAtMs": {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991
+                    },
+                    "dueDate": {
+                      "type": "string",
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "x-happier-max-utf8-bytes": 7187
+                    },
+                    "completedAtMs": {
                       "type": "integer",
                       "minimum": -9007199254740991,
                       "maximum": 9007199254740991
@@ -4373,7 +5321,7 @@
                           "type": "string",
                           "minLength": 1,
                           "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
-                          "x-happier-max-utf8-bytes": 512
+                          "x-happier-max-utf8-bytes": 7187
                         },
                         "stage": {
                           "anyOf": [
@@ -4597,6 +5545,9 @@
                     "taskCapabilities": {
                       "type": "object",
                       "properties": {
+                        "completedScan": {
+                          "const": true
+                        },
                         "createFields": {
                           "type": "array",
                           "items": {
@@ -4637,6 +5588,92 @@
                             ]
                           },
                           "uniqueItems": true
+                        },
+                        "initialStatuses": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "id": {
+                                "type": "string",
+                                "minLength": 1,
+                                "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                "x-happier-max-utf8-bytes": 128
+                              },
+                              "label": {
+                                "type": "string",
+                                "minLength": 1,
+                                "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                "x-happier-max-utf8-bytes": 7187
+                              },
+                              "state": {
+                                "type": "object",
+                                "properties": {
+                                  "presentation": {
+                                    "anyOf": [
+                                      {
+                                        "const": "active"
+                                      },
+                                      {
+                                        "const": "resolved"
+                                      },
+                                      {
+                                        "const": "closed"
+                                      },
+                                      {
+                                        "const": "suppressed"
+                                      },
+                                      {
+                                        "const": "unknown"
+                                      }
+                                    ]
+                                  },
+                                  "nativeLabel": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                    "x-happier-max-utf8-bytes": 7187
+                                  },
+                                  "stage": {
+                                    "anyOf": [
+                                      {
+                                        "const": "backlog"
+                                      },
+                                      {
+                                        "const": "unstarted"
+                                      },
+                                      {
+                                        "const": "started"
+                                      }
+                                    ]
+                                  },
+                                  "completionReason": {
+                                    "anyOf": [
+                                      {
+                                        "const": "completed"
+                                      },
+                                      {
+                                        "const": "canceled"
+                                      }
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "presentation"
+                                ],
+                                "additionalProperties": false
+                              },
+                              "isDefault": {
+                                "const": true
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "label",
+                              "state"
+                            ],
+                            "additionalProperties": false
+                          }
                         },
                         "editFields": {
                           "type": "array",
@@ -4694,7 +5731,7 @@
                                 "type": "string",
                                 "minLength": 1,
                                 "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
-                                "x-happier-max-utf8-bytes": 512
+                                "x-happier-max-utf8-bytes": 7187
                               },
                               "state": {
                                 "type": "object",
@@ -4722,7 +5759,7 @@
                                     "type": "string",
                                     "minLength": 1,
                                     "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
-                                    "x-happier-max-utf8-bytes": 512
+                                    "x-happier-max-utf8-bytes": 7187
                                   },
                                   "stage": {
                                     "anyOf": [
@@ -4752,6 +5789,195 @@
                                   "presentation"
                                 ],
                                 "additionalProperties": false
+                              },
+                              "requiredFields": {
+                                "type": "array",
+                                "items": {
+                                  "anyOf": [
+                                    {
+                                      "type": "object",
+                                      "properties": {
+                                        "id": {
+                                          "type": "string",
+                                          "minLength": 1,
+                                          "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                          "x-happier-max-utf8-bytes": 128
+                                        },
+                                        "label": {
+                                          "type": "string",
+                                          "minLength": 1,
+                                          "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                          "x-happier-max-utf8-bytes": 7187
+                                        },
+                                        "kind": {
+                                          "const": "text"
+                                        }
+                                      },
+                                      "required": [
+                                        "id",
+                                        "label",
+                                        "kind"
+                                      ],
+                                      "additionalProperties": false
+                                    },
+                                    {
+                                      "type": "object",
+                                      "properties": {
+                                        "id": {
+                                          "type": "string",
+                                          "minLength": 1,
+                                          "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                          "x-happier-max-utf8-bytes": 128
+                                        },
+                                        "label": {
+                                          "type": "string",
+                                          "minLength": 1,
+                                          "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                          "x-happier-max-utf8-bytes": 7187
+                                        },
+                                        "kind": {
+                                          "const": "number"
+                                        }
+                                      },
+                                      "required": [
+                                        "id",
+                                        "label",
+                                        "kind"
+                                      ],
+                                      "additionalProperties": false
+                                    },
+                                    {
+                                      "type": "object",
+                                      "properties": {
+                                        "id": {
+                                          "type": "string",
+                                          "minLength": 1,
+                                          "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                          "x-happier-max-utf8-bytes": 128
+                                        },
+                                        "label": {
+                                          "type": "string",
+                                          "minLength": 1,
+                                          "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                          "x-happier-max-utf8-bytes": 7187
+                                        },
+                                        "kind": {
+                                          "const": "choice"
+                                        },
+                                        "options": {
+                                          "type": "array",
+                                          "items": {
+                                            "type": "object",
+                                            "properties": {
+                                              "id": {
+                                                "type": "string",
+                                                "minLength": 1,
+                                                "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                                "x-happier-max-utf8-bytes": 128
+                                              },
+                                              "label": {
+                                                "type": "string",
+                                                "minLength": 1,
+                                                "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                                "x-happier-max-utf8-bytes": 7187
+                                              }
+                                            },
+                                            "required": [
+                                              "id",
+                                              "label"
+                                            ],
+                                            "additionalProperties": false
+                                          }
+                                        }
+                                      },
+                                      "required": [
+                                        "id",
+                                        "label",
+                                        "kind",
+                                        "options"
+                                      ],
+                                      "additionalProperties": false
+                                    },
+                                    {
+                                      "type": "object",
+                                      "properties": {
+                                        "id": {
+                                          "type": "string",
+                                          "minLength": 1,
+                                          "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                          "x-happier-max-utf8-bytes": 128
+                                        },
+                                        "label": {
+                                          "type": "string",
+                                          "minLength": 1,
+                                          "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                          "x-happier-max-utf8-bytes": 7187
+                                        },
+                                        "kind": {
+                                          "const": "choices"
+                                        },
+                                        "options": {
+                                          "type": "array",
+                                          "items": {
+                                            "type": "object",
+                                            "properties": {
+                                              "id": {
+                                                "type": "string",
+                                                "minLength": 1,
+                                                "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                                "x-happier-max-utf8-bytes": 128
+                                              },
+                                              "label": {
+                                                "type": "string",
+                                                "minLength": 1,
+                                                "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                                "x-happier-max-utf8-bytes": 7187
+                                              }
+                                            },
+                                            "required": [
+                                              "id",
+                                              "label"
+                                            ],
+                                            "additionalProperties": false
+                                          }
+                                        }
+                                      },
+                                      "required": [
+                                        "id",
+                                        "label",
+                                        "kind",
+                                        "options"
+                                      ],
+                                      "additionalProperties": false
+                                    },
+                                    {
+                                      "type": "object",
+                                      "properties": {
+                                        "id": {
+                                          "type": "string",
+                                          "minLength": 1,
+                                          "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                          "x-happier-max-utf8-bytes": 128
+                                        },
+                                        "label": {
+                                          "type": "string",
+                                          "minLength": 1,
+                                          "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                          "x-happier-max-utf8-bytes": 7187
+                                        },
+                                        "kind": {
+                                          "const": "unsupported"
+                                        }
+                                      },
+                                      "required": [
+                                        "id",
+                                        "label",
+                                        "kind"
+                                      ],
+                                      "additionalProperties": false
+                                    }
+                                  ]
+                                }
                               }
                             },
                             "required": [
@@ -4761,6 +5987,12 @@
                             ],
                             "additionalProperties": false
                           }
+                        },
+                        "completingTransitionId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                          "x-happier-max-utf8-bytes": 128
                         }
                       },
                       "additionalProperties": false
@@ -4774,13 +6006,13 @@
                             "type": "string",
                             "minLength": 1,
                             "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
-                            "x-happier-max-utf8-bytes": 64
+                            "x-happier-max-utf8-bytes": 7187
                           },
                           "label": {
                             "type": "string",
                             "minLength": 1,
                             "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
-                            "x-happier-max-utf8-bytes": 64
+                            "x-happier-max-utf8-bytes": 7187
                           },
                           "importance": {
                             "anyOf": [
@@ -4807,7 +6039,7 @@
                                     "type": "string",
                                     "minLength": 1,
                                     "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
-                                    "x-happier-max-utf8-bytes": 64
+                                    "x-happier-max-utf8-bytes": 7187
                                   }
                                 },
                                 "required": [
@@ -4826,7 +6058,7 @@
                                     "type": "string",
                                     "minLength": 1,
                                     "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
-                                    "x-happier-max-utf8-bytes": 64
+                                    "x-happier-max-utf8-bytes": 7187
                                   }
                                 },
                                 "required": [
@@ -4904,7 +6136,7 @@
                                     "type": "string",
                                     "minLength": 1,
                                     "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
-                                    "x-happier-max-utf8-bytes": 64
+                                    "x-happier-max-utf8-bytes": 7187
                                   },
                                   "tone": {
                                     "anyOf": [
@@ -4954,8 +6186,7 @@
                           "value"
                         ],
                         "additionalProperties": false
-                      },
-                      "maxItems": 4
+                      }
                     },
                     "reviewRevision": {
                       "type": "object",
@@ -5066,7 +6297,7 @@
                               "type": "string",
                               "minLength": 1,
                               "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
-                              "x-happier-max-utf8-bytes": 512
+                              "x-happier-max-utf8-bytes": 7187
                             }
                           },
                           "required": [
@@ -5255,6 +6486,28 @@
                       "type": "object",
                       "properties": {
                         "kind": {
+                          "const": "revisionRange"
+                        },
+                        "baseOid": {
+                          "type": "string",
+                          "pattern": "^[a-f0-9]{40}(?:[a-f0-9]{24})?$"
+                        },
+                        "headOid": {
+                          "type": "string",
+                          "pattern": "^[a-f0-9]{40}(?:[a-f0-9]{24})?$"
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "baseOid",
+                        "headOid"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
                           "const": "pullRequest"
                         },
                         "locator": {
@@ -5306,10 +6559,195 @@
                                   ],
                                   "additionalProperties": false
                                 },
-                                "input": {}
+                                "input": {},
+                                "clientId": {
+                                  "type": "string",
+                                  "minLength": 1
+                                },
+                                "messageActionReference": {
+                                  "type": "object",
+                                  "properties": {
+                                    "v": {
+                                      "const": 1
+                                    },
+                                    "sessionId": {
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "maxLength": 512,
+                                      "pattern": "^\\S(?:[\\s\\S]*\\S)?$(?![\\s\\S])"
+                                    },
+                                    "messageId": {
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "maxLength": 512,
+                                      "pattern": "^\\S(?:[\\s\\S]*\\S)?$(?![\\s\\S])"
+                                    },
+                                    "observedRevision": {
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "maxLength": 512,
+                                      "pattern": "^\\S(?:[\\s\\S]*\\S)?$(?![\\s\\S])"
+                                    }
+                                  },
+                                  "required": [
+                                    "v",
+                                    "sessionId",
+                                    "messageId",
+                                    "observedRevision"
+                                  ],
+                                  "additionalProperties": false
+                                }
                               },
                               "required": [
                                 "action"
+                              ],
+                              "additionalProperties": false
+                            },
+                            "fileViewedActions": {
+                              "type": "object",
+                              "properties": {
+                                "read": {
+                                  "type": "object",
+                                  "properties": {
+                                    "action": {
+                                      "type": "object",
+                                      "properties": {
+                                        "pluginId": {
+                                          "type": "string",
+                                          "minLength": 3,
+                                          "maxLength": 256,
+                                          "pattern": "^(?!.*(?:^|\\.)(?:__proto__|constructor|prototype)(?:\\.|$))[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$(?![\\s\\S])"
+                                        },
+                                        "localId": {
+                                          "type": "string",
+                                          "minLength": 1,
+                                          "maxLength": 256,
+                                          "pattern": "^[a-z0-9]+(?:[-/][a-z0-9]+)*$(?![\\s\\S])"
+                                        }
+                                      },
+                                      "required": [
+                                        "pluginId",
+                                        "localId"
+                                      ],
+                                      "additionalProperties": false
+                                    },
+                                    "input": {},
+                                    "clientId": {
+                                      "type": "string",
+                                      "minLength": 1
+                                    },
+                                    "messageActionReference": {
+                                      "type": "object",
+                                      "properties": {
+                                        "v": {
+                                          "const": 1
+                                        },
+                                        "sessionId": {
+                                          "type": "string",
+                                          "minLength": 1,
+                                          "maxLength": 512,
+                                          "pattern": "^\\S(?:[\\s\\S]*\\S)?$(?![\\s\\S])"
+                                        },
+                                        "messageId": {
+                                          "type": "string",
+                                          "minLength": 1,
+                                          "maxLength": 512,
+                                          "pattern": "^\\S(?:[\\s\\S]*\\S)?$(?![\\s\\S])"
+                                        },
+                                        "observedRevision": {
+                                          "type": "string",
+                                          "minLength": 1,
+                                          "maxLength": 512,
+                                          "pattern": "^\\S(?:[\\s\\S]*\\S)?$(?![\\s\\S])"
+                                        }
+                                      },
+                                      "required": [
+                                        "v",
+                                        "sessionId",
+                                        "messageId",
+                                        "observedRevision"
+                                      ],
+                                      "additionalProperties": false
+                                    }
+                                  },
+                                  "required": [
+                                    "action"
+                                  ],
+                                  "additionalProperties": false
+                                },
+                                "set": {
+                                  "type": "object",
+                                  "properties": {
+                                    "action": {
+                                      "type": "object",
+                                      "properties": {
+                                        "pluginId": {
+                                          "type": "string",
+                                          "minLength": 3,
+                                          "maxLength": 256,
+                                          "pattern": "^(?!.*(?:^|\\.)(?:__proto__|constructor|prototype)(?:\\.|$))[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$(?![\\s\\S])"
+                                        },
+                                        "localId": {
+                                          "type": "string",
+                                          "minLength": 1,
+                                          "maxLength": 256,
+                                          "pattern": "^[a-z0-9]+(?:[-/][a-z0-9]+)*$(?![\\s\\S])"
+                                        }
+                                      },
+                                      "required": [
+                                        "pluginId",
+                                        "localId"
+                                      ],
+                                      "additionalProperties": false
+                                    },
+                                    "input": {},
+                                    "clientId": {
+                                      "type": "string",
+                                      "minLength": 1
+                                    },
+                                    "messageActionReference": {
+                                      "type": "object",
+                                      "properties": {
+                                        "v": {
+                                          "const": 1
+                                        },
+                                        "sessionId": {
+                                          "type": "string",
+                                          "minLength": 1,
+                                          "maxLength": 512,
+                                          "pattern": "^\\S(?:[\\s\\S]*\\S)?$(?![\\s\\S])"
+                                        },
+                                        "messageId": {
+                                          "type": "string",
+                                          "minLength": 1,
+                                          "maxLength": 512,
+                                          "pattern": "^\\S(?:[\\s\\S]*\\S)?$(?![\\s\\S])"
+                                        },
+                                        "observedRevision": {
+                                          "type": "string",
+                                          "minLength": 1,
+                                          "maxLength": 512,
+                                          "pattern": "^\\S(?:[\\s\\S]*\\S)?$(?![\\s\\S])"
+                                        }
+                                      },
+                                      "required": [
+                                        "v",
+                                        "sessionId",
+                                        "messageId",
+                                        "observedRevision"
+                                      ],
+                                      "additionalProperties": false
+                                    }
+                                  },
+                                  "required": [
+                                    "action"
+                                  ],
+                                  "additionalProperties": false
+                                }
+                              },
+                              "required": [
+                                "read",
+                                "set"
                               ],
                               "additionalProperties": false
                             }
@@ -5329,6 +6767,303 @@
                       "additionalProperties": false
                     }
                   ]
+                },
+                "taskFields": {
+                  "type": "object",
+                  "properties": {
+                    "title": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "body": {
+                      "type": "string"
+                    },
+                    "assigneeIds": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "minLength": 1,
+                        "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                        "x-happier-max-utf8-bytes": 128
+                      }
+                    },
+                    "labelIds": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "minLength": 1,
+                        "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                        "x-happier-max-utf8-bytes": 128
+                      }
+                    },
+                    "scopeId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$"
+                    },
+                    "projectId": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "minLength": 1,
+                          "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                          "x-happier-max-utf8-bytes": 128
+                        },
+                        {
+                          "const": null
+                        }
+                      ]
+                    },
+                    "priority": {
+                      "anyOf": [
+                        {
+                          "type": "number"
+                        },
+                        {
+                          "type": "string",
+                          "minLength": 1,
+                          "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                          "x-happier-max-utf8-bytes": 128
+                        },
+                        {
+                          "const": null
+                        }
+                      ]
+                    },
+                    "dueDate": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        {
+                          "const": null
+                        }
+                      ]
+                    },
+                    "estimate": {
+                      "anyOf": [
+                        {
+                          "type": "number"
+                        },
+                        {
+                          "const": null
+                        }
+                      ]
+                    },
+                    "parent": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "source": {
+                              "type": "object",
+                              "properties": {
+                                "pluginId": {
+                                  "type": "string",
+                                  "minLength": 3,
+                                  "maxLength": 256,
+                                  "pattern": "^(?!.*(?:^|\\.)(?:__proto__|constructor|prototype)(?:\\.|$))[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$(?![\\s\\S])"
+                                },
+                                "localId": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 256,
+                                  "pattern": "^[a-z0-9]+(?:[-/][a-z0-9]+)*$(?![\\s\\S])"
+                                }
+                              },
+                              "required": [
+                                "pluginId",
+                                "localId"
+                              ],
+                              "additionalProperties": false
+                            },
+                            "kindId": {
+                              "type": "string",
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "x-happier-max-utf8-bytes": 128
+                            },
+                            "collisionScope": {
+                              "type": "string",
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+(?:\\u001f[^\\u0000-\\u001f\\u007f]+)?$",
+                              "x-happier-max-utf8-bytes": 192
+                            },
+                            "entryId": {
+                              "type": "string",
+                              "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "x-happier-max-utf8-bytes": 128
+                            }
+                          },
+                          "required": [
+                            "source",
+                            "kindId",
+                            "collisionScope",
+                            "entryId"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "const": null
+                        }
+                      ]
+                    },
+                    "blockedBy": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "source": {
+                            "type": "object",
+                            "properties": {
+                              "pluginId": {
+                                "type": "string",
+                                "minLength": 3,
+                                "maxLength": 256,
+                                "pattern": "^(?!.*(?:^|\\.)(?:__proto__|constructor|prototype)(?:\\.|$))[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$(?![\\s\\S])"
+                              },
+                              "localId": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 256,
+                                "pattern": "^[a-z0-9]+(?:[-/][a-z0-9]+)*$(?![\\s\\S])"
+                              }
+                            },
+                            "required": [
+                              "pluginId",
+                              "localId"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "kindId": {
+                            "type": "string",
+                            "minLength": 1,
+                            "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                            "x-happier-max-utf8-bytes": 128
+                          },
+                          "collisionScope": {
+                            "type": "string",
+                            "minLength": 1,
+                            "pattern": "^[^\\u0000-\\u001f\\u007f]+(?:\\u001f[^\\u0000-\\u001f\\u007f]+)?$",
+                            "x-happier-max-utf8-bytes": 192
+                          },
+                          "entryId": {
+                            "type": "string",
+                            "minLength": 1,
+                            "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                            "x-happier-max-utf8-bytes": 128
+                          }
+                        },
+                        "required": [
+                          "source",
+                          "kindId",
+                          "collisionScope",
+                          "entryId"
+                        ],
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                "dispatchEvidence": {
+                  "type": "object",
+                  "properties": {
+                    "v": {
+                      "const": 1
+                    },
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "source": {
+                            "type": "object",
+                            "properties": {
+                              "kind": {
+                                "anyOf": [
+                                  {
+                                    "const": "pullRequest"
+                                  },
+                                  {
+                                    "const": "hostedCi"
+                                  },
+                                  {
+                                    "const": "releaseNotes"
+                                  },
+                                  {
+                                    "const": "alert"
+                                  },
+                                  {
+                                    "const": "localTerminal"
+                                  },
+                                  {
+                                    "const": "entry"
+                                  }
+                                ]
+                              },
+                              "label": {
+                                "type": "string"
+                              },
+                              "url": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "kind",
+                              "label"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "author": {
+                            "type": "object",
+                            "properties": {
+                              "kind": {
+                                "anyOf": [
+                                  {
+                                    "const": "person"
+                                  },
+                                  {
+                                    "const": "bot"
+                                  },
+                                  {
+                                    "const": "process"
+                                  },
+                                  {
+                                    "const": "unknown"
+                                  }
+                                ]
+                              },
+                              "label": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "kind"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "text": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "source",
+                          "author",
+                          "text"
+                        ],
+                        "additionalProperties": false
+                      },
+                      "minItems": 1
+                    }
+                  },
+                  "required": [
+                    "v",
+                    "items"
+                  ],
+                  "additionalProperties": false
                 }
               },
               "required": [
@@ -5524,7 +7259,13 @@
                       "type": "string",
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
-                      "x-happier-max-utf8-bytes": 256
+                      "x-happier-max-utf8-bytes": 7187
+                    },
+                    "requiredPermissions": {
+                      "type": "string",
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "x-happier-max-utf8-bytes": 7187
                     },
                     "retryNotBeforeMs": {
                       "type": "integer",
@@ -5618,138 +7359,6 @@
           "icon": "settings",
           "defaultRank": 10,
           "renderer": "ledger-source-settings"
-        }
-      ],
-      "translations": [
-        {
-          "locale": "en",
-          "messages": {
-            "plugins.triage.sourceSettings.failure.authentication": "The connected account is no longer authorized. Reconnect it in Connected Accounts.",
-            "plugins.triage.sourceSettings.failure.permission": "The connected account cannot see this scope. Grant it access at the provider.",
-            "plugins.triage.sourceSettings.failure.rateLimit": "The provider is rate limiting this account. Try again shortly.",
-            "plugins.triage.sourceSettings.failure.transient": "The provider could not be reached. Try again.",
-            "plugins.triage.sourceSettings.failure.unsupportedContract": "The provider returned something this version cannot read.",
-            "plugins.triage.sourceSettings.failure.unknown": "The provider could not be read.",
-            "plugins.triage.sourceSettings.heading": "{source} in PRs & Issues",
-            "plugins.triage.sourceSettings.intro": "Choose which {source} accounts and scopes appear in PRs & Issues.",
-            "plugins.triage.sourceSettings.manageAccounts": "Manage connected accounts",
-            "plugins.triage.sourceSettings.connectAccount": "Connect account",
-            "plugins.triage.sourceSettings.reconnectAccount": "Reconnect",
-            "plugins.triage.sourceSettings.navigationUnavailable": "Connected Accounts could not be opened.",
-            "plugins.triage.sourceSettings.loading.title": "Reading {source} accounts",
-            "plugins.triage.sourceSettings.loading.description": "Checking what this authorized connection can reach.",
-            "plugins.triage.sourceSettings.outcomeUnknown.title": "This read did not finish",
-            "plugins.triage.sourceSettings.outcomeUnknown.description": "It may still be running. Refresh to ask again.",
-            "plugins.triage.sourceSettings.unreadable.title": "This version cannot read the response",
-            "plugins.triage.sourceSettings.unreadable.description": "The {source} source returned a result outside the published contract.",
-            "plugins.triage.sourceSettings.unreachable.title": "{source} could not be read",
-            "plugins.triage.sourceSettings.unreachable.noMachine": "No machine answered this read.",
-            "plugins.triage.sourceSettings.refresh": "Refresh",
-            "plugins.triage.sourceSettings.tryAgain": "Try again",
-            "plugins.triage.sourceSettings.incomplete.title": "This list may be incomplete",
-            "plugins.triage.sourceSettings.incomplete.description": "Some accounts or scopes could not be enumerated, so one you expect may be missing.",
-            "plugins.triage.sourceSettings.empty.title": "No {source} scopes to add",
-            "plugins.triage.sourceSettings.empty.description": "Connect your {source} account, then refresh.",
-            "plugins.triage.sourceSettings.scopesLabel": "{source} scopes",
-            "plugins.triage.sourceSettings.followsProviderName": "Follows the provider name",
-            "plugins.triage.sourceSettings.failures.title": "Accounts that could not be read",
-            "plugins.triage.sourceSettings.control.add": "Add",
-            "plugins.triage.sourceSettings.control.addLabel": "Add {title} to PRs & Issues",
-            "plugins.triage.sourceSettings.control.restore": "Restore",
-            "plugins.triage.sourceSettings.control.restoreLabel": "Restore {title} to PRs & Issues",
-            "plugins.triage.sourceSettings.control.update": "Update",
-            "plugins.triage.sourceSettings.control.updateLabel": "Update {title} from the provider",
-            "plugins.triage.sourceSettings.control.remove": "Remove",
-            "plugins.triage.sourceSettings.control.removeLabel": "Remove {title} from PRs & Issues",
-            "plugins.triage.sourceSettings.section.title": "Accounts and scopes",
-            "plugins.triage.sourceSettings.section.description": "Each one you add appears in PRs & Issues.",
-            "plugins.triage.sourceSettings.control.moreActions": "More actions for {title}",
-            "plugins.triage.sourceSettings.configuration.added": "Added to {product}.",
-            "plugins.triage.sourceSettings.configuration.alreadyConfigured": "Already in {product}.",
-            "plugins.triage.sourceSettings.configuration.updated": "Configuration updated.",
-            "plugins.triage.sourceSettings.configuration.restored": "Restored to {product}.",
-            "plugins.triage.sourceSettings.configuration.removed": "Removed from {product}. Its entries leave the list; the pins and Session links you made stay.",
-            "plugins.triage.sourceSettings.configuration.conflict": "You removed this earlier. This page cannot bring it back yet.",
-            "plugins.triage.sourceSettings.configuration.atMaximum": "You have configured as many sources as {product} holds. Remove one you no longer use.",
-            "plugins.triage.sourceSettings.configuration.sourceNotAdmitted": "{source} is no longer an admitted {product} source on this account.",
-            "plugins.triage.sourceSettings.configuration.raced": "Something changed while this was saving. Try again.",
-            "plugins.triage.sourceSettings.configuration.unreadable": "The response could not be read by this version.",
-            "plugins.triage.sourceSettings.configuration.outcomeUnknown": "{message} It may already have been applied; refresh before trying again.",
-            "plugins.triage.sourceSettings.lifecycle.configured": "In {product}.",
-            "plugins.triage.sourceSettings.lifecycle.missing": "In {product}, but {source} can no longer reach it. Its entries stop arriving until the account or scope comes back.",
-            "plugins.triage.sourceSettings.lifecycle.unlisted": "In {product}. This page could not list it just now, so it may still be working.",
-            "plugins.triage.sourceSettings.lifecycle.retired": "Removed from {product}.",
-            "plugins.triage.sourceSettings.configuredRead.incomplete.title": "Not everything you configured is listed here",
-            "plugins.triage.sourceSettings.configuredRead.incomplete.description": "{product} holds more {source} configurations than this page can list, so one you already added may still offer Add.",
-            "plugins.triage.sourceSettings.configuredRead.unreadable.title": "This version cannot read what is configured",
-            "plugins.triage.sourceSettings.configuredRead.unreadable.description": "{product} answered outside the published contract, so this page cannot say which of these are already added.",
-            "plugins.triage.sourceSettings.configuredRead.unreachable.title": "What is already configured could not be read",
-            "plugins.triage.sourceSettings.configuredRead.unreachable.description": "{message} A row may offer Add for something you already added.",
-            "plugins.triage.sourceSettings.configuredRead.outcomeUnknown.title": "This page does not know what is already configured",
-            "plugins.triage.sourceSettings.configuredRead.outcomeUnknown.description": "That read did not finish. Refresh to ask again before adding anything.",
-            "plugins.triage.sourceSettings.configuredRead.sourceNotAdmitted.title": "{source} is no longer an admitted {product} source on this account.",
-            "plugins.triage.sourceSettings.configuredRead.sourceNotAdmitted.description": "Nothing here can be added to {product} until it is admitted again.",
-            "plugins.triage.sourceSettings.configuredRead.raced.title": "This page read while something was changing",
-            "plugins.triage.sourceSettings.configuredRead.raced.description": "Refresh to see what is configured now.",
-            "plugins.triage.detailStory.ask": "The ask",
-            "plugins.triage.detailStory.report": "The report",
-            "plugins.triage.detailStory.changed": "What changed",
-            "plugins.triage.detailStory.failed": "{count} failed",
-            "plugins.triage.detailStory.running": "Running",
-            "plugins.triage.detailStory.passed": "Passed",
-            "plugins.triage.detailStory.detail": "Source detail",
-            "plugins.triage.detailStory.happened": "What happened",
-            "plugins.triage.detailStory.spread": "Spread",
-            "plugins.triage.detailStory.inFilesPartial": "in {count}+ files",
-            "plugins.triage.detailStory.filesPartial": "{count}+ files",
-            "plugins.triage.detailStory.noLineCounts": "Line counts not reported",
-            "plugins.triage.detailStory.fileLines": "{path}: {additions} added, {deletions} removed",
-            "plugins.triage.detailStory.notAllRead": "more checks not read",
-            "plugins.triage.detailStory.inFiles.one": "in {count} file",
-            "plugins.triage.detailStory.inFiles.few": "in {count} files",
-            "plugins.triage.detailStory.inFiles.many": "in {count} files",
-            "plugins.triage.detailStory.inFiles.other": "in {count} files",
-            "plugins.triage.detailStory.files.one": "{count} file",
-            "plugins.triage.detailStory.files.few": "{count} files",
-            "plugins.triage.detailStory.files.many": "{count} files",
-            "plugins.triage.detailStory.files.other": "{count} files",
-            "plugins.triage.detailStory.smallerFiles.one": "{count} smaller file",
-            "plugins.triage.detailStory.smallerFiles.few": "{count} smaller files",
-            "plugins.triage.detailStory.smallerFiles.many": "{count} smaller files",
-            "plugins.triage.detailStory.smallerFiles.other": "{count} smaller files",
-            "plugins.triage.detailStory.moreFiles.one": "{count} more file",
-            "plugins.triage.detailStory.moreFiles.few": "{count} more files",
-            "plugins.triage.detailStory.moreFiles.many": "{count} more files",
-            "plugins.triage.detailStory.moreFiles.other": "{count} more files",
-            "plugins.triage.detailStory.failing.one": "{count} failing",
-            "plugins.triage.detailStory.failing.few": "{count} failing",
-            "plugins.triage.detailStory.failing.many": "{count} failing",
-            "plugins.triage.detailStory.failing.other": "{count} failing",
-            "plugins.triage.detailStory.passedCount.one": "{count} passed",
-            "plugins.triage.detailStory.passedCount.few": "{count} passed",
-            "plugins.triage.detailStory.passedCount.many": "{count} passed",
-            "plugins.triage.detailStory.passedCount.other": "{count} passed",
-            "plugins.triage.detailStory.runningCount.one": "{count} running",
-            "plugins.triage.detailStory.runningCount.few": "{count} running",
-            "plugins.triage.detailStory.runningCount.many": "{count} running",
-            "plugins.triage.detailStory.runningCount.other": "{count} running",
-            "plugins.triage.detailStory.allPassed.one": "{count} passed",
-            "plugins.triage.detailStory.allPassed.few": "All {count} passed",
-            "plugins.triage.detailStory.allPassed.many": "All {count} passed",
-            "plugins.triage.detailStory.allPassed.other": "All {count} passed",
-            "plugins.triage.detailStory.allPassedLatest.one": "{count} passed on the latest commit",
-            "plugins.triage.detailStory.allPassedLatest.few": "All {count} passed on the latest commit",
-            "plugins.triage.detailStory.allPassedLatest.many": "All {count} passed on the latest commit",
-            "plugins.triage.detailStory.allPassedLatest.other": "All {count} passed on the latest commit",
-            "plugins.triage.detailStory.failingSoFar.one": "{count} failing so far",
-            "plugins.triage.detailStory.failingSoFar.few": "{count} failing so far",
-            "plugins.triage.detailStory.failingSoFar.many": "{count} failing so far",
-            "plugins.triage.detailStory.failingSoFar.other": "{count} failing so far",
-            "plugins.triage.detailStory.runningSoFar.one": "{count} running so far",
-            "plugins.triage.detailStory.runningSoFar.few": "{count} running so far",
-            "plugins.triage.detailStory.runningSoFar.many": "{count} running so far",
-            "plugins.triage.detailStory.runningSoFar.other": "{count} running so far"
-          }
         }
       ]
     },

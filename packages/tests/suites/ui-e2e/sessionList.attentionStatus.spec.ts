@@ -1,3 +1,5 @@
+import { sessionListOccurrenceId } from '../../src/testkit/uiE2e/sessionListRowTestId';
+import { resolveCanonicalServerIdForUi } from '../../src/testkit/uiE2e/sessionFoldersDrag';
 import type { SocketCollector } from '../../src/testkit/socketClient';
 import { appendBrowserDiagnostics, collectBrowserDiagnostics } from '../../src/testkit/uiE2e/browserDiagnostics';
 import { expect, test, type WebSocketRoute } from '@playwright/test';
@@ -29,6 +31,7 @@ import {
 import { startForwardedHeaderProxy } from '../../src/testkit/uiE2e/forwardedHeaderProxy';
 import { gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../../src/testkit/uiE2e/pageNavigation';
 import { waitForInitialAppUi } from '../../src/testkit/uiE2e/waitForInitialAppUi';
+let rowServerId: string;
 
 const run = createRunDirs({ runLabel: 'ui-e2e-session-list-attention-status' });
 
@@ -99,6 +102,8 @@ test.describe('ui e2e: session list attention status', () => {
     });
     token = auth.token;
 
+    rowServerId = await resolveCanonicalServerIdForUi(proxy.baseUrl);
+
     ui = await startUiWeb({
       testDir: suiteDir,
       env: {
@@ -106,7 +111,6 @@ test.describe('ui e2e: session list attention status', () => {
         EXPO_PUBLIC_DEBUG: '1',
         EXPO_PUBLIC_HAPPY_SERVER_URL: proxy.baseUrl,
         EXPO_PUBLIC_HAPPY_STORAGE_SCOPE: `e2e-session-list-attention-status-${run.runId}`,
-        HAPPIER_E2E_UI_WEB_MODE: 'export',
       },
     });
 
@@ -134,9 +138,9 @@ test.describe('ui e2e: session list attention status', () => {
     await chooseSessionListDensity({ page, baseUrl: uiBaseUrl, density: 'narrow' });
     await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/?happier_hmr=0`, 180_000);
 
-    await expect(sessionRow(page, quiet.id)).toHaveCount(1, { timeout: 120_000 });
-    await expect(sessionRow(page, working.id)).toHaveCount(1, { timeout: 120_000 });
-    await expect(sessionRow(page, ready.id)).toHaveCount(1, { timeout: 120_000 });
+    await expect(sessionRow(page, quiet.id, rowServerId)).toHaveCount(1, { timeout: 120_000 });
+    await expect(sessionRow(page, working.id, rowServerId)).toHaveCount(1, { timeout: 120_000 });
+    await expect(sessionRow(page, ready.id, rowServerId)).toHaveCount(1, { timeout: 120_000 });
 
     const workingPublisher = await connectAuthenticatedSessionPublisher({
       baseUrl: server.baseUrl,
@@ -148,11 +152,11 @@ test.describe('ui e2e: session list attention status', () => {
       await seedReadyMarker({ baseUrl: server.baseUrl, token, sessionId: ready.id });
       await updateSessionRuntimeStatus({ baseUrl: server.baseUrl, token, sessionId: ready.id, latestTurnStatus: 'completed' });
 
-      await expect(anySessionAttentionIndicator(page, quiet.id)).toHaveCount(0);
-      await expect(page.getByTestId(sessionListAttentionTestIds.attentionIndicator(working.id, 'working'))).toHaveCount(1, { timeout: 60_000 });
-      await expect(page.getByTestId(sessionListAttentionTestIds.attentionIndicator(ready.id, 'ready'))).toHaveCount(1, { timeout: 60_000 });
-      await expect(sessionStatusSubtitle(page, working.id, 'working')).toHaveCount(0);
-      await expect(sessionStatusSubtitle(page, ready.id, 'ready')).toHaveCount(0);
+      await expect(anySessionAttentionIndicator(page, quiet.id, rowServerId)).toHaveCount(0);
+      await expect(page.getByTestId(sessionListAttentionTestIds.attentionIndicator(working.id, 'working', rowServerId))).toHaveCount(1, { timeout: 60_000 });
+      await expect(page.getByTestId(sessionListAttentionTestIds.attentionIndicator(ready.id, 'ready', rowServerId))).toHaveCount(1, { timeout: 60_000 });
+      await expect(sessionStatusSubtitle(page, working.id, 'working', rowServerId)).toHaveCount(0);
+      await expect(sessionStatusSubtitle(page, ready.id, 'ready', rowServerId)).toHaveCount(0);
     } finally {
       workingPublisher.close();
     }
@@ -172,8 +176,8 @@ test.describe('ui e2e: session list attention status', () => {
     await chooseSessionListDensity({ page, baseUrl: uiBaseUrl, density: 'cozy' });
     await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/?happier_hmr=0`, 180_000);
 
-    await expect(sessionRow(page, working.id)).toHaveCount(1, { timeout: 120_000 });
-    await expect(sessionRow(page, ready.id)).toHaveCount(1, { timeout: 120_000 });
+    await expect(sessionRow(page, working.id, rowServerId)).toHaveCount(1, { timeout: 120_000 });
+    await expect(sessionRow(page, ready.id, rowServerId)).toHaveCount(1, { timeout: 120_000 });
 
     const workingPublisher = await connectAuthenticatedSessionPublisher({
       baseUrl: server.baseUrl,
@@ -185,11 +189,11 @@ test.describe('ui e2e: session list attention status', () => {
       await seedReadyMarker({ baseUrl: server.baseUrl, token, sessionId: ready.id });
       await updateSessionRuntimeStatus({ baseUrl: server.baseUrl, token, sessionId: ready.id, latestTurnStatus: 'completed' });
 
-      await expect(sessionStatusSubtitle(page, ready.id, 'ready')).toHaveCount(1, { timeout: 60_000 });
-      await expect(page.getByTestId(sessionListAttentionTestIds.secondaryReadyIndicator(ready.id))).toHaveCount(1, { timeout: 60_000 });
-      await expect(sessionStatusSubtitleText(page, ready.id, 'ready')).not.toHaveText('', { timeout: 60_000 });
+      await expect(sessionStatusSubtitle(page, ready.id, 'ready', rowServerId)).toHaveCount(1, { timeout: 60_000 });
+      await expect(page.getByTestId(sessionListAttentionTestIds.secondaryReadyIndicator(ready.id, rowServerId))).toHaveCount(1, { timeout: 60_000 });
+      await expect(sessionStatusSubtitleText(page, ready.id, 'ready', rowServerId)).not.toHaveText('', { timeout: 60_000 });
 
-      await expect(sessionStatusSubtitle(page, working.id, 'working')).toHaveCount(1, { timeout: 60_000 });
+      await expect(sessionStatusSubtitle(page, working.id, 'working', rowServerId)).toHaveCount(1, { timeout: 60_000 });
     } finally {
       workingPublisher.close();
     }
@@ -210,8 +214,8 @@ test.describe('ui e2e: session list attention status', () => {
     await chooseSessionListDensity({ page, baseUrl: uiBaseUrl, density: 'narrow' });
     await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/?happier_hmr=0`, 180_000);
 
-    await expect(sessionRow(page, live.id)).toHaveCount(1, { timeout: 120_000 });
-    await expect(sessionRow(page, cancelled.id)).toHaveCount(1, { timeout: 120_000 });
+    await expect(sessionRow(page, live.id, rowServerId)).toHaveCount(1, { timeout: 120_000 });
+    await expect(sessionRow(page, cancelled.id, rowServerId)).toHaveCount(1, { timeout: 120_000 });
     const livePublisher = await connectAuthenticatedSessionPublisher({
       baseUrl: server.baseUrl,
       token,
@@ -226,18 +230,18 @@ test.describe('ui e2e: session list attention status', () => {
       });
       await updateSessionRuntimeStatus({ baseUrl: server.baseUrl, token, sessionId: live.id, latestTurnStatus: 'in_progress' });
       await expect(page.getByTestId(sessionListAttentionTestIds.workingHeader)).toHaveCount(1, { timeout: 60_000 });
-      await expectRowInSection({ page, headerTestId: sessionListAttentionTestIds.workingHeader, sessionId: live.id });
+      await expectRowInSection({ serverId: rowServerId, page, headerTestId: sessionListAttentionTestIds.workingHeader, sessionId: live.id });
 
       await seedReadyMarker({ baseUrl: server.baseUrl, token, sessionId: live.id });
       await updateSessionRuntimeStatus({ baseUrl: server.baseUrl, token, sessionId: live.id, latestTurnStatus: 'completed' });
       await expect(page.getByTestId(sessionListAttentionTestIds.attentionHeader)).toHaveCount(1, { timeout: 60_000 });
-      await expectRowInSection({ page, headerTestId: sessionListAttentionTestIds.attentionHeader, sessionId: live.id });
-      await expectRowNotInSection({ page, headerTestId: sessionListAttentionTestIds.workingHeader, sessionId: live.id });
+      await expectRowInSection({ serverId: rowServerId, page, headerTestId: sessionListAttentionTestIds.attentionHeader, sessionId: live.id });
+      await expectRowNotInSection({ serverId: rowServerId, page, headerTestId: sessionListAttentionTestIds.workingHeader, sessionId: live.id });
 
       await updateSessionRuntimeStatus({ baseUrl: server.baseUrl, token, sessionId: cancelled.id, latestTurnStatus: 'in_progress' });
-      await expectRowInSection({ page, headerTestId: sessionListAttentionTestIds.workingHeader, sessionId: cancelled.id });
+      await expectRowInSection({ serverId: rowServerId, page, headerTestId: sessionListAttentionTestIds.workingHeader, sessionId: cancelled.id });
       await updateSessionRuntimeStatus({ baseUrl: server.baseUrl, token, sessionId: cancelled.id, latestTurnStatus: 'cancelled' });
-      await expectRowNotInSection({ page, headerTestId: sessionListAttentionTestIds.workingHeader, sessionId: cancelled.id });
+      await expectRowNotInSection({ serverId: rowServerId, page, headerTestId: sessionListAttentionTestIds.workingHeader, sessionId: cancelled.id });
     } finally {
       cancelledPublisher?.close();
       livePublisher.close();
@@ -278,7 +282,7 @@ test.describe('ui e2e: session list attention status', () => {
       await chooseSessionListDensity({ page, baseUrl: uiBaseUrl, density: 'cozy' });
       await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/?happier_hmr=0`, 180_000);
       await waitForInitialAppUi({ page, timeoutMs: 180_000 });
-      await expect(sessionRow(page, session.id)).toHaveCount(1, { timeout: 120_000 });
+      await expect(sessionRow(page, session.id, rowServerId)).toHaveCount(1, { timeout: 120_000 });
       publisher = await connectAuthenticatedSessionPublisher({ baseUrl: server.baseUrl, token, sessionId: session.id, thinking: false });
       stopKeepAlive = startPresenceKeepAlive(publisher, session.id);
       await publishRuntimeActivity({ socket: publisher, sessionId: session.id, snapshot: { state: 'active', activeCount: 1 } });
@@ -292,10 +296,10 @@ test.describe('ui e2e: session list attention status', () => {
         activitySummaryV1: { pendingPermissionRequestCount: 1, pendingUserActionRequestCount: 0 },
       });
       expect(pendingAck?.result).toBe('success');
-      const permissionIndicator = page.getByTestId(`session-list-attention-indicator-${session.id}-secondary-permission_required`);
+      const permissionIndicator = page.getByTestId(`session-list-attention-indicator-${sessionListOccurrenceId(rowServerId, session.id)}-secondary-permission_required`);
       await expect(permissionIndicator).toHaveCount(1, { timeout: 60_000 });
       await expect.poll(() => pendingUpdate !== null).toBe(true);
-      await sessionRow(page, session.id).click();
+      await sessionRow(page, session.id, rowServerId).click();
       const composerStatus = page.getByTestId('agent-input-connection-status-text');
       await expect(composerStatus).toContainText(/permission required/i, { timeout: 60_000 });
 
@@ -311,16 +315,81 @@ test.describe('ui e2e: session list attention status', () => {
       expect(ack?.result).toBe('success');
       await expect(permissionIndicator).toHaveCount(0, { timeout: 60_000 });
       await expect(composerStatus).not.toContainText(/permission required/i);
-      await expect(sessionStatusSubtitle(page, session.id, 'working')).toHaveCount(1);
+      await expect(sessionStatusSubtitle(page, session.id, 'working', rowServerId)).toHaveCount(1);
       const stale = readPendingUpdate();
       if (!stale) throw new Error('Missing captured pending update');
       stale.route.send(stale.packet);
       // A subsequent real update provides an observable barrier after the replay.
       await publishRuntimeActivity({ socket: publisher, sessionId: session.id, snapshot: { state: 'idle', activeCount: 0 } });
-      await expect(sessionStatusSubtitle(page, session.id, 'working')).toHaveCount(0, { timeout: 60_000 });
+      await expect(sessionStatusSubtitle(page, session.id, 'working', rowServerId)).toHaveCount(0, { timeout: 60_000 });
       await expect(permissionIndicator).toHaveCount(0);
       await expect(composerStatus).not.toContainText(/permission required/i);
-      await sessionRow(page, session.id).screenshot({ path: test.info().outputPath('permission-settled-after-stale-update.png') });
+      await sessionRow(page, session.id, rowServerId).screenshot({ path: test.info().outputPath('permission-settled-after-stale-update.png') });
+    } catch (error) {
+      throw appendBrowserDiagnostics(error, browserDiagnostics().replaceAll(token, '[redacted]'));
+    } finally {
+      stopKeepAlive?.();
+      publisher?.close();
+    }
+  });
+
+  test('keeps delayed background observations in Working until reported activity settles', async ({ page }) => {
+    test.setTimeout(360_000);
+    if (!server || !token || !uiBaseUrl) throw new Error('missing session list attention fixtures');
+    const session = await seedAttentionSession({ baseUrl: server.baseUrl, token, title: 'Background design review' });
+    const browserDiagnostics = collectBrowserDiagnostics({ page });
+    let publisher: SocketCollector | null = null;
+    let stopKeepAlive: (() => void) | null = null;
+    let holdObservations = false;
+    let heldObservations = 0;
+    // Hold only this Session's repeating observations at the real transport boundary. The
+    // publisher stays alive, while the UI's existing freshness deadline runs on the real clock.
+    await page.routeWebSocket(url => url.pathname === '/v1/updates/', route => {
+      const upstream = route.connectToServer();
+      upstream.onMessage(message => {
+        if (holdObservations && typeof message === 'string' && message.startsWith('42')) {
+          let event: unknown;
+          try { event = JSON.parse(message.slice(2)); } catch { /* Other Socket.IO packets pass through. */ }
+          const data: unknown = Array.isArray(event) ? event[1] : null;
+          const body = data && typeof data === 'object' && Array.isArray(event) && event[0] === 'update'
+            && 'body' in data ? data.body : data;
+          if (body && typeof body === 'object' && 'id' in body && body.id === session.id
+            && (('type' in body && body.type === 'activity') || 'activeAt' in body)) {
+            heldObservations += 1;
+            return;
+          }
+        }
+        route.send(message);
+      });
+    });
+    try {
+      await page.setViewportSize({ width: 1440, height: 900 });
+      await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/?happier_hmr=0`, 180_000);
+      await waitForInitialAppUi({ page, timeoutMs: 180_000 });
+      await chooseSessionListSettingOption({ page, baseUrl: uiBaseUrl,
+        triggerTestId: sessionListAttentionTestIds.workingPlacementModeTrigger, option: 'global' });
+      await chooseSessionListDensity({ page, baseUrl: uiBaseUrl, density: 'cozy' });
+      await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/?happier_hmr=0`, 180_000);
+      await waitForInitialAppUi({ page, timeoutMs: 180_000 });
+      publisher = await connectAuthenticatedSessionPublisher({ baseUrl: server.baseUrl, token,
+        sessionId: session.id, thinking: false });
+      stopKeepAlive = startPresenceKeepAlive(publisher, session.id);
+      await publishRuntimeActivity({ socket: publisher, sessionId: session.id, snapshot: { state: 'active', activeCount: 2 } });
+      await seedReadyMarker({ baseUrl: server.baseUrl, token, sessionId: session.id });
+      await updateSessionRuntimeStatus({ baseUrl: server.baseUrl, token, sessionId: session.id, latestTurnStatus: 'completed' });
+      await expectRowInSection({ page, serverId: rowServerId,
+        headerTestId: sessionListAttentionTestIds.workingHeader, sessionId: session.id });
+      const workingRow = sessionRow(page, session.id, rowServerId, 'working');
+      holdObservations = true;
+      await expect(workingRow).toContainText(/awaiting updates/i, { timeout: 180_000 });
+      expect(heldObservations).toBeGreaterThan(0);
+      await workingRow.screenshot({ path: test.info().outputPath('background-awaiting-updates-wide.png') });
+      await page.setViewportSize({ width: 390, height: 844 });
+      await expect(workingRow).toContainText(/awaiting updates/i);
+      await workingRow.screenshot({ path: test.info().outputPath('background-awaiting-updates-phone.png') });
+      holdObservations = false;
+      await publishRuntimeActivity({ socket: publisher, sessionId: session.id, snapshot: { state: 'idle', activeCount: 0 } });
+      await expect(workingRow).toHaveCount(0, { timeout: 60_000 });
     } catch (error) {
       throw appendBrowserDiagnostics(error, browserDiagnostics().replaceAll(token, '[redacted]'));
     } finally {
@@ -360,7 +429,7 @@ test.describe('ui e2e: session list attention status', () => {
       await chooseSessionListDensity({ page, baseUrl: uiBaseUrl, density: 'cozy' });
       await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/?happier_hmr=0`, 180_000);
       await waitForInitialAppUi({ page, timeoutMs: 180_000 });
-      await expect(sessionRow(page, session.id)).toHaveCount(1, { timeout: 120_000 });
+      await expect(sessionRow(page, session.id, rowServerId)).toHaveCount(1, { timeout: 120_000 });
 
       publisher = await connectAuthenticatedSessionPublisher({
         baseUrl: server.baseUrl,
@@ -386,35 +455,38 @@ test.describe('ui e2e: session list attention status', () => {
         });
         await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/?happier_hmr=0`, 180_000);
         await seedReadyMarker({ baseUrl: server.baseUrl, token, sessionId: session.id });
-        await expectRowInSection({
+        await expectRowInSection({ serverId: rowServerId,
           page,
           headerTestId: mode === 'showUnread' ? sessionListAttentionTestIds.attentionHeader : sessionListAttentionTestIds.workingHeader,
           sessionId: session.id,
         });
-        await expect(page.getByTestId(sessionListAttentionTestIds.secondaryReadyIndicator(session.id))).toHaveCount(0);
-        const spinner = page.getByTestId(`session-row-attention-indicator-spinner-${session.id}-secondary`);
+        const occurrenceRole = mode === 'showUnread' ? 'needsYou' : 'working';
+        const occurrenceId = sessionListOccurrenceId(rowServerId, session.id, occurrenceRole);
+        await expect(page.getByTestId(sessionListAttentionTestIds.secondaryReadyIndicator(session.id, rowServerId, occurrenceRole))).toHaveCount(0);
+        const spinner = page.getByTestId(`session-row-attention-indicator-spinner-${occurrenceId}-secondary`);
         if (mode === 'keepWorking') {
           await expect(spinner).toHaveCount(1);
-          await expect(page.getByTestId(`session-row-unread-indicator-${session.id}-secondary`)).toHaveCount(0);
-          await expect(page.getByTestId(`session-row-unread-center-${session.id}-secondary`)).toHaveCount(1);
-          await sessionRow(page, session.id).screenshot({ path: test.info().outputPath('working-unread.png') });
+          await expect(page.getByTestId(`session-row-unread-indicator-${occurrenceId}-secondary`)).toHaveCount(0);
+          await expect(page.getByTestId(`session-row-unread-center-${occurrenceId}-secondary`)).toHaveCount(1);
+          await sessionRow(page, session.id, rowServerId, 'working').screenshot({ path: test.info().outputPath('working-unread.png') });
         } else {
           await expect(spinner).toHaveCount(0);
-          await expect(page.getByTestId(`session-list-attention-indicator-${session.id}-secondary-unread`)).toHaveCount(1);
+          await expect(page.getByTestId(`session-list-attention-indicator-${occurrenceId}-secondary-unread`)).toHaveCount(1);
         }
-        await sessionRow(page, session.id).click();
-        await expectRowInSection({ page, headerTestId: sessionListAttentionTestIds.workingHeader, sessionId: session.id });
-        await expect(spinner).toHaveCount(1);
-        await expect(page.getByTestId(`session-row-unread-indicator-${session.id}-secondary`)).toHaveCount(0);
-        await expect(page.getByTestId(`session-row-unread-center-${session.id}-secondary`)).toHaveCount(0);
-        if (mode === 'keepWorking') await sessionRow(page, session.id).screenshot({ path: test.info().outputPath('working-read.png') });
+        await sessionRow(page, session.id, rowServerId, mode === 'showUnread' ? 'needsYou' : 'working').click();
+        await expectRowInSection({ serverId: rowServerId, page, headerTestId: sessionListAttentionTestIds.workingHeader, sessionId: session.id });
+        const workingOccurrenceId = sessionListOccurrenceId(rowServerId, session.id, 'working');
+        await expect(page.getByTestId(`session-row-attention-indicator-spinner-${workingOccurrenceId}-secondary`)).toHaveCount(1);
+        await expect(page.getByTestId(`session-row-unread-indicator-${workingOccurrenceId}-secondary`)).toHaveCount(0);
+        await expect(page.getByTestId(`session-row-unread-center-${workingOccurrenceId}-secondary`)).toHaveCount(0);
+        if (mode === 'keepWorking') await sessionRow(page, session.id, rowServerId, 'working').screenshot({ path: test.info().outputPath('working-read.png') });
       }
       // A new unread completed reply becomes ready only after reported work settles.
       await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/?happier_hmr=0`, 180_000);
       await seedReadyMarker({ baseUrl: server.baseUrl, token, sessionId: session.id });
       await publishRuntimeActivity({ socket: publisher, sessionId: session.id, snapshot: { state: 'idle', activeCount: 0 } });
-      await expectRowInSection({ page, headerTestId: sessionListAttentionTestIds.attentionHeader, sessionId: session.id });
-      await expect(page.getByTestId(sessionListAttentionTestIds.secondaryReadyIndicator(session.id))).toHaveCount(1);
+      await expectRowInSection({ serverId: rowServerId, page, headerTestId: sessionListAttentionTestIds.attentionHeader, sessionId: session.id });
+      await expect(page.getByTestId(sessionListAttentionTestIds.secondaryReadyIndicator(session.id, rowServerId, 'needsYou'))).toHaveCount(1);
 
     } catch (error) {
       throw appendBrowserDiagnostics(error, browserDiagnostics().replaceAll(token, '[redacted]'));

@@ -1,0 +1,9 @@
+{
+  "name": "happier-qa-finish-e-cli-secret-configuration",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.mjs",
+  "description": "Disposable E6 connected configuration Secret-reference QA fixture; never bundled.",
+  "dependencies": { "@happier-dev/plugin-sdk": ">=0.0.0 <1.0.0" }
+}

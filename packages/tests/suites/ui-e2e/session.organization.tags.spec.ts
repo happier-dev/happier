@@ -10,9 +10,14 @@ import { resolveUiWebBeforeAllTimeoutMs, startUiWeb, type StartedUiWeb } from '.
 import { createRunDirs } from '../../src/testkit/runDir';
 import { startForwardedHeaderProxy } from '../../src/testkit/uiE2e/forwardedHeaderProxy';
 import { gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../../src/testkit/uiE2e/pageNavigation';
-import { createPlainSession } from '../../src/testkit/uiE2e/sessionFoldersDrag';
+import { resolveCanonicalServerIdForUi, createPlainSession } from '../../src/testkit/uiE2e/sessionFoldersDrag';
 import { readSessionTagLabelsFromOrganizationSnapshot } from '../../src/testkit/uiE2e/sessionOrganization';
 import { waitForInitialAppUi } from '../../src/testkit/uiE2e/waitForInitialAppUi';
+
+import { sessionListRowTestId } from '../../src/testkit/uiE2e/sessionListRowTestId';
+
+let rowServerId: string;
+const rowTestId = (sessionId: string) => sessionListRowTestId(rowServerId, sessionId);
 
 const run = createRunDirs({ runLabel: 'ui-e2e-session-organization-tags' });
 
@@ -26,7 +31,7 @@ const IDENTITY_HEADERS = {
 const SESSION_CREATE_TIMESTAMP_SEPARATION_MS = 35;
 
 const testIds = {
-  row: (sessionId: string) => `session-list-item-${sessionId}`,
+  row: rowTestId,
   rowTagAction: 'session-item-tag-action',
   createTagOption: 'dropdown-option-__create__',
   existingTagOption: (tagLabel: string) => `dropdown-option-${safeDropdownItemId(tagLabel)}`,
@@ -173,6 +178,8 @@ test.describe('ui e2e: session organization tags', () => {
       machineId: SEEDED_MACHINE_ID,
       metadata: 'session-organization-tags-machine',
     });
+
+    rowServerId = await resolveCanonicalServerIdForUi(proxy.baseUrl);
 
     ui = await startUiWeb({
       testDir: suiteDir,

@@ -13,7 +13,6 @@
  *    it did not read.
  */
 import {
-    MAX_TRIAGE_ROW_FACTS_V1,
     MAX_TRIAGE_TEXT_UTF8_BYTES_V1,
 } from '@happier-dev/triage-protocol/v1';
 import { normalizeScmHostingRepositoryIdentity } from '@happier-dev/plugin-sdk/scm';
@@ -57,7 +56,6 @@ function localRefFor(row, collisionScope) {
 
 function projectFacts(row) {
     const facts = [];
-    let truncated = false;
 
     if (isIntegerMs(row.updated_at)) {
         facts.push({
@@ -92,11 +90,7 @@ function projectFacts(row) {
         });
     }
 
-    if (facts.length > MAX_TRIAGE_ROW_FACTS_V1) {
-        truncated = true;
-        facts.length = MAX_TRIAGE_ROW_FACTS_V1;
-    }
-    return { facts, truncated };
+    return facts;
 }
 
 function projectViewer(row) {
@@ -131,7 +125,7 @@ export function mapLedgerRow(row, collisionScope) {
 
     const presentation = PRESENTATION_BY_PROVIDER_STATUS[row.status] ?? 'unknown';
     const title = truncateToUtf8Bytes(row.headline, MAX_TRIAGE_TEXT_UTF8_BYTES_V1);
-    const { facts, truncated: factsTruncated } = projectFacts(row);
+    const facts = projectFacts(row);
 
     const snapshot = {
         v: 1,
@@ -142,7 +136,7 @@ export function mapLedgerRow(row, collisionScope) {
     };
     if (isNonEmptyString(row.detail)) snapshot.summary = row.detail;
     if (isIntegerMs(row.opened_at)) snapshot.createdAtMs = row.opened_at;
-    if (title.truncated || factsTruncated) snapshot.projectionTruncated = true;
+    if (title.truncated) snapshot.projectionTruncated = true;
 
     const observation = {
         kind: 'present',

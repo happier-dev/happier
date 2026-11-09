@@ -252,9 +252,9 @@ const issueDogfoodPlugin = definePlugin({
     inspect: {
       title: 'Inspect external Action context',
       description: 'Reads current account settings and returns an external-plugin marker.',
-      scopes: ['global'],
+      scopes: ['global', 'session'],
       surfaces: ['cli', 'agent', 'ui'],
-      placementBindings: ['commandPalette'],
+      placementBindings: ['commandPalette', 'composer.primary', 'composer.more'],
       dangerLevel: 'safe',
       execution: { target: 'daemon' },
       inputSchema: ACTION_INSPECT_INPUT,
@@ -425,6 +425,7 @@ const issueDogfoodPlugin = definePlugin({
       'issue-control': defineComposerControl({
         label: 'Issue',
         icon: 'error',
+        defaultPlacement: 'pinned',
         state: { resource: 'issue-control-state' },
         compactRenderer: ISSUE_SURFACE_RENDERER_ID,
         overflow: {

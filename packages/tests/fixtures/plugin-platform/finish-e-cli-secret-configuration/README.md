@@ -1,0 +1,7 @@
+# FINISH-E-CLI Secret configuration QA fixture
+
+Disposable author-source plugin for Lane12 E6 on its owned QA stack. It declares one service-scoped configuration field (`dummy-secret`, optional and secret) and a qualified connected-account purpose. The intended recipe selects a dummy Saved Secret reference through the host's canonical owner; the plugin never acquires, reads, prints, or materializes it. Authentication accepts only the non-secret label `E6 disposable fixture`. No network, provider, timer, or background work.
+
+Install through `happier plugins install <absolute-target-source-path> --dev --json`; complete the ordinary install approval if returned. Use the host connection/Secret surfaces for choose, clear, replace, and second-client readback. Remove owned references and disposable Secrets, then uninstall `qa.finish-e-cli-secret-configuration`. This directory is test-fixture source, excluded from shipped plugin bundles; do not register it in a bundled catalog.
+
+READY53 replay passed: the browser catalog published the fixture and its service configuration chose, cleared and directly replaced existing dummy Saved Secret references. Independent canonical CLI readbacks verified service, mode, purpose and reference identities. The final references, dummy Secrets and connected fixture Account were removed, and the plugin was uninstalled. Evidence and bounded validation gaps are recorded in `.project/reviews/2026-10-02-lane12-replan/impl-main/FINISH-E-CLI.md`.

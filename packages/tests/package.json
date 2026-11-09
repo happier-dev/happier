@@ -58,6 +58,7 @@
     "stress:compose:status": "node scripts/runTsxEntrypoint.mjs src/testkit/stress/cli/stressComposeCli.ts status",
     "test:agents": "node scripts/run-vitest-with-heartbeat.mjs --config vitest.agents.config.ts",
     "test:ui:e2e": "node scripts/run-playwright-with-heartbeat.mjs --config playwright.ui.config.mjs",
+    "test:ui:e2e:network-transfer": "node scripts/run-playwright-with-heartbeat.mjs --config playwright.ui.config.mjs suites/ui-e2e/session.networkTransfer.spec.ts",
     "test:ui:e2e:plugin-current-stack": "HAPPIER_E2E_PLUGIN_UI_CURRENT_STACK=1 node scripts/run-playwright-with-heartbeat.mjs --config playwright.ui.config.mjs suites/ui-e2e/plugin.ui.currentStack.spec.ts",
     "test:ui:e2e:session-board-current-stack": "HAPPIER_E2E_SESSION_BOARD_CURRENT_STACK=1 node scripts/run-playwright-with-heartbeat.mjs --config playwright.ui.config.mjs suites/ui-e2e/session.board.currentStack.spec.ts",
     "test:ui:e2e:plugin-current-stack:session-agent": "HAPPIER_E2E_PLUGIN_UI_CURRENT_STACK=1 HAPPIER_E2E_PLUGIN_UI_CURRENT_STACK_MUTATIONS=1 node scripts/run-playwright-with-heartbeat.mjs --config playwright.ui.config.mjs suites/ui-e2e/plugin.ui.currentStack.sessionAgent.spec.ts",

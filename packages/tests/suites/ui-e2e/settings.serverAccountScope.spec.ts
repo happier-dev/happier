@@ -24,6 +24,9 @@ import {
 
 test.use(secretBearingBrowserCapturePolicy);
 
+import { sessionListRowTestId } from '../../src/testkit/uiE2e/sessionListRowTestId';
+import { resolveCanonicalServerIdForUi } from '../../src/testkit/uiE2e/sessionFoldersDrag';
+
 const run = createRunDirs({ runLabel: 'ui-e2e' });
 const DIFF_SYNTAX_TOGGLE_ID = 'settings-feature-toggle-files.diffSyntaxHighlighting';
 
@@ -206,6 +209,8 @@ test.describe('ui e2e: server/account scoped settings', () => {
     await page.setViewportSize({ width: 1440, height: 900 });
     await createAccountWithoutDaemon({ page, uiBaseUrl });
     const primaryServerId = deriveServerIdFromUrl(primaryServer.baseUrl);
+    const primaryRowServerId = await resolveCanonicalServerIdForUi(primaryServer.baseUrl);
+    const secondaryRowServerId = await resolveCanonicalServerIdForUi(secondaryServer.baseUrl);
 
     await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/settings/features?happier_hmr=0`, 180_000);
     const primaryToggle = page.getByTestId(DIFF_SYNTAX_TOGGLE_ID);
@@ -338,8 +343,8 @@ test.describe('ui e2e: server/account scoped settings', () => {
     // UI projection: the focused A runtime projects A's row while the secondary
     // (non-focused) Home runtime projects B's row in the same session list.
     await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/?happier_hmr=0`, 180_000);
-    await expect(page.getByTestId(`session-list-item-${primarySession.sessionId}`)).toHaveCount(1, { timeout: 120_000 });
-    await expect(page.getByTestId(`session-list-item-${secondarySession.sessionId}`)).toHaveCount(1, { timeout: 120_000 });
+    await expect(page.getByTestId(sessionListRowTestId(primaryRowServerId, primarySession.sessionId))).toHaveCount(1, { timeout: 120_000 });
+    await expect(page.getByTestId(sessionListRowTestId(secondaryRowServerId, secondarySession.sessionId))).toHaveCount(1, { timeout: 120_000 });
 
     await secondaryServer.stop();
     secondaryServer = null;
@@ -347,7 +352,7 @@ test.describe('ui e2e: server/account scoped settings', () => {
     // A stays interactive with B offline: its session row remains visible and
     // its scoped setting remains writable.
     await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/?happier_hmr=0`, 180_000);
-    await expect(page.getByTestId(`session-list-item-${primarySession.sessionId}`)).toHaveCount(1, { timeout: 120_000 });
+    await expect(page.getByTestId(sessionListRowTestId(primaryRowServerId, primarySession.sessionId))).toHaveCount(1, { timeout: 120_000 });
 
     await expectDiffSyntaxToggleChecked(page, uiBaseUrl, false);
     const primaryToggleWhileSecondaryOffline = page.getByTestId(DIFF_SYNTAX_TOGGLE_ID);
@@ -375,8 +380,8 @@ test.describe('ui e2e: server/account scoped settings', () => {
     // once: no duplicate rows in the list and no duplicated session rows on
     // either server.
     await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/?happier_hmr=0`, 180_000);
-    await expect(page.getByTestId(`session-list-item-${primarySession.sessionId}`)).toHaveCount(1, { timeout: 120_000 });
-    await expect(page.getByTestId(`session-list-item-${secondarySession.sessionId}`)).toHaveCount(1, { timeout: 120_000 });
+    await expect(page.getByTestId(sessionListRowTestId(primaryRowServerId, primarySession.sessionId))).toHaveCount(1, { timeout: 120_000 });
+    await expect(page.getByTestId(sessionListRowTestId(secondaryRowServerId, secondarySession.sessionId))).toHaveCount(1, { timeout: 120_000 });
     expect(await listServerSessionIds(primaryServer, primaryAccountToken)).toEqual([primarySession.sessionId]);
     expect(await listServerSessionIds(secondaryServer, secondaryAccountToken)).toEqual([secondarySession.sessionId]);
 

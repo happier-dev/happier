@@ -1,10 +1,10 @@
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { createServerLightTemplateCacheKey, prepareCachedDataDir } from './serverLightTemplateCache';
+import { createServerLightTemplateCacheKey, prepareCachedDataDir } from './serverLightTemplateCache.mjs';
 
 describe('serverLightTemplateCache', () => {
   afterEach(() => {
@@ -126,6 +126,26 @@ describe('serverLightTemplateCache', () => {
     expect(before).not.toBe(after);
   });
 
+  it('keeps an explicit predecessor migration directory separate from current SQLite templates', async () => {
+    const rootDir = mkdtempSync(join(tmpdir(), 'happier-server-light-template-key-'));
+    try {
+      const prisma = resolve(rootDir, 'apps', 'server', 'prisma', 'sqlite');
+      const current = resolve(prisma, 'migrations', 'current');
+      const predecessor = resolve(rootDir, 'predecessor', 'initial');
+      mkdirSync(current, { recursive: true });
+      mkdirSync(predecessor, { recursive: true });
+      writeFileSync(resolve(prisma, 'schema.prisma'), 'datasource db { provider = "sqlite" }\n');
+      writeFileSync(resolve(current, 'migration.sql'), 'create table current (id text);\n');
+      writeFileSync(resolve(predecessor, 'migration.sql'), 'create table predecessor (id text);\n');
+
+      const canonical = await createServerLightTemplateCacheKey({ rootDir, provider: 'sqlite' });
+      const historical = await createServerLightTemplateCacheKey({ rootDir, provider: 'sqlite', migrationsDir: resolve(rootDir, 'predecessor') });
+      expect(historical).not.toBe(canonical);
+    } finally {
+      rmSync(rootDir, { recursive: true, force: true });
+    }
+  });
+
   it('retries cache publish when rename returns a transient EPERM error', async () => {
     const rootDir = mkdtempSync(join(tmpdir(), 'happier-server-light-template-cache-'));
     const cacheRootDir = resolve(rootDir, 'cache');
@@ -148,7 +168,7 @@ describe('serverLightTemplateCache', () => {
       };
     });
 
-    const { prepareCachedDataDir: prepareWithRetry } = await import('./serverLightTemplateCache');
+    const { prepareCachedDataDir: prepareWithRetry } = await import('./serverLightTemplateCache.mjs');
     const result = await prepareWithRetry({
       cacheRootDir,
       templateKey: 'sqlite-seed',

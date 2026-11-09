@@ -10,13 +10,18 @@ import { resolveUiWebBeforeAllTimeoutMs, startUiWeb, type StartedUiWeb } from '.
 import { createRunDirs } from '../../src/testkit/runDir';
 import { startForwardedHeaderProxy } from '../../src/testkit/uiE2e/forwardedHeaderProxy';
 import { gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../../src/testkit/uiE2e/pageNavigation';
-import { createPlainSession } from '../../src/testkit/uiE2e/sessionFoldersDrag';
+import { resolveCanonicalServerIdForUi, createPlainSession } from '../../src/testkit/uiE2e/sessionFoldersDrag';
 import {
   fetchSessionOrganizationSnapshot,
   importSessionOrganization,
   readPinnedSessionIdsFromOrganizationSnapshot,
 } from '../../src/testkit/uiE2e/sessionOrganization';
 import { waitForInitialAppUi } from '../../src/testkit/uiE2e/waitForInitialAppUi';
+
+import { sessionListRowTestId } from '../../src/testkit/uiE2e/sessionListRowTestId';
+
+let rowServerId: string;
+const rowTestId = (sessionId: string) => sessionListRowTestId(rowServerId, sessionId);
 
 const run = createRunDirs({ runLabel: 'ui-e2e-session-organization-pinned-bootstrap' });
 
@@ -205,6 +210,8 @@ test.describe('ui e2e: session organization pinned bootstrap', () => {
       metadata: 'session-organization-pinned-bootstrap-machine',
     });
 
+    rowServerId = await resolveCanonicalServerIdForUi(proxy.baseUrl);
+
     ui = await startUiWeb({
       testDir: suiteDir,
       env: {
@@ -274,6 +281,27 @@ test.describe('ui e2e: session organization pinned bootstrap', () => {
     });
     await expectNoSessionListRequestUsesPinnedIds(initialListCaptures);
     await expect(page.getByTestId('session-list-header:pinned-v1')).toHaveCount(1, { timeout: 120_000 });
-    await expect(page.getByTestId(`session-list-item-${pinnedSessionIds[0]}`)).toHaveCount(1, { timeout: 120_000 });
+    await expect(page.getByTestId(rowTestId(pinnedSessionIds[0]))).toHaveCount(1, { timeout: 120_000 });
+    await test.step('the open session menu changes its list pin and copies information without developer mode', async () => {
+      const sessionId = pinnedSessionIds[0];
+      await page.goto(`${uiBaseUrl}/session/${sessionId}?serverId=${encodeURIComponent(rowServerId)}`, { waitUntil: 'domcontentloaded' });
+      const menu = page.getByTestId('session-header-action-menu-trigger');
+      await expect(menu).toBeVisible();
+      await menu.click();
+      await page.getByTestId('dropdown-option-ui_session_unpin').click();
+      const readPins = async () => readPinnedSessionIdsFromOrganizationSnapshot(await fetchSessionOrganizationSnapshot({
+        baseUrl: server!.baseUrl, token: token!, request: { includeFolders: false, includeTags: false, includeLabels: false },
+      }));
+      await expect.poll(readPins).not.toContain(sessionId);
+      await page.context().grantPermissions(['clipboard-read', 'clipboard-write']);
+      await menu.click();
+      await expect(page.getByTestId('dropdown-option-ui_session_pin')).toBeVisible();
+      await page.getByTestId('dropdown-option-session_copyDebugInformation').click();
+      await expect.poll(() => page.evaluate(() => navigator.clipboard.readText()))
+        .toContain(`Happier session ID: ${sessionId}`);
+      await menu.click();
+      await page.getByTestId('dropdown-option-ui_session_pin').click();
+      await expect.poll(readPins).toContain(sessionId);
+    });
   });
 });

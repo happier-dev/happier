@@ -1,13 +1,14 @@
 import { expect, type Page } from '@playwright/test';
+import { sessionListRowTestId } from './sessionListRowTestId';
 
-export async function openSessionListRowMenu(page: Page, sessionId: string): Promise<void> {
-    const row = page.getByTestId(`session-list-item-${sessionId}`);
+export async function openSessionListRowMenu(page: Page, address: Readonly<{ serverId: string; sessionId: string }>): Promise<void> {
+    const row = page.getByTestId(sessionListRowTestId(address.serverId, address.sessionId));
     await expect(row).toHaveCount(1, { timeout: 60_000 });
     await row.hover();
 
-    // Row presentation keeps trailing controls beside navigation. Bind to
+    // CollectionRowContent keeps trailing controls beside navigation. Bind to
     // their nearest common row, refusing an ancestor containing another Session.
-    const collectionRow = row.locator('xpath=ancestor::*[count(.//*[@role="button" and starts-with(@data-testid, "session-list-item-")]) = 1 and count(.//*[@data-testid="session-item-more-menu"]) = 1][1]');
+    const collectionRow = row.locator('xpath=ancestor::*[count(.//*[@role="button" and @data-testid and starts-with(@data-testid, "session-list-item-")]) = 1 and count(.//*[@data-testid="session-item-more-menu"]) = 1][1]');
     const trigger = collectionRow.getByTestId('session-item-more-menu');
     // Hover actions commit asynchronously; the SDK waits for this row's trigger.
     await trigger.waitFor({ state: 'visible' });
@@ -22,9 +23,10 @@ export async function selectSessionListRowMenuItem(page: Page, itemId: string): 
 
 export async function openSessionListRowMenuAndSelectItem(params: Readonly<{
     page: Page;
+    serverId: string;
     sessionId: string;
     itemId: string;
 }>): Promise<void> {
-    await openSessionListRowMenu(params.page, params.sessionId);
+    await openSessionListRowMenu(params.page, params);
     await selectSessionListRowMenuItem(params.page, params.itemId);
 }

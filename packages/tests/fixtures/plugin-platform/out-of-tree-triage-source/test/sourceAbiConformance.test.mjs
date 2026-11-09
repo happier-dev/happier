@@ -1,3 +1,4 @@
+import { createTestResourceInvocationContext } from '@happier-dev/plugin-sdk/testing';
 /**
  * `qa/QA-PROTOCOL.md` §2.1 as runnable cases.
  *
@@ -68,8 +69,12 @@ const LEDGER_SPACE = 'acme/ledger';
 const LEDGER_QA_SPACE = 'acme/ledger-qa';
 const LEDGER_QA_ROW_COUNT = 2_000;
 const LEDGER_QA_PAGE_LIMIT = 100;
+const LEDGER_CONTINUATION_SPACES = Object.freeze([
+    ['acme/ledger-qa-deep', 500],
+    ['acme/ledger-qa-shallow', 3],
+]);
 /** Every space discovery offers, in the order it reports them. */
-const LEDGER_SPACES = Object.freeze([LEDGER_SPACE, LEDGER_QA_SPACE]);
+const LEDGER_SPACES = Object.freeze([LEDGER_SPACE, LEDGER_QA_SPACE, ...LEDGER_CONTINUATION_SPACES.map(([space]) => space), 'acme/ledger-qa-empty']);
 const LISTED_ACCOUNT = Object.freeze({
     service: Object.freeze({ pluginId: 'acme.ledger', localId: LEDGER_CONNECTED_ACCOUNT_ID }),
     accountId: 'account-1',
@@ -407,7 +412,7 @@ function detailSurfaceInput(observation, space = LEDGER_SPACE) {
 async function readDetailDocument(installed, context) {
     const runtime = installed.source.registration('resources', LEDGER_DETAIL_DOCUMENT_RESOURCE_ID);
     assert.ok(runtime, 'the source registers no detail document producer');
-    const produced = await runtime.read({ signal: new AbortController().signal, context });
+    const produced = await runtime.read(createTestResourceInvocationContext({ signal: new AbortController().signal, context }));
     const text = typeof produced === 'string' ? produced : new TextDecoder().decode(produced);
     return JSON.parse(text);
 }
@@ -786,6 +791,47 @@ test('QB-05: a page never exceeds the submitted limit once omissions are counted
 // ---------------------------------------------------------------------------
 // QB-57 — the declared QA space is a real source for the loaded list recipe
 // ---------------------------------------------------------------------------
+
+for (const [space, count] of LEDGER_CONTINUATION_SPACES) {
+    test(`QB-86: ${space} scans exactly ${count} observations and resolves its last entry`, async () => {
+        const installed = await install();
+        try {
+            const instance = configuredInstance(manifest.id, space);
+            const seen = new Set();
+            let input = { v: 1, instance, page: { kind: 'initial', limit: 37 } };
+            let result;
+            do {
+                result = TriageScanResultV1Schema.parse(await installed.scan(input));
+                for (const observation of result.observations) {
+                    assert.equal(observation.localRef.collisionScope, space);
+                    assert.equal(seen.has(observation.localRef.entryId), false);
+                    seen.add(observation.localRef.entryId);
+                }
+                assert.ok(seen.size <= count);
+                if (result.kind === 'page') input = {
+                    v: 1, instance, page: { kind: 'continuation', continuation: result.continuation },
+                };
+            } while (result.kind === 'page');
+            assert.equal(result.kind, 'complete');
+            assert.deepEqual(plain(result.evidence), { kind: 'walkFinished' });
+            assert.equal(seen.size, count);
+            const localRef = {
+                kindId: (count - 1) % 2 === 0 ? 'change' : 'ticket',
+                collisionScope: space,
+                entryId: `LGQ-${count - 1}`,
+            };
+            const exact = TriageGetResultV1Schema.parse(await installed.get({ v: 1, instance, localRef }));
+            assert.equal(exact.kind, 'present');
+            assert.equal(exact.snapshot.scopeLabel, space);
+            const beyond = TriageGetResultV1Schema.parse(await installed.get({
+                v: 1, instance, localRef: { kindId: 'change', collisionScope: space, entryId: `LGQ-${count}` },
+            }));
+            assert.equal(beyond.kind, 'absent');
+        } finally {
+            await installed.dispose();
+        }
+    });
+}
 
 test('QB-57: the configured QA space pages 2,000 real entries through the same scan owner', async () => {
     // QB-57's workload is 2,000 mixed entries. A performance recipe run against

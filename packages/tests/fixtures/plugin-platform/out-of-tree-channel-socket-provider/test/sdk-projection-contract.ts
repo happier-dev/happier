@@ -1,10 +1,14 @@
-import type { ActionsService } from '@happier-dev/plugin-sdk/actions';
+import {
+    isPluginActionApprovalRequestCreated,
+    type ActionApprovalRequestCreatedResult,
+    type ActionsService,
+} from '@happier-dev/plugin-sdk/actions';
 import {
     PluginContributionIdentityV1JsonSchema,
     PluginIdJsonSchema,
 } from '@happier-dev/plugin-sdk/manifest';
 import type { PluginJsonSchema } from '@happier-dev/plugin-sdk/protocol';
-import { SessionSpawnNewInputV2Schema } from '@happier-dev/plugin-sdk/sessions';
+import { projectSessionSpawnNewActionInputV2, SessionSpawnNewInputV2Schema } from '@happier-dev/plugin-sdk/sessions';
 
 const publicContributionLocalIdSchema: PluginJsonSchema | undefined =
     PluginContributionIdentityV1JsonSchema.properties?.localId;
@@ -18,10 +22,10 @@ const publicPluginIdSchemaType: PluginJsonSchema['type'] = PluginIdJsonSchema.ty
 export async function publicSessionSpawn(
     actions: ActionsService,
     signal?: AbortSignal,
-): Promise<string | boolean> {
+): Promise<string | boolean | ActionApprovalRequestCreatedResult> {
     const parsed = SessionSpawnNewInputV2Schema.safeParse({
         executionTarget: { serverId: 'server-1', machineId: 'machine-1' },
-        directory: '/workspace/project',
+        directory: { kind: 'path', path: '/workspace/project' },
         agentTarget: {
             kind: 'agent',
             identity: { pluginId: 'happier.agent.codex', localId: 'codex' },
@@ -31,9 +35,10 @@ export async function publicSessionSpawn(
 
     const result = await actions.execute(
         'session.spawn_new',
-        parsed.data,
+        projectSessionSpawnNewActionInputV2(parsed.data),
         { signal },
     );
+    if (isPluginActionApprovalRequestCreated(result)) return result;
     if (result.type === 'success') {
         const sessionId: string = result.sessionId;
         return sessionId;

@@ -59,6 +59,7 @@ const REMOVED_NORMAL_SYMBOL_IMPORTS = [
   ['.', 'PluginActivationApi'],
   ['./manifest', 'PluginAgentAcpTransport'],
   ['./manifest', 'PluginToolContributionV2'],
+  ['./manifest', 'PluginCommandContributionV2'],
   ['./agents/runtime', 'RuntimeCoreV1'],
   ['./agents/runtime', 'AcpSessionRuntimeV1'],
   ['./agents/runtime', 'AgentRuntimeV1'],

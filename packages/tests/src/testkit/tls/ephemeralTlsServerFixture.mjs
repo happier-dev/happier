@@ -129,6 +129,9 @@ export async function createEphemeralTlsServerFixture(input = {}) {
             .filter((value) => value !== 'localhost')
             .map((value) => ({ type: 'dns', value })),
           { type: 'ip', value: '127.0.0.1' },
+          ...[...new Set(input.additionalIpAddresses ?? [])]
+            .filter((value) => value !== '127.0.0.1')
+            .map((value) => ({ type: 'ip', value })),
         ]),
         await SubjectKeyIdentifierExtension.create(
           leafKeys.publicKey,

@@ -40,6 +40,11 @@ import {
  *    main-thread regression without flaking on slow CI.
  */
 
+import { sessionListRowTestId } from '../../src/testkit/uiE2e/sessionListRowTestId';
+
+let rowServerId: string;
+const rowTestId = (sessionId: string) => sessionListRowTestId(rowServerId, sessionId);
+
 const run = createRunDirs({ runLabel: 'ui-e2e-session-folders-drag-geometry' });
 
 const SEEDED_MACHINE_ID = 'seeded-session-drag-geometry-machine';
@@ -174,6 +179,8 @@ test.describe('ui e2e: session list drag geometry', () => {
       metadata: 'session-drag-geometry-machine',
     });
 
+    rowServerId = await resolveCanonicalServerIdForUi(proxy.baseUrl);
+
     ui = await startUiWeb({
       testDir: suiteDir,
       env: {
@@ -249,13 +256,13 @@ test.describe('ui e2e: session list drag geometry', () => {
       sessionFoldersV1: buildSessionFolderSettings({ workspace }),
     });
 
-    await expect(page.getByTestId(`session-list-item-${dragSessionId}`)).toHaveCount(1, { timeout: 120_000 });
+    await expect(page.getByTestId(rowTestId(dragSessionId))).toHaveCount(1, { timeout: 120_000 });
     await expect(page.getByTestId(`session-folder-header-${FOLDER_BOTTOM_ID}`)).toHaveCount(1, { timeout: 120_000 });
     await expect(page.getByTestId('session-list-drop-overlay')).toHaveCount(1, { timeout: 60_000 });
 
     // Scroll the list during a held drag. Before the content-coordinate fix,
     // stale window bounds put the indicator several rows off the pointer.
-    const scrolledProbe = await dragSessionWithGeometryProbe(page, {
+    const scrolledProbe = await dragSessionWithGeometryProbe(page, { serverId: rowServerId,
       sessionId: dragSessionId,
       targetTestId: `session-folder-header-${FOLDER_BOTTOM_ID}`,
       targetEdge: 'top',
@@ -335,9 +342,9 @@ test.describe('ui e2e: session list drag geometry', () => {
       sessionFoldersV1: buildSessionFolderSettings({ workspace }),
     });
 
-    await expect(page.getByTestId(`session-list-item-${perfSessionId}`)).toHaveCount(1, { timeout: 120_000 });
+    await expect(page.getByTestId(rowTestId(perfSessionId))).toHaveCount(1, { timeout: 120_000 });
 
-    const { drag, longTasks } = await dragSessionWithLongTaskProbe(page, {
+    const { drag, longTasks } = await dragSessionWithLongTaskProbe(page, { serverId: rowServerId,
       sessionId: perfSessionId,
       targetTestId: `session-folder-header-${FOLDER_TOP_ID}`,
       targetEdge: 'top',

@@ -12,6 +12,7 @@ import { startForwardedHeaderProxy } from '../../src/testkit/uiE2e/forwardedHead
 import { gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../../src/testkit/uiE2e/pageNavigation';
 import { seedDismissedPendingSetupIntent } from '../../src/testkit/uiE2e/pendingSetupIntent';
 import {
+  resolveCanonicalServerIdForUi,
   createPlainSession,
   readVisibleSessionRowOrder,
 } from '../../src/testkit/uiE2e/sessionFoldersDrag';
@@ -20,6 +21,11 @@ import {
   readPinnedSessionIdsFromOrganizationSnapshot,
 } from '../../src/testkit/uiE2e/sessionOrganization';
 import { waitForInitialAppUi } from '../../src/testkit/uiE2e/waitForInitialAppUi';
+
+import { sessionListOccurrenceId, sessionListRowTestId } from '../../src/testkit/uiE2e/sessionListRowTestId';
+
+let rowServerId: string;
+const rowTestId = (sessionId: string) => sessionListRowTestId(rowServerId, sessionId);
 
 const run = createRunDirs({ runLabel: 'ui-e2e-session-list-multi-select-actions' });
 
@@ -34,8 +40,8 @@ const SESSION_CREATE_TIMESTAMP_SEPARATION_MS = 35;
 const STORAGE_SCOPE = `e2e-session-list-multi-select-${run.runId}`;
 
 const testIds = {
-  row: (sessionId: string) => `session-list-item-${sessionId}`,
-  selectionCheckbox: (sessionId: string) => `session-list-selection-checkbox-${sessionId}`,
+  row: rowTestId,
+  selectionCheckbox: (sessionId: string) => `session-list-selection-checkbox-${sessionListOccurrenceId(rowServerId, sessionId)}`,
   selectionActionBar: 'session-list-selection-action-bar',
   selectionCount: 'session-list-selection-count',
   selectionProgress: 'session-list-selection-progress',
@@ -100,11 +106,11 @@ async function expectRowsVisible(page: Page, sessionIds: readonly string[]): Pro
 async function readVisibleOrderForSeededSessions(page: Page, sessionIds: readonly string[]): Promise<string[]> {
   const expectedIds = new Set(sessionIds);
   await expect.poll(async () => {
-    const visibleOrder = await readVisibleSessionRowOrder(page);
+    const visibleOrder = await readVisibleSessionRowOrder(page, { serverId: rowServerId, sessionIds });
     return visibleOrder.filter((sessionId) => expectedIds.has(sessionId));
   }, { timeout: 120_000 }).toHaveLength(sessionIds.length);
 
-  const visibleOrder = await readVisibleSessionRowOrder(page);
+  const visibleOrder = await readVisibleSessionRowOrder(page, { serverId: rowServerId, sessionIds });
   return visibleOrder.filter((sessionId) => expectedIds.has(sessionId));
 }
 
@@ -282,6 +288,8 @@ test.describe('ui e2e: session list multi-select actions', () => {
       metadata: 'session-list-multi-select-machine',
     });
 
+    rowServerId = await resolveCanonicalServerIdForUi(proxy.baseUrl);
+
     ui = await startUiWeb({
       testDir: suiteDir,
       env: {
@@ -398,7 +406,7 @@ test.describe('ui e2e: session list multi-select actions', () => {
       await expect(progress).toHaveAttribute('data-action-id', 'ui.session.archive', { timeout: 60_000 });
       expect(delayedFirstArchive).toBe(true);
       expect(pendingSessionId).not.toBeNull();
-      const pendingRow = page.getByTestId(`session-list-item-${pendingSessionId}`);
+      const pendingRow = page.getByTestId(rowTestId(pendingSessionId!));
       await expect(pendingRow.getByRole('img', { name: /archiving/i })).toBeVisible({ timeout: 60_000 });
       for (const view of [
         { name: 'wide-light', width: 1440, height: 900, colorScheme: 'light' },

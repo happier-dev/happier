@@ -13,6 +13,11 @@ import { authenticateAndStartDaemon } from '../../src/testkit/uiE2e/authenticate
 import { gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../../src/testkit/uiE2e/pageNavigation';
 import { waitForInitialAppUi } from '../../src/testkit/uiE2e/waitForInitialAppUi';
 
+import { sessionListOccurrenceId } from '../../src/testkit/uiE2e/sessionListRowTestId';
+import { resolveCanonicalServerIdForUi } from '../../src/testkit/uiE2e/sessionFoldersDrag';
+
+let rowServerId: string;
+
 const run = createRunDirs({ runLabel: 'ui-e2e' });
 
 const IDENTITY_HEADERS = {
@@ -355,6 +360,7 @@ test.describe('ui e2e: session composer draft continuity', () => {
         await postPlainUserMessage({ baseUrl: server.baseUrl, token, sessionId: sessionA.id, text: 'newer session A user prompt' });
         await postPlainUserMessage({ baseUrl: server.baseUrl, token, sessionId: sessionB.id, text: 'session B user prompt must stay isolated' });
 
+        rowServerId = await resolveCanonicalServerIdForUi(proxy.baseUrl);
         ui = await startUiWeb({
             testDir: suiteDir,
             env: {
@@ -472,7 +478,7 @@ test.describe('ui e2e: session composer draft continuity', () => {
         await fillAndFlushDraft(page, composer, submitted);
 
         await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/?happier_hmr=0`, 120_000);
-        await expect(page.getByTestId(`session-list-draft-indicator:${sessionA.id}`)).toBeVisible({ timeout: 60_000 });
+        await expect(page.getByTestId(`session-list-draft-indicator:${sessionListOccurrenceId(rowServerId, sessionA.id)}`)).toBeVisible({ timeout: 60_000 });
 
         const reopened = await openSession({ page, uiBaseUrl, session: sessionA });
         await expect(reopened).toHaveValue(submitted);

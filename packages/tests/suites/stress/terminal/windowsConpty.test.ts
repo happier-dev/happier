@@ -34,7 +34,6 @@ describe('stress: terminal Windows/ConPTY fallback diagnostics', () => {
       config: {
         bufferMaxBytes: 64 * 1024,
         bufferMaxEvents: 32,
-        bufferRetentionMs: 60_000,
         urlParseBufferLimit: 8 * 1024,
         maxWriteChunkBytes: 64 * 1024,
         defaultCols: 80,

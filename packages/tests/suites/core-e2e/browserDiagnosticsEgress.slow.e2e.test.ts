@@ -3,7 +3,6 @@ import { describe, expect, it } from 'vitest';
 import {
   BrowserDiagnosticEventV1Schema,
   classifyBrowserDiagnosticFieldForDestination,
-  INJECTED_CONSOLE_TEXT_MAX_LENGTH,
   INJECTED_EVENT_ALLOWED_FIELDS,
   INJECTED_OWNER_ONLY_FIELDS,
   redactDiagnosticsHeaders,
@@ -160,8 +159,6 @@ describe('core e2e: browser diagnostics egress redaction (LANE-B)', () => {
     expect(resolveRedactionLevel('console.entry', 'remoteSnapshot', { injected: true, ownerFull: true })).toBe('metadataOnly');
     // Other injected (page-tamperable) kinds stay metadata-only even locally.
     expect(resolveRedactionLevel('network.websocketOpened', 'localOwner', { injected: true, ownerFull: true })).toBe('metadataOnly');
-    // The owner-text capped ceiling is the single producer/schema/host ceiling.
-    expect(INJECTED_CONSOLE_TEXT_MAX_LENGTH).toBeGreaterThan(0);
   });
 
   it('redacts a seeded header bag to the value-safe allowlist (sec-websocket-protocol / authorization / cookie dropped)', () => {

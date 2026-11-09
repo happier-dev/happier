@@ -1,3 +1,4 @@
+import { resolveCanonicalServerIdForUi } from '../../src/testkit/uiE2e/sessionFoldersDrag';
 import { test, expect, type Page } from '@playwright/test';
 import { appendFile, mkdir, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
@@ -14,6 +15,11 @@ import { createAccountAndReachConnectMachineState, gotoDomContentLoadedWithRetri
 import { fakeClaudeFixturePath } from '../../src/testkit/fakeClaude';
 import { sleep } from '../../src/testkit/timing';
 import { waitForInitialAppUi } from '../../src/testkit/uiE2e/waitForInitialAppUi';
+
+import { sessionListRowTestId } from '../../src/testkit/uiE2e/sessionListRowTestId';
+
+let rowServerId: string;
+const rowTestId = (sessionId: string) => sessionListRowTestId(rowServerId, sessionId);
 
 const run = createRunDirs({ runLabel: 'ui-e2e' });
 const attachLeaseTtlMs = 1_000;
@@ -257,6 +263,8 @@ test.describe('ui e2e: direct-session background follow + visibility catch-up', 
       },
     });
 
+    rowServerId = await resolveCanonicalServerIdForUi(server.baseUrl);
+
     ui = await startUiWeb({
       testDir: suiteDir,
       env: {
@@ -302,7 +310,7 @@ test.describe('ui e2e: direct-session background follow + visibility catch-up', 
     await enableBackgroundFollow(page);
 
     await navigateHomeAndOpenDirectTab(page);
-    await expect(page.getByTestId(`session-list-item-${sessionId}`)).toHaveCount(1, { timeout: 120_000 });
+    await expect(page.getByTestId(rowTestId(sessionId))).toHaveCount(1, { timeout: 120_000 });
     await expect(page.getByTestId(`session-list-item-unread-indicator-${sessionId}`)).toHaveCount(0);
     await sleep(detachLeaseSettledDelayMs);
 
@@ -319,7 +327,7 @@ test.describe('ui e2e: direct-session background follow + visibility catch-up', 
 
     await expect(page.getByTestId(`session-list-item-unread-indicator-${sessionId}`)).toHaveCount(1, { timeout: 60_000 });
 
-    await page.getByTestId(`session-list-item-${sessionId}`).click();
+    await page.getByTestId(rowTestId(sessionId)).click();
     await waitForCommittedTranscriptMessageMatches({
       page,
       text: 'detached background follow ui delta',

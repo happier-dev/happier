@@ -14,8 +14,6 @@ import {
   ConversationEndpointResolveResultV1Schema,
   ConversationPrincipalResolveInputV1Schema,
   ConversationPrincipalResolveResultV1Schema,
-  ConversationProviderConnectionStopInputV1Schema,
-  ConversationProviderConnectionStopResultV1Schema,
   ConversationProviderConnectionsSnapshotV1Schema,
   ConversationProviderObservationIngestInputV1Schema,
   ConversationProviderSetupResultV1Schema,
@@ -33,7 +31,6 @@ const FIXTURE_ENDPOINT = Object.freeze({ kind: 'direct', audience: 'direct', id:
 const MAX_STATUS_BYTES = 16 * 1024;
 const MAX_OUTBOUND_TEXT_CODE_POINTS = 4096;
 const RECONCILIATION_INTERVAL_MS = 30_000;
-const STOP_WAIT_MS = 2_000;
 
 /**
  * These are intentionally fixture-owned local Action identities. The
@@ -47,7 +44,6 @@ const PROVIDER_ACTION_IDS = Object.freeze({
   principalResolve: 'fixture/principal',
   messageDeliver: 'fixture/deliver',
   deliveryReconcile: 'fixture/reconcile',
-  connectionStop: 'fixture/stop',
 });
 
 const channelsProvidersV1 = ConversationProvidersContributionProtocolV1;
@@ -91,23 +87,6 @@ const state = {
 
 function isRecord(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
-}
-
-function sameJsonValue(left, right) {
-  if (left === right) return true;
-  if (left === null || right === null || typeof left !== 'object' || typeof right !== 'object') return false;
-  if (Array.isArray(left) || Array.isArray(right)) {
-    return Array.isArray(left)
-      && Array.isArray(right)
-      && left.length === right.length
-      && left.every((entry, index) => sameJsonValue(entry, right[index]));
-  }
-  if (!isRecord(left) || !isRecord(right)) return false;
-  const leftKeys = Object.keys(left).sort();
-  const rightKeys = Object.keys(right).sort();
-  return leftKeys.length === rightKeys.length
-    && leftKeys.every((key, index) => key === rightKeys[index]
-      && sameJsonValue(left[key], right[key]));
 }
 
 function providerFailure(reason, diagnostic) {
@@ -281,16 +260,6 @@ function connectionFactKey(snapshot) {
   return JSON.stringify([snapshot.connectionId, snapshot.authorityEpoch]);
 }
 
-function isExactFrozenOldWorker(snapshot, request) {
-  return request.authorityEpoch > 1
-    && snapshot.connectionId === request.connectionId
-    && snapshot.authorityEpoch === request.authorityEpoch - 1
-    && snapshot.providerConnectionKey === request.providerConnectionKey
-    && snapshot.providerConfigVersion === request.providerConfigVersion
-    && sameJsonValue(snapshot.providerConfig, request.providerConfig)
-    && sameJsonValue(snapshot.credentialRef, request.credentialRef);
-}
-
 function waitForDelay(delayMs, signal) {
   return new Promise((resolve) => {
     if (signal.aborted) {
@@ -309,27 +278,6 @@ function waitForDelay(delayMs, signal) {
   });
 }
 
-function waitForCompletion(completion, signal) {
-  return new Promise((resolve) => {
-    if (signal.aborted) {
-      resolve(false);
-      return;
-    }
-    let settled = false;
-    const finish = (value) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      signal.removeEventListener('abort', onAbort);
-      resolve(value);
-    };
-    const timer = setTimeout(() => finish(false), STOP_WAIT_MS);
-    const onAbort = () => finish(false);
-    signal.addEventListener('abort', onAbort, { once: true });
-    void completion.then(() => finish(true), () => finish(true));
-  });
-}
-
 function parseSocketFrame(message) {
   if (message.kind !== 'text') throw new Error('fixture socket frame must be text');
   const parsed = JSON.parse(message.text);
@@ -343,7 +291,6 @@ function createObserver(context, generation) {
   const controller = new AbortController();
   const workers = new Map();
   const pendingFacts = new Map();
-  const reportedNotRunning = new Set();
   const suspendedFingerprints = new Set();
   const observer = {};
   let reconciliationTail = Promise.resolve();
@@ -361,7 +308,6 @@ function createObserver(context, generation) {
   };
 
   const stopWorker = (entry, intent) => {
-    if (entry.stopIntent === null || intent === 'explicit') entry.stopIntent = intent;
     if (!entry.controller.signal.aborted) {
       entry.controller.abort(new Error(`Fixture socket stopped for ${intent}.`));
     }
@@ -403,7 +349,6 @@ function createObserver(context, generation) {
         pendingFacts.delete(key);
         return false;
       }
-      if (fact.kind === 'stopConfirmed') reportedNotRunning.add(key);
     }
     pendingFacts.delete(key);
     return true;
@@ -460,6 +405,7 @@ function createObserver(context, generation) {
         try {
           ingress = ConversationProviderObservationIngestInputV1Schema.parse({
             connectionId: entry.snapshot.connectionId,
+            authorityEpoch: entry.snapshot.authorityEpoch,
             entry: {
               observation: frame.observation,
               eventCandidate: null,
@@ -520,22 +466,6 @@ function createObserver(context, generation) {
           stopWorker(existing, 'reconcile');
           return;
         }
-        if (snapshot.deletionState === 'pendingStopReconciliation') {
-          if (existing) {
-            stopWorker(existing, 'reconcile');
-            return;
-          }
-          const key = connectionFactKey(snapshot);
-          const hasPendingStopConfirmation = (pendingFacts.get(key) ?? []).some(
-            (fact) => fact.kind === 'stopConfirmed',
-          );
-          if (!reportedNotRunning.has(key) && !hasPendingStopConfirmation) {
-            addFact(snapshot, { kind: 'stopConfirmed', reason: 'notRunningOnReconcile' });
-            reportedNotRunning.add(key);
-          }
-          await reportPendingFacts(snapshot, actionContext);
-          return;
-        }
         if (!snapshot.enabled || snapshot.deletionState !== 'none') {
           if (existing) stopWorker(existing, 'reconcile');
           return;
@@ -551,8 +481,6 @@ function createObserver(context, generation) {
           fingerprint,
           controller: new AbortController(),
           socket: null,
-          stopIntent: null,
-          explicitStopAuthorityEpoch: null,
           completion: Promise.resolve(),
         };
         const abortWorker = () => entry.controller.abort(controller.signal.reason);
@@ -568,19 +496,8 @@ function createObserver(context, generation) {
               addFact(snapshot, result);
               suspendedFingerprints.add(entry.fingerprint);
             }
-            if (entry.stopIntent === 'explicit') {
-              addFact({
-                ...snapshot,
-                authorityEpoch: entry.explicitStopAuthorityEpoch ?? snapshot.authorityEpoch,
-              }, { kind: 'stopConfirmed', reason: 'explicitStop' });
-            }
             refreshStatus();
-            // A direct `stopped` result is the caller's settlement proof. Do
-            // not race it with the recovery report path before the core can
-            // settle its retained pending row. Pending/response-loss recovery
-            // is retried by the periodic authoritative reconciliation, while
-            // a restarted generation reports `notRunningOnReconcile`.
-            if (entry.stopIntent !== 'explicit') void requestReconciliation(context);
+            void requestReconciliation(context);
           }
         });
       };
@@ -589,7 +506,6 @@ function createObserver(context, generation) {
         const currentKeys = new Set(Object.values(snapshots).map(connectionFactKey));
         const currentFingerprints = new Set(Object.values(snapshots).map(connectionFingerprint));
         for (const key of pendingFacts.keys()) if (!currentKeys.has(key)) pendingFacts.delete(key);
-        for (const key of reportedNotRunning) if (!currentKeys.has(key)) reportedNotRunning.delete(key);
         for (const fingerprint of suspendedFingerprints) {
           if (!currentFingerprints.has(fingerprint)) suspendedFingerprints.delete(fingerprint);
         }
@@ -611,24 +527,6 @@ function createObserver(context, generation) {
     });
     reconciliationTail = run.catch(() => undefined);
     return run;
-  };
-
-  const stop = async (request, actionContext) => {
-    const entry = workers.get(request.connectionId);
-    if (!entry) {
-      return ConversationProviderConnectionStopResultV1Schema.parse({ kind: 'notRunning' });
-    }
-    if (!isExactFrozenOldWorker(entry.snapshot, request)) {
-      return ConversationProviderConnectionStopResultV1Schema.parse({
-        kind: 'notReady',
-        reason: 'invalidConfiguration',
-        diagnostic: 'Fixture socket worker does not match the frozen old connection stop request.',
-      });
-    }
-    entry.explicitStopAuthorityEpoch = request.authorityEpoch;
-    stopWorker(entry, 'explicit');
-    const stopped = await waitForCompletion(entry.completion, actionContext.signal);
-    return ConversationProviderConnectionStopResultV1Schema.parse({ kind: stopped ? 'stopped' : 'pending' });
   };
 
   const retire = () => {
@@ -662,7 +560,7 @@ function createObserver(context, generation) {
     }
   };
 
-  Object.assign(observer, { run, retire, stop });
+  Object.assign(observer, { run, retire });
   return observer;
 }
 
@@ -681,20 +579,12 @@ async function runObserver(context) {
   await observer.run();
 }
 
-async function stop(input, context) {
-  const request = ConversationProviderConnectionStopInputV1Schema.parse(input);
-  if (!state.observer) {
-    return ConversationProviderConnectionStopResultV1Schema.parse({ kind: 'notRunning' });
-  }
-  return state.observer.stop(request, context);
-}
-
 async function deliver(input, context) {
   const delivery = ConversationDeliveryInputV1Schema.parse(input);
   if (delivery.endpoint.kind !== FIXTURE_ENDPOINT.kind || delivery.endpoint.id !== FIXTURE_ENDPOINT.id) {
     return ConversationDeliveryResultV1Schema.parse({ kind: 'notDelivered', retry: 'never' });
   }
-  if (Array.from(delivery.content).length > MAX_OUTBOUND_TEXT_CODE_POINTS) {
+  if (Array.from(delivery.content.text).length > MAX_OUTBOUND_TEXT_CODE_POINTS) {
     return ConversationDeliveryResultV1Schema.parse({ kind: 'notDelivered', retry: 'never' });
   }
   const socketUrl = parseSocketUrlFromConnection(delivery);
@@ -769,13 +659,6 @@ const actions = {
     ...actionContract(channelsProvidersV1.operations.principalResolve),
     run: channelsCoreAction(async (input) => principalResolve(input)),
   },
-  [PROVIDER_ACTION_IDS.connectionStop]: {
-    title: 'Stop external socket channel',
-    scopes: ['global'],
-    confirmation: { title: 'Stop external socket channel' },
-    ...actionContract(channelsProvidersV1.operations.connectionStop),
-    run: channelsCoreAction(async (input, context) => stop(input, context)),
-  },
   [PROVIDER_ACTION_IDS.messageDeliver]: {
     title: 'Deliver a fixture message',
     scopes: ['global'],
@@ -828,7 +711,6 @@ const plugin = definePlugin({
             principalResolve: channelsProvidersV1.operations.principalResolve.bind(PROVIDER_ACTION_IDS.principalResolve),
             messageDeliver: channelsProvidersV1.operations.messageDeliver.bind(PROVIDER_ACTION_IDS.messageDeliver),
             deliveryReconcile: channelsProvidersV1.operations.deliveryReconcile.bind(PROVIDER_ACTION_IDS.deliveryReconcile),
-            connectionStop: channelsProvidersV1.operations.connectionStop.bind(PROVIDER_ACTION_IDS.connectionStop),
           },
         }),
       },

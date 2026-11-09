@@ -8,7 +8,6 @@ type LocalExtensionContributionMap = Readonly<Record<string, readonly LocalExten
 const SUPPORTED_CONTRIBUTION_FAMILIES = new Set<string>([
     'actions',
     'agents',
-    'commands',
     'connectedAccountDescriptors',
     'events',
     'executionRunProfiles',
@@ -25,7 +24,6 @@ const SUPPORTED_CONTRIBUTION_FAMILIES = new Set<string>([
     'sessionHeaderActions',
     'settings',
     'systemTools',
-    'tools',
     'ui',
     'voiceModelPacks',
     'voiceProviders',
@@ -109,8 +107,6 @@ export function createLocalExtensionPackageManifest(params: Readonly<{
 type ExtensionRuntimeCapability =
     | 'agents'
     | 'actions'
-    | 'tools'
-    | 'commands'
     | 'hooks'
     | 'resources'
     | 'settings'
@@ -137,8 +133,6 @@ function inferRuntimeCapabilitiesFromContributes(
 
     if ((contributes.agents?.length ?? 0) > 0) capabilities.add('agents');
     if ((contributes.actions?.length ?? 0) > 0) capabilities.add('actions');
-    if ((contributes.tools?.length ?? 0) > 0) capabilities.add('tools');
-    if ((contributes.commands?.length ?? 0) > 0) capabilities.add('commands');
     if ((contributes.hooks?.length ?? 0) > 0) capabilities.add('hooks');
     if ((contributes.resources?.length ?? 0) > 0) capabilities.add('resources');
     if ((contributes.settings?.length ?? 0) > 0) capabilities.add('settings');

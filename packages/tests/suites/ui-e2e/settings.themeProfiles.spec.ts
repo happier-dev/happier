@@ -7,6 +7,7 @@ import { startUiWeb, type StartedUiWeb } from '../../src/testkit/process/uiWeb';
 import { gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../../src/testkit/uiE2e/pageNavigation';
 import { waitForInitialAppUi } from '../../src/testkit/uiE2e/waitForInitialAppUi';
 import { ensureAccountReadyForConnect } from '../../src/testkit/uiE2e/ensureAccountReadyForConnect';
+import { appendBrowserDiagnostics, collectBrowserDiagnostics } from '../../src/testkit/uiE2e/browserDiagnostics';
 
 const run = createRunDirs({ runLabel: 'ui-e2e' });
 
@@ -19,19 +20,6 @@ async function expectVisibleTestId(page: Page, testId: string): Promise<ReturnTy
   const locator = visibleTestId(page, testId).first();
   await expect(locator).toBeVisible({ timeout: 60_000 });
   return locator;
-}
-
-async function createAccountIfNeeded(page: Page): Promise<void> {
-  const createAccountByTestId = page.getByTestId('welcome-create-account');
-  if (await createAccountByTestId.count()) {
-    await ensureAccountReadyForConnect({ page, timeoutMs: 120_000 });
-    return;
-  }
-
-  const createAccountByRole = page.getByRole('button', { name: 'Create account' });
-  if (await createAccountByRole.count()) {
-    await ensureAccountReadyForConnect({ page, timeoutMs: 120_000 });
-  }
 }
 
 async function openThemeProfiles(params: Readonly<{ page: Page; uiBaseUrl: string }>): Promise<void> {
@@ -119,7 +107,7 @@ test.describe('ui e2e: custom theme profiles', () => {
     await server?.stop().catch(() => {});
   });
 
-  test('creates, activates, exports, and imports a custom theme profile through Appearance settings', async ({ page }) => {
+  test('creates, activates, exports, and imports a custom theme profile through Appearance settings', async ({ page, context, browser }) => {
     test.setTimeout(540_000);
     if (!uiBaseUrl) throw new Error('missing ui fixture');
 
@@ -127,19 +115,19 @@ test.describe('ui e2e: custom theme profiles', () => {
 
     await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/?happier_hmr=0`, 420_000);
     await waitForInitialAppUi({ page, timeoutMs: 420_000 });
-    await createAccountIfNeeded(page);
+    await ensureAccountReadyForConnect({ page, timeoutMs: 120_000 });
 
     await openThemeProfiles({ page, uiBaseUrl });
 
-    await expectVisibleTestId(page, 'settings-theme-profile-built-in-premiumDark');
-    await expectVisibleTestId(page, 'settings-theme-profile-built-in-premiumLight');
     await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/settings/appearance/themes/premiumDark?happier_hmr=0`, 180_000);
     await expectVisibleTestId(page, 'settings-theme-profile-editor');
     await expect(visibleTestId(page, 'settings-theme-profile-save')).toHaveCount(0, { timeout: 60_000 });
     await expect(visibleTestId(page, 'settings-theme-profile-delete')).toHaveCount(0, { timeout: 60_000 });
-    await expectVisibleTestId(page, 'settings-theme-profile-clone-premiumDark');
+    await (await expectVisibleTestId(page, 'settings-theme-profile-menu.trigger')).click();
+    await expectVisibleTestId(page, 'dropdown-option-duplicate');
 
     await openThemeProfiles({ page, uiBaseUrl });
+    await (await expectVisibleTestId(page, 'settings-theme-profile-add')).click();
     await (await expectVisibleTestId(page, 'settings-theme-profile-create')).click();
     await expectVisibleTestId(page, 'settings-theme-profile-editor');
 
@@ -166,7 +154,9 @@ test.describe('ui e2e: custom theme profiles', () => {
     await openThemeProfiles({ page, uiBaseUrl });
     await expectVisibleTestId(page, `settings-theme-profile-custom-${profileId}`);
 
-    await (await expectVisibleTestId(page, 'settings-theme-profile-export')).click();
+    await (await expectVisibleTestId(page, `settings-theme-profile-custom-${profileId}`)).click();
+    await (await expectVisibleTestId(page, 'settings-theme-profile-menu.trigger')).click();
+    await (await expectVisibleTestId(page, 'dropdown-option-export')).click();
     await expectVisibleTestId(page, 'settings-theme-profile-export-screen');
     const exportedJson = await readInputValue(await expectVisibleTestId(page, 'settings-theme-profile-export-json'));
     expect(JSON.parse(exportedJson)).toMatchObject({
@@ -183,6 +173,7 @@ test.describe('ui e2e: custom theme profiles', () => {
     });
 
     await openThemeProfiles({ page, uiBaseUrl });
+    await (await expectVisibleTestId(page, 'settings-theme-profile-add')).click();
     await (await expectVisibleTestId(page, 'settings-theme-profile-import')).click();
     await expectVisibleTestId(page, 'settings-theme-profile-import-screen');
     await (await expectVisibleTestId(page, 'settings-theme-profile-import-json')).fill(exportedJson);
@@ -190,5 +181,56 @@ test.describe('ui e2e: custom theme profiles', () => {
 
     await expectVisibleTestId(page, 'settings-theme-profiles-screen');
     await expect(page.locator('[data-testid^="settings-theme-profile-custom-theme_"]:visible')).toHaveCount(2, { timeout: 60_000 });
+
+    // A second browser gets only this fixture account's credentials/server config.
+    // Exclude every settings cache and local preference so the library must arrive over sync.
+    const originalState = await context.storageState();
+    const secondContext = await browser.newContext({ storageState: {
+      cookies: originalState.cookies,
+      origins: originalState.origins.map((origin) => ({
+        ...origin,
+        localStorage: origin.localStorage.filter(({ name }) => {
+          const key = name.split('\\').at(-1) ?? name;
+          return key !== 'local-settings' && key !== 'settings' && key !== 'pending-settings'
+            && !key.startsWith('account-settings:') && !key.startsWith('pending-account-settings:');
+        }),
+      })),
+    }, viewport: { width: 390, height: 844 } });
+    const secondPage = await secondContext.newPage();
+    const firstDiagnostics = collectBrowserDiagnostics({ page });
+    const secondDiagnostics = collectBrowserDiagnostics({ page: secondPage });
+    try {
+      await gotoDomContentLoadedWithRetries(secondPage, `${uiBaseUrl}/?happier_hmr=0`, 180_000);
+      await waitForInitialAppUi({ page: secondPage, timeoutMs: 180_000 });
+      await openThemeProfiles({ page: secondPage, uiBaseUrl });
+      await expectVisibleTestId(secondPage, `settings-theme-profile-custom-${profileId}`);
+      await expect(secondPage.locator('[data-testid^="settings-theme-profile-custom-theme_"]:visible')).toHaveCount(2, { timeout: 60_000 });
+      await (await expectVisibleTestId(secondPage, `settings-theme-profile-custom-${profileId}`)).click();
+      await expectVisibleTestId(secondPage, 'settings-theme-profile-editor');
+      await (await expectVisibleTestId(secondPage, 'settings-theme-profile-menu.trigger')).click();
+      await expect(visibleTestId(secondPage, 'dropdown-option-deactivate')).toHaveCount(0);
+      await secondPage.keyboard.press('Escape');
+
+      await openThemeProfiles({ page, uiBaseUrl });
+      const firstScreen = await expectVisibleTestId(page, 'settings-theme-profiles-screen');
+      const firstBackground = await readBackgroundColor(firstScreen);
+      await (await expectVisibleTestId(secondPage, 'settings-theme-profile-name')).fill('Shared ocean');
+      await fillThemeColor({ page: secondPage, mode: 'light', tokenId: 'background.canvas', value: '#654321' });
+      await (await expectVisibleTestId(secondPage, 'settings-theme-profile-save')).click();
+      // The receiving page is not an editor: remote colors must reach the global runtime.
+      await expect.poll(() => readBackgroundColor(firstScreen), { timeout: 60_000 }).not.toBe(firstBackground);
+      await (await expectVisibleTestId(page, `settings-theme-profile-custom-${profileId}`)).click();
+      await expect(visibleTestId(page, 'settings-theme-profile-name').first()).toHaveValue('Shared ocean', { timeout: 60_000 });
+      await expect(visibleTestId(page, 'settings-theme-color-input-light-background.canvas').first()).toHaveValue('#654321');
+      await page.reload({ waitUntil: 'domcontentloaded' });
+      await expect(visibleTestId(page, 'settings-theme-profile-name').first()).toHaveValue('Shared ocean', { timeout: 60_000 });
+      await (await expectVisibleTestId(page, 'settings-theme-profile-menu.trigger')).click();
+      await expectVisibleTestId(page, 'dropdown-option-deactivate');
+    } catch (error) {
+      throw appendBrowserDiagnostics(error, `${firstDiagnostics()}\n\nSecond browser:\n${secondDiagnostics()}`);
+    } finally {
+      await secondContext.close();
+    }
+
   });
 });

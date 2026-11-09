@@ -60,6 +60,21 @@ describe('provider HTTP boundary testkit', () => {
     });
   });
 
+  it('records purpose bindings without adding Voice fields and copies header names', async () => {
+    const boundary = createProviderHttpBoundary([{ response: jsonProviderHttpResponse({ ok: true }) }]);
+    const headerNames = ['authorization'];
+    await boundary.http.request({
+      url: 'https://provider.invalid/projects', redirect: 'error',
+      credentialBinding: { kind: 'connectedAccountPurpose', purpose: 'upstream',
+        origin: 'https://provider.invalid', method: 'GET', headerNames },
+    });
+    headerNames.push('x-later');
+    expect(boundary.requests[0]?.credentialBinding).toEqual({
+      kind: 'connectedAccountPurpose', purpose: 'upstream', origin: 'https://provider.invalid',
+      method: 'GET', headerNames: ['authorization'],
+    });
+  });
+
   it('keeps provider failures and cancellation at the external boundary', async () => {
     const boundary = createProviderHttpBoundary([
       { kind: 'error', error: new Error('rate-limited') },

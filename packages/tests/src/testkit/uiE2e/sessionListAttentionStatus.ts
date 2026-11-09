@@ -9,21 +9,23 @@ import type { SocketCollector } from '../socketClient';
 import { waitFor } from '../timing';
 import { createPlainSession } from './sessionFoldersDrag';
 import { gotoDomContentLoadedWithRetries } from './pageNavigation';
+import { sessionListOccurrenceId, sessionListRowTestId } from './sessionListRowTestId';
 
 const SEEDED_MACHINE_ID = 'seeded-session-list-attention-status-machine';
 
 export const sessionListAttentionTestIds = {
-  row: (sessionId: string) => `session-list-item-${sessionId}`,
+  row: sessionListRowTestId,
   attentionIndicator: (
     sessionId: string,
     state: 'working' | 'ready' | 'permission_required' | 'action_required' | 'failed' | 'unread',
-  ) => `session-list-attention-indicator-${sessionId}-${state}`,
-  anyAttentionIndicatorSelector: (sessionId: string) => `[data-testid^="session-list-attention-indicator-${sessionId}-"]`,
-  statusSubtitle: (sessionId: string, state: 'working' | 'ready' | 'failed') =>
-    `session-list-status-subtitle-${sessionId}-${state}`,
-  statusSubtitleText: (sessionId: string, state: 'working' | 'ready' | 'failed') =>
-    `session-list-status-subtitle-text-${sessionId}-${state}`,
-  secondaryReadyIndicator: (sessionId: string) => `session-list-attention-indicator-${sessionId}-secondary-ready`,
+    serverId: string,
+  ) => `session-list-attention-indicator-${sessionListOccurrenceId(serverId, sessionId)}-trailing-${state}`,
+  statusSubtitle: (sessionId: string, state: 'working' | 'ready' | 'failed', serverId: string) =>
+    `session-list-status-subtitle-${sessionListOccurrenceId(serverId, sessionId)}-${state}`,
+  statusSubtitleText: (sessionId: string, state: 'working' | 'ready' | 'failed', serverId: string) =>
+    `session-list-status-subtitle-text-${sessionListOccurrenceId(serverId, sessionId)}-${state}`,
+  secondaryReadyIndicator: (sessionId: string, serverId: string, occurrenceRole: 'base' | 'needsYou' | 'working' = 'base') =>
+    `session-list-attention-indicator-${sessionListOccurrenceId(serverId, sessionId, occurrenceRole)}-secondary-ready`,
   attentionHeader: 'session-list-header:attention-promotion-v1',
   workingHeader: 'session-list-header:working-placement-v1',
   densityTrigger: 'settings-session-sessionListDensity-trigger',
@@ -289,28 +291,35 @@ export async function toggleWorkingStatusAnimatedTextOff(params: Readonly<{
   }
 }
 
-export function sessionRow(page: Page, sessionId: string) {
-  return page.getByTestId(sessionListAttentionTestIds.row(sessionId));
+export function sessionRow(page: Page, sessionId: string, serverId: string, occurrenceRole: 'base' | 'needsYou' | 'working' = 'base') {
+  return page.getByTestId(sessionListAttentionTestIds.row(serverId, sessionId, occurrenceRole));
 }
 
-export function anySessionAttentionIndicator(page: Page, sessionId: string) {
-  return page.locator(sessionListAttentionTestIds.anyAttentionIndicatorSelector(sessionId));
+export function anySessionAttentionIndicator(page: Page, sessionId: string, serverId: string) {
+  return sessionRow(page, sessionId, serverId).locator('[data-testid^="session-list-attention-indicator-"]');
 }
 
-export function sessionStatusSubtitle(page: Page, sessionId: string, state: 'working' | 'ready' | 'failed') {
-  return page.getByTestId(sessionListAttentionTestIds.statusSubtitle(sessionId, state));
+export function sessionStatusSubtitle(page: Page, sessionId: string, state: 'working' | 'ready' | 'failed', serverId: string) {
+  return page.getByTestId(sessionListAttentionTestIds.statusSubtitle(sessionId, state, serverId));
 }
 
-export function sessionStatusSubtitleText(page: Page, sessionId: string, state: 'working' | 'ready' | 'failed') {
-  return page.getByTestId(sessionListAttentionTestIds.statusSubtitleText(sessionId, state));
+export function sessionStatusSubtitleText(page: Page, sessionId: string, state: 'working' | 'ready' | 'failed', serverId: string) {
+  return page.getByTestId(sessionListAttentionTestIds.statusSubtitleText(sessionId, state, serverId));
+}
+
+function rowTestIdForSection(params: Readonly<{ serverId: string; sessionId: string; headerTestId: string }>): string {
+  return sessionListAttentionTestIds.row(params.serverId, params.sessionId,
+    params.headerTestId === sessionListAttentionTestIds.attentionHeader ? 'needsYou'
+      : params.headerTestId === sessionListAttentionTestIds.workingHeader ? 'working' : 'base');
 }
 
 export async function expectRowInSection(params: Readonly<{
   page: Page;
+  serverId: string;
   headerTestId: string;
   sessionId: string;
 }>): Promise<void> {
-  const rowTestId = sessionListAttentionTestIds.row(params.sessionId);
+  const rowTestId = rowTestIdForSection(params);
   await expect.poll(
     async () => params.page.evaluate(({ headerTestId, rowTestId }) => {
       const elements = Array.from(document.querySelectorAll<HTMLElement>('[data-testid]'));
@@ -332,10 +341,11 @@ export async function expectRowInSection(params: Readonly<{
 
 export async function expectRowNotInSection(params: Readonly<{
   page: Page;
+  serverId: string;
   headerTestId: string;
   sessionId: string;
 }>): Promise<void> {
-  const rowTestId = sessionListAttentionTestIds.row(params.sessionId);
+  const rowTestId = rowTestIdForSection(params);
   await expect.poll(
     async () => params.page.evaluate(({ headerTestId, rowTestId }) => {
       const elements = Array.from(document.querySelectorAll<HTMLElement>('[data-testid]'));

@@ -57,7 +57,7 @@ describe('core e2e: plugin SDK v1 runtime', () => {
                 pluginRoot,
                 manifest: createPluginSdkV1Manifest({
                     pluginId,
-                    uses: ['actions', 'tools', 'hooks'],
+                    uses: ['actions', 'hooks'],
                     permissions: [],
                     contributes: {
                         actions: [
@@ -72,16 +72,16 @@ describe('core e2e: plugin SDK v1 runtime', () => {
                                 handler: { target: 'daemon', registrationId: actionId },
                                 dangerLevel: 'safe',
                             },
-                        ],
-                        tools: [
                             {
                                 id: toolId,
-                                name: 'acme_sdk_lifecycle_tool',
                                 title: 'Lifecycle Tool',
-                                safety: 'safe',
+                                scopes: ['global'],
                                 surfaces: ['cli', 'agent'],
+                                execution: { target: 'daemon' },
+                                dangerLevel: 'safe',
+                                tool: { name: 'acme_sdk_lifecycle_tool' },
                                 inputSchema: { type: 'object', additionalProperties: true },
-                                handler: { target: 'plugin', exportName: 'executeTool' },
+                                handler: { target: 'daemon', registrationId: toolId },
                             },
                         ],
                         hooks: [
@@ -106,6 +106,7 @@ describe('core e2e: plugin SDK v1 runtime', () => {
                     'export async function activate(host) {',
                     '  await appendFile(activationLogPath, "activate\\n", "utf8");',
                     `  host.registerAction({ id: ${JSON.stringify(actionId)}, handler: async (request) => ({ ok: true, data: { kind: "action", surface: request.context.surface, input: request.input } }) });`,
+                    `  host.registerAction({ id: ${JSON.stringify(toolId)}, handler: executeTool });`,
                     '  host.onDispose(async () => appendFile(disposalLogPath, "dispose\\n", "utf8"));',
                     '}',
                     '',
@@ -151,7 +152,7 @@ describe('core e2e: plugin SDK v1 runtime', () => {
                     'if (!runtimeRegistry) throw new Error("plugin runtime registry unavailable");',
                     'const cliAction = await executePluginActionIfAvailable({ runtimeRegistry, actionId, input: { source: "cli" }, context: { surface: "cli" } });',
                     'const agentAction = await executePluginActionIfAvailable({ runtimeRegistry, actionId, input: { source: "agent" }, context: { surface: "agent" } });',
-                    'const toolProjected = runtimeRegistry.contributes.tools.some((tool) => tool.definition.id === toolId && tool.definition.surfaces.agent === true);',
+                    'const toolProjected = runtimeRegistry.contributes.actions.some((action) => action.definition.id === toolId && action.definition.surfaces.agent === true && action.definition.tool?.name === "acme_sdk_lifecycle_tool");',
                     'const toolAction = await executePluginActionIfAvailable({ runtimeRegistry, actionId: toolId, input: { source: "tool" }, context: { surface: "cli" } });',
                     'const hook = await dispatchPluginHookEvent({',
                     '  runtimeRegistry,',
@@ -573,17 +574,19 @@ describe('core e2e: plugin SDK v1 runtime', () => {
                 pluginRoot: successRoot,
                 manifest: createPluginSdkV1Manifest({
                     pluginId: successPluginId,
-                    uses: ['tools'],
+                    uses: ['actions'],
                     permissions: [],
-                    activationEvents: [`onTool:${successToolId}`],
+                    activationEvents: [`onAction:${successToolId}`],
                     contributes: {
-                        tools: [
+                        actions: [
                             {
                                 id: successToolId,
-                                name: 'acme_sdk_lazy_success_tool',
                                 title: 'Lazy Success Tool',
-                                safety: 'safe',
+                                scopes: ['global'],
                                 surfaces: ['cli'],
+                                execution: { target: 'daemon' },
+                                dangerLevel: 'safe',
+                                tool: { name: 'acme_sdk_lazy_success_tool' },
                                 handler: { target: 'daemon', registrationId: successToolId },
                             },
                         ],
@@ -594,7 +597,7 @@ describe('core e2e: plugin SDK v1 runtime', () => {
                     `const marker = ${JSON.stringify(activationLogPath)};`,
                     'export async function activate(host) {',
                     '  await appendFile(marker, "success-activate\\n", "utf8");',
-                    `  host.registerTool({ id: ${JSON.stringify(successToolId)}, handler: async () => ({ ok: true, data: { activated: true } }) });`,
+                    `  host.registerAction({ id: ${JSON.stringify(successToolId)}, handler: async () => ({ ok: true, data: { activated: true } }) });`,
                     '}',
                     '',
                 ].join('\n'),
@@ -659,7 +662,7 @@ describe('core e2e: plugin SDK v1 runtime', () => {
                     'const runtimeRegistry = await resolveExecutablePluginRuntimeRegistry({ happyHomeDir });',
                     'const successActivatedAtStartup = runtimeRegistry.activatedPluginIds.has(successPluginId);',
                     'const failureActivatedAtStartup = runtimeRegistry.activatedPluginIds.has(failurePluginId);',
-                    'const projectedTool = runtimeRegistry.contributes.toolsById?.has(successToolId) === true;',
+                    'const projectedTool = runtimeRegistry.contributes.actions.some((action) => action.definition.id === successToolId && action.definition.tool?.name === "acme_sdk_lazy_success_tool");',
                     'const [successOne, successTwo] = await Promise.all([',
                     '  executePluginActionIfAvailable({ runtimeRegistry, actionId: successToolId, input: {}, context: { surface: "cli" } }),',
                     '  executePluginActionIfAvailable({ runtimeRegistry, actionId: successToolId, input: {}, context: { surface: "cli" } }),',

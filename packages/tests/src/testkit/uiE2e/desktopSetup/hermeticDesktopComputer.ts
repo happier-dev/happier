@@ -12,7 +12,7 @@ import { resolveExplicitOrInstalledLocalFirstPartyCommand } from '@happier-dev/c
 import { repoRootDir } from '../../paths';
 import { resolveCliTestLaunchSpec, type CliTestLaunchSpec } from '../../process/cliLaunchSpec';
 import { resolveServerLightTemplateCacheRoot } from '../../process/serverLight';
-import { createServerLightTemplateCacheKey, prepareCachedDataDir } from '../../process/serverLightTemplateCache';
+import { createServerLightTemplateCacheKey, prepareCachedDataDir } from '../../process/serverLightTemplateCache.mjs';
 import { resolveTsxImportHookSpecifier } from '../../process/tsxImportHook';
 import type { HsetupLaunch } from './desktopSystemTaskHost';
 

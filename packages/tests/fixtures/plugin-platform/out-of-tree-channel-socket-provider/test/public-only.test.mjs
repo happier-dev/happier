@@ -52,7 +52,6 @@ test('source fixture conforms through the public Channels V1 provider testkit', 
     principalResolve: 'fixture/principal',
     messageDeliver: 'fixture/deliver',
     deliveryReconcile: 'fixture/reconcile',
-    connectionStop: 'fixture/stop',
   });
 });
 
@@ -98,7 +97,6 @@ test('fixture is a public-only packed provider shape', async () => {
       'fixture/test',
       'fixture/endpoint',
       'fixture/principal',
-      'fixture/stop',
       'fixture/deliver',
       'fixture/reconcile',
     ],
@@ -126,7 +124,6 @@ test('fixture is a public-only packed provider shape', async () => {
   }
   const actionsById = new Map(manifest.contributes.actions.map((action) => [action.id, action]));
   assert.equal(actionsById.get('fixture/deliver')?.dangerLevel, 'writesRemote');
-  assert.equal(actionsById.get('fixture/stop')?.dangerLevel, 'writesRemote');
   assert.deepEqual(manifest.contributes.actions[0].surfaces, ['plugin', 'ui']);
   assert.deepEqual(manifest.contributes.actions[0].placementBindings, ['commandPalette']);
   assert.equal(manifest.contributes.actions[0].placement, undefined);
@@ -141,6 +138,7 @@ test('fixture is a public-only packed provider shape', async () => {
     id: 'fixture-socket',
     target: { pluginId: 'happier.channels', pointId: 'providers' },
     protocol: { id: 'happier.channels/providers', version: 1 },
+    descriptor: { v: 1, displayName: 'External socket' },
     operations: {
       setup: 'fixture/setup',
       connectionTest: 'fixture/test',
@@ -148,7 +146,6 @@ test('fixture is a public-only packed provider shape', async () => {
       principalResolve: 'fixture/principal',
       messageDeliver: 'fixture/deliver',
       deliveryReconcile: 'fixture/reconcile',
-      connectionStop: 'fixture/stop',
     },
   }]);
   assert.equal(manifest.contributes.targetedPluginContributions[0].operations.observationsPoll, undefined);

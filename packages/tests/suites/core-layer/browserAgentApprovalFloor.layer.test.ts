@@ -8,11 +8,14 @@ import {
   isInternalActionId,
   RUNTIME_ACTION_IDS_V1,
   type ActionExecutorContext,
-  type ActionExecutorDeps,
   type ActionId,
-  type ApprovalRequestV1,
+  type ApprovalRequest,
   type RuntimeActionExecute,
 } from '@happier-dev/protocol';
+import { createBlockingApprovalCoordinator } from '@happier-dev/protocol/actions/blockingApprovalCoordinator';
+import { StoredApprovalRequestSchema } from '@happier-dev/protocol/approvals/approvalRequestV1';
+import { decideApprovalRequestTransition } from '@happier-dev/protocol/approvals/approvalRequestTransition';
+import { createActionExecutorBoundaryFixture } from '../../src/testkit/actionExecutorBoundary';
 
 /**
  * Layer coverage for the approval floor (LANE-CONSENT / CON-1..6, root cause D — the agent-browser consent hole).
@@ -31,7 +34,8 @@ import {
  *   1. POLICY CONTRACT over the COMPLETE SSOT-derived verb set: every mutating/navigating browser
  *      verb + `localServices.launcher.start` + `browser.recording.start` + `browser.diagnostics.eval`
  *      (every `safety:'danger'` runtime action that is surfaced on `agent`) is floored on
- *      `agent` and NEVER on `ui`; the read-only agent verbs are NOT floored. This is the
+ *      `agent`; the read-only agent verbs are NOT floored. Reversible host UI intents are
+ *      admitted with actual present-user authority, while irreversible Actions retain review. This is the
  *      exact predicate the executor consults, iterated over the real `RUNTIME_ACTION_IDS_V1` so it
  *      cannot drift from a hand-list.
  *   2. ASSEMBLED-EXECUTOR ROUND-TRIP for a real danger+agent verb with a valid input
@@ -133,10 +137,6 @@ const EXECUTOR_DRIVE_LEAF_RESULT = {
   },
 } as const;
 
-function unsupportedDep(): never {
-  throw new Error('unexpected executor dependency invocation');
-}
-
 /**
  * Builds the production-wired executor. Approval routing is decided by the REAL
  * `isApprovalRequiredByActionsSettings` (exactly as `defaultActionExecutor.ts` wires it). The
@@ -145,33 +145,53 @@ function unsupportedDep(): never {
  */
 function createProductionWiredExecutor(input: Readonly<{
   runtimeLeaf: RuntimeActionExecute;
-  decision: 'approve' | 'reject';
   onApprovalsCreate: () => void;
   onApprovalsWait: () => void;
 }>) {
-  const deps = {
+  const coordinator = createBlockingApprovalCoordinator();
+  const cancellation = new AbortController();
+  const store: { request: ApprovalRequest | null } = { request: null };
+  let announceWaiter!: () => void;
+  const waiting = new Promise<void>(resolve => { announceWaiter = resolve; });
+  const executor = createActionExecutor(createActionExecutorBoundaryFixture({
     runtimeActionExecute: input.runtimeLeaf,
-    approvalsCreate: async () => {
+    // Persistence and daemon authorization/IO are boundaries. Decision admission,
+    // subject transitions and the blocking coordinator remain real.
+    isApprovalExecutionOriginCurrent: async () => true,
+    approvalsCreate: async ({ request }) => {
+      store.request = StoredApprovalRequestSchema.parse(request);
       input.onApprovalsCreate();
       return { artifactId: 'approval_floor_e2e' };
     },
-    approvalsUpdate: async () => ({ ok: true as const }),
-    approvalsWaitForDecision: async (args: { request: ApprovalRequestV1 }) => {
+    approvalsGet: async () => store.request,
+    approvalsUpdate: async ({ request }) => {
+      if (!store.request) throw new Error('Missing approval');
+      const transition = decideApprovalRequestTransition(store.request, request);
+      if (!transition.ok) return transition;
+      store.request = StoredApprovalRequestSchema.parse(request);
+      coordinator.notifyApprovalUpdated({ artifactId: 'approval_floor_e2e', request: store.request });
+      return { ok: true };
+    },
+    approvalsResolveBlockingDecision: args => coordinator.resolveBlockingDecision(args),
+    approvalsWaitForDecision: async args => {
+      const pending = coordinator.waitForDecision({ ...args, readRequest: async () => store.request,
+        subscribeChanges: listener => coordinator.subscribeApprovalChanges(listener) });
       input.onApprovalsWait();
-      return {
-        decision: input.decision,
-        request: {
-          ...args.request,
-          status: input.decision === 'approve' ? ('approved' as const) : ('rejected' as const),
-        },
-      };
+      announceWaiter();
+      const decision = await pending;
+      return { ...decision, request: StoredApprovalRequestSchema.parse(decision.request) };
     },
     isActionApprovalRequired: (actionId: ActionId, ctx: ActionExecutorContext) =>
-      isApprovalRequiredByActionsSettings(actionId, EMPTY_SETTINGS, { surface: ctx.surface ?? null }),
-    executionRunStart: unsupportedDep,
-    sessionOpen: unsupportedDep,
-  } as unknown as ActionExecutorDeps;
-  return createActionExecutor(deps);
+      isApprovalRequiredByActionsSettings(actionId, EMPTY_SETTINGS, ctx),
+  }));
+  const context = { serverId: 'home', serverIdentityId: 'srv_home', runtimeAccountId: 'account',
+    actionRequestId: 'launcher-1', actionCaller: { kind: 'host' as const },
+    defaultSessionId: 'session', defaultSessionMachineId: EXECUTOR_DRIVE_INPUT.machineId, signal: cancellation.signal };
+  return { executor, waiting,
+    agent: { ...context, surface: 'agent' as const, authority: 'account_automation' as const },
+    person: { ...context, surface: 'ui' as const, authority: 'present_user' as const },
+    dispose() { cancellation.abort(); coordinator.dispose('test_finished'); },
+  };
 }
 
 describe('core layer: agent approval floor enforced by the assembled executor', () => {
@@ -207,11 +227,9 @@ describe('core layer: agent approval floor enforced by the assembled executor', 
     expect(reachable).toEqual([...REQUIRED_FLOORED_VERBS]);
   });
 
-  it('floors EVERY danger+agent verb on agent and NEVER on ui (policy contract the executor consults)', () => {
+  it('floors EVERY danger+agent verb on agent (policy contract the executor consults)', () => {
     for (const id of FLOORED_DANGER_AGENT_VERBS) {
-      expect(isApprovalRequiredByActionsSettings(id, EMPTY_SETTINGS, { surface: 'agent' })).toBe(true);
-      // User-initiated dispatches never prompt by default.
-      expect(isApprovalRequiredByActionsSettings(id, EMPTY_SETTINGS, { surface: 'ui' })).toBe(false);
+      expect(isApprovalRequiredByActionsSettings(id, EMPTY_SETTINGS, { surface: 'agent' }), id).toBe(true);
     }
   });
 
@@ -219,7 +237,9 @@ describe('core layer: agent approval floor enforced by the assembled executor', 
     for (const id of READ_ONLY_AGENT_VERBS) {
       expect(getActionSpec(id).safety).toBe('safe');
       expect(isApprovalRequiredByActionsSettings(id, EMPTY_SETTINGS, { surface: 'agent' })).toBe(false);
-      expect(isApprovalRequiredByActionsSettings(id, EMPTY_SETTINGS, { surface: 'ui' })).toBe(false);
+      expect(isApprovalRequiredByActionsSettings(id, EMPTY_SETTINGS, {
+        surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
+      })).toBe(false);
     }
   });
 
@@ -227,8 +247,7 @@ describe('core layer: agent approval floor enforced by the assembled executor', 
     let leafCalls = 0;
     let created = 0;
     let waited = 0;
-    const executor = createProductionWiredExecutor({
-      decision: 'reject',
+    const fixture = createProductionWiredExecutor({
       runtimeLeaf: async () => {
         leafCalls += 1;
         return EXECUTOR_DRIVE_LEAF_RESULT;
@@ -237,7 +256,15 @@ describe('core layer: agent approval floor enforced by the assembled executor', 
       onApprovalsWait: () => { waited += 1; },
     });
 
-    const result = await executor.execute(EXECUTOR_DRIVE_ACTION_ID, EXECUTOR_DRIVE_INPUT, { surface: 'agent' });
+    const pending = fixture.executor.execute(EXECUTOR_DRIVE_ACTION_ID, EXECUTOR_DRIVE_INPUT, fixture.agent);
+    await Promise.race([fixture.waiting, pending.then(result => {
+      throw new Error(result.ok ? 'approval_waiter_missing' : result.errorCode);
+    })]);
+    expect(await fixture.executor.execute('approval.request.decide', {
+      artifactId: 'approval_floor_e2e', decision: 'reject',
+    }, fixture.person)).toMatchObject({ ok: true });
+    const result = await pending;
+    fixture.dispose();
 
     // OUTCOME: the agent dispatch was diverted into the approvals store BEFORE the leaf, and the
     // leaf is gated behind the (rejected) decision.
@@ -250,8 +277,7 @@ describe('core layer: agent approval floor enforced by the assembled executor', 
   it('runs the same danger verb directly on ui — no approval prompt', async () => {
     let leafCalls = 0;
     let created = 0;
-    const executor = createProductionWiredExecutor({
-      decision: 'reject',
+    const fixture = createProductionWiredExecutor({
       runtimeLeaf: async () => {
         leafCalls += 1;
         return EXECUTOR_DRIVE_LEAF_RESULT;
@@ -260,7 +286,8 @@ describe('core layer: agent approval floor enforced by the assembled executor', 
       onApprovalsWait: () => {},
     });
 
-    const result = await executor.execute(EXECUTOR_DRIVE_ACTION_ID, EXECUTOR_DRIVE_INPUT, { surface: 'ui' });
+    const result = await fixture.executor.execute(EXECUTOR_DRIVE_ACTION_ID, EXECUTOR_DRIVE_INPUT, fixture.person);
+    fixture.dispose();
 
     expect(created).toBe(0);
     expect(leafCalls).toBe(1);
@@ -273,8 +300,7 @@ describe('core layer: agent approval floor enforced by the assembled executor', 
     let leafCalls = 0;
     let created = 0;
     let waited = 0;
-    const executor = createProductionWiredExecutor({
-      decision: 'approve',
+    const fixture = createProductionWiredExecutor({
       runtimeLeaf: async () => {
         leafCalls += 1;
         return EXECUTOR_DRIVE_LEAF_RESULT;
@@ -283,7 +309,16 @@ describe('core layer: agent approval floor enforced by the assembled executor', 
       onApprovalsWait: () => { waited += 1; },
     });
 
-    const result = await executor.execute(EXECUTOR_DRIVE_ACTION_ID, EXECUTOR_DRIVE_INPUT, { surface: 'agent' });
+    const pending = fixture.executor.execute(EXECUTOR_DRIVE_ACTION_ID, EXECUTOR_DRIVE_INPUT, fixture.agent);
+    await Promise.race([fixture.waiting, pending.then(result => {
+      throw new Error(result.ok ? 'approval_waiter_missing' : result.errorCode);
+    })]);
+    expect(leafCalls).toBe(0);
+    expect(await fixture.executor.execute('approval.request.decide', {
+      artifactId: 'approval_floor_e2e', decision: 'approve',
+    }, fixture.person)).toMatchObject({ ok: true });
+    const result = await pending;
+    fixture.dispose();
 
     // OUTCOME: approval was still required (created + awaited), then the leaf ran post-approval.
     expect(created).toBe(1);

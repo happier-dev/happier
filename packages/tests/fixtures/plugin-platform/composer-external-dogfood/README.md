@@ -46,7 +46,7 @@ GREEN. In particular, the fixture must have all three canonical entry points:
   `ISSUE_SURFACE_REPACK_MODULE` metadata from a packed-test harness is not a
   production builder input. No separate UI build configuration is needed.
 
-The declared `discussion-helper` control must select the `discussion-surface`
+The declared `inspect` control must select the `discussion-surface`
 renderer, reusing `issue-surface-native`, and be restricted to Discussion
 scope. Stop if these source prerequisites are absent or the public build
 fails; do not substitute a fake host API or inject a bundled contribution.

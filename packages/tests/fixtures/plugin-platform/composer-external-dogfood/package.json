@@ -2,6 +2,12 @@
   "name": "happier-composer-external-dogfood",
   "version": "0.0.0",
   "description": "External-only r1.0 Composer issue-attachment dogfood fixture.",
+  "keywords": [
+    "happier-plugin"
+  ],
+  "happier": {
+    "manifest": ".happier-plugin/plugin.json"
+  },
   "private": true,
   "type": "module",
   "main": "./src/index.mjs",

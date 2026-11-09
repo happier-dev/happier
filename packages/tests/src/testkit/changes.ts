@@ -1,4 +1,5 @@
 import { fetchJson } from './http';
+import { buildChangesReadRequest } from '@happier-dev/protocol/changes';
 
 export type ChangesCursor = { cursor: number; changesFloor: number };
 
@@ -26,11 +27,9 @@ export type AccountChangeRow = {
 export async function fetchChanges(baseUrl: string, token: string, params?: { after?: number; limit?: number }): Promise<{ changes: AccountChangeRow[]; nextCursor: number }> {
   const after = params?.after ?? 0;
   const limit = params?.limit ?? 200;
-  const url = new URL(`${baseUrl}/v2/changes`);
-  url.searchParams.set('after', String(after));
-  url.searchParams.set('limit', String(limit));
+  const read = buildChangesReadRequest({ after, limit });
 
-  const res = await fetchJson<any>(url.toString(), {
+  const res = await fetchJson<any>(`${baseUrl}${read.path}`, {
     headers: { Authorization: `Bearer ${token}` },
     timeoutMs: 20_000,
   });

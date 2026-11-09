@@ -25,6 +25,11 @@ import {
 } from '../../src/testkit/uiE2e/sessionOrganization';
 import { waitForInitialAppUi } from '../../src/testkit/uiE2e/waitForInitialAppUi';
 
+import { sessionListRowTestId } from '../../src/testkit/uiE2e/sessionListRowTestId';
+
+let rowServerId: string;
+const rowTestId = (sessionId: string) => sessionListRowTestId(rowServerId, sessionId);
+
 const run = createRunDirs({ runLabel: 'ui-e2e-session-list-ordering-mode' });
 
 const SEEDED_MACHINE_ID = 'seeded-session-list-ordering-machine';
@@ -51,11 +56,11 @@ async function selectOrderingMode(page: Page, mode: 'custom' | 'created' | 'upda
 async function waitForVisibleSessionOrder(page: Page, sessionIds: readonly string[]): Promise<string[]> {
   const expectedIds = new Set(sessionIds);
   await expect.poll(async () => {
-    const visible = await readVisibleSessionRowOrder(page);
+    const visible = await readVisibleSessionRowOrder(page, { serverId: rowServerId, sessionIds: [...expectedIds] });
     return visible.filter((id) => expectedIds.has(id));
   }, { timeout: 120_000 }).toHaveLength(sessionIds.length);
 
-  const visible = await readVisibleSessionRowOrder(page);
+  const visible = await readVisibleSessionRowOrder(page, { serverId: rowServerId, sessionIds: [...expectedIds] });
   return visible.filter((id) => expectedIds.has(id));
 }
 
@@ -69,7 +74,7 @@ async function readFirstProjectGroupKey(page: Page): Promise<string> {
 async function expectVisibleSessionOrder(page: Page, orderedSessionIds: readonly string[]): Promise<void> {
   const expectedIds = new Set(orderedSessionIds);
   await expect.poll(async () => {
-    const visible = await readVisibleSessionRowOrder(page);
+    const visible = await readVisibleSessionRowOrder(page, { serverId: rowServerId, sessionIds: [...expectedIds] });
     return visible.filter((id) => expectedIds.has(id));
   }, { timeout: 120_000 }).toEqual([...orderedSessionIds]);
 }
@@ -196,6 +201,8 @@ test.describe('ui e2e: session list ordering mode', () => {
       metadata: 'session-list-ordering-machine',
     });
 
+    rowServerId = await resolveCanonicalServerIdForUi(proxy.baseUrl);
+
     ui = await startUiWeb({
       testDir: suiteDir,
       env: {
@@ -254,9 +261,9 @@ test.describe('ui e2e: session list ordering mode', () => {
     await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/?happier_hmr=0`, 300_000);
     await waitForInitialAppUi({ page, timeoutMs: 180_000 });
 
-    await expect(page.getByTestId(`session-list-item-${oldestSessionId}`)).toHaveCount(1, { timeout: 120_000 });
-    await expect(page.getByTestId(`session-list-item-${middleSessionId}`)).toHaveCount(1, { timeout: 120_000 });
-    await expect(page.getByTestId(`session-list-item-${newestSessionId}`)).toHaveCount(1, { timeout: 120_000 });
+    await expect(page.getByTestId(rowTestId(oldestSessionId))).toHaveCount(1, { timeout: 120_000 });
+    await expect(page.getByTestId(rowTestId(middleSessionId))).toHaveCount(1, { timeout: 120_000 });
+    await expect(page.getByTestId(rowTestId(newestSessionId))).toHaveCount(1, { timeout: 120_000 });
 
     const baselineDateOrder = await waitForVisibleSessionOrder(page, [
       oldestSessionId,

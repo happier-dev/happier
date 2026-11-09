@@ -7,7 +7,7 @@ authored as an out-of-tree package. Its runtime imports only the published
 server, UI, or the Channels feature implementation.
 
 The fixture proves the public provider seam rather than a first-party provider
-implementation: setup and connection-test/resolve/stop/deliver Actions, a
+implementation: setup and connection-test/resolve/deliver Actions, a
 transient generic Action form, a packaged generic brand asset, a dynamic
 status Resource, host-vended WebSocket delivery, and delivery reconciliation
 are exercised by the source runtime test. Reconciliation returns the explicit
@@ -30,11 +30,13 @@ There is no `ConversationProvider` runtime abstraction, local provider
 registry, Action scan, or private Protocol import to make the example work.
 
 The socket observer treats the Channels core's caller-scoped list/read Actions
-as its only reconciliation authority on activation, periodic repair, and an
-exact post-stop reread. It opens a host-vended WebSocket for each current
+as its only reconciliation authority on activation and periodic repair.
+It opens a host-vended WebSocket for each current
 enabled socket snapshot, sends the core-derived shared-content demand in its
 subscription, forwards valid observations to the core ingress Action, and
-reports current-epoch stop/history facts through the core fact Action. The
+reports current-generation history facts through the core fact Action.
+Ordinary observer retirement closes and disposes its sockets; there is no
+provider stop Action or durable stop-proof handshake. The
 status Resource is ordinary UI state, never reconciliation authority; the
 fixture has no local registry, unqualified Resource lookup, or core/Data
 producer substitute.

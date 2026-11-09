@@ -204,7 +204,7 @@ function githubCase(): TriageSourceAdapterConformanceCase {
       const result = await scanGithubTriageSource({
         v: 1,
         instance: githubInstance(),
-        page: { kind: 'initial', limit: 64 },
+        page: { kind: 'initial', limit: 1 },
       }, transport.context, { now: fixedClock(1_700_000_000_000) });
       return { result, requestWitness: transport.requests.at(-1)?.url ?? '' };
     },

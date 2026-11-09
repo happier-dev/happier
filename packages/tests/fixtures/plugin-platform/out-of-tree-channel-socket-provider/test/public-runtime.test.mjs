@@ -7,7 +7,7 @@ import {
 } from '@happier-dev/channels-protocol/v1';
 import { assertConversationProviderContributionV1 } from '@happier-dev/channels-protocol/testing/v1';
 import { definePlugin } from '@happier-dev/plugin-sdk';
-import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
+import { createPluginTestkit, createTestResourceInvocationContext } from '@happier-dev/plugin-sdk/testing';
 
 const fixture = await import('../src/index.mjs');
 const { PROVIDER_ACTION_IDS } = fixture;
@@ -18,7 +18,6 @@ const CORE_PROVIDER_OPERATION_ACTION_IDS = Object.freeze({
   principalResolve: 'fixture/execute-provider-principal-resolve-v1',
   messageDeliver: 'fixture/execute-provider-message-deliver-v1',
   deliveryReconcile: 'fixture/execute-provider-delivery-reconcile-v1',
-  connectionStop: 'fixture/execute-provider-connection-stop-v1',
 });
 
 const fixtureProviderConformance = assertConversationProviderContributionV1(fixture.manifest);
@@ -104,14 +103,6 @@ function createCoreTarget(operationSlots) {
         dangerLevel: 'safe',
         execution: { target: 'daemon' },
         run: runAdmittedProviderOperation(() => operationSlots.deliveryReconcile),
-      },
-      [CORE_PROVIDER_OPERATION_ACTION_IDS.connectionStop]: {
-        title: 'Execute admitted fixture connection stop',
-        scopes: ['global'],
-        surfaces: ['plugin'],
-        dangerLevel: 'safe',
-        execution: { target: 'daemon' },
-        run: runAdmittedProviderOperation(() => operationSlots.connectionStop),
       },
     },
   });
@@ -206,13 +197,6 @@ async function createActivation() {
       'deliveryReconcile',
       fixtureProviderConformance.contribution.operations.deliveryReconcile,
     ),
-    connectionStop: issueAdmittedProviderOperation(
-      coreTestkit,
-      testkit,
-      coreTarget.contributionPoints.providers,
-      'connectionStop',
-      fixtureProviderConformance.contribution.operations.connectionStop,
-    ),
   });
   Object.assign(operationSlots, admittedOperations);
   const resourceRuntime = testkit.registration('resources', 'status-v1');
@@ -272,13 +256,6 @@ async function createActivation() {
           ...(context?.signal ? { signal: context.signal } : {}),
         });
       },
-      connectionStop: async (input, context) => {
-        activeServices = context?.services;
-        return await coreTestkit.invokeAction(CORE_PROVIDER_OPERATION_ACTION_IDS.connectionStop, input, {
-          surface: 'plugin',
-          ...(context?.signal ? { signal: context.signal } : {}),
-        });
-      },
     }),
     dispose: async () => {
       await coreTestkit.dispose();
@@ -303,7 +280,7 @@ function connection(providerConfig) {
 }
 
 function status(resourceRuntime) {
-  return JSON.parse(new TextDecoder().decode(resourceRuntime.read()));
+  return JSON.parse(new TextDecoder().decode(resourceRuntime.read(createTestResourceInvocationContext())));
 }
 
 function plainJson(value) {
@@ -413,17 +390,11 @@ test('every provider Action requires a host-stamped Channels core caller', async
       endpoint: { kind: 'direct', audience: 'direct', id: 'fixture:room' },
       query: 'fixture:human',
     },
-    [PROVIDER_ACTION_IDS.connectionStop]: {
-      ...input,
-      authorityEpoch: 1,
-      reason: 'disable',
-    },
     [PROVIDER_ACTION_IDS.messageDeliver]: {
       ...input,
       endpoint: { kind: 'direct', audience: 'direct', id: 'fixture:room' },
-      content: 'hello fixture',
+      content: { text: 'hello fixture' },
       deliveryKey: 'delivery-direct-caller',
-      mentionPolicy: 'suppress',
       linkPreviewPolicy: 'suppress',
     },
     [PROVIDER_ACTION_IDS.deliveryReconcile]: {
@@ -467,16 +438,15 @@ test('the Channels target retains exact admitted provider-role handles through e
       principalResolve: 'principalResolve',
       messageDeliver: 'messageDeliver',
       deliveryReconcile: 'deliveryReconcile',
-      connectionStop: 'connectionStop',
     },
   );
   assert.equal(original.identity.contributor.pluginId, fixture.manifest.id);
   assert.equal(original.identity.contributor.contributionId, 'fixture-socket');
-  assert.equal(typeof original.identity.contributor.immutableGenerationId, 'string');
-  assert.notEqual(original.identity.contributor.immutableGenerationId, '');
+  assert.equal(typeof original.identity.contributor.occurrenceId, 'string');
+  assert.notEqual(original.identity.contributor.occurrenceId, '');
   assert.equal(
     new Set(Object.values(admittedOperations).map((operation) => (
-      operation.identity.contributor.immutableGenerationId
+      operation.identity.contributor.occurrenceId
     ))).size,
     1,
   );
@@ -571,15 +541,15 @@ test('public runtime performs setup, resolution, and typed delivery without reta
     plainJson(await invokeProviderAction(invokeProvider.messageDeliver, {
       ...input,
       endpoint: { kind: 'direct', audience: 'direct', id: 'fixture:room' },
-      content: 'hello fixture',
+      content: { text: 'hello fixture' },
       deliveryKey: 'delivery-1',
-      mentionPolicy: 'suppress',
       linkPreviewPolicy: 'suppress',
     }, context)),
     { kind: 'delivered', providerMessageIds: ['fixture:delivery-1'] },
   );
   assert.equal(sent.length, 1);
   const delivered = JSON.parse(sent[0].text);
+  assert.deepEqual(delivered.content, { text: 'hello fixture' });
   assert.equal(delivered.deliveryKey, 'delivery-1');
   assert.equal(Object.hasOwn(delivered, 'pairingCode'), false);
   assert.equal(JSON.stringify(delivered).includes('one-time-secret'), false);
@@ -594,6 +564,28 @@ test('public runtime performs setup, resolution, and typed delivery without reta
   assert.equal(openedSocketCount, 1);
   assert.equal(sent.length, 1);
   assert.deepEqual(status(resourceRuntime).activeConnectionIds, []);
+
+  // The fixture declares Unicode code points, so an astral character still counts once.
+  const boundaryContent = '😀'.repeat(setup.outboundTextLimit.maximum);
+  const deliveryInput = {
+    ...input,
+    endpoint: { kind: 'direct', audience: 'direct', id: 'fixture:room' },
+    linkPreviewPolicy: 'suppress',
+  };
+  assert.deepEqual(
+    plainJson(await invokeProviderAction(invokeProvider.messageDeliver, {
+      ...deliveryInput, content: { text: boundaryContent }, deliveryKey: 'delivery-at-limit',
+    }, context)),
+    { kind: 'delivered', providerMessageIds: ['fixture:delivery-at-limit'] },
+  );
+  assert.deepEqual(
+    plainJson(await invokeProviderAction(invokeProvider.messageDeliver, {
+      ...deliveryInput, content: { text: `${boundaryContent}😀` }, deliveryKey: 'delivery-over-limit',
+    }, context)),
+    { kind: 'notDelivered', retry: 'never' },
+  );
+  assert.equal(openedSocketCount, 2, 'Over-limit content must be refused before opening a socket');
+  assert.equal(sent.length, 2);
 });
 
 test('expected connection unavailability stays in the Channels in-band result contract', async (t) => {
@@ -619,10 +611,10 @@ test('expected connection unavailability stays in the Channels in-band result co
 });
 
 test('background observer forwards checkpoint-free endpoint-routed socket observations through public list/read authority', async (t) => {
-  const { invokeProvider, backgroundRunner, resourceRuntime, dispose } = await createActivation();
+  const { backgroundRunner, resourceRuntime, dispose } = await createActivation();
   t.after(dispose);
   const controller = new AbortController();
-  let current = reconciliationSnapshot();
+  const current = reconciliationSnapshot();
   const calls = [];
   const ingested = [];
   const facts = [];
@@ -675,46 +667,19 @@ test('background observer forwards checkpoint-free endpoint-routed socket observ
   });
   assert.deepEqual(plainJson(ingested), [{
     connectionId: 'connection-1',
+    authorityEpoch: 7,
     entry: {
       observation: socketMessageObservation(),
       eventCandidate: null,
     },
   }]);
 
-  assert.deepEqual(
-    plainJson(await invokeProviderAction(invokeProvider.connectionStop, {
-      ...connection(current.providerConfig),
-      authorityEpoch: current.authorityEpoch,
-      reason: 'delete',
-    }, context)),
-    {
-      kind: 'notReady',
-      reason: 'invalidConfiguration',
-      diagnostic: 'Fixture socket worker does not match the frozen old connection stop request.',
-    },
-  );
   assert.equal(socket.closeCount, 0);
-
-  current = reconciliationSnapshot({
-    authorityEpoch: 8,
-    enabled: false,
-    deletionState: 'pendingStopReconciliation',
-  });
-  assert.deepEqual(
-    plainJson(await invokeProviderAction(invokeProvider.connectionStop, {
-      ...connection(current.providerConfig),
-      authorityEpoch: current.authorityEpoch,
-      reason: 'delete',
-    }, context)),
-    { kind: 'stopped' },
-  );
-  assert.equal(calls.some(({ ref }) => (
-    ref.localId === CONVERSATION_CORE_PROVIDER_ACTION_IDS_V1.connectionRead
-  )), false);
   assert.deepEqual(plainJson(facts), []);
 
   controller.abort();
   await running;
+  assert.equal(socket.closeCount > 0, true);
   assert.equal(status(resourceRuntime).state, 'idle');
   assert.equal(status(resourceRuntime).reconciliation, null);
 });
@@ -774,8 +739,8 @@ test('an application admission loss reports a history gap before suspending the 
   await running;
 });
 
-test('restart reconciliation reports a retained pending stop only after proving no local worker exists', async (t) => {
-  const { backgroundRunner, dispose } = await createActivation();
+test('restart reconciliation keeps a retained pending deletion inactive without publishing stop proof', async (t) => {
+  const { backgroundRunner, resourceRuntime, dispose } = await createActivation();
   t.after(dispose);
   const controller = new AbortController();
   const current = reconciliationSnapshot({
@@ -801,95 +766,18 @@ test('restart reconciliation reports a retained pending stop only after proving 
       },
       http: {
         openWebSocket: async () => {
-          throw new Error('pending-stop restart reconciliation must not start a socket');
+          throw new Error('retained pending deletion must not start a socket');
         },
       },
     },
   });
 
-  await waitFor(() => facts.length === 1);
-  assert.deepEqual(plainJson(facts), [{
-    connectionId: 'connection-1',
-    authorityEpoch: 8,
-    fact: { kind: 'stopConfirmed', reason: 'notRunningOnReconcile' },
-  }]);
+  await waitFor(() => status(resourceRuntime).state === 'active');
+  assert.deepEqual(status(resourceRuntime).activeConnectionIds, []);
+  assert.deepEqual(facts, []);
 
   controller.abort();
   await running;
-});
-
-test('a timed-out stop retains E+1 recovery authority and a replacement generation reports no worker', async (t) => {
-  const { invokeProvider, backgroundRunner, resourceRuntime, dispose } = await createActivation();
-  t.after(dispose);
-  const firstController = new AbortController();
-  const replacementController = new AbortController();
-  let current = reconciliationSnapshot();
-  const facts = [];
-  const socket = createSocket({ ignoreAbort: true });
-  const actions = {
-    async execute(ref, input) {
-      if (ref.localId === CONVERSATION_CORE_PROVIDER_ACTION_IDS_V1.connectionsList) {
-        return { [current.connectionId]: current };
-      }
-      if (ref.localId === CONVERSATION_CORE_PROVIDER_ACTION_IDS_V1.transportFactReport) {
-        facts.push(input);
-        return { kind: 'recorded' };
-      }
-      throw new Error(`unexpected core Action ${ref.localId}`);
-    },
-  };
-  const first = backgroundRunner({
-    signal: firstController.signal,
-    services: {
-      actions,
-      http: { openWebSocket: async () => socket },
-    },
-  });
-  await waitFor(() => status(resourceRuntime).activeConnectionIds[0] === 'connection-1');
-
-  current = reconciliationSnapshot({
-    authorityEpoch: 8,
-    enabled: false,
-    deletionState: 'pendingStopReconciliation',
-  });
-  assert.deepEqual(
-    plainJson(await invokeProviderAction(invokeProvider.connectionStop, {
-      ...connection(current.providerConfig),
-      authorityEpoch: current.authorityEpoch,
-      reason: 'delete',
-    }, {
-      signal: new AbortController().signal,
-      services: { actions, http: { openWebSocket: async () => socket } },
-    })),
-    { kind: 'pending' },
-  );
-  assert.deepEqual(facts, []);
-
-  socket.push({ kind: 'closed', close: { kind: 'local', wasClean: true } });
-  await waitFor(() => status(resourceRuntime).activeConnectionIds.length === 0);
-  firstController.abort();
-  await first;
-
-  const replacement = backgroundRunner({
-    signal: replacementController.signal,
-    services: {
-      actions,
-      http: {
-        openWebSocket: async () => {
-          throw new Error('pending-stop replacement must not start a socket');
-        },
-      },
-    },
-  });
-  await waitFor(() => facts.length === 1);
-  assert.deepEqual(plainJson(facts), [{
-    connectionId: 'connection-1',
-    authorityEpoch: 8,
-    fact: { kind: 'stopConfirmed', reason: 'notRunningOnReconcile' },
-  }]);
-
-  replacementController.abort();
-  await replacement;
 });
 
 test('a malformed received frame reports provider history loss before suspending the unchanged socket snapshot', async (t) => {
@@ -1179,26 +1067,4 @@ test('provider update, uninstall, and remount retire each socket generation befo
   remountController.abort();
   await updated;
   await remounted;
-});
-
-test('connection-stop is typed and idempotent while reconciliation has no live socket', async (t) => {
-  const { invokeProvider, dispose } = await createActivation();
-  t.after(dispose);
-  const setup = await invokeProviderAction(invokeProvider.setup, {
-    socketUrl: 'wss://channels-fixture.invalid/socket',
-    pairingCode: 'one-time-secret',
-  });
-  const stopInput = {
-    ...connection(setup.providerConfig),
-    authorityEpoch: 1,
-    reason: 'disable',
-  };
-  assert.deepEqual(
-    plainJson(await invokeProviderAction(invokeProvider.connectionStop, stopInput)),
-    { kind: 'notRunning' },
-  );
-  assert.deepEqual(
-    plainJson(await invokeProviderAction(invokeProvider.connectionStop, stopInput)),
-    { kind: 'notRunning' },
-  );
 });

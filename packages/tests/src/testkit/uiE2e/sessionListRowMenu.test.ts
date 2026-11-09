@@ -18,6 +18,7 @@ vi.mock('@playwright/test', () => ({
 }));
 
 import { openSessionListRowMenu } from './sessionListRowMenu';
+import { sessionListRowTestId } from './sessionListRowTestId';
 
 type FakeLocator = {
     count: () => Promise<number>;
@@ -30,7 +31,7 @@ type FakeLocator = {
 };
 
 describe('openSessionListRowMenu', () => {
-    it('hovers the row before opening the hover-revealed more-actions trigger', async () => {
+    it.each(['home-a', 'home-b'])('opens the qualified base occurrence on %s after hovering it', async (serverId) => {
         let hoverActive = false;
 
         const trigger: FakeLocator = {
@@ -73,12 +74,12 @@ describe('openSessionListRowMenu', () => {
 
         const page = {
             getByTestId: vi.fn((testId: string) => {
-                expect(testId).toBe('session-list-item-session-1');
+                expect(testId).toBe(sessionListRowTestId(serverId, 'session-1'));
                 return row;
             }),
         };
 
-        await openSessionListRowMenu(page as never, 'session-1');
+        await openSessionListRowMenu(page as never, { serverId, sessionId: 'session-1' });
 
         expect(row.hover).toHaveBeenCalledTimes(1);
         expect(trigger.click).toHaveBeenCalledTimes(1);

@@ -318,8 +318,7 @@ export async function applyFakeTauriDesktopCommand(
                 },
             };
         case 'desktop_activity_overlay_set_input_locked':
-        case 'desktop_activity_overlay_apply_drag_delta':
-        case 'desktop_activity_overlay_reset_position':
+        case 'desktop_activity_overlay_move':
         case 'desktop_activity_overlay_emit_interaction':
         case 'desktop_activity_overlay_emit_interaction_result':
         case 'desktop_show_main_window':
@@ -657,8 +656,7 @@ export async function installFakeTauriDesktopBridge(
                     };
                 }
                 case 'desktop_activity_overlay_set_input_locked':
-                case 'desktop_activity_overlay_apply_drag_delta':
-                case 'desktop_activity_overlay_reset_position':
+                case 'desktop_activity_overlay_move':
                 case 'desktop_activity_overlay_emit_interaction':
                 case 'desktop_activity_overlay_emit_interaction_result':
                 case 'desktop_show_main_window':

@@ -1,3 +1,4 @@
+import { resolveCanonicalServerIdForUi } from '../../src/testkit/uiE2e/sessionFoldersDrag';
 import { test, expect, type Page } from '@playwright/test';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
@@ -17,6 +18,11 @@ import { toTestIdSafeValue } from '../../src/testkit/uiE2e/testIdSafeValue';
 import { waitForInitialAppUi } from '../../src/testkit/uiE2e/waitForInitialAppUi';
 import { ensureAccountReadyForConnect } from '../../src/testkit/uiE2e/ensureAccountReadyForConnect';
 import { collectBrowserDiagnostics } from '../../src/testkit/uiE2e/browserDiagnostics';
+
+import { sessionListRowTestId } from '../../src/testkit/uiE2e/sessionListRowTestId';
+
+let rowServerId: string;
+const rowTestId = (sessionId: string) => sessionListRowTestId(rowServerId, sessionId);
 
 const run = createRunDirs({ runLabel: 'ui-e2e' });
 
@@ -175,6 +181,8 @@ test.describe('ui e2e: SCM review scroll + tab state', () => {
         HAPPIER_E2E_PROVIDER_USE_SERVER_SOURCE_ENTRYPOINT: '1',
       },
     });
+
+    rowServerId = await resolveCanonicalServerIdForUi(server.baseUrl);
 
     ui = await startUiWeb({
       testDir: suiteDir,
@@ -550,8 +558,8 @@ test.describe('ui e2e: SCM review scroll + tab state', () => {
     if (await sidebarExpand.count()) {
       await sidebarExpand.click({ force: true });
     }
-    await expect(page.getByTestId(`session-list-item-${sessionId2}`)).toHaveCount(1, { timeout: 90_000 });
-    await page.getByTestId(`session-list-item-${sessionId2}`).click();
+    await expect(page.getByTestId(rowTestId(sessionId2))).toHaveCount(1, { timeout: 90_000 });
+    await page.getByTestId(rowTestId(sessionId2)).click();
     await expect(page).toHaveURL(new RegExp(`/session/${sessionId2}(\\?|$)`), { timeout: 90_000 });
     await expect(page.getByTestId('session-composer-input')).toHaveCount(1, { timeout: 120_000 });
 
@@ -564,8 +572,8 @@ test.describe('ui e2e: SCM review scroll + tab state', () => {
     await page.getByTestId('session-rightpanel-close').click();
     await expect(rightPaneLocator(page)).toHaveCount(0, { timeout: 60_000 });
 
-    await expect(page.getByTestId(`session-list-item-${sessionId}`)).toHaveCount(1, { timeout: 90_000 });
-    await page.getByTestId(`session-list-item-${sessionId}`).click();
+    await expect(page.getByTestId(rowTestId(sessionId))).toHaveCount(1, { timeout: 90_000 });
+    await page.getByTestId(rowTestId(sessionId)).click();
     await expect(page).toHaveURL(new RegExp(`/session/${sessionId}(\\?|$)`), { timeout: 90_000 });
     await expect(page.getByTestId('session-composer-input')).toHaveCount(1, { timeout: 120_000 });
 
@@ -574,13 +582,13 @@ test.describe('ui e2e: SCM review scroll + tab state', () => {
     await expect(detailsPaneLocator(page)).toHaveCount(1, { timeout: 60_000 });
 
     // Switch back to session 2 and ensure it remembers the closed right pane state.
-    await page.getByTestId(`session-list-item-${sessionId2}`).click();
+    await page.getByTestId(rowTestId(sessionId2)).click();
     await expect(page).toHaveURL(new RegExp(`/session/${sessionId2}(\\?|$)`), { timeout: 90_000 });
     await expect(page.getByTestId('session-composer-input')).toHaveCount(1, { timeout: 120_000 });
     await expect(rightPaneLocator(page)).toHaveCount(0, { timeout: 60_000 });
 
     // Return to session 1 for the remaining assertions.
-    await page.getByTestId(`session-list-item-${sessionId}`).click();
+    await page.getByTestId(rowTestId(sessionId)).click();
     await expect(page).toHaveURL(new RegExp(`/session/${sessionId}(\\?|$)`), { timeout: 90_000 });
     await expect(page.getByTestId('session-composer-input')).toHaveCount(1, { timeout: 120_000 });
 

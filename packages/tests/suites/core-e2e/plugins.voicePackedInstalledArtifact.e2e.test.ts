@@ -1381,7 +1381,7 @@ describePackedCandidate('candidate-bound packed public-authoring Voice lifecycle
         publishMachineContributionRegistryProjectionInvalidation({
           machineId: MACHINE_ID,
           serverId: SERVER_ID,
-        });
+        }, 'authority');
       });
       await flushHookEffects({ cycles: 10 });
       await waitForReact(() => {
@@ -1500,7 +1500,7 @@ describePackedCandidate('candidate-bound packed public-authoring Voice lifecycle
       await publishAvailability();
       invalidateDaemonContributionRegistryProjectionCache();
       await act(async () => {
-        publishMachineContributionRegistryProjectionInvalidation({ machineId: MACHINE_ID, serverId: SERVER_ID });
+        publishMachineContributionRegistryProjectionInvalidation({ machineId: MACHINE_ID, serverId: SERVER_ID }, 'authority');
       });
       await flushHookEffects({ cycles: 8 });
       await waitForReact(() => {
@@ -1536,7 +1536,7 @@ describePackedCandidate('candidate-bound packed public-authoring Voice lifecycle
       await publishAvailability();
       invalidateDaemonContributionRegistryProjectionCache();
       await act(async () => {
-        publishMachineContributionRegistryProjectionInvalidation({ machineId: MACHINE_ID, serverId: SERVER_ID });
+        publishMachineContributionRegistryProjectionInvalidation({ machineId: MACHINE_ID, serverId: SERVER_ID }, 'authority');
       });
       await flushHookEffects({ cycles: 8 });
       await waitForReact(() => {
@@ -1617,7 +1617,7 @@ describePackedCandidate('candidate-bound packed public-authoring Voice lifecycle
       await publishAvailability();
       invalidateDaemonContributionRegistryProjectionCache();
       await act(async () => {
-        publishMachineContributionRegistryProjectionInvalidation({ machineId: MACHINE_ID, serverId: SERVER_ID });
+        publishMachineContributionRegistryProjectionInvalidation({ machineId: MACHINE_ID, serverId: SERVER_ID }, 'authority');
       });
       await flushHookEffects({ cycles: 8 });
       await waitForReact(() => {

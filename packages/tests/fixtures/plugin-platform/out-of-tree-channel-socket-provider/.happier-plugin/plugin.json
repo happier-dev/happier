@@ -111,32 +111,52 @@
                       "type": "object",
                       "properties": {
                         "service": {
-                          "type": "object",
-                          "properties": {
-                            "pluginId": {
-                              "type": "string",
-                              "minLength": 3,
-                              "maxLength": 256,
-                              "pattern": "^(?!.*(?:^|\\.)(?:__proto__|constructor|prototype)(?:\\.|$))[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$"
+                          "anyOf": [
+                            {
+                              "type": "object",
+                              "properties": {
+                                "pluginId": {
+                                  "type": "string",
+                                  "minLength": 3,
+                                  "maxLength": 256,
+                                  "pattern": "^(?!.*(?:^|\\.)(?:__proto__|constructor|prototype)(?:\\.|$))[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$(?![\\s\\S])"
+                                },
+                                "localId": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 256,
+                                  "pattern": "^[a-z0-9]+(?:[-/][a-z0-9]+)*$(?![\\s\\S])"
+                                }
+                              },
+                              "required": [
+                                "pluginId",
+                                "localId"
+                              ],
+                              "additionalProperties": false
                             },
-                            "localId": {
-                              "type": "string",
-                              "minLength": 1,
-                              "maxLength": 256,
-                              "pattern": "^[a-z0-9]+(?:[-/][a-z0-9]+)*$"
+                            {
+                              "type": "object",
+                              "properties": {
+                                "pluginId": {
+                                  "const": "happier"
+                                },
+                                "localId": {
+                                  "const": "mcp-sign-in"
+                                }
+                              },
+                              "required": [
+                                "pluginId",
+                                "localId"
+                              ],
+                              "additionalProperties": false
                             }
-                          },
-                          "required": [
-                            "pluginId",
-                            "localId"
-                          ],
-                          "additionalProperties": false
+                          ]
                         },
                         "accountId": {
                           "type": "string",
                           "minLength": 1,
                           "maxLength": 256,
-                          "pattern": "^(?!\\s)[\\s\\S]*\\S$"
+                          "pattern": "^(?!\\s)[\\s\\S]*\\S$(?![\\s\\S])"
                         }
                       },
                       "required": [
@@ -219,9 +239,6 @@
                     },
                     {
                       "const": "providerExclusive"
-                    },
-                    {
-                      "const": "destructive"
                     }
                   ]
                 },
@@ -258,6 +275,9 @@
                           "const": "unicodeCodePoints"
                         }
                       ]
+                    },
+                    "formatting": {
+                      "const": "preservesNativeUnits"
                     }
                   },
                   "required": [
@@ -265,6 +285,11 @@
                     "unit"
                   ],
                   "additionalProperties": false
+                },
+                "recommendedMaximumObservationAgeMs": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
                 },
                 "sharedEndpointInputModes": {
                   "type": "array",
@@ -298,6 +323,53 @@
                       "type": "string",
                       "minLength": 1,
                       "maxLength": 256
+                    },
+                    "steps": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "title": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256
+                          },
+                          "externalUrl": {
+                            "type": "string",
+                            "minLength": 1,
+                            "pattern": "^https://[^\\s]+$",
+                            "x-happier-max-utf8-bytes": 2048
+                          },
+                          "copyableValues": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "label": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 256
+                                },
+                                "value": {
+                                  "type": "string",
+                                  "minLength": 1
+                                }
+                              },
+                              "required": [
+                                "label",
+                                "value"
+                              ],
+                              "additionalProperties": false
+                            },
+                            "minItems": 1
+                          }
+                        },
+                        "required": [
+                          "title"
+                        ],
+                        "additionalProperties": false
+                      },
+                      "minItems": 1
                     }
                   },
                   "required": [
@@ -319,13 +391,13 @@
                       "type": "string",
                       "minLength": 3,
                       "maxLength": 256,
-                      "pattern": "^(?!.*(?:^|\\.)(?:__proto__|constructor|prototype)(?:\\.|$))[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$"
+                      "pattern": "^(?!.*(?:^|\\.)(?:__proto__|constructor|prototype)(?:\\.|$))[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$(?![\\s\\S])"
                     },
                     "localId": {
                       "type": "string",
                       "minLength": 1,
                       "maxLength": 256,
-                      "pattern": "^[a-z0-9]+(?:[-/][a-z0-9]+)*$"
+                      "pattern": "^[a-z0-9]+(?:[-/][a-z0-9]+)*$(?![\\s\\S])"
                     }
                   },
                   "required": [
@@ -345,8 +417,7 @@
                 "supportedTransports",
                 "recommendedTransport",
                 "overlapSafety",
-                "replayContinuity",
-                "outboundTextLimit"
+                "replayContinuity"
               ],
               "additionalProperties": false
             },
@@ -412,32 +483,52 @@
                   "type": "object",
                   "properties": {
                     "service": {
-                      "type": "object",
-                      "properties": {
-                        "pluginId": {
-                          "type": "string",
-                          "minLength": 3,
-                          "maxLength": 256,
-                          "pattern": "^(?!.*(?:^|\\.)(?:__proto__|constructor|prototype)(?:\\.|$))[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$"
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "pluginId": {
+                              "type": "string",
+                              "minLength": 3,
+                              "maxLength": 256,
+                              "pattern": "^(?!.*(?:^|\\.)(?:__proto__|constructor|prototype)(?:\\.|$))[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$(?![\\s\\S])"
+                            },
+                            "localId": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 256,
+                              "pattern": "^[a-z0-9]+(?:[-/][a-z0-9]+)*$(?![\\s\\S])"
+                            }
+                          },
+                          "required": [
+                            "pluginId",
+                            "localId"
+                          ],
+                          "additionalProperties": false
                         },
-                        "localId": {
-                          "type": "string",
-                          "minLength": 1,
-                          "maxLength": 256,
-                          "pattern": "^[a-z0-9]+(?:[-/][a-z0-9]+)*$"
+                        {
+                          "type": "object",
+                          "properties": {
+                            "pluginId": {
+                              "const": "happier"
+                            },
+                            "localId": {
+                              "const": "mcp-sign-in"
+                            }
+                          },
+                          "required": [
+                            "pluginId",
+                            "localId"
+                          ],
+                          "additionalProperties": false
                         }
-                      },
-                      "required": [
-                        "pluginId",
-                        "localId"
-                      ],
-                      "additionalProperties": false
+                      ]
                     },
                     "accountId": {
                       "type": "string",
                       "minLength": 1,
                       "maxLength": 256,
-                      "pattern": "^(?!\\s)[\\s\\S]*\\S$"
+                      "pattern": "^(?!\\s)[\\s\\S]*\\S$(?![\\s\\S])"
                     }
                   },
                   "required": [
@@ -570,7 +661,7 @@
                 "retryAfterMs": {
                   "type": "integer",
                   "minimum": 0,
-                  "maximum": 86400000
+                  "maximum": 9007199254740991
                 },
                 "diagnostic": {
                   "type": "string",
@@ -634,32 +725,52 @@
                   "type": "object",
                   "properties": {
                     "service": {
-                      "type": "object",
-                      "properties": {
-                        "pluginId": {
-                          "type": "string",
-                          "minLength": 3,
-                          "maxLength": 256,
-                          "pattern": "^(?!.*(?:^|\\.)(?:__proto__|constructor|prototype)(?:\\.|$))[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$"
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "pluginId": {
+                              "type": "string",
+                              "minLength": 3,
+                              "maxLength": 256,
+                              "pattern": "^(?!.*(?:^|\\.)(?:__proto__|constructor|prototype)(?:\\.|$))[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$(?![\\s\\S])"
+                            },
+                            "localId": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 256,
+                              "pattern": "^[a-z0-9]+(?:[-/][a-z0-9]+)*$(?![\\s\\S])"
+                            }
+                          },
+                          "required": [
+                            "pluginId",
+                            "localId"
+                          ],
+                          "additionalProperties": false
                         },
-                        "localId": {
-                          "type": "string",
-                          "minLength": 1,
-                          "maxLength": 256,
-                          "pattern": "^[a-z0-9]+(?:[-/][a-z0-9]+)*$"
+                        {
+                          "type": "object",
+                          "properties": {
+                            "pluginId": {
+                              "const": "happier"
+                            },
+                            "localId": {
+                              "const": "mcp-sign-in"
+                            }
+                          },
+                          "required": [
+                            "pluginId",
+                            "localId"
+                          ],
+                          "additionalProperties": false
                         }
-                      },
-                      "required": [
-                        "pluginId",
-                        "localId"
-                      ],
-                      "additionalProperties": false
+                      ]
                     },
                     "accountId": {
                       "type": "string",
                       "minLength": 1,
                       "maxLength": 256,
-                      "pattern": "^(?!\\s)[\\s\\S]*\\S$"
+                      "pattern": "^(?!\\s)[\\s\\S]*\\S$(?![\\s\\S])"
                     }
                   },
                   "required": [
@@ -911,6 +1022,92 @@
                             "type": "string",
                             "minLength": 1,
                             "maxLength": 256
+                          },
+                          "pullRequest": {
+                            "type": "object",
+                            "properties": {
+                              "repository": {
+                                "type": "string",
+                                "minLength": 1,
+                                "pattern": "^[^\\s/]+/[^\\s/]+$"
+                              },
+                              "number": {
+                                "type": "integer",
+                                "minimum": 1,
+                                "maximum": 9007199254740991
+                              }
+                            },
+                            "required": [
+                              "repository",
+                              "number"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "pullRequestState": {
+                            "type": "object",
+                            "properties": {
+                              "state": {
+                                "anyOf": [
+                                  {
+                                    "const": "open"
+                                  },
+                                  {
+                                    "const": "merged"
+                                  },
+                                  {
+                                    "const": "closed"
+                                  },
+                                  {
+                                    "const": "unknown"
+                                  }
+                                ]
+                              },
+                              "observedAt": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "maximum": 9007199254740991
+                              },
+                              "fixResolution": {
+                                "type": "object",
+                                "properties": {
+                                  "headRevision": {
+                                    "type": "string",
+                                    "minLength": 1
+                                  },
+                                  "resolved": {
+                                    "anyOf": [
+                                      {
+                                        "const": true
+                                      },
+                                      {
+                                        "const": false
+                                      }
+                                    ]
+                                  },
+                                  "incomplete": {
+                                    "anyOf": [
+                                      {
+                                        "const": true
+                                      },
+                                      {
+                                        "const": false
+                                      }
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "headRevision",
+                                  "resolved",
+                                  "incomplete"
+                                ],
+                                "additionalProperties": false
+                              }
+                            },
+                            "required": [
+                              "state",
+                              "observedAt"
+                            ],
+                            "additionalProperties": false
                           }
                         },
                         "required": [
@@ -966,7 +1163,7 @@
                 "retryAfterMs": {
                   "type": "integer",
                   "minimum": 0,
-                  "maximum": 86400000
+                  "maximum": 9007199254740991
                 },
                 "diagnostic": {
                   "type": "string",
@@ -1030,32 +1227,52 @@
                   "type": "object",
                   "properties": {
                     "service": {
-                      "type": "object",
-                      "properties": {
-                        "pluginId": {
-                          "type": "string",
-                          "minLength": 3,
-                          "maxLength": 256,
-                          "pattern": "^(?!.*(?:^|\\.)(?:__proto__|constructor|prototype)(?:\\.|$))[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$"
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "pluginId": {
+                              "type": "string",
+                              "minLength": 3,
+                              "maxLength": 256,
+                              "pattern": "^(?!.*(?:^|\\.)(?:__proto__|constructor|prototype)(?:\\.|$))[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$(?![\\s\\S])"
+                            },
+                            "localId": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 256,
+                              "pattern": "^[a-z0-9]+(?:[-/][a-z0-9]+)*$(?![\\s\\S])"
+                            }
+                          },
+                          "required": [
+                            "pluginId",
+                            "localId"
+                          ],
+                          "additionalProperties": false
                         },
-                        "localId": {
-                          "type": "string",
-                          "minLength": 1,
-                          "maxLength": 256,
-                          "pattern": "^[a-z0-9]+(?:[-/][a-z0-9]+)*$"
+                        {
+                          "type": "object",
+                          "properties": {
+                            "pluginId": {
+                              "const": "happier"
+                            },
+                            "localId": {
+                              "const": "mcp-sign-in"
+                            }
+                          },
+                          "required": [
+                            "pluginId",
+                            "localId"
+                          ],
+                          "additionalProperties": false
                         }
-                      },
-                      "required": [
-                        "pluginId",
-                        "localId"
-                      ],
-                      "additionalProperties": false
+                      ]
                     },
                     "accountId": {
                       "type": "string",
                       "minLength": 1,
                       "maxLength": 256,
-                      "pattern": "^(?!\\s)[\\s\\S]*\\S$"
+                      "pattern": "^(?!\\s)[\\s\\S]*\\S$(?![\\s\\S])"
                     }
                   },
                   "required": [
@@ -1254,6 +1471,92 @@
                       "type": "string",
                       "minLength": 1,
                       "maxLength": 256
+                    },
+                    "pullRequest": {
+                      "type": "object",
+                      "properties": {
+                        "repository": {
+                          "type": "string",
+                          "minLength": 1,
+                          "pattern": "^[^\\s/]+/[^\\s/]+$"
+                        },
+                        "number": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 9007199254740991
+                        }
+                      },
+                      "required": [
+                        "repository",
+                        "number"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "pullRequestState": {
+                      "type": "object",
+                      "properties": {
+                        "state": {
+                          "anyOf": [
+                            {
+                              "const": "open"
+                            },
+                            {
+                              "const": "merged"
+                            },
+                            {
+                              "const": "closed"
+                            },
+                            {
+                              "const": "unknown"
+                            }
+                          ]
+                        },
+                        "observedAt": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        "fixResolution": {
+                          "type": "object",
+                          "properties": {
+                            "headRevision": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "resolved": {
+                              "anyOf": [
+                                {
+                                  "const": true
+                                },
+                                {
+                                  "const": false
+                                }
+                              ]
+                            },
+                            "incomplete": {
+                              "anyOf": [
+                                {
+                                  "const": true
+                                },
+                                {
+                                  "const": false
+                                }
+                              ]
+                            }
+                          },
+                          "required": [
+                            "headRevision",
+                            "resolved",
+                            "incomplete"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "required": [
+                        "state",
+                        "observedAt"
+                      ],
+                      "additionalProperties": false
                     }
                   },
                   "required": [
@@ -1371,7 +1674,7 @@
                 "retryAfterMs": {
                   "type": "integer",
                   "minimum": 0,
-                  "maximum": 86400000
+                  "maximum": 9007199254740991
                 },
                 "diagnostic": {
                   "type": "string",
@@ -1399,207 +1702,6 @@
         ],
         "dangerLevel": "safe",
         "id": "fixture/principal"
-      },
-      {
-        "title": "Stop external socket channel",
-        "confirmation": {
-          "title": "Stop external socket channel"
-        },
-        "execution": {
-          "target": "daemon"
-        },
-        "inputSchema": {
-          "$schema": "http://json-schema.org/draft-07/schema#",
-          "type": "object",
-          "properties": {
-            "v": {
-              "const": 1
-            },
-            "connectionId": {
-              "type": "string",
-              "minLength": 1,
-              "maxLength": 96,
-              "pattern": "^[\\x21-\\x7E]+$"
-            },
-            "providerConnectionKey": {
-              "type": "string",
-              "minLength": 1,
-              "x-happier-max-utf8-bytes": 512
-            },
-            "providerConfigVersion": {
-              "const": 1
-            },
-            "providerConfig": {
-              "x-happier-max-serialized-utf8-bytes": 49152
-            },
-            "credentialRef": {
-              "anyOf": [
-                {
-                  "type": "object",
-                  "properties": {
-                    "service": {
-                      "type": "object",
-                      "properties": {
-                        "pluginId": {
-                          "type": "string",
-                          "minLength": 3,
-                          "maxLength": 256,
-                          "pattern": "^(?!.*(?:^|\\.)(?:__proto__|constructor|prototype)(?:\\.|$))[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$"
-                        },
-                        "localId": {
-                          "type": "string",
-                          "minLength": 1,
-                          "maxLength": 256,
-                          "pattern": "^[a-z0-9]+(?:[-/][a-z0-9]+)*$"
-                        }
-                      },
-                      "required": [
-                        "pluginId",
-                        "localId"
-                      ],
-                      "additionalProperties": false
-                    },
-                    "accountId": {
-                      "type": "string",
-                      "minLength": 1,
-                      "maxLength": 256,
-                      "pattern": "^(?!\\s)[\\s\\S]*\\S$"
-                    }
-                  },
-                  "required": [
-                    "service",
-                    "accountId"
-                  ],
-                  "additionalProperties": false
-                },
-                {
-                  "type": "null"
-                }
-              ]
-            },
-            "authorityEpoch": {
-              "type": "integer",
-              "minimum": 1,
-              "maximum": 9007199254740991
-            },
-            "reason": {
-              "anyOf": [
-                {
-                  "const": "disable"
-                },
-                {
-                  "const": "delete"
-                },
-                {
-                  "const": "transfer"
-                }
-              ]
-            }
-          },
-          "required": [
-            "v",
-            "connectionId",
-            "providerConnectionKey",
-            "providerConfigVersion",
-            "providerConfig",
-            "credentialRef",
-            "authorityEpoch",
-            "reason"
-          ],
-          "additionalProperties": false
-        },
-        "resultSchema": {
-          "$schema": "http://json-schema.org/draft-07/schema#",
-          "anyOf": [
-            {
-              "type": "object",
-              "properties": {
-                "kind": {
-                  "anyOf": [
-                    {
-                      "const": "stopped"
-                    },
-                    {
-                      "const": "notRunning"
-                    }
-                  ]
-                }
-              },
-              "required": [
-                "kind"
-              ],
-              "additionalProperties": false
-            },
-            {
-              "type": "object",
-              "properties": {
-                "kind": {
-                  "const": "pending"
-                }
-              },
-              "required": [
-                "kind"
-              ],
-              "additionalProperties": false
-            },
-            {
-              "type": "object",
-              "properties": {
-                "kind": {
-                  "const": "notReady"
-                },
-                "reason": {
-                  "anyOf": [
-                    {
-                      "const": "credentialInvalid"
-                    },
-                    {
-                      "const": "permissionMissing"
-                    },
-                    {
-                      "const": "network"
-                    },
-                    {
-                      "const": "rateLimited"
-                    },
-                    {
-                      "const": "providerConflict"
-                    },
-                    {
-                      "const": "unsupported"
-                    },
-                    {
-                      "const": "invalidConfiguration"
-                    }
-                  ]
-                },
-                "retryAfterMs": {
-                  "type": "integer",
-                  "minimum": 0,
-                  "maximum": 86400000
-                },
-                "diagnostic": {
-                  "type": "string",
-                  "minLength": 1,
-                  "x-happier-max-utf8-bytes": 1024
-                }
-              },
-              "required": [
-                "kind",
-                "reason"
-              ],
-              "additionalProperties": false
-            }
-          ]
-        },
-        "scopes": [
-          "global"
-        ],
-        "surfaces": [
-          "plugin"
-        ],
-        "dangerLevel": "writesRemote",
-        "id": "fixture/stop"
       },
       {
         "title": "Deliver a fixture message",
@@ -1642,32 +1744,52 @@
                   "type": "object",
                   "properties": {
                     "service": {
-                      "type": "object",
-                      "properties": {
-                        "pluginId": {
-                          "type": "string",
-                          "minLength": 3,
-                          "maxLength": 256,
-                          "pattern": "^(?!.*(?:^|\\.)(?:__proto__|constructor|prototype)(?:\\.|$))[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$"
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "pluginId": {
+                              "type": "string",
+                              "minLength": 3,
+                              "maxLength": 256,
+                              "pattern": "^(?!.*(?:^|\\.)(?:__proto__|constructor|prototype)(?:\\.|$))[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$(?![\\s\\S])"
+                            },
+                            "localId": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 256,
+                              "pattern": "^[a-z0-9]+(?:[-/][a-z0-9]+)*$(?![\\s\\S])"
+                            }
+                          },
+                          "required": [
+                            "pluginId",
+                            "localId"
+                          ],
+                          "additionalProperties": false
                         },
-                        "localId": {
-                          "type": "string",
-                          "minLength": 1,
-                          "maxLength": 256,
-                          "pattern": "^[a-z0-9]+(?:[-/][a-z0-9]+)*$"
+                        {
+                          "type": "object",
+                          "properties": {
+                            "pluginId": {
+                              "const": "happier"
+                            },
+                            "localId": {
+                              "const": "mcp-sign-in"
+                            }
+                          },
+                          "required": [
+                            "pluginId",
+                            "localId"
+                          ],
+                          "additionalProperties": false
                         }
-                      },
-                      "required": [
-                        "pluginId",
-                        "localId"
-                      ],
-                      "additionalProperties": false
+                      ]
                     },
                     "accountId": {
                       "type": "string",
                       "minLength": 1,
                       "maxLength": 256,
-                      "pattern": "^(?!\\s)[\\s\\S]*\\S$"
+                      "pattern": "^(?!\\s)[\\s\\S]*\\S$(?![\\s\\S])"
                     }
                   },
                   "required": [
@@ -1866,6 +1988,92 @@
                       "type": "string",
                       "minLength": 1,
                       "maxLength": 256
+                    },
+                    "pullRequest": {
+                      "type": "object",
+                      "properties": {
+                        "repository": {
+                          "type": "string",
+                          "minLength": 1,
+                          "pattern": "^[^\\s/]+/[^\\s/]+$"
+                        },
+                        "number": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 9007199254740991
+                        }
+                      },
+                      "required": [
+                        "repository",
+                        "number"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "pullRequestState": {
+                      "type": "object",
+                      "properties": {
+                        "state": {
+                          "anyOf": [
+                            {
+                              "const": "open"
+                            },
+                            {
+                              "const": "merged"
+                            },
+                            {
+                              "const": "closed"
+                            },
+                            {
+                              "const": "unknown"
+                            }
+                          ]
+                        },
+                        "observedAt": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        "fixResolution": {
+                          "type": "object",
+                          "properties": {
+                            "headRevision": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "resolved": {
+                              "anyOf": [
+                                {
+                                  "const": true
+                                },
+                                {
+                                  "const": false
+                                }
+                              ]
+                            },
+                            "incomplete": {
+                              "anyOf": [
+                                {
+                                  "const": true
+                                },
+                                {
+                                  "const": false
+                                }
+                              ]
+                            }
+                          },
+                          "required": [
+                            "headRevision",
+                            "resolved",
+                            "incomplete"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "required": [
+                        "state",
+                        "observedAt"
+                      ],
+                      "additionalProperties": false
                     }
                   },
                   "required": [
@@ -1878,14 +2086,54 @@
               ]
             },
             "content": {
-              "type": "string",
-              "minLength": 1,
-              "x-happier-max-utf8-bytes": 196608
+              "type": "object",
+              "properties": {
+                "text": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "html": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "text"
+              ],
+              "additionalProperties": false
+            },
+            "newThread": {
+              "type": "object",
+              "properties": {
+                "recipients": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "x-happier-max-utf8-bytes": 256
+                  },
+                  "minItems": 1,
+                  "uniqueItems": true
+                },
+                "subject": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "recipients",
+                "subject"
+              ],
+              "additionalProperties": false
             },
             "deliveryKey": {
               "type": "string",
               "minLength": 1,
               "x-happier-max-utf8-bytes": 256
+            },
+            "chunkIndex": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
             },
             "replyContext": {
               "anyOf": [
@@ -1939,9 +2187,6 @@
                 }
               ]
             },
-            "mentionPolicy": {
-              "const": "suppress"
-            },
             "linkPreviewPolicy": {
               "anyOf": [
                 {
@@ -1963,7 +2208,6 @@
             "endpoint",
             "content",
             "deliveryKey",
-            "mentionPolicy",
             "linkPreviewPolicy"
           ],
           "additionalProperties": false
@@ -1971,6 +2215,54 @@
         "resultSchema": {
           "$schema": "http://json-schema.org/draft-07/schema#",
           "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "const": "notReady"
+                },
+                "reason": {
+                  "anyOf": [
+                    {
+                      "const": "credentialInvalid"
+                    },
+                    {
+                      "const": "permissionMissing"
+                    },
+                    {
+                      "const": "network"
+                    },
+                    {
+                      "const": "rateLimited"
+                    },
+                    {
+                      "const": "providerConflict"
+                    },
+                    {
+                      "const": "unsupported"
+                    },
+                    {
+                      "const": "invalidConfiguration"
+                    }
+                  ]
+                },
+                "retryAfterMs": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "diagnostic": {
+                  "type": "string",
+                  "minLength": 1,
+                  "x-happier-max-utf8-bytes": 1024
+                }
+              },
+              "required": [
+                "kind",
+                "reason"
+              ],
+              "additionalProperties": false
+            },
             {
               "type": "object",
               "properties": {
@@ -1983,8 +2275,289 @@
                     "type": "string",
                     "minLength": 1,
                     "x-happier-max-utf8-bytes": 512
-                  },
-                  "maxItems": 32
+                  }
+                },
+                "endpoint": {
+                  "anyOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "const": "direct"
+                        },
+                        "audience": {
+                          "const": "direct"
+                        },
+                        "id": {
+                          "type": "string",
+                          "minLength": 1,
+                          "x-happier-max-utf8-bytes": 512
+                        },
+                        "parentId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "x-happier-max-utf8-bytes": 512
+                        },
+                        "label": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256
+                        },
+                        "parentLabel": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "audience",
+                        "id"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "const": "shared"
+                        },
+                        "audience": {
+                          "const": "shared"
+                        },
+                        "id": {
+                          "type": "string",
+                          "minLength": 1,
+                          "x-happier-max-utf8-bytes": 512
+                        },
+                        "parentId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "x-happier-max-utf8-bytes": 512
+                        },
+                        "label": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256
+                        },
+                        "parentLabel": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "audience",
+                        "id"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "const": "thread"
+                        },
+                        "audience": {
+                          "anyOf": [
+                            {
+                              "const": "direct"
+                            },
+                            {
+                              "const": "shared"
+                            }
+                          ]
+                        },
+                        "id": {
+                          "type": "string",
+                          "minLength": 1,
+                          "x-happier-max-utf8-bytes": 512
+                        },
+                        "parentId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "x-happier-max-utf8-bytes": 512
+                        },
+                        "label": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256
+                        },
+                        "parentLabel": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "audience",
+                        "id"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "const": "githubIssue"
+                        },
+                        "audience": {
+                          "const": "shared"
+                        },
+                        "id": {
+                          "type": "string",
+                          "minLength": 1,
+                          "x-happier-max-utf8-bytes": 512
+                        },
+                        "parentId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "x-happier-max-utf8-bytes": 512
+                        },
+                        "label": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256
+                        },
+                        "parentLabel": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "audience",
+                        "id"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "const": "githubPullRequest"
+                        },
+                        "audience": {
+                          "const": "shared"
+                        },
+                        "id": {
+                          "type": "string",
+                          "minLength": 1,
+                          "x-happier-max-utf8-bytes": 512
+                        },
+                        "parentId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "x-happier-max-utf8-bytes": 512
+                        },
+                        "label": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256
+                        },
+                        "parentLabel": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256
+                        },
+                        "pullRequest": {
+                          "type": "object",
+                          "properties": {
+                            "repository": {
+                              "type": "string",
+                              "minLength": 1,
+                              "pattern": "^[^\\s/]+/[^\\s/]+$"
+                            },
+                            "number": {
+                              "type": "integer",
+                              "minimum": 1,
+                              "maximum": 9007199254740991
+                            }
+                          },
+                          "required": [
+                            "repository",
+                            "number"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "pullRequestState": {
+                          "type": "object",
+                          "properties": {
+                            "state": {
+                              "anyOf": [
+                                {
+                                  "const": "open"
+                                },
+                                {
+                                  "const": "merged"
+                                },
+                                {
+                                  "const": "closed"
+                                },
+                                {
+                                  "const": "unknown"
+                                }
+                              ]
+                            },
+                            "observedAt": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            "fixResolution": {
+                              "type": "object",
+                              "properties": {
+                                "headRevision": {
+                                  "type": "string",
+                                  "minLength": 1
+                                },
+                                "resolved": {
+                                  "anyOf": [
+                                    {
+                                      "const": true
+                                    },
+                                    {
+                                      "const": false
+                                    }
+                                  ]
+                                },
+                                "incomplete": {
+                                  "anyOf": [
+                                    {
+                                      "const": true
+                                    },
+                                    {
+                                      "const": false
+                                    }
+                                  ]
+                                }
+                              },
+                              "required": [
+                                "headRevision",
+                                "resolved",
+                                "incomplete"
+                              ],
+                              "additionalProperties": false
+                            }
+                          },
+                          "required": [
+                            "state",
+                            "observedAt"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "audience",
+                        "id"
+                      ],
+                      "additionalProperties": false
+                    }
+                  ]
                 }
               },
               "required": [
@@ -2005,23 +2578,18 @@
                     "type": "string",
                     "minLength": 1,
                     "x-happier-max-utf8-bytes": 512
-                  },
-                  "maxItems": 32
+                  }
                 },
                 "failedChunk": {
                   "type": "integer",
                   "minimum": 0,
-                  "maximum": 32
-                },
-                "retrySafe": {
-                  "const": false
+                  "maximum": 9007199254740991
                 }
               },
               "required": [
                 "kind",
                 "providerMessageIds",
-                "failedChunk",
-                "retrySafe"
+                "failedChunk"
               ],
               "additionalProperties": false
             },
@@ -2047,7 +2615,7 @@
                 "retryAfterMs": {
                   "type": "integer",
                   "minimum": 0,
-                  "maximum": 86400000
+                  "maximum": 9007199254740991
                 }
               },
               "required": [
@@ -2091,8 +2659,289 @@
                     "type": "string",
                     "minLength": 1,
                     "x-happier-max-utf8-bytes": 512
-                  },
-                  "maxItems": 32
+                  }
+                },
+                "endpoint": {
+                  "anyOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "const": "direct"
+                        },
+                        "audience": {
+                          "const": "direct"
+                        },
+                        "id": {
+                          "type": "string",
+                          "minLength": 1,
+                          "x-happier-max-utf8-bytes": 512
+                        },
+                        "parentId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "x-happier-max-utf8-bytes": 512
+                        },
+                        "label": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256
+                        },
+                        "parentLabel": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "audience",
+                        "id"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "const": "shared"
+                        },
+                        "audience": {
+                          "const": "shared"
+                        },
+                        "id": {
+                          "type": "string",
+                          "minLength": 1,
+                          "x-happier-max-utf8-bytes": 512
+                        },
+                        "parentId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "x-happier-max-utf8-bytes": 512
+                        },
+                        "label": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256
+                        },
+                        "parentLabel": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "audience",
+                        "id"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "const": "thread"
+                        },
+                        "audience": {
+                          "anyOf": [
+                            {
+                              "const": "direct"
+                            },
+                            {
+                              "const": "shared"
+                            }
+                          ]
+                        },
+                        "id": {
+                          "type": "string",
+                          "minLength": 1,
+                          "x-happier-max-utf8-bytes": 512
+                        },
+                        "parentId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "x-happier-max-utf8-bytes": 512
+                        },
+                        "label": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256
+                        },
+                        "parentLabel": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "audience",
+                        "id"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "const": "githubIssue"
+                        },
+                        "audience": {
+                          "const": "shared"
+                        },
+                        "id": {
+                          "type": "string",
+                          "minLength": 1,
+                          "x-happier-max-utf8-bytes": 512
+                        },
+                        "parentId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "x-happier-max-utf8-bytes": 512
+                        },
+                        "label": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256
+                        },
+                        "parentLabel": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "audience",
+                        "id"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "const": "githubPullRequest"
+                        },
+                        "audience": {
+                          "const": "shared"
+                        },
+                        "id": {
+                          "type": "string",
+                          "minLength": 1,
+                          "x-happier-max-utf8-bytes": 512
+                        },
+                        "parentId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "x-happier-max-utf8-bytes": 512
+                        },
+                        "label": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256
+                        },
+                        "parentLabel": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256
+                        },
+                        "pullRequest": {
+                          "type": "object",
+                          "properties": {
+                            "repository": {
+                              "type": "string",
+                              "minLength": 1,
+                              "pattern": "^[^\\s/]+/[^\\s/]+$"
+                            },
+                            "number": {
+                              "type": "integer",
+                              "minimum": 1,
+                              "maximum": 9007199254740991
+                            }
+                          },
+                          "required": [
+                            "repository",
+                            "number"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "pullRequestState": {
+                          "type": "object",
+                          "properties": {
+                            "state": {
+                              "anyOf": [
+                                {
+                                  "const": "open"
+                                },
+                                {
+                                  "const": "merged"
+                                },
+                                {
+                                  "const": "closed"
+                                },
+                                {
+                                  "const": "unknown"
+                                }
+                              ]
+                            },
+                            "observedAt": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            "fixResolution": {
+                              "type": "object",
+                              "properties": {
+                                "headRevision": {
+                                  "type": "string",
+                                  "minLength": 1
+                                },
+                                "resolved": {
+                                  "anyOf": [
+                                    {
+                                      "const": true
+                                    },
+                                    {
+                                      "const": false
+                                    }
+                                  ]
+                                },
+                                "incomplete": {
+                                  "anyOf": [
+                                    {
+                                      "const": true
+                                    },
+                                    {
+                                      "const": false
+                                    }
+                                  ]
+                                }
+                              },
+                              "required": [
+                                "headRevision",
+                                "resolved",
+                                "incomplete"
+                              ],
+                              "additionalProperties": false
+                            }
+                          },
+                          "required": [
+                            "state",
+                            "observedAt"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "audience",
+                        "id"
+                      ],
+                      "additionalProperties": false
+                    }
+                  ]
                 }
               },
               "required": [
@@ -2146,32 +2995,52 @@
                   "type": "object",
                   "properties": {
                     "service": {
-                      "type": "object",
-                      "properties": {
-                        "pluginId": {
-                          "type": "string",
-                          "minLength": 3,
-                          "maxLength": 256,
-                          "pattern": "^(?!.*(?:^|\\.)(?:__proto__|constructor|prototype)(?:\\.|$))[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$"
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "pluginId": {
+                              "type": "string",
+                              "minLength": 3,
+                              "maxLength": 256,
+                              "pattern": "^(?!.*(?:^|\\.)(?:__proto__|constructor|prototype)(?:\\.|$))[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$(?![\\s\\S])"
+                            },
+                            "localId": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 256,
+                              "pattern": "^[a-z0-9]+(?:[-/][a-z0-9]+)*$(?![\\s\\S])"
+                            }
+                          },
+                          "required": [
+                            "pluginId",
+                            "localId"
+                          ],
+                          "additionalProperties": false
                         },
-                        "localId": {
-                          "type": "string",
-                          "minLength": 1,
-                          "maxLength": 256,
-                          "pattern": "^[a-z0-9]+(?:[-/][a-z0-9]+)*$"
+                        {
+                          "type": "object",
+                          "properties": {
+                            "pluginId": {
+                              "const": "happier"
+                            },
+                            "localId": {
+                              "const": "mcp-sign-in"
+                            }
+                          },
+                          "required": [
+                            "pluginId",
+                            "localId"
+                          ],
+                          "additionalProperties": false
                         }
-                      },
-                      "required": [
-                        "pluginId",
-                        "localId"
-                      ],
-                      "additionalProperties": false
+                      ]
                     },
                     "accountId": {
                       "type": "string",
                       "minLength": 1,
                       "maxLength": 256,
-                      "pattern": "^(?!\\s)[\\s\\S]*\\S$"
+                      "pattern": "^(?!\\s)[\\s\\S]*\\S$(?![\\s\\S])"
                     }
                   },
                   "required": [
@@ -2370,6 +3239,92 @@
                       "type": "string",
                       "minLength": 1,
                       "maxLength": 256
+                    },
+                    "pullRequest": {
+                      "type": "object",
+                      "properties": {
+                        "repository": {
+                          "type": "string",
+                          "minLength": 1,
+                          "pattern": "^[^\\s/]+/[^\\s/]+$"
+                        },
+                        "number": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 9007199254740991
+                        }
+                      },
+                      "required": [
+                        "repository",
+                        "number"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "pullRequestState": {
+                      "type": "object",
+                      "properties": {
+                        "state": {
+                          "anyOf": [
+                            {
+                              "const": "open"
+                            },
+                            {
+                              "const": "merged"
+                            },
+                            {
+                              "const": "closed"
+                            },
+                            {
+                              "const": "unknown"
+                            }
+                          ]
+                        },
+                        "observedAt": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        "fixResolution": {
+                          "type": "object",
+                          "properties": {
+                            "headRevision": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "resolved": {
+                              "anyOf": [
+                                {
+                                  "const": true
+                                },
+                                {
+                                  "const": false
+                                }
+                              ]
+                            },
+                            "incomplete": {
+                              "anyOf": [
+                                {
+                                  "const": true
+                                },
+                                {
+                                  "const": false
+                                }
+                              ]
+                            }
+                          },
+                          "required": [
+                            "headRevision",
+                            "resolved",
+                            "incomplete"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "required": [
+                        "state",
+                        "observedAt"
+                      ],
+                      "additionalProperties": false
                     }
                   },
                   "required": [
@@ -2406,6 +3361,54 @@
               "type": "object",
               "properties": {
                 "kind": {
+                  "const": "notReady"
+                },
+                "reason": {
+                  "anyOf": [
+                    {
+                      "const": "credentialInvalid"
+                    },
+                    {
+                      "const": "permissionMissing"
+                    },
+                    {
+                      "const": "network"
+                    },
+                    {
+                      "const": "rateLimited"
+                    },
+                    {
+                      "const": "providerConflict"
+                    },
+                    {
+                      "const": "unsupported"
+                    },
+                    {
+                      "const": "invalidConfiguration"
+                    }
+                  ]
+                },
+                "retryAfterMs": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "diagnostic": {
+                  "type": "string",
+                  "minLength": 1,
+                  "x-happier-max-utf8-bytes": 1024
+                }
+              },
+              "required": [
+                "kind",
+                "reason"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
                   "const": "delivered"
                 },
                 "providerMessageIds": {
@@ -2414,8 +3417,289 @@
                     "type": "string",
                     "minLength": 1,
                     "x-happier-max-utf8-bytes": 512
-                  },
-                  "maxItems": 32
+                  }
+                },
+                "endpoint": {
+                  "anyOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "const": "direct"
+                        },
+                        "audience": {
+                          "const": "direct"
+                        },
+                        "id": {
+                          "type": "string",
+                          "minLength": 1,
+                          "x-happier-max-utf8-bytes": 512
+                        },
+                        "parentId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "x-happier-max-utf8-bytes": 512
+                        },
+                        "label": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256
+                        },
+                        "parentLabel": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "audience",
+                        "id"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "const": "shared"
+                        },
+                        "audience": {
+                          "const": "shared"
+                        },
+                        "id": {
+                          "type": "string",
+                          "minLength": 1,
+                          "x-happier-max-utf8-bytes": 512
+                        },
+                        "parentId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "x-happier-max-utf8-bytes": 512
+                        },
+                        "label": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256
+                        },
+                        "parentLabel": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "audience",
+                        "id"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "const": "thread"
+                        },
+                        "audience": {
+                          "anyOf": [
+                            {
+                              "const": "direct"
+                            },
+                            {
+                              "const": "shared"
+                            }
+                          ]
+                        },
+                        "id": {
+                          "type": "string",
+                          "minLength": 1,
+                          "x-happier-max-utf8-bytes": 512
+                        },
+                        "parentId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "x-happier-max-utf8-bytes": 512
+                        },
+                        "label": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256
+                        },
+                        "parentLabel": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "audience",
+                        "id"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "const": "githubIssue"
+                        },
+                        "audience": {
+                          "const": "shared"
+                        },
+                        "id": {
+                          "type": "string",
+                          "minLength": 1,
+                          "x-happier-max-utf8-bytes": 512
+                        },
+                        "parentId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "x-happier-max-utf8-bytes": 512
+                        },
+                        "label": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256
+                        },
+                        "parentLabel": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "audience",
+                        "id"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "const": "githubPullRequest"
+                        },
+                        "audience": {
+                          "const": "shared"
+                        },
+                        "id": {
+                          "type": "string",
+                          "minLength": 1,
+                          "x-happier-max-utf8-bytes": 512
+                        },
+                        "parentId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "x-happier-max-utf8-bytes": 512
+                        },
+                        "label": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256
+                        },
+                        "parentLabel": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256
+                        },
+                        "pullRequest": {
+                          "type": "object",
+                          "properties": {
+                            "repository": {
+                              "type": "string",
+                              "minLength": 1,
+                              "pattern": "^[^\\s/]+/[^\\s/]+$"
+                            },
+                            "number": {
+                              "type": "integer",
+                              "minimum": 1,
+                              "maximum": 9007199254740991
+                            }
+                          },
+                          "required": [
+                            "repository",
+                            "number"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "pullRequestState": {
+                          "type": "object",
+                          "properties": {
+                            "state": {
+                              "anyOf": [
+                                {
+                                  "const": "open"
+                                },
+                                {
+                                  "const": "merged"
+                                },
+                                {
+                                  "const": "closed"
+                                },
+                                {
+                                  "const": "unknown"
+                                }
+                              ]
+                            },
+                            "observedAt": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            "fixResolution": {
+                              "type": "object",
+                              "properties": {
+                                "headRevision": {
+                                  "type": "string",
+                                  "minLength": 1
+                                },
+                                "resolved": {
+                                  "anyOf": [
+                                    {
+                                      "const": true
+                                    },
+                                    {
+                                      "const": false
+                                    }
+                                  ]
+                                },
+                                "incomplete": {
+                                  "anyOf": [
+                                    {
+                                      "const": true
+                                    },
+                                    {
+                                      "const": false
+                                    }
+                                  ]
+                                }
+                              },
+                              "required": [
+                                "headRevision",
+                                "resolved",
+                                "incomplete"
+                              ],
+                              "additionalProperties": false
+                            }
+                          },
+                          "required": [
+                            "state",
+                            "observedAt"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "audience",
+                        "id"
+                      ],
+                      "additionalProperties": false
+                    }
+                  ]
                 }
               },
               "required": [
@@ -2436,23 +3720,18 @@
                     "type": "string",
                     "minLength": 1,
                     "x-happier-max-utf8-bytes": 512
-                  },
-                  "maxItems": 32
+                  }
                 },
                 "failedChunk": {
                   "type": "integer",
                   "minimum": 0,
-                  "maximum": 32
-                },
-                "retrySafe": {
-                  "const": false
+                  "maximum": 9007199254740991
                 }
               },
               "required": [
                 "kind",
                 "providerMessageIds",
-                "failedChunk",
-                "retrySafe"
+                "failedChunk"
               ],
               "additionalProperties": false
             },
@@ -2478,7 +3757,7 @@
                 "retryAfterMs": {
                   "type": "integer",
                   "minimum": 0,
-                  "maximum": 86400000
+                  "maximum": 9007199254740991
                 }
               },
               "required": [
@@ -2522,8 +3801,289 @@
                     "type": "string",
                     "minLength": 1,
                     "x-happier-max-utf8-bytes": 512
-                  },
-                  "maxItems": 32
+                  }
+                },
+                "endpoint": {
+                  "anyOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "const": "direct"
+                        },
+                        "audience": {
+                          "const": "direct"
+                        },
+                        "id": {
+                          "type": "string",
+                          "minLength": 1,
+                          "x-happier-max-utf8-bytes": 512
+                        },
+                        "parentId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "x-happier-max-utf8-bytes": 512
+                        },
+                        "label": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256
+                        },
+                        "parentLabel": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "audience",
+                        "id"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "const": "shared"
+                        },
+                        "audience": {
+                          "const": "shared"
+                        },
+                        "id": {
+                          "type": "string",
+                          "minLength": 1,
+                          "x-happier-max-utf8-bytes": 512
+                        },
+                        "parentId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "x-happier-max-utf8-bytes": 512
+                        },
+                        "label": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256
+                        },
+                        "parentLabel": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "audience",
+                        "id"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "const": "thread"
+                        },
+                        "audience": {
+                          "anyOf": [
+                            {
+                              "const": "direct"
+                            },
+                            {
+                              "const": "shared"
+                            }
+                          ]
+                        },
+                        "id": {
+                          "type": "string",
+                          "minLength": 1,
+                          "x-happier-max-utf8-bytes": 512
+                        },
+                        "parentId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "x-happier-max-utf8-bytes": 512
+                        },
+                        "label": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256
+                        },
+                        "parentLabel": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "audience",
+                        "id"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "const": "githubIssue"
+                        },
+                        "audience": {
+                          "const": "shared"
+                        },
+                        "id": {
+                          "type": "string",
+                          "minLength": 1,
+                          "x-happier-max-utf8-bytes": 512
+                        },
+                        "parentId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "x-happier-max-utf8-bytes": 512
+                        },
+                        "label": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256
+                        },
+                        "parentLabel": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "audience",
+                        "id"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "const": "githubPullRequest"
+                        },
+                        "audience": {
+                          "const": "shared"
+                        },
+                        "id": {
+                          "type": "string",
+                          "minLength": 1,
+                          "x-happier-max-utf8-bytes": 512
+                        },
+                        "parentId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "x-happier-max-utf8-bytes": 512
+                        },
+                        "label": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256
+                        },
+                        "parentLabel": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256
+                        },
+                        "pullRequest": {
+                          "type": "object",
+                          "properties": {
+                            "repository": {
+                              "type": "string",
+                              "minLength": 1,
+                              "pattern": "^[^\\s/]+/[^\\s/]+$"
+                            },
+                            "number": {
+                              "type": "integer",
+                              "minimum": 1,
+                              "maximum": 9007199254740991
+                            }
+                          },
+                          "required": [
+                            "repository",
+                            "number"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "pullRequestState": {
+                          "type": "object",
+                          "properties": {
+                            "state": {
+                              "anyOf": [
+                                {
+                                  "const": "open"
+                                },
+                                {
+                                  "const": "merged"
+                                },
+                                {
+                                  "const": "closed"
+                                },
+                                {
+                                  "const": "unknown"
+                                }
+                              ]
+                            },
+                            "observedAt": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            "fixResolution": {
+                              "type": "object",
+                              "properties": {
+                                "headRevision": {
+                                  "type": "string",
+                                  "minLength": 1
+                                },
+                                "resolved": {
+                                  "anyOf": [
+                                    {
+                                      "const": true
+                                    },
+                                    {
+                                      "const": false
+                                    }
+                                  ]
+                                },
+                                "incomplete": {
+                                  "anyOf": [
+                                    {
+                                      "const": true
+                                    },
+                                    {
+                                      "const": false
+                                    }
+                                  ]
+                                }
+                              },
+                              "required": [
+                                "headRevision",
+                                "resolved",
+                                "incomplete"
+                              ],
+                              "additionalProperties": false
+                            }
+                          },
+                          "required": [
+                            "state",
+                            "observedAt"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "audience",
+                        "id"
+                      ],
+                      "additionalProperties": false
+                    }
+                  ]
                 }
               },
               "required": [
@@ -2571,14 +4131,17 @@
           "id": "happier.channels/providers",
           "version": 1
         },
+        "descriptor": {
+          "v": 1,
+          "displayName": "External socket"
+        },
         "operations": {
           "setup": "fixture/setup",
           "connectionTest": "fixture/test",
           "endpointResolve": "fixture/endpoint",
           "principalResolve": "fixture/principal",
           "messageDeliver": "fixture/deliver",
-          "deliveryReconcile": "fixture/reconcile",
-          "connectionStop": "fixture/stop"
+          "deliveryReconcile": "fixture/reconcile"
         },
         "id": "fixture-socket",
         "target": {
