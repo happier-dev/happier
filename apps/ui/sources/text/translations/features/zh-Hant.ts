@@ -16617,7 +16617,7 @@ const zhHant = translated(workflowValueReferenceTranslations['zh-Hant'], {
         showFullPlan: '顯示完整計畫',
         generationRequested: "已要求產生",
         startsResume: "恢復執行後開始。",
-        generateBody: "代理會在此對話中產生新結果。如果有效，執行會繼續，不再詢問。",
+        generateBody: "結果有效時會繼續，不再審查。",
         acceptedPaused: "結果已接受。工作流程仍處於暫停狀態。",
         editResult: "編輯結果",
         generate: "產生結果並繼續",

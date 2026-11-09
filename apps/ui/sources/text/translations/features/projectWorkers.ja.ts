@@ -169,6 +169,7 @@ export const projectWorkers: ProjectWorkersTranslations = {
     whenUnavailable: 'そこで実行できない場合',
     fallbackPrimary: '代わりにここで実行',
     fallbackFail: '開始しない',
+    fallbackLocked: '次回の起動から適用されます。変更するにはサービスを停止してください。',
     destinationMissing: '保存された実行先を利用できません。',
     settingsUnavailable: 'サービスの配置設定を利用できません。',
     saveFailed: 'サービスの配置を保存できませんでした。',

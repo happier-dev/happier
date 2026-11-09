@@ -19,6 +19,8 @@ const en = {
   useTheirs: 'Use theirs',
   offline: ({ machine }: Machine) =>
     `${machine} isn’t answering. Your edits are kept on this device; save when it’s back.`,
+  offlineSaving: ({ machine }: Machine) =>
+    `${machine} isn’t answering. Your edits are kept on this device and save when it’s back.`,
   backOnline: ({ machine }: Machine) =>
     `${machine} is back. Your edits are ready to save.`,
   awaitingApproval: 'Waiting for approval to save. Your edits are kept.',
@@ -98,6 +100,8 @@ export const fileEditingTranslations: Record<
     useTheirs: 'Prendre celle du disque',
     offline: ({ machine }) =>
       `${machine} ne répond pas. Tes modifications sont conservées sur cet appareil ; enregistre quand il sera de retour.`,
+    offlineSaving: ({ machine }) =>
+      `${machine} ne répond pas. Tes modifications sont conservées sur cet appareil et seront enregistrées à son retour.`,
     backOnline: ({ machine }) =>
       `${machine} est de retour. Tes modifications sont prêtes à être enregistrées.`,
     awaitingApproval:
@@ -161,6 +165,8 @@ export const fileEditingTranslations: Record<
     useTheirs: 'Die vom Datenträger verwenden',
     offline: ({ machine }) =>
       `${machine} antwortet nicht. Deine Änderungen bleiben auf diesem Gerät; speichere, sobald es wieder da ist.`,
+    offlineSaving: ({ machine }) =>
+      `${machine} antwortet nicht. Deine Änderungen bleiben auf diesem Gerät und werden gespeichert, sobald es wieder da ist.`,
     backOnline: ({ machine }) =>
       `${machine} ist wieder da. Deine Änderungen können gespeichert werden.`,
     awaitingApproval:
@@ -226,6 +232,8 @@ export const fileEditingTranslations: Record<
     useTheirs: 'Usar la del disco',
     offline: ({ machine }) =>
       `${machine} no responde. Tus cambios se conservan en este dispositivo; guarda cuando vuelva.`,
+    offlineSaving: ({ machine }) =>
+      `${machine} no responde. Tus cambios se conservan en este dispositivo y se guardarán cuando vuelva.`,
     backOnline: ({ machine }) =>
       `${machine} ha vuelto. Tus cambios están listos para guardarse.`,
     awaitingApproval:
@@ -288,6 +296,8 @@ export const fileEditingTranslations: Record<
     useTheirs: 'Fes servir la del disc',
     offline: ({ machine }) =>
       `${machine} no respon. Els teus canvis es conserven en aquest dispositiu; desa quan torni.`,
+    offlineSaving: ({ machine }) =>
+      `${machine} no respon. Els teus canvis es conserven en aquest dispositiu i es desaran quan torni.`,
     backOnline: ({ machine }) =>
       `${machine} ha tornat. Els teus canvis estan a punt per desar.`,
     awaitingApproval:
@@ -351,6 +361,8 @@ export const fileEditingTranslations: Record<
     useTheirs: 'Usa quella del disco',
     offline: ({ machine }) =>
       `${machine} non risponde. Le tue modifiche restano su questo dispositivo; salva quando torna.`,
+    offlineSaving: ({ machine }) =>
+      `${machine} non risponde. Le tue modifiche restano su questo dispositivo e verranno salvate quando torna.`,
     backOnline: ({ machine }) =>
       `${machine} è tornato. Le tue modifiche sono pronte per essere salvate.`,
     awaitingApproval:
@@ -413,6 +425,8 @@ export const fileEditingTranslations: Record<
     useTheirs: 'Usar a do disco',
     offline: ({ machine }) =>
       `${machine} não está respondendo. Suas alterações ficam neste dispositivo; salve quando ele voltar.`,
+    offlineSaving: ({ machine }) =>
+      `${machine} não está respondendo. Suas alterações ficam neste dispositivo e serão salvas quando ele voltar.`,
     backOnline: ({ machine }) =>
       `${machine} voltou. Suas alterações estão prontas para salvar.`,
     awaitingApproval:
@@ -475,6 +489,8 @@ export const fileEditingTranslations: Record<
     useTheirs: 'Użyj wersji z dysku',
     offline: ({ machine }) =>
       `${machine} nie odpowiada. Twoje zmiany są zachowane na tym urządzeniu; zapisz, gdy wróci.`,
+    offlineSaving: ({ machine }) =>
+      `${machine} nie odpowiada. Twoje zmiany są zachowane na tym urządzeniu i zapiszą się, gdy wróci.`,
     backOnline: ({ machine }) =>
       `${machine} jest z powrotem. Twoje zmiany są gotowe do zapisania.`,
     awaitingApproval:
@@ -534,6 +550,8 @@ export const fileEditingTranslations: Record<
     useTheirs: 'Взять версию с диска',
     offline: ({ machine }) =>
       `${machine} не отвечает. Ваши правки хранятся на этом устройстве; сохраните, когда он вернётся.`,
+    offlineSaving: ({ machine }) =>
+      `${machine} не отвечает. Ваши правки хранятся на этом устройстве и сохранятся, когда он вернётся.`,
     backOnline: ({ machine }) =>
       `${machine} снова на связи. Ваши правки можно сохранить.`,
     awaitingApproval:
@@ -591,6 +609,8 @@ export const fileEditingTranslations: Record<
     useTheirs: 'ディスクの版を使う',
     offline: ({ machine }) =>
       `${machine}が応答しません。編集はこのデバイスに保持されています。戻ったら保存してください。`,
+    offlineSaving: ({ machine }) =>
+      `${machine}が応答しません。編集はこのデバイスに保持され、戻ったときに保存されます。`,
     backOnline: ({ machine }) => `${machine}が戻りました。編集を保存できます。`,
     awaitingApproval: '保存の承認を待っています。編集は保持されています。',
     saveFailed: '保存できませんでした。編集は保持されています。',
@@ -646,6 +666,8 @@ export const fileEditingTranslations: Record<
     useTheirs: '使用磁盘上的',
     offline: ({ machine }) =>
       `${machine} 没有响应。你的编辑保留在此设备上；它恢复后再保存。`,
+    offlineSaving: ({ machine }) =>
+      `${machine} 没有响应。你的编辑保留在此设备上，它恢复后会自动保存。`,
     backOnline: ({ machine }) => `${machine} 已恢复。你的编辑可以保存了。`,
     awaitingApproval: '正在等待保存批准。你的编辑已保留。',
     saveFailed: '无法保存。你的编辑已保留。',
@@ -700,6 +722,8 @@ export const fileEditingTranslations: Record<
     useTheirs: '使用磁碟上的',
     offline: ({ machine }) =>
       `${machine} 沒有回應。你的編輯保留在這部裝置上；它恢復後再儲存。`,
+    offlineSaving: ({ machine }) =>
+      `${machine} 沒有回應。你的編輯保留在這部裝置上，它恢復後會自動儲存。`,
     backOnline: ({ machine }) => `${machine} 已恢復。你的編輯可以儲存了。`,
     awaitingApproval: '正在等待儲存核准。你的編輯已保留。',
     saveFailed: '無法儲存。你的編輯已保留。',

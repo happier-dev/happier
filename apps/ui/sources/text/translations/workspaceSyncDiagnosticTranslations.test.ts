@@ -32,7 +32,6 @@ describe('workspaceSyncDiagnosticTranslations', () => {
             ).toEqual(englishKeys);
             expect(copy.title, `${locale} title`).not.toBe(en.workspaceSync.title);
             expect(copy.footer, `${locale} footer`).not.toBe(en.workspaceSync.footer);
-            expect(copy.legacyRecovery.explanation, `${locale} legacy explanation`).not.toBe(en.workspaceSync.legacyRecovery.explanation);
             expect(copy.error.needsAttention, `${locale} recovery guidance`).not.toBe(en.workspaceSync.error.needsAttention);
             expect(copy.state.loading, `${locale} loading ellipsis`).toContain('…');
             expect(copy.state.working, `${locale} working ellipsis`).toContain('…');

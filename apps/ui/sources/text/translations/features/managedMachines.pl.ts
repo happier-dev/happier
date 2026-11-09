@@ -357,7 +357,7 @@ export const managedMachines: ManagedMachinesTranslations = {
             joined: ({ name, home }: { name: string; home: string }) => `${name} dołączyła do ${home}.`,
             enrollmentUnavailable: "Twój Home nie mógł zarejestrować tej maszyny. Sprawdź, czy jest dostępny, i spróbuj ponownie.",
             homeRequestFailed: "Twój Home nie mógł wykonać tego żądania. Sprawdź swój Home i spróbuj ponownie.",
-            homeNotGuestReachable: "Ten Home oferuje połączenie tylko na komputerze zarządzającym, więc nowa maszyna nie może się z nim połączyć. Dodaj punkt dostępu Home, do którego może dotrzeć, i utwórz maszynę ponownie.",
+            homeNotGuestReachable: "Nowa maszyna nie może połączyć się z tym Home. Sprawdź adres Home, DNS, trasy sieciowe i dostęp przez zaporę z nowej maszyny, a następnie spróbuj ponownie.",
             retryInstall: "Ponów instalację",
             openDetails: "Pokaż szczegóły tworzenia",
             fromThis: { phone: "Z tego telefonu", browser: "Z tej przeglądarki", desktop: "Z tego komputera" },

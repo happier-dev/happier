@@ -42,7 +42,6 @@ export const en = {
     thenRunWorkflow: 'Run a workflow',
     offline: 'Offline',
     off: 'Off',
-    columnLoadFailed: 'Could not load workflows. Nothing you saved is lost.',
     firstVisitTitle: 'Save prompts that work, then run them again',
     firstVisitBody: 'A workflow is a set of steps your agents run in order, side by side, or once per item — when you choose, on a schedule, or when something happens.',
     importPrompt: 'Have a workflow file?',
@@ -75,10 +74,10 @@ export const en = {
     deleteFailedTitle: 'Could not delete workflow',
     exportFailedTitle: 'Could not export workflow',
     gate: {
-        localTitle: 'Automations are turned off on this device',
+        localTitle: 'Workflows are turned off on this device',
         localBody: 'Turn them on to run workflows and their triggers.',
-        dependencyTitle: 'Workflows need Automations',
-        dependencyBody: 'Turn on Automations to create and run workflows.',
+        dependencyTitle: 'Workflows are turned off',
+        dependencyBody: "Turn on Workflows to create and run them.",
         openSettings: 'Open Settings',
     },
     runSettingsPage: {

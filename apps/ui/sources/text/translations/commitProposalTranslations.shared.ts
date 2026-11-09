@@ -69,7 +69,7 @@ export const en = {
         waiting: 'Waiting',
         writing: 'Running hooks and creating the commit',
         landed: 'committed', landedAt: ({ time }: { time: string }) => `committed ${time}`, signed: 'signed', pausedBy: ({ hook, count }: { hook: string; count: number }) => (count === 1 ? `${hook} changed 1 file · not committed yet` : `${hook} changed ${count} files · not committed yet`), hookFailedBy: ({ hook }: { hook: string }) => `${hook} failed · not committed`,
-        rewritten: 'a hook rewrote the message',
+        rewritten: 'A hook rewrote the message',
         notCreated: 'Not created · still yours to edit',
         notCreatedShort: 'Not created',
         unknown: 'Not confirmed yet',

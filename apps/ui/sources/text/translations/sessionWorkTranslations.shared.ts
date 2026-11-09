@@ -107,6 +107,10 @@ export const en = {
     },
     row: {
         a11y: ({ title, status }: { title: string; status: string }) => `${title}, ${status}`,
+        reportsTo: ({ lead }: { lead: string }) => `reports to ${lead}`,
+        asksQuestion: 'asks a question',
+        needsApproval: ({ tool }: { tool: string }) => `wants approval: ${tool}`,
+        asksPermission: 'asks for permission',
     },
     progress: ({ completed, total }: { completed: number; total: number }) => `${completed} of ${total}`,
     strip: {
@@ -118,6 +122,16 @@ export const en = {
     leadArchived: ({ count }: { count: number }) => `This session is archived · ${count} still working`,
     managedBy: 'Managed by',
     plan: 'Plan',
+    digest: {
+        title: 'Digest',
+        fromMemory: 'from memory',
+        latestUpdate: 'latest update',
+        refresh: 'Ask for a fresh digest',
+        refreshRequest: 'Please post a fresh digest: what needs me, and what has moved since your last one.',
+        statusSentence: ({ title, status }: { title: string; status: string }) => `${title} ${status}.`,
+        empty: 'Nothing yet. Its memory summary, or the latest update from a session it manages, shows here.',
+        unavailable: 'The digest can\'t be read on this device.',
+    },
     runsStale: 'Workflow runs may be out of date',
     list: {
         level: ({ level }: { level: number }) => `Level ${level}`,
@@ -128,6 +142,7 @@ export const en = {
         hideReports: ({ name }: { name: string }) => `Hide sessions under ${name}`,
         reportsWorking: ({ count }: { count: number }) => `${count} working`,
         reportsNeedYou: ({ count }: { count: number }) => (count === 1 ? '1 sub-session needs you' : `${count} sub-sessions need you`),
+        reportsDoneA11y: ({ finished, total }: { finished: number; total: number }) => `${finished} of ${total} sub-sessions done`,
     },
     archive: {
         alsoArchiveReports: ({ count }: { count: number }) => (count === 1 ? 'Also archive 1 sub-session' : `Also archive ${count} sub-sessions`),
@@ -149,7 +164,7 @@ export const en = {
 };
 
 
-export const notifyEnglish = { en: { attention: 'Notify me when this needs me', armed: 'You’ll be notified', cancel: 'Cancel notification', failed: 'Couldn’t update the notification. Try again.', turnFinished: 'This session’s turn finished.', needsYou: 'This session needs you.', settings: 'Notification settings' } };
+export const notifyEnglish = { en: { attention: 'Notify me when this needs me', cancel: 'Cancel notification', failed: 'Couldn’t update the notification. Try again.', turnFinished: 'This session’s turn finished.', needsYou: 'This session needs you.', settings: 'Notification settings' } };
 
 
 export const runNotifyEnglish = { en: { run: 'Notify me when this finishes', runFinished: 'This run finished.', runNeedsYou: 'This run needs you.', setup: 'Set up notifications', walkthroughUpdate: 'Your walkthrough has an update.', commitPlanUpdate: 'Your commit proposals have an update.' } };

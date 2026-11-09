@@ -3,10 +3,12 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
 import {
-    WORKFLOW_INVOCATION_LIFECYCLES_V1,
-    WORKFLOW_RUN_STATES_V1,
+    WORKFLOW_INVOCATION_LIFECYCLES_V1} from '@happier-dev/protocol/workflows/workflowProgressV1';
+import {
+    WORKFLOW_RUN_STATES_V1} from '@happier-dev/protocol/workflows';
+import {
     WORKFLOW_VALIDATION_ISSUE_CODES,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/workflows/workflowV1';
 
 import { workflowTranslations } from './workflowTranslations';
 

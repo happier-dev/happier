@@ -10,6 +10,7 @@ export type GitPullRequestCopy = typeof en;
 
 export const en = {
     form: {
+        chooseBase: "Choose a base branch",
         title: 'New pull request',
         expand: 'Open in a Details pane',
         moveBack: 'Move back to the sidebar',
@@ -50,6 +51,10 @@ export const en = {
         copied: 'Link copied',
     },
     settings: {
+        resourceOpenTitle: 'Open GitHub links',
+        resourceOpenDescription: 'Pull requests, issues, CI runs, and security alerts. Unsupported links open on GitHub.',
+        inHappier: 'In Happier',
+        onGitHub: 'On GitHub',
         placementTitle: 'Open new pull requests in',
         placementDescription: 'On a phone the form always opens as its own page.',
         sidebar: 'Sidebar',

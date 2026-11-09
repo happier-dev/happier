@@ -1,10 +1,11 @@
-import { storeTranslations } from './storeTranslations';
+import { connectedAccountCallbackTranslations } from './connectedAccountCallbackTranslations';
 import { skillsPageTranslations } from './skillsPageTranslations';
 import { sessionCapabilityTranslations } from './sessionCapabilityTranslations';
 import { capabilityNoticeTranslations } from './capabilityNoticeTranslations';
 import { capabilityDetailTranslations } from './capabilityDetailTranslations';
 import { skillDetailTranslations } from './skillDetailTranslations';
 import { skillsFoundTranslations } from './skillsFoundTranslations';
+import { mcpFoundTranslations } from './mcpFoundTranslations';
 import { skillsUpdatesTranslations } from './skillsUpdatesTranslations';
 import { mcpPageTranslations } from './mcpPageTranslations';
 import { valueRefRowsTranslations } from './valueRefRowsTranslations';
@@ -12,7 +13,9 @@ import { mcpAddTranslations } from './mcpAddTranslations';
 import { agentAddTranslations } from './agentAddTranslations';
 import { mcpSignInTranslations } from './mcpSignInTranslations';
 import { mcpHomeTranslations } from './mcpHomeTranslations';
+import { agentsHomeTranslations } from './agentsHomeTranslations';
 import { registriesTranslations, skillAddTranslations } from './registriesTranslations';
+import { storeTranslations } from './storeTranslations';
 import { profileSeedsTranslations } from './profileSeedsTranslations';
 import { scopeSectionTranslations } from './scopeSectionTranslations';
 // Shared capability UI kit copy (P5): "Where it's on" words and the capability status vocabulary.
@@ -97,6 +100,7 @@ export type CapabilityKitTranslation = Readonly<{
     staysOff: (params: Readonly<{ agents: string }>) => string;
     change: string;
     changeFailed: string;
+    checking: string;
   }>;
   add: Readonly<{
     closeDetails: string;
@@ -127,6 +131,7 @@ export type CapabilityKitTranslation = Readonly<{
     cantrun: (params: Readonly<{ machine?: string }>) => string;
     offline: string;
     update: string;
+    removed: string;
     modified: string;
     pinned: string;
     unused: string;
@@ -240,6 +245,7 @@ const en: CapabilityKitTranslation = {
     staysOff: ({ agents }) => `${agents} stays off here`,
     change: 'Change',
     changeFailed: 'Couldn’t save that change.',
+    checking: 'Checking machines…',
   },
   add: {
     closeDetails: 'Close details',
@@ -271,6 +277,7 @@ const en: CapabilityKitTranslation = {
       machine ? `Can’t run on ${machine}` : 'Can’t run',
     offline: 'Offline',
     update: 'Update available',
+    removed: 'Removed from source',
     modified: 'Modified',
     pinned: 'Pinned',
     unused: 'Not used recently',
@@ -370,6 +377,7 @@ const ca: CapabilityKitTranslation = {
     staysOff: ({ agents }) => `${agents} continua desactivat aquí`,
     change: 'Canvia',
     changeFailed: 'No s’ha pogut desar el canvi.',
+    checking: 'Comprovant les màquines…',
   },
   add: {
     closeDetails: 'Tanca els detalls',
@@ -401,6 +409,7 @@ const ca: CapabilityKitTranslation = {
       machine ? `No es pot executar a ${machine}` : 'No es pot executar',
     offline: 'Fora de línia',
     update: 'Actualització disponible',
+    removed: 'Ja no és a la font',
     modified: 'Modificat',
     pinned: 'Fixat',
     unused: 'No s’ha fet servir recentment',
@@ -510,6 +519,7 @@ const de: CapabilityKitTranslation = {
     staysOff: ({ agents }) => `${agents} bleibt hier aus`,
     change: 'Ändern',
     changeFailed: 'Die Änderung konnte nicht gespeichert werden.',
+    checking: 'Maschinen werden geprüft…',
   },
   add: {
     closeDetails: 'Details schließen',
@@ -541,6 +551,7 @@ const de: CapabilityKitTranslation = {
       machine ? `Läuft nicht auf ${machine}` : 'Läuft nicht',
     offline: 'Offline',
     update: 'Update verfügbar',
+    removed: 'Aus der Quelle entfernt',
     modified: 'Geändert',
     pinned: 'Fixiert',
     unused: 'Länger nicht benutzt',
@@ -636,6 +647,7 @@ const es: CapabilityKitTranslation = {
     staysOff: ({ agents }) => `${agents} sigue desactivado aquí`,
     change: 'Cambiar',
     changeFailed: 'No se pudo guardar el cambio.',
+    checking: 'Comprobando las máquinas…',
   },
   add: {
     closeDetails: 'Cerrar detalles',
@@ -667,6 +679,7 @@ const es: CapabilityKitTranslation = {
       machine ? `No puede ejecutarse en ${machine}` : 'No puede ejecutarse',
     offline: 'Sin conexión',
     update: 'Actualización disponible',
+    removed: 'Ya no está en la fuente',
     modified: 'Modificado',
     pinned: 'Fijado',
     unused: 'Sin uso reciente',
@@ -777,6 +790,7 @@ const fr: CapabilityKitTranslation = {
     staysOff: ({ agents }) => `${agents} reste désactivé ici`,
     change: 'Modifier',
     changeFailed: 'Impossible d’enregistrer ce changement.',
+    checking: 'Vérification des machines…',
   },
   add: {
     closeDetails: 'Fermer les détails',
@@ -810,6 +824,7 @@ const fr: CapabilityKitTranslation = {
         : 'Ne peut pas s’exécuter',
     offline: 'Hors ligne',
     update: 'Mise à jour disponible',
+    removed: 'N’est plus dans la source',
     modified: 'Modifié',
     pinned: 'Épinglé',
     unused: 'Pas utilisé récemment',
@@ -921,6 +936,7 @@ const it: CapabilityKitTranslation = {
     staysOff: ({ agents }) => `${agents} resta spento qui`,
     change: 'Cambia',
     changeFailed: 'Impossibile salvare la modifica.',
+    checking: 'Controllo delle macchine…',
   },
   add: {
     closeDetails: 'Chiudi dettagli',
@@ -954,6 +970,7 @@ const it: CapabilityKitTranslation = {
         : 'Non può essere eseguito',
     offline: 'Offline',
     update: 'Aggiornamento disponibile',
+    removed: 'Non è più nella fonte',
     modified: 'Modificato',
     pinned: 'Fissato',
     unused: 'Non usato di recente',
@@ -1049,6 +1066,7 @@ const ja: CapabilityKitTranslation = {
     staysOff: ({ agents }) => `${agents}はここでもオフのままです`,
     change: '変更',
     changeFailed: '変更を保存できませんでした。',
+    checking: 'マシンを確認しています…',
   },
   add: {
     closeDetails: '詳細を閉じる',
@@ -1080,6 +1098,7 @@ const ja: CapabilityKitTranslation = {
       machine ? `${machine} で実行できません` : '実行できません',
     offline: 'オフライン',
     update: 'アップデートあり',
+    removed: 'ソースから削除されました',
     modified: '変更済み',
     pinned: '固定',
     unused: '最近使われていません',
@@ -1195,6 +1214,7 @@ const pl: CapabilityKitTranslation = {
     staysOff: ({ agents }) => `${agents} pozostaje tu wyłączony`,
     change: 'Zmień',
     changeFailed: 'Nie udało się zapisać zmiany.',
+    checking: 'Sprawdzanie maszyn…',
   },
   add: {
     closeDetails: 'Zamknij szczegóły',
@@ -1226,6 +1246,7 @@ const pl: CapabilityKitTranslation = {
       machine ? `Nie działa na ${machine}` : 'Nie działa',
     offline: 'Offline',
     update: 'Dostępna aktualizacja',
+    removed: 'Usunięto ze źródła',
     modified: 'Zmodyfikowane',
     pinned: 'Przypięte',
     unused: 'Nieużywane ostatnio',
@@ -1321,6 +1342,7 @@ const pt: CapabilityKitTranslation = {
     staysOff: ({ agents }) => `${agents} continua desativado aqui`,
     change: 'Alterar',
     changeFailed: 'Não foi possível salvar a alteração.',
+    checking: 'Verificando as máquinas…',
   },
   add: {
     closeDetails: 'Fechar detalhes',
@@ -1351,6 +1373,7 @@ const pt: CapabilityKitTranslation = {
     cantrun: ({ machine }) => (machine ? `Não roda em ${machine}` : 'Não roda'),
     offline: 'Offline',
     update: 'Atualização disponível',
+    removed: 'Já não está na origem',
     modified: 'Modificado',
     pinned: 'Fixado',
     unused: 'Sem uso recente',
@@ -1466,6 +1489,7 @@ const ru: CapabilityKitTranslation = {
     staysOff: ({ agents }) => `${agents} здесь остаётся выключен`,
     change: 'Изменить',
     changeFailed: 'Не удалось сохранить изменение.',
+    checking: 'Проверяем машины…',
   },
   add: {
     closeDetails: 'Закрыть подробности',
@@ -1497,6 +1521,7 @@ const ru: CapabilityKitTranslation = {
       machine ? `Не запускается на ${machine}` : 'Не запускается',
     offline: 'Не в сети',
     update: 'Есть обновление',
+    removed: 'Удалено из источника',
     modified: 'Изменено',
     pinned: 'Закреплено',
     unused: 'Давно не использовался',
@@ -1589,6 +1614,7 @@ const zhHans: CapabilityKitTranslation = {
     staysOff: ({ agents }) => `${agents} 在这里仍保持关闭`,
     change: '更改',
     changeFailed: '无法保存此更改。',
+    checking: '正在检查机器…',
   },
   add: {
     closeDetails: '关闭详情',
@@ -1620,6 +1646,7 @@ const zhHans: CapabilityKitTranslation = {
       machine ? `无法在 ${machine} 上运行` : '无法运行',
     offline: '离线',
     update: '有可用更新',
+    removed: '已从来源移除',
     modified: '已修改',
     pinned: '已固定',
     unused: '最近未使用',
@@ -1711,6 +1738,7 @@ const zhHant: CapabilityKitTranslation = {
     staysOff: ({ agents }) => `${agents} 在這裡仍保持關閉`,
     change: '變更',
     changeFailed: '無法儲存此變更。',
+    checking: '正在檢查機器…',
   },
   add: {
     closeDetails: '關閉詳情',
@@ -1742,6 +1770,7 @@ const zhHant: CapabilityKitTranslation = {
       machine ? `無法在 ${machine} 上執行` : '無法執行',
     offline: '離線',
     update: '有可用更新',
+    removed: '已從來源移除',
     modified: '已修改',
     pinned: '已釘選',
     unused: '最近未使用',
@@ -1770,16 +1799,16 @@ const zhHant: CapabilityKitTranslation = {
 
 // The Skills page family's copy rides in each locale's `capabilities` block as `capabilities.skills`.
 export const capabilityKitTranslations = {
-  en: { ...en, skills: skillsPageTranslations.en, session: sessionCapabilityTranslations.en, notice: capabilityNoticeTranslations.en, detail: capabilityDetailTranslations.en, skillDetail: skillDetailTranslations.en, skillsFound: skillsFoundTranslations.en, skillsUpdates: skillsUpdatesTranslations.en, mcp: mcpPageTranslations.en, valueRows: valueRefRowsTranslations.en, mcpSignIn: mcpSignInTranslations.en, mcpHome: mcpHomeTranslations.en, registries: registriesTranslations.en, skillAdd: skillAddTranslations.en, mcpAdd: mcpAddTranslations.en, agentAdd: agentAddTranslations.en, profileSeeds: profileSeedsTranslations.en, scopeSection: scopeSectionTranslations.en , store: storeTranslations.en },
-  ca: { ...ca, skills: skillsPageTranslations.ca, session: sessionCapabilityTranslations.ca, notice: capabilityNoticeTranslations.ca, detail: capabilityDetailTranslations.ca, skillDetail: skillDetailTranslations.ca, skillsFound: skillsFoundTranslations.ca, skillsUpdates: skillsUpdatesTranslations.ca, mcp: mcpPageTranslations.ca, valueRows: valueRefRowsTranslations.ca, mcpSignIn: mcpSignInTranslations.ca, mcpHome: mcpHomeTranslations.ca, registries: registriesTranslations.ca, skillAdd: skillAddTranslations.ca, mcpAdd: mcpAddTranslations.ca, agentAdd: agentAddTranslations.ca, profileSeeds: profileSeedsTranslations.ca, scopeSection: scopeSectionTranslations.ca , store: storeTranslations.ca },
-  de: { ...de, skills: skillsPageTranslations.de, session: sessionCapabilityTranslations.de, notice: capabilityNoticeTranslations.de, detail: capabilityDetailTranslations.de, skillDetail: skillDetailTranslations.de, skillsFound: skillsFoundTranslations.de, skillsUpdates: skillsUpdatesTranslations.de, mcp: mcpPageTranslations.de, valueRows: valueRefRowsTranslations.de, mcpSignIn: mcpSignInTranslations.de, mcpHome: mcpHomeTranslations.de, registries: registriesTranslations.de, skillAdd: skillAddTranslations.de, mcpAdd: mcpAddTranslations.de, agentAdd: agentAddTranslations.de, profileSeeds: profileSeedsTranslations.de, scopeSection: scopeSectionTranslations.de , store: storeTranslations.de },
-  es: { ...es, skills: skillsPageTranslations.es, session: sessionCapabilityTranslations.es, notice: capabilityNoticeTranslations.es, detail: capabilityDetailTranslations.es, skillDetail: skillDetailTranslations.es, skillsFound: skillsFoundTranslations.es, skillsUpdates: skillsUpdatesTranslations.es, mcp: mcpPageTranslations.es, valueRows: valueRefRowsTranslations.es, mcpSignIn: mcpSignInTranslations.es, mcpHome: mcpHomeTranslations.es, registries: registriesTranslations.es, skillAdd: skillAddTranslations.es, mcpAdd: mcpAddTranslations.es, agentAdd: agentAddTranslations.es, profileSeeds: profileSeedsTranslations.es, scopeSection: scopeSectionTranslations.es , store: storeTranslations.es },
-  fr: { ...fr, skills: skillsPageTranslations.fr, session: sessionCapabilityTranslations.fr, notice: capabilityNoticeTranslations.fr, detail: capabilityDetailTranslations.fr, skillDetail: skillDetailTranslations.fr, skillsFound: skillsFoundTranslations.fr, skillsUpdates: skillsUpdatesTranslations.fr, mcp: mcpPageTranslations.fr, valueRows: valueRefRowsTranslations.fr, mcpSignIn: mcpSignInTranslations.fr, mcpHome: mcpHomeTranslations.fr, registries: registriesTranslations.fr, skillAdd: skillAddTranslations.fr, mcpAdd: mcpAddTranslations.fr, agentAdd: agentAddTranslations.fr, profileSeeds: profileSeedsTranslations.fr, scopeSection: scopeSectionTranslations.fr , store: storeTranslations.fr },
-  it: { ...it, skills: skillsPageTranslations.it, session: sessionCapabilityTranslations.it, notice: capabilityNoticeTranslations.it, detail: capabilityDetailTranslations.it, skillDetail: skillDetailTranslations.it, skillsFound: skillsFoundTranslations.it, skillsUpdates: skillsUpdatesTranslations.it, mcp: mcpPageTranslations.it, valueRows: valueRefRowsTranslations.it, mcpSignIn: mcpSignInTranslations.it, mcpHome: mcpHomeTranslations.it, registries: registriesTranslations.it, skillAdd: skillAddTranslations.it, mcpAdd: mcpAddTranslations.it, agentAdd: agentAddTranslations.it, profileSeeds: profileSeedsTranslations.it, scopeSection: scopeSectionTranslations.it , store: storeTranslations.it },
-  ja: { ...ja, skills: skillsPageTranslations.ja, session: sessionCapabilityTranslations.ja, notice: capabilityNoticeTranslations.ja, detail: capabilityDetailTranslations.ja, skillDetail: skillDetailTranslations.ja, skillsFound: skillsFoundTranslations.ja, skillsUpdates: skillsUpdatesTranslations.ja, mcp: mcpPageTranslations.ja, valueRows: valueRefRowsTranslations.ja, mcpSignIn: mcpSignInTranslations.ja, mcpHome: mcpHomeTranslations.ja, registries: registriesTranslations.ja, skillAdd: skillAddTranslations.ja, mcpAdd: mcpAddTranslations.ja, agentAdd: agentAddTranslations.ja, profileSeeds: profileSeedsTranslations.ja, scopeSection: scopeSectionTranslations.ja , store: storeTranslations.ja },
-  pl: { ...pl, skills: skillsPageTranslations.pl, session: sessionCapabilityTranslations.pl, notice: capabilityNoticeTranslations.pl, detail: capabilityDetailTranslations.pl, skillDetail: skillDetailTranslations.pl, skillsFound: skillsFoundTranslations.pl, skillsUpdates: skillsUpdatesTranslations.pl, mcp: mcpPageTranslations.pl, valueRows: valueRefRowsTranslations.pl, mcpSignIn: mcpSignInTranslations.pl, mcpHome: mcpHomeTranslations.pl, registries: registriesTranslations.pl, skillAdd: skillAddTranslations.pl, mcpAdd: mcpAddTranslations.pl, agentAdd: agentAddTranslations.pl, profileSeeds: profileSeedsTranslations.pl, scopeSection: scopeSectionTranslations.pl , store: storeTranslations.pl },
-  pt: { ...pt, skills: skillsPageTranslations.pt, session: sessionCapabilityTranslations.pt, notice: capabilityNoticeTranslations.pt, detail: capabilityDetailTranslations.pt, skillDetail: skillDetailTranslations.pt, skillsFound: skillsFoundTranslations.pt, skillsUpdates: skillsUpdatesTranslations.pt, mcp: mcpPageTranslations.pt, valueRows: valueRefRowsTranslations.pt, mcpSignIn: mcpSignInTranslations.pt, mcpHome: mcpHomeTranslations.pt, registries: registriesTranslations.pt, skillAdd: skillAddTranslations.pt, mcpAdd: mcpAddTranslations.pt, agentAdd: agentAddTranslations.pt, profileSeeds: profileSeedsTranslations.pt, scopeSection: scopeSectionTranslations.pt , store: storeTranslations.pt },
-  ru: { ...ru, skills: skillsPageTranslations.ru, session: sessionCapabilityTranslations.ru, notice: capabilityNoticeTranslations.ru, detail: capabilityDetailTranslations.ru, skillDetail: skillDetailTranslations.ru, skillsFound: skillsFoundTranslations.ru, skillsUpdates: skillsUpdatesTranslations.ru, mcp: mcpPageTranslations.ru, valueRows: valueRefRowsTranslations.ru, mcpSignIn: mcpSignInTranslations.ru, mcpHome: mcpHomeTranslations.ru, registries: registriesTranslations.ru, skillAdd: skillAddTranslations.ru, mcpAdd: mcpAddTranslations.ru, agentAdd: agentAddTranslations.ru, profileSeeds: profileSeedsTranslations.ru, scopeSection: scopeSectionTranslations.ru , store: storeTranslations.ru },
-  zhHans: { ...zhHans, skills: skillsPageTranslations.zhHans, session: sessionCapabilityTranslations.zhHans, notice: capabilityNoticeTranslations.zhHans, detail: capabilityDetailTranslations.zhHans, skillDetail: skillDetailTranslations.zhHans, skillsFound: skillsFoundTranslations.zhHans, skillsUpdates: skillsUpdatesTranslations.zhHans, mcp: mcpPageTranslations.zhHans, valueRows: valueRefRowsTranslations.zhHans, mcpSignIn: mcpSignInTranslations.zhHans, mcpHome: mcpHomeTranslations.zhHans, registries: registriesTranslations.zhHans, skillAdd: skillAddTranslations.zhHans, mcpAdd: mcpAddTranslations.zhHans, agentAdd: agentAddTranslations.zhHans, profileSeeds: profileSeedsTranslations.zhHans, scopeSection: scopeSectionTranslations.zhHans , store: storeTranslations.zhHans },
-  zhHant: { ...zhHant, skills: skillsPageTranslations.zhHant, session: sessionCapabilityTranslations.zhHant, notice: capabilityNoticeTranslations.zhHant, detail: capabilityDetailTranslations.zhHant, skillDetail: skillDetailTranslations.zhHant, skillsFound: skillsFoundTranslations.zhHant, skillsUpdates: skillsUpdatesTranslations.zhHant, mcp: mcpPageTranslations.zhHant, valueRows: valueRefRowsTranslations.zhHant, mcpSignIn: mcpSignInTranslations.zhHant, mcpHome: mcpHomeTranslations.zhHant, registries: registriesTranslations.zhHant, skillAdd: skillAddTranslations.zhHant, mcpAdd: mcpAddTranslations.zhHant, agentAdd: agentAddTranslations.zhHant, profileSeeds: profileSeedsTranslations.zhHant, scopeSection: scopeSectionTranslations.zhHant , store: storeTranslations.zhHant },
+  en: { ...en, skills: skillsPageTranslations.en, session: sessionCapabilityTranslations.en, notice: capabilityNoticeTranslations.en, detail: capabilityDetailTranslations.en, skillDetail: skillDetailTranslations.en, skillsFound: skillsFoundTranslations.en, mcpFound: mcpFoundTranslations.en, skillsUpdates: skillsUpdatesTranslations.en, mcp: mcpPageTranslations.en, valueRows: valueRefRowsTranslations.en, mcpSignIn: mcpSignInTranslations.en, connectedAccountCallback: connectedAccountCallbackTranslations.en, mcpHome: mcpHomeTranslations.en, registries: registriesTranslations.en, skillAdd: skillAddTranslations.en, mcpAdd: mcpAddTranslations.en, agentAdd: agentAddTranslations.en, agentsHome: agentsHomeTranslations.en, profileSeeds: profileSeedsTranslations.en, scopeSection: scopeSectionTranslations.en, store: storeTranslations.en },
+  ca: { ...ca, skills: skillsPageTranslations.ca, session: sessionCapabilityTranslations.ca, notice: capabilityNoticeTranslations.ca, detail: capabilityDetailTranslations.ca, skillDetail: skillDetailTranslations.ca, skillsFound: skillsFoundTranslations.ca, mcpFound: mcpFoundTranslations.ca, skillsUpdates: skillsUpdatesTranslations.ca, mcp: mcpPageTranslations.ca, valueRows: valueRefRowsTranslations.ca, mcpSignIn: mcpSignInTranslations.ca, connectedAccountCallback: connectedAccountCallbackTranslations.ca, mcpHome: mcpHomeTranslations.ca, registries: registriesTranslations.ca, skillAdd: skillAddTranslations.ca, mcpAdd: mcpAddTranslations.ca, agentAdd: agentAddTranslations.ca, agentsHome: agentsHomeTranslations.ca, profileSeeds: profileSeedsTranslations.ca, scopeSection: scopeSectionTranslations.ca, store: storeTranslations.ca },
+  de: { ...de, skills: skillsPageTranslations.de, session: sessionCapabilityTranslations.de, notice: capabilityNoticeTranslations.de, detail: capabilityDetailTranslations.de, skillDetail: skillDetailTranslations.de, skillsFound: skillsFoundTranslations.de, mcpFound: mcpFoundTranslations.de, skillsUpdates: skillsUpdatesTranslations.de, mcp: mcpPageTranslations.de, valueRows: valueRefRowsTranslations.de, mcpSignIn: mcpSignInTranslations.de, connectedAccountCallback: connectedAccountCallbackTranslations.de, mcpHome: mcpHomeTranslations.de, registries: registriesTranslations.de, skillAdd: skillAddTranslations.de, mcpAdd: mcpAddTranslations.de, agentAdd: agentAddTranslations.de, agentsHome: agentsHomeTranslations.de, profileSeeds: profileSeedsTranslations.de, scopeSection: scopeSectionTranslations.de, store: storeTranslations.de },
+  es: { ...es, skills: skillsPageTranslations.es, session: sessionCapabilityTranslations.es, notice: capabilityNoticeTranslations.es, detail: capabilityDetailTranslations.es, skillDetail: skillDetailTranslations.es, skillsFound: skillsFoundTranslations.es, mcpFound: mcpFoundTranslations.es, skillsUpdates: skillsUpdatesTranslations.es, mcp: mcpPageTranslations.es, valueRows: valueRefRowsTranslations.es, mcpSignIn: mcpSignInTranslations.es, connectedAccountCallback: connectedAccountCallbackTranslations.es, mcpHome: mcpHomeTranslations.es, registries: registriesTranslations.es, skillAdd: skillAddTranslations.es, mcpAdd: mcpAddTranslations.es, agentAdd: agentAddTranslations.es, agentsHome: agentsHomeTranslations.es, profileSeeds: profileSeedsTranslations.es, scopeSection: scopeSectionTranslations.es, store: storeTranslations.es },
+  fr: { ...fr, skills: skillsPageTranslations.fr, session: sessionCapabilityTranslations.fr, notice: capabilityNoticeTranslations.fr, detail: capabilityDetailTranslations.fr, skillDetail: skillDetailTranslations.fr, skillsFound: skillsFoundTranslations.fr, mcpFound: mcpFoundTranslations.fr, skillsUpdates: skillsUpdatesTranslations.fr, mcp: mcpPageTranslations.fr, valueRows: valueRefRowsTranslations.fr, mcpSignIn: mcpSignInTranslations.fr, connectedAccountCallback: connectedAccountCallbackTranslations.fr, mcpHome: mcpHomeTranslations.fr, registries: registriesTranslations.fr, skillAdd: skillAddTranslations.fr, mcpAdd: mcpAddTranslations.fr, agentAdd: agentAddTranslations.fr, agentsHome: agentsHomeTranslations.fr, profileSeeds: profileSeedsTranslations.fr, scopeSection: scopeSectionTranslations.fr, store: storeTranslations.fr },
+  it: { ...it, skills: skillsPageTranslations.it, session: sessionCapabilityTranslations.it, notice: capabilityNoticeTranslations.it, detail: capabilityDetailTranslations.it, skillDetail: skillDetailTranslations.it, skillsFound: skillsFoundTranslations.it, mcpFound: mcpFoundTranslations.it, skillsUpdates: skillsUpdatesTranslations.it, mcp: mcpPageTranslations.it, valueRows: valueRefRowsTranslations.it, mcpSignIn: mcpSignInTranslations.it, connectedAccountCallback: connectedAccountCallbackTranslations.it, mcpHome: mcpHomeTranslations.it, registries: registriesTranslations.it, skillAdd: skillAddTranslations.it, mcpAdd: mcpAddTranslations.it, agentAdd: agentAddTranslations.it, agentsHome: agentsHomeTranslations.it, profileSeeds: profileSeedsTranslations.it, scopeSection: scopeSectionTranslations.it, store: storeTranslations.it },
+  ja: { ...ja, skills: skillsPageTranslations.ja, session: sessionCapabilityTranslations.ja, notice: capabilityNoticeTranslations.ja, detail: capabilityDetailTranslations.ja, skillDetail: skillDetailTranslations.ja, skillsFound: skillsFoundTranslations.ja, mcpFound: mcpFoundTranslations.ja, skillsUpdates: skillsUpdatesTranslations.ja, mcp: mcpPageTranslations.ja, valueRows: valueRefRowsTranslations.ja, mcpSignIn: mcpSignInTranslations.ja, connectedAccountCallback: connectedAccountCallbackTranslations.ja, mcpHome: mcpHomeTranslations.ja, registries: registriesTranslations.ja, skillAdd: skillAddTranslations.ja, mcpAdd: mcpAddTranslations.ja, agentAdd: agentAddTranslations.ja, agentsHome: agentsHomeTranslations.ja, profileSeeds: profileSeedsTranslations.ja, scopeSection: scopeSectionTranslations.ja, store: storeTranslations.ja },
+  pl: { ...pl, skills: skillsPageTranslations.pl, session: sessionCapabilityTranslations.pl, notice: capabilityNoticeTranslations.pl, detail: capabilityDetailTranslations.pl, skillDetail: skillDetailTranslations.pl, skillsFound: skillsFoundTranslations.pl, mcpFound: mcpFoundTranslations.pl, skillsUpdates: skillsUpdatesTranslations.pl, mcp: mcpPageTranslations.pl, valueRows: valueRefRowsTranslations.pl, mcpSignIn: mcpSignInTranslations.pl, connectedAccountCallback: connectedAccountCallbackTranslations.pl, mcpHome: mcpHomeTranslations.pl, registries: registriesTranslations.pl, skillAdd: skillAddTranslations.pl, mcpAdd: mcpAddTranslations.pl, agentAdd: agentAddTranslations.pl, agentsHome: agentsHomeTranslations.pl, profileSeeds: profileSeedsTranslations.pl, scopeSection: scopeSectionTranslations.pl, store: storeTranslations.pl },
+  pt: { ...pt, skills: skillsPageTranslations.pt, session: sessionCapabilityTranslations.pt, notice: capabilityNoticeTranslations.pt, detail: capabilityDetailTranslations.pt, skillDetail: skillDetailTranslations.pt, skillsFound: skillsFoundTranslations.pt, mcpFound: mcpFoundTranslations.pt, skillsUpdates: skillsUpdatesTranslations.pt, mcp: mcpPageTranslations.pt, valueRows: valueRefRowsTranslations.pt, mcpSignIn: mcpSignInTranslations.pt, connectedAccountCallback: connectedAccountCallbackTranslations.pt, mcpHome: mcpHomeTranslations.pt, registries: registriesTranslations.pt, skillAdd: skillAddTranslations.pt, mcpAdd: mcpAddTranslations.pt, agentAdd: agentAddTranslations.pt, agentsHome: agentsHomeTranslations.pt, profileSeeds: profileSeedsTranslations.pt, scopeSection: scopeSectionTranslations.pt, store: storeTranslations.pt },
+  ru: { ...ru, skills: skillsPageTranslations.ru, session: sessionCapabilityTranslations.ru, notice: capabilityNoticeTranslations.ru, detail: capabilityDetailTranslations.ru, skillDetail: skillDetailTranslations.ru, skillsFound: skillsFoundTranslations.ru, mcpFound: mcpFoundTranslations.ru, skillsUpdates: skillsUpdatesTranslations.ru, mcp: mcpPageTranslations.ru, valueRows: valueRefRowsTranslations.ru, mcpSignIn: mcpSignInTranslations.ru, connectedAccountCallback: connectedAccountCallbackTranslations.ru, mcpHome: mcpHomeTranslations.ru, registries: registriesTranslations.ru, skillAdd: skillAddTranslations.ru, mcpAdd: mcpAddTranslations.ru, agentAdd: agentAddTranslations.ru, agentsHome: agentsHomeTranslations.ru, profileSeeds: profileSeedsTranslations.ru, scopeSection: scopeSectionTranslations.ru, store: storeTranslations.ru },
+  zhHans: { ...zhHans, skills: skillsPageTranslations.zhHans, session: sessionCapabilityTranslations.zhHans, notice: capabilityNoticeTranslations.zhHans, detail: capabilityDetailTranslations.zhHans, skillDetail: skillDetailTranslations.zhHans, skillsFound: skillsFoundTranslations.zhHans, mcpFound: mcpFoundTranslations.zhHans, skillsUpdates: skillsUpdatesTranslations.zhHans, mcp: mcpPageTranslations.zhHans, valueRows: valueRefRowsTranslations.zhHans, mcpSignIn: mcpSignInTranslations.zhHans, connectedAccountCallback: connectedAccountCallbackTranslations.zhHans, mcpHome: mcpHomeTranslations.zhHans, registries: registriesTranslations.zhHans, skillAdd: skillAddTranslations.zhHans, mcpAdd: mcpAddTranslations.zhHans, agentAdd: agentAddTranslations.zhHans, agentsHome: agentsHomeTranslations.zhHans, profileSeeds: profileSeedsTranslations.zhHans, scopeSection: scopeSectionTranslations.zhHans, store: storeTranslations.zhHans },
+  zhHant: { ...zhHant, skills: skillsPageTranslations.zhHant, session: sessionCapabilityTranslations.zhHant, notice: capabilityNoticeTranslations.zhHant, detail: capabilityDetailTranslations.zhHant, skillDetail: skillDetailTranslations.zhHant, skillsFound: skillsFoundTranslations.zhHant, mcpFound: mcpFoundTranslations.zhHant, skillsUpdates: skillsUpdatesTranslations.zhHant, mcp: mcpPageTranslations.zhHant, valueRows: valueRefRowsTranslations.zhHant, mcpSignIn: mcpSignInTranslations.zhHant, connectedAccountCallback: connectedAccountCallbackTranslations.zhHant, mcpHome: mcpHomeTranslations.zhHant, registries: registriesTranslations.zhHant, skillAdd: skillAddTranslations.zhHant, mcpAdd: mcpAddTranslations.zhHant, agentAdd: agentAddTranslations.zhHant, agentsHome: agentsHomeTranslations.zhHant, profileSeeds: profileSeedsTranslations.zhHant, scopeSection: scopeSectionTranslations.zhHant, store: storeTranslations.zhHant },
 } as const;

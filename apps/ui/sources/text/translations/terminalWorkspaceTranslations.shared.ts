@@ -4,12 +4,33 @@ export const en = {
     terminalWorkspace: {
         stripA11y: 'Terminals',
         shell: 'Shell',
+        /** A second terminal that would read the same as another: "Shell 2". */
+        numberedTitle: ({ title, number }: { title: string; number: number }) => `${title} ${number}`,
+        recovered: {
+            note: ({ machine, count }: { machine: string; count: number }) => count === 1
+                ? `This Shell is still running on ${machine}. Open it to pick up where it left off.`
+                : `These Shells are still running on ${machine}. Open one to pick up where it left off.`,
+        },
+        closeOne: {
+            title: ({ title }: { title: string }) => `Close ${title}?`,
+            body: 'Anything running in it stops.',
+        },
+        closeMany: {
+            title: ({ count }: { count: number }) => `Close ${count} terminals?`,
+            body: 'Anything running in them stops.',
+        },
         agentTerminal: ({ agent }: { agent: string }) => `${agent}’s terminal`,
         agentTerminalOn: ({ agent, host, machine }: { agent: string; host: string; machine: string }) => `${agent}’s terminal · ${host} on ${machine}`,
         agentTerminalHost: ({ agent, host }: { agent: string; host: string }) => `${agent}’s terminal · ${host}`,
         agentTerminalHint: ({ agent }: { agent: string }) => `Watch and answer ${agent}`,
         agentNotAttachable: 'This session doesn’t run in a terminal. New sessions in tmux, zellij or herdr have one.',
         actionFailed: 'That didn’t work. Try again.',
+        splitRefused: {
+            noRoom: 'Not enough room to split this terminal',
+            noRoomHint: 'Hide a side panel or widen the window first.',
+            notReady: 'This terminal isn’t ready to split yet',
+            notReadyHint: 'Split again once it’s on screen.',
+        },
         placeOnMachine: ({ cwd, machine }: { cwd: string; machine: string }) => `${cwd} · ${machine}`,
         readOnlyPlace: ({ cwd }: { cwd: string }) => `Read only · ${cwd}`,
         status: {
@@ -26,7 +47,7 @@ export const en = {
             newOptions: 'New terminal options',
             split: 'Split terminal',
             more: 'Terminal actions',
-            hide: 'Hide the bottom pane (terminals keep running)',
+            hide: 'Hide terminals',
         },
         newMenu: {
             shellIn: ({ folder }: { folder: string }) => `Shell in ${folder}`,
@@ -58,8 +79,8 @@ export const en = {
             jump: 'Jump to a terminal…',
             showList: 'Show list',
             showListHint: 'What each terminal is doing',
-            hide: 'Hide the bottom pane',
-            hideHint: 'Terminals keep running',
+            hide: 'Hide terminals',
+            hideHint: 'They keep running',
             settings: 'Terminal settings…',
             settingsHint: 'Font and renderer',
         },
@@ -84,7 +105,7 @@ export const en = {
             checkAgain: 'Check again',
             restart: 'Restart',
             close: 'Close',
-            empty: 'No terminals are open in this session.',
+            empty: 'No terminals are open.',
             emptyAction: 'New terminal',
         },
         jump: {

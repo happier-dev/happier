@@ -125,7 +125,6 @@ export type SkillDetailTranslation = Readonly<{
     add: string;
     adding: string;
     addFailed: string;
-    whereIncomplete: string;
   }>;
 }>;
 
@@ -259,7 +258,6 @@ const en: SkillDetailTranslation = {
     add: 'Add to library',
     adding: 'Adding…',
     addFailed: 'Couldn’t add the skill. Your text is kept.',
-    whereIncomplete: 'Added · Couldn’t set where it’s on',
   },
 };
 
@@ -397,7 +395,6 @@ const ca: SkillDetailTranslation = {
     add: 'Afegeix a la biblioteca',
     adding: 'Afegint…',
     addFailed: 'No s’ha pogut afegir l’habilitat. El teu text es conserva.',
-    whereIncomplete: 'Afegida · No s’ha pogut definir on està activada',
   },
 };
 
@@ -537,7 +534,6 @@ const de: SkillDetailTranslation = {
     adding: 'Wird hinzugefügt…',
     addFailed:
       'Der Skill konnte nicht hinzugefügt werden. Dein Text bleibt erhalten.',
-    whereIncomplete: 'Hinzugefügt · „Wo er an ist“ konnte nicht gesetzt werden',
   },
 };
 
@@ -675,7 +671,6 @@ const es: SkillDetailTranslation = {
     add: 'Añadir a la biblioteca',
     adding: 'Añadiendo…',
     addFailed: 'No se pudo añadir la habilidad. Tu texto se conserva.',
-    whereIncomplete: 'Añadida · No se pudo definir dónde está activada',
   },
 };
 
@@ -814,7 +809,6 @@ const fr: SkillDetailTranslation = {
     add: 'Ajouter à la bibliothèque',
     adding: 'Ajout…',
     addFailed: 'Impossible d’ajouter le skill. Votre texte est conservé.',
-    whereIncomplete: 'Ajouté · Impossible de définir où il est activé',
   },
 };
 
@@ -952,7 +946,6 @@ const it: SkillDetailTranslation = {
     add: 'Aggiungi alla libreria',
     adding: 'Aggiunta…',
     addFailed: 'Impossibile aggiungere la skill. Il tuo testo è conservato.',
-    whereIncomplete: 'Aggiunta · Impossibile impostare dove è attiva',
   },
 };
 
@@ -1089,7 +1082,6 @@ const ja: SkillDetailTranslation = {
     add: 'ライブラリに追加',
     adding: '追加中…',
     addFailed: 'スキルを追加できませんでした。入力したテキストは残っています。',
-    whereIncomplete: '追加しました · オンにする場所を設定できませんでした',
   },
 };
 
@@ -1225,7 +1217,6 @@ const pl: SkillDetailTranslation = {
     add: 'Dodaj do biblioteki',
     adding: 'Dodawanie…',
     addFailed: 'Nie udało się dodać umiejętności. Twój tekst został zachowany.',
-    whereIncomplete: 'Dodano · Nie udało się ustawić, gdzie jest włączona',
   },
 };
 
@@ -1364,7 +1355,6 @@ const pt: SkillDetailTranslation = {
     add: 'Adicionar à biblioteca',
     adding: 'A adicionar…',
     addFailed: 'Não foi possível adicionar a habilidade. O seu texto foi mantido.',
-    whereIncomplete: 'Adicionada · Não foi possível definir onde está ativada',
   },
 };
 
@@ -1501,7 +1491,6 @@ const ru: SkillDetailTranslation = {
     add: 'Добавить в библиотеку',
     adding: 'Добавление…',
     addFailed: 'Не удалось добавить скилл. Ваш текст сохранён.',
-    whereIncomplete: 'Добавлен · Не удалось задать, где он включён',
   },
 };
 
@@ -1629,7 +1618,6 @@ const zhHans: SkillDetailTranslation = {
     add: '添加到资料库',
     adding: '正在添加…',
     addFailed: '无法添加技能。你的文本已保留。',
-    whereIncomplete: '已添加 · 无法设置在哪里开启',
   },
 };
 
@@ -1757,7 +1745,6 @@ const zhHant: SkillDetailTranslation = {
     add: '新增到資料庫',
     adding: '正在新增…',
     addFailed: '無法新增技能。你的文字已保留。',
-    whereIncomplete: '已新增 · 無法設定在哪裡開啟',
   },
 };
 

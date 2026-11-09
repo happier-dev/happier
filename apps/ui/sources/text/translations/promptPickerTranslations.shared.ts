@@ -11,7 +11,7 @@ export const promptPickerTranslationsEnglish = { "en": {
         "library": "Library",
         "sentBefore": "Sent before",
         "builtIn": "Built in",
-        "readError": "This prompt could not be read. Try again.",
+        "readError": "Couldn’t read this prompt",
         "libraryError": "The library could not be loaded.",
         "partialLibrary": "Some library prompts could not be read.",
         "loadOlder": "Search older messages",
@@ -21,8 +21,8 @@ export const promptPickerTranslationsEnglish = { "en": {
         "addFavorite": "Add to favourites",
         "removeFavorite": "Remove from favourites",
         "empty": "Save a message as a prompt to reuse it here.",
-        "applyError": "The prompt could not be applied. Try again.",
-        "historyError": "Older messages could not be loaded. Try again.",
+        "applyError": "Couldn’t apply this prompt",
+        "historyError": "Couldn’t search older messages",
         "title": "Prompts",
         "clear": "Clear",
         "favorite": "Favourite",
@@ -35,5 +35,7 @@ export const promptPickerTranslationsEnglish = { "en": {
         "previewInserts": "inserts, then you send",
         "previewSent": "sent before",
         "previewEdited": ({ time }: { time: string }) => `Edited ${time}`,
-        "searchingOlder": ({ searched, total }: { searched: number; total: number }) => `Searching older messages… ${searched} of ${total} sessions`
+        "searchingOlder": ({ searched, total }: { searched: number; total: number }) => `Searching ${searched} of ${total} sessions…`,
+        "searchedOlder": ({ searched, total }: { searched: number; total: number }) => `Searched ${searched} of ${total} sessions`,
+        "searchMore": "Search more"
     } } as const;

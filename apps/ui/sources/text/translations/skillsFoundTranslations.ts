@@ -21,6 +21,8 @@ export type SkillsFoundTranslation = Readonly<{
   showFewer: string;
   looking: string;
   nothingHere: string;
+  quietEmpty: (params: Readonly<{ count: number; others: boolean }>) => string;
+  quietLooking: (params: Readonly<{ count: number }>) => string;
   lastKnown: (params: Readonly<{ time: string }>) => string;
   offlineBring: (params: Readonly<{ machine: string }>) => string;
   offlineUnseen: (params: Readonly<{ count: number }>) => string;
@@ -31,7 +33,6 @@ export type SkillsFoundTranslation = Readonly<{
   noMachinesTitle: string;
   noMachinesBody: string;
   addFailed: (params: Readonly<{ name: string }>) => string;
-  addedPartial: (params: Readonly<{ name: string }>) => string;
   compareYours: string;
   compareTheirs: (params: Readonly<{ machine: string }>) => string;
   compareFailed: (params: Readonly<{ machine: string }>) => string;
@@ -76,6 +77,10 @@ export const en: SkillsFoundTranslation = {
   showFewer: 'Show fewer',
   looking: 'Looking…',
   nothingHere: 'No skills found here.',
+  quietEmpty: ({ count, others }) =>
+    `No skills found on ${count} ${others ? 'other ' : ''}${count === 1 ? 'machine' : 'machines'}`,
+  quietLooking: ({ count }) =>
+    `Looking on ${count} ${count === 1 ? 'machine' : 'machines'}…`,
   lastKnown: ({ time }) => `last known ${time}`,
   offlineBring: ({ machine }) => `Bring ${machine} online to add from it.`,
   offlineUnseen: ({ count }) =>
@@ -91,8 +96,6 @@ export const en: SkillsFoundTranslation = {
   noMachinesBody:
     'Connect a machine to see the skills your agents already keep on it.',
   addFailed: ({ name }) => `Couldn't add ${name}. Nothing changed.`,
-  addedPartial: ({ name }) =>
-    `${name} is in your library, but where it's on couldn't be set. Open it to choose.`,
   compareYours: 'Your library',
   compareTheirs: ({ machine }) => `On ${machine}`,
   compareFailed: ({ machine }) => `Couldn't read the copy on ${machine}.`,
@@ -142,6 +145,10 @@ const ca: SkillsFoundTranslation = {
   showFewer: 'Mostra’n menys',
   looking: 'Cercant…',
   nothingHere: 'No s’ha trobat cap habilitat aquí.',
+  quietEmpty: ({ count, others }) =>
+    `No s’ha trobat cap habilitat en ${count} ${count === 1 ? (others ? 'altra màquina' : 'màquina') : (others ? 'altres màquines' : 'màquines')}`,
+  quietLooking: ({ count }) =>
+    `Cercant en ${count} ${count === 1 ? 'màquina' : 'màquines'}…`,
   lastKnown: ({ time }) => `últim estat ${time}`,
   offlineBring: ({ machine }) =>
     `Posa ${machine} en línia per afegir-ne habilitats.`,
@@ -159,8 +166,6 @@ const ca: SkillsFoundTranslation = {
   noMachinesBody:
     'Connecta una màquina per veure les habilitats que els teus agents ja hi tenen.',
   addFailed: ({ name }) => `No s’ha pogut afegir ${name}. No ha canviat res.`,
-  addedPartial: ({ name }) =>
-    `${name} és a la teva biblioteca, però no s’ha pogut definir on està activada. Obre-la per triar-ho.`,
   compareYours: 'La teva biblioteca',
   compareTheirs: ({ machine }) => `A ${machine}`,
   compareFailed: ({ machine }) =>
@@ -212,6 +217,10 @@ const de: SkillsFoundTranslation = {
   showFewer: 'Weniger anzeigen',
   looking: 'Suche…',
   nothingHere: 'Hier wurden keine Skills gefunden.',
+  quietEmpty: ({ count, others }) =>
+    `Keine Skills auf ${count} ${others ? 'weiteren ' : ''}${count === 1 ? 'Maschine' : 'Maschinen'} gefunden`,
+  quietLooking: ({ count }) =>
+    `Suche auf ${count} ${count === 1 ? 'Maschine' : 'Maschinen'}…`,
   lastKnown: ({ time }) => `zuletzt bekannt ${time}`,
   offlineBring: ({ machine }) =>
     `Bring ${machine} online, um davon hinzuzufügen.`,
@@ -230,8 +239,6 @@ const de: SkillsFoundTranslation = {
     'Verbinde eine Maschine, um die Skills zu sehen, die deine Agenten dort schon haben.',
   addFailed: ({ name }) =>
     `${name} konnte nicht hinzugefügt werden. Es wurde nichts geändert.`,
-  addedPartial: ({ name }) =>
-    `${name} ist in deiner Bibliothek, aber „Wo er an ist“ konnte nicht gesetzt werden. Öffne ihn zum Auswählen.`,
   compareYours: 'Deine Bibliothek',
   compareTheirs: ({ machine }) => `Auf ${machine}`,
   compareFailed: ({ machine }) =>
@@ -284,6 +291,10 @@ const es: SkillsFoundTranslation = {
   showFewer: 'Mostrar menos',
   looking: 'Buscando…',
   nothingHere: 'No se encontraron habilidades aquí.',
+  quietEmpty: ({ count, others }) =>
+    `No se encontraron habilidades en ${count} ${count === 1 ? (others ? 'máquina más' : 'máquina') : (others ? 'máquinas más' : 'máquinas')}`,
+  quietLooking: ({ count }) =>
+    `Buscando en ${count} ${count === 1 ? 'máquina' : 'máquinas'}…`,
   lastKnown: ({ time }) => `último estado ${time}`,
   offlineBring: ({ machine }) =>
     `Pon ${machine} en línea para añadir desde ella.`,
@@ -301,8 +312,6 @@ const es: SkillsFoundTranslation = {
   noMachinesBody:
     'Conecta una máquina para ver las habilidades que tus agentes ya tienen en ella.',
   addFailed: ({ name }) => `No se pudo añadir ${name}. No cambió nada.`,
-  addedPartial: ({ name }) =>
-    `${name} está en tu biblioteca, pero no se pudo definir dónde está activada. Ábrela para elegir.`,
   compareYours: 'Tu biblioteca',
   compareTheirs: ({ machine }) => `En ${machine}`,
   compareFailed: ({ machine }) => `No se pudo leer la copia de ${machine}.`,
@@ -353,6 +362,10 @@ const fr: SkillsFoundTranslation = {
   showFewer: 'Afficher moins',
   looking: 'Recherche…',
   nothingHere: 'Aucun skill trouvé ici.',
+  quietEmpty: ({ count, others }) =>
+    `Aucun skill trouvé sur ${count} ${others ? (count === 1 ? 'autre ' : 'autres ') : ''}${count === 1 ? 'machine' : 'machines'}`,
+  quietLooking: ({ count }) =>
+    `Recherche sur ${count} ${count === 1 ? 'machine' : 'machines'}…`,
   lastKnown: ({ time }) => `dernier état ${time}`,
   offlineBring: ({ machine }) =>
     `Mettez ${machine} en ligne pour ajouter depuis cette machine.`,
@@ -369,8 +382,6 @@ const fr: SkillsFoundTranslation = {
   noMachinesBody:
     'Connectez une machine pour voir les skills que vos agents y gardent déjà.',
   addFailed: ({ name }) => `Impossible d’ajouter ${name}. Rien n’a changé.`,
-  addedPartial: ({ name }) =>
-    `${name} est dans votre bibliothèque, mais l’endroit où il est activé n’a pas pu être défini. Ouvrez-le pour choisir.`,
   compareYours: 'Votre bibliothèque',
   compareTheirs: ({ machine }) => `Sur ${machine}`,
   compareFailed: ({ machine }) =>
@@ -422,6 +433,10 @@ const it: SkillsFoundTranslation = {
   showFewer: 'Mostra meno',
   looking: 'Ricerca…',
   nothingHere: 'Nessuna skill trovata qui.',
+  quietEmpty: ({ count, others }) =>
+    `Nessuna skill trovata su ${count} ${count === 1 ? (others ? 'altra macchina' : 'macchina') : (others ? 'altre macchine' : 'macchine')}`,
+  quietLooking: ({ count }) =>
+    `Ricerca su ${count} ${count === 1 ? 'macchina' : 'macchine'}…`,
   lastKnown: ({ time }) => `ultimo stato ${time}`,
   offlineBring: ({ machine }) =>
     `Porta online ${machine} per aggiungere da lì.`,
@@ -439,8 +454,6 @@ const it: SkillsFoundTranslation = {
     'Collega una macchina per vedere le skill che i tuoi agenti hanno già.',
   addFailed: ({ name }) =>
     `Impossibile aggiungere ${name}. Non è cambiato nulla.`,
-  addedPartial: ({ name }) =>
-    `${name} è nella tua libreria, ma non è stato possibile impostare dove è attiva. Aprila per scegliere.`,
   compareYours: 'La tua libreria',
   compareTheirs: ({ machine }) => `Su ${machine}`,
   compareFailed: ({ machine }) =>
@@ -491,6 +504,10 @@ const ja: SkillsFoundTranslation = {
   showFewer: '表示を減らす',
   looking: '探しています…',
   nothingHere: 'ここにはスキルが見つかりません。',
+  quietEmpty: ({ count, others }) =>
+    others ? `他の ${count} 台のマシンにはスキルが見つかりません` : `${count} 台のマシンにはスキルが見つかりません`,
+  quietLooking: ({ count }) =>
+    `${count} 台のマシンを探しています…`,
   lastKnown: ({ time }) => `最終確認 ${time}`,
   offlineBring: ({ machine }) =>
     `${machine} をオンラインにすると、そこから追加できます。`,
@@ -508,8 +525,6 @@ const ja: SkillsFoundTranslation = {
     'マシンを接続すると、エージェントがそこにすでに持っているスキルが表示されます。',
   addFailed: ({ name }) =>
     `${name} を追加できませんでした。何も変更されていません。`,
-  addedPartial: ({ name }) =>
-    `${name} をライブラリに追加しましたが、オンにする場所を設定できませんでした。開いて選択してください。`,
   compareYours: 'ライブラリ',
   compareTheirs: ({ machine }) => `${machine} 上`,
   compareFailed: ({ machine }) =>
@@ -561,6 +576,10 @@ const pl: SkillsFoundTranslation = {
   showFewer: 'Pokaż mniej',
   looking: 'Szukanie…',
   nothingHere: 'Nie znaleziono tu umiejętności.',
+  quietEmpty: ({ count, others }) =>
+    others ? `Pozostałe maszyny bez znalezionych umiejętności: ${count}` : `Maszyny bez znalezionych umiejętności: ${count}`,
+  quietLooking: ({ count }) =>
+    `Szukanie na maszynach: ${count}…`,
   lastKnown: ({ time }) => `ostatni stan ${time}`,
   offlineBring: ({ machine }) =>
     `Włącz ${machine} online, aby dodać z niej umiejętności.`,
@@ -578,8 +597,6 @@ const pl: SkillsFoundTranslation = {
   noMachinesBody:
     'Połącz maszynę, aby zobaczyć umiejętności, które Twoi agenci już na niej mają.',
   addFailed: ({ name }) => `Nie udało się dodać ${name}. Nic się nie zmieniło.`,
-  addedPartial: ({ name }) =>
-    `${name} jest w Twojej bibliotece, ale nie udało się ustawić, gdzie jest włączona. Otwórz ją, aby wybrać.`,
   compareYours: 'Twoja biblioteka',
   compareTheirs: ({ machine }) => `Na ${machine}`,
   compareFailed: ({ machine }) =>
@@ -631,6 +648,10 @@ const pt: SkillsFoundTranslation = {
   showFewer: 'Mostrar menos',
   looking: 'A procurar…',
   nothingHere: 'Nenhuma habilidade encontrada aqui.',
+  quietEmpty: ({ count, others }) =>
+    `Nenhuma habilidade encontrada em ${count} ${count === 1 ? (others ? 'outra máquina' : 'máquina') : (others ? 'outras máquinas' : 'máquinas')}`,
+  quietLooking: ({ count }) =>
+    `A procurar em ${count} ${count === 1 ? 'máquina' : 'máquinas'}…`,
   lastKnown: ({ time }) => `último estado ${time}`,
   offlineBring: ({ machine }) =>
     `Coloque ${machine} online para adicionar a partir dela.`,
@@ -649,8 +670,6 @@ const pt: SkillsFoundTranslation = {
     'Ligue uma máquina para ver as habilidades que os seus agentes já têm nela.',
   addFailed: ({ name }) =>
     `Não foi possível adicionar ${name}. Nada foi alterado.`,
-  addedPartial: ({ name }) =>
-    `${name} está na sua biblioteca, mas não foi possível definir onde está ativada. Abra-a para escolher.`,
   compareYours: 'A sua biblioteca',
   compareTheirs: ({ machine }) => `Em ${machine}`,
   compareFailed: ({ machine }) =>
@@ -702,6 +721,10 @@ const ru: SkillsFoundTranslation = {
   showFewer: 'Показать меньше',
   looking: 'Поиск…',
   nothingHere: 'Скиллы здесь не найдены.',
+  quietEmpty: ({ count, others }) =>
+    others ? `Скиллы не найдены на других машинах: ${count}` : `Скиллы не найдены на машинах: ${count}`,
+  quietLooking: ({ count }) =>
+    `Поиск на машинах: ${count}…`,
   lastKnown: ({ time }) => `последнее состояние ${time}`,
   offlineBring: ({ machine }) =>
     `Подключите ${machine} к сети, чтобы добавлять скиллы с неё.`,
@@ -719,8 +742,6 @@ const ru: SkillsFoundTranslation = {
     'Подключите машину, чтобы увидеть скиллы, которые агенты уже хранят на ней.',
   addFailed: ({ name }) =>
     `Не удалось добавить ${name}. Ничего не изменилось.`,
-  addedPartial: ({ name }) =>
-    `${name} теперь в вашей библиотеке, но не удалось задать, где он включён. Откройте его, чтобы выбрать.`,
   compareYours: 'Ваша библиотека',
   compareTheirs: ({ machine }) => `На ${machine}`,
   compareFailed: ({ machine }) =>
@@ -771,6 +792,10 @@ const zhHans: SkillsFoundTranslation = {
   showFewer: '显示更少',
   looking: '正在查找…',
   nothingHere: '这里没有找到技能。',
+  quietEmpty: ({ count, others }) =>
+    others ? `另外 ${count} 台机器上没有找到技能` : `${count} 台机器上没有找到技能`,
+  quietLooking: ({ count }) =>
+    `正在 ${count} 台机器上查找…`,
   lastKnown: ({ time }) => `最后已知 ${time}`,
   offlineBring: ({ machine }) => `让 ${machine} 上线后，才能从中添加。`,
   offlineUnseen: ({ count }) =>
@@ -785,8 +810,6 @@ const zhHans: SkillsFoundTranslation = {
   noMachinesTitle: '还没有机器',
   noMachinesBody: '连接一台机器，即可查看你的智能体已保存在其上的技能。',
   addFailed: ({ name }) => `无法添加 ${name}。未作任何更改。`,
-  addedPartial: ({ name }) =>
-    `${name} 已在你的资料库中，但无法设置在哪里开启。打开它进行选择。`,
   compareYours: '你的资料库',
   compareTheirs: ({ machine }) => `在 ${machine} 上`,
   compareFailed: ({ machine }) => `无法读取 ${machine} 上的副本。`,
@@ -835,6 +858,10 @@ const zhHant: SkillsFoundTranslation = {
   showFewer: '顯示較少',
   looking: '正在尋找…',
   nothingHere: '這裡沒有找到技能。',
+  quietEmpty: ({ count, others }) =>
+    others ? `另外 ${count} 台機器上沒有找到技能` : `${count} 台機器上沒有找到技能`,
+  quietLooking: ({ count }) =>
+    `正在 ${count} 台機器上尋找…`,
   lastKnown: ({ time }) => `最後已知 ${time}`,
   offlineBring: ({ machine }) => `讓 ${machine} 上線後，才能從中新增。`,
   offlineUnseen: ({ count }) =>
@@ -849,8 +876,6 @@ const zhHant: SkillsFoundTranslation = {
   noMachinesTitle: '還沒有機器',
   noMachinesBody: '連接一台機器，即可查看你的代理已存放在其上的技能。',
   addFailed: ({ name }) => `無法新增 ${name}。未作任何變更。`,
-  addedPartial: ({ name }) =>
-    `${name} 已在你的資料庫中，但無法設定在哪裡開啟。開啟它進行選擇。`,
   compareYours: '你的資料庫',
   compareTheirs: ({ machine }) => `在 ${machine} 上`,
   compareFailed: ({ machine }) => `無法讀取 ${machine} 上的副本。`,

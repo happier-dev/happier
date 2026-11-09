@@ -45,7 +45,7 @@ export type ConnectedServicesSetupTranslation = Readonly<{
 
 export const connectedServicesSetupTranslationsEnglish = { en: {
         connectMoreTitle: 'Connect more',
-        connectMoreDescription: 'Services the agents on your machines accept that you haven’t connected.',
+        connectMoreDescription: 'Add another account to a service you use, or connect a new one.',
         connectMoreNothingNew: 'Add another account, or a code host or tool.',
         serviceSignInInstead: ({ agents }) => `${agents} can sign in with it instead of each machine’s own login.`,
         serviceCanUse: ({ agents }) => `${agents} can use it.`,

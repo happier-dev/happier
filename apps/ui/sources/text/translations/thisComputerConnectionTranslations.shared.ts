@@ -26,8 +26,8 @@ export type ThisComputerConnectionTranslation = typeof en;
 
 export const en = {
     connectHome: {
-        title: ({ home }: HomeParams) => `Connect this computer to ${home}?`,
-        body: ({ home }: HomeParams) => `${home} will be able to start sessions on this computer. Your terminal’s Home and other Home connections stay in place.`,
+        title: ({ home }: HomeParams) => `Connect this machine to ${home}?`,
+        body: ({ home }: HomeParams) => `${home} will be able to start sessions on this machine. Your terminal’s Home and other Home connections stay in place.`,
         connect: 'Connect',
         keep: 'Keep current connections',
     },
@@ -46,7 +46,7 @@ export const en = {
             `It’s signed in to ${home} as ${daemonAccount}, not as ${appAccount}.`,
         daemon_needs_auth: ({ home }: HomeParams) => `It’s connected to ${home} but hasn’t been approved yet.`,
         daemon_not_configured: ({ home }: HomeParams) => `It hasn’t finished connecting to ${home}.`,
-        daemon_not_installed: ({ home }: HomeParams) => `Install it to connect this computer to ${home}.`,
+        daemon_not_installed: ({ home }: HomeParams) => `Install it to connect this machine to ${home}.`,
         daemon_not_running: ({ home }: HomeParams) => `Start it to reconnect to ${home}.`,
     },
     action: {
@@ -58,12 +58,12 @@ export const en = {
         daemon_not_running: 'Start background service',
     },
     connected: ({ home, appAccount }: { home: string; appAccount: string }) => `Connected to ${home} as ${appAccount}.`,
-    noComputers: ({ home, appAccount }: { home: string; appAccount: string }) => `${appAccount} has no computers on ${home} yet.`,
-    openThisComputer: 'Review this computer',
+    noComputers: ({ home, appAccount }: { home: string; appAccount: string }) => `${appAccount} has no machines on ${home} yet.`,
+    openThisComputer: 'Review this machine',
     moveConfirm: {
-        title: ({ appAccount }: { appAccount: string }) => `Switch this computer to ${appAccount}?`,
+        title: ({ appAccount }: { appAccount: string }) => `Switch this machine to ${appAccount}?`,
         body: ({ home, daemonHome, daemonAccount, appAccount }: MoveParams) =>
-            `Its background service is signed in to ${daemonHome} as ${daemonAccount}. After switching, it works for ${appAccount} on ${home}, and ${daemonAccount} no longer sees this computer.`,
+            `Its background service is signed in to ${daemonHome} as ${daemonAccount}. After switching, it works for ${appAccount} on ${home}, and ${daemonAccount} no longer sees this machine.`,
         confirm: 'Switch',
     },
     cli: {
@@ -98,19 +98,19 @@ export const en = {
         oldCopyPath: ({ path }: { path: string }) => `Still installed at ${path}.`,
     },
     servers: {
-        title: 'Homes this computer serves',
+        title: 'Homes this machine serves',
         connected: 'Connected',
         offline: 'Set up · Offline',
         attention: 'Needs attention',
         currentHome: ({ home }: HomeParams) => `${home} · this Home`,
     },
     removal: {
-        uninstallFailedTitle: 'Couldn’t disconnect this computer',
-        uninstallFailedBody: ({ home }: HomeParams) => `This computer’s background service for ${home} couldn’t be removed, so ${home} was kept. Try again, or remove the service from Settings › This computer.`,
-        inventoryUnavailableTitle: 'Couldn’t check this computer',
-        inventoryUnavailableBody: ({ home }: HomeParams) => `Happier couldn’t read this computer’s background services, so it can’t tell whether this computer still serves ${home}. Remove it from Happier anyway?`,
+        uninstallFailedTitle: 'Couldn’t disconnect this machine',
+        uninstallFailedBody: ({ home }: HomeParams) => `This machine’s background service for ${home} couldn’t be removed, so ${home} was kept. Try again, or remove the service from Settings › This machine.`,
+        inventoryUnavailableTitle: 'Couldn’t check this machine',
+        inventoryUnavailableBody: ({ home }: HomeParams) => `Happier couldn’t read this machine’s background services, so it can’t tell whether this machine still serves ${home}. Remove it from Happier anyway?`,
         removeAnyway: 'Remove anyway',
-        userOwnedTitle: 'This computer keeps serving it',
+        userOwnedTitle: 'This machine keeps serving it',
         userOwnedBody: ({ home, service }: RemovalServiceParams) => `${service} was installed outside Happier, so it keeps running for ${home}. Remove it from the terminal if you no longer need it.`,
     },
 };

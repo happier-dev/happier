@@ -17,7 +17,7 @@ export const starterPrompts = {
     starter: {
         explain: 'Explain how Happier is organized',
         fixTest: 'Find a failing test and fix it',
-        automation: 'Create an automation that runs every morning',
+        automation: 'Create a workflow that runs every morning',
     },
     goodFirstSession: 'A good first session',
 };

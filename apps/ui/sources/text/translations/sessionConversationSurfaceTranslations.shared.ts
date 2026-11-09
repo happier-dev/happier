@@ -8,6 +8,7 @@ export const en = {
         errorTitle: 'Couldn’t open this conversation',
         lockedTitle: 'Can’t open this conversation on this device yet',
         lockedReason: 'It’s end-to-end encrypted, and this device’s encryption setup doesn’t match this session’s.',
+        errorReason: 'Check your connection and try again.',
         revokedTitle: 'You no longer have access to this conversation',
         revokedReason: 'This session isn’t shared with you anymore. Messages you wrote stay with the session.',
         unavailableTitle: 'Conversations aren’t available here',

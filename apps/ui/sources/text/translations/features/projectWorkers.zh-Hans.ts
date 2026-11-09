@@ -169,6 +169,7 @@ export const projectWorkers: ProjectWorkersTranslations = {
     whenUnavailable: '如果无法在那里运行',
     fallbackPrimary: '改为在此运行',
     fallbackFail: '不启动',
+    fallbackLocked: '将在下次启动时生效。停止该服务后才能更改。',
     destinationMissing: '已保存的目标不可用。',
     settingsUnavailable: '服务放置设置不可用。',
     saveFailed: '无法保存服务放置。',

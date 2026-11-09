@@ -169,6 +169,7 @@ export const projectWorkers: ProjectWorkersTranslations = {
     whenUnavailable: 'Gdy nie może tam działać',
     fallbackPrimary: 'Uruchom tutaj',
     fallbackFail: 'Nie uruchamiaj',
+    fallbackLocked: 'Zadziała przy następnym uruchomieniu. Zatrzymaj usługę, aby to zmienić.',
     destinationMissing: 'Zapisany cel jest niedostępny.',
     settingsUnavailable: 'Ustawienia lokalizacji usługi są niedostępne.',
     saveFailed: 'Nie udało się zapisać lokalizacji usługi.',

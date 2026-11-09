@@ -6,7 +6,7 @@ import * as Shared_accountServiceOAuthTranslations from '../accountServiceOAuthT
 import * as Shared_actionConfirmationTranslations from '../actionConfirmationTranslations.shared';
 import * as Shared_fileContentSearchTranslations from '../fileContentSearchTranslations.shared';
 import * as Shared_promptPickerTranslations from '../promptPickerTranslations.shared';
-import type { ActionIdFamilyV1 } from '@happier-dev/protocol';
+import type { ActionIdFamilyV1 } from '@happier-dev/protocol/actions/actionIds';
 import * as Shared_actionFamilyTranslations from '../actionFamilyTranslations.shared';
 import * as Shared_addFlowsTranslations from '../addFlowsTranslations.shared';
 import * as Shared_agentInstallJobTranslations from '../agentInstallJobTranslations.shared';
@@ -564,7 +564,7 @@ const effectiveTranslations = Shared_glassAppearanceTranslations.effectiveTransl
 
 const glassAppearanceTranslations = Shared_glassAppearanceTranslations.glassAppearanceTranslationsEnglish;
 
-return { effectiveTranslations, glassAppearanceTranslations };
+return { effectiveTranslations, glassAppearanceTranslations, newSessionBackdropStrengthTranslations: Shared_glassAppearanceTranslations.newSessionBackdropStrengthTranslations };
 })();
 
 const Domain_goalControlTranslations = (() => {

@@ -6,7 +6,7 @@ export type WorkflowBuiltinTranslations = typeof en;
 
 export const en = {
     keepGoing: { title: BUILTIN_WORKFLOW_TITLES_V1['builtin:keep-going'], description: 'Continues until the goal is met' },
-    reviewAndConverge: { title: BUILTIN_WORKFLOW_TITLES_V1['builtin:review-and-converge'], description: 'Review until the reviewers agree', apply: 'Apply', verifyAndFix: 'Verify and fix', verifyOnly: 'Verify only', rounds: 'Rounds before stopping', inputs: { engines: 'Reviewers', reviewSession: 'Session to review' } },
+    reviewAndConverge: { title: BUILTIN_WORKFLOW_TITLES_V1['builtin:review-and-converge'], description: 'Review until the reviewers agree', apply: 'Apply', verifyAndFix: 'Verify and fix', verifyOnly: 'Verify only', rounds: 'Rounds before stopping', inputs: { engines: 'Reviewers', reviewSession: 'Session to review', useJudge: 'Let a judge settle disputes', focus: 'What to focus on' } },
     planWithAPanel: { title: BUILTIN_WORKFLOW_TITLES_V1['builtin:plan-with-a-panel'], description: 'Several agents plan side by side, then the plan waits for your review.', inputs: { request: 'Request', requestPlaceholder: 'What should the panel plan?', engines: 'Planners' } },
     freshOpinions: { title: BUILTIN_WORKFLOW_TITLES_V1['builtin:fresh-opinions'], description: 'Independent answers to the same question, with an optional summary.' },
     answerAndReview: { title: BUILTIN_WORKFLOW_TITLES_V1['builtin:answer-and-review'], description: 'One agent answers, then another reviews that exact answer.' },

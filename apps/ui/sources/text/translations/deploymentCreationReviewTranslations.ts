@@ -5,6 +5,9 @@ import type { SupportedLanguage } from '../_all';
  * review that shows the canonical resolver's values and sources (the Environment draft and the Store App).
  */
 type DeploymentCreationReviewCopy = Readonly<{
+  title: string;
+  description: string;
+  create: string;
   buildsOn: (params: { machine: string }) => string;
   deploysFrom: (params: { machine: string }) => string;
   keepsPrevious: (params: { count: number }) => string;
@@ -16,6 +19,10 @@ type DeploymentCreationReviewCopy = Readonly<{
 
 export const deploymentCreationReviewTranslations = {
   en: {
+    title: 'How it deploys',
+    description:
+      'Check these before you create it.',
+    create: 'Create environment',
     buildsOn: ({ machine }) => `Builds on ${machine}`,
     deploysFrom: ({ machine }) => `Deploys run from ${machine}`,
     keepsPrevious: ({ count }) =>
@@ -30,6 +37,10 @@ export const deploymentCreationReviewTranslations = {
     fromBuiltin: 'Happier’s default',
   },
   ca: {
+    title: 'Com es desplega',
+    description:
+      'Revisa’ls abans de crear-lo.',
+    create: 'Crea l’entorn',
     buildsOn: ({ machine }) => `Es construeix a ${machine}`,
     deploysFrom: ({ machine }) =>
       `Els desplegaments s’executen des de ${machine}`,
@@ -45,6 +56,10 @@ export const deploymentCreationReviewTranslations = {
     fromBuiltin: 'Valor per defecte de Happier',
   },
   de: {
+    title: 'So wird bereitgestellt',
+    description:
+      'Prüfe diese Werte, bevor du die Umgebung erstellst.',
+    create: 'Umgebung erstellen',
     buildsOn: ({ machine }) => `Baut auf ${machine}`,
     deploysFrom: ({ machine }) => `Bereitstellungen laufen von ${machine}`,
     keepsPrevious: ({ count }) =>
@@ -59,6 +74,10 @@ export const deploymentCreationReviewTranslations = {
     fromBuiltin: 'Happiers Standard',
   },
   es: {
+    title: 'Cómo se despliega',
+    description:
+      'Revísalos antes de crearlo.',
+    create: 'Crear entorno',
     buildsOn: ({ machine }) => `Se compila en ${machine}`,
     deploysFrom: ({ machine }) =>
       `Los despliegues se ejecutan desde ${machine}`,
@@ -74,6 +93,10 @@ export const deploymentCreationReviewTranslations = {
     fromBuiltin: 'Valor por defecto de Happier',
   },
   fr: {
+    title: 'Comment il se déploie',
+    description:
+      'Vérifie-les avant de le créer.',
+    create: 'Créer l’environnement',
     buildsOn: ({ machine }) => `Se construit sur ${machine}`,
     deploysFrom: ({ machine }) => `Les déploiements partent de ${machine}`,
     keepsPrevious: ({ count }) =>
@@ -88,6 +111,10 @@ export const deploymentCreationReviewTranslations = {
     fromBuiltin: 'Valeur par défaut de Happier',
   },
   it: {
+    title: 'Come viene distribuito',
+    description:
+      'Controllali prima di crearlo.',
+    create: 'Crea ambiente',
     buildsOn: ({ machine }) => `Compila su ${machine}`,
     deploysFrom: ({ machine }) => `Le distribuzioni partono da ${machine}`,
     keepsPrevious: ({ count }) =>
@@ -102,6 +129,9 @@ export const deploymentCreationReviewTranslations = {
     fromBuiltin: 'Predefinito di Happier',
   },
   ja: {
+    title: 'デプロイのしかた',
+    description: '作成する前に確認してください。',
+    create: '環境を作成',
     buildsOn: ({ machine }) => `${machine} でビルド`,
     deploysFrom: ({ machine }) => `${machine} からデプロイ`,
     keepsPrevious: ({ count }) =>
@@ -114,6 +144,10 @@ export const deploymentCreationReviewTranslations = {
     fromBuiltin: 'Happier の既定',
   },
   pl: {
+    title: 'Jak jest wdrażane',
+    description:
+      'Sprawdź je przed utworzeniem.',
+    create: 'Utwórz środowisko',
     buildsOn: ({ machine }) => `Budowane na ${machine}`,
     deploysFrom: ({ machine }) => `Wdrożenia działają z ${machine}`,
     keepsPrevious: ({ count }) =>
@@ -128,6 +162,9 @@ export const deploymentCreationReviewTranslations = {
     fromBuiltin: 'Domyślne Happier',
   },
   pt: {
+    title: 'Como é implementado',
+    description: 'Revê-os antes de o criar.',
+    create: 'Criar ambiente',
     buildsOn: ({ machine }) => `Compila em ${machine}`,
     deploysFrom: ({ machine }) =>
       `As implementações correm a partir de ${machine}`,
@@ -143,6 +180,10 @@ export const deploymentCreationReviewTranslations = {
     fromBuiltin: 'Predefinição do Happier',
   },
   ru: {
+    title: 'Как развёртывается',
+    description:
+      'Проверьте их перед созданием.',
+    create: 'Создать окружение',
     buildsOn: ({ machine }) => `Собирается на ${machine}`,
     deploysFrom: ({ machine }) => `Развёртывания идут с ${machine}`,
     keepsPrevious: ({ count }) =>
@@ -155,6 +196,9 @@ export const deploymentCreationReviewTranslations = {
     fromBuiltin: 'По умолчанию в Happier',
   },
   'zh-Hans': {
+    title: '部署方式',
+    description: '创建前请先确认。',
+    create: '创建环境',
     buildsOn: ({ machine }) => `在 ${machine} 上构建`,
     deploysFrom: ({ machine }) => `从 ${machine} 运行部署`,
     keepsPrevious: ({ count }) =>
@@ -165,6 +209,9 @@ export const deploymentCreationReviewTranslations = {
     fromBuiltin: 'Happier 默认值',
   },
   'zh-Hant': {
+    title: '部署方式',
+    description: '建立前請先確認。',
+    create: '建立環境',
     buildsOn: ({ machine }) => `在 ${machine} 上建置`,
     deploysFrom: ({ machine }) => `從 ${machine} 執行部署`,
     keepsPrevious: ({ count }) =>

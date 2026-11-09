@@ -169,6 +169,7 @@ export const projectWorkers: ProjectWorkersTranslations = {
     whenUnavailable: '如果無法在那裡執行',
     fallbackPrimary: '改為在此執行',
     fallbackFail: '不啟動',
+    fallbackLocked: '將於下次啟動時生效。停止該服務後才能變更。',
     destinationMissing: '已儲存的目標無法使用。',
     settingsUnavailable: '服務放置設定無法使用。',
     saveFailed: '無法儲存服務放置。',

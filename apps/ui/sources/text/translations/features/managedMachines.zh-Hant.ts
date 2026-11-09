@@ -357,7 +357,7 @@ export const managedMachines: ManagedMachinesTranslations = {
             joined: ({ name, home }: { name: string; home: string }) => `${name} 已加入 ${home}。`,
             enrollmentUnavailable: "你的 Home 無法註冊此機器。請確認 Home 是否可用，然後重試。",
             homeRequestFailed: "你的 Home 無法完成此請求。請檢查 Home，然後重試。",
-            homeNotGuestReachable: "此 Home 僅在管理它的電腦上提供連線，因此新機器無法連上。請新增新機器可連上的 Home 端點，然後重新建立機器。",
+            homeNotGuestReachable: "新機器無法連線至此 Home。請從新機器檢查 Home 位址、DNS、網路路由和防火牆存取權限，然後重試。",
             retryInstall: "重試安裝",
             openDetails: "顯示建立詳細資料",
             fromThis: { phone: "來自這支手機", browser: "來自這個瀏覽器", desktop: "來自這台電腦" },

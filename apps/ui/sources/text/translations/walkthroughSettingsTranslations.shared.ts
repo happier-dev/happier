@@ -52,10 +52,11 @@ export const en = {
     prefetch: 'Prepare after each turn', prefetchDescription: 'Prepares a walkthrough when the agent finishes a turn.',
     saved: 'Saved walkthroughs', savedDescription: 'Saved on this machine, including your edits.', clear: 'Clear',
     unavailableData: 'Reconnect the machine to load saved walkthroughs and costs.', costUnavailable: 'Last 7 days · cost unavailable',
-    clearTitle: 'Clear saved walkthroughs?', clearDescription: ({ machine }: { machine: string }) => `Delete saved walkthroughs and your manual edits on ${machine}, plus your review marks for those comparisons. Other machines are not affected.`,
+    clearTitle: 'Clear saved walkthroughs?', clearDescription: ({ machine }: { machine: string }) => `Delete the selected saved walkthroughs and your manual edits on ${machine}. Your review marks are cleared for comparisons with no saved walkthrough left on this machine. Saved walkthroughs on other machines stay.`,
     savedCount: ({ count, bytes }: { count: number; bytes: string }) => `${count} saved · ${bytes}`,
     cost: ({ amount, partial }: { amount: string; partial: boolean }) => `Last 7 days · ${amount}${partial ? ' · some costs unavailable' : ''}`,
     clearFailed: 'Some walkthroughs could not be cleared. Reload and try again.',
+    clearMarksCleanupFailed: 'Some walkthroughs were deleted, but their review marks could not be cleared. Retry to clear those marks.',
 };
 
 

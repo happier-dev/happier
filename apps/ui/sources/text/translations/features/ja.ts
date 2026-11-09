@@ -16622,7 +16622,7 @@ const ja = translated(workflowValueReferenceTranslations.ja, {
         showFullPlan: '計画の全文を表示',
         generationRequested: "生成をリクエスト済み",
         startsResume: "実行を再開すると開始します。",
-        generateBody: "エージェントがこの会話で新しい結果を作成します。有効な結果なら、再確認せず実行を続けます。",
+        generateBody: "有効な結果なら、再確認せず続行します。",
         acceptedPaused: "結果を受け入れました。ワークフローは一時停止したままです。",
         editResult: "結果を編集",
         generate: "結果を生成して続行",

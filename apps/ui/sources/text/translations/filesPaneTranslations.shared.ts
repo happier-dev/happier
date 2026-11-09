@@ -23,6 +23,25 @@ export type FilesPaneTranslations = Readonly<{
         goToDefinition: string;
         showInfo: string;
         restartLanguageServices: string;
+        goToTypeDefinition: string;
+        goToImplementation: string;
+        formatDocument: string;
+        formatSelection: string;
+        organizeImports: string;
+        suggest: string;
+        acceptCompletion: string;
+        expandSelection: string;
+        shrinkSelection: string;
+        peekReferences: string;
+        signatureHelp: string;
+        formatOnSave: string;
+        formatOnSaveDescription: string;
+        inlayHints: string;
+        inlayOff: string;
+        inlayParameters: string;
+        inlayAll: string;
+        semanticHighlighting: string;
+        semanticHighlightingDescription: string;
         renameSymbol: string;
         quickFix: string;
     }>;
@@ -55,6 +74,8 @@ export type FilesPaneTranslations = Readonly<{
         artifactTitle: string;
         artifactDescription: string;
         artifactTitleLabel: string;
+        artifactFolderDescription: string;
+        artifactEntrypointLabel: string;
         artifactAudience: string;
         artifactOnlyYou: string;
         artifactSave: string;
@@ -74,8 +95,6 @@ export type FilesPaneTranslations = Readonly<{
         tooLargeBody: (params: Readonly<{ slice: string }>) => string;
         showFirst: (params: Readonly<{ slice: string }>) => string;
         showLast: (params: Readonly<{ slice: string }>) => string;
-        artifactFolderDescription: string;
-        artifactEntrypointLabel: string;
         showingFirst: (params: Readonly<{ slice: string; size: string }>) => string;
         showingLast: (params: Readonly<{ slice: string; size: string }>) => string;
         partialFact: (params: Readonly<{ slice: string; size: string }>) => string;
@@ -121,11 +140,26 @@ export type FilesPaneTranslations = Readonly<{
         noReferences: string;
         textMatches: string;
         textMatchesPartial: string;
+        noReferencesPartial: string;
+        referencesPartial: string;
         problemsTitle: string;
         referencesTitle: string;
         problemsScope: string;
         problemsIdle: string;
         checkProblems: string;
+        calls: string;
+        incomingCalls: string;
+        outgoingCalls: string;
+        noCalls: string;
+        chooseCallTarget: string;
+        checkWholeProject: string;
+        openFiles: string;
+        wholeProject: string;
+        projectProblemsIdle: string;
+        projectProblemsUnavailable: string;
+        projectNoProblems: string;
+        projectProblemsPartial: string;
+        workspaceSymbols: string;
         checking: string;
         noProblems: string;
         addedToMessage: string;
@@ -205,6 +239,25 @@ export const filesPaneTranslationsEnglish = { en: {
             goToDefinition: "Go to definition at cursor",
             showInfo: "Info at cursor",
             restartLanguageServices: "Restart language services",
+            goToTypeDefinition: "Go to type definition",
+            goToImplementation: "Go to implementation",
+            formatDocument: "Format document",
+            formatSelection: "Format selection",
+            organizeImports: "Organize imports",
+            suggest: "Suggest",
+            acceptCompletion: "Accept suggestion",
+            expandSelection: "Expand selection",
+            shrinkSelection: "Shrink selection",
+            peekReferences: "Peek references",
+            signatureHelp: "Parameter help",
+            formatOnSave: "Format on save",
+            formatOnSaveDescription: "Format the buffer before saving. Off by default.",
+            inlayHints: "Inlay hints",
+            inlayOff: "Off",
+            inlayParameters: "Parameters",
+            inlayAll: "All",
+            semanticHighlighting: "Semantic highlighting",
+            semanticHighlightingDescription: "Layer language-server highlighting over syntax colors.",
             renameSymbol: "Rename symbol",
             quickFix: "Quick fix",
         },
@@ -222,7 +275,7 @@ export const filesPaneTranslationsEnglish = { en: {
         noChangedFilesReason: 'The working copy matches the last commit.',
         rootErrorTitle: ({ machine }) => `Couldn’t list files on ${machine}`,
         rootErrorTitleUnnamed: 'Couldn’t list files',
-        workspaceUnavailableReason: 'Happier could not resolve a machine and folder for this session.',
+        workspaceUnavailableReason: 'Happier can’t reach these files from here.',
         page: {
             view: "View",
             preview: "Preview",
@@ -236,6 +289,8 @@ export const filesPaneTranslationsEnglish = { en: {
             artifactTitle: "Save as Artifact",
             artifactDescription: "An Artifact is a copy you can share. Later changes to the file don’t change it.",
             artifactTitleLabel: "Title",
+            artifactFolderDescription: "An Artifact is a copy you can share. It takes the page and every file beside it; later changes to the folder don’t change it.",
+            artifactEntrypointLabel: "Page it opens",
             artifactAudience: "Who can see it",
             artifactOnlyYou: "Only you",
             artifactSave: "Save as Artifact",
@@ -289,8 +344,6 @@ export const filesPaneTranslationsEnglish = { en: {
             lookingUp: "Looking it up…",
             goToDefinition: "Go to definition",
             findReferences: "Find references",
-            artifactFolderDescription: "An Artifact is a copy you can share. It takes the page and every file beside it; later changes to the folder don’t change it.",
-            artifactEntrypointLabel: "Page it opens",
             definition: "Definition",
             references: "References",
             definedOutside: "Defined outside the workspace",
@@ -298,11 +351,26 @@ export const filesPaneTranslationsEnglish = { en: {
             noReferences: "No references found",
             textMatches: "Text matches: no language server answers for this file.",
             textMatchesPartial: "Text matches, first results: no language server answers for this file.",
+            noReferencesPartial: "None in the first results. There may be more.",
+            referencesPartial: "First results only. There may be more.",
             problemsTitle: "Problems",
             referencesTitle: "References",
             problemsScope: "In files you have open",
             problemsIdle: "Check this file for type errors and other problems.",
             checkProblems: "Check problems",
+            calls: "Calls",
+            incomingCalls: "Incoming",
+            outgoingCalls: "Outgoing",
+            noCalls: "No calls found",
+            chooseCallTarget: "Choose a function",
+            checkWholeProject: "Check the whole project",
+            openFiles: "Open files",
+            wholeProject: "Whole project",
+            projectProblemsIdle: "Check every file in the project, including the ones you don’t have open.",
+            projectProblemsUnavailable: "Project checking is unavailable. Check the machine and its language tools, then try again.",
+            projectNoProblems: "No problems in the project",
+            projectProblemsPartial: "Some project results could not be included.",
+            workspaceSymbols: "Symbols",
             checking: "Checking…",
             noProblems: "No problems in files you have open",
             addedToMessage: "Added to your message",

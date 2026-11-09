@@ -1,3 +1,5 @@
+import { PUBLIC_USAGE_PLANET_COPY_EN } from '@happier-dev/protocol/account/publicProfilePublication';
+
 // Copy for the calendar and planet-family Usage chart bodies (Ninety planets, Streak thread, Weeks, Days on the
 // surface, Ringed by streaks, Around the period, Moons, Machines, Projects, Atmosphere).
 type Count = { count: string | number };
@@ -31,36 +33,7 @@ const block = (copy: {
 }) => copy;
 
 export const usageChartPlanetFamilyTranslations = {
-  en: block({
-    levelColumn: 'How busy',
-    weekColumn: 'Week',
-    activeDaysColumn: 'Active days',
-    shareColumn: 'Share',
-    daysColumn: 'Days',
-    peakColumn: 'At once',
-    kindColumn: 'Machine',
-    countColumn: 'How many',
-    weekdayInitials: 'M,T,W,T,F,S,S',
-    streakBestDays: ({ count }) => `Best · ${count} ${Number(count) === 1 ? 'day' : 'days'}`,
-    streakNowDays: ({ count }) => `${count} ${Number(count) === 1 ? 'day' : 'days'} now`,
-    streakOngoingBest: ({ count }) =>
-      `${count} ${Number(count) === 1 ? 'day' : 'days'} · your longest in this period`,
-    daysLit: ({ count, total }) => `${count} of ${total} days lit`,
-    partialWeek: ({ from, to }) => `${from}–${to} · part week`, noStreakRings: 'No run of three days or more in this period',
-    moonsCaption: 'Each agent is a moon; its size is its share.',
-    moonsCaptionDays:
-      'Each agent is a moon; its size is its share, the lit part how many days it worked.',
-    machinesUnavailable:
-      'Machine kinds aren’t recorded yet. They appear once Happier can tell which kind of machine each agent ran on.',
-    machinesEmpty: 'No machine ran agents in this period.',
-    machineKindUnknown: 'Unknown kind',
-    projectsEmpty: 'No public projects linked yet.',
-    atmosphereFirstWeek: 'Week 1',
-    atmosphereCaption:
-      'The halo thickens in weeks with more agents at once; week 1 is at the top.',
-    atmosphereCaptionPeak: ({ count }) =>
-      `The halo thickens in weeks with more agents at once; up to ${count} at once this period.`,
-  }),
+  en: block(PUBLIC_USAGE_PLANET_COPY_EN),
   es: block({
     levelColumn: 'Actividad',
     weekColumn: 'Semana',
@@ -98,7 +71,7 @@ export const usageChartPlanetFamilyTranslations = {
     shareColumn: 'Anteil',
     daysColumn: 'Tage',
     peakColumn: 'Gleichzeitig',
-    kindColumn: 'Maschine',
+    kindColumn: 'Rechner',
     countColumn: 'Anzahl',
     weekdayInitials: 'M,D,M,D,F,S,S',
     streakBestDays: ({ count }) => `Bestwert · ${count} ${Number(count) === 1 ? 'Tag' : 'Tage'}`,
@@ -111,8 +84,8 @@ export const usageChartPlanetFamilyTranslations = {
     moonsCaptionDays:
       'Jeder Agent ist ein Mond; seine Größe ist sein Anteil, der beleuchtete Teil die Tage, an denen er gearbeitet hat.',
     machinesUnavailable:
-      'Maschinenarten werden noch nicht erfasst. Sie erscheinen, sobald Happier erkennt, auf welcher Art Maschine jeder Agent lief.',
-    machinesEmpty: 'In diesem Zeitraum hat keine Maschine Agenten ausgeführt.',
+      'Rechnerarten werden noch nicht erfasst. Sie erscheinen, sobald Happier erkennt, auf welcher Art Rechner jeder Agent lief.',
+    machinesEmpty: 'In diesem Zeitraum hat kein Rechner Agenten ausgeführt.',
     machineKindUnknown: 'Unbekannte Art',
     projectsEmpty: 'Noch keine öffentlichen Projekte verlinkt.',
     atmosphereFirstWeek: 'Woche 1',

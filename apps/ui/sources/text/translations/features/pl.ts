@@ -16658,7 +16658,7 @@ const pl = translated(workflowValueReferenceTranslations.pl, {
         showFullPlan: 'Pokaż cały plan',
         generationRequested: "Zlecono generowanie",
         startsResume: "Zacznie się po wznowieniu uruchomienia.",
-        generateBody: "Agent zapisze nowy wynik w tej rozmowie. Jeśli będzie poprawny, uruchomienie będzie kontynuowane bez ponownego pytania.",
+        generateBody: "Poprawny wynik przechodzi dalej bez kolejnej weryfikacji.",
         acceptedPaused: "Wynik zaakceptowany. Workflow jest nadal wstrzymany.",
         editResult: "Edytuj wynik",
         generate: "Wygeneruj wynik i kontynuuj",

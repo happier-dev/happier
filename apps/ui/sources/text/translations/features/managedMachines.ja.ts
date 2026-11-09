@@ -357,7 +357,7 @@ export const managedMachines: ManagedMachinesTranslations = {
             joined: ({ name, home }: { name: string; home: string }) => `${name} が ${home} に参加しました。`,
             enrollmentUnavailable: "Home にこのマシンを登録できませんでした。Home が利用可能か確認してから、もう一度お試しください。",
             homeRequestFailed: "Home でこのリクエストを完了できませんでした。Home を確認してから、もう一度お試しください。",
-            homeNotGuestReachable: "この Home は管理元のコンピュータ上でしか接続を受け付けないため、新しいマシンから到達できません。マシンから届く Home のエンドポイントを追加してから、もう一度作成してください。",
+            homeNotGuestReachable: "新しいマシンからこの Home に接続できません。新しいマシンから Home のアドレス、DNS、ネットワーク経路、ファイアウォールによるアクセス許可を確認して、もう一度お試しください。",
             retryInstall: "インストールを再試行",
             openDetails: "作成の詳細を表示",
             fromThis: { phone: "このスマートフォンから", browser: "このブラウザから", desktop: "このコンピューターから" },

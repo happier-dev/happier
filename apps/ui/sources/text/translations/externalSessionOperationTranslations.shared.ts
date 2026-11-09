@@ -20,6 +20,10 @@ export const en = {
     operationMaterializeAvailable: 'Import this linked session to use its transcript offline or share it.',
     externalAgentStatusOnMachine: ({ agent, machine, status }: { agent: string; machine: string; status: string }) =>
         `${agent} on ${machine}: ${status}`,
+    externalAgentRunsOnMachine: ({ agent, machine }: { agent: string; machine: string }) =>
+        `Runs in ${agent} on ${machine}.`,
+    externalAgentRunsOutsideHappier: 'Runs outside Happier.',
+    externalAgentTakeOverHint: 'Take over to continue it in Happier.',
     operationStatusRunning: 'In progress',
     operationStatusCancelling: 'Cancelling…',
     operationStatusCancelled: 'Cancelled',

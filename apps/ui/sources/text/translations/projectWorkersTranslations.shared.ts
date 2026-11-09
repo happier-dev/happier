@@ -188,6 +188,7 @@ export const projectWorkersEn = {
     whenUnavailable: 'If it can’t run there',
     fallbackPrimary: 'Run here instead',
     fallbackFail: 'Don’t start',
+    fallbackLocked: 'Applies at the next start. Stop the service to change it.',
     destinationMissing: 'The saved destination is unavailable.',
     settingsUnavailable: 'Service placement settings are unavailable.',
     saveFailed: 'Couldn’t save service placement.',

@@ -22,7 +22,7 @@ export const actionSettingsResourcesTranslations = {
             related: 'Its own Action · opens its settings',
         },
         facts: {
-            automationsSection: 'Automations',
+            automationsSection: 'Workflows',
             alwaysTrueSection: 'Always true',
             automations: { title: 'Scheduled reviews', subtitle: 'Scheduled reviews use the Agents setting above.' },
             forbidden: { title: 'Forbidden locations', subtitle: 'Happier refuses to move or delete them.' },

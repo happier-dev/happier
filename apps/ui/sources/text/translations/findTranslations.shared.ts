@@ -2,7 +2,7 @@
 
 export type FindTranslations = Readonly<{
     open: string;
-    openedForMatch: string;
+    openedForMatch: (params: Readonly<{ count: number }>) => string;
     foldAgain: string;
     showHiddenLines: (params: Readonly<{ count: number }>) => string;
     surface: Readonly<{
@@ -65,7 +65,7 @@ export function russianPlural(count: number, one: string, few: string, many: str
 
 export const en: FindTranslations = {
     open: 'Find…',
-    openedForMatch: 'Opened for a match', foldAgain: 'Fold again', showHiddenLines: ({ count }) => `Show ${count} hidden ${count === 1 ? 'line' : 'lines'}`,
+    openedForMatch: ({ count }) => `Opened for a match · ${count} hidden ${count === 1 ? 'line' : 'lines'}`, foldAgain: 'Fold again', showHiddenLines: ({ count }) => `Show ${count} hidden ${count === 1 ? 'line' : 'lines'}`,
     surface: {
         chat: 'Find in chat',
         changes: 'Find in changes',

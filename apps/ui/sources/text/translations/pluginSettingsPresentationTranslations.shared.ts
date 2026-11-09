@@ -33,8 +33,9 @@ export const english = {
     detailMissingRetry: 'Check again',
     surfaces: {
         purpose: 'Add surfaces, commands and integrations to Happier. Plugins run as trusted code on your machines.',
-        /** The main sidebar entry and app-page title for these screens. */
+        /** Settings keeps the Plugin management title; the app destination is Store. */
         navigationTitle: 'Plugins',
+        storeTitle: 'Store',
         updatesTitle: 'Updates',
         moreDescriptionInSettings: 'Where plugins come from, building your own, and what this machine reports. These open in Settings.',
         fix: 'Fix',
@@ -118,6 +119,8 @@ export const english = {
             agent: 'Agents',
             providers: 'Model providers',
             scmHostingProviders: 'Code hosting',
+            machineRecipes: 'Machine recipes',
+            machineSetupPresets: 'Machine setup presets',
             scmBackends: 'Source control',
             languageServers: 'Language servers',
             voice: 'Voice',

@@ -16,6 +16,7 @@ type Labels = Readonly<{
   lines: (params: Range) => string;
   kept: string;
   keep: string;
+  keepUnavailable: string;
   discard: string;
   keepA11y: (params: RowA11y) => string;
   unkeepA11y: (params: RowA11y) => string;
@@ -27,6 +28,12 @@ type Labels = Readonly<{
   keepAll: string;
   fileReviewed: string;
   filesLeft: (params: Count) => string;
+  viewed: string;
+  viewedChanged: string;
+  viewedNotSaved: string;
+  viewedA11y: (params: Name) => string;
+  viewedCount: (params: Readonly<{ count: number; total: number }>) => string;
+  viewedUnavailable: string;
   nextFile: string;
   nextNamed: (params: Name) => string;
   scopeA11y: string;
@@ -68,6 +75,8 @@ type Labels = Readonly<{
   imageModeA11y: string;
   imageBefore: string;
   imageAfter: string;
+  pdfOpenBefore: string;
+  pdfOpenAfter: string;
   imageAdded: string;
   imageDeleted: string;
   imageUnreadable: string;
@@ -88,6 +97,7 @@ export const hunkReviewTranslations = {
     lines: ({ start, end }) => `lines ${start}–${end}`,
     kept: 'Kept',
     keep: 'Keep',
+    keepUnavailable: 'Keep is unavailable. Reopen this review to try again.',
     discard: 'Discard',
     keepA11y: ({ n, total, range }) => `Keep change ${n} of ${total}, ${range}`,
     unkeepA11y: ({ n, total, range }) =>
@@ -101,6 +111,12 @@ export const hunkReviewTranslations = {
     keepAll: 'Keep all',
     fileReviewed: 'All changes in this file reviewed',
     filesLeft: ({ count }) => (count === 1 ? '1 file left' : `${count} files left`),
+    viewed: 'Viewed',
+    viewedChanged: 'Changed since viewed',
+    viewedNotSaved: 'Not saved to GitHub',
+    viewedA11y: ({ name }) => `${name}, viewed on GitHub`,
+    viewedCount: ({ count, total }) => `${count} of ${total} viewed`,
+    viewedUnavailable: 'Viewed unavailable',
     nextFile: 'Next file',
     nextNamed: ({ name }) => `Next · ${name}`,
     scopeA11y: 'Changes to show',
@@ -144,6 +160,8 @@ export const hunkReviewTranslations = {
     imageModeA11y: 'Compare images',
     imageBefore: 'Before',
     imageAfter: 'After',
+    pdfOpenBefore: 'Open before',
+    pdfOpenAfter: 'Open after',
     imageAdded: 'Added',
     imageDeleted: 'Deleted',
     imageUnreadable: 'This image could not be read',
@@ -162,6 +180,7 @@ export const hunkReviewTranslations = {
     lines: ({ start, end }) => `lignes ${start}–${end}`,
     kept: 'Conservée',
     keep: 'Conserver',
+    keepUnavailable: 'La conservation est indisponible. Rouvrez cette revue pour réessayer.',
     discard: 'Annuler',
     keepA11y: ({ n, total, range }) =>
       `Conserver la modification ${n} sur ${total}, ${range}`,
@@ -176,6 +195,12 @@ export const hunkReviewTranslations = {
     keepAll: 'Tout conserver',
     fileReviewed: 'Toutes les modifications de ce fichier sont vérifiées',
     filesLeft: ({ count }) => (count === 1 ? '1 fichier restant' : `${count} fichiers restants`),
+    viewed: 'Vu',
+    viewedChanged: 'Modifié depuis la consultation',
+    viewedNotSaved: 'Non enregistré sur GitHub',
+    viewedA11y: ({ name }) => `${name}, vu sur GitHub`,
+    viewedCount: ({ count, total }) => `${count} sur ${total} vus`,
+    viewedUnavailable: 'Vu indisponible',
     nextFile: 'Fichier suivant',
     nextNamed: ({ name }) => `Suivant · ${name}`,
     scopeA11y: 'Modifications à afficher',
@@ -220,6 +245,8 @@ export const hunkReviewTranslations = {
     imageModeA11y: 'Comparer les images',
     imageBefore: 'Avant',
     imageAfter: 'Après',
+    pdfOpenBefore: 'Ouvrir avant',
+    pdfOpenAfter: 'Ouvrir après',
     imageAdded: 'Ajoutée',
     imageDeleted: 'Supprimée',
     imageUnreadable: 'Impossible de lire cette image',
@@ -238,6 +265,7 @@ export const hunkReviewTranslations = {
     lines: ({ start, end }) => `Zeilen ${start}–${end}`,
     kept: 'Behalten',
     keep: 'Behalten',
+    keepUnavailable: 'Behalten ist nicht verfügbar. Öffne diese Überprüfung erneut und versuche es noch einmal.',
     discard: 'Verwerfen',
     keepA11y: ({ n, total, range }) =>
       `Änderung ${n} von ${total} behalten, ${range}`,
@@ -252,6 +280,12 @@ export const hunkReviewTranslations = {
     keepAll: 'Alle behalten',
     fileReviewed: 'Alle Änderungen in dieser Datei geprüft',
     filesLeft: ({ count }) => (count === 1 ? '1 Datei übrig' : `${count} Dateien übrig`),
+    viewed: 'Angesehen',
+    viewedChanged: 'Seit dem Ansehen geändert',
+    viewedNotSaved: 'Nicht auf GitHub gespeichert',
+    viewedA11y: ({ name }) => `${name}, auf GitHub angesehen`,
+    viewedCount: ({ count, total }) => `${count} von ${total} angesehen`,
+    viewedUnavailable: 'Angesehen nicht verfügbar',
     nextFile: 'Nächste Datei',
     nextNamed: ({ name }) => `Weiter · ${name}`,
     scopeA11y: 'Angezeigte Änderungen',
@@ -297,6 +331,8 @@ export const hunkReviewTranslations = {
     imageModeA11y: 'Bilder vergleichen',
     imageBefore: 'Vorher',
     imageAfter: 'Nachher',
+    pdfOpenBefore: 'Vorher öffnen',
+    pdfOpenAfter: 'Nachher öffnen',
     imageAdded: 'Hinzugefügt',
     imageDeleted: 'Gelöscht',
     imageUnreadable: 'Dieses Bild konnte nicht gelesen werden',
@@ -315,6 +351,7 @@ export const hunkReviewTranslations = {
     lines: ({ start, end }) => `líneas ${start}–${end}`,
     kept: 'Conservado',
     keep: 'Conservar',
+    keepUnavailable: 'No se pueden conservar los cambios. Vuelve a abrir esta revisión para intentarlo de nuevo.',
     discard: 'Descartar',
     keepA11y: ({ n, total, range }) =>
       `Conservar el cambio ${n} de ${total}, ${range}`,
@@ -329,6 +366,12 @@ export const hunkReviewTranslations = {
     keepAll: 'Conservar todo',
     fileReviewed: 'Todos los cambios de este archivo revisados',
     filesLeft: ({ count }) => (count === 1 ? 'queda 1 archivo' : `quedan ${count} archivos`),
+    viewed: 'Visto',
+    viewedChanged: 'Cambiado desde que se vio',
+    viewedNotSaved: 'No guardado en GitHub',
+    viewedA11y: ({ name }) => `${name}, visto en GitHub`,
+    viewedCount: ({ count, total }) => `${count} de ${total} vistos`,
+    viewedUnavailable: 'Visto no disponible',
     nextFile: 'Archivo siguiente',
     nextNamed: ({ name }) => `Siguiente · ${name}`,
     scopeA11y: 'Cambios que mostrar',
@@ -373,6 +416,8 @@ export const hunkReviewTranslations = {
     imageModeA11y: 'Comparar imágenes',
     imageBefore: 'Antes',
     imageAfter: 'Después',
+    pdfOpenBefore: 'Abrir antes',
+    pdfOpenAfter: 'Abrir después',
     imageAdded: 'Añadida',
     imageDeleted: 'Eliminada',
     imageUnreadable: 'No se pudo leer esta imagen',
@@ -391,6 +436,7 @@ export const hunkReviewTranslations = {
     lines: ({ start, end }) => `línies ${start}–${end}`,
     kept: 'Conservat',
     keep: 'Conservar',
+    keepUnavailable: 'No es poden conservar els canvis. Torna a obrir aquesta revisió per tornar-ho a provar.',
     discard: 'Descartar',
     keepA11y: ({ n, total, range }) =>
       `Conservar el canvi ${n} de ${total}, ${range}`,
@@ -405,6 +451,12 @@ export const hunkReviewTranslations = {
     keepAll: 'Conservar-ho tot',
     fileReviewed: 'Tots els canvis d’aquest fitxer revisats',
     filesLeft: ({ count }) => (count === 1 ? 'en queda 1 fitxer' : `en queden ${count} fitxers`),
+    viewed: 'Vist',
+    viewedChanged: 'Canviat des que es va veure',
+    viewedNotSaved: 'No desat a GitHub',
+    viewedA11y: ({ name }) => `${name}, vist a GitHub`,
+    viewedCount: ({ count, total }) => `${count} de ${total} vistos`,
+    viewedUnavailable: 'Vist no disponible',
     nextFile: 'Fitxer següent',
     nextNamed: ({ name }) => `Següent · ${name}`,
     scopeA11y: 'Canvis per mostrar',
@@ -449,6 +501,8 @@ export const hunkReviewTranslations = {
     imageModeA11y: 'Comparar imatges',
     imageBefore: 'Abans',
     imageAfter: 'Després',
+    pdfOpenBefore: 'Obre abans',
+    pdfOpenAfter: 'Obre després',
     imageAdded: 'Afegida',
     imageDeleted: 'Suprimida',
     imageUnreadable: 'No s’ha pogut llegir aquesta imatge',
@@ -467,6 +521,7 @@ export const hunkReviewTranslations = {
     lines: ({ start, end }) => `righe ${start}–${end}`,
     kept: 'Conservata',
     keep: 'Conserva',
+    keepUnavailable: 'Impossibile conservare le modifiche. Riapri questa revisione per riprovare.',
     discard: 'Scarta',
     keepA11y: ({ n, total, range }) =>
       `Conserva la modifica ${n} di ${total}, ${range}`,
@@ -481,6 +536,12 @@ export const hunkReviewTranslations = {
     keepAll: 'Conserva tutto',
     fileReviewed: 'Tutte le modifiche di questo file verificate',
     filesLeft: ({ count }) => (count === 1 ? 'resta 1 file' : `restano ${count} file`),
+    viewed: 'Visto',
+    viewedChanged: 'Modificato da quando è stato visto',
+    viewedNotSaved: 'Non salvato su GitHub',
+    viewedA11y: ({ name }) => `${name}, visto su GitHub`,
+    viewedCount: ({ count, total }) => `${count} di ${total} visti`,
+    viewedUnavailable: 'Visto non disponibile',
     nextFile: 'File successivo',
     nextNamed: ({ name }) => `Successivo · ${name}`,
     scopeA11y: 'Modifiche da mostrare',
@@ -525,6 +586,8 @@ export const hunkReviewTranslations = {
     imageModeA11y: 'Confronta immagini',
     imageBefore: 'Prima',
     imageAfter: 'Dopo',
+    pdfOpenBefore: 'Apri prima',
+    pdfOpenAfter: 'Apri dopo',
     imageAdded: 'Aggiunta',
     imageDeleted: 'Eliminata',
     imageUnreadable: 'Impossibile leggere questa immagine',
@@ -543,6 +606,7 @@ export const hunkReviewTranslations = {
     lines: ({ start, end }) => `linhas ${start}–${end}`,
     kept: 'Mantida',
     keep: 'Manter',
+    keepUnavailable: 'Não é possível manter as alterações. Reabra esta revisão para tentar novamente.',
     discard: 'Descartar',
     keepA11y: ({ n, total, range }) =>
       `Manter a alteração ${n} de ${total}, ${range}`,
@@ -557,6 +621,12 @@ export const hunkReviewTranslations = {
     keepAll: 'Manter tudo',
     fileReviewed: 'Todas as alterações deste arquivo revisadas',
     filesLeft: ({ count }) => (count === 1 ? 'falta 1 arquivo' : `faltam ${count} arquivos`),
+    viewed: 'Visto',
+    viewedChanged: 'Alterado desde que foi visto',
+    viewedNotSaved: 'Não salvo no GitHub',
+    viewedA11y: ({ name }) => `${name}, visto no GitHub`,
+    viewedCount: ({ count, total }) => `${count} de ${total} vistos`,
+    viewedUnavailable: 'Visto indisponível',
     nextFile: 'Próximo arquivo',
     nextNamed: ({ name }) => `Próximo · ${name}`,
     scopeA11y: 'Alterações a mostrar',
@@ -601,6 +671,8 @@ export const hunkReviewTranslations = {
     imageModeA11y: 'Comparar imagens',
     imageBefore: 'Antes',
     imageAfter: 'Depois',
+    pdfOpenBefore: 'Abrir antes',
+    pdfOpenAfter: 'Abrir depois',
     imageAdded: 'Adicionada',
     imageDeleted: 'Excluída',
     imageUnreadable: 'Não foi possível ler esta imagem',
@@ -619,6 +691,7 @@ export const hunkReviewTranslations = {
     lines: ({ start, end }) => `wiersze ${start}–${end}`,
     kept: 'Zachowana',
     keep: 'Zachowaj',
+    keepUnavailable: 'Zachowanie zmian jest niedostępne. Otwórz tę recenzję ponownie i spróbuj jeszcze raz.',
     discard: 'Odrzuć',
     keepA11y: ({ n, total, range }) =>
       `Zachowaj zmianę ${n} z ${total}, ${range}`,
@@ -633,6 +706,12 @@ export const hunkReviewTranslations = {
     keepAll: 'Zachowaj wszystko',
     fileReviewed: 'Wszystkie zmiany w tym pliku przejrzane',
     filesLeft: ({ count }) => (count === 1 ? 'został 1 plik' : count % 10 >= 2 && count % 10 <= 4 && (count % 100 < 12 || count % 100 > 14) ? `zostały ${count} pliki` : `zostało ${count} plików`),
+    viewed: 'Przejrzane',
+    viewedChanged: 'Zmieniono od przejrzenia',
+    viewedNotSaved: 'Nie zapisano w GitHub',
+    viewedA11y: ({ name }) => `${name}, przejrzane w GitHub`,
+    viewedCount: ({ count, total }) => `${count} z ${total} przejrzanych`,
+    viewedUnavailable: 'Przejrzane niedostępne',
     nextFile: 'Następny plik',
     nextNamed: ({ name }) => `Dalej · ${name}`,
     scopeA11y: 'Zmiany do pokazania',
@@ -677,6 +756,8 @@ export const hunkReviewTranslations = {
     imageModeA11y: 'Porównaj obrazy',
     imageBefore: 'Przed',
     imageAfter: 'Po',
+    pdfOpenBefore: 'Otwórz przed',
+    pdfOpenAfter: 'Otwórz po',
     imageAdded: 'Dodany',
     imageDeleted: 'Usunięty',
     imageUnreadable: 'Nie udało się odczytać tego obrazu',
@@ -695,6 +776,7 @@ export const hunkReviewTranslations = {
     lines: ({ start, end }) => `строки ${start}–${end}`,
     kept: 'Принято',
     keep: 'Принять',
+    keepUnavailable: 'Принятие изменений недоступно. Откройте эту проверку заново и повторите попытку.',
     discard: 'Отменить',
     keepA11y: ({ n, total, range }) =>
       `Принять изменение ${n} из ${total}, ${range}`,
@@ -709,6 +791,12 @@ export const hunkReviewTranslations = {
     keepAll: 'Принять все',
     fileReviewed: 'Все изменения в этом файле просмотрены',
     filesLeft: ({ count }) => (count % 10 === 1 && count % 100 !== 11 ? `остался ${count} файл` : count % 10 >= 2 && count % 10 <= 4 && (count % 100 < 12 || count % 100 > 14) ? `осталось ${count} файла` : `осталось ${count} файлов`),
+    viewed: 'Просмотрено',
+    viewedChanged: 'Изменён после просмотра',
+    viewedNotSaved: 'Не сохранено в GitHub',
+    viewedA11y: ({ name }) => `${name}, просмотрено в GitHub`,
+    viewedCount: ({ count, total }) => `${count} из ${total} просмотрено`,
+    viewedUnavailable: 'Отметки просмотра недоступны',
     nextFile: 'Следующий файл',
     nextNamed: ({ name }) => `Далее · ${name}`,
     scopeA11y: 'Какие изменения показать',
@@ -752,6 +840,8 @@ export const hunkReviewTranslations = {
     imageModeA11y: 'Сравнить изображения',
     imageBefore: 'До',
     imageAfter: 'После',
+    pdfOpenBefore: 'Открыть до',
+    pdfOpenAfter: 'Открыть после',
     imageAdded: 'Добавлено',
     imageDeleted: 'Удалено',
     imageUnreadable: 'Не удалось прочитать изображение',
@@ -770,6 +860,7 @@ export const hunkReviewTranslations = {
     lines: ({ start, end }) => `${start}–${end} 行目`,
     kept: '承認済み',
     keep: '承認',
+    keepUnavailable: '変更を承認できません。このレビューを開き直して再試行してください。',
     discard: '破棄',
     keepA11y: ({ n, total, range }) =>
       `${total} 件中 ${n} 件目の変更を承認、${range}`,
@@ -784,6 +875,12 @@ export const hunkReviewTranslations = {
     keepAll: 'すべて承認',
     fileReviewed: 'このファイルの変更をすべて確認しました',
     filesLeft: ({ count }) => `残り ${count} ファイル`,
+    viewed: '表示済み',
+    viewedChanged: '表示後に変更あり',
+    viewedNotSaved: 'GitHub に保存されていません',
+    viewedA11y: ({ name }) => `${name}、GitHub で表示済み`,
+    viewedCount: ({ count, total }) => `${count} / ${total} 件表示済み`,
+    viewedUnavailable: '表示済みを読み込めません',
     nextFile: '次のファイル',
     nextNamed: ({ name }) => `次 · ${name}`,
     scopeA11y: '表示する変更',
@@ -828,6 +925,8 @@ export const hunkReviewTranslations = {
     imageModeA11y: '画像を比較',
     imageBefore: '変更前',
     imageAfter: '変更後',
+    pdfOpenBefore: '変更前を開く',
+    pdfOpenAfter: '変更後を開く',
     imageAdded: '追加',
     imageDeleted: '削除',
     imageUnreadable: 'この画像を読み込めませんでした',
@@ -846,6 +945,7 @@ export const hunkReviewTranslations = {
     lines: ({ start, end }) => `第 ${start}–${end} 行`,
     kept: '已保留',
     keep: '保留',
+    keepUnavailable: '暂时无法保留更改。请重新打开此审查后重试。',
     discard: '放弃',
     keepA11y: ({ n, total, range }) =>
       `保留第 ${n} 项更改（共 ${total} 项），${range}`,
@@ -860,6 +960,12 @@ export const hunkReviewTranslations = {
     keepAll: '全部保留',
     fileReviewed: '此文件的所有更改均已审查',
     filesLeft: ({ count }) => `还剩 ${count} 个文件`,
+    viewed: '已查看',
+    viewedChanged: '查看后有更改',
+    viewedNotSaved: '未保存到 GitHub',
+    viewedA11y: ({ name }) => `${name}，已在 GitHub 查看`,
+    viewedCount: ({ count, total }) => `已查看 ${count} / ${total}`,
+    viewedUnavailable: '无法读取已查看状态',
     nextFile: '下一个文件',
     nextNamed: ({ name }) => `下一个 · ${name}`,
     scopeA11y: '要显示的更改',
@@ -901,6 +1007,8 @@ export const hunkReviewTranslations = {
     imageModeA11y: '比较图片',
     imageBefore: '之前',
     imageAfter: '之后',
+    pdfOpenBefore: '打开之前',
+    pdfOpenAfter: '打开之后',
     imageAdded: '已添加',
     imageDeleted: '已删除',
     imageUnreadable: '无法读取此图片',
@@ -919,6 +1027,7 @@ export const hunkReviewTranslations = {
     lines: ({ start, end }) => `第 ${start}–${end} 行`,
     kept: '已保留',
     keep: '保留',
+    keepUnavailable: '暫時無法保留變更。請重新開啟此審查後再試。',
     discard: '捨棄',
     keepA11y: ({ n, total, range }) =>
       `保留第 ${n} 項變更（共 ${total} 項），${range}`,
@@ -933,6 +1042,12 @@ export const hunkReviewTranslations = {
     keepAll: '全部保留',
     fileReviewed: '此檔案的所有變更皆已審查',
     filesLeft: ({ count }) => `還剩 ${count} 個檔案`,
+    viewed: '已檢視',
+    viewedChanged: '檢視後有變更',
+    viewedNotSaved: '未儲存到 GitHub',
+    viewedA11y: ({ name }) => `${name}，已在 GitHub 檢視`,
+    viewedCount: ({ count, total }) => `已檢視 ${count} / ${total}`,
+    viewedUnavailable: '無法讀取已檢視狀態',
     nextFile: '下一個檔案',
     nextNamed: ({ name }) => `下一個 · ${name}`,
     scopeA11y: '要顯示的變更',
@@ -974,6 +1089,8 @@ export const hunkReviewTranslations = {
     imageModeA11y: '比較圖片',
     imageBefore: '之前',
     imageAfter: '之後',
+    pdfOpenBefore: '開啟之前',
+    pdfOpenAfter: '開啟之後',
     imageAdded: '已新增',
     imageDeleted: '已刪除',
     imageUnreadable: '無法讀取此圖片',

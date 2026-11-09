@@ -31,6 +31,8 @@ export type HomesJourneysTranslation = Readonly<{
     alreadyUseTitle: string;
     alreadyUseDescription: string;
     signIn: string;
+    /** Get set up's "Already use Happier?" action: what signing in there does (Capacity's "Sign in" is for agents). */
+    findHomes: string;
     /** The service beside Sign in; pressing it changes the service. */
     withService: (params: Service) => string;
     changeServiceLabel: (params: Service) => string;
@@ -179,6 +181,7 @@ export const en: HomesJourneysTranslation = {
     alreadyUseTitle: 'Already use Happier?',
     alreadyUseDescription: 'Find your Homes with your account, or connect straight to a Home you run. Nothing on this computer changes until you choose.',
     signIn: 'Sign in',
+    findHomes: 'Find your Homes',
     withService: ({ service }) => `with ${service}`,
     changeServiceLabel: ({ service }) => `Sign-in service: ${service}. Change`,
     connectToHome: 'Connect to a Home…',

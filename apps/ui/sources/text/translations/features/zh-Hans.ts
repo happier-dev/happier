@@ -16617,7 +16617,7 @@ const zhHans = translated(workflowValueReferenceTranslations.zh, {
         showFullPlan: '显示完整计划',
         generationRequested: "已请求生成",
         startsResume: "恢复运行后开始。",
-        generateBody: "智能体会在此对话中生成新结果。如果有效，运行将继续，不再询问。",
+        generateBody: "结果有效时继续运行，不再审查。",
         acceptedPaused: "结果已接受。工作流仍处于暂停状态。",
         editResult: "编辑结果",
         generate: "生成结果并继续",

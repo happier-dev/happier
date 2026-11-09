@@ -18,10 +18,10 @@ export const english = {
         builtInDescription: 'Ready-made profiles for each agent.',
     },
     settingsRemoteHostsPage: {
-        pageDescription: 'SSH hosts this computer can set up as machines, connect to, or run a relay on.',
+        pageDescription: 'SSH hosts this machine can set up as machines, connect to, or run a relay on.',
         savedHostsSection: 'Saved hosts',
         savedHostsDescription: "Most recently used first. Open a host to use or change it.",
-        hostPageDescription: "An SSH host this computer can set up as a machine, connect to, or run a relay on.",
+        hostPageDescription: "An SSH host this machine can set up as a machine, connect to, or run a relay on.",
         newHostTitle: "New remote host",
         newHostDescription: "Name the host and say how to reach it over SSH.",
         useSection: "Use this host",

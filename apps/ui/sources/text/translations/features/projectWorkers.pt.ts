@@ -169,6 +169,7 @@ export const projectWorkers: ProjectWorkersTranslations = {
     whenUnavailable: 'Se não puder executar lá',
     fallbackPrimary: 'Executar aqui',
     fallbackFail: 'Não iniciar',
+    fallbackLocked: 'Aplica-se na próxima inicialização. Pare o serviço para alterar.',
     destinationMissing: 'O destino salvo não está disponível.',
     settingsUnavailable: 'As configurações de local do serviço não estão disponíveis.',
     saveFailed: 'Não foi possível salvar o local do serviço.',

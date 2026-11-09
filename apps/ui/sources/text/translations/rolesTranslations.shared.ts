@@ -8,6 +8,7 @@ export type RolesTranslations = Readonly<{
         empty: string;
         emptyWithManage: string;
         footer: string;
+        uses: (params: Readonly<{ label: string }>) => string;
         manage: string;
         engineAppliesOnStart: string;
         defaultEngine: string;
@@ -160,7 +161,8 @@ export const rolesTranslationsEnglish = { en: {
             searchPlaceholder: 'Search roles…',
             empty: 'No roles yet.',
             emptyWithManage: 'No roles yet. Add one in Manage roles.',
-            footer: 'A role brings its own instructions, engine and how it runs, so workflows stay portable.',
+            footer: 'A role brings its own instructions, agent and model, and how it runs.',
+            uses: ({ label }: { label: string }) => `Uses ${label}`,
             manage: 'Manage roles',
             engineAppliesOnStart: 'Engine applies when starting this role',
             defaultEngine: 'Default agent',
@@ -180,11 +182,11 @@ export const rolesTranslationsEnglish = { en: {
             duplicate: 'Duplicate',
             duplicateName: ({ name }) => `${name} copy`,
             platformDefault: 'Platform default · follows updates',
-            runsAsThisSession: 'This session',
-            runsAsOrchestratorDescription: 'An orchestrator is the session you switch it on in.',
+            runsAsThisSession: 'Runs in the session',
+            runsAsOrchestratorDescription: 'A coordinator is the session you switch it on in.',
             readOnly: 'Read-only',
             engineChooseMigrated: 'No engine came over from 0.2. Choose one, or it follows your default agent.',
-            description: 'Who does each kind of work. Workflows and orchestrators ask for a role; the role says how to run it.',
+            description: 'Who does each kind of work. Workflows and coordinators ask for a role; the role says how to run it.',
             count: ({ count }) => (count === 1 ? '1 role' : `${count} roles`),
             newRole: 'New role',
             groupBuiltIn: 'Built-in',

@@ -35,20 +35,21 @@ export const en = {
     checking: 'Checking background services…',
     readFailed: 'Couldn’t check background services',
     incomplete: 'Some background services couldn’t be checked',
-    noServices: 'This computer isn’t set up yet',
+    noServices: 'This machine isn’t set up yet',
     working: 'Working…',
     stopConfirmTitle: ({ relay }: RelayParams) => `Stop Happier’s background service for ${relay}?`,
     stopConfirmBody: ({ relay }: RelayParams) =>
-        `Agent sessions running on this computer for ${relay} will end, and your phone and browser can’t reach it there until the service starts again.`,
+        `Agent sessions running on this machine for ${relay} will end, and your phone and browser can’t reach it there until the service starts again.`,
     stopAllConfirmTitle: 'Stop Happier’s background services and quit?',
-    stopAllConfirmBody: 'Agent sessions running on this computer will end, and your phone and browser can’t reach it until its background services start again.',
+    stopAllConfirmBody: 'Agent sessions running on this machine will end, and your phone and browser can’t reach it until its background services start again.',
     stopConfirmAction: 'Stop',
     actionFailedTitle: 'That didn’t go through',
+    quitWaitForSystemTasks: "Happier is still setting up or removing components. Wait for it to finish, then try quitting again.",
     loginItemFailed: 'Couldn’t update Happier’s login item',
     quitStopTitle: 'Agent sessions are still running',
-    quitStopBody: 'Quitting stops this computer’s background services and ends the sessions running here.',
+    quitStopBody: 'Quitting stops this machine’s background services and ends the sessions running here.',
     quitStopUnknownTitle: 'Stop background services?',
-    quitStopUnknownBody: 'Happier can’t see which sessions are running on this computer. Quitting stops its background services and ends any that are.',
+    quitStopUnknownBody: 'Happier can’t see which sessions are running on this machine. Quitting stops its background services and ends any that are.',
     quitStopConfirm: 'Stop anyway',
     quitStopKeep: 'Leave them running',
     quitStopFailedTitle: 'Some background services didn’t stop',
@@ -59,9 +60,9 @@ export const en = {
 
 export const enLoginStart = {
     title: 'Start at login',
-    subtitle: 'Keeps this computer reachable from your phone and browser: its background services start when you sign in and keep running after you quit Happier. When this is off, quitting Happier stops them.',
-    unknown: 'Happier can’t tell yet whether this computer’s background services start at login.',
-    notSetUp: 'Available once this computer is set up.',
+    subtitle: 'Keeps this machine reachable from your phone and browser: its background services start when you sign in and keep running after you quit Happier. When this is off, quitting Happier stops them.',
+    unknown: 'Happier can’t tell yet whether this machine’s background services start at login.',
+    notSetUp: 'Available once this machine is set up.',
 };
 
 

@@ -200,7 +200,7 @@ export const en = {
         showFullPlan: 'Show full plan',
         generationRequested: "Generation requested",
         startsResume: "Starts when you resume the run.",
-        generateBody: "The agent writes a new result in this conversation. If it is valid, the run continues without asking you again.",
+        generateBody: "A valid result continues without another review.",
         acceptedPaused: "Result accepted. Workflow is still paused.",
         editResult: "Edit result",
         generate: "Generate result and continue",

@@ -28,8 +28,6 @@ export const en = {
             pullAllTabsDescription: 'Drag the session title down to see every open tab and recent session.',
         },
         bar: {
-            onTheBar: 'On the bar',
-            more: 'More',
             heldInMore: 'In More while “Always swipe” is on',
             keepOnBar: 'Keep on the bar',
             removeFromBar: 'Remove from the bar',

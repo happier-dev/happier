@@ -169,6 +169,7 @@ export const projectWorkers: ProjectWorkersTranslations = {
     whenUnavailable: 'Если там нельзя запустить',
     fallbackPrimary: 'Запустить здесь',
     fallbackFail: 'Не запускать',
+    fallbackLocked: 'Применится при следующем запуске. Остановите сервис, чтобы изменить.',
     destinationMissing: 'Сохранённое назначение недоступно.',
     settingsUnavailable: 'Настройки размещения сервиса недоступны.',
     saveFailed: 'Не удалось сохранить размещение сервиса.',

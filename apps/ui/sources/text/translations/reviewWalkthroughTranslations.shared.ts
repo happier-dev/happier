@@ -49,6 +49,7 @@ export type ReviewWalkthroughTranslations = {
         selected: (params: Count) => string;
         loadingEngines: string;
         noEngines: string;
+        moreEngines: (params: Readonly<{ count: number; machine: string | null }>) => string;
         findingsOnly: string;
         changes: string;
         instructions: string;
@@ -63,6 +64,8 @@ export type ReviewWalkthroughTranslations = {
         noNarrator: string;
         footerReviewThenWalkthrough: string;
         footerHandover: (params: Readonly<{ reviewer: string; narrator: string }>) => string;
+        walkMeThroughAfter: string;
+        findingsOnlyChoice: string;
     };
     generated: {
         continues: (params: Readonly<{ model: string }>) => string;
@@ -141,6 +144,9 @@ export const en: ReviewWalkthroughTranslations = {
         selected: ({ count }) => `${count} selected`,
         loadingEngines: 'Finding review engines…',
         noEngines: 'No review engine can run on this Session’s machine.',
+        moreEngines: ({ count, machine }) => count === 1
+            ? (machine ? `1 more agent isn’t set up on ${machine}` : '1 more agent isn’t set up here')
+            : (machine ? `${count} more agents aren’t set up on ${machine}` : `${count} more agents aren’t set up here`),
         findingsOnly: 'findings only',
         changes: 'Changes',
         instructions: 'Instructions',
@@ -155,6 +161,8 @@ export const en: ReviewWalkthroughTranslations = {
         noNarrator: 'None of these engines can write a walkthrough. Add a model engine, or turn the walkthrough off.',
         footerReviewThenWalkthrough: 'Reviewing, then writing the walkthrough',
         footerHandover: ({ reviewer, narrator }) => `${reviewer} reviews · ${narrator} writes`,
+        walkMeThroughAfter: 'Walk me through after',
+        findingsOnlyChoice: 'Findings only',
     },
     generated: {
         continues: ({ model }) => `${model} · continues the review`,

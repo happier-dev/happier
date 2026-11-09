@@ -16126,7 +16126,7 @@ const de = translated(workflowValueReferenceTranslations.de, {
         showFullPlan: 'Vollständigen Plan anzeigen',
         generationRequested: "Erzeugung angefordert",
         startsResume: "Startet, wenn du den Ablauf fortsetzt.",
-        generateBody: "Der Agent schreibt ein neues Ergebnis in dieser Unterhaltung. Ist es gültig, läuft der Ablauf ohne weitere Rückfrage weiter.",
+        generateBody: "Ein gültiges Ergebnis läuft ohne weitere Prüfung weiter.",
         acceptedPaused: "Ergebnis übernommen. Der Ablauf ist weiterhin pausiert.",
         editResult: "Ergebnis bearbeiten",
         generate: "Ergebnis erzeugen und fortfahren",

@@ -534,9 +534,9 @@ export const english = {
         monitoring: {
             title: "Monitoring",
             modes: { off: "Off", whileViewing: "While viewing", always: "Always" },
-            descriptions: { off: "Reads nothing. Earlier readings stay, with the time they were read.", whileViewing: "Reads only while someone has it open.", always: "Reads all the time and keeps its history." },
+            descriptions: { off: "Reads nothing. Earlier readings stay, with the time they were read.", whileViewing: "Reads only while someone has it open.", always: "Keeps its history. Reads once a minute, more often while someone watches live." },
             interval: "Read every",
-            intervalDescription: "How often it reads CPU, memory, disk and network.",
+            intervalDescription: "How often it reads CPU, memory, disk and network while someone watches it live. Otherwise it reads once a minute.",
             seconds: ({ count }: { count: number }) => `${count} s`,
             offTitle: ({ machine }: { machine: string }) => `Monitoring is off on ${machine}`,
             offReason: "Happier isn’t reading its CPU, memory, disk or network.",

@@ -2,7 +2,7 @@ import type { ProjectWorkersTranslations } from '../projectWorkersTranslations.s
 
 export const projectWorkers: ProjectWorkersTranslations = {
   projectWorkers: {
-    offlineMachines: ({ count }: { count: number }) => `${count} Maschinen offline`,
+    offlineMachines: ({ count }: { count: number }) => `${count} Rechner offline`,
     draftKept: 'Deine Änderung ist noch nicht gespeichert.',
     draftRetry: 'Erneut speichern',
     draftDiscard: 'Änderung verwerfen',
@@ -169,6 +169,7 @@ export const projectWorkers: ProjectWorkersTranslations = {
     whenUnavailable: 'Wenn es dort nicht laufen kann',
     fallbackPrimary: 'Stattdessen hier ausführen',
     fallbackFail: 'Nicht starten',
+    fallbackLocked: 'Gilt ab dem nächsten Start. Stoppe den Dienst, um es zu ändern.',
     destinationMissing: 'Das gespeicherte Ziel ist nicht verfügbar.',
     settingsUnavailable: 'Einstellungen für den Dienstort sind nicht verfügbar.',
     saveFailed: 'Dienstort konnte nicht gespeichert werden.',

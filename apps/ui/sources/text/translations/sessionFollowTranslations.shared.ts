@@ -105,6 +105,7 @@ export const en = {
     "sources": {
         "title": "Following",
         "waitingRuntime": "Waiting for the destination Session to reconnect.",
+        "waitingAuthorizedDevice": "Waiting for an authorized device",
         "unsupported": "Update or reconnect the CLI on the destination machine to receive updates.",
         "pausedArchived": "Updates are paused while the source or destination is archived.",
         "add": "Follow in another session…",

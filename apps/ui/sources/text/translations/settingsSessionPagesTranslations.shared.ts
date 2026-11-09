@@ -119,7 +119,7 @@ export const en = {
             timingWhenIdle: 'When all work is idle',
             layoutSection: 'Composer layout',
             actionBarTitle: 'Action bar',
-            actionBarAutoDescription: 'Controls use the available space and wrap when needed.',
+            actionBarAutoDescription: 'One line per row that scrolls sideways; larger native screens wrap.',
             actionBarWrapDescription: 'Chips wrap onto a second line when they don\'t fit.',
             actionBarScrollDescription: 'Chips stay on one line; scroll sideways to reach the rest.',
             actionBarCollapsedDescription: 'Chips fold into a menu, leaving the most room to type.',

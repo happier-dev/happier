@@ -1,3 +1,5 @@
+import { PUBLIC_PROFILE_PAGE_COPY_EN, PUBLIC_PROFILE_FIELD_COPY_EN } from '@happier-dev/protocol/account/publicProfilePublication';
+
 /**
  * Copy for the Account handle (one username shared with Friends and the public page) and the
  * public profile settings page. English is the shape every locale block
@@ -6,27 +8,13 @@
 export const publicIdentityEn = {
   publicIdentity: {
     blocks: { sky: 'Sky of days', crew: 'Crew', planet: 'Your planet', orbit: 'Orbit', shipped: 'Shipped' , totals: "Totals", parallel: "Peak parallel", hours: "When agents work", tide: "Week tide" },
-    page: {
-      since: ({ date }: { date: string }) => `since ${date}`,
-      periodDetail: ({ range, synced }: { range: string; synced: string }) => `${range} · synced ${synced}`,
-      empty: 'No blocks placed yet.',
-      footerNote: 'Totals only. No prompts, files, private repositories or costs are part of a profile.',
-      report: 'Report',
-      madeWith: 'Made with Happier',
-      success: 'Success',
-      warning: 'Warning',
-      error: 'Error',
-      incomplete: 'Incomplete',
-      blockUnavailable: 'Not recorded for this period.',
-      activityLevel: 'Activity level',
-    },
+    page: PUBLIC_PROFILE_PAGE_COPY_EN,
     publicData: {
       consent: {
         hiding: ({ item }: { item: string }) => `Hiding ${item}…`,
         sharing: ({ item }: { item: string }) => `Sharing ${item}…`,
         hidden: ({ item }: { item: string }) => `${item} is hidden on your public page.`,
         shared: ({ item }: { item: string }) => `${item} is shared on your public page.`,
-        sharedLater: ({ item }: { item: string }) => `${item} is shared. It appears when your page next refreshes.`,
         failedHide: ({ item }: { item: string }) => `Couldn’t hide ${item}. Your public page is unchanged.`,
         failedShare: ({ item }: { item: string }) => `Couldn’t share ${item}. Your public page is unchanged.`,
         uncertain: ({ item }: { item: string }) => `Not sure the change to ${item} was saved. Check your page before trying again.`,
@@ -38,20 +26,13 @@ export const publicIdentityEn = {
       description: 'What leaves your devices. Every block, badge and card uses only these items.',
       footer: 'Removing a block doesn’t unshare its data; turn the item off here.',
       blocks: ({ count }: { count: number }) => (count === 1 ? 'In 1 block' : `In ${count} blocks`),
+      heading: 'At the top of your page',
       notPlaced: 'Not on the page · in badges and JSON',
       placedPrivate: 'Placed, only you see it',
       notShared: 'Not shared',
       needsPeak: 'Needs Peak parallel: your highest week is your peak.',
       sections: { about: 'About you', numbers: 'Numbers', patterns: 'Patterns', detail: 'Finer detail', links: 'Links and estimates' },
-      fields: {
-        name: 'Name', avatar: 'Photo', bio: 'Bio', links: 'Links', since: 'Member since',
-        tokens: 'Tokens', activeDays: 'Active days', agentTime: 'Agent hours', mergedPrs: 'Merged pull requests',
-        currentStreak: 'Current streak', bestStreak: 'Best streak in this period', peakParallel: 'Peak parallel', highlights: 'Highlights',
-        calendar: 'Activity levels', punch: 'Hours of the week', agentMix: 'Agent mix', sourceSplit: 'Where agents ran',
-        agentActiveDays: 'Days per agent', weeklyAgentMix: 'Weekly agent mix', weeklyPeakParallel: 'Weekly peaks',
-        sessionDurations: 'Turn lengths', machineKinds: 'Kinds of machines', dayNightActivity: 'Day and night',
-        projects: 'Projects', footprint: 'Footprint',
-      },
+      fields: PUBLIC_PROFILE_FIELD_COPY_EN,
       details: {
         calendar: 'Each day as a level, never an amount. The calendar still shows which days you were active.',
         punch: 'When in the week you usually work, as levels.',
@@ -66,6 +47,7 @@ export const publicIdentityEn = {
     details: {
       button: "Details",
       aboutTitle: "About you",
+      notSharedMany: ({ items }: { items: string }) => `${items} are off in Public data, so visitors don’t see them.`,
       notShared: ({ item }: { item: string }) => `${item} is off in Public data, so visitors don’t see it.`,
       bioPlaceholder: "A line about you and what you build",
       link: ({ position }: { position: number }) => `Link ${position}`,
@@ -100,6 +82,7 @@ export const publicIdentityEn = {
       hiddenBlock: ({ item }: { item: string }) => `${item} isn’t in your public data, so visitors don’t see this block.`,
       hiddenBlockNoItem: "Visitors don’t see this block.",
       shareItem: ({ item }: { item: string }) => `Share ${item.charAt(0).toLocaleLowerCase()}${item.slice(1)}`,
+      hideItem: ({ item }: { item: string }) => `Hide ${item.charAt(0).toLocaleLowerCase()}${item.slice(1)} from visitors`,
       undoTitle: "Undo your last Apply",
       undone: "Your public page is back as it was.",
       startFrom: 'Start from',
@@ -133,7 +116,7 @@ export const publicIdentityEn = {
     review: {
       titlePublish: 'Publish your page',
       titleApply: 'Apply your changes',
-      intro: ({ service }: { service: string }) => `These items become public on ${service}:`,
+      public: 'Public',
       none: 'Nothing but your name and handle.',
       plaintext: 'Published numbers are stored readable by this service, even though your account is end-to-end encrypted.',
       picture: 'Your picture is uploaded as it looks here, and anyone can see it. Make sure you may share it and that it shows nothing private.',
@@ -145,7 +128,7 @@ export const publicIdentityEn = {
       where: ({ url, period }: { url: string; period: string }) => `Anyone with the link can see it at ${url}. It covers ${period}.`,
       hidden: 'Hidden',
       viewData: 'View public data',
-      viewDataDetail: 'The exact JSON visitors can read',
+      viewDataDetail: 'All public data and appearance. For a new picture, the pixels are shown above and its public reference is assigned when saved.',
     },
     handle: {
       available: ({ username }: { username: string }) =>
@@ -161,7 +144,7 @@ export const publicIdentityEn = {
         `Friends find you by the new name, and links or badges that use @${username} stop working.`,
       releaseTitle: 'Release username',
       releaseDetail: ({ username }: { username: string }) =>
-        `Friends stop finding you as @${username} and links to your public page stop working. No one can claim @${username} for 30 days, including you.`,
+        `Friends stop finding you as @${username}. Anyone can claim @${username} right away, and links that use it may then lead to whoever takes it.`,
       releaseAction: 'Release',
       releaseFailed: 'Couldn’t release your username. Nothing changed.',
     },
@@ -221,6 +204,8 @@ export const publicIdentityEn = {
       unpublishTitle: 'Unpublish',
       unpublishDetail:
         'Deletes the public record. Your page, badges and preview image stop working the next time they’re requested; images already posted elsewhere stay where they are.',
+      resumeConfirm: 'Your page comes back with fresh numbers. What it shares stays the same.',
+      unpublishConfirm: 'Your page, its JSON and badges stop working. Your handle stays yours.',
       unpublishAction: 'Unpublish…',
       restrictedTitle: 'Your page was removed',
       restrictedBody: ({ reason }: { reason: string }) =>
@@ -234,7 +219,6 @@ export const publicIdentityEn = {
       retry: 'Try again',
       actionFailed: 'That didn’t go through. Nothing changed.',
       actionUncertain: 'The service didn’t answer. Your page below is what it shows now.',
-      savedRefreshPending: 'Saved. The numbers on your page update at the next sync.',
       reasons: {
         feature_disabled: 'Public profiles are turned off on this service.',
         username_required: 'Choose a username first.',
@@ -273,11 +257,6 @@ export const publicIdentityEn = {
         'This picture is on this device only. Applying uploads one copy to your public page; make sure you may share it, and that it shows nothing private.',
       missingTitle: ({ name }: { name: string }) =>
         `“${name}” isn’t on this device`,
-      imageFrom: 'Image from',
-      imageFrom_usage: 'Your usage',
-      imageFrom_public_profile: 'Public profile',
-      unpublished_image: 'Publish your profile to make an image from it',
-      imageFromProfileNote: 'Shows only what your public page shows. Made on this device.',
       missingBody:
         'Pick it again on the device you added it from, or choose another picture. Your public page keeps its current header.',
       choosePicture: 'Choose a picture',
@@ -294,6 +273,11 @@ export const publicIdentityEn = {
       unpublishedBody: 'Your public page shows totals, your calendar and your agents. You choose every field first.',
       previewProfile: 'Preview my profile',
       imagesWithoutProfile: 'Images can be shared without a profile: they’re made on this device.',
+      imageFrom: 'Image from',
+      imageFrom_usage: 'Your usage',
+      imageFrom_public_profile: 'Public profile',
+      unpublished_image: 'Publish your profile to make an image from it',
+      imageFromProfileNote: 'Shows only what your public page shows. Made on this device.',
       readFailed: 'Couldn’t read your public page',
       readFailedBody: 'Nothing changed. Try again in a moment.',
       serviceUnavailable: 'Your public page can’t be read right now',

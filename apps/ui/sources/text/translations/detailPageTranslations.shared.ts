@@ -11,6 +11,8 @@ export type DetailPageTranslations = Readonly<{
         sessionOnHome: (params: Readonly<{ home: string }>) => string;
         sessionElsewhere: string;
         requesterYou: string;
+        requesterGuard: string;
+        requesterGuardDescription: string;
         origin: Readonly<Record<'voice' | 'agent' | 'mcp' | 'cli' | 'ui' | 'api' | 'plugin' | 'workflowRun' | 'system', string>>;
         proposalsDescription: string;
         requester: Readonly<{
@@ -25,7 +27,6 @@ export type DetailPageTranslations = Readonly<{
             thread: Readonly<{
                 youConfirm: string;
                 review: string;
-                decline: string;
                 waiting: (params: Readonly<{ name: string }>) => string;
                 using: (params: Readonly<{ label: string }>) => string;
                 usingAccount: string;
@@ -49,6 +50,15 @@ export type DetailPageTranslations = Readonly<{
         filterRunning: string;
         filterAll: string;
         onHome: (params: Readonly<{ home: string }>) => string;
+        emptyRunning: string;
+        emptyAll: string;
+        emptyDescription: string;
+        machinesTitle: string;
+        otherMachinesTitle: string;
+        uncheckedDescription: (params: Readonly<{ count: number }>) => string;
+        machineNotChecked: string;
+        machineNotShared: string;
+        machineReadFailed: string;
     }>;
     person: Readonly<{
         placeholderTitle: string;
@@ -80,6 +90,8 @@ export const detailPageTranslationsEnglish = { en: {
             sessionOnHome: ({ home }) => `A session on ${home}`,
             sessionElsewhere: 'A session that isn’t on this device',
             requesterYou: 'You',
+            requesterGuard: 'Happier Guard',
+            requesterGuardDescription: 'Guard found this and is asking before it acts.',
             origin: {
                 voice: 'Asked by voice',
                 agent: 'Asked by an agent',
@@ -104,7 +116,6 @@ export const detailPageTranslationsEnglish = { en: {
                 thread: {
                     youConfirm: 'You asked, so you confirm',
                     review: 'Review and confirm…',
-                    decline: 'Decline',
                     waiting: ({ name }) => `Waiting for ${name} to confirm. Only the person who asked can.`,
                     using: ({ label }) => `Using ${label}`,
                     usingAccount: 'Using a connected account',
@@ -128,6 +139,15 @@ export const detailPageTranslationsEnglish = { en: {
             filterRunning: 'Running',
             filterAll: 'All',
             onHome: ({ home }) => `On ${home}`,
+            emptyRunning: 'Nothing running right now',
+            emptyAll: 'No runs yet',
+            emptyDescription: 'Background runs your agents start on these machines show up here.',
+            machinesTitle: 'Machines',
+            otherMachinesTitle: 'Other machines',
+            uncheckedDescription: ({ count }) => `Couldn’t check runs on ${count} of these machines.`,
+            machineNotChecked: 'Not checked',
+            machineNotShared: 'Not shared with you',
+            machineReadFailed: 'Couldn’t read',
         },
         person: {
             placeholderTitle: 'Person',

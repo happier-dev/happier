@@ -1,4 +1,4 @@
-import type { ActionIdFamilyV1 } from '@happier-dev/protocol';
+import type { ActionIdFamilyV1 } from '@happier-dev/protocol/actions/actionIds';
 
 
 import { fileContentSearchTranslationsEnglish as fileContentSearchTranslations } from './fileContentSearchTranslations.shared';
@@ -15,8 +15,11 @@ export function translated(value: typeof english): typeof english {
 
 
 export const surfaceFamilyLabels = {
+    desktop_windows: 'App windows',
+    desktop_shell: 'Desktop app',
     observation: 'Waiting',
     capture_viewing: 'Captures',
+    screen_capture_delivery: 'Screen capture',
     session_terminals: 'Session terminals',
     workspace_layout: 'Workspace layout',
     workspace_file_search: fileContentSearchTranslations.en.textInFiles,
@@ -42,11 +45,14 @@ export const surfaceFamilyLabels = {
     widgets: 'Widgets',
     workflow_effects: 'Workflow effects',
     workflow_authoring: 'Workflow authoring',
+    automation_occurrences: 'Runs',
     command_palette: 'Search',
     find: 'Find',
     prompt_picker: promptPickerTranslations.en.open,
+    session_message_pins: 'Message pins',
     app_updates: 'App updates',
     notification_configuration: 'Notification settings',
+    external_links: 'External links',
 };
 
 
@@ -54,11 +60,14 @@ export const surfaceFamilyLabels = {
 // Friends already owns a localized title; the family-title key owner reuses it.
 export const english = {
     actionFamilies: {
+        machine_reachability: "Machine reachability",
+        media_annotation: "Media annotations",
         plugin_execution_origin: "Plugin execution",
         usage: "Usage",
         project_sources: "Project sources",
         project_execution: "Project scripts",
         project_definitions: "Project settings",
+        deployments: "Deployments",
         account_profile: "Account profile",
         project_workers: "Project workers",
         operation_output: "Operation output",
@@ -83,6 +92,9 @@ export const english = {
         machine_processes: "Machine processes",
         machine_storage: "Machine storage",
         machine_resources: "Machine resources",
+        machine_admin_access: "Administrator access",
+        machine_reboot: "Machine reboot",
+        machine_agent_isolation: "Agent isolation",
         machine_guard: "Machine protection",
         account_home_continuation: "Account access recovery",
         bug_report_submission: "Bug reports",
@@ -156,8 +168,8 @@ export const english = {
         identity_providers: 'Sign-in providers',
         machine_pools: 'Machine pools',
         ephemeral_runner: 'Runners',
-        automation_events: 'Automation events',
-        automation_conversation: 'Automation conversations',
+        automation_events: 'Workflow events',
+        automation_conversation: 'Workflow conversations',
         scm_git: 'Git',
         scm_pull_request: 'Pull requests',
         scm_repository: 'Repositories',

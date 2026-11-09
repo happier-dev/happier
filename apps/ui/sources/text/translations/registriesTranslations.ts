@@ -1,7 +1,9 @@
 // Registry select, the Registries view (P4 U6) and the skills Add modal (P6 U6.4). Mounted under
 // `capabilities.registries` and `capabilities.skillAdd`.
 
-type Kind = Readonly<{ kind: 'skill' | 'mcpServer' | 'agent' | 'plugin' }>;
+import type { RegistryKindV1 } from '@happier-dev/protocol/registries';
+
+type Kind = Readonly<{ kind: RegistryKindV1 }>;
 type Count = Readonly<{ count: number }>;
 
 const kindNoun = (kind: Kind['kind'], plural: boolean): string => {
@@ -14,6 +16,10 @@ const kindNoun = (kind: Kind['kind'], plural: boolean): string => {
       return plural ? 'agents' : 'agent';
     case 'plugin':
       return plural ? 'plugins' : 'plugin';
+    case 'app':
+      return plural ? 'apps' : 'app';
+    case 'browserExtension':
+      return plural ? 'browser extensions' : 'browser extension';
   }
 };
 const compact = (count: number, decimal = '.'): string =>
@@ -41,6 +47,8 @@ export type RegistriesTranslation = Readonly<{
     acpRegistry: string;
     happierCatalog: string;
     happierNpm: string;
+    composeCatalog: string;
+    composeTomlCatalog: string;
     addedBy: (params: Readonly<{ plugin: string }>) => string;
     off: string;
   }>;
@@ -76,7 +84,7 @@ export type RegistriesTranslation = Readonly<{
     submit: string;
     cancel: string;
     organisation: string;
-    unknownFormat: string;
+    unknownFormat: (params: Readonly<{ formats: string }>) => string;
     needsToken: (params: Readonly<{ host: string }>) => string;
     tokenRejected: string;
     httpsRequired: string;
@@ -137,6 +145,8 @@ const en: RegistriesTranslation = {
     acpRegistry: 'ACP Registry',
     happierCatalog: 'Happier catalog',
     happierNpm: 'npm',
+    composeCatalog: "Compose templates",
+    composeTomlCatalog: "Compose + TOML templates",
     addedBy: ({ plugin }) => `Added by ${plugin}`,
     off: 'Off',
   },
@@ -180,8 +190,8 @@ const en: RegistriesTranslation = {
     submit: 'Add registry',
     cancel: 'Cancel',
     organisation: 'This is an organisation. Add one of its repositories.',
-    unknownFormat:
-      'This link isn’t a Git repository, a Claude marketplace, an MCP Registry or an ACP Registry.',
+    unknownFormat: ({ formats }) =>
+      `This link isn’t a supported registry. Supported formats: ${formats}.`,
     needsToken: ({ host }) =>
       `This registry asked for a token. It’s sent only to ${host}.`,
     tokenRejected: 'That token was rejected. Choose another.',
@@ -252,8 +262,11 @@ export type SkillAddTranslation = Readonly<{
   clear: string;
   add: string;
   inLibrary: string;
+  /** An upload or link holds a skill named like one the library has: Add creates a separate copy. */
+  sameName: (params: Readonly<{ name: string }>) => string;
   open: string;
   addToLibrary: string;
+  addOnly: (params: Readonly<{ name: string }>) => string;
   pinnedTo: (params: Readonly<{ ref: string }>) => string;
   via: (params: Readonly<{ source: string }>) => string;
   outsideReferences: (params: Count) => string;
@@ -300,6 +313,8 @@ export type SkillAddTranslation = Readonly<{
     selectAll: string;
     openOne: string;
     chooseWhich: string;
+    /** The heading over the one skill a link found (nothing to choose). */
+    foundOne: string;
   }>;
   upload: Readonly<{
     title: string;
@@ -339,8 +354,10 @@ const enSkillAdd: SkillAddTranslation = {
   clear: 'Clear',
   add: 'Add',
   inLibrary: 'In your library',
+  sameName: ({ name }) => `You already have a skill named ${name}. This adds a separate copy.`,
   open: 'Open',
   addToLibrary: 'Add to library',
+  addOnly: ({ name }) => `Add only ${name}`,
   pinnedTo: ({ ref }) => `Pinned to ${ref}`,
   via: ({ source }) => `via ${source}`,
   outsideReferences: ({ count }) =>
@@ -398,6 +415,7 @@ const enSkillAdd: SkillAddTranslation = {
     selectAll: 'Select all',
     openOne: 'Open one to see what it installs.',
     chooseWhich: 'Choose which to add',
+    foundOne: 'One skill at this link',
   },
   upload: {
     title: 'Upload',
@@ -492,6 +510,7 @@ const caNouns = pairNouns({
   mcpServer: ['servidor MCP', 'servidors MCP'],
   agent: ['agent', 'agents'],
   plugin: ['connector', 'connectors'],
+  app: ['aplicació', 'aplicacions'],
 });
 
 const ca: RegistriesTranslation = {
@@ -511,6 +530,8 @@ const ca: RegistriesTranslation = {
     acpRegistry: 'Registre ACP',
     happierCatalog: 'Catàleg de Happier',
     happierNpm: 'npm',
+    composeCatalog: "Plantilles Compose",
+    composeTomlCatalog: "Plantilles Compose + TOML",
     addedBy: ({ plugin }) => `Afegit per ${plugin}`,
     off: 'Desactivat',
   },
@@ -555,8 +576,8 @@ const ca: RegistriesTranslation = {
     submit: 'Afegeix el registre',
     cancel: 'Cancel·la',
     organisation: 'Això és una organització. Afegeix-ne un dels repositoris.',
-    unknownFormat:
-      'Aquest enllaç no és un repositori Git, un marketplace de Claude, un registre MCP ni un registre ACP.',
+    unknownFormat: ({ formats }) =>
+      `Aquest enllaç no és un registre compatible. Formats compatibles: ${formats}.`,
     needsToken: ({ host }) =>
       `Aquest registre ha demanat un token. Només s’enviarà a ${host}.`,
     tokenRejected: 'S’ha rebutjat aquest token. Tria’n un altre.',
@@ -631,8 +652,10 @@ const caSkillAdd: SkillAddTranslation = {
   clear: 'Neteja',
   add: 'Afegeix',
   inLibrary: 'A la teva biblioteca',
+  sameName: ({ name }) => `Ja tens una habilitat anomenada ${name}. Això n’afegeix una còpia separada.`,
   open: 'Obre',
   addToLibrary: 'Afegeix a la biblioteca',
+  addOnly: ({ name }) => `Afegeix només ${name}`,
   pinnedTo: ({ ref }) => `Fixada a ${ref}`,
   via: ({ source }) => `via ${source}`,
   outsideReferences: ({ count }) =>
@@ -692,6 +715,7 @@ const caSkillAdd: SkillAddTranslation = {
     selectAll: 'Selecciona-ho tot',
     openOne: 'Obre’n un per veure què instal·la.',
     chooseWhich: 'Tria quins vols afegir',
+    foundOne: 'Una habilitat en aquest enllaç',
   },
   upload: {
     title: 'Puja',
@@ -721,6 +745,7 @@ const deNouns = pairNouns({
   mcpServer: ['MCP-Server', 'MCP-Server'],
   agent: ['Agent', 'Agenten'],
   plugin: ['Plugin', 'Plugins'],
+  app: ['App', 'Apps'],
 });
 
 const de: RegistriesTranslation = {
@@ -740,6 +765,8 @@ const de: RegistriesTranslation = {
     acpRegistry: 'ACP Registry',
     happierCatalog: 'Happier-Katalog',
     happierNpm: 'npm',
+    composeCatalog: "Compose-Vorlagen",
+    composeTomlCatalog: "Compose- und TOML-Vorlagen",
     addedBy: ({ plugin }) => `Hinzugefügt von ${plugin}`,
     off: 'Aus',
   },
@@ -786,8 +813,8 @@ const de: RegistriesTranslation = {
     cancel: 'Abbrechen',
     organisation:
       'Das ist eine Organisation. Füge eines ihrer Repositories hinzu.',
-    unknownFormat:
-      'Dieser Link ist weder ein Git-Repository noch ein Claude-Marketplace, eine MCP Registry oder eine ACP Registry.',
+    unknownFormat: ({ formats }) =>
+      `Dieser Link ist keine unterstützte Registry. Unterstützte Formate: ${formats}.`,
     needsToken: ({ host }) =>
       `Diese Registry verlangt ein Token. Es wird nur an ${host} gesendet.`,
     tokenRejected: 'Dieses Token wurde abgelehnt. Wähle ein anderes.',
@@ -868,8 +895,10 @@ const deSkillAdd: SkillAddTranslation = {
   clear: 'Leeren',
   add: 'Hinzufügen',
   inLibrary: 'In deiner Bibliothek',
+  sameName: ({ name }) => `Du hast bereits einen Skill namens ${name}. Dies fügt eine separate Kopie hinzu.`,
   open: 'Öffnen',
   addToLibrary: 'Zur Bibliothek hinzufügen',
+  addOnly: ({ name }) => `Nur ${name} hinzufügen`,
   pinnedTo: ({ ref }) => `Angeheftet an ${ref}`,
   via: ({ source }) => `über ${source}`,
   outsideReferences: ({ count }) =>
@@ -930,6 +959,7 @@ const deSkillAdd: SkillAddTranslation = {
     selectAll: 'Alle auswählen',
     openOne: 'Öffne einen, um zu sehen, was er installiert.',
     chooseWhich: 'Wähle aus, was hinzukommt',
+    foundOne: 'Ein Skill unter diesem Link',
   },
   upload: {
     title: 'Hochladen',
@@ -959,6 +989,7 @@ const esNouns = pairNouns({
   mcpServer: ['servidor MCP', 'servidores MCP'],
   agent: ['agente', 'agentes'],
   plugin: ['plugin', 'plugins'],
+  app: ['aplicación', 'aplicaciones'],
 });
 
 const es: RegistriesTranslation = {
@@ -978,6 +1009,8 @@ const es: RegistriesTranslation = {
     acpRegistry: 'Registro ACP',
     happierCatalog: 'Catálogo de Happier',
     happierNpm: 'npm',
+    composeCatalog: "Plantillas Compose",
+    composeTomlCatalog: "Plantillas Compose y TOML",
     addedBy: ({ plugin }) => `Añadido por ${plugin}`,
     off: 'Desactivado',
   },
@@ -1022,8 +1055,8 @@ const es: RegistriesTranslation = {
     submit: 'Añadir registro',
     cancel: 'Cancelar',
     organisation: 'Esto es una organización. Añade uno de sus repositorios.',
-    unknownFormat:
-      'Este enlace no es un repositorio Git, un marketplace de Claude, un registro MCP ni un registro ACP.',
+    unknownFormat: ({ formats }) =>
+      `Este enlace no es un registro compatible. Formatos compatibles: ${formats}.`,
     needsToken: ({ host }) =>
       `Este registro ha pedido un token. Solo se envía a ${host}.`,
     tokenRejected: 'Se ha rechazado ese token. Elige otro.',
@@ -1099,8 +1132,10 @@ const esSkillAdd: SkillAddTranslation = {
   clear: 'Borrar',
   add: 'Añadir',
   inLibrary: 'En tu biblioteca',
+  sameName: ({ name }) => `Ya tienes una habilidad llamada ${name}. Esto añade una copia aparte.`,
   open: 'Abrir',
   addToLibrary: 'Añadir a la biblioteca',
+  addOnly: ({ name }) => `Añadir solo ${name}`,
   pinnedTo: ({ ref }) => `Fijada a ${ref}`,
   via: ({ source }) => `vía ${source}`,
   outsideReferences: ({ count }) =>
@@ -1160,6 +1195,7 @@ const esSkillAdd: SkillAddTranslation = {
     selectAll: 'Seleccionar todo',
     openOne: 'Abre uno para ver qué instala.',
     chooseWhich: 'Elige cuáles añadir',
+    foundOne: 'Una habilidad en este enlace',
   },
   upload: {
     title: 'Subir',
@@ -1190,6 +1226,7 @@ const frNouns = pairNouns(
     mcpServer: ['serveur MCP', 'serveurs MCP'],
     agent: ['agent', 'agents'],
     plugin: ['plugin', 'plugins'],
+    app: ['application', 'applications'],
   },
   (count) => count < 2,
 );
@@ -1211,6 +1248,8 @@ const fr: RegistriesTranslation = {
     acpRegistry: 'Registre ACP',
     happierCatalog: 'Catalogue Happier',
     happierNpm: 'npm',
+    composeCatalog: "Modèles Compose",
+    composeTomlCatalog: "Modèles Compose et TOML",
     addedBy: ({ plugin }) => `Ajouté par ${plugin}`,
     off: 'Désactivé',
   },
@@ -1256,8 +1295,8 @@ const fr: RegistriesTranslation = {
     cancel: 'Annuler',
     organisation:
       'Il s’agit d’une organisation. Ajoutez l’un de ses dépôts.',
-    unknownFormat:
-      'Ce lien n’est ni un dépôt Git, ni un marketplace Claude, ni un registre MCP, ni un registre ACP.',
+    unknownFormat: ({ formats }) =>
+      `Ce lien n’est pas un registre pris en charge. Formats pris en charge : ${formats}.`,
     needsToken: ({ host }) =>
       `Ce registre demande un jeton. Il n’est envoyé qu’à ${host}.`,
     tokenRejected: 'Ce jeton a été refusé. Choisissez-en un autre.',
@@ -1334,8 +1373,10 @@ const frSkillAdd: SkillAddTranslation = {
   clear: 'Effacer',
   add: 'Ajouter',
   inLibrary: 'Dans votre bibliothèque',
+  sameName: ({ name }) => `Vous avez déjà une compétence nommée ${name}. Cela en ajoute une copie distincte.`,
   open: 'Ouvrir',
   addToLibrary: 'Ajouter à la bibliothèque',
+  addOnly: ({ name }) => `Ajouter uniquement ${name}`,
   pinnedTo: ({ ref }) => `Épinglé sur ${ref}`,
   via: ({ source }) => `via ${source}`,
   outsideReferences: ({ count }) =>
@@ -1395,6 +1436,7 @@ const frSkillAdd: SkillAddTranslation = {
     selectAll: 'Tout sélectionner',
     openOne: 'Ouvrez-en un pour voir ce qu’il installe.',
     chooseWhich: 'Choisissez lesquels ajouter',
+    foundOne: 'Un skill via ce lien',
   },
   upload: {
     title: 'Importer',
@@ -1424,6 +1466,7 @@ const itNouns = pairNouns({
   mcpServer: ['server MCP', 'server MCP'],
   agent: ['agente', 'agenti'],
   plugin: ['plugin', 'plugin'],
+  app: ['app', 'app'],
 });
 
 const it: RegistriesTranslation = {
@@ -1443,6 +1486,8 @@ const it: RegistriesTranslation = {
     acpRegistry: 'Registro ACP',
     happierCatalog: 'Catalogo Happier',
     happierNpm: 'npm',
+    composeCatalog: "Modelli Compose",
+    composeTomlCatalog: "Modelli Compose e TOML",
     addedBy: ({ plugin }) => `Aggiunto da ${plugin}`,
     off: 'Disattivato',
   },
@@ -1486,8 +1531,8 @@ const it: RegistriesTranslation = {
     submit: 'Aggiungi registro',
     cancel: 'Annulla',
     organisation: 'Questa è un’organizzazione. Aggiungi uno dei suoi repository.',
-    unknownFormat:
-      'Questo link non è un repository Git, un marketplace di Claude, un registro MCP né un registro ACP.',
+    unknownFormat: ({ formats }) =>
+      `Questo link non è un registro supportato. Formati supportati: ${formats}.`,
     needsToken: ({ host }) =>
       `Questo registro ha richiesto un token. Viene inviato solo a ${host}.`,
     tokenRejected: 'Token rifiutato. Scegline un altro.',
@@ -1562,8 +1607,10 @@ const itSkillAdd: SkillAddTranslation = {
   clear: 'Cancella',
   add: 'Aggiungi',
   inLibrary: 'Nella tua libreria',
+  sameName: ({ name }) => `Hai già una skill chiamata ${name}. Questa ne aggiunge una copia separata.`,
   open: 'Apri',
   addToLibrary: 'Aggiungi alla libreria',
+  addOnly: ({ name }) => `Aggiungi solo ${name}`,
   pinnedTo: ({ ref }) => `Bloccata su ${ref}`,
   via: ({ source }) => `tramite ${source}`,
   outsideReferences: ({ count }) =>
@@ -1623,6 +1670,7 @@ const itSkillAdd: SkillAddTranslation = {
     selectAll: 'Seleziona tutto',
     openOne: 'Aprine uno per vedere cosa installa.',
     chooseWhich: 'Scegli quali aggiungere',
+    foundOne: 'Una skill in questo link',
   },
   upload: {
     title: 'Carica',
@@ -1652,6 +1700,7 @@ const jaNouns = bareNouns({
   mcpServer: 'MCP サーバー',
   agent: 'エージェント',
   plugin: 'プラグイン',
+  app: 'アプリ',
 });
 
 const ja: RegistriesTranslation = {
@@ -1671,6 +1720,8 @@ const ja: RegistriesTranslation = {
     acpRegistry: 'ACP レジストリ',
     happierCatalog: 'Happier カタログ',
     happierNpm: 'npm',
+    composeCatalog: "Compose テンプレート",
+    composeTomlCatalog: "Compose + TOML テンプレート",
     addedBy: ({ plugin }) => `${plugin} が追加`,
     off: 'オフ',
   },
@@ -1716,8 +1767,8 @@ const ja: RegistriesTranslation = {
     submit: 'レジストリを追加',
     cancel: 'キャンセル',
     organisation: 'これは組織です。その中のリポジトリを追加してください。',
-    unknownFormat:
-      'このリンクは、Git リポジトリ、Claude マーケットプレイス、MCP レジストリ、ACP レジストリのいずれでもありません。',
+    unknownFormat: ({ formats }) =>
+      `このリンクは対応しているレジストリではありません。対応形式：${formats}。`,
     needsToken: ({ host }) =>
       `このレジストリにはトークンが必要です。${host} にのみ送信されます。`,
     tokenRejected: 'このトークンは拒否されました。別のトークンを選んでください。',
@@ -1793,8 +1844,10 @@ const jaSkillAdd: SkillAddTranslation = {
   clear: 'クリア',
   add: '追加',
   inLibrary: 'ライブラリにあります',
+  sameName: ({ name }) => `${name} という名前のスキルがすでにあります。これは別のコピーとして追加されます。`,
   open: '開く',
   addToLibrary: 'ライブラリに追加',
+  addOnly: ({ name }) => `${name} のみ追加`,
   pinnedTo: ({ ref }) => `${ref} に固定`,
   via: ({ source }) => `${source} 経由`,
   outsideReferences: ({ count }) =>
@@ -1851,6 +1904,7 @@ const jaSkillAdd: SkillAddTranslation = {
     selectAll: 'すべて選択',
     openOne: '開くと、インストールされる内容を確認できます。',
     chooseWhich: '追加するものを選択',
+    foundOne: 'このリンクのスキル 1 件',
   },
   upload: {
     title: 'アップロード',
@@ -1903,6 +1957,13 @@ const plNouns = slavicNouns(
       plural: 'wtyczki',
       object: 'wtyczki',
     },
+    app: {
+      one: "aplikacja",
+      few: "aplikacje",
+      many: "aplikacji",
+      plural: "aplikacje",
+      object: "aplikacje",
+    },
   },
   polishForm,
 );
@@ -1924,6 +1985,8 @@ const pl: RegistriesTranslation = {
     acpRegistry: 'Rejestr ACP',
     happierCatalog: 'Katalog Happier',
     happierNpm: 'npm',
+    composeCatalog: "Szablony Compose",
+    composeTomlCatalog: "Szablony Compose i TOML",
     addedBy: ({ plugin }) => `Dodane przez ${plugin}`,
     off: 'Wyłączony',
   },
@@ -1969,8 +2032,8 @@ const pl: RegistriesTranslation = {
     submit: 'Dodaj rejestr',
     cancel: 'Anuluj',
     organisation: 'To organizacja. Dodaj jedno z jej repozytoriów.',
-    unknownFormat:
-      'Ten link nie jest repozytorium Git, marketplace’em Claude, rejestrem MCP ani rejestrem ACP.',
+    unknownFormat: ({ formats }) =>
+      `Ten link nie jest obsługiwanym rejestrem. Obsługiwane formaty: ${formats}.`,
     needsToken: ({ host }) =>
       `Ten rejestr wymaga tokenu. Zostanie wysłany tylko do ${host}.`,
     tokenRejected: 'Ten token został odrzucony. Wybierz inny.',
@@ -2045,8 +2108,10 @@ const plSkillAdd: SkillAddTranslation = {
   clear: 'Wyczyść',
   add: 'Dodaj',
   inLibrary: 'W Twojej bibliotece',
+  sameName: ({ name }) => `Masz już umiejętność o nazwie ${name}. To doda osobną kopię.`,
   open: 'Otwórz',
   addToLibrary: 'Dodaj do biblioteki',
+  addOnly: ({ name }) => `Dodaj tylko ${name}`,
   pinnedTo: ({ ref }) => `Przypięta do ${ref}`,
   via: ({ source }) => `przez ${source}`,
   outsideReferences: ({ count }) =>
@@ -2111,6 +2176,7 @@ const plSkillAdd: SkillAddTranslation = {
     selectAll: 'Zaznacz wszystko',
     openOne: 'Otwórz jeden, aby zobaczyć, co instaluje.',
     chooseWhich: 'Wybierz, co dodać',
+    foundOne: 'Jedna umiejętność pod tym linkiem',
   },
   upload: {
     title: 'Prześlij',
@@ -2140,6 +2206,7 @@ const ptNouns = pairNouns({
   mcpServer: ['servidor MCP', 'servidores MCP'],
   agent: ['agente', 'agentes'],
   plugin: ['plugin', 'plugins'],
+  app: ['aplicativo', 'aplicativos'],
 });
 
 const pt: RegistriesTranslation = {
@@ -2159,6 +2226,8 @@ const pt: RegistriesTranslation = {
     acpRegistry: 'Registro ACP',
     happierCatalog: 'Catálogo do Happier',
     happierNpm: 'npm',
+    composeCatalog: "Modelos Compose",
+    composeTomlCatalog: "Modelos Compose e TOML",
     addedBy: ({ plugin }) => `Adicionado por ${plugin}`,
     off: 'Desativado',
   },
@@ -2203,8 +2272,8 @@ const pt: RegistriesTranslation = {
     submit: 'Adicionar registro',
     cancel: 'Cancelar',
     organisation: 'Isto é uma organização. Adicione um dos repositórios dela.',
-    unknownFormat:
-      'Este link não é um repositório Git, um marketplace do Claude, um registro MCP nem um registro ACP.',
+    unknownFormat: ({ formats }) =>
+      `Este link não é um registro compatível. Formatos compatíveis: ${formats}.`,
     needsToken: ({ host }) =>
       `Este registro pediu um token. Ele é enviado só para ${host}.`,
     tokenRejected: 'Esse token foi recusado. Escolha outro.',
@@ -2280,8 +2349,10 @@ const ptSkillAdd: SkillAddTranslation = {
   clear: 'Limpar',
   add: 'Adicionar',
   inLibrary: 'Na sua biblioteca',
+  sameName: ({ name }) => `Você já tem uma skill chamada ${name}. Isto adiciona uma cópia separada.`,
   open: 'Abrir',
   addToLibrary: 'Adicionar à biblioteca',
+  addOnly: ({ name }) => `Adicionar apenas ${name}`,
   pinnedTo: ({ ref }) => `Fixada em ${ref}`,
   via: ({ source }) => `via ${source}`,
   outsideReferences: ({ count }) =>
@@ -2341,6 +2412,7 @@ const ptSkillAdd: SkillAddTranslation = {
     selectAll: 'Selecionar tudo',
     openOne: 'Abra um para ver o que ele instala.',
     chooseWhich: 'Escolha quais adicionar',
+    foundOne: 'Uma habilidade neste link',
   },
   upload: {
     title: 'Enviar',
@@ -2395,6 +2467,13 @@ const ruNouns = slavicNouns(
       plural: 'плагины',
       object: 'плагинов',
     },
+    app: {
+      one: "приложение",
+      few: "приложения",
+      many: "приложений",
+      plural: "приложения",
+      object: "приложений",
+    },
   },
   russianForm,
 );
@@ -2416,6 +2495,8 @@ const ru: RegistriesTranslation = {
     acpRegistry: 'Реестр ACP',
     happierCatalog: 'Каталог Happier',
     happierNpm: 'npm',
+    composeCatalog: "Шаблоны Compose",
+    composeTomlCatalog: "Шаблоны Compose и TOML",
     addedBy: ({ plugin }) => `Добавлено: ${plugin}`,
     off: 'Выкл.',
   },
@@ -2461,8 +2542,8 @@ const ru: RegistriesTranslation = {
     submit: 'Добавить реестр',
     cancel: 'Отмена',
     organisation: 'Это организация. Добавьте один из её репозиториев.',
-    unknownFormat:
-      'Эта ссылка не ведёт ни на Git-репозиторий, ни на маркетплейс Claude, ни на реестр MCP, ни на реестр ACP.',
+    unknownFormat: ({ formats }) =>
+      `Эта ссылка не ведёт на поддерживаемый реестр. Поддерживаемые форматы: ${formats}.`,
     needsToken: ({ host }) =>
       `Этому реестру нужен токен. Он отправляется только на ${host}.`,
     tokenRejected: 'Токен отклонён. Выберите другой.',
@@ -2539,8 +2620,10 @@ const ruSkillAdd: SkillAddTranslation = {
   clear: 'Очистить',
   add: 'Добавить',
   inLibrary: 'В вашей библиотеке',
+  sameName: ({ name }) => `У вас уже есть навык с именем ${name}. Это добавит отдельную копию.`,
   open: 'Открыть',
   addToLibrary: 'Добавить в библиотеку',
+  addOnly: ({ name }) => `Добавить только ${name}`,
   pinnedTo: ({ ref }) => `Закреплён на ${ref}`,
   via: ({ source }) => `через ${source}`,
   outsideReferences: ({ count }) =>
@@ -2614,6 +2697,7 @@ const ruSkillAdd: SkillAddTranslation = {
     selectAll: 'Выбрать все',
     openOne: 'Откройте любой, чтобы увидеть, что он устанавливает.',
     chooseWhich: 'Выберите, что добавить',
+    foundOne: 'Один навык по этой ссылке',
   },
   upload: {
     title: 'Загрузить',
@@ -2648,6 +2732,7 @@ const zhHansNouns = bareNouns({
   mcpServer: 'MCP 服务器',
   agent: '智能体',
   plugin: '插件',
+  app: '应用',
 });
 
 const zhHans: RegistriesTranslation = {
@@ -2667,6 +2752,8 @@ const zhHans: RegistriesTranslation = {
     acpRegistry: 'ACP 注册表',
     happierCatalog: 'Happier 目录',
     happierNpm: 'npm',
+    composeCatalog: "Compose 模板",
+    composeTomlCatalog: "Compose + TOML 模板",
     addedBy: ({ plugin }) => `由 ${plugin} 添加`,
     off: '关闭',
   },
@@ -2710,8 +2797,8 @@ const zhHans: RegistriesTranslation = {
     submit: '添加注册表',
     cancel: '取消',
     organisation: '这是一个组织。请添加它的某个仓库。',
-    unknownFormat:
-      '此链接不是 Git 仓库、Claude 插件市场、MCP 注册表或 ACP 注册表。',
+    unknownFormat: ({ formats }) =>
+      `此链接不是支持的注册表。支持的格式：${formats}。`,
     needsToken: ({ host }) =>
       `此注册表需要令牌。仅会发送到 ${host}。`,
     tokenRejected: '该令牌被拒绝。请选择另一个。',
@@ -2786,8 +2873,10 @@ const zhHansSkillAdd: SkillAddTranslation = {
   clear: '清除',
   add: '添加',
   inLibrary: '已在你的资料库',
+  sameName: ({ name }) => `你已经有一个名为 ${name} 的技能。这会另外添加一份副本。`,
   open: '打开',
   addToLibrary: '添加到资料库',
+  addOnly: ({ name }) => `仅添加 ${name}`,
   pinnedTo: ({ ref }) => `固定到 ${ref}`,
   via: ({ source }) => `经由 ${source}`,
   outsideReferences: ({ count }) =>
@@ -2839,6 +2928,7 @@ const zhHansSkillAdd: SkillAddTranslation = {
     selectAll: '全选',
     openOne: '打开一个即可查看它会安装什么。',
     chooseWhich: '选择要添加的',
+    foundOne: '此链接中的 1 个技能',
   },
   upload: {
     title: '上传',
@@ -2866,6 +2956,7 @@ const zhHantNouns = bareNouns({
   mcpServer: 'MCP 伺服器',
   agent: '代理',
   plugin: '外掛程式',
+  app: '應用程式',
 });
 
 const zhHant: RegistriesTranslation = {
@@ -2885,6 +2976,8 @@ const zhHant: RegistriesTranslation = {
     acpRegistry: 'ACP 註冊表',
     happierCatalog: 'Happier 目錄',
     happierNpm: 'npm',
+    composeCatalog: "Compose 範本",
+    composeTomlCatalog: "Compose + TOML 範本",
     addedBy: ({ plugin }) => `由 ${plugin} 新增`,
     off: '關閉',
   },
@@ -2928,8 +3021,8 @@ const zhHant: RegistriesTranslation = {
     submit: '新增註冊表',
     cancel: '取消',
     organisation: '這是一個組織。請新增它的其中一個儲存庫。',
-    unknownFormat:
-      '此連結不是 Git 儲存庫、Claude 外掛程式市集、MCP 註冊表或 ACP 註冊表。',
+    unknownFormat: ({ formats }) =>
+      `此連結不是支援的註冊表。支援的格式：${formats}。`,
     needsToken: ({ host }) =>
       `此註冊表需要權杖。僅會傳送到 ${host}。`,
     tokenRejected: '該權杖被拒絕。請選擇另一個。',
@@ -3004,8 +3097,10 @@ const zhHantSkillAdd: SkillAddTranslation = {
   clear: '清除',
   add: '新增',
   inLibrary: '已在你的資料庫',
+  sameName: ({ name }) => `你已經有一個名為 ${name} 的技能。這會另外新增一份副本。`,
   open: '開啟',
   addToLibrary: '新增到資料庫',
+  addOnly: ({ name }) => `僅新增 ${name}`,
   pinnedTo: ({ ref }) => `固定在 ${ref}`,
   via: ({ source }) => `經由 ${source}`,
   outsideReferences: ({ count }) =>
@@ -3057,6 +3152,7 @@ const zhHantSkillAdd: SkillAddTranslation = {
     selectAll: '全選',
     openOne: '開啟一個即可查看它會安裝什麼。',
     chooseWhich: '選擇要新增的',
+    foundOne: '此連結中的 1 個技能',
   },
   upload: {
     title: '上傳',

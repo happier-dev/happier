@@ -6,7 +6,7 @@ export const english = {
         footer: 'Read-only. Installing, updating and every other plugin action runs on the machine selected above.',
         empty: 'No machine has reported a plugin installation for this Account yet.',
         unavailable: 'Account plugin availability has not loaded yet, so machine states are unknown.',
-        incomplete: ({ count }: { count: number }) => `This list may be incomplete: ${count} server(s) have not reported their machines yet.`,
+        incomplete: ({ count }: { count: number }) => `This list may be incomplete. Homes yet to report their machines: ${count}.`,
         summary: ({ installed, total }: { installed: number; total: number }) => `Installed and current on ${installed} of ${total} machines`,
         lastObserved: ({ ago }: { ago: string }) => `last seen ${ago}`,
         state: {

@@ -14,7 +14,7 @@ export const en = {
         },
     },
     automations: {
-        title: 'Automations',
+        title: 'Workflows',
         description: 'Scheduled and triggered agent work.',
     },
     workflows: {
@@ -139,7 +139,7 @@ export const en = {
         },
         board: {
             title: 'Session board',
-            description: 'Arrange sessions and their items on shared boards.',
+            description: 'Pin notes and live views beside a session\'s chat.',
         },
         filteredListing: {
             title: 'Filtered listing',
@@ -339,7 +339,7 @@ export const en = {
         pairing: {
             desktopQrMobileScan: {
                 title: 'Sign in by scanning',
-                description: 'Sign in on a phone by scanning a code on a computer.',
+                description: 'Sign in on a phone by scanning a code on a machine.',
             },
             boundQrV2: {
                 title: 'Safer pairing codes',
@@ -596,7 +596,7 @@ export const en = {
         },
         HAPPIER_FEATURE_PLUGINS_WEBHOOKS__PROCESS_MAX_REQUESTS: {
             title: 'Webhooks in progress',
-            description: 'Most webhook requests this server handles at once.',
+            description: 'Most webhook requests this Home handles at once.',
         },
         HAPPIER_FEATURE_PLUGINS_WEBHOOKS__PROCESS_MAX_WORKING_BYTES: {
             title: 'Webhook memory',

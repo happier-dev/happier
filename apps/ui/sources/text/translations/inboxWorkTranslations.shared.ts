@@ -11,7 +11,7 @@ export const en = {
         const list = parts.length > 1 ? `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}` : parts[0] ?? '';
         return `${list} ${approvals + decisions + blocked === 1 ? 'needs you' : 'need you'}.`;
     },
-    quickDecision: { deny: 'Deny', allowOnce: 'Allow once' },
+    quickDecision: { allowOnce: 'Allow once' },
     keyHints: { move: 'move', fullPage: 'full page', close: 'close', answering: 'Answering opens the next one' },
     tabs: {
         a11y: 'Inbox view',
@@ -25,10 +25,12 @@ export const en = {
     },
     rows: {
         step: 'Step',
+        pluginControlUnavailable: 'That didn’t go through. Open the session to try there.',
         workflowRun: 'Workflow run',
         review: 'Review',
         stalled: 'Stalled',
         stalledReason: 'Its machine went offline mid-turn',
+        reportsTo: ({ lead }: { lead: string }) => `Reports to ${lead}`,
         landing: 'Landing',
         settle: 'Settle',
         snoozedUntil: ({ time }: { time: string }) => `Snoozed until ${time}`,
@@ -49,7 +51,7 @@ export const en = {
     },
     empty: {
         title: 'Nothing needs you',
-        description: 'Permission requests, reviews and anything an orchestrator or workflow waits on land here.',
+        description: 'Permission requests, reviews and anything a Coordinator or Workflow waits on land here.',
     },
     updatesEmpty: {
         title: 'No updates',
@@ -57,6 +59,8 @@ export const en = {
     },
     stale: {
         reason: "Couldn't refresh workflow runs",
+        sources: 'Some items may be missing.',
+        sourcesTitle: "Couldn't load everything",
         retry: 'Try again',
     },
     settleFailed: "Couldn't settle this session",

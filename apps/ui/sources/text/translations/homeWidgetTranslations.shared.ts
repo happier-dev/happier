@@ -31,7 +31,7 @@ export const homeWidgetTranslationsEnglish = { en: {
         latestRunsTitle: 'Latest runs',
         latestRunsLoading: 'Loading the latest runs',
         latestRunsEmptyTitle: 'No runs yet',
-        latestRunsEmptyReason: 'When your automations run, how each run went shows up here.',
+        latestRunsEmptyReason: 'Each workflow run shows here, with how it went.',
         latestRunsErrorTitle: 'Couldn’t load the latest runs',
         latestRunsErrorReason: 'Your Home didn’t answer. Check the connection, then try again.',
         yourHomeTitle: 'Your Home',

@@ -15,8 +15,35 @@ export type SkillsPageTranslation = Readonly<{
   noOwnSkills: string;
   noMatch: (params: Readonly<{ query: string }>) => string;
   loadFailed: string;
-  filterOn: (params: Readonly<{ machine: string }>) => string;
-  clearFilter: string;
+  saved: Readonly<{
+    saved: string;
+    notAttached: string;
+    attachAgain: string;
+    liveNow: string;
+    loadsAfterTurn: string;
+    restartNow: string;
+    needsRestart: string;
+    view: string;
+    liveNowDetail: (params: Readonly<{ name: string }>) => string;
+    loadsAfterTurnDetail: string;
+    restartDetail: string;
+    restartTerminalDetail: string;
+    notAttachedDetail: string;
+    onlyUses: (params: Readonly<{ name: string }>) => string;
+  }>;
+  maker: Readonly<{
+    title: string;
+    anyone: string;
+    you: string;
+    anyBot: string;
+    registries: string;
+    session: string;
+    person: string;
+    unknown: string;
+    openSession: string;
+    createdHere: string;
+  }>;
+  pane: Readonly<{ thisBot: string; yours: string; registries: string; other: string; allSkills: string }>;
   home: Readonly<{
     reach: (
       params: Readonly<{ count: number; agents: string; machines: number }>,
@@ -62,6 +89,35 @@ export type SkillsPageTranslation = Readonly<{
 }>;
 
 const en: SkillsPageTranslation = {
+  pane: { thisBot: "Made by this Bot", yours: "Yours", registries: "From your registries", other: "Other skills", allSkills: "All your skills" },
+  saved: {
+    saved: "Saved to your skills",
+    notAttached: "Not attached here",
+    attachAgain: "Attach again",
+    liveNow: "Live now",
+    loadsAfterTurn: "Loads after this turn",
+    restartNow: "Restart now",
+    needsRestart: "Needs a restart to load",
+    view: "View",
+    liveNowDetail: ({ name }) => name + " uses it from its next message.",
+    loadsAfterTurnDetail: "It joins between turns. The conversation is kept.",
+    restartDetail: "Restarting keeps the conversation.",
+    restartTerminalDetail: "Restart it from its terminal. The conversation is kept.",
+    notAttachedDetail: "It’s in your skills; this session didn’t take it.",
+    onlyUses: ({ name }) => "only " + name + " uses it",
+  },
+  maker: {
+    title: "Made by",
+    anyone: "Anyone",
+    you: "You",
+    anyBot: "Any Bot",
+    registries: "From registries",
+    session: "Session",
+    person: "Another person",
+    unknown: "Unknown maker",
+    openSession: "Open session",
+    createdHere: "Created in Happier",
+  },
   title: 'Skills',
   pageDescription:
     'Instructions your agents pick up when a task needs them. Add a skill once and it reaches every machine.',
@@ -76,8 +132,6 @@ const en: SkillsPageTranslation = {
   noOwnSkills: 'No skills of your own yet',
   noMatch: ({ query }) => `No skills match “${query}”`,
   loadFailed: 'Couldn’t load your skills',
-  filterOn: ({ machine }) => `On ${machine}`,
-  clearFilter: 'Show every machine',
   home: {
     reach: ({ count, agents, machines }) =>
       `${count} ${count === 1 ? 'skill reaches' : 'skills reach'} ${agents} on ${machines} ${machines === 1 ? 'machine' : 'machines'}`,
@@ -129,6 +183,35 @@ const en: SkillsPageTranslation = {
 };
 
 const de: SkillsPageTranslation = {
+  pane: { thisBot: "Von diesem Bot erstellt", yours: "Deine", registries: "Aus deinen Registries", other: "Andere Skills", allSkills: "Alle deine Skills" },
+  saved: {
+    saved: "In deinen Skills gespeichert",
+    notAttached: "Hier nicht angehängt",
+    attachAgain: "Erneut anhängen",
+    liveNow: "Jetzt aktiv",
+    loadsAfterTurn: "Wird nach diesem Zug geladen",
+    restartNow: "Jetzt neu starten",
+    needsRestart: "Braucht einen Neustart",
+    view: "Ansehen",
+    liveNowDetail: ({ name }) => name + " nutzt ihn ab der nächsten Nachricht.",
+    loadsAfterTurnDetail: "Er kommt zwischen zwei Zügen dazu. Das Gespräch bleibt erhalten.",
+    restartDetail: "Ein Neustart behält das Gespräch.",
+    restartTerminalDetail: "Starte sie im Terminal neu. Das Gespräch bleibt erhalten.",
+    notAttachedDetail: "Er ist in deinen Skills; diese Sitzung hat ihn nicht übernommen.",
+    onlyUses: ({ name }) => "nur " + name + " nutzt ihn",
+  },
+  maker: {
+    title: "Erstellt von",
+    anyone: "Allen",
+    you: "Dir",
+    anyBot: "Jedem Bot",
+    registries: "Aus Registries",
+    session: "Sitzung",
+    person: "Eine andere Person",
+    unknown: "Unbekannter Ersteller",
+    openSession: "Sitzung öffnen",
+    createdHere: "In Happier erstellt",
+  },
   title: 'Skills',
   pageDescription:
     'Anweisungen, die deine Agenten nutzen, wenn eine Aufgabe sie braucht. Füge einen Skill einmal hinzu, und er erreicht jede Maschine.',
@@ -143,8 +226,6 @@ const de: SkillsPageTranslation = {
   noOwnSkills: 'Noch keine eigenen Skills',
   noMatch: ({ query }) => `Keine Skills passen zu „${query}“`,
   loadFailed: 'Deine Skills konnten nicht geladen werden',
-  filterOn: ({ machine }) => `Auf ${machine}`,
-  clearFilter: 'Alle Maschinen zeigen',
   home: {
     reach: ({ count, agents, machines }) =>
       `${count} ${count === 1 ? 'Skill erreicht' : 'Skills erreichen'} ${agents} auf ${machines} ${machines === 1 ? 'Maschine' : 'Maschinen'}`,
@@ -196,6 +277,35 @@ const de: SkillsPageTranslation = {
 };
 
 const fr: SkillsPageTranslation = {
+  pane: { thisBot: "Créées par ce Bot", yours: "Les tiennes", registries: "De tes registres", other: "Autres compétences", allSkills: "Toutes tes compétences" },
+  saved: {
+    saved: "Enregistré dans vos skills",
+    notAttached: "Non attaché ici",
+    attachAgain: "Attacher à nouveau",
+    liveNow: "Actif maintenant",
+    loadsAfterTurn: "Se charge après ce tour",
+    restartNow: "Redémarrer maintenant",
+    needsRestart: "Redémarrage nécessaire",
+    view: "Voir",
+    liveNowDetail: ({ name }) => name + " l’utilise dès son prochain message.",
+    loadsAfterTurnDetail: "Elle arrive entre deux tours. La conversation est conservée.",
+    restartDetail: "Redémarrer conserve la conversation.",
+    restartTerminalDetail: "Redémarre-la depuis son terminal. La conversation est conservée.",
+    notAttachedDetail: "Elle est dans tes compétences ; cette session ne l’a pas prise.",
+    onlyUses: ({ name }) => "seul " + name + " l’utilise",
+  },
+  maker: {
+    title: "Créé par",
+    anyone: "Tout le monde",
+    you: "Vous",
+    anyBot: "Tout bot",
+    registries: "Depuis les registres",
+    session: "Session",
+    person: "Une autre personne",
+    unknown: "Créateur inconnu",
+    openSession: "Ouvrir la session",
+    createdHere: "Créé dans Happier",
+  },
   title: 'Skills',
   pageDescription:
     'Des instructions que vos agents utilisent quand une tâche en a besoin. Ajoutez un skill une fois et il atteint chaque machine.',
@@ -210,8 +320,6 @@ const fr: SkillsPageTranslation = {
   noOwnSkills: 'Aucun skill à vous pour l’instant',
   noMatch: ({ query }) => `Aucun skill ne correspond à « ${query} »`,
   loadFailed: 'Impossible de charger vos skills',
-  filterOn: ({ machine }) => `Sur ${machine}`,
-  clearFilter: 'Afficher toutes les machines',
   home: {
     reach: ({ count, agents, machines }) =>
       `${count} ${count === 1 ? 'skill atteint' : 'skills atteignent'} ${agents} sur ${machines} ${machines === 1 ? 'machine' : 'machines'}`,
@@ -263,6 +371,35 @@ const fr: SkillsPageTranslation = {
 };
 
 const es: SkillsPageTranslation = {
+  pane: { thisBot: "Creadas por este Bot", yours: "Tuyas", registries: "De tus registros", other: "Otras habilidades", allSkills: "Todas tus habilidades" },
+  saved: {
+    saved: "Guardado en tus skills",
+    notAttached: "No está adjunto aquí",
+    attachAgain: "Adjuntar de nuevo",
+    liveNow: "Activo ahora",
+    loadsAfterTurn: "Se carga después de este turno",
+    restartNow: "Reiniciar ahora",
+    needsRestart: "Necesita reiniciar",
+    view: "Ver",
+    liveNowDetail: ({ name }) => name + " la usa desde su próximo mensaje.",
+    loadsAfterTurnDetail: "Se suma entre turnos. La conversación se conserva.",
+    restartDetail: "Reiniciar conserva la conversación.",
+    restartTerminalDetail: "Reiníciala desde su terminal. La conversación se conserva.",
+    notAttachedDetail: "Está en tus habilidades; esta sesión no la tomó.",
+    onlyUses: ({ name }) => "solo " + name + " la usa",
+  },
+  maker: {
+    title: "Creado por",
+    anyone: "Cualquiera",
+    you: "Tú",
+    anyBot: "Cualquier bot",
+    registries: "De registros",
+    session: "Sesión",
+    person: "Otra persona",
+    unknown: "Creador desconocido",
+    openSession: "Abrir sesión",
+    createdHere: "Creado en Happier",
+  },
   title: 'Habilidades',
   pageDescription:
     'Instrucciones que tus agentes usan cuando una tarea las necesita. Añade una habilidad una vez y llega a todas tus máquinas.',
@@ -277,8 +414,6 @@ const es: SkillsPageTranslation = {
   noOwnSkills: 'Aún no tienes habilidades propias',
   noMatch: ({ query }) => `Ninguna habilidad coincide con «${query}»`,
   loadFailed: 'No se pudieron cargar tus habilidades',
-  filterOn: ({ machine }) => `En ${machine}`,
-  clearFilter: 'Mostrar todas las máquinas',
   home: {
     reach: ({ count, agents, machines }) =>
       `${count} ${count === 1 ? 'habilidad llega' : 'habilidades llegan'} a ${agents} en ${machines} ${machines === 1 ? 'máquina' : 'máquinas'}`,
@@ -330,6 +465,35 @@ const es: SkillsPageTranslation = {
 };
 
 const ca: SkillsPageTranslation = {
+  pane: { thisBot: "Creades per aquest Bot", yours: "Teves", registries: "Dels teus registres", other: "Altres habilitats", allSkills: "Totes les teves habilitats" },
+  saved: {
+    saved: "Desat als teus skills",
+    notAttached: "No està adjunt aquí",
+    attachAgain: "Torna a adjuntar",
+    liveNow: "Actiu ara",
+    loadsAfterTurn: "Es carrega després d’aquest torn",
+    restartNow: "Reinicia ara",
+    needsRestart: "Cal reiniciar",
+    view: "Mostra",
+    liveNowDetail: ({ name }) => name + " la fa servir des del pròxim missatge.",
+    loadsAfterTurnDetail: "S’afegeix entre torns. La conversa es conserva.",
+    restartDetail: "Reiniciar conserva la conversa.",
+    restartTerminalDetail: "Reinicia-la des del seu terminal. La conversa es conserva.",
+    notAttachedDetail: "És a les teves habilitats; aquesta sessió no l’ha agafada.",
+    onlyUses: ({ name }) => "només " + name + " la fa servir",
+  },
+  maker: {
+    title: "Creat per",
+    anyone: "Qualsevol",
+    you: "Tu",
+    anyBot: "Qualsevol bot",
+    registries: "De registres",
+    session: "Sessió",
+    person: "Una altra persona",
+    unknown: "Creador desconegut",
+    openSession: "Obre la sessió",
+    createdHere: "Creat a Happier",
+  },
   ...es,
   title: 'Habilitats',
   pageDescription:
@@ -345,8 +509,6 @@ const ca: SkillsPageTranslation = {
   noOwnSkills: 'Encara no tens habilitats pròpies',
   noMatch: ({ query }) => `Cap habilitat coincideix amb «${query}»`,
   loadFailed: 'No s’han pogut carregar les teves habilitats',
-  filterOn: ({ machine }) => `A ${machine}`,
-  clearFilter: 'Mostra totes les màquines',
   home: {
     ...es.home,
     reach: ({ count, agents, machines }) =>
@@ -400,6 +562,35 @@ const ca: SkillsPageTranslation = {
 };
 
 const it: SkillsPageTranslation = {
+  pane: { thisBot: "Create da questo Bot", yours: "Le tue", registries: "Dai tuoi registri", other: "Altre abilità", allSkills: "Tutte le tue abilità" },
+  saved: {
+    saved: "Salvato nei tuoi skill",
+    notAttached: "Non collegato qui",
+    attachAgain: "Collega di nuovo",
+    liveNow: "Attivo ora",
+    loadsAfterTurn: "Si carica dopo questo turno",
+    restartNow: "Riavvia ora",
+    needsRestart: "Serve un riavvio",
+    view: "Vedi",
+    liveNowDetail: ({ name }) => name + " la usa dal prossimo messaggio.",
+    loadsAfterTurnDetail: "Si aggiunge tra un turno e l’altro. La conversazione resta.",
+    restartDetail: "Il riavvio mantiene la conversazione.",
+    restartTerminalDetail: "Riavviala dal suo terminale. La conversazione resta.",
+    notAttachedDetail: "È nelle tue abilità; questa sessione non l’ha presa.",
+    onlyUses: ({ name }) => "solo " + name + " la usa",
+  },
+  maker: {
+    title: "Creato da",
+    anyone: "Chiunque",
+    you: "Te",
+    anyBot: "Qualsiasi bot",
+    registries: "Dai registri",
+    session: "Sessione",
+    person: "Un’altra persona",
+    unknown: "Autore sconosciuto",
+    openSession: "Apri sessione",
+    createdHere: "Creato in Happier",
+  },
   title: 'Skill',
   pageDescription:
     'Istruzioni che i tuoi agenti usano quando un compito ne ha bisogno. Aggiungi una skill una volta e raggiunge ogni macchina.',
@@ -414,8 +605,6 @@ const it: SkillsPageTranslation = {
   noOwnSkills: 'Ancora nessuna skill tua',
   noMatch: ({ query }) => `Nessuna skill corrisponde a «${query}»`,
   loadFailed: 'Impossibile caricare le tue skill',
-  filterOn: ({ machine }) => `Su ${machine}`,
-  clearFilter: 'Mostra tutte le macchine',
   home: {
     reach: ({ count, agents, machines }) =>
       `${count} skill ${count === 1 ? 'raggiunge' : 'raggiungono'} ${agents} su ${machines} ${machines === 1 ? 'macchina' : 'macchine'}`,
@@ -466,6 +655,35 @@ const it: SkillsPageTranslation = {
 };
 
 const pt: SkillsPageTranslation = {
+  pane: { thisBot: "Criadas por este Bot", yours: "Suas", registries: "Dos seus registros", other: "Outras habilidades", allSkills: "Todas as suas habilidades" },
+  saved: {
+    saved: "Salvo nos seus skills",
+    notAttached: "Não anexado aqui",
+    attachAgain: "Anexar novamente",
+    liveNow: "Ativo agora",
+    loadsAfterTurn: "Carrega após este turno",
+    restartNow: "Reiniciar agora",
+    needsRestart: "Precisa reiniciar",
+    view: "Ver",
+    liveNowDetail: ({ name }) => name + " a usa a partir da próxima mensagem.",
+    loadsAfterTurnDetail: "Ela entra entre os turnos. A conversa é mantida.",
+    restartDetail: "Reiniciar mantém a conversa.",
+    restartTerminalDetail: "Reinicie pelo terminal. A conversa é mantida.",
+    notAttachedDetail: "Está nas suas habilidades; esta sessão não a recebeu.",
+    onlyUses: ({ name }) => "só " + name + " a usa",
+  },
+  maker: {
+    title: "Criado por",
+    anyone: "Qualquer pessoa",
+    you: "Você",
+    anyBot: "Qualquer bot",
+    registries: "Dos registros",
+    session: "Sessão",
+    person: "Outra pessoa",
+    unknown: "Criador desconhecido",
+    openSession: "Abrir sessão",
+    createdHere: "Criado no Happier",
+  },
   ...es,
   pageDescription:
     'Instruções que os seus agentes usam quando uma tarefa precisa delas. Adicione uma habilidade uma vez e ela chega a todas as máquinas.',
@@ -480,8 +698,6 @@ const pt: SkillsPageTranslation = {
   noOwnSkills: 'Ainda não há habilidades suas',
   noMatch: ({ query }) => `Nenhuma habilidade corresponde a “${query}”`,
   loadFailed: 'Não foi possível carregar as suas habilidades',
-  filterOn: ({ machine }) => `Em ${machine}`,
-  clearFilter: 'Mostrar todas as máquinas',
   home: {
     ...es.home,
     reach: ({ count, agents, machines }) =>
@@ -534,6 +750,35 @@ const pt: SkillsPageTranslation = {
 };
 
 const pl: SkillsPageTranslation = {
+  pane: { thisBot: "Utworzone przez tego Bota", yours: "Twoje", registries: "Z Twoich rejestrów", other: "Inne umiejętności", allSkills: "Wszystkie Twoje umiejętności" },
+  saved: {
+    saved: "Zapisano w Twoich umiejętnościach",
+    notAttached: "Nie dołączono tutaj",
+    attachAgain: "Dołącz ponownie",
+    liveNow: "Aktywne teraz",
+    loadsAfterTurn: "Załaduje się po tej turze",
+    restartNow: "Uruchom ponownie",
+    needsRestart: "Wymaga ponownego uruchomienia",
+    view: "Pokaż",
+    liveNowDetail: ({ name }) => name + " używa jej od następnej wiadomości.",
+    loadsAfterTurnDetail: "Dołącza między turami. Rozmowa zostaje.",
+    restartDetail: "Ponowne uruchomienie zachowuje rozmowę.",
+    restartTerminalDetail: "Uruchom ją ponownie z terminala. Rozmowa zostaje.",
+    notAttachedDetail: "Jest w twoich umiejętnościach; ta sesja jej nie przyjęła.",
+    onlyUses: ({ name }) => "używa jej tylko " + name,
+  },
+  maker: {
+    title: "Utworzone przez",
+    anyone: "Każdego",
+    you: "Ciebie",
+    anyBot: "Dowolnego bota",
+    registries: "Z rejestrów",
+    session: "Sesja",
+    person: "Inna osoba",
+    unknown: "Nieznany twórca",
+    openSession: "Otwórz sesję",
+    createdHere: "Utworzono w Happier",
+  },
   title: 'Umiejętności',
   pageDescription:
     'Instrukcje, z których agenci korzystają, gdy zadanie tego wymaga. Dodaj umiejętność raz, a trafi na każdą maszynę.',
@@ -547,8 +792,6 @@ const pl: SkillsPageTranslation = {
   noOwnSkills: 'Brak jeszcze własnych umiejętności',
   noMatch: ({ query }) => `Żadna umiejętność nie pasuje do „${query}”`,
   loadFailed: 'Nie udało się wczytać umiejętności',
-  filterOn: ({ machine }) => `Na ${machine}`,
-  clearFilter: 'Pokaż wszystkie maszyny',
   home: {
     reach: ({ count, agents, machines }) =>
       `Umiejętności: ${count} · ${agents} · maszyny: ${machines}`,
@@ -599,6 +842,35 @@ const pl: SkillsPageTranslation = {
 };
 
 const ru: SkillsPageTranslation = {
+  pane: { thisBot: "Созданы этим Ботом", yours: "Ваши", registries: "Из ваших реестров", other: "Другие навыки", allSkills: "Все ваши навыки" },
+  saved: {
+    saved: "Сохранено в ваших навыках",
+    notAttached: "Здесь не подключено",
+    attachAgain: "Подключить снова",
+    liveNow: "Уже активно",
+    loadsAfterTurn: "Загрузится после этого хода",
+    restartNow: "Перезапустить сейчас",
+    needsRestart: "Нужен перезапуск",
+    view: "Открыть",
+    liveNowDetail: ({ name }) => name + " использует его со следующего сообщения.",
+    loadsAfterTurnDetail: "Он подключится между ходами. Разговор сохранится.",
+    restartDetail: "Перезапуск сохраняет разговор.",
+    restartTerminalDetail: "Перезапустите сессию из терминала. Разговор сохранится.",
+    notAttachedDetail: "Он есть в ваших навыках, но эта сессия его не приняла.",
+    onlyUses: ({ name }) => "использует только " + name,
+  },
+  maker: {
+    title: "Кем создано",
+    anyone: "Кем угодно",
+    you: "Вами",
+    anyBot: "Любым ботом",
+    registries: "Из реестров",
+    session: "Сессия",
+    person: "Другой человек",
+    unknown: "Автор неизвестен",
+    openSession: "Открыть сессию",
+    createdHere: "Создано в Happier",
+  },
   title: 'Скиллы',
   pageDescription:
     'Инструкции, которые агенты берут, когда задача их требует. Добавьте скилл один раз — и он будет на каждой машине.',
@@ -612,8 +884,6 @@ const ru: SkillsPageTranslation = {
   noOwnSkills: 'Своих скиллов пока нет',
   noMatch: ({ query }) => `Нет скиллов по запросу «${query}»`,
   loadFailed: 'Не удалось загрузить скиллы',
-  filterOn: ({ machine }) => `На ${machine}`,
-  clearFilter: 'Показать все машины',
   home: {
     reach: ({ count, agents, machines }) =>
       `Скиллов: ${count} · ${agents} · машин: ${machines}`,
@@ -664,6 +934,35 @@ const ru: SkillsPageTranslation = {
 };
 
 const ja: SkillsPageTranslation = {
+  pane: { thisBot: "このBotが作成", yours: "あなたのスキル", registries: "レジストリから", other: "その他のスキル", allSkills: "すべてのスキル" },
+  saved: {
+    saved: "スキルに保存しました",
+    notAttached: "このセッションには未追加",
+    attachAgain: "もう一度追加",
+    liveNow: "現在有効",
+    loadsAfterTurn: "このターンの後に読み込み",
+    restartNow: "今すぐ再起動",
+    needsRestart: "読み込みには再起動が必要",
+    view: "表示",
+    liveNowDetail: ({ name }) => name + " は次のメッセージから使います。",
+    loadsAfterTurnDetail: "ターンの合間に読み込まれます。会話はそのままです。",
+    restartDetail: "再起動しても会話はそのままです。",
+    restartTerminalDetail: "ターミナルから再起動してください。会話はそのままです。",
+    notAttachedDetail: "スキルには保存されていますが、このセッションには入っていません。",
+    onlyUses: ({ name }) => name + " だけが使います",
+  },
+  maker: {
+    title: "作成者",
+    anyone: "すべて",
+    you: "あなた",
+    anyBot: "すべてのボット",
+    registries: "レジストリから",
+    session: "セッション",
+    person: "他の人",
+    unknown: "作成者不明",
+    openSession: "セッションを開く",
+    createdHere: "Happierで作成",
+  },
   title: 'スキル',
   pageDescription:
     'タスクに必要なときにエージェントが使う指示です。一度追加すれば、すべてのマシンに届きます。',
@@ -677,8 +976,6 @@ const ja: SkillsPageTranslation = {
   noOwnSkills: '自分のスキルはまだありません',
   noMatch: ({ query }) => `「${query}」に一致するスキルはありません`,
   loadFailed: 'スキルを読み込めませんでした',
-  filterOn: ({ machine }) => `${machine} 上`,
-  clearFilter: 'すべてのマシンを表示',
   home: {
     reach: ({ count, agents, machines }) =>
       `${count}件のスキルが${machines}台のマシンの${agents}に届いています`,
@@ -729,6 +1026,35 @@ const ja: SkillsPageTranslation = {
 };
 
 const zhHans: SkillsPageTranslation = {
+  pane: { thisBot: "此 Bot 创建", yours: "你的技能", registries: "来自你的注册库", other: "其他技能", allSkills: "你的所有技能" },
+  saved: {
+    saved: "已保存到你的技能",
+    notAttached: "未附加到此会话",
+    attachAgain: "重新附加",
+    liveNow: "现已生效",
+    loadsAfterTurn: "本轮结束后加载",
+    restartNow: "立即重启",
+    needsRestart: "需要重启才能加载",
+    view: "查看",
+    liveNowDetail: ({ name }) => name + " 从下一条消息起使用它。",
+    loadsAfterTurnDetail: "它会在两轮之间加入。对话保留。",
+    restartDetail: "重启会保留对话。",
+    restartTerminalDetail: "请在终端中重启。对话保留。",
+    notAttachedDetail: "它已在你的技能中，但本会话没有加载。",
+    onlyUses: ({ name }) => "仅 " + name + " 使用",
+  },
+  maker: {
+    title: "创建者",
+    anyone: "任何人",
+    you: "你",
+    anyBot: "任何机器人",
+    registries: "来自注册表",
+    session: "会话",
+    person: "其他人",
+    unknown: "创建者未知",
+    openSession: "打开会话",
+    createdHere: "在 Happier 中创建",
+  },
   title: '技能',
   pageDescription:
     '任务需要时你的智能体会采用的指令。添加一次，技能就会到达每台机器。',
@@ -742,8 +1068,6 @@ const zhHans: SkillsPageTranslation = {
   noOwnSkills: '还没有你自己的技能',
   noMatch: ({ query }) => `没有与“${query}”匹配的技能`,
   loadFailed: '无法加载你的技能',
-  filterOn: ({ machine }) => `在 ${machine} 上`,
-  clearFilter: '显示所有机器',
   home: {
     reach: ({ count, agents, machines }) =>
       `${count} 个技能到达 ${machines} 台机器上的 ${agents}`,
@@ -794,6 +1118,35 @@ const zhHans: SkillsPageTranslation = {
 };
 
 const zhHant: SkillsPageTranslation = {
+  pane: { thisBot: "此 Bot 建立", yours: "你的技能", registries: "來自你的登錄庫", other: "其他技能", allSkills: "你的所有技能" },
+  saved: {
+    saved: "已儲存至你的技能",
+    notAttached: "未附加至此工作階段",
+    attachAgain: "重新附加",
+    liveNow: "現已生效",
+    loadsAfterTurn: "本輪結束後載入",
+    restartNow: "立即重新啟動",
+    needsRestart: "需要重新啟動才能載入",
+    view: "檢視",
+    liveNowDetail: ({ name }) => name + " 從下一則訊息起使用它。",
+    loadsAfterTurnDetail: "它會在兩輪之間加入。對話會保留。",
+    restartDetail: "重新啟動會保留對話。",
+    restartTerminalDetail: "請在終端機重新啟動。對話會保留。",
+    notAttachedDetail: "它已在你的技能中，但此工作階段沒有載入。",
+    onlyUses: ({ name }) => "僅 " + name + " 使用",
+  },
+  maker: {
+    title: "建立者",
+    anyone: "任何人",
+    you: "你",
+    anyBot: "任何機器人",
+    registries: "來自登錄庫",
+    session: "工作階段",
+    person: "其他人",
+    unknown: "建立者未知",
+    openSession: "開啟工作階段",
+    createdHere: "在 Happier 中建立",
+  },
   title: '技能',
   pageDescription:
     '任務需要時你的代理會採用的指令。新增一次，技能就會到達每台機器。',
@@ -807,8 +1160,6 @@ const zhHant: SkillsPageTranslation = {
   noOwnSkills: '還沒有你自己的技能',
   noMatch: ({ query }) => `沒有符合「${query}」的技能`,
   loadFailed: '無法載入你的技能',
-  filterOn: ({ machine }) => `在 ${machine} 上`,
-  clearFilter: '顯示所有機器',
   home: {
     reach: ({ count, agents, machines }) =>
       `${count} 個技能到達 ${machines} 台機器上的 ${agents}`,

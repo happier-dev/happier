@@ -16,7 +16,7 @@ export const usageChartInputTranslations = {
     inputPlanets: 'Planeten des Zeitraums', inputThread: 'Serienfaden', inputSkyline: 'Wochen-Skyline', inputSurface: 'Tage auf der Oberfläche',
     inputRings: 'Serienringe', inputPeriodOrbit: 'Rund um den Zeitraum', inputMoons: 'Monde', inputGalaxy: 'Sitzungsgalaxie',
     inputCalendar: 'Kalender', inputWeekdayHour: 'Wochentag / Stunde', inputSky: 'Tagehimmel', inputWeekTide: 'Wochentide', inputDaylight: 'Tageslicht',
-    inputLanes: 'Bahnen', inputDial: 'Zifferblatt', inputTimeline: 'Maschinen-Zeitleiste', inputCrew: 'Besatzung', inputRiver: 'Agentenfluss',
+    inputLanes: 'Bahnen', inputDial: 'Zifferblatt', inputTimeline: 'Rechner-Zeitleiste', inputCrew: 'Besatzung', inputRiver: 'Agentenfluss',
     inputShipped: 'Ausgeliefert', inputPersonalRecords: 'Persönliche Rekorde', inputSteering: 'Steuerung nach Agent' },
   fr: { inputColourBy: 'Colorer par', inputIntensity: 'Intensité', inputLeadingAgent: 'Agent principal', inputDay: 'Jour',
     inputPlanets: 'Planètes de la période', inputThread: 'Fil des séries', inputSkyline: 'Silhouette des semaines', inputSurface: 'Jours à la surface',

@@ -2,7 +2,6 @@
 
 export const english = {
     eventAutomationComposer: {
-        available: 'Available',
         payloadFields: 'PAYLOAD FIELDS',
         payloadSample: 'Sample payload',
         noFilterableFields: 'This Event does not declare filterable payload fields.',
@@ -13,8 +12,8 @@ export const english = {
         filterOneOf: 'Is one of',
         filterValue: 'Filter value',
         filterValuePlaceholder: '"value" or ["value"]',
-        storedContentUnavailableTitle: 'Stored automation content unavailable',
-        storedContentUnavailableBody: 'This Event automation cannot be saved because its stored content is unavailable.',
+        storedContentUnavailableTitle: 'Stored workflow content unavailable',
+        storedContentUnavailableBody: 'This Event workflow cannot be saved because its stored content is unavailable.',
         historyGapRecoveryTitle: 'History gap needs attention',
         historyGapRecoverySubtitle: 'Reset the source baseline to resume observing new Events.',
         historyGapRecoveryUnavailable: 'The source recovery action is not available on its current watcher.',
@@ -47,7 +46,6 @@ export const english = {
         sourceCatalogStatusState: {
             current: 'Current',
             reconciling: 'Reconciling',
-            reconciliationLate: 'Reconciliation delayed',
         },
         sourceCatalogStatusObservedRevision: ({ revision }: { revision: string }) => `Observed revision: ${revision}`,
         sourceCatalogStatusAdoptedRevision: ({ revision }: { revision: string }) => `Adopted revision: ${revision}`,
