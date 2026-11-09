@@ -961,8 +961,8 @@ describe('Environment → Settings: checks, backups, previews', () => {
         machineId: 'machine-a', installationId: 'installation-a', targetLinkId: 'target-link', deploymentId: 'deployment-a',
       } });
       const { formatAsOfTime } = await import('@/utils/time/formatAsOfTime');
-      await vi.waitFor(() => expect(screen.findByTestId(`${id}.status`)?.props.detail)
-        .toBe(formatAsOfTime(Date.parse('2026-11-06T10:01:00Z'))));
+      await vi.waitFor(() => expect(screen.findAllByProps({ testID: `${id}.status`,
+        detail: formatAsOfTime(Date.parse('2026-11-06T10:01:00Z')) })).not.toHaveLength(0));
       expect(effects.filter(effect => effect.actionId === 'deployments.backups.history')).toHaveLength(2);
       await screen.pressByTestIdAsync(`${id}.verify`);
       expect(await settle(`${id}.snapshot.${snapshot.snapshotId}.manifestReadBack`)).not.toBeNull();

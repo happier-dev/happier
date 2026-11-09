@@ -629,8 +629,8 @@ describe('Environment → Data → Database page (P9)', () => {
       await view.screen.pressByTestIdAsync(`${page}.missed.action`);
       expect(await view.settle(`${page}.history.manual-backup`)).not.toBeNull();
       const { formatAsOfTime } = await import('@/utils/time/formatAsOfTime');
-      expect(view.screen.findByTestId(`${page}.lastGood`)?.props.detail)
-        .toBe(formatAsOfTime(Date.parse('2026-11-07T10:01:00Z')));
+      expect(view.screen.findAllByProps({ testID: `${page}.lastGood`,
+        detail: formatAsOfTime(Date.parse('2026-11-07T10:01:00Z')) })).not.toHaveLength(0);
       expect(view.effects.filter(effect => effect.actionId === 'deployments.backups.history')).toHaveLength(2);
       expect(view.effects.filter(effect => effect.actionId === 'deployments.backups.run')).toHaveLength(1);
     } finally { await view.dispose(); }
@@ -705,8 +705,8 @@ describe('Environment → Data → Database page (P9)', () => {
       expect(view.effects.find((effect) => effect.actionId === 'deployments.backups.run')?.input).toEqual(history);
       expect(await view.settle(`${page}.history.manual-backup`)).not.toBeNull();
       const { formatAsOfTime } = await import('@/utils/time/formatAsOfTime');
-      expect(view.screen.findByTestId(`${page}.lastGood`)?.props.detail)
-        .toBe(formatAsOfTime(Date.parse('2026-11-07T10:01:00Z')));
+      expect(view.screen.findAllByProps({ testID: `${page}.lastGood`,
+        detail: formatAsOfTime(Date.parse('2026-11-07T10:01:00Z')) })).not.toHaveLength(0);
       expect(view.effects.filter((effect) => effect.actionId === 'deployments.backups.history')).toHaveLength(2);
     } finally {
       await view.dispose();
@@ -750,7 +750,8 @@ describe('Environment → Data → Database page (P9)', () => {
       await waitForHomeGovernance(() => expect(view.screen.findByTestId('project-deployments.connect.refused')
         ?? view.screen.findByTestId('project-deployments.connect.connected')).not.toBeNull());
       expect(view.screen.findByTestId('project-deployments.connect.connected')).toBeNull();
-      expect(view.screen.findByTestId('project-deployments.connect.refused')?.props.diagnosticCode).toBe('deployment_conflict');
+      expect(view.screen.findAllByProps({ testID: 'project-deployments.connect.refused',
+        diagnosticCode: 'deployment_conflict' })).not.toHaveLength(0);
     } finally { await view.dispose(); }
   });
 
