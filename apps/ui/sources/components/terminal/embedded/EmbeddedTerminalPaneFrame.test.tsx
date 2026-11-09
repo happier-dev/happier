@@ -49,15 +49,15 @@ vi.mock('@/components/ui/text/Text', () => ({
     Text: (props: any) => React.createElement('Text', props, props.children),
 }));
 
-vi.mock('@/utils/ui/clipboard', () => ({
-    setClipboardStringSafe: vi.fn(),
+vi.mock('expo-clipboard', () => ({
+    setStringAsync: vi.fn(),
 }));
 
 vi.mock('@/utils/url/openExternalUrl', () => ({
     openExternalUrl: vi.fn(),
 }));
 
-import { EmbeddedTerminalPaneFrame } from './EmbeddedTerminalPaneFrame';
+import { EmbeddedTerminalPaneFrame, terminalAcceptsKeys } from './EmbeddedTerminalPaneFrame';
 import { embeddedTerminalPaneStyles } from './embeddedTerminalPaneStyles';
 import type { EmbeddedTerminalPaneController } from './types';
 
@@ -90,6 +90,15 @@ function makeController(overrides: Partial<EmbeddedTerminalPaneController>): Emb
 }
 
 describe('EmbeddedTerminalPaneFrame states (terminal lab ST)', () => {
+    it('keeps writable disconnected Shell input available without admitting read-only or uncertain input', () => {
+        const disconnected = makeController({ status: 'error', connectionLost: true });
+        expect(terminalAcceptsKeys(disconnected)).toBe(true);
+        expect(terminalAcceptsKeys({ ...disconnected, readOnly: true })).toBe(false);
+        expect(terminalAcceptsKeys({ ...disconnected, inputRecoveryAvailable: true })).toBe(false);
+        expect(terminalAcceptsKeys({ ...disconnected, status: 'exited' })).toBe(false);
+        expect(terminalAcceptsKeys(makeController({ status: 'error', connectionLost: false }))).toBe(false);
+    });
+
     it('keeps uncertain input recoverable with copy and discard while retaining output', async () => {
         const copyInputRecovery = vi.fn(async () => {});
         const discardInputRecovery = vi.fn();
@@ -127,6 +136,28 @@ describe('EmbeddedTerminalPaneFrame states (terminal lab ST)', () => {
         expect(bare.getTextContent()).not.toContain('terminalWorkspace.states.connecting');
         // Only the Approvals action needs the callback.
         expect(bare.findByTestId('consent-state-line-action')).toBeFalsy();
+    });
+    it('keeps the first connection quiet while the session owner is still starting it', async () => {
+        const screen = await renderScreen(<EmbeddedTerminalPaneFrame title="shell" controller={makeController({
+            status: 'connecting', connectionRetryAvailable: false,
+        })} chrome="none" surface={React.createElement('TerminalSurface')} testIdPrefix="starting" platformOS="web" />);
+        expect(screen.findByType('TerminalSurface')).toBeTruthy();
+        expect(screen.findByTestId('starting-state-line-spinner')).toBeTruthy();
+        expect(screen.findByTestId('starting-state-line-action')).toBeFalsy();
+    });
+    it.each([undefined, true])('lets Retry supersede a stalled connection while retaining terminal output (owner recovery: %s)', async connectionRetryAvailable => {
+        const retryConnect = vi.fn();
+        const requestRestart = vi.fn();
+        const screen = await renderScreen(<EmbeddedTerminalPaneFrame title="shell" controller={makeController({
+            status: 'connecting', connectionRetryAvailable, retryConnect, requestRestart,
+        })} chrome="none" surface={React.createElement('TerminalSurface')} testIdPrefix="connecting" platformOS="web" />);
+        expect(screen.findByTestId('connecting-overlay')).toBeFalsy();
+        expect(screen.findByType('TerminalSurface')).toBeTruthy();
+        const retry = screen.findByTestId('connecting-state-line-action');
+        expect(retry).toBeTruthy();
+        retry?.props.onPress();
+        expect(retryConnect).toHaveBeenCalledOnce();
+        expect(requestRestart).not.toHaveBeenCalled();
     });
     it('keeps a connected terminal live even when an approval is pending', async () => {
         const screen = await renderScreen(<EmbeddedTerminalPaneFrame title="shell" controller={{ ...makeController({ status: 'connected' }), approvalPending: true }}

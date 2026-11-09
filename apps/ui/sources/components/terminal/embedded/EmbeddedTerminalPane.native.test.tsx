@@ -3,8 +3,10 @@ import { Platform } from 'react-native';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 import type { TerminalNativeQaRendererCrashInjectionResult } from '@happier-dev/terminal-native';
-import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { countStoreNotifications, renderScreen, standardCleanup } from '@/dev/testkit';
 import { storage } from '@/sync/domains/state/storageStore';
+import { terminalNativeRendererQuarantineState, writeTerminalNativeRendererQuarantine, type NativeRendererQuarantine } from '@/sync/domains/state/terminalRendererUiState';
+import { clearPersistenceStorage } from '@/sync/domains/state/persistenceStorage';
 import { settingsParse } from '@/sync/domains/settings/settings';
 import type { LocalSettings } from '@/sync/domains/settings/localSettings';
 import type { EmbeddedTerminalRendererHandle } from '@/components/terminal/embedded/embeddedTerminalRendererHandle';
@@ -52,13 +54,15 @@ const localSettingState = {
     set terminalRendererPreference(value: LocalSettings['terminalRendererPreference']) {
         storage.getState().applyLocalSettings({ terminalRendererPreference: value }, { source: 'test' });
     },
-    get terminalNativeRendererQuarantine() { return storage.getState().localSettings.terminalNativeRendererQuarantine; },
-    set terminalNativeRendererQuarantine(value: LocalSettings['terminalNativeRendererQuarantine']) {
-        storage.getState().applyLocalSettings({ terminalNativeRendererQuarantine: value }, { source: 'test' });
+};
+const nativeRendererState = {
+    get quarantine() { return terminalNativeRendererQuarantineState.read('native') ?? null; },
+    set quarantine(value: NativeRendererQuarantine) {
+        writeTerminalNativeRendererQuarantine(value);
     },
 };
 
-afterEach(() => { standardCleanup(); storage.setState(initialStorageState, true); });
+afterEach(() => { standardCleanup(); clearPersistenceStorage(); storage.setState(initialStorageState, true); });
 
 const screenReaderState = vi.hoisted(() => ({
     enabled: false,
@@ -108,9 +112,9 @@ vi.mock('@/hooks/ui/useScreenReaderEnabled', () => ({
     },
 }));
 
-vi.mock('@/utils/ui/clipboard', () => ({
-    getClipboardStringTrimmedSafe: vi.fn(async () => ''),
-    setClipboardStringSafe: clipboardState.setClipboardStringSafe,
+vi.mock('expo-clipboard', () => ({
+    getStringAsync: vi.fn(async () => ''),
+    setStringAsync: clipboardState.setClipboardStringSafe,
 }));
 
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({
@@ -204,7 +208,7 @@ function resetSurfaceState() {
     screenReaderState.enabled = false;
     screenReaderState.notify = null;
     localSettingState.terminalRendererPreference = 'auto';
-    localSettingState.terminalNativeRendererQuarantine = null;
+    nativeRendererState.quarantine = null;
     storage.setState(state => ({ settings: settingsParse({ ...state.settings,
         actionsSettingsV1: { v: 1, actions: { 'settings.set': { disabledSurfaces: ['ui'] } } } }) }));
     clipboardState.setClipboardStringSafe.mockReset();
@@ -585,7 +589,7 @@ describe('EmbeddedTerminalPane native renderer selection', () => {
         const now = vi.spyOn(Date, 'now').mockReturnValue(1_700_000_000_000);
 
         try {
-            await renderScreen(
+            const screen = await renderScreen(
                 <EmbeddedTerminalPane
                     title="Terminal"
                     controller={makeController()}
@@ -593,6 +597,8 @@ describe('EmbeddedTerminalPane native renderer selection', () => {
                 />,
             );
             expect(surfaceState.ghosttyProps).not.toBeNull();
+            const preferencesBeforeCrash = storage.getState().localSettings;
+            const preferencesNotifications = countStoreNotifications(storage);
 
             await act(async () => {
                 (surfaceState.ghosttyProps as {
@@ -604,11 +610,20 @@ describe('EmbeddedTerminalPane native renderer selection', () => {
                 });
             });
 
-            expect(storage.getState().localSettings.terminalNativeRendererQuarantine).toEqual({
+            preferencesNotifications.stop();
+            expect(preferencesNotifications.read()).toHaveLength(0);
+            expect(storage.getState().localSettings).toBe(preferencesBeforeCrash);
+            expect(nativeRendererState.quarantine).toEqual({
                 renderer: 'ios-ghosttykit',
                 expiresAtMs: 1_700_086_400_000,
             });
             expect(surfaceState.xtermProps).not.toBeNull();
+            await act(async () => { screen.tree?.unmount(); });
+            await renderScreen(
+                <EmbeddedTerminalPane title="Terminal" controller={makeController()} terminalRef={{ current: null }} />,
+            );
+            expect(surfaceState.xtermProps).not.toBeNull();
+            expect(surfaceState.ghosttyProps).toBeNull();
         } finally {
             now.mockRestore();
         }
@@ -690,15 +705,15 @@ describe('EmbeddedTerminalPane native renderer selection', () => {
             });
 
             expect(nativeQaState.injectRendererCrash).toHaveBeenCalledWith('embedded-terminal:android-termux:terminal');
-            expect(storage.getState().localSettings.terminalNativeRendererQuarantine).toEqual({
+            expect(nativeRendererState.quarantine).toEqual({
                 renderer: 'android-termux',
                 expiresAtMs: 1_700_086_400_000,
             });
             expect(surfaceState.xtermProps).not.toBeNull();
             expect(surfaceState.termuxProps).toBeNull();
 
-            localSettingState.terminalNativeRendererQuarantine = null;
             await act(async () => {
+                nativeRendererState.quarantine = null;
                 screen.tree?.update(
                     <EmbeddedTerminalPane
                         title="Terminal"
@@ -748,7 +763,7 @@ describe('EmbeddedTerminalPane native renderer selection', () => {
         expect(surfaceState.xtermProps).not.toBeNull();
         expect(surfaceState.ghosttyProps).toBeNull();
         expect(surfaceState.termuxProps).toBeNull();
-        expect(storage.getState().localSettings.terminalNativeRendererQuarantine).toBeNull();
+        expect(nativeRendererState.quarantine).toBeNull();
     });
 
     it('uses an unexpired fatal quarantine for xterm fallback and clears it once it expires', async () => {
@@ -770,7 +785,7 @@ describe('EmbeddedTerminalPane native renderer selection', () => {
         const now = vi.spyOn(Date, 'now').mockReturnValue(1_700_000_000_000);
 
         try {
-            localSettingState.terminalNativeRendererQuarantine = {
+            nativeRendererState.quarantine = {
                 renderer: 'ios-ghosttykit',
                 expiresAtMs: 1_700_086_400_000,
             };
@@ -785,10 +800,12 @@ describe('EmbeddedTerminalPane native renderer selection', () => {
             expect(surfaceState.xtermProps).not.toBeNull();
             expect(surfaceState.ghosttyProps).toBeNull();
 
-            localSettingState.terminalNativeRendererQuarantine = {
-                renderer: 'ios-ghosttykit',
-                expiresAtMs: 1_699_999_999_999,
-            };
+            await act(async () => {
+                nativeRendererState.quarantine = {
+                    renderer: 'ios-ghosttykit',
+                    expiresAtMs: 1_699_999_999_999,
+                };
+            });
             await renderScreen(
                 <EmbeddedTerminalPane
                     title="Terminal"
@@ -798,7 +815,7 @@ describe('EmbeddedTerminalPane native renderer selection', () => {
             );
 
             expect(surfaceState.ghosttyProps).not.toBeNull();
-            expect(storage.getState().localSettings.terminalNativeRendererQuarantine).toBeNull();
+            expect(nativeRendererState.quarantine).toBeNull();
         } finally {
             now.mockRestore();
         }

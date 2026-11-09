@@ -6,6 +6,7 @@ import { FindBarPlacement, useFindBarPresence } from '@/components/ui/find/FindB
 import { useFindSurfaceFocusReturn } from '@/components/ui/find/useFindSurfaceFocusReturn';
 import { usePluginSurfaceFocusEligibility } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { useFindSurfaceRegistration } from '@/keyboard/KeyboardShortcutProvider';
+import { isFindSurfaceTarget } from '@/keyboard/findSurfaceTarget';
 import { t } from '@/text';
 import type { EmbeddedTerminalRendererHandle, FindEngine } from './embeddedTerminalRendererHandle';
 import { readTerminalSurfaceState, updateTerminalSurfaceState } from '@/components/sessions/terminal/terminalSurfaceStateCache';
@@ -65,6 +66,7 @@ export function useTerminalFind(props: Readonly<{ title: string; focused?: boole
     };
     useFindSurfaceRegistration(eligible && engine && controller ? {
         surfaceId: props.findSurfaceId ?? `terminal:${id}`, controller,
+        containsTarget: target => isFindSurfaceTarget(rootRef.current as unknown as HTMLElement | null, target),
         containsFocus, isOpen: () => open, isInputFocused: () => inputFocused,
         open: () => { capture(engine.getSnapshot().open); engine.open(); inputRef.current?.focus(); },
     } : null);

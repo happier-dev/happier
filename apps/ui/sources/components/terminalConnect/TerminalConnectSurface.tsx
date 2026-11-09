@@ -2,6 +2,8 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
+import { useOptionalAuth } from '@/auth/context/AuthContext';
+import { UnauthenticatedRouteShell, UnauthenticatedStep } from '@/components/onboarding/unauthShell';
 import { FlowSurfaceActions, FlowSurfaceChrome } from '@/components/ui/flowSurface';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
@@ -15,11 +17,12 @@ type TerminalConnectMessageState = Readonly<{
     description?: string;
     tone?: 'default' | 'critical';
     loading?: boolean;
+    /** The one way forward from this state. */
+    action?: Readonly<{ testID: string; label: string; onPress: () => void }>;
 }>;
 
 type TerminalConnectApprovalState = Readonly<{
     kind: 'approval';
-    publicKey: string;
     isLoading: boolean;
     homeUrl: string;
     storageMode: 'plain' | 'e2ee' | null;
@@ -44,13 +47,6 @@ const stylesheet = StyleSheet.create((theme) => ({
         alignItems: 'center',
         justifyContent: 'center',
     },
-    section: {
-        gap: theme.space.s8,
-    },
-    sectionTitle: {
-        ...Typography.variant('label', 'semiBold'),
-        color: theme.colors.text.primary,
-    },
     sectionBody: {
         gap: theme.space.s6,
     },
@@ -60,28 +56,21 @@ const stylesheet = StyleSheet.create((theme) => ({
         lineHeight: 20,
         color: theme.colors.text.secondary,
     },
-    securityBlock: {
-        paddingTop: theme.space.s6,
-        borderTopWidth: StyleSheet.hairlineWidth,
-        borderTopColor: theme.colors.border.default,
-        gap: theme.space.s8,
-    },
-    securityRow: {
+    consequence: {
         flexDirection: 'row',
         alignItems: 'flex-start',
         gap: theme.space.s10,
+        paddingTop: theme.space.s12,
+        borderTopWidth: StyleSheet.hairlineWidth,
+        borderTopColor: theme.colors.border.default,
     },
-    securityCopy: {
-        flex: 1,
-        gap: theme.space.s4,
-    },
-    securityTitle: {
-        ...Typography.variant('label', 'semiBold'),
-        color: theme.colors.text.primary,
-    },
-    securitySubtitle: {
+    consequenceText: {
         ...Typography.variant('body'),
+        flex: 1,
         color: theme.colors.text.secondary,
+    },
+    paneProgress: {
+        alignItems: 'flex-start',
     },
     message: {
         alignItems: 'center',
@@ -90,23 +79,85 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
 }));
 
-function truncatePublicKey(publicKey: string): string {
-    const value = String(publicKey ?? '').trim();
-    if (value.length <= 12) return value;
-    return `${value.slice(0, 12)}...`;
+type TerminalConnectFrameProps = Readonly<{
+    signedIn: boolean;
+    testID?: string;
+    titleLeading?: React.ReactNode;
+    title: string;
+    subtitle?: string;
+    renderFooter?: (placement: 'card' | 'column') => React.ReactNode;
+    children?: React.ReactNode;
+}>;
+
+/**
+ * Signed out, a terminal link is one more step of the welcome split (it hands off to sign-in in
+ * the same pane), so the brand stays beside it; signed in, it is the focused approval card.
+ */
+function TerminalConnectFrame(props: TerminalConnectFrameProps) {
+    if (!props.signedIn) {
+        return (
+            <UnauthenticatedRouteShell testID="unauth-shell-terminal-connect" stepId="terminal-connect">
+                <UnauthenticatedStep testID={props.testID} title={props.title} subtitle={props.subtitle} footer={props.renderFooter?.('column')}>
+                    {props.children ?? null}
+                </UnauthenticatedStep>
+            </UnauthenticatedRouteShell>
+        );
+    }
+    return (
+        <FlowSurfaceChrome
+            testID={props.testID}
+            showScrim={false}
+            titleLeading={props.titleLeading}
+            title={props.title}
+            subtitle={props.subtitle}
+            footer={props.renderFooter?.('card')}
+        >
+            {props.children}
+        </FlowSurfaceChrome>
+    );
 }
 
 export function TerminalConnectSurface(props: TerminalConnectSurfaceProps) {
     const { theme } = useUnistyles();
     const styles = stylesheet;
+    const signedIn = useOptionalAuth()?.isAuthenticated === true;
 
     if (props.state.kind === 'message') {
+        const action = props.state.action;
+        const renderMessageFooter = action
+            ? (placement: 'card' | 'column') => (
+                <FlowSurfaceActions
+                    placement={placement}
+                    primary={{ testID: action.testID, label: action.label, onPress: action.onPress }}
+                />
+            )
+            : undefined;
+        // In the welcome pane a message is a step: its heading and sentence carry it, and only
+        // real progress earns a mark, aligned with the column instead of centred under it.
+        if (!signedIn) {
+            return (
+                <TerminalConnectFrame
+                    signedIn={false}
+                    testID={props.testID}
+                    title={props.state.title}
+                    subtitle={props.state.description}
+                    renderFooter={renderMessageFooter}
+                >
+                    {props.state.loading ? (
+                        <View style={styles.paneProgress}>
+                            <ActivitySpinner color={theme.colors.text.secondary} />
+                        </View>
+                    ) : null}
+                </TerminalConnectFrame>
+            );
+        }
         return (
-            <FlowSurfaceChrome
+            <TerminalConnectFrame
+                signedIn
                 testID={props.testID}
-                showScrim={false}
                 title={props.state.title}
                 subtitle={props.state.description}
+                renderFooter={renderMessageFooter}
             >
                 <View style={styles.message}>
                     {props.state.loading ? (
@@ -115,77 +166,67 @@ export function TerminalConnectSurface(props: TerminalConnectSurfaceProps) {
                         <Icon
                             name={props.state.tone === 'critical' ? 'warning' : 'terminal'}
                             size={34}
-                            color={props.state.tone === 'critical' ? theme.colors.state.danger.foreground : theme.colors.radio.active}
+                            color={props.state.tone === 'critical' ? theme.colors.state.danger.foreground : theme.colors.text.secondary}
                         />
                     )}
                 </View>
-            </FlowSurfaceChrome>
+            </TerminalConnectFrame>
         );
     }
 
+    const approval = props.state;
     return (
-        <FlowSurfaceChrome
+        <TerminalConnectFrame
+            signedIn={signedIn}
             testID={props.testID}
-            showScrim={false}
             titleLeading={(
                 <View style={styles.icon}>
-                    <Icon name="terminal" size={32} color={theme.colors.radio.active} />
+                    <Icon name="terminal" size={32} color={theme.colors.text.secondary} />
                 </View>
             )}
             title={t('terminal.connectTerminal')}
             subtitle={t('terminal.terminalRequestDescription')}
-            footer={(
+            renderFooter={(placement) => (
                 <FlowSurfaceActions
+                    placement={placement}
                     primary={{
                         testID: 'terminal-connect-approve',
-                        label: props.state.isLoading ? t('terminal.connecting')
-                            : props.state.onRetry ? t('common.retry')
-                                : props.state.needsSignIn ? t('common.continue') : t('terminal.acceptConnection'),
-                        onPress: props.state.onRetry ?? props.state.onApprove,
-                        disabled: props.state.isLoading || (!props.state.storageMode && !props.state.needsSignIn && !props.state.onRetry),
-                        loading: props.state.isLoading,
+                        label: approval.isLoading ? t('terminal.connecting')
+                            : approval.onRetry ? t('common.retry')
+                                : approval.needsSignIn ? t('common.continue') : t('terminal.acceptConnection'),
+                        onPress: approval.onRetry ?? approval.onApprove,
+                        disabled: approval.isLoading || (!approval.storageMode && !approval.needsSignIn && !approval.onRetry),
+                        loading: approval.isLoading,
                     }}
                     secondary={{
                         testID: 'terminal-connect-reject',
                         label: t('terminal.reject'),
-                        onPress: props.state.onReject,
-                        disabled: props.state.isLoading,
+                        onPress: approval.onReject,
+                        disabled: approval.isLoading,
                     }}
                 />
             )}
         >
-            <View style={styles.section}>
-                <Text style={styles.sectionTitle}>{t('terminal.connectionDetails')}</Text>
-                <View style={styles.sectionBody}>
-                    <Text style={styles.sectionLine}>
-                        {t('server.customServerUrlLabel')}: {props.state.homeUrl}
-                    </Text>
-                    <Text style={styles.sectionLine}>
-                        {t('terminal.publicKey')}: {truncatePublicKey(props.state.publicKey)}
-                    </Text>
-                    <Text style={styles.sectionLine}>
-                        {t('terminal.encryption')}: {props.state.storageMode === 'e2ee'
-                            ? t('terminal.endToEndEncrypted')
-                            : props.state.storageMode === 'plain' ? t('terminal.plaintextStorage')
-                                : props.state.errorDescription ?? (props.state.needsSignIn ? t('modals.pleaseSignInFirst') : t('common.loading'))}
-                    </Text>
-                </View>
+            <View style={styles.sectionBody}>
+                <Text style={styles.sectionLine}>
+                    {t('server.customServerUrlLabel')}: {props.state.homeUrl}
+                </Text>
+                <Text style={styles.sectionLine}>
+                    {t('terminal.encryption')}: {props.state.storageMode === 'e2ee'
+                        ? t('terminal.endToEndEncrypted')
+                        : props.state.storageMode === 'plain' ? t('terminal.plaintextStorage')
+                            : props.state.errorDescription ?? (props.state.needsSignIn ? t('modals.pleaseSignInFirst') : t('common.loading'))}
+                </Text>
             </View>
 
-            <View style={styles.securityBlock}>
-                <Text style={styles.sectionTitle}>{t('terminal.security')}</Text>
-                <View style={styles.securityRow}>
-                    <Icon name="shield-check" size={20} color={theme.colors.state.success.foreground} />
-                    <View style={styles.securityCopy}>
-                        <Text style={styles.securityTitle}>{t('terminal.clientSideProcessing')}</Text>
-                        <Text style={styles.securitySubtitle}>{t('terminal.linkProcessedOnDevice')}</Text>
-                        {props.state.storageMode ? (
-                            <Text style={styles.securitySubtitle}>{props.state.storageMode === 'plain'
-                                ? t('terminal.plaintextStorageDescription') : t('terminal.securityFooterDevice')}</Text>
-                        ) : null}
-                    </View>
-                </View>
+            <View style={styles.consequence}>
+                <Icon name="shield-check" size={20} color={theme.colors.text.secondary} />
+                <Text style={styles.consequenceText}>
+                    {props.state.storageMode === 'plain' ? t('terminal.plaintextStorageDescription')
+                        : props.state.storageMode === 'e2ee' ? t('terminal.securityFooterDevice')
+                            : t('terminal.linkProcessedOnDevice')}
+                </Text>
             </View>
-        </FlowSurfaceChrome>
+        </TerminalConnectFrame>
     );
 }

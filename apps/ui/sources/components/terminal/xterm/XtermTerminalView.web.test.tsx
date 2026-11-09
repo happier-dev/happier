@@ -78,6 +78,7 @@ class MockTerminal {
     cursorMoved: (() => void) | null = null;
     scrolled: (() => void) | null = null;
     writeParsed: (() => void) | null = null;
+    dataHandler: ((data: string) => void) | null = null;
     printedRows: Record<number, string> = {};
     onCursorMove(callback: () => void) { this.cursorMoved = callback; return { dispose: () => { this.cursorMoved = null; } }; }
     onScroll(callback: () => void) { this.scrolled = callback; return { dispose: () => { this.scrolled = null; } }; }
@@ -131,6 +132,7 @@ class MockTerminal {
         }
     });
     focus = focusSpy;
+    blur = vi.fn();
     clear = vi.fn();
     hasSelection = vi.fn(() => false);
     getSelection = vi.fn(() => '');
@@ -152,6 +154,7 @@ class MockTerminal {
     });
 
     onData(callback: (data: string) => void) {
+        this.dataHandler = callback;
         onDataSpy.mockImplementation(callback);
         return { dispose: vi.fn() };
     }
@@ -713,6 +716,117 @@ describe('XtermTerminalView.web', () => {
         }
     });
 
+    it('moves the same parsed buffer beyond the preview cap and retains an unfinished UTF8 character', async () => {
+        const getContext = vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(null);
+        const { Terminal } = await vi.importActual<typeof import('@xterm/xterm')>('@xterm/xterm');
+        getContext.mockRestore();
+        const parsed = new Terminal({ cols: 100, rows: 24, scrollback: 5000 });
+        const { XtermTerminalView } = await import('./XtermTerminalView.web');
+        const ref = React.createRef<XtermTerminalHandle>();
+        const oldInput = vi.fn();
+        const newInput = vi.fn();
+        const oldCompletion = vi.fn();
+        const newCompletion = vi.fn();
+        await act(async () => root.render(<XtermTerminalView key="old" ref={ref} testID="old-host"
+            fontSize={14} onInput={oldInput} onResize={() => {}} onReady={() => {}} onWriteComplete={oldCompletion} />));
+        const original = terminalInstances[0];
+        original.focus = vi.fn(() => original.textarea?.focus());
+        original.blur = vi.fn(() => original.textarea?.blur());
+        let holdCompletion = false;
+        let finishPendingWrite: (() => void) | undefined;
+        original.write.mockImplementation((data, callback) => parsed.write(data, () => {
+            if (holdCompletion) finishPendingWrite = callback;
+            else callback?.();
+        }));
+        const history = Array.from({ length: 4500 }, (_, index) => `history-${index}-retained-text\r\n`).join('');
+        try {
+            await act(async () => {
+                requireTerminalHandle(ref).write(history, { intent: 'replay' });
+                await new Promise<void>((resolve) => parsed.write('', resolve));
+                holdCompletion = true;
+                requireTerminalHandle(ref).writeBytes({ terminalId: 'history', seq: 0, byteOffset: history.length,
+                    writeGeneration: 0, bytes: new Uint8Array([0xe2, 0x82]) });
+                await new Promise<void>((resolve) => parsed.write('', resolve));
+            });
+            const resource = requireTerminalHandle(ref).captureResource?.();
+            expect(resource, 'the renderer must hand off its parsed buffer').toBeDefined();
+            if (!resource) return;
+            const cache = await import('@/components/sessions/terminal/terminalSurfaceStateCache');
+            cache.replaceTerminalSurfaceState('history-visible-owner', { ...cache.createEmptyTerminalSurfaceState(),
+                terminalId: 'history', rendererResource: resource });
+            for (let index = 0; index < 13; index += 1) {
+                cache.replaceTerminalSurfaceState(`history-dormant-${index}`, cache.createEmptyTerminalSurfaceState());
+            }
+            expect(cache.readTerminalSurfaceState('history-visible-owner')?.rendererResource,
+                'cycling dormant Shells must not evict an attached renderer').toBe(resource);
+            let settled = false;
+            const settling = resource.whenSettled().then(() => { settled = true; });
+            await act(async () => root.render(null));
+            expect(settled).toBe(false);
+            expect(oldCompletion).not.toHaveBeenCalled();
+            finishPendingWrite?.();
+            await settling;
+            expect(oldCompletion).toHaveBeenCalledWith(expect.objectContaining({ ackedByteOffset: history.length + 2 }));
+            holdCompletion = false;
+            await act(async () => root.render(<XtermTerminalView key="new" ref={ref} testID="new-host"
+                fontSize={16} readOnly onInput={newInput} onResize={() => {}} onReady={() => {}} onWriteComplete={newCompletion} />));
+            await act(async () => {
+                expect(requireTerminalHandle(ref).restoreResource?.(resource)).toBe(true);
+                expect(requireTerminalHandle(ref).restoreResource?.(resource)).toBe(true);
+                expect(original.options.fontSize).toBe(16);
+                expect(original.options.disableStdin).toBe(true);
+                expect(document.activeElement).toBe(original.textarea);
+                requireTerminalHandle(ref).writeBytes({ terminalId: 'history', seq: 1, byteOffset: history.length + 2,
+                    writeGeneration: 1, bytes: new Uint8Array([0xac]) });
+                await resource.whenSettled();
+            });
+            expect(original.disposed).toBe(false);
+            expect(original.open).toHaveBeenCalledTimes(1);
+            expect(container.querySelector('[data-testid="new-host"]')?.contains(original.textarea)).toBe(true);
+            expect(container.querySelector('[data-testid="old-host"]')).toBeNull();
+            expect(parsed.buffer.active.getLine(0)?.translateToString(true)).toBe('history-0-retained-text');
+            expect(parsed.buffer.active.getLine(4499)?.translateToString(true)).toBe('history-4499-retained-text');
+            expect(parsed.buffer.active.getLine(4500)?.translateToString(true)).toBe('€');
+            expect(newCompletion).toHaveBeenCalledWith(expect.objectContaining({ ackedByteOffset: history.length + 3 }));
+            await act(async () => root.render(<XtermTerminalView key="new" ref={ref} testID="new-host"
+                fontSize={14} onInput={newInput} onResize={() => {}} onReady={() => {}} />));
+            original.dataHandler?.('new owner input');
+            expect(newInput).toHaveBeenCalledWith('new owner input');
+            expect(oldInput).not.toHaveBeenCalled();
+            await act(async () => root.render(<XtermTerminalView key="new" ref={ref} testID="new-host"
+                fontSize={16} readOnly onInput={newInput} onResize={() => {}} onReady={() => {}} />));
+            expect(original.options.fontSize).toBe(16);
+            expect(original.options.disableStdin).toBe(true);
+            expect(original.disposed).toBe(false);
+            resource.dispose();
+            expect(original.disposed).toBe(false);
+            await act(async () => root.render(null));
+            await act(async () => { await new Promise((resolve) => setTimeout(resolve, deferredDisposeDrainMs)); });
+            expect(original.disposed).toBe(true);
+            cache.replaceTerminalSurfaceState('history-visible-owner', cache.createEmptyTerminalSurfaceState());
+        } finally {
+            parsed.dispose();
+        }
+    });
+
+    it('reattaches the retained renderer before activation reports ready, preserving textarea focus', async () => {
+        const { XtermTerminalView } = await import('./XtermTerminalView.web');
+        const ref = React.createRef<XtermTerminalHandle>();
+        const props = { fontSize: 14, onInput: vi.fn(), onResize: vi.fn(), onReady: vi.fn() };
+        await act(async () => root.render(<XtermTerminalView ref={ref} {...props} />));
+        const original = terminalInstances[0];
+        original.focus = vi.fn(() => original.textarea?.focus());
+        original.blur = vi.fn(() => original.textarea?.blur());
+        const retainedResource = requireTerminalHandle(ref).captureResource?.();
+        await act(async () => root.render(null));
+        const ready = vi.fn(() => expect(document.activeElement).toBe(original.textarea));
+        await act(async () => root.render(<XtermTerminalView ref={ref} {...props} retainedResource={retainedResource} onReady={ready} />));
+        expect(terminalInstances).toHaveLength(1);
+        expect(document.activeElement).toBe(original.textarea);
+        expect(ready).toHaveBeenCalled();
+        retainedResource?.dispose();
+    });
+
     it('releases replay suppression when a renderer is replaced before its callback', async () => {
         const { XtermTerminalView } = await import('./XtermTerminalView.web');
         const ref = React.createRef<XtermTerminalHandle>();
@@ -744,7 +858,7 @@ describe('XtermTerminalView.web', () => {
         expect(onInput).toHaveBeenCalledWith('new replay completed');
     });
 
-    it('writes byte chunks to xterm as Uint8Array without decoding high-bit bytes', async () => {
+    it('submits byte chunks to the parser without waiting for an animation frame or decoding high-bit bytes', async () => {
         const { XtermTerminalView } = await import('./XtermTerminalView.web');
         const ref = React.createRef<XtermTerminalHandle>();
 
@@ -773,10 +887,33 @@ describe('XtermTerminalView.web', () => {
                 bytes,
                 writeGeneration: 1,
             });
-            await new Promise((resolve) => setTimeout(resolve, 40));
+            expect(terminalInstances[0]?.write).toHaveBeenCalledWith(bytes, expect.any(Function));
         });
+    });
 
-        expect(terminalInstances[0]?.write).toHaveBeenCalledWith(bytes, expect.any(Function));
+    it('returns queued before reporting a synchronous real-parser completion after user input', async () => {
+        const getContext = vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(null);
+        const { Terminal } = await vi.importActual<typeof import('@xterm/xterm')>('@xterm/xterm');
+        getContext.mockRestore();
+        const terminal = new Terminal();
+        const { XtermTerminalView } = await import('./XtermTerminalView.web');
+        const ref = React.createRef<XtermTerminalHandle>();
+        const onWriteComplete = vi.fn();
+        await act(async () => root.render(<XtermTerminalView ref={ref} fontSize={14}
+            onInput={() => {}} onResize={() => {}} onReady={() => {}} onWriteComplete={onWriteComplete} />));
+        terminalInstances[0].write.mockImplementation((data, callback) => terminal.write(data, callback));
+        terminal.input('a');
+        await act(async () => {
+            expect(requireTerminalHandle(ref).writeBytes({ terminalId: 'burst', seq: 0, byteOffset: 0,
+                bytes: new TextEncoder().encode('a'), writeGeneration: 7 })).toEqual({ status: 'queued' });
+            // User-input echo can parse synchronously. The controller must receive its queued
+            // receipt before the completion that releases that receipt's stream credit.
+            expect(onWriteComplete).not.toHaveBeenCalled();
+        });
+        expect(onWriteComplete).toHaveBeenCalledWith(expect.objectContaining({
+            terminalId: 'burst', ackedByteOffset: 1, writeGeneration: 7,
+        }));
+        terminal.dispose();
     });
 
     it('mirrors byte output into the deterministic terminal text attribute', async () => {
@@ -1010,7 +1147,7 @@ describe('XtermTerminalView.web', () => {
 
         await act(async () => {
             pendingWriteCallbacks.shift()?.();
-            await new Promise((resolve) => setTimeout(resolve, 40));
+            expect(terminalInstances[0]?.write).toHaveBeenCalledTimes(2);
         });
 
         expect(terminalInstances[0]?.write).toHaveBeenCalledTimes(2);

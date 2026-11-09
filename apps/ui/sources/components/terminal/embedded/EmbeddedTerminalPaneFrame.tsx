@@ -7,8 +7,8 @@ import { IconButton } from '@/components/ui/buttons/IconButton';
 import { PrimaryCircleIconButton } from '@/components/ui/buttons/PrimaryCircleIconButton';
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
-import { setClipboardStringSafe } from '@/utils/ui/clipboard';
-import { openExternalUrl } from '@/utils/url/openExternalUrl';
+import { useClipboardWrite } from '@/hooks/ui/useClipboardWrite';
+import { requestOpenExternalUrl as openExternalUrl } from '@/utils/url/requestOpenExternalUrl';
 import { resolveTerminalErrorCopy } from '@/components/sessions/terminal/terminalErrorCopy';
 import { SurfaceFreshnessLine, type SurfaceFreshnessAction } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
@@ -16,6 +16,7 @@ import { describeActionOperationStatusLabel } from '@/components/inbox/actionOpe
 import { embeddedTerminalPaneStyles } from './embeddedTerminalPaneStyles';
 import type { EmbeddedTerminalPaneController } from './types';
 import { Icon } from '@/components/ui/icons/Icon';
+import { projectTerminalSurfaceFailure } from '@/components/sessions/terminal/terminalSurfaceSummary';
 
 export type EmbeddedTerminalPaneFrameProps = Readonly<{
     title: string;
@@ -49,8 +50,6 @@ export type EmbeddedTerminalPaneFrameProps = Readonly<{
     contentHeight?: number | null;
 }>;
 
-const MACHINE_UNREACHABLE_ERROR = 'terminal_machine_unreachable';
-
 type TerminalFrameState =
     | Readonly<{ kind: 'live' }>
     | Readonly<{ kind: 'not-open' }>
@@ -83,7 +82,11 @@ function resolveTerminalFrameState(props: EmbeddedTerminalPaneFrameProps): Termi
         case 'connected': return { kind: 'live' };
         case 'not-open': return { kind: 'not-open' };
         case 'idle':
-        case 'connecting': return { kind: 'line', reason: t('terminalWorkspace.states.connecting'), busy: true };
+        case 'connecting': return {
+            kind: 'line', reason: t('terminalWorkspace.states.connecting'), busy: true,
+            ...(controller.connectionRetryAvailable !== false
+                ? { action: { label: t('common.retry'), onPress: controller.retryConnect } } : {}),
+        };
         case 'exited': {
             // A native step may exit before its operation settles, including a Stop
             // requested on another device. Only that owner can establish its outcome.
@@ -108,7 +111,8 @@ function resolveTerminalFrameState(props: EmbeddedTerminalPaneFrameProps): Termi
             };
         }
         case 'error': {
-            if (controller.error === MACHINE_UNREACHABLE_ERROR) {
+            const failure = projectTerminalSurfaceFailure(controller);
+            if (failure === 'machine-unreachable') {
                 return {
                     kind: 'line',
                     tone: 'warning',
@@ -121,7 +125,7 @@ function resolveTerminalFrameState(props: EmbeddedTerminalPaneFrameProps): Termi
             const copy = resolveTerminalErrorCopy(controller.error);
             // An attached terminal already exists even if this view's first read
             // failed. Keep its surface and retry only the attachment.
-            if (controller.connectionLost || controller.readOnly) {
+            if (failure === 'connection-lost') {
                 return {
                     kind: 'line',
                     tone: 'warning',
@@ -140,14 +144,11 @@ function resolveTerminalFrameState(props: EmbeddedTerminalPaneFrameProps): Termi
     }
 }
 
-/**
- * Typing keys belong to a terminal that is live or on its way; not-open, exited and failed terminals
- * have no process to receive them, so the phone key rail and arrow pad stay away.
- */
-/** Whether the phone key rail and arrow pad are offered: a writable terminal that is open or opening. */
-export function terminalAcceptsKeys(controller: Pick<EmbeddedTerminalPaneController, 'status' | 'readOnly' | 'inputRecoveryAvailable'>): boolean {
+/** A writable Shell retains its input route across disconnection; its session queue holds keys until reattach. */
+export function terminalAcceptsKeys(controller: Pick<EmbeddedTerminalPaneController, 'status' | 'readOnly' | 'inputRecoveryAvailable' | 'connectionLost'>): boolean {
     if (controller.readOnly || controller.inputRecoveryAvailable) return false;
-    return controller.status === 'idle' || controller.status === 'connecting' || controller.status === 'connected';
+    return controller.status === 'idle' || controller.status === 'connecting' || controller.status === 'connected'
+        || (controller.status === 'error' && controller.connectionLost === true);
 }
 
 function resolveKeyboardBottomInset(value: number | undefined): number {
@@ -156,6 +157,7 @@ function resolveKeyboardBottomInset(value: number | undefined): number {
 }
 
 export const EmbeddedTerminalPaneFrame = React.memo(function EmbeddedTerminalPaneFrame(props: EmbeddedTerminalPaneFrameProps) {
+    const writeClipboard = useClipboardWrite(undefined, { enabled: Boolean(props.controller.detectedUrl?.url) });
     const { theme } = useUnistyles();
     const styles = embeddedTerminalPaneStyles;
     const keyboardBottomInset = props.platformOS === 'android'
@@ -176,13 +178,13 @@ export const EmbeddedTerminalPaneFrame = React.memo(function EmbeddedTerminalPan
     const onCopyUrl = React.useCallback(() => {
         const url = props.controller.detectedUrl?.url ?? '';
         if (!url) return;
-        void setClipboardStringSafe(url);
-    }, [props.controller.detectedUrl?.url]);
+        void writeClipboard(url);
+    }, [props.controller.detectedUrl?.url, writeClipboard]);
 
     const onOpenUrl = React.useCallback(() => {
         const url = props.controller.detectedUrl?.url ?? '';
         if (!url) return;
-        void openExternalUrl(url, props.platformOS === 'web' ? { platformOS: 'web' } : undefined);
+        void openExternalUrl(url);
     }, [props.controller.detectedUrl?.url, props.platformOS]);
 
     const frameState = resolveTerminalFrameState(props);

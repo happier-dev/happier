@@ -1,6 +1,7 @@
 import { z } from 'zod/mini';
 import type { FindOptions, FindStatus } from '@happier-dev/plugin-ui/presentation';
 import type { FindEngine, TerminalFindSnapshot } from '../../embedded/embeddedTerminalRendererHandle';
+import { reconcileTerminalFindSnapshot } from '../../embedded/terminalFindSnapshot';
 
 export type XtermFindRequest =
     | Readonly<{ type: 'find.set'; payload: { revision: number; query: string; options: FindOptions } }>
@@ -22,7 +23,13 @@ export function createWebViewFindEngine(send: (request: XtermFindRequest) => voi
     let snapshot: TerminalFindSnapshot = { open: false, query: '', options: { regex: false, matchCase: false }, status: { kind: 'idle' }, retainedLines: 0 };
     let revision = 0;
     const listeners = new Set<() => void>();
-    const publish = (next: TerminalFindSnapshot) => { snapshot = next; for (const listener of listeners) listener(); };
+    const publish = (next: TerminalFindSnapshot) => {
+        const reconciled = reconcileTerminalFindSnapshot(snapshot, next);
+        if (reconciled === snapshot) return false;
+        snapshot = reconciled;
+        for (const listener of listeners) listener();
+        return true;
+    };
     const set = () => {
         if (!snapshot.open) return;
         send({ type: 'find.set', payload: { revision: ++revision, query: snapshot.query, options: snapshot.options } });
@@ -32,9 +39,9 @@ export function createWebViewFindEngine(send: (request: XtermFindRequest) => voi
         get query() { return snapshot.query; }, get options() { return snapshot.options; }, get status() { return snapshot.status; },
         capabilities: { regex: true, stop: false }, getSnapshot: () => snapshot,
         subscribe: (listener) => { listeners.add(listener); return () => { listeners.delete(listener); }; },
-        open: () => { publish({ ...snapshot, open: true }); set(); },
-        setQuery: (query) => { publish({ ...snapshot, query, status: { kind: 'idle' } }); set(); },
-        setOptions: (options) => { publish({ ...snapshot, options }); set(); },
+        open: () => { if (publish({ ...snapshot, open: true })) set(); },
+        setQuery: (query) => { if (query === snapshot.query) return; publish({ ...snapshot, query, status: { kind: 'idle' } }); set(); },
+        setOptions: (options) => { if (publish({ ...snapshot, options })) set(); },
         step: (direction) => { if (snapshot.open) send({ type: 'find.step', payload: { revision: ++revision, direction } }); },
         stop: () => {}, close: () => { retire(); send({ type: 'find.close', payload: { revision } }); },
     };

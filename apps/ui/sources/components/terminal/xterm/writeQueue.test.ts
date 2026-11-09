@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { createXtermWriteQueue } from './writeQueue';
 
 describe('createXtermWriteQueue', () => {
-    it('serializes writes and invokes completions after parser callbacks', () => {
+    it('continues queued writes on parser completion without waiting for another presentation frame', () => {
         const scheduled: Array<() => void> = [];
         const written: string[] = [];
         const parserCallbacks: Array<() => void> = [];
@@ -28,8 +28,6 @@ describe('createXtermWriteQueue', () => {
 
         parserCallbacks.shift()?.();
         expect(completed).toEqual(['one']);
-        expect(written).toEqual(['one']);
-        scheduled.shift()?.();
         expect(written).toEqual(['one', 'two']);
         parserCallbacks.shift()?.();
         expect(completed).toEqual(['one', 'two']);
@@ -56,7 +54,7 @@ describe('createXtermWriteQueue', () => {
         expect(queue.enqueue({ data: 'efgh', byteLength: 4 })).toBe(true);
     });
 
-    it('drops stale parser callbacks after clear', () => {
+    it.each([false, true])('drops stale parser callbacks after clear (synchronous=%s)', async (synchronous) => {
         const written: string[] = [];
         const parserCallbacks: Array<() => void> = [];
         const onComplete = vi.fn();
@@ -64,7 +62,8 @@ describe('createXtermWriteQueue', () => {
         const queue = createXtermWriteQueue({
             write: (data, callback) => {
                 written.push(String(data));
-                parserCallbacks.push(callback);
+                if (synchronous) callback();
+                else parserCallbacks.push(callback);
             },
             schedule: (flush) => flush(),
             maxPendingBytes: 1024,
@@ -73,12 +72,14 @@ describe('createXtermWriteQueue', () => {
         queue.enqueue({ data: 'hello', byteLength: 5, onComplete });
         queue.clear();
         parserCallbacks.shift()?.();
+        await Promise.resolve();
 
         expect(onComplete).not.toHaveBeenCalled();
 
         queue.enqueue({ data: 'next', byteLength: 4, onComplete: onNextComplete });
         expect(written).toEqual(['hello', 'next']);
         parserCallbacks.shift()?.();
+        await Promise.resolve();
         expect(onNextComplete).toHaveBeenCalledTimes(1);
         expect(onComplete).not.toHaveBeenCalled();
     });

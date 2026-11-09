@@ -1,11 +1,14 @@
 import type { Terminal } from '@xterm/xterm';
 import type { SearchAddon } from '@xterm/addon-search';
 import type { FindEngine, TerminalFindSnapshot } from '../embedded/embeddedTerminalRendererHandle';
+import { reconcileTerminalFindSnapshot } from '../embedded/terminalFindSnapshot';
 
 export type XtermFindColors = Readonly<{ matchAll: string; matchCurrent: string }>;
 
 /** Renderer-local Find; matching and selection belong to the supplied xterm addon. */
-export function createXtermFindEngine(term: Terminal, addon: SearchAddon, colors: XtermFindColors): FindEngine & {
+export function createXtermFindEngine(term: Terminal, addon: SearchAddon, colors: XtermFindColors,
+    reconcileSnapshot: typeof reconcileTerminalFindSnapshot = reconcileTerminalFindSnapshot,
+): FindEngine & {
     dispose(): void;
     setColors(colors: XtermFindColors): void;
     applyQuery(query: string, options: TerminalFindSnapshot['options']): void;
@@ -15,18 +18,11 @@ export function createXtermFindEngine(term: Terminal, addon: SearchAddon, colors
     let snapshot: TerminalFindSnapshot = { open: false, query: '', options: { regex: false, matchCase: false }, status: { kind: 'idle' }, retainedLines: 0 };
     const listeners = new Set<() => void>();
     const publish = (next: TerminalFindSnapshot) => {
-        const options = next.options.regex === snapshot.options.regex && next.options.matchCase === snapshot.options.matchCase
-            ? snapshot.options : next.options;
-        const sameStatus = next.status === snapshot.status || next.status.kind === snapshot.status.kind && (
-            next.status.kind === 'idle' || next.status.kind === 'invalidPattern'
-            || next.status.kind === 'results' && snapshot.status.kind === 'results'
-                && next.status.current === snapshot.status.current && next.status.total === snapshot.status.total
-                && next.status.coverage === snapshot.status.coverage);
-        const status = sameStatus ? snapshot.status : next.status;
-        if (next.open === snapshot.open && next.query === snapshot.query && options === snapshot.options
-            && status === snapshot.status && next.retainedLines === snapshot.retainedLines) return;
-        snapshot = { ...next, options, status };
+        const reconciled = reconcileSnapshot(snapshot, next);
+        if (reconciled === snapshot) return false;
+        snapshot = reconciled;
         for (const listener of listeners) listener();
+        return true;
     };
     let disposed = false;
     let truncated = false;
@@ -125,12 +121,12 @@ export function createXtermFindEngine(term: Terminal, addon: SearchAddon, colors
         get query() { return snapshot.query; }, get options() { return snapshot.options; }, get status() { return snapshot.status; },
         capabilities: { regex: true, stop: false },
         getSnapshot: () => snapshot, subscribe: (listener) => { listeners.add(listener); return () => { listeners.delete(listener); }; },
-        open: () => { publish({ ...snapshot, open: true }); refresh(); },
+        open: () => { if (publish({ ...snapshot, open: true })) refresh(); },
         // One guest request must not publish a previous query's counts under its new revision.
         applyQuery: (query, options) => { publish({ ...snapshot, open: true, query, options, status: { kind: 'idle' } }); refresh(); },
         close: clear,
-        setQuery: (query) => { publish({ ...snapshot, query }); search(1, true); },
-        setOptions: (options) => { publish({ ...snapshot, options }); search(1, true); },
+        setQuery: (query) => { if (query === snapshot.query) return; publish({ ...snapshot, query }); search(1, true); },
+        setOptions: (options) => { if (publish({ ...snapshot, options })) search(1, true); },
         step: (direction) => search(direction), stop: () => {},
         ownsSelection: () => stepping || (stepSelection !== null && selectionKey() === stepSelection),
         dispose: () => {

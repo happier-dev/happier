@@ -20,6 +20,15 @@ export type EmbeddedTerminalWriteBytesResult =
 /** Cached output is parsed for display only; its terminal replies must not reach the process. */
 export type EmbeddedTerminalWriteOptions = Readonly<{ intent: 'replay' }>;
 
+/** An in-memory parsed renderer, owned by the existing terminal surface cache. */
+export type EmbeddedTerminalRendererResource = Readonly<{
+    kind: 'xterm-web';
+    /** Attached hosts already own this live resource and must keep their cache state. */
+    attached: boolean;
+    whenSettled: () => Promise<void>;
+    dispose: () => void;
+}>;
+
 export type EmbeddedTerminalRendererHandle = Readonly<{
     find?: FindEngine;
     write: (data: string, options?: EmbeddedTerminalWriteOptions) => boolean | void;
@@ -35,6 +44,9 @@ export type EmbeddedTerminalRendererHandle = Readonly<{
     copySelection?: () => void;
     hasSelection?: () => boolean;
     getSelectionText?: () => string;
+    captureResource?: () => EmbeddedTerminalRendererResource;
+    restoreResource?: (resource: EmbeddedTerminalRendererResource) => boolean;
+    hasRetainedOutput?: () => boolean;
 }>;
 
 export type TerminalFindSnapshot = Readonly<{

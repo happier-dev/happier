@@ -46,15 +46,22 @@ export function createXtermWriteQueue(params: CreateXtermWriteQueueParams): Xter
         pendingBytes = Math.max(0, pendingBytes - next.byteLength);
         isWriting = true;
         const writeEpoch = epoch;
-
-        params.write(next.data, () => {
+        const complete = () => {
             if (writeEpoch !== epoch) return;
             isWriting = false;
             next.onComplete?.();
             if (pending.length > 0) {
-                params.schedule(flush);
+                flush();
             }
+        };
+        let submitting = true;
+        params.write(next.data, () => {
+            // xterm parses the first echo after user input synchronously. Let the
+            // caller install its queued receipt before delivering its completion.
+            if (submitting) queueMicrotask(complete);
+            else complete();
         }, next.options);
+        submitting = false;
     };
 
     return {

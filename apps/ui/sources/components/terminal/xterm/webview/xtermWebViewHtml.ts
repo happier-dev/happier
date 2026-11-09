@@ -2,6 +2,7 @@ import { XTERM_WEBVIEW_BUNDLE_JS, XTERM_WEBVIEW_CSS } from './xtermWebViewAssets
 import { XTERM_READABILITY_OPTIONS } from '../readability';
 import { registerXtermReadOnlyCursorPolicy, resolveXtermCursorAppearance } from '../cursorAppearance';
 import { createXtermFindEngine, type XtermFindColors } from '../findEngine';
+import { reconcileTerminalFindSnapshot } from '../../embedded/terminalFindSnapshot';
 import {
     buildTerminalRendererInteractionContract,
     type TerminalRendererInteractionContract,
@@ -88,6 +89,7 @@ export function buildXtermWebViewHtml(params: Readonly<{
       };
       const INTERACTION_POLICY = ${interactionContractJson};
       const createXtermFindEngine = ${createXtermFindEngine.toString()};
+      const reconcileTerminalFindSnapshot = ${reconcileTerminalFindSnapshot.toString()};
       const resolveXtermCursorAppearance = ${resolveXtermCursorAppearance.toString()};
       const registerXtermReadOnlyCursorPolicy = ${registerXtermReadOnlyCursorPolicy.toString()};
       let readOnly = DEFAULT_CONFIG.readOnly;
@@ -595,7 +597,7 @@ export function buildXtermWebViewHtml(params: Readonly<{
         if (mod.SearchAddon && DEFAULT_CONFIG.theme.findColors) {
           const search = new mod.SearchAddon();
           term.loadAddon(search);
-          find = createXtermFindEngine(term, search, DEFAULT_CONFIG.theme.findColors);
+          find = createXtermFindEngine(term, search, DEFAULT_CONFIG.theme.findColors, reconcileTerminalFindSnapshot);
           find.subscribe(() => {
             const snapshot = find.getSnapshot();
             sendEnvelope({ v: 1, type: 'find.results', payload: { revision: findRevision, status: snapshot.status, retainedLines: snapshot.retainedLines } });

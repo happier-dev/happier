@@ -1,7 +1,6 @@
-import type { EmbeddedTerminalWriteCompleteEvent } from './embeddedTerminalRendererHandle';
+import type { EmbeddedTerminalRendererResource, EmbeddedTerminalWriteCompleteEvent } from './embeddedTerminalRendererHandle';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions';
 import type { ActionOperationSnapshotV1 } from '@happier-dev/protocol/actions/operations/v1';
-import type { TerminalOutputRetention } from '@/sync/domains/terminal/stream/model';
 
 export type EmbeddedTerminalPaneStatus = 'idle' | 'connecting' | 'connected' | 'not-open' | 'error' | 'exited';
 
@@ -12,6 +11,7 @@ export type EmbeddedTerminalDetectedUrl = Readonly<{
 }> | null;
 
 export type EmbeddedTerminalPaneController = Readonly<{
+    rendererResource?: EmbeddedTerminalRendererResource;
     status: EmbeddedTerminalPaneStatus;
     /** A borrowed view of a process another lifecycle owns: it reads output, it never types, resets or restarts. */
     readOnly?: boolean;
@@ -24,10 +24,12 @@ export type EmbeddedTerminalPaneController = Readonly<{
     operationState?: ActionOperationSnapshotV1['state'] | null;
     /** The existing Stop control is pending or has an accepted request, not settlement. */
     operationStopPending?: boolean;
-    /** What the daemon still retains of this terminal's output; null while unknown (legacy transport, not yet read). */
-    outputRetention?: TerminalOutputRetention | null;
+    /** Whether the daemon dropped earlier output of this terminal; null while unknown (legacy transport, not yet read). */
+    outputRetention?: Readonly<{ truncated: boolean }> | null;
     /** `error` that followed a connected stream: the terminal started, then its connection dropped. */
     connectionLost?: boolean;
+    /** The session owner distinguishes recovery from its first pending attachment. */
+    connectionRetryAvailable?: boolean;
     inputRecoveryAvailable?: boolean;
     copyInputRecovery?: () => Promise<void>;
     discardInputRecovery?: () => void;

@@ -90,6 +90,7 @@ export const EmbeddedTerminalPane = React.memo(function EmbeddedTerminalPaneWeb(
                         testID={props.testIdPrefix ? `${props.testIdPrefix}-renderer-loading` : 'terminal-renderer-loading'}
                         load={loadXtermTerminalView}
                         props={{
+                            retainedResource: props.controller.rendererResource,
                             testID: props.testIdPrefix ? `${props.testIdPrefix}-xterm` : undefined,
                             ref: xtermRef,
                             onFindEngine: find.onFindEngine,

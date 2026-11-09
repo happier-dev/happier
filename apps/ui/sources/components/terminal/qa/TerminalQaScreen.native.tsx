@@ -18,9 +18,9 @@ import type { GhosttyRendererSelectionOptions } from '@/components/terminal/ghos
 import type { TermuxRendererSelectionOptions } from '@/components/terminal/termux/availability';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Text, TextInput } from '@/components/ui/text/Text';
-import { useLocalSetting, useLocalSettingMutable } from '@/sync/domains/state/storage';
-import { getStorage } from '@/sync/domains/state/storageStore';
-import { setClipboardStringSafe } from '@/utils/ui/clipboard';
+import { useLocalSettingMutable } from '@/sync/domains/state/storage';
+import { useTerminalNativeRendererQuarantine, writeTerminalNativeRendererQuarantine } from '@/sync/domains/state/terminalRendererUiState';
+import { useClipboardWrite } from '@/hooks/ui/useClipboardWrite';
 
 import { createTerminalQaSession } from './session';
 import { createTerminalQaRunIdentity, readTerminalQaBuildIdentity } from './evidenceIdentity';
@@ -37,6 +37,7 @@ export function TerminalQaScreen(): React.ReactElement | null {
 }
 
 function TerminalQaScreenEnabled(): React.ReactElement {
+    const writeClipboard = useClipboardWrite();
     const { theme } = useUnistyles();
     const terminalRef = React.useRef<EmbeddedTerminalRendererHandle | null>(null);
     const buildIdentity = React.useMemo(() => readTerminalQaBuildIdentity(), []);
@@ -57,7 +58,7 @@ function TerminalQaScreenEnabled(): React.ReactElement {
     }), [runIdentity]);
     const snapshot = React.useSyncExternalStore(session.subscribe, session.getSnapshot, session.getSnapshot);
     const [terminalRendererPreference, setTerminalRendererPreference] = useLocalSettingMutable('terminalRendererPreference');
-    const nativeQuarantine = useLocalSetting('terminalNativeRendererQuarantine');
+    const nativeQuarantine = useTerminalNativeRendererQuarantine();
     const [detectedUrl, setDetectedUrl] = React.useState<EmbeddedTerminalPaneController['detectedUrl']>(null);
     const [pasteText, setPasteText] = React.useState('line one\nline two');
     const qaCapabilities = React.useMemo(() => getTerminalNativeQaCapabilities(), []);
@@ -112,7 +113,7 @@ function TerminalQaScreenEnabled(): React.ReactElement {
         copySelection: (request) => {
             const text = request?.text ?? '';
             session.notifyCopy(new TextEncoder().encode(text).byteLength);
-            if (text) void setClipboardStringSafe(text);
+            if (text) void writeClipboard(text);
         },
         clearTerminal: session.clear,
         requestRestart: () => {
@@ -121,7 +122,7 @@ function TerminalQaScreenEnabled(): React.ReactElement {
         },
         retryConnect: session.retry,
         dismissDetectedUrl: () => setDetectedUrl(null),
-    }), [detectedUrl, session]);
+    }), [detectedUrl, session, writeClipboard]);
 
     const setPreference = React.useCallback((value: TerminalRendererPreference) => {
         setTerminalRendererPreference(value);
@@ -175,7 +176,7 @@ function TerminalQaScreenEnabled(): React.ReactElement {
                         <QaButton
                             testID="terminal-qa-clear-quarantine"
                             title="Clear quarantine"
-                            onPress={() => getStorage().getState().applyLocalSettings({ terminalNativeRendererQuarantine: null }, { source: 'ui' })}
+                            onPress={() => writeTerminalNativeRendererQuarantine(null)}
                         />
                     </ButtonRow>
                     <Text style={{ color: theme.colors.text.secondary }}>

@@ -1,7 +1,7 @@
 import * as React from 'react';
 import type { EmbeddedTerminalPaneController } from './types';
 import type { EmbeddedTerminalRendererHandle } from './embeddedTerminalRendererHandle';
-import { publishTerminalSurfaceSummary } from '@/components/sessions/terminal/terminalSurfaceSummary';
+import { projectTerminalSurfaceFailure, publishTerminalSurfaceSummary } from '@/components/sessions/terminal/terminalSurfaceSummary';
 import { createSessionTerminalLeafHandles } from '@/components/sessions/terminal/strip/sessionTerminalLeafHandles';
 import { useFindSurfaceRuntime } from '@/keyboard/KeyboardShortcutProvider';
 import { usePluginSurfaceFocusEligibility } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
@@ -11,6 +11,7 @@ import { useTerminalApprovalOpener } from './useTerminalApprovalOpener';
 /** Mounted renderer presentation shared by Session and Project hosts; no process authority. */
 export function useEmbeddedTerminalPresentation(input: Readonly<{
     scopeId: string; terminalKey: string; terminalId: string | null; available: boolean; focused?: boolean;
+    presentationId?: string;
     controller: EmbeddedTerminalPaneController;
     terminalRef: React.MutableRefObject<EmbeddedTerminalRendererHandle | null>;
 }>) {
@@ -22,13 +23,17 @@ export function useEmbeddedTerminalPresentation(input: Readonly<{
     const url = controller.detectedUrl?.url ?? null;
     React.useEffect(() => publishTerminalSurfaceSummary(terminalKey, {
         title: controller.terminalTitle ?? null, bell: unseenBell, status: controller.status,
-        error: controller.status === 'error' ? controller.error : null, url,
-    }), [controller.error, controller.status, controller.terminalTitle, terminalKey, unseenBell, url]);
-    const handles = React.useMemo(() => createSessionTerminalLeafHandles(input.scopeId), [input.scopeId]);
+        error: controller.status === 'error' ? controller.error : null,
+        failure: projectTerminalSurfaceFailure(controller), url,
+    }), [controller.connectionLost, controller.error, controller.readOnly, controller.status, controller.terminalTitle, terminalKey, unseenBell, url]);
+    const handles = React.useMemo(() => createSessionTerminalLeafHandles(input.scopeId, input.presentationId), [input.scopeId, input.presentationId]);
     const findRuntime = useFindSurfaceRuntime();
     const mountedId = React.useId();
     const findSurfaceId = `terminal:${terminalKey}:${mountedId}`;
     const findEligible = usePluginSurfaceFocusEligibility() && input.focused !== false;
+    React.useLayoutEffect(() => {
+        if (findEligible) input.terminalRef.current?.focus?.();
+    }, [findEligible, input.terminalRef]);
     const { clearTerminal, requestRestart, copySelection, onPaste } = controller;
     React.useEffect(() => {
         if (!input.terminalId || !input.available) return;

@@ -2,8 +2,9 @@ import * as React from 'react';
 import { useUnistyles } from 'react-native-unistyles';
 
 import type { FitAddon } from '@xterm/addon-fit';
-import type { FindEngine, EmbeddedTerminalCursorRow, EmbeddedTerminalWriteOptions } from '../embedded/embeddedTerminalRendererHandle';
+import type { EmbeddedTerminalRendererHandle, EmbeddedTerminalRendererResource, FindEngine, EmbeddedTerminalCursorRow, EmbeddedTerminalWriteOptions } from '../embedded/embeddedTerminalRendererHandle';
 import { Terminal } from '@xterm/xterm';
+import { XtermRetainedResource } from './retainedResource';
 
 import '@xterm/xterm/css/xterm.css';
 import { XTERM_READABILITY_OPTIONS } from './readability';
@@ -38,7 +39,8 @@ import {
     type XtermWriteQueue,
 } from './writeQueue';
 
-export type XtermTerminalHandle = Readonly<{
+export type XtermTerminalHandle = Pick<EmbeddedTerminalRendererHandle,
+    'captureResource' | 'restoreResource' | 'hasRetainedOutput'> & Readonly<{
     find?: FindEngine;
     write: (data: string, options?: EmbeddedTerminalWriteOptions) => boolean;
     writeBytes: (input: XtermWriteBytesInput) => boolean | Readonly<{ status: 'queued' }>;
@@ -57,6 +59,8 @@ export type XtermSelectionRange = Readonly<{
 }>;
 
 export type XtermTerminalViewProps = Readonly<{
+    /** The controller's already-authorized parsed renderer, adopted before activation reports ready. */
+    retainedResource?: EmbeddedTerminalRendererResource;
     onFindEngine?: (engine: FindEngine | null) => void;
     onInput: (data: string) => void;
     onPaste?: (data: string) => void | Promise<unknown>;
@@ -136,6 +140,18 @@ export const XtermTerminalView = React.forwardRef<XtermTerminalHandle, XtermTerm
     selectionBackgroundColorRef.current = selectionBackgroundColor;
     const containerRef = React.useRef<HTMLDivElement | null>(null);
     const terminalRef = React.useRef<Terminal | null>(null);
+    const resourceRef = React.useRef<XtermRetainedResource | null>(null);
+    const activeHostRef = React.useRef<HTMLDivElement | null>(null);
+    const currentPropsRef = React.useRef(props);
+    currentPropsRef.current = props;
+    const pendingWritesRef = React.useRef(0);
+    const settledWaitersRef = React.useRef<Array<() => void>>([]);
+    const completePendingWrite = React.useCallback(() => {
+        pendingWritesRef.current = Math.max(0, pendingWritesRef.current - 1);
+        if (pendingWritesRef.current === 0) {
+            for (const resolve of settledWaitersRef.current.splice(0)) resolve();
+        }
+    }, []);
     const readOnlyRef = React.useRef(props.readOnly === true);
     readOnlyRef.current = props.readOnly === true;
     const findRef = React.useRef<ReturnType<typeof loadXtermSearchAddon> | null>(null);
@@ -182,11 +198,14 @@ export const XtermTerminalView = React.forwardRef<XtermTerminalHandle, XtermTerm
 
     const resetWriteState = React.useCallback(() => {
         writeQueueRef.current?.clear();
+        pendingWritesRef.current = 0;
+        for (const resolve of settledWaitersRef.current.splice(0)) resolve();
         outputPreviewRef.current = '';
         outputPreviewDirtyRef.current = false;
         if (containerRef.current) {
             containerRef.current.removeAttribute('data-happier-terminal-text');
         }
+        activeHostRef.current?.removeAttribute('data-happier-terminal-text');
         if (writeRafRef.current !== null && typeof window !== 'undefined') {
             window.cancelAnimationFrame(writeRafRef.current);
         }
@@ -197,7 +216,7 @@ export const XtermTerminalView = React.forwardRef<XtermTerminalHandle, XtermTerm
         if (!outputPreviewDirtyRef.current) {
             return;
         }
-        const container = containerRef.current;
+        const container = activeHostRef.current ?? containerRef.current;
         if (!container) {
             return;
         }
@@ -265,12 +284,15 @@ export const XtermTerminalView = React.forwardRef<XtermTerminalHandle, XtermTerm
         if (!data) {
             return true;
         }
+        pendingWritesRef.current += 1;
         const accepted = ensureWriteQueue().enqueue({
             data,
             byteLength: estimateUtf8ByteLength(data),
             options,
+            onComplete: completePendingWrite,
         });
         if (!accepted) {
+            completePendingWrite();
             return false;
         }
         appendOutputPreview(data);
@@ -281,7 +303,7 @@ export const XtermTerminalView = React.forwardRef<XtermTerminalHandle, XtermTerm
             ensureWriteQueue().flush();
         }
         return true;
-    }, [appendOutputPreview, applyOutputPreviewAttribute, ensureWriteQueue]);
+    }, [appendOutputPreview, applyOutputPreviewAttribute, completePendingWrite, ensureWriteQueue]);
 
     const enqueueWriteBytes = React.useCallback((input: XtermWriteBytesInput) => {
         if (input.bytes.byteLength === 0) {
@@ -289,21 +311,30 @@ export const XtermTerminalView = React.forwardRef<XtermTerminalHandle, XtermTerm
         }
         const bytes = copyTerminalBytes(input.bytes);
         const completion = buildXtermWriteCompleteEvent({ ...input, bytes });
+        pendingWritesRef.current += 1;
         const accepted = ensureWriteQueue().enqueue({
             data: bytes,
             byteLength: bytes.byteLength,
-            onComplete: () => onWriteCompleteRef.current?.(completion),
+            onComplete: () => {
+                onWriteCompleteRef.current?.(completion);
+                completePendingWrite();
+            },
         });
         if (!accepted) {
+            completePendingWrite();
             return false;
         }
         appendOutputPreview(bytes);
+        // The stream already waits for this parser completion before sending
+        // the next frame. A separate animation-frame wait paces retained replay.
+        ensureWriteQueue().flush();
         return { status: 'queued' } as const;
-    }, [appendOutputPreview, ensureWriteQueue]);
+    }, [appendOutputPreview, completePendingWrite, ensureWriteQueue]);
 
     const reportSize = React.useCallback((cols: number, rows: number, _kind: 'ready' | 'resize') => {
-        containerRef.current?.setAttribute('data-happier-terminal-cols', String(cols));
-        containerRef.current?.setAttribute('data-happier-terminal-rows', String(rows));
+        const host = activeHostRef.current ?? containerRef.current;
+        host?.setAttribute('data-happier-terminal-cols', String(cols));
+        host?.setAttribute('data-happier-terminal-rows', String(rows));
         const previous = lastReportedSizeRef.current;
         if (!previous || previous.cols !== cols || previous.rows !== rows) {
             lastReportedSizeRef.current = { cols, rows };
@@ -343,7 +374,33 @@ export const XtermTerminalView = React.forwardRef<XtermTerminalHandle, XtermTerm
         }
     }, [reportSize]);
 
-    React.useImperativeHandle(ref, () => ({
+    const applyAppearanceRef = React.useRef<() => void>(() => {});
+    applyAppearanceRef.current = () => {
+        const term = terminalRef.current;
+        if (!term) return;
+        try {
+            const cursor = resolveXtermCursorAppearance(props.readOnly === true, theme.colors.text.primary);
+            // Application cursor commands remain authoritative while writable. Only a change
+            // in host input eligibility replaces them with the hidden/default cursor options.
+            if (term.options.disableStdin !== (props.readOnly === true)) {
+                Object.assign(term.options, cursor.options);
+            }
+            term.options.fontSize = Math.max(8, Math.round(props.fontSize));
+            term.options.lineHeight = props.lineHeight ?? 1.35;
+            term.options.theme = {
+                background: backgroundColor,
+                foreground: theme.colors.text.primary,
+                cursor: cursor.color,
+                selectionBackground: selectionBackgroundColor,
+            };
+            findRef.current?.setColors(resolveXtermFindColors(theme.colors.find, theme.colors.surface.base));
+        } catch {
+            // ignored
+        }
+        fitTerminal('resize');
+    };
+
+    const localHandle = React.useMemo<XtermTerminalHandle>(() => ({
         write: enqueueWrite,
         writeBytes: enqueueWriteBytes,
         clear: () => {
@@ -385,10 +442,57 @@ export const XtermTerminalView = React.forwardRef<XtermTerminalHandle, XtermTerm
         },
     }), [enqueueWrite, enqueueWriteBytes, resetWriteState]);
 
+    React.useImperativeHandle(ref, () => ({
+        write: (...args) => (resourceRef.current?.runtime.handle ?? localHandle).write(...args),
+        writeBytes: (...args) => (resourceRef.current?.runtime.handle ?? localHandle).writeBytes(...args),
+        clear: () => (resourceRef.current?.runtime.handle ?? localHandle).clear(),
+        focus: () => (resourceRef.current?.runtime.handle ?? localHandle).focus(),
+        hasSelection: () => (resourceRef.current?.runtime.handle ?? localHandle).hasSelection(),
+        getSelectionText: () => (resourceRef.current?.runtime.handle ?? localHandle).getSelectionText(),
+        getSelectionRange: () => (resourceRef.current?.runtime.handle ?? localHandle).getSelectionRange?.() ?? null,
+        get find() { return resourceRef.current?.runtime.find ?? localHandle.find; },
+        captureResource: () => {
+            const resource = resourceRef.current;
+            if (!resource) throw new Error('Terminal renderer is not mounted');
+            return resource.capture();
+        },
+        restoreResource: (resource) => {
+            if (resourceRef.current === resource) return true;
+            if (!(resource instanceof XtermRetainedResource) || !resource.canAttach()) return false;
+            const host = containerRef.current;
+            if (!host) return false;
+            const current = resourceRef.current;
+            current?.detach();
+            if (!resource.attach(host, currentPropsRef.current)) return false;
+            resourceRef.current = resource;
+            terminalRef.current = resource.runtime.terminal;
+            fitAddonRef.current = resource.runtime.fitAddon;
+            findRef.current = resource.runtime.find;
+            applyAppearanceRef.current();
+            return true;
+        },
+        hasRetainedOutput: () => resourceRef.current?.retained === true,
+    }), [localHandle]);
+
     React.useLayoutEffect(() => {
         const container = containerRef.current;
         if (!container) {
             return;
+        }
+        activeHostRef.current = container;
+
+        const retained = props.retainedResource;
+        if (retained instanceof XtermRetainedResource && retained.canAttach()) {
+            resourceRef.current = retained;
+            terminalRef.current = retained.runtime.terminal;
+            fitAddonRef.current = retained.runtime.fitAddon;
+            findRef.current = retained.runtime.find;
+            retained.attach(container, props);
+            applyAppearanceRef.current();
+            return () => {
+                retained.detach();
+                resourceRef.current = null;
+            };
         }
 
         const cursor = resolveXtermCursorAppearance(props.readOnly === true, theme.colors.text.primary);
@@ -588,7 +692,7 @@ export const XtermTerminalView = React.forwardRef<XtermTerminalHandle, XtermTerm
 
         resizeObserver?.observe(container);
 
-        return () => {
+        const destroy = () => {
             onFindEngineRef.current?.(null);
             find.dispose();
             findRef.current = null;
@@ -633,38 +737,89 @@ export const XtermTerminalView = React.forwardRef<XtermTerminalHandle, XtermTerm
             readyFitRetryCountRef.current = 0;
             lastReportedSizeRef.current = null;
         };
+        const resource = new XtermRetainedResource({
+            container,
+            terminal: term,
+            fitAddon,
+            find,
+            handle: localHandle,
+            whenSettled: () => {
+                writeQueueRef.current?.flush();
+                return pendingWritesRef.current === 0 ? Promise.resolve()
+                    : new Promise<void>((resolve) => settledWaitersRef.current.push(resolve));
+            },
+            bind: (next) => {
+                onInputRef.current = next.onInput;
+                onPasteRef.current = next.onPaste;
+                onCopySelectionRef.current = next.onCopySelection;
+                onSelectionChangeRef.current = next.onSelectionChange;
+                onLinkRef.current = next.onLink;
+                onResizeRef.current = next.onResize;
+                onReadyRef.current = next.onReady;
+                onWriteCompleteRef.current = next.onWriteComplete;
+                onWriteRejectedRef.current = next.onWriteRejected;
+                onCursorRowChangeRef.current = next.onCursorRowChange;
+                onContentHeightChangeRef.current = next.onContentHeightChange;
+                onFindEngineRef.current = next.onFindEngine;
+                readOnlyRef.current = next.readOnly === true;
+            },
+            attach: (host) => {
+                containerRef.current = container;
+                activeHostRef.current = host;
+                didReportReadyRef.current = false;
+                lastReportedSizeRef.current = null;
+                outputPreviewDirtyRef.current = true;
+                applyOutputPreviewAttribute();
+                container.addEventListener('paste', handlePaste, true);
+                container.addEventListener('pointerdown', focusFromPointer, true);
+                resizeObserver?.observe(container);
+                onFindEngineRef.current?.(find);
+                term.focus();
+                fitTerminal('ready');
+                reportContentHeight();
+                reportCursorRow();
+            },
+            detach: () => {
+                term.blur();
+                container.removeEventListener('paste', handlePaste, true);
+                container.removeEventListener('pointerdown', focusFromPointer, true);
+                resizeObserver?.disconnect();
+                if (resizeTimeoutRef.current !== null) window.clearTimeout(resizeTimeoutRef.current);
+                if (readyFitRetryTimeoutRef.current !== null) window.clearTimeout(readyFitRetryTimeoutRef.current);
+                resizeTimeoutRef.current = null;
+                readyFitRetryTimeoutRef.current = null;
+                onFindEngineRef.current?.(null);
+                onInputRef.current = () => {};
+                onPasteRef.current = undefined;
+                onCopySelectionRef.current = undefined;
+                onLinkRef.current = undefined;
+                onSelectionChangeRef.current = undefined;
+                onResizeRef.current = () => {};
+                onReadyRef.current = () => {};
+                onCursorRowChangeRef.current = undefined;
+                onContentHeightChangeRef.current = undefined;
+                activeHostRef.current = null;
+                // Pending parser callbacks still publish their exact applied cursor before handoff.
+                writeQueueRef.current?.flush();
+            },
+            destroy,
+        });
+        resourceRef.current = resource;
+        return () => {
+            resourceRef.current?.detach();
+            resourceRef.current = null;
+        };
     // Appearance updates below change the existing terminal's options. Recreating it here
     // discards retained output behind the same renderer handle, so the controller cannot
     // distinguish the empty replacement from the renderer it has already hydrated.
-    }, [ensureWriteQueue, fitTerminal, props.maxPendingWriteBytes, resetWriteState, scheduleFlushWrites]);
+    }, [applyOutputPreviewAttribute, ensureWriteQueue, fitTerminal, localHandle, props.maxPendingWriteBytes, resetWriteState, scheduleFlushWrites]);
+
+    React.useLayoutEffect(() => {
+        resourceRef.current?.bind(props);
+    });
 
     React.useEffect(() => {
-        const term = terminalRef.current;
-        if (!term) {
-            return;
-        }
-
-        try {
-            const cursor = resolveXtermCursorAppearance(props.readOnly === true, theme.colors.text.primary);
-            // Application cursor commands remain authoritative while writable. Only a change
-            // in host input eligibility replaces them with the hidden/default cursor options.
-            if (term.options.disableStdin !== (props.readOnly === true)) {
-                Object.assign(term.options, cursor.options);
-            }
-            term.options.fontSize = Math.max(8, Math.round(props.fontSize));
-            term.options.lineHeight = props.lineHeight ?? 1.35;
-            term.options.theme = {
-                background: backgroundColor,
-                foreground: theme.colors.text.primary,
-                cursor: cursor.color,
-                selectionBackground: selectionBackgroundColor,
-            };
-            findRef.current?.setColors(resolveXtermFindColors(theme.colors.find, theme.colors.surface.base));
-        } catch {
-            // ignored
-        }
-
-        fitTerminal('resize');
+        applyAppearanceRef.current();
     }, [backgroundColor, selectionBackgroundColor, fitTerminal, props.fontSize, props.lineHeight, props.readOnly, theme.colors.text.primary, theme.colors.find, theme.colors.surface.base]);
 
     return (

@@ -1,19 +1,24 @@
 import * as React from 'react';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 
-import { renderScreen } from '@/dev/testkit';
+import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { storage } from '@/sync/domains/state/storageStore';
+import { clearPersistenceStorage } from '@/sync/domains/state/persistenceStorage';
+import { terminalNativeRendererQuarantineState, writeTerminalNativeRendererQuarantine } from '@/sync/domains/state/terminalRendererUiState';
+import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const routeState = vi.hoisted(() => ({ enabled: true }));
 const paneState = vi.hoisted(() => ({ props: null as unknown }));
-const settingState = vi.hoisted(() => ({
-    preference: 'native',
-    quarantine: { renderer: 'ios-ghosttykit', expiresAtMs: Date.now() + 10_000 } as unknown,
-    setPreference: vi.fn((value: unknown) => { settingState.preference = String(value); }),
-    setQuarantine: vi.fn((value: unknown) => { settingState.quarantine = value; }),
-}));
+const initialStorageState = storage.getState();
+beforeEach(() => {
+    storage.getState().applyLocalSettings({ terminalRendererPreference: 'native' }, { source: 'test' });
+    writeTerminalNativeRendererQuarantine({ renderer: 'ios-ghosttykit', expiresAtMs: Date.now() + 10_000 });
+});
+afterEach(() => { standardCleanup(); clearPersistenceStorage(); storage.setState(initialStorageState, true); });
 const qaState = vi.hoisted(() => ({
     injectCrash: vi.fn(async () => ({ injected: true, surfaceId: 'embedded-terminal:ios-ghosttykit:terminal-qa-loaded-device' })),
 }));
@@ -30,6 +35,7 @@ vi.mock('react-native', async () => {
             addEventListener: () => ({ remove: vi.fn() }),
         },
         Dimensions: {
+            ...mock.Dimensions,
             addEventListener: () => ({ remove: vi.fn() }),
         },
     };
@@ -42,21 +48,6 @@ vi.mock('react-native-unistyles', async () => {
 
 vi.mock('@/auth/routing/devRoutePolicy', () => ({
     isDevRouteEnabled: () => routeState.enabled,
-}));
-
-vi.mock('@/sync/domains/state/storage', () => ({
-    useLocalSetting: () => settingState.quarantine,
-    useLocalSettingMutable: () => [settingState.preference, settingState.setPreference],
-}));
-
-vi.mock('@/sync/domains/state/storageStore', () => ({
-    getStorage: () => ({
-        getState: () => ({
-            applyLocalSettings: (delta: { terminalNativeRendererQuarantine?: unknown }) => {
-                settingState.setQuarantine(delta.terminalNativeRendererQuarantine);
-            },
-        }),
-    }),
 }));
 
 vi.mock('@happier-dev/terminal-native', () => ({
@@ -72,9 +63,12 @@ vi.mock('@happier-dev/terminal-native', () => ({
     injectTerminalNativeRendererCrashForQa: qaState.injectCrash,
 }));
 
-vi.mock('@/utils/ui/clipboard', () => ({
-    setClipboardStringSafe: vi.fn(async () => true),
+vi.mock('expo-clipboard', () => ({
+    setStringAsync: vi.fn(async () => true),
 }));
+
+vi.mock('socket.io-client', async importOriginal =>
+    (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
 
 vi.mock('@/components/terminal/embedded/EmbeddedTerminalPane.native', () => ({
     EmbeddedTerminalPane: React.forwardRef<unknown, Readonly<{ children?: React.ReactNode }>>((props, _ref) => {
@@ -94,7 +88,10 @@ vi.mock('@/components/ui/text/Text', () => ({
     TextInput: (props: Readonly<{ children?: React.ReactNode }>) => React.createElement('TextInput', props, props.children),
 }));
 
-import { TerminalQaScreen } from './TerminalQaScreen.native';
+installDisconnectedServerSocketBoundary();
+await loadSyncSingletonForTests();
+const { TerminalQaScreen } = await import('./TerminalQaScreen.native');
+const { AuthProvider } = await import('@/auth/context/AuthContext');
 
 describe('TerminalQaScreen', () => {
     it('fails closed when dev routes are disabled', async () => {
@@ -134,16 +131,23 @@ describe('TerminalQaScreen', () => {
     });
 
     it('uses canonical settings and native QA APIs rather than bypassing renderer gates', async () => {
-        const screen = await renderScreen(<TerminalQaScreen />);
+        const screen = await renderScreen(<AuthProvider initialCredentials={null}><TerminalQaScreen /></AuthProvider>);
 
         await act(async () => {
             screen.tree?.root.findByProps({ testID: 'terminal-qa-preference-xterm-webview' }).props.onPress();
+            await vi.waitFor(() => {
+                expect(storage.getState().localSettings.terminalRendererPreference).toBe('xterm-webview');
+            });
+        });
+        const settingsAfterPreference = storage.getState().localSettings;
+
+        await act(async () => {
             screen.tree?.root.findByProps({ testID: 'terminal-qa-clear-quarantine' }).props.onPress();
             await screen.tree?.root.findByProps({ testID: 'terminal-qa-inject-crash' }).props.onPress();
         });
 
-        expect(settingState.setPreference).toHaveBeenCalledWith('xterm-webview');
-        expect(settingState.setQuarantine).toHaveBeenCalledWith(null);
+        expect(storage.getState().localSettings).toBe(settingsAfterPreference);
+        expect(terminalNativeRendererQuarantineState.read('native')).toBeNull();
         expect(qaState.injectCrash).toHaveBeenCalledWith(
             'embedded-terminal:ios-ghosttykit:terminal-qa-loaded-device',
         );

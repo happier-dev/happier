@@ -4,6 +4,7 @@ import { Terminal } from '@xterm/xterm';
 import { SearchAddon } from '@xterm/addon-search';
 import { runInNewContext } from 'node:vm';
 import { createXtermFindEngine } from './findEngine';
+import { createWebViewFindEngine, type XtermFindRequest } from './webview/findBridge';
 import { buildXtermWebViewHtml } from './webview/xtermWebViewHtml';
 vi.mock('./webview/xtermWebViewAssets.generated', () => ({ XTERM_WEBVIEW_BUNDLE_JS: '', XTERM_WEBVIEW_CSS: '' }));
 
@@ -22,9 +23,73 @@ async function fixture(text: string, scrollback = 5000) {
     disposals.push(() => { find.dispose(); term.dispose(); element.remove(); });
     await new Promise<void>((resolve) => term.write(text, resolve));
     find.open();
-    return { term, find };
+    return { term, find, addon };
 }
 describe('xterm engine Find', () => {
+    it('does no addon search for an already-open equal query/options request and still searches a changed query', async () => {
+        const { find, addon } = await fixture('hit hit');
+        find.setQuery('hit');
+        const search = vi.spyOn(addon, 'findNext'); // Count real matching work; keep the addon implementation.
+        for (let i = 0; i < 10; i++) {
+            find.open();
+            find.setOptions({ regex: false, matchCase: false });
+            find.setQuery('hit');
+        }
+        expect(search).not.toHaveBeenCalled();
+        expect(find.status).toMatchObject({ kind: 'results', total: 2 });
+        find.setQuery('absent');
+        expect(search).toHaveBeenCalledTimes(1);
+        expect(find.status).toMatchObject({ kind: 'results', total: 0 });
+    });
+
+    it('sends no find.set for an already-open equal WebView query/options request, preserving the current result', () => {
+        const requests: XtermFindRequest[] = [];
+        const bridge = createWebViewFindEngine(request => requests.push(request));
+        bridge.engine.open();
+        bridge.engine.setQuery('hit');
+        const revision = requests.at(-1)!.payload.revision;
+        bridge.accept({ revision, retainedLines: 24, status: { kind: 'results', total: 2, current: 1, coverage: 'complete' } });
+        const matched = bridge.engine.getSnapshot();
+        requests.length = 0;
+        for (let i = 0; i < 10; i++) {
+            bridge.engine.open();
+            bridge.engine.setOptions({ regex: false, matchCase: false });
+            bridge.engine.setQuery('hit');
+        }
+        expect(requests).toHaveLength(0);
+        expect(bridge.engine.getSnapshot()).toBe(matched);
+        bridge.engine.setQuery('changed');
+        expect(requests).toHaveLength(1);
+        expect(requests[0]).toMatchObject({ type: 'find.set', payload: { query: 'changed' } });
+        bridge.accept({ revision, retainedLines: 24, status: { kind: 'results', total: 99, current: 1, coverage: 'complete' } });
+        expect(bridge.engine.status).toEqual({ kind: 'idle' });
+    });
+
+    it('publishes only changed WebView result facts and retains equal nested values', () => {
+        const requests: XtermFindRequest[] = [];
+        const bridge = createWebViewFindEngine(request => requests.push(request));
+        bridge.engine.open();
+        bridge.engine.setQuery('hit');
+        const revision = requests.at(-1)!.payload.revision;
+        const reply = { revision, retainedLines: 24, status: { kind: 'results', total: 2, current: 1, coverage: 'complete' } };
+        bridge.accept(reply);
+        const matched = bridge.engine.getSnapshot();
+        const publications = vi.fn();
+        const unsubscribe = bridge.engine.subscribe(publications);
+        for (let i = 0; i < 10; i++) bridge.accept({ ...reply, status: { ...reply.status } });
+        expect(publications).not.toHaveBeenCalled();
+        expect(bridge.engine.getSnapshot()).toBe(matched);
+        bridge.accept({ ...reply, status: { ...reply.status, total: 3 } });
+        expect(publications).toHaveBeenCalledTimes(1);
+        expect(bridge.engine.status).toMatchObject({ kind: 'results', total: 3 });
+        const changed = bridge.engine.getSnapshot();
+        bridge.accept({ ...reply, retainedLines: 25, status: { ...reply.status, total: 3 } });
+        expect(publications).toHaveBeenCalledTimes(2);
+        expect(bridge.engine.getSnapshot().status).toBe(changed.status);
+        expect(bridge.engine.getSnapshot().options).toBe(matched.options);
+        unsubscribe();
+    });
+
     it('publishes only changed snapshot facts across parsed output and addon refreshes', async () => {
         const { term, find } = await fixture('hit');
         find.setQuery('hit');
