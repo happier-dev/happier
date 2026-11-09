@@ -141,4 +141,8 @@ export function InlineTextField(props: Readonly<{
 
 const RESTING_FRAME_STYLE = { position: 'relative' } as const;
 /** The field lies over the clamped words, invisible, so pressing them edits the title where it was pressed. */
-const RESTING_FIELD_STYLE = { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, height: '100%', opacity: 0 } as const;
+const RESTING_FIELD_STYLE = {
+    position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, height: '100%',
+    // UIKit excludes zero-alpha views from hit-testing and accessibility; hide only the native glyphs.
+    ...(Platform.OS === 'web' ? { opacity: 0 } : { color: 'transparent' }),
+} as const;
