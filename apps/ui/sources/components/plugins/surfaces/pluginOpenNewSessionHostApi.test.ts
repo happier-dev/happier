@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { TriagePrepareReviewWorkspaceResultV1Schema } from '@happier-dev/triage-protocol/v1';
 import type {
     PluginUiHostApiRequestEnvelopeV1,
     PluginUiJsonValueV1,
@@ -72,6 +73,40 @@ const executeSelectedOperation = vi.fn(async () => ({
 } as const));
 
 describe('openNewSession Host API producer', () => {
+    it.each([
+        { kind: 'unavailable', reason: 'account' },
+        { kind: 'unavailable', reason: 'scmResolver' },
+        { kind: 'refused', reason: 'observedHeadMoved' },
+    ] as const)('retains the preparation owner $kind/$reason diagnostics without navigating', async (result) => {
+        const openNewSession = vi.fn(async () => ({ kind: 'opened' as const, dataId: 'handoff-1', draftId: 'draft-1' }));
+        const handler = createPluginOpenNewSessionHostApiHandler({
+            pluginId: 'happier.triage', accountLifetime, isCurrent: () => true,
+            executionTarget: { serverId: 'server-a', machineId: 'machine-a' },
+            // Preserve the real contribution result contract at the transport boundary.
+            executeSelectedOperation: async () => TriagePrepareReviewWorkspaceResultV1Schema.parse(result),
+            openNewSession,
+        });
+
+        await expect(handler(request({ checkoutIntent: 'preparedReviewWorkspace' }), {
+            targetedOperation: operation, selectedActionInput: selected,
+        })).resolves.toEqual({ code: 'unavailable', diagnostics: [result.kind, result.reason] });
+        expect(openNewSession).not.toHaveBeenCalled();
+    });
+
+    it('retains the preparation owner workspaceRequired reason without navigating', async () => {
+        const openNewSession = vi.fn(async () => ({ kind: 'opened' as const, dataId: 'handoff-1', draftId: 'draft-1' }));
+        const handler = createPluginOpenNewSessionHostApiHandler({
+            pluginId: 'happier.triage', accountLifetime, isCurrent: () => true,
+            executionTarget: { serverId: 'server-a', machineId: 'machine-a' },
+            // The selected operation is a transport boundary; its typed refusal is not a navigation failure.
+            executeSelectedOperation: async () => ({ kind: 'workspaceRequired' }),
+            openNewSession,
+        });
+        await expect(handler(request({ checkoutIntent: 'preparedReviewWorkspace' }), {
+            targetedOperation: operation, selectedActionInput: selected,
+        })).resolves.toEqual({ code: 'unavailable', diagnostics: ['workspaceRequired'] });
+        expect(openNewSession).not.toHaveBeenCalled();
+    });
     it('attributes the exact plugin and Account scope and settles with JSON null', async () => {
         const openNewSession = vi.fn(async () => ({ kind: 'opened' as const, dataId: 'handoff-1', draftId: 'draft-1' }));
         const handler = createPluginOpenNewSessionHostApiHandler({
@@ -163,8 +198,8 @@ describe('openNewSession Host API producer', () => {
                 machineId: 'machine-b',
             },
         }), { targetedOperation: operation, selectedActionInput: selected })).resolves.toEqual({
-            code: 'invalid_payload',
-            diagnostics: ['prepared_review_workspace_selection_invalid'],
+            code: 'unavailable',
+            diagnostics: ['workspaceMismatch'],
         });
         expect(openNewSession).not.toHaveBeenCalled();
 
@@ -181,7 +216,7 @@ describe('openNewSession Host API producer', () => {
             { targetedOperation: operation, selectedActionInput: selected },
         )).resolves.toEqual({
             code: 'unavailable',
-            diagnostics: ['prepared_review_workspace_unavailable'],
+            diagnostics: ['workspaceMismatch'],
         });
         expect(openNewSession).not.toHaveBeenCalled();
 

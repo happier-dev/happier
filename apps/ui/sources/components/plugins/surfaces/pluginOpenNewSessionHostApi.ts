@@ -31,6 +31,8 @@ type OpenNewSession = (params: Readonly<{
     scope: ServerAccountScope;
     signal?: AbortSignal;
     isCurrent: () => boolean;
+    /** The control that asked, so a docked New Session seats in that control's pane. */
+    origin?: unknown;
 }>) => Promise<SessionNewSessionSeedOutcome>;
 
 function failure(outcome: Exclude<SessionNewSessionSeedOutcome, Readonly<{ kind: 'opened' }>>): PluginUiJsonValueV1 {
@@ -83,6 +85,8 @@ type PluginOpenNewSessionBinding = Readonly<{
         options?: PluginSurfaceHostApiRequestOptions,
     ) => Promise<PluginUiJsonValueV1>;
     openNewSession?: OpenNewSession;
+    /** The mounted control that asked (a press in the page); absent for client Actions. */
+    origin?: unknown;
 }>;
 
 /** Shared New Session producer for mounted surfaces and client Actions; owns no draft state. */
@@ -112,11 +116,16 @@ export function createPluginOpenNewSessionHandler(input: PluginOpenNewSessionBin
                     || target === undefined
                     || (parsed.data.placement !== undefined
                         && (parsed.data.placement.kind !== 'exactTarget'
-                            || parsed.data.placement.serverId !== target.serverId
-                            || parsed.data.placement.machineId !== target.machineId
                             || parsed.data.placement.directory !== undefined))
                 ) {
                     return errorPayload('invalid_payload', 'prepared_review_workspace_selection_invalid');
+                }
+                if (parsed.data.placement !== undefined
+                    && (parsed.data.placement.serverId !== target.serverId
+                        || parsed.data.placement.machineId !== target.machineId)) {
+                    // A valid saved-project choice can belong to a different Machine.
+                    // Keep the source's admitted target and report the placement refusal.
+                    return errorPayload('unavailable', 'workspaceMismatch');
                 }
                 const result = await input.executeSelectedOperation({
                     action: selected.data.action,
@@ -130,7 +139,16 @@ export function createPluginOpenNewSessionHandler(input: PluginOpenNewSessionBin
                 if (actionFailure !== null) return actionFailure;
                 const repositoryPath = readPreparedRepositoryPath(result);
                 if (repositoryPath === null) {
-                    return errorPayload('unavailable', 'prepared_review_workspace_unavailable');
+                    // The selected contribution has already parsed its result.
+                    // Preserve its secret-free kind and reason so preparation
+                    // failures retain the fact the person needs to resolve.
+                    if (!isJsonRecord(result) || typeof result.kind !== 'string') {
+                        return errorPayload('unavailable', 'prepared_review_workspace_result_invalid');
+                    }
+                    return createPluginSurfaceHostApiError('unavailable', [
+                        result.kind,
+                        ...(typeof result.reason === 'string' ? [result.reason] : []),
+                    ]);
                 }
                 if (signal?.aborted || !isCurrent()) {
                     return errorPayload(isCurrent() ? 'unavailable' : 'stale_surface', 'open_new_session_aborted');
@@ -164,6 +182,7 @@ export function createPluginOpenNewSessionHandler(input: PluginOpenNewSessionBin
                 scope: input.accountLifetime.scope,
                 ...(signal ? { signal } : {}),
                 isCurrent,
+                ...(input.origin === undefined ? {} : { origin: input.origin }),
             });
             return outcome.kind === 'opened' ? null : failure(outcome);
         } finally {
@@ -179,8 +198,12 @@ export function createPluginOpenNewSessionHostApiHandler(input: Omit<PluginOpenN
         if (request.method !== 'openNewSession') {
             return errorPayload('unsupported_method', 'open_new_session_method_mismatch');
         }
+        // The mounted request arrives with the asking control still focused (a press keeps focus on web); read it
+        // before any await so the docked New Session can seat in that control's pane.
+        const origin = typeof document === 'undefined' ? undefined : document.activeElement ?? undefined;
         return await createPluginOpenNewSessionHandler({
             ...input,
+            ...(origin === undefined ? {} : { origin }),
             executeSelectedOperation: async (payload, operationOptions) => await input.executeSelectedOperation({
                 ...request, method: 'executeAction', payload,
             }, operationOptions),
