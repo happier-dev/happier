@@ -7,6 +7,7 @@ import { normalizeServerIdentityIdCapability } from '@happier-dev/protocol/featu
 
 import { normalizeBaseUrl, withAbortTimeout } from '../diagnostics/httpClient';
 import { decodeServerFeaturesResponseBody } from './serverFeaturesParse';
+import { isNativeTlsErrorCode } from '@/api/client/tlsError';
 
 export type CliServerFeaturesSnapshot =
   | Readonly<{
@@ -20,6 +21,7 @@ export type CliServerFeaturesSnapshot =
       status: 'error';
       reason: 'network' | 'timeout' | 'response_status';
       httpStatus?: number;
+      transportCategory?: 'tls_error';
       /** When the server said how long it will be unavailable (Retry-After on a non-OK response). */
       retryLater?: RetryLaterHints;
     }>;
@@ -154,7 +156,12 @@ async function requestServerFeaturesSnapshot(
     if (params.signal?.aborted) params.signal.throwIfAborted();
     if (error instanceof CredentialRequestRedirectError) throw error;
     const isTimeout = error instanceof Error && error.name === 'AbortError';
-    return { status: 'error', reason: isTimeout ? 'timeout' : 'network' };
+    const cause = error instanceof Error ? error.cause : undefined;
+    const code = cause && typeof cause === 'object' && 'code' in cause ? cause.code
+      : error && typeof error === 'object' && 'code' in error ? error.code : undefined;
+    return { status: 'error', reason: isTimeout ? 'timeout' : 'network',
+      ...(typeof code === 'string' && isNativeTlsErrorCode(code, params.serverUrl.startsWith('https:'))
+        ? { transportCategory: 'tls_error' as const } : {}) };
   }
 }
 

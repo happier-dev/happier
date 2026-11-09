@@ -73,10 +73,11 @@ export async function handleAuthRequest(args: string[], signal?: AbortSignal, in
   const acquired = await acquireTerminalAuthEnrollmentRuntime(
     target.descriptor ?? target, target.preferredTransport, signal,
   );
-  if (!acquired.ok) throw new Error('Unable to acquire the selected Home enrollment carrier');
+  if (!acquired.ok) throw Object.assign(new Error('Unable to acquire the selected Home enrollment carrier', { cause: acquired.error }),
+    { code: 'AUTH_ENROLL_REMOTE_CARRIER_UNAVAILABLE', carrierFailure: acquired.carrierFailure });
   try {
     const featuresSnapshot = await fetchServerFeaturesSnapshot({ serverUrl: acquired.runtime.runtimeOrigin, ...(signal ? { signal } : {}) });
-    const verified = verifyTerminalAuthEnrollmentRuntime({ target, runtime: acquired.runtime, snapshot: featuresSnapshot });
+    const verified = verifyTerminalAuthEnrollmentRuntime({ target, runtime: acquired.runtime, snapshot: featuresSnapshot, phase: 'first_contact' });
     const serverIdentityId = verified.homeServerIdentityId;
 
     const secret = new Uint8Array(randomBytes(32));
@@ -117,7 +118,7 @@ export async function handleAuthRequest(args: string[], signal?: AbortSignal, in
           supportsTokenOnly: true,
           pairingRequirement: 'v3',
           ...(target.descriptor ? { homeConnectionDescriptor: target.descriptor } : {}),
-          ...(managed ? { managedEnrollment: managed.managedEnrollment } : {}),
+          ...(managed ? { managedEnrollment: managed.managedEnrollment, machineDisplayName: managed.machineDisplayName } : {}),
           ...(prepared ? { remoteProfileId: prepared.profileId } : {}),
           createdAt: new Date().toISOString(),
         },

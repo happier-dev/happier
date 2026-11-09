@@ -5,12 +5,15 @@ import { join } from 'node:path';
 import axios, { AxiosError, AxiosHeaders } from 'axios';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { sealTerminalProvisioningV3TokenOnlyPayload } from '@happier-dev/protocol/crypto/terminalProvisioningV2';
-import { createHappierJsonExecutorFromTextRunner, runRemoteHomeEnrollmentRecipe } from '@happier-dev/cli-common/systemTasks';
+import { decodePlainMachineStoredContent } from '@happier-dev/protocol/machines/machineStoredContent';
+import { createHappierJsonExecutorFromTextRunner, runRemoteHomeEnrollmentFlow } from '@happier-dev/cli-common/systemTasks';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { withTempDir } from '@/testkit/fs/tempDir';
 import { reloadConfiguration } from '@/configuration';
 import { handleAuthRequest } from './request';
 import { handleAuthWait } from './wait';
+import { handleAuthCliCommand } from '../auth';
+import { readRemoteEnrollmentCommandFailure } from '@happier-dev/protocol/ssh/commandFailure';
 
 const descriptor = { v: 1 as const, homeServerIdentityId: 'srv_buffered_home', canonicalServerUrl: 'https://home.example.test', revision: 1,
   endpoints: [{ kind: 'https' as const, url: 'https://home.example.test' }] };
@@ -38,8 +41,10 @@ describe('buffered normal auth request/wait', () => {
         return true;
       };
       vi.spyOn(process.stdout, 'write').mockImplementation(writePipe);
-      vi.stubGlobal('fetch', vi.fn<typeof fetch>(async () => new Response(JSON.stringify({ features: {},
-        capabilities: { serverIdentity: { serverIdentityId: descriptor.homeServerIdentityId } }, homeConnectionDescriptor: descriptor }), { status: 200 })));
+      vi.stubGlobal('fetch', vi.fn<typeof fetch>(async url => new Response(JSON.stringify({ features: {},
+        capabilities: { serverIdentity: { serverIdentityId: descriptor.homeServerIdentityId } },
+        ...(String(url).endsWith('/v1/features/authenticated') ? { homeConnectionDescriptor: descriptor } : {}),
+      }), { status: 200 })));
       let response = '';
       let statusReads = 0;
       let registration: unknown;
@@ -70,8 +75,11 @@ describe('buffered normal auth request/wait', () => {
         }
         return httpResult({});
       });
-      await handleAuthRequest(['--json', '--remote-enrollment', '--home-target-stdin', '--managed-enrollment-stdin'], undefined,
-        Readable.from([JSON.stringify({ homeTarget, managedEnrollment })]));
+      await handleAuthRequest(['--json', '--remote-enrollment', '--home-target-stdin', '--managed-enrollment-stdin',
+        '--server-url', descriptor.canonicalServerUrl, '--no-persist'], undefined,
+        Readable.from([JSON.stringify({ homeTarget, managedEnrollment,
+          ...(admission === 'current' ? { machineDisplayName: 'Managed design box' } : {}),
+        })]));
       const request = JSON.parse(outputs[0]!) as { publicKey: string; remoteProfileId: string; pairing: { secretB64Url: string; createdAtMs: number; expiresAtMs: number } };
       expect(JSON.parse(outputs[0]!)).toMatchObject({ kind: 'remote_home_enrollment_pairing_request', homeServerIdentityId: descriptor.homeServerIdentityId });
       const pending = (await readdir(homeDir, { recursive: true })).find((path) => /auth[\\/]pending[\\/].*\.json$/u.test(path));
@@ -98,18 +106,22 @@ describe('buffered normal auth request/wait', () => {
         HAPPIER_LOCAL_SERVER_URL: undefined, HAPPIER_PUBLIC_SERVER_URL: undefined, HAPPIER_WEBAPP_URL: undefined });
       reloadConfiguration();
       if (admission === 'expired') vi.spyOn(Date, 'now').mockReturnValue(request.pairing.expiresAtMs + 1);
-      const wait = handleAuthWait(['--json', '--remote-enrollment', '--server', request.remoteProfileId, '--no-persist', '--public-key', request.publicKey]);
+      const waitArgs = ['--json', '--remote-enrollment', '--server', request.remoteProfileId, '--no-persist', '--public-key', request.publicKey];
+      if (admission === 'retired') vi.spyOn(process, 'exit').mockImplementation(() => { throw new Error('process_exit'); });
+      const wait = admission === 'retired'
+        ? handleAuthCliCommand({ args: ['auth', 'wait', ...waitArgs], rawArgv: [], terminalRuntime: null })
+        : handleAuthWait(waitArgs);
       if (admission === 'current') {
         await wait;
         expect(JSON.parse(outputs.at(-1)!)).toMatchObject({ kind: 'remote_home_enrollment_result', homeServerIdentityId: descriptor.homeServerIdentityId,
           encryptionType: 'tokenOnly', remoteProfileId: request.remoteProfileId, machineId: expect.any(String) });
         // Feed the real finite command producers into the exact strict host consumer.
         const completion = outputs.at(-1)!;
-        const consumed = await runRemoteHomeEnrollmentRecipe({
+        const consumed = await runRemoteHomeEnrollmentFlow({
           executor: createHappierJsonExecutorFromTextRunner(async (args) => ({ status: 0, stderr: '',
             stdout: args[1] === 'request' ? outputs[0]! : completion })),
           processIO: 'buffered', homeTargetInput: homeTarget, managedEnrollment,
-          approvePairingRequest: async () => {}, timeoutMs: 5_000,
+          approvePairingRequest: async () => {},
         });
         expect(consumed).toMatchObject({ machineId: JSON.parse(completion).machineId, remoteProfileId: request.remoteProfileId,
           homeServerIdentityId: descriptor.homeServerIdentityId });
@@ -119,10 +131,23 @@ describe('buffered normal auth request/wait', () => {
         await expect(wait).rejects.toMatchObject({ code: { expired: 'AUTH_REQUEST_EXPIRED', 'invalid-status': 'AUTH_RESPONSE_INVALID',
           denied: 'ERR_BAD_REQUEST', transport: 'ECONNREFUSED' }[admission] });
       } else {
-        await expect(wait).rejects.toThrow('retired managed row');
+        await expect(wait).rejects.toThrow('process_exit');
+        const failure: unknown = await runRemoteHomeEnrollmentFlow({
+          executor: createHappierJsonExecutorFromTextRunner(async args => ({ status: args[1] === 'request' ? 0 : 1,
+            stdout: args[1] === 'request' ? outputs[0]! : outputs.at(-1)!, stderr: '' })),
+          processIO: 'buffered', homeTargetInput: homeTarget, managedEnrollment, approvePairingRequest: async () => {},
+        }).catch((error: unknown) => error);
+        if (!(failure instanceof Error) || !('code' in failure)) throw failure;
+        expect(readRemoteEnrollmentCommandFailure(failure.code, failure.message)?.message).toContain('HTTP 409');
+        expect(outputs.at(-1)).not.toContain('retired managed row');
       }
       if (admission !== 'current' && admission !== 'retired') expect(registration).toBeUndefined();
       else expect(registration).toMatchObject({ managedEnrollment });
+      if (admission === 'current') {
+        if (!registration || typeof registration !== 'object' || !('metadata' in registration)
+          || typeof registration.metadata !== 'string') throw new Error('Expected published Machine metadata');
+        expect(decodePlainMachineStoredContent(registration.metadata)).toMatchObject({ displayName: 'Managed design box' });
+      }
       expect((await readdir(homeDir, { recursive: true })).some((path) => /(?:^|[\\/])access\.key$/u.test(path))).toBe(admission === 'current');
       expect(outputs.join('')).not.toContain('full-account-bearer');
     });

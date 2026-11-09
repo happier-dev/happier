@@ -92,7 +92,13 @@ export function readDaemonServiceProcessV1(value: unknown): DaemonServiceProcess
         ...(signal.success ? { signal: signal.data } : {}), ...(errorCode.success ? { errorCode: errorCode.data } : {}) });
     return process.success ? process.data : undefined;
 }
-const authCategories = ['http_error', 'auth_error', 'cancelled', 'deadline_elapsed', 'unknown'] as const;
+const authCategories = ['http_error', 'auth_error', 'tls_error', 'network_error', 'cancelled', 'deadline_elapsed', 'unknown'] as const;
+export function readGuestAuthCategory(value: unknown): typeof authCategories[number] | undefined {
+    return member(authCategories, value);
+}
+export function readGuestAuthHttpStatus(value: unknown): number | undefined {
+    return typeof value === 'number' && Number.isInteger(value) && value >= 100 && value <= 599 ? value : undefined;
+}
 const elapsedBuckets = ['under_1s', 'under_10s', 'under_60s', 'under_600s', 'at_least_600s'] as const;
 const controllerAbortCategories = ['none', 'caller_abort', 'enrollment_deadline', 'pairing_deadline'] as const;
 
@@ -123,7 +129,7 @@ export function readHomeEnrollmentCarrierFailure(value: unknown): HomeEnrollment
 
 /** One owner for which guest failures can carry the optional transport diagnostic. */
 export function readGuestAuthCarrierFailure(code: unknown, value: unknown): HomeEnrollmentCarrierFailure | undefined {
-    return code === 'AUTH_ENROLL_REMOTE_CARRIER_UNAVAILABLE' || code === 'HOME_FEATURES_NETWORK'
+    return code === 'AUTH_ENROLL_REMOTE_CARRIER_UNAVAILABLE' || code === 'AUTH_WAIT_TRANSPORT_UNAVAILABLE' || code === 'AUTH_WAIT_HOME_UNAVAILABLE' || code === 'HOME_FEATURES_NETWORK'
         ? readHomeEnrollmentCarrierFailure(value) : undefined;
 }
 
@@ -142,6 +148,7 @@ export function readGuestServiceErrorCode(value: unknown): typeof serviceCodes[n
 export type GuestCliFailureFacts = Readonly<Omit<Partial<GuestServiceFailureFactsV1>, 'guestCliCode'> & {
     guestCliCode?: typeof serviceCodes[number] | typeof authCodes[number];
     guestAuthCategory?: typeof authCategories[number];
+    guestHttpStatus?: number;
     carrierFailure?: HomeEnrollmentCarrierFailure;
     homeAuthority?: HomeAuthorityMismatchFacts;
 }>;
@@ -163,10 +170,11 @@ export function readGuestCliFailure(value: unknown): GuestCliFailureFacts | null
     }
     const error = record(envelope.error);
     if (envelope.v !== 1 || !['auth_enroll_remote', 'auth_request', 'auth_wait'].includes(String(envelope.kind)) || !error) return null;
-    const carrierFailure = envelope.kind === 'auth_enroll_remote'
-        ? readGuestAuthCarrierFailure(error.code, error.carrierFailure) : undefined;
+    const carrierFailure = readGuestAuthCarrierFailure(error.code, error.carrierFailure);
+    const guestHttpStatus = readGuestAuthHttpStatus(error.status);
     const homeAuthority = error.code === 'HOME_AUTHORITY_MISMATCH' ? readHomeAuthorityMismatchFacts(error) : undefined;
-    return { guestCliCode: readGuestAuthErrorCode(error.code), guestAuthCategory: member(authCategories, error.category) ?? 'unknown',
+    return { guestCliCode: readGuestAuthErrorCode(error.code), guestAuthCategory: readGuestAuthCategory(error.category) ?? 'unknown',
+        ...(guestHttpStatus !== undefined ? { guestHttpStatus } : {}),
         ...(homeAuthority ? { homeAuthority } : {}),
         ...(carrierFailure ? { carrierFailure } : {}) };
 }
@@ -188,6 +196,7 @@ export type RemoteEnrollmentFailureFacts = Readonly<{
     finalResultEventSeen: boolean;
     guestCliCode?: typeof authCodes[number];
     guestAuthCategory: typeof authCategories[number];
+    guestHttpStatus?: number;
     controllerAbortCategory: typeof controllerAbortCategories[number];
     carrierFailure?: HomeEnrollmentCarrierFailure;
     homeAuthority?: HomeAuthorityMismatchFacts;
@@ -237,15 +246,19 @@ const REMOTE_ENROLLMENT_FAILURE_MESSAGE = 'Remote Home enrollment failed.';
 type RemoteEnrollmentPhase = 'auth.request' | 'auth.wait' | 'auth.enroll-remote';
 
 /** Shell status 128 + 9 is kill-compatible, not evidence of an OOM killer. */
+export function formatGuestAuthCarrierFailure(code: unknown, value: unknown): string {
+    const carrierFailure = readGuestAuthCarrierFailure(code, value);
+    return carrierFailure ? `; attemptedCarrier ${carrierFailure.attemptedCarrier}; carrierReason ${carrierFailure.reason}${carrierFailure.irohAttempt
+        ? `; irohOutcome ${carrierFailure.irohAttempt.outcome}; irohReason ${carrierFailure.irohAttempt.reason}` : ''}` : '';
+}
+
 export function formatRemoteEnrollmentCommandFailure(facts: ProcessFacts & Partial<RemoteEnrollmentFailureFacts> & Readonly<{ phase: RemoteEnrollmentPhase }>): string {
     const signal = facts.exitStatus === 137 ? 'SIGKILL-compatible' : 'unknown';
     const diagnostics = facts.elapsedBucket ? `; elapsedBucket ${facts.elapsedBucket}; requestEventSeen ${facts.requestEventSeen}; finalResultEventSeen ${facts.finalResultEventSeen}; guestCliCode ${facts.guestCliCode ?? 'unknown'}; guestAuthCategory ${facts.guestAuthCategory ?? 'unknown'}; controllerAbortCategory ${facts.controllerAbortCategory ?? 'none'}` : '';
-    const carrierFailure = facts.elapsedBucket
-        ? readGuestAuthCarrierFailure(facts.guestCliCode, facts.carrierFailure) : undefined;
-    const carrier = carrierFailure ? `; attemptedCarrier ${carrierFailure.attemptedCarrier}; carrierReason ${carrierFailure.reason}${carrierFailure.irohAttempt
-        ? `; irohOutcome ${carrierFailure.irohAttempt.outcome}; irohReason ${carrierFailure.irohAttempt.reason}` : ''}` : '';
+    const carrier = facts.elapsedBucket ? formatGuestAuthCarrierFailure(facts.guestCliCode, facts.carrierFailure) : '';
+    const status = readGuestAuthHttpStatus(facts.guestHttpStatus);
     const homeAuthority = facts.guestCliCode === 'HOME_AUTHORITY_MISMATCH' ? readHomeAuthorityMismatchFacts(facts.homeAuthority) : undefined;
-    return `${REMOTE_ENROLLMENT_FAILURE_MESSAGE} (phase ${facts.phase}; exitStatus ${facts.exitStatus ?? 'unknown'}; signal ${signal}; stdoutPresent ${facts.stdoutPresent ?? 'unknown'}; stderrPresent ${facts.stderrPresent ?? 'unknown'}${diagnostics}${carrier}${homeAuthority ? `; ${formatHomeAuthorityMismatchFacts(homeAuthority)}` : ''})`;
+    return `${REMOTE_ENROLLMENT_FAILURE_MESSAGE} (phase ${facts.phase}; exitStatus ${facts.exitStatus ?? 'unknown'}; signal ${signal}; stdoutPresent ${facts.stdoutPresent ?? 'unknown'}; stderrPresent ${facts.stderrPresent ?? 'unknown'}${diagnostics}${carrier}${status !== undefined ? `; HTTP ${status}` : ''}${homeAuthority ? `; ${formatHomeAuthorityMismatchFacts(homeAuthority)}` : ''})`;
 }
 
 /** Retain only closed process facts or the active finite auth diagnostic grammar. */
@@ -254,7 +267,7 @@ export function readRemoteEnrollmentCommandFailure(code: unknown, message?: unkn
     const authority = splitHomeAuthorityMismatchSuffix(message);
     const baseMessage = authority.message;
     const details = authority.facts ? { kind: 'homeAuthorityMismatch' as const, ...authority.facts } : undefined;
-    const match = typeof baseMessage === 'string' ? /^Remote Home enrollment failed\. \(phase (auth\.(?:request|wait|enroll-remote)); exitStatus (-?\d+|unknown); signal (SIGKILL-compatible|unknown); stdoutPresent (true|false|unknown); stderrPresent (true|false|unknown)(?:; elapsedBucket ([a-z_0-9]+); requestEventSeen (true|false); finalResultEventSeen (true|false); guestCliCode ([A-Za-z][A-Za-z0-9_.-]{1,63}); guestAuthCategory ([a-z_]+); controllerAbortCategory ([a-z_]+)(?:; attemptedCarrier ([a-z_]+); carrierReason ([a-z_]+)(?:; irohOutcome ([a-z_]+); irohReason ([a-z_]+))?)?)?\)$/u.exec(baseMessage) : null;
+    const match = typeof baseMessage === 'string' ? /^Remote Home enrollment failed\. \(phase (auth\.(?:request|wait|enroll-remote)); exitStatus (-?\d+|unknown); signal (SIGKILL-compatible|unknown); stdoutPresent (true|false|unknown); stderrPresent (true|false|unknown)(?:; elapsedBucket ([a-z_0-9]+); requestEventSeen (true|false); finalResultEventSeen (true|false); guestCliCode ([A-Za-z][A-Za-z0-9_.-]{1,63}); guestAuthCategory ([a-z_]+); controllerAbortCategory ([a-z_]+)(?:; attemptedCarrier ([a-z_]+); carrierReason ([a-z_]+)(?:; irohOutcome ([a-z_]+); irohReason ([a-z_]+))?)?)?(?:; HTTP ([1-5]\d{2}))?\)$/u.exec(baseMessage) : null;
     const exitStatus = match?.[2] === 'unknown' ? undefined : match ? Number(match[2]) : NaN;
     const elapsedBucket = member(elapsedBuckets, match?.[6]);
     const guestCliCode = readGuestAuthErrorCode(match?.[9]);
@@ -269,14 +282,17 @@ export function readRemoteEnrollmentCommandFailure(code: unknown, message?: unkn
             stdoutPresent: match[4] === 'unknown' ? undefined : match[4] === 'true', stderrPresent: match[5] === 'unknown' ? undefined : match[5] === 'true',
             ...(elapsedBucket ? { elapsedBucket, requestEventSeen: match[7] === 'true', finalResultEventSeen: match[8] === 'true',
                 guestCliCode, guestAuthCategory, controllerAbortCategory, ...(carrierFailure ? { carrierFailure } : {}),
-                ...(authority.facts ? { homeAuthority: authority.facts } : {}) } : {}) });
+                ...(authority.facts ? { homeAuthority: authority.facts } : {}) } : {}),
+            ...(match[16] ? { guestHttpStatus: Number(match[16]) } : {}) });
         if (formatted === message) return { code, message: formatted, ...(details ? { details } : {}) };
     }
     // Buffered native request/wait already projects these identifier-only fields.
     // Keep that live producer's Home error codes without accepting native prose.
-    const buffered = typeof baseMessage === 'string' && /^Remote Home enrollment failed during auth (request|wait) \(exit (-?\d+)(?:; code ([A-Za-z][A-Za-z0-9_.-]{1,63}))?(?:; diagnostic (?:absent|invalid)(?:; check (?:parse|v|ok|kind|code))?)?(?:; category (?:http_error|auth_error))?(?:; HTTP [1-5]\d{2})?(?:; server code (?:database_transaction_conflict_exhausted|database_transaction_timeout|database_connection_unavailable))?\)\.$/u.exec(baseMessage);
+    const buffered = typeof baseMessage === 'string' && /^Remote Home enrollment failed during auth (request|wait) \(exit (-?\d+)(?:; code ([A-Za-z][A-Za-z0-9_.-]{1,63}))?(?:; diagnostic (?:absent|invalid)(?:; check (?:parse|v|ok|kind|code))?)?(?:; category (?:http_error|auth_error|tls_error|network_error|cancelled|deadline_elapsed|unknown))?(?:; HTTP [1-5]\d{2})?(?:; server code (?:database_transaction_conflict_exhausted|database_transaction_timeout|database_connection_unavailable))?(; attemptedCarrier ([a-z_]+); carrierReason ([a-z_]+)(?:; irohOutcome ([a-z_]+); irohReason ([a-z_]+))?)?\)\.$/u.exec(baseMessage);
     if (code === 'remote_command_failed' && buffered && Number.isSafeInteger(Number(buffered[2]))
         && (!buffered[3] || readGuestAuthErrorCode(buffered[3]))
+        && (!buffered[4] || formatGuestAuthCarrierFailure(buffered[3], { attemptedCarrier: buffered[5], reason: buffered[6],
+            irohAttempt: { outcome: buffered[7], reason: buffered[8] } }) === buffered[4])
         && (!details || buffered[3] === 'HOME_AUTHORITY_MISMATCH')) return { code, message: String(message), ...(details ? { details } : {}) };
     if (code === 'cancelled') return null;
     return { code, message: code === 'auth_enrollment_timeout' ? 'Remote Home enrollment timed out. Retry setup to request fresh approval.'

@@ -5,6 +5,8 @@ import { showAuthHelp } from './auth/help';
 import { projectSafeAuthError } from './auth/errorDiagnostic';
 import { wantsJson, writeJsonStdout } from '@/cli/output/jsonEnvelope';
 import { classifyServerEndpointError } from '@/api/client/classifyServerEndpointError';
+import { readGuestAuthErrorCode, readGuestAuthCarrierFailure, readHomeAuthorityMismatchFacts } from '@happier-dev/protocol/ssh/commandFailure';
+import { logger } from '@/ui/logger';
 
 export async function handleAuthCommand(args: string[], signal?: AbortSignal): Promise<void> {
   args = await (await import('./auth/stdinSecrets')).expandAuthSecretsFromStdin(args);
@@ -21,9 +23,6 @@ export async function handleAuthCommand(args: string[], signal?: AbortSignal): P
       return;
     case 'security':
       await (await import('./auth/accountSecurity')).handleAuthSecurityGet(args.slice(1), signal);
-      return;
-    case 'cli-approvals':
-      await (await import('./auth/accountSecurity')).handleAuthCliApprovals(args.slice(1), signal);
       return;
     case 'password':
       await (await import('./auth/accountSecurity')).handleAuthPasswordCommand(args.slice(1), signal);
@@ -89,8 +88,32 @@ export async function handleAuthCliCommand(context: CommandContext): Promise<voi
     await handleAuthCommand(context.args.slice(1), context.signal);
   } catch (error) {
     const diagnostic = projectSafeAuthError(error);
+    const authority = diagnostic.code === 'HOME_AUTHORITY_MISMATCH' ? readHomeAuthorityMismatchFacts(diagnostic) : undefined;
     const phase = context.args[1];
+    const category = diagnostic.status !== undefined ? 'http_error' : diagnostic.authCategory ?? 'auth_error';
+    const carrierFailure = error && typeof error === 'object' && 'carrierFailure' in error
+      ? readGuestAuthCarrierFailure(diagnostic.code, error.carrierFailure) : undefined;
     const exitCode = phase === 'wait' && diagnostic.code === 'AUTH_WAIT_INVALID_ARGUMENT' ? 2 : 1;
+    if (phase === 'enroll-remote' && context.args.includes('--json-lines')) {
+      const code = context.signal?.aborted ? 'AUTH_ENROLL_REMOTE_CANCELLED'
+        : readGuestAuthErrorCode(diagnostic.code) ?? 'AUTH_ENROLL_REMOTE_FAILED';
+      const carrierFailure = error
+        && typeof error === 'object' && 'carrierFailure' in error
+        ? readGuestAuthCarrierFailure(code, error.carrierFailure) : undefined;
+      if (carrierFailure) {
+        logger.infoFile('[AUTH ENROLLMENT] Carrier failure', { code, ...carrierFailure });
+        logger.flushSync();
+      }
+      await writeJsonStdout({ v: 1, ok: false, kind: 'auth_enroll_remote', error: { code,
+        category: code === 'AUTH_ENROLL_REMOTE_CANCELLED' ? 'cancelled'
+          : code === 'AUTH_ENROLL_REMOTE_TIMEOUT' ? 'deadline_elapsed'
+          : category,
+        ...(diagnostic.status !== undefined ? { status: diagnostic.status } : {}),
+        ...(carrierFailure ? { carrierFailure } : {}),
+        ...authority,
+      } });
+      process.exit(exitCode);
+    }
     if ((phase === 'request' || phase === 'wait') && wantsJson(context.args)) {
       // Auth errors may carry HTTP bodies and pairing secrets. Finite remote
       // enrollment consumes only this credential-free diagnostic projection.
@@ -98,10 +121,12 @@ export async function handleAuthCliCommand(context: CommandContext): Promise<voi
       const homeUnavailable = phase === 'wait' && ['network', 'timeout', 'server_error', 'dependency_unavailable', 'rate_limited'].includes(availability.kind);
       await writeJsonStdout({ v: 1, ok: false, kind: `auth_${phase}`, error: {
         code: homeUnavailable ? 'AUTH_WAIT_HOME_UNAVAILABLE'
-          : diagnostic.code ?? (phase === 'wait' ? 'AUTH_WAIT_FAILED' : 'AUTH_REQUEST_FAILED'),
-        category: diagnostic.status !== undefined ? 'http_error' : 'auth_error',
+          : readGuestAuthErrorCode(diagnostic.code) ?? (phase === 'wait' ? 'AUTH_WAIT_FAILED' : 'AUTH_REQUEST_FAILED'),
+        category,
+        ...(carrierFailure ? { carrierFailure } : {}),
         ...(diagnostic.status !== undefined ? { status: diagnostic.status } : {}),
         ...(diagnostic.serverCode !== undefined ? { serverCode: diagnostic.serverCode } : {}),
+        ...authority,
       } });
       process.exit(exitCode);
     }

@@ -4,6 +4,7 @@ import { createHomeCredentialDestinationV1, isHomeCredentialDestinationAllowedV1
 import { normalizeServerIdentityIdCapability } from '@happier-dev/protocol/features/payload/capabilities/serverIdentityCapabilities';
 import type { HomeConnectionDescriptorV1, HomeCredentialDestinationSelectionV1 } from '@happier-dev/protocol';
 import type { ResolvedHomeTarget } from '@happier-dev/cli-common/homeTarget';
+import { formatHomeAuthorityMismatchFailure, type HomeAuthorityMismatchFacts, type HomeEnrollmentCarrierFailure } from '@happier-dev/protocol/ssh/commandFailure';
 
 import type { CliServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
 
@@ -11,6 +12,7 @@ export type TerminalAuthEnrollmentRuntime = Readonly<{
   /** Explicit acquired runtime origin. A daemon-global publication is never consulted. */
   runtimeOrigin: string;
   carrier: 'https' | 'iroh';
+  irohAttempt?: HomeEnrollmentCarrierFailure['irohAttempt'];
   /** Descriptor endpoint or EndpointId authenticated by the acquisition owner. */
   authenticatedCredentialDestination: HomeCredentialDestinationSelectionV1 | null;
 }>;
@@ -34,11 +36,22 @@ export type TerminalAuthEnrollmentVerificationErrorCode =
 
 export class TerminalAuthEnrollmentVerificationError extends Error {
   readonly status?: number;
+  readonly authCategory?: 'tls_error' | 'network_error';
+  readonly authorityReason?: HomeAuthorityMismatchFacts['authorityReason'];
+  readonly authorityPhase?: HomeAuthorityMismatchFacts['authorityPhase'];
+  readonly authorityCarrier?: HomeAuthorityMismatchFacts['authorityCarrier'];
+  readonly authorityDescriptorPresent?: boolean;
+  readonly carrierFailure?: HomeEnrollmentCarrierFailure;
 
   constructor(readonly code: TerminalAuthEnrollmentVerificationErrorCode, message: string,
-    options?: ErrorOptions & Readonly<{ status?: number }>) {
-    super(message, options);
+    options?: ErrorOptions & Readonly<{ status?: number; authorityFailure?: HomeAuthorityMismatchFacts;
+      carrierFailure?: HomeEnrollmentCarrierFailure; authCategory?: 'tls_error' | 'network_error' }>) {
+    super(code === 'HOME_AUTHORITY_MISMATCH' && options?.authorityFailure
+      ? formatHomeAuthorityMismatchFailure(options.authorityFailure) : message, options);
     this.status = options?.status;
+    this.authCategory = options?.authCategory;
+    this.carrierFailure = options?.carrierFailure;
+    if (code === 'HOME_AUTHORITY_MISMATCH' && options?.authorityFailure) Object.assign(this, options.authorityFailure);
     this.name = 'TerminalAuthEnrollmentVerificationError';
   }
 }
@@ -50,7 +63,8 @@ export class HomeFeaturesUnreadableError extends TerminalAuthEnrollmentVerificat
   }
 }
 
-export function readTerminalAuthHomeIdentity(snapshot: CliServerFeaturesSnapshot): string | null {
+export function readTerminalAuthHomeIdentity(snapshot: CliServerFeaturesSnapshot, carrier?: TerminalAuthEnrollmentRuntime['carrier'],
+  irohAttempt?: TerminalAuthEnrollmentRuntime['irohAttempt']): string | null {
   if (snapshot.status === 'unsupported') {
     if (snapshot.reason === 'invalid_payload') throw new HomeFeaturesUnreadableError();
     throw new TerminalAuthEnrollmentVerificationError(
@@ -62,7 +76,8 @@ export function readTerminalAuthHomeIdentity(snapshot: CliServerFeaturesSnapshot
     if (snapshot.reason === 'network') {
       throw new TerminalAuthEnrollmentVerificationError(
         'HOME_FEATURES_NETWORK', 'The selected Home features could not be reached. Check connectivity and retry.',
-        { cause: { code: 'ERR_NETWORK' } },
+        { cause: { code: 'ERR_NETWORK' }, authCategory: snapshot.transportCategory ?? 'network_error', ...(carrier ? { carrierFailure: { attemptedCarrier: carrier, reason: 'transport',
+          ...(irohAttempt ? { irohAttempt } : {}) } } : {}) },
       );
     }
     if (snapshot.reason === 'timeout') {
@@ -163,9 +178,11 @@ export function verifyTerminalAuthEnrollmentRuntime(params: Readonly<{
   target: ResolvedHomeTarget;
   runtime: TerminalAuthEnrollmentRuntime;
   snapshot: CliServerFeaturesSnapshot;
+  /** Only pre-claim callers may accept an absent advisory public descriptor. */
+  phase?: HomeAuthorityMismatchFacts['authorityPhase'];
 }>): VerifiedTerminalAuthEnrollmentRuntime {
   normalizedOrigin(params.runtime.runtimeOrigin);
-  const observedIdentity = readTerminalAuthHomeIdentity(params.snapshot);
+  const observedIdentity = readTerminalAuthHomeIdentity(params.snapshot, params.runtime.carrier, params.runtime.irohAttempt);
   if (!observedIdentity) {
     throw new TerminalAuthEnrollmentVerificationError(
       'HOME_IDENTITY_MISSING', 'Unable to verify the selected Home identity: the features response has no Home identity',
@@ -195,19 +212,37 @@ export function verifyTerminalAuthEnrollmentRuntime(params: Readonly<{
   const observedDescriptor = params.snapshot.status === 'ready'
     ? params.snapshot.features.homeConnectionDescriptor
     : undefined;
-  if (
-    !params.target.descriptor
-    || !params.target.credentialDestination
-    || !params.target.homeServerIdentityId
-    || !observedDescriptor
-    || observedIdentity !== params.target.homeServerIdentityId
-    || observedDescriptor.homeServerIdentityId !== params.target.homeServerIdentityId
-    || JSON.stringify(createHomeCredentialDestinationV1(observedDescriptor))
-      !== JSON.stringify(params.target.credentialDestination)
-    || !isHomeCredentialDestinationAllowedV1(params.target.credentialDestination, selectedDestination)
-  ) {
+  // Public discovery is read-only and may legitimately have no committed
+  // descriptor yet. Trust still comes from the selected input and acquired
+  // endpoint, never from a public response. Post-claim callers remain exact,
+  // including when their authenticated request falls back to public features.
+  const publicFirstContact = params.phase === 'first_contact'
+    && params.snapshot.status === 'ready' && params.snapshot.provenance === 'public'
+    && params.runtime.carrier === selectedDestination.kind
+    && (selectedDestination.kind !== 'https'
+      || normalizedOrigin(params.runtime.runtimeOrigin) === normalizedOrigin(selectedDestination.applicationUrl));
+  // Preserve the existing predicate order; labels explain a refusal without
+  // exposing either side of an identity, descriptor or endpoint comparison.
+  let authorityReason: HomeAuthorityMismatchFacts['authorityReason'] | undefined;
+  if (!params.target.descriptor || !params.target.credentialDestination || !params.target.homeServerIdentityId) {
+    authorityReason = 'target';
+  } else if (!observedDescriptor && !publicFirstContact) {
+    authorityReason = 'descriptor';
+  } else if (observedIdentity !== params.target.homeServerIdentityId) {
+    authorityReason = 'identity';
+  } else if (observedDescriptor && observedDescriptor.homeServerIdentityId !== params.target.homeServerIdentityId) {
+    authorityReason = 'descriptor_identity';
+  } else if (observedDescriptor && JSON.stringify(createHomeCredentialDestinationV1(observedDescriptor))
+    !== JSON.stringify(params.target.credentialDestination)) {
+    authorityReason = 'destination';
+  } else if (!isHomeCredentialDestinationAllowedV1(params.target.credentialDestination, selectedDestination)) {
+    authorityReason = 'destination_not_allowed';
+  }
+  if (authorityReason) {
     throw new TerminalAuthEnrollmentVerificationError(
       'HOME_AUTHORITY_MISMATCH', 'The acquired enrollment runtime does not match the resolved Home authority',
+      { authorityFailure: { authorityReason, authorityPhase: params.phase ?? 'authenticated',
+        authorityCarrier: params.runtime.carrier, authorityDescriptorPresent: Boolean(observedDescriptor) } },
     );
   }
 

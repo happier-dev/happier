@@ -5,6 +5,7 @@ import { HomeConnectionDescriptorV1Schema } from '@happier-dev/protocol/auth/acc
 import { normalizeServerIdentityIdCapability } from '@happier-dev/protocol/features/payload/capabilities/serverIdentityCapabilities';
 import type { HomeConnectionDescriptorV1 } from '@happier-dev/protocol';
 import { ManagedEnrollmentCorrelationV1Schema, type ManagedEnrollmentCorrelationV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { MachinePublishedMetadataV1Schema } from '@happier-dev/protocol/machines/machinePublishedContentV1';
 
 import { decodeBase64 } from '@/api/encryption';
 import { writeJsonStdout } from '@/cli/output/jsonEnvelope';
@@ -46,6 +47,7 @@ type PendingAuthState = Readonly<{
   pairingRequirement: 'v3';
   homeConnectionDescriptor?: HomeConnectionDescriptorV1;
   managedEnrollment?: ManagedEnrollmentCorrelationV1;
+  machineDisplayName?: string;
   remoteProfileId?: string;
   createdAt: string;
 }>;
@@ -189,6 +191,9 @@ function parsePendingAuthState(raw: string): PendingAuthState {
     pairingRequirement: 'v3',
     ...(parsedDescriptor?.success ? { homeConnectionDescriptor: parsedDescriptor.data } : {}),
     ...(managedEnrollment ? { managedEnrollment } : {}),
+    ...(parsed.machineDisplayName !== undefined ? {
+      machineDisplayName: MachinePublishedMetadataV1Schema.shape.displayName.parse(parsed.machineDisplayName),
+    } : {}),
     ...(typeof remoteProfileId === 'string' ? { remoteProfileId } : {}),
   };
 }
@@ -268,7 +273,8 @@ export async function handleAuthWait(argsRaw: string[], signal?: AbortSignal): P
   const acquired = await acquireTerminalAuthEnrollmentRuntime(
     target.descriptor ?? target, target.preferredTransport, signal,
   );
-  if (!acquired.ok) throw new AuthWaitError('AUTH_WAIT_TRANSPORT_UNAVAILABLE', 'Unable to acquire the selected Home enrollment carrier');
+  if (!acquired.ok) throw Object.assign(new AuthWaitError('AUTH_WAIT_TRANSPORT_UNAVAILABLE', 'Unable to acquire the selected Home enrollment carrier'),
+    { cause: acquired.error, carrierFailure: acquired.carrierFailure });
   const pollIntervalMsRaw = Number(process.env.HAPPIER_AUTH_POLL_INTERVAL_MS ?? '');
   const pollIntervalMs = Number.isFinite(pollIntervalMsRaw) && pollIntervalMsRaw > 0 ? pollIntervalMsRaw : TERMINAL_AUTH_POLL_INTERVAL_MS;
   const homeRetry = { deadlineMs: state.pairingExpiresAtMs, pollIntervalMs, signal };
@@ -276,7 +282,7 @@ export async function handleAuthWait(argsRaw: string[], signal?: AbortSignal): P
   try {
     if (target.descriptor) {
       const initialSnapshot = await fetchServerFeaturesSnapshot({ serverUrl: acquired.runtime.runtimeOrigin, ...(signal ? { signal } : {}) });
-      verifyTerminalAuthEnrollmentRuntime({ target, runtime: acquired.runtime, snapshot: initialSnapshot });
+      verifyTerminalAuthEnrollmentRuntime({ target, runtime: acquired.runtime, snapshot: initialSnapshot, phase: 'first_contact' });
     }
     while (true) {
     signal?.throwIfAborted();
@@ -327,7 +333,7 @@ export async function handleAuthWait(argsRaw: string[], signal?: AbortSignal): P
             timeoutMs: Math.max(1, homeRetry.deadlineMs - Date.now()),
             ...(signal ? { signal } : {}),
           });
-          verifyTerminalAuthEnrollmentRuntime({ target, runtime: acquired.runtime, snapshot: authenticatedSnapshot });
+          verifyTerminalAuthEnrollmentRuntime({ target, runtime: acquired.runtime, snapshot: authenticatedSnapshot, phase: 'post_claim' });
         });
       }
 
@@ -356,6 +362,7 @@ export async function handleAuthWait(argsRaw: string[], signal?: AbortSignal): P
         await removeProtectedLocalStateFile(statePath, PENDING_AUTH_STATE_PROTECTION);
         ({ machineId } = await registerAndPersistManagedTerminalEnrollmentCredential({ token, opened,
           runtimeOrigin: acquired.runtime.runtimeOrigin, managedEnrollment: state.managedEnrollment,
+          machineDisplayName: state.machineDisplayName,
           homeRetry,
           assertCurrent: () => signal?.throwIfAborted() }));
       } else {

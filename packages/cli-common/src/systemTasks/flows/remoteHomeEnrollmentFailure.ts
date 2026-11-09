@@ -24,6 +24,7 @@ export function projectRemoteHomeEnrollmentFailure(params: Readonly<{
     elapsedBucket: remoteEnrollmentElapsedBucket(Date.now() - params.startedAtMs),
     requestEventSeen: params.requestEventSeen, finalResultEventSeen: params.finalResultEventSeen,
     guestCliCode: readGuestAuthErrorCode(observed?.guestCliCode), guestAuthCategory: observed?.guestAuthCategory ?? 'unknown',
+    ...(observed?.guestHttpStatus !== undefined ? { guestHttpStatus: observed.guestHttpStatus } : {}),
     ...(observed?.carrierFailure ? { carrierFailure: observed.carrierFailure } : {}),
     ...(observed?.homeAuthority ? { homeAuthority: observed.homeAuthority } : {}),
     controllerAbortCategory: category,

@@ -3,6 +3,7 @@ import {
   type HomeTargetInput,
 } from '@happier-dev/cli-common/homeTarget';
 import { ManagedEnrollmentCorrelationV1Schema, type ManagedEnrollmentCorrelationV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { MachinePublishedMetadataV1Schema } from '@happier-dev/protocol/machines/machinePublishedContentV1';
 
 import { runRemoteTerminalEnrollment } from '@/auth/remoteTerminalEnrollment';
 import { writeJsonStdout } from '@/cli/output/jsonEnvelope';
@@ -24,7 +25,7 @@ type EnrollRemoteDeps = Readonly<{
   runEnrollment: typeof runRemoteTerminalEnrollment;
   useHomeProfile: typeof useServerProfile;
   writeOutput: typeof writeJsonStdout;
-  readManagedEnrollmentInput: () => Promise<Readonly<{ homeTarget: HomeTargetInput; managedEnrollment: ManagedEnrollmentCorrelationV1 }>>;
+  readManagedEnrollmentInput: typeof readManagedEnrollmentInputFromStdin;
 }>;
 
 async function readBoundedStdin(input: Readable = process.stdin): Promise<string> {
@@ -55,16 +56,20 @@ export async function readHomeTargetInputFromStdin(input?: Readable): Promise<Ho
 export async function readManagedEnrollmentInputFromStdin(input?: Readable): Promise<Readonly<{
   homeTarget: HomeTargetInput;
   managedEnrollment: ManagedEnrollmentCorrelationV1;
+  machineDisplayName?: string;
 }>> {
   const value: unknown = JSON.parse(await readBoundedStdin(input));
   if (!value || typeof value !== 'object' || Array.isArray(value)
-    || Object.keys(value).some((key) => key !== 'homeTarget' && key !== 'managedEnrollment')) {
+    || Object.keys(value).some((key) => key !== 'homeTarget' && key !== 'managedEnrollment' && key !== 'machineDisplayName')) {
     throw new Error('Invalid managed enrollment input.');
   }
   const envelope = value as Record<string, unknown>;
   return {
     homeTarget: parseHomeTargetInput(envelope.homeTarget),
     managedEnrollment: ManagedEnrollmentCorrelationV1Schema.parse(envelope.managedEnrollment),
+    ...(envelope.machineDisplayName !== undefined ? {
+      machineDisplayName: MachinePublishedMetadataV1Schema.shape.displayName.parse(envelope.machineDisplayName),
+    } : {}),
   };
 }
 
@@ -157,7 +162,7 @@ export async function handleAuthEnrollRemote(
       target: prepared.target,
       signal,
       timeoutMs,
-      ...(managed ? { managedEnrollment: managed.managedEnrollment } : {}),
+      ...(managed ? { managedEnrollment: managed.managedEnrollment, machineDisplayName: managed.machineDisplayName } : {}),
       onPairingRequest: async (request) => {
         await deps.writeOutput({
           kind: 'remote_home_enrollment_pairing_request',

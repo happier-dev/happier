@@ -66,6 +66,7 @@ export async function registerAndPersistManagedTerminalEnrollmentCredential(para
   opened: OpenTerminalProvisioningResponseResult;
   runtimeOrigin: string;
   managedEnrollment: ManagedEnrollmentCorrelationV1;
+  machineDisplayName?: string;
   homeRetry: HomeOperationRetry;
   assertCurrent(): void;
 }>): Promise<Readonly<{ machineId: string; encryptionType: 'dataKey' | 'tokenOnly' }>> {
@@ -79,7 +80,7 @@ export async function registerAndPersistManagedTerminalEnrollmentCredential(para
     ? await prepareCredentialsTokenOnlyForServerId(configuration.activeServerId, { token: params.token }, { previousAccountId })
     : prepared.credentials;
   params.assertCurrent();
-  const machineId = await registerTerminalEnrollmentMachine(credentials, params.runtimeOrigin, params.managedEnrollment, params.homeRetry);
+  const machineId = await registerTerminalEnrollmentMachine(credentials, params.runtimeOrigin, params.managedEnrollment, params.homeRetry, params.machineDisplayName);
   params.assertCurrent();
   await persistTerminalEnrollmentCredential({ ...params, previousAccountId });
   return { machineId, encryptionType: prepared.encryptionType };
@@ -90,6 +91,7 @@ export async function registerTerminalEnrollmentMachine(
   runtimeOrigin: string,
   managedEnrollment?: ManagedEnrollmentCorrelationV1,
   homeRetry?: HomeOperationRetry,
+  machineDisplayName?: string,
 ): Promise<string> {
   const register = async () => await runWithServerHttpBaseUrl(runtimeOrigin, async () => {
     const { machineId } = await ensureMachineIdForCredentials(credentials);
@@ -97,7 +99,7 @@ export async function registerTerminalEnrollmentMachine(
     const registered = await ensureMachineRegistered({
       api,
       machineId,
-      metadata: initialMachineMetadata,
+      metadata: machineDisplayName === undefined ? initialMachineMetadata : { ...initialMachineMetadata, displayName: machineDisplayName },
       caller: 'auth.wait',
       ...(managedEnrollment ? { managedEnrollment } : {}),
     });

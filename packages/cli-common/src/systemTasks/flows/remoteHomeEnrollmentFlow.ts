@@ -7,7 +7,7 @@ import { SystemTaskExecutionError } from '../runSystemTask.js';
 import { normalizeServerIdentityIdCapability } from '@happier-dev/protocol/features/payload/capabilities/serverIdentityCapabilities';
 import { ManagedEnrollmentCorrelationV1Schema, type ManagedEnrollmentCorrelationV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { readUnexpectedActionErrorDiagnosticV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { formatRemoteEnrollmentCommandFailure, formatHomeAuthorityMismatchFacts, readGuestCliFailure,
+import { formatGuestAuthCarrierFailure, formatRemoteEnrollmentCommandFailure, formatHomeAuthorityMismatchFacts, readGuestCliFailure,
   type GuestCliFailureFacts } from '@happier-dev/protocol/ssh/commandFailure';
 import { projectRemoteHomeEnrollmentFailure } from './remoteHomeEnrollmentFailure.js';
 
@@ -289,21 +289,34 @@ export async function runRemoteHomeEnrollmentFlow(params: Readonly<{
             fields.push(`check ${check}`);
           }
         }
-        if (diagnostic && ['http_error', 'auth_error'].includes(String(diagnostic.category))) {
-          fields.push(`category ${diagnostic.category}`);
+        if (guestFailure?.guestAuthCategory && guestFailure.guestAuthCategory !== 'unknown') {
+          fields.push(`category ${guestFailure.guestAuthCategory}`);
         }
         if (typeof diagnostic?.status === 'number' && Number.isInteger(diagnostic.status) && diagnostic.status >= 100 && diagnostic.status <= 599) {
           fields.push(`HTTP ${diagnostic.status}`);
         }
         const serverCode = readUnexpectedActionErrorDiagnosticV1({ code: diagnostic?.serverCode }).errorCode;
         if (serverCode !== null) fields.push(`server code ${serverCode}`);
+        const carrier = formatGuestAuthCarrierFailure(guestCode, guestFailure?.carrierFailure);
+        if (carrier) fields.push(carrier.slice(2));
         if (guestFailure?.homeAuthority) fields.push(formatHomeAuthorityMismatchFacts(guestFailure.homeAuthority));
         throw new SystemTaskExecutionError('remote_command_failed', `Remote Home enrollment failed during auth ${args[1]} (${fields.join('; ')}).`);
       }
       return response;
     };
+    // Released CLIs silently ignore descriptor-stdin flags. Scope the first
+    // invocation too, so an unsupported CLI cannot create its request on cloud
+    // (or another saved Home). Its legacy response still requires an update;
+    // the descriptor and v3 identity remain the enrollment authority.
+    const serverArgs = homeTargetInput.kind === 'descriptor'
+      ? ['--server-url', homeTargetInput.descriptor.canonicalServerUrl, '--no-persist']
+      : homeTargetInput.kind === 'https_url'
+        ? ['--server-url', homeTargetInput.url, '--no-persist',
+          ...(homeTargetInput.localUrl ? ['--local-server-url', homeTargetInput.localUrl] : []),
+          ...(homeTargetInput.webappUrl ? ['--webapp-url', homeTargetInput.webappUrl] : [])]
+        : [];
     const response = await capture(
-      ['auth', 'request', '--json', '--remote-enrollment', '--home-target-stdin', ...(managedEnrollment ? ['--managed-enrollment-stdin'] : [])],
+      ['auth', 'request', '--json', '--remote-enrollment', '--home-target-stdin', ...serverArgs, ...(managedEnrollment ? ['--managed-enrollment-stdin'] : [])],
       JSON.stringify(managedEnrollment ? { homeTarget: homeTargetInput, managedEnrollment, machineDisplayName: params.machineDisplayName } : homeTargetInput),
     );
     const olderAuthRequestError = readOlderEnrollmentError(response);

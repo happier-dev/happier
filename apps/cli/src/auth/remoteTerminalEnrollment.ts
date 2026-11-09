@@ -30,6 +30,12 @@ import { retryHomeOperation, REMOTE_HOME_ENROLLMENT_POLL_INTERVAL_MS } from '@/a
 
 const MAX_PROVISIONING_RESPONSE_B64_CHARS = 4096;
 
+function enrollmentError(code: 'AUTH_ENROLL_REMOTE_CANCELLED' | 'AUTH_ENROLL_REMOTE_TIMEOUT'
+  | 'AUTH_ENROLL_REMOTE_REQUEST_EXPIRED' | 'AUTH_ENROLL_REMOTE_CARRIER_UNAVAILABLE' | 'AUTH_ENROLL_REMOTE_IDENTITY_MISMATCH'
+  | 'AUTH_ENROLL_REMOTE_INVALID_RESPONSE' | 'AUTH_ENROLL_REMOTE_PAIRING_REQUIRED', message: string): Error & { code: typeof code } {
+  return Object.assign(new Error(message), { code });
+}
+
 export type RemoteTerminalEnrollmentPairingRequest = Readonly<{
   publicKey: string;
   homeServerIdentityId: string;
@@ -60,17 +66,17 @@ function remainingMs(deadlineMs: number): number {
 
 function throwIfStopped(signal: AbortSignal | undefined, deadlineMs: number): void {
   if (signal?.aborted) {
-    throw new Error('Remote Home enrollment was cancelled.');
+    throw enrollmentError('AUTH_ENROLL_REMOTE_CANCELLED', 'Remote Home enrollment was cancelled.');
   }
   if (Date.now() >= deadlineMs) {
-    throw new Error('Remote Home enrollment timed out.');
+    throw enrollmentError('AUTH_ENROLL_REMOTE_TIMEOUT', 'Remote Home enrollment timed out.');
   }
 }
 
 async function delayWithSignal(ms: number, signal: AbortSignal | undefined): Promise<void> {
   await new Promise<void>((resolve, reject) => {
     const timeout = setTimeout(finish, ms);
-    const onAbort = () => finish(new Error('Remote Home enrollment was cancelled.'));
+    const onAbort = () => finish(enrollmentError('AUTH_ENROLL_REMOTE_CANCELLED', 'Remote Home enrollment was cancelled.'));
     function finish(error?: Error): void {
       clearTimeout(timeout);
       signal?.removeEventListener('abort', onAbort);
@@ -93,6 +99,7 @@ async function delayWithSignal(ms: number, signal: AbortSignal | undefined): Pro
 export async function runRemoteTerminalEnrollment(params: Readonly<{
   target: ResolvedHomeTarget;
   managedEnrollment?: ManagedEnrollmentCorrelationV1;
+  machineDisplayName?: string;
   signal?: AbortSignal;
   timeoutMs: number;
   pollIntervalMs?: number;
@@ -105,7 +112,7 @@ export async function runRemoteTerminalEnrollment(params: Readonly<{
   const managedEnrollment = params.managedEnrollment === undefined ? undefined
     : ManagedEnrollmentCorrelationV1Schema.parse(params.managedEnrollment);
   if (managedEnrollment && params.target.homeServerIdentityId !== managedEnrollment.homeId) {
-    throw new Error('Managed enrollment does not match the selected Home.');
+    throw enrollmentError('AUTH_ENROLL_REMOTE_IDENTITY_MISMATCH', 'Managed enrollment does not match the selected Home.');
   }
 
   const acquired = await acquireTerminalAuthEnrollmentRuntime(
@@ -114,7 +121,8 @@ export async function runRemoteTerminalEnrollment(params: Readonly<{
     params.signal,
   );
   if (!acquired.ok) {
-    throw new Error('Unable to acquire the selected Home enrollment carrier.');
+    throw Object.assign(enrollmentError('AUTH_ENROLL_REMOTE_CARRIER_UNAVAILABLE', 'Unable to acquire the selected Home enrollment carrier.'),
+      { cause: acquired.error, carrierFailure: acquired.carrierFailure });
   }
 
   try {
@@ -128,6 +136,7 @@ export async function runRemoteTerminalEnrollment(params: Readonly<{
       target: params.target,
       runtime: acquired.runtime,
       snapshot: initialSnapshot,
+      phase: 'first_contact',
     });
 
     const secretKey = new Uint8Array(randomBytes(32));
@@ -174,7 +183,7 @@ export async function runRemoteTerminalEnrollment(params: Readonly<{
       });
       const status = isRecord(statusData) ? statusData.status : undefined;
       if (status === 'not_found') {
-        throw new Error('Remote Home enrollment request expired.');
+        throw enrollmentError('AUTH_ENROLL_REMOTE_REQUEST_EXPIRED', 'Remote Home enrollment request expired.');
       }
       if (status !== 'authorized') {
         await delayWithSignal(Math.min(pollIntervalMs, remainingMs(deadlineMs)), params.signal);
@@ -197,12 +206,12 @@ export async function runRemoteTerminalEnrollment(params: Readonly<{
         ? claimData.serverIdentityId.trim()
         : '';
       if (claimedIdentity !== verified.homeServerIdentityId) {
-        throw new Error('Remote Home enrollment response identity does not match the selected Home.');
+        throw enrollmentError('AUTH_ENROLL_REMOTE_IDENTITY_MISMATCH', 'Remote Home enrollment response identity does not match the selected Home.');
       }
       const token = typeof claimData.token === 'string' ? claimData.token : '';
       const responseB64 = typeof claimData.response === 'string' ? claimData.response : '';
       if (!token || !responseB64 || responseB64.length > MAX_PROVISIONING_RESPONSE_B64_CHARS) {
-        throw new Error('Remote Home enrollment returned an invalid provisioning response.');
+        throw enrollmentError('AUTH_ENROLL_REMOTE_INVALID_RESPONSE', 'Remote Home enrollment returned an invalid provisioning response.');
       }
       await retryHomeOperation(homeRetry, async () => {
         throwIfStopped(params.signal, deadlineMs);
@@ -216,6 +225,7 @@ export async function runRemoteTerminalEnrollment(params: Readonly<{
           target: params.target,
           runtime: acquired.runtime,
           snapshot: authenticatedSnapshot,
+          phase: 'post_claim',
         });
       });
       const opened = openTerminalProvisioningResponse({
@@ -227,13 +237,14 @@ export async function runRemoteTerminalEnrollment(params: Readonly<{
         supportsTokenOnly: true,
       });
       if (!opened) {
-        throw new Error('Authenticated terminal pairing v3 is required.');
+        throw enrollmentError('AUTH_ENROLL_REMOTE_PAIRING_REQUIRED', 'Authenticated terminal pairing v3 is required.');
       }
       throwIfStopped(params.signal, deadlineMs);
       let completion: Readonly<{ machineId: string; encryptionType: 'dataKey' | 'tokenOnly' }>;
       if (managedEnrollment) {
         completion = await registerAndPersistManagedTerminalEnrollmentCredential({ token, opened,
           runtimeOrigin: acquired.runtime.runtimeOrigin, managedEnrollment,
+          machineDisplayName: params.machineDisplayName,
           homeRetry,
           assertCurrent: () => throwIfStopped(params.signal, deadlineMs) });
       } else {
