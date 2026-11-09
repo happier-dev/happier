@@ -230,7 +230,8 @@ describe('one opened GitHub issue read owner', () => {
       expect(document.body.textContent).toContain(route);
       expect(availableSessions).toMatchObject([{ sessionId: 'session-composed-issue', updatedAtMs: 3 }]);
       const paths = transport.requests.map(request => new URL(request.url).pathname).sort();
-      expect(paths).toEqual([`/repos/${route}`, `/repos/${route}/issues/7`, `/repos/${route}/issues/7/parent`,
+      expect(paths).toEqual([`/repos/${route}`, `/repos/${route}/assignees`, `/repos/${route}/labels`,
+        `/repos/${route}/issues/7`, `/repos/${route}/issues/7/parent`,
         `/repos/${route}/issues/7/sub_issues`, `/repos/${route}/issues/7/dependencies/blocked_by`].sort());
     } finally { await act(async () => { await shell?.dispose(); }); await github.dispose(); }
   });
@@ -305,6 +306,7 @@ describe('one opened GitHub issue read owner', () => {
         return { kind: 'observed', entryRef, observation: toTriageWireObservation(observation) };
       } },
     });
+    // This harness's descriptor declares no directory, so the shared open read asks for no people or labels.
     const expectedPaths = [`/repos/${route}`, `/repos/${route}/issues/7`,
       `/repos/${route}/issues/7/parent`, `/repos/${route}/issues/7/sub_issues`, `/repos/${route}/issues/7/dependencies/blocked_by`].sort();
     const paths = () => transports.flatMap(http => http.requests.map(request => new URL(request.url).pathname)).sort();
@@ -316,7 +318,7 @@ describe('one opened GitHub issue read owner', () => {
         await expect(shell.getByText('detail:First open:8')).resolves.toBeDefined();
         await expect(shell.getByText('companion:First open:8')).resolves.toBeDefined();
       });
-      // One entry get: one issue DTO, one repository identity, three relations.
+      // One entry get: one issue DTO, one repository identity, three relations and both field-choice catalogs.
       await act(async () => { await shell.press(await shell.getByRole('button', { name: 'Toggle issue' })); });
       title = 'Fresh next open'; childNumber = 10;
       await act(async () => { await shell.press(await shell.getByRole('button', { name: 'Toggle issue' })); });

@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { readPluginErrorRequestIdV1 } from '@happier-dev/plugin-sdk';
+import { readPluginErrorRequestIdV1, type PluginError } from '@happier-dev/plugin-sdk';
 import { PullRequestFailureDetails } from '../../sessions/pullRequestGlance/PullRequestReadFailure.js';
 
 import { deriveTriageDetailMountInstanceKey } from './mountKey.js';
@@ -134,6 +134,7 @@ import { TriageSourceMark } from '../list/sourceMark.js';
 export type TriageDetailRegionProps = Readonly<{
   /** Opening and subsequent exact reads belong to the shell's one read owner. */
   exactRead?: import('./postMutationReobservation.js').TriageExactEntryReadV1 | null;
+  exactReadFailure?: Readonly<{ failure?: PluginError }>;
   sourcePanelActions?: TriageSourcePanelActionsV1;
   tabSelection: TriageDetailTabSelectionV1;
   sessionSelection: Readonly<{
@@ -772,7 +773,10 @@ export function TriageDetailRegion(props: TriageDetailRegionProps): React.ReactE
     props.lastKnown === true || props.exactRead === null || selection === null || observation === null ? null
       : { selection, observation, ...(props.exactRead?.detailData === undefined ? {} : { detailData: props.exactRead.detailData }) },
   );
-  const detail = props.lastKnown === true ? null : props.exactRead === null ? { kind: 'reading' as const } : observedDetail;
+  const detail = props.lastKnown === true ? null
+    : props.exactReadFailure !== undefined
+      ? { kind: 'unreachable' as const, ...props.exactReadFailure, retry: props.completePostMutation }
+      : props.exactRead === null ? { kind: 'reading' as const } : observedDetail;
   const linkedSessions = detail?.kind === 'ready' ? detail.linkedSessions : EMPTY_SESSIONS;
   const linkedSessionsHasMore = detail?.kind === 'ready'
     ? detail.linkedSessionsNextCursor !== undefined
@@ -1283,6 +1287,7 @@ export function TriageDetailRegion(props: TriageDetailRegionProps): React.ReactE
   return (
     <TriageEditTaskScope key={`task-fields:${selected === null ? 'unavailable' : deriveTriageDetailMountInstanceKey(row.entryRef, selected.sourceInstanceId)}`}
       taskFields={props.exactRead?.taskFields}
+      taskFieldChoices={props.exactRead?.taskFieldChoices}
       row={row} {...(detail?.kind === 'ready' ? { instance: detail.input.instance } : {})}
       linkedSessionIds={linkedSessionIds} relationRows={props.rows}
       disabled={detail?.kind !== 'ready'} onApplied={completePostMutation}>{(task) => {

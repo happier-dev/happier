@@ -612,7 +612,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
    * The rows and the one grouping axis (`ui/list/sections.ts`).
    *
    * The reader's pins are planned even with no window at all (`core/SURFACE.md` §6.2, reachability state 5):
-   * they are Collection state, so a machine nobody can reach does not make them disappear.
+   * they are Collection state. The active lens matches only their retained facts until a source read answers.
    */
   // Pinned entries this mount has read exactly (their detail was opened): the pin then shows what the source said.
   const [exactPinReads, setExactPinReads] = React.useState<ReadonlyMap<string, TriageListRowV1>>(NO_EXACT_PIN_READS);
@@ -625,7 +625,14 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
             const pin = pinsByEntry.get(triageEntryRowKey(row.entryRef));
             return pin === undefined ? [] : [pin];
           }) : marks.pins,
-          readRows: incremental ? [] : [...exactPinReads.values()],
+          readRows: incremental ? [] : [
+            ...exactPinReads.values(),
+            ...marks.pins.flatMap(pin => {
+              const retained = window.readOwner?.getRow(triageEntryRowKey(pin.entryRef));
+              return retained == null ? [] : [retained];
+            }),
+          ],
+          lens: { query: windowLens.query, filters: windowLens.filters },
           locale: surfaceContext.locale,
           workflowSubjectOf: (entryRef) => resolveTriageSourceWorkflowSubjectV1(
             surfaceContext.targetedContributions,
@@ -646,7 +653,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
             hasSessions: (key) => (sessionActivity.linkedSessions.get(key)?.length ?? 0) > 0,
           } }),
     }, previous),
-    [completedSinceMs, exactPinReads, listedStale, staleCompletedAtMs, marks.pins, pinsByEntry, personalTaskOrder.value, sessionActivity.agentStates, sessionActivity.linkedSessions, surfaceContext.locale, surfaceContext.targetedContributions, taskAudience, text, viewInventory]
+    [completedSinceMs, exactPinReads, listedStale, staleCompletedAtMs, marks.pins, pinsByEntry, personalTaskOrder.value, sessionActivity.agentStates, sessionActivity.linkedSessions, surfaceContext.locale, surfaceContext.targetedContributions, taskAudience, text, viewInventory, window.readOwner, windowLens.filters, windowLens.query]
   );
   listPublication.setPlanner(planItems);
   const items = listsItems ? listPublication.getItems() : NO_LIST_ITEMS;
@@ -2435,6 +2442,9 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
     detailRow !== null ? (
       <TriagePublishedDetail
         exactRead={exactRead}
+        {...(readFailed ? { exactReadFailure: {
+          ...(selectedReadFailure === undefined ? {} : { failure: selectedReadFailure }),
+        } } : {})}
         sourcePanelActions={sourcePanel.actions}
         onFixPullRequestsRetryChange={reportDetailFixRetry}
         onRetryFixPullRequests={retryDetailFixPullRequests}
@@ -2505,6 +2515,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
     ? <TriageCreateTaskFields key={props.createDraftId ?? localTaskDraft?.input.draftId ?? 'task-draft'}
       draftId={props.createDraftId ?? localTaskDraft?.input.draftId} sources={configuredSources.sources}
       sourcesLoaded={configuredSources.loaded} sourcesUnavailableReason={configuredSources.unavailableReason}
+      sourceSnapshot={window.snapshot}
       suggestionRows={listWindow?.window.rows}
       {...(props.createDraft === undefined ? {} : { draft: props.createDraft })}
       onApplied={refresh} onClose={closeTaskDraft}
@@ -2787,19 +2798,6 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
 
           {editingSources ? (
             <Stack gap="small">
-              <Row gap="small" align="center" justify="space-between" wrap>
-                <Heading
-                  value={text('plugins.triage.surface.sources.title', 'Configured sources')}
-                  level={3}
-                />
-                <Button
-                  titleKey="plugins.triage.surface.close"
-                  title="Close"
-                  variant="secondary"
-                  size="small"
-                  onPress={() => executeMountedOperation({ kind: 'setSourceManagementOpen', open: false })}
-                />
-              </Row>
               {configuredSources.unavailableReason === null ? null : (
                 <Banner
                   tone="warning"
@@ -2822,18 +2820,23 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
                 />
               )}
               {/* Unavailable or still reading is not empty: only a completed read may say there are none. */}
-              {configuredSources.sources.length === 0 ? (!configuredSources.loaded || sourcesUnreachable ? null : (
-                <Status
-                  tone="muted"
-                  label={text('plugins.triage.surface.sources.none', 'No configured sources')}
-                />
-              )) : (
-                <ItemGroup accessibilityLabel={text('plugins.triage.surface.sources.title', 'Configured sources')}>
-                  {configuredSources.sources.map((source) => {
+              {/* A titled section (its Close is the section's action), so a phone row moves a long status beneath its name. */}
+              <ItemGroup title={text('plugins.triage.surface.sources.title', 'Configured sources')}
+                action={<Button titleKey="plugins.triage.surface.close" title="Close" variant="secondary" size="small"
+                  onPress={() => executeMountedOperation({ kind: 'setSourceManagementOpen', open: false })} />}>
+                {configuredSources.sources.length === 0 ? (!configuredSources.loaded || sourcesUnreachable ? null : (
+                  <Status
+                    tone="muted"
+                    label={text('plugins.triage.surface.sources.none', 'No configured sources')}
+                  />
+                )) : (
+                  configuredSources.sources.map((source) => {
                     // A bare account name ("leeroybrun") does not say what it is: the source's own name does.
                     const sourceName = resolveTriageSourceDescriptorV1(surfaceContext.targetedContributions,
                       source.configured.instance.source)?.displayName;
-                    const subtitle = source.displayPath ?? sourceName;
+                    // The connection's own handle tells two accounts of one source apart.
+                    const subtitle = sourceName !== undefined && source.displayPath !== undefined && source.displayPath !== source.displayLabel
+                      ? `${sourceName} · ${source.displayPath}` : source.displayPath ?? sourceName;
                     // Each connection says its own health on its row: a quiet word and its reason, its fix at the end.
                     const health = sourceHealthRows.get(source.sourceInstanceId) ?? null;
                     const repair = health?.fix === 'connection'
@@ -2886,9 +2889,9 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
                         }}
                       />
                     );
-                  })}
-                </ItemGroup>
-              )}
+                  })
+                )}
+              </ItemGroup>
               {/*
                 Adding a connection, and repairing one, are the same source-owned
                 form this page never hosts (`core/SURFACE.md` §1.4). They stay

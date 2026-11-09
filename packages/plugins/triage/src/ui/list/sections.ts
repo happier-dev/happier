@@ -3,7 +3,8 @@ import type { TriageEntryLocatorV1, TriageEntryRelationsV1, TriageEntryStateV1, 
 import { projectTriageDetailFieldsV1, projectTriageDetailFieldTextV1, triageTaskStatusCategoryV1 } from '@happier-dev/triage-protocol/v1';
 
 import { CORPUS_LANE } from '../../corpus/fold/lane.js';
-import { triageEntryRowKey, triageTaskCompletionMatchesWindowV1, type TriageListRowV1 } from '../../projection/listWindow.js';
+import { createTriageListLensMatcherV1, triageEntryRowKey, triageTaskCompletionMatchesWindowV1,
+  type TriageListLensV1, type TriageListRowV1 } from '../../projection/listWindow.js';
 import type { TriagePinnedEntryV1 } from '../marks/pinCommand.js';
 import {
   indexTriagePinsByEntry,
@@ -166,11 +167,11 @@ export function planTriageListItemsV1(input: Readonly<{
   rows: readonly TriageListRowV1[];
   pins: readonly TriagePinnedEntryV1[];
   /**
-   * Rows this mount read exactly (an opened detail's authoritative read) that the window may not hold. They answer
-   * a pin the window never walked, so an entry the reader has just read no longer says it is unsynchronized; they
-   * never join the window's own groups. A window row for the same entry wins.
+   * Retained rows and exact detail reads outside the active window supply a pin's known facts for filtering and
+   * display. They never join the window's own groups. A window row for the same entry wins.
    */
   readRows?: readonly TriageListRowV1[];
+  lens?: Pick<TriageListLensV1, 'query' | 'filters'>;
   locale?: string;
   /** The admitted source contribution's workflow subject for this kind, or `null` when none was declared. */
   workflowSubjectOf: (entryRef: TriageListRowV1['entryRef']) => TriageSourceWorkflowSubjectV1 | null;
@@ -195,6 +196,7 @@ export function planTriageListItemsV1(input: Readonly<{
   }>;
 }>, previous: readonly TriageListItemV1[] = []): readonly TriageListItemV1[] {
   const pinIndex = indexTriagePinsByEntry(input.pins);
+  const matchesLens = input.lens === undefined ? undefined : createTriageListLensMatcherV1(input.lens);
   const agentStatesOf = (key: string) => input.agentStatesOf?.(key) ?? NO_AGENT_STATES;
   const projectedByKey = new Map<string, TriageListRowV1>();
   for (const row of input.readRows ?? []) projectedByKey.set(triageEntryRowKey(row.entryRef), row);
@@ -220,8 +222,10 @@ export function planTriageListItemsV1(input: Readonly<{
       workflowSubject: input.workflowSubjectOf(row.entryRef),
       agentActive: agentStatesOf(key).some((state) => state.workStatus.bucket === 'working'),
     }));
-  const items: TriageListItemV1[] = input.pins.filter((pin) => included(pin.entryRef,
-    projectedByKey.get(triageEntryRowKey(pin.entryRef)) ?? null)).map((pin) => {
+  const items: TriageListItemV1[] = input.pins.filter((pin) => {
+    const projected = projectedByKey.get(triageEntryRowKey(pin.entryRef)) ?? null;
+    return included(pin.entryRef, projected) && (matchesLens?.(projected ?? pin) ?? true);
+  }).map((pin) => {
     const projected = projectedByKey.get(triageEntryRowKey(pin.entryRef)) ?? null;
     const row = projectTriagePinnedRow(pin, projected, input.display);
     return Object.freeze({

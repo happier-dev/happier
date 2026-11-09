@@ -1,5 +1,6 @@
 import type { PluginContributionIdentity } from '@happier-dev/plugin-sdk/manifest';
 import type { TriageListInvocationErrorV1 } from '../actions/listEntriesProtocol.js';
+import type { TriageListPinnedEntriesResultV1 } from '../actions/userMarksProtocol.js';
 import {
     MAX_TRIAGE_LIST_WINDOW_ROWS_V1,
     triageTaskStatusCategoryV1,
@@ -26,6 +27,7 @@ import {
     type CorpusSelectedInstanceV1,
 } from '../corpus/selection/selectObservationInstance.js';
 import {
+    foldTriageSearchValue,
     parseTriageSearchQuery,
     projectTriageEntrySearchText,
     triageEntryMatchesSearch,
@@ -382,12 +384,20 @@ function latestObservedAtMs(observations: CorpusEntryObservationsV1): number {
     return latest;
 }
 
-function matchesState(row: TriageListRowV1, states: readonly CorpusStateFilterValueV1[]): boolean {
+type TriageListFilterFactsV1 = Readonly<{
+    entryRef: TriageEntryRefV1;
+    observations?: CorpusEntryObservationsV1;
+    presence?: CorpusPresenceV1;
+    lane?: CorpusLaneV1;
+    attention?: CorpusDisplayedAttentionV1 | null;
+}>;
+
+function matchesState(row: TriageListFilterFactsV1, states: readonly CorpusStateFilterValueV1[]): boolean {
     if (states.length === 0) return true;
     for (const state of states) {
-        if (state === 'absent' && row.presence.kind === 'absent') return true;
-        if (state === 'unresolved' && row.presence.kind === 'unresolved') return true;
-        if (row.presence.kind !== 'present') continue;
+        if (state === 'absent' && row.presence?.kind === 'absent') return true;
+        if (state === 'unresolved' && row.presence?.kind === 'unresolved') return true;
+        if (row.presence?.kind !== 'present') continue;
         if (state === 'open' && row.lane === CORPUS_LANE.open) return true;
         if (state === 'done' && row.lane === CORPUS_LANE.done) return true;
     }
@@ -395,10 +405,11 @@ function matchesState(row: TriageListRowV1, states: readonly CorpusStateFilterVa
 }
 
 function matchesAttention(
-    row: TriageListRowV1,
+    row: TriageListFilterFactsV1,
     attention: readonly CorpusAttentionFilterValueV1[],
 ): boolean {
     if (attention.length === 0) return true;
+    if (row.attention === undefined) return false;
     const level = row.attention?.level ?? 'none';
     return attention.includes(level);
 }
@@ -407,11 +418,11 @@ function typeFilterKey(value: CorpusTypeFilterValueV1): string {
     return `${JSON.stringify([value.source.pluginId, value.source.localId])}:${JSON.stringify(value.kindId)}`;
 }
 
-function matchesFilters(row: TriageListRowV1, filters: SurfaceFilterSelectionV1): boolean {
+function matchesFilters(row: TriageListFilterFactsV1, filters: SurfaceFilterSelectionV1): boolean {
     if (filters.sources.length > 0
         && !filters.sources.some((value) => sameTriageSourceIdentity(value.source, row.entryRef.source)
             && (value.sourceInstanceId === undefined
-                || row.observations.some((observation) => observation.sourceInstanceId === value.sourceInstanceId)))) {
+                || row.observations?.some((observation) => observation.sourceInstanceId === value.sourceInstanceId)))) {
         return false;
     }
     if (filters.types.length > 0 && !filters.types.some(
@@ -421,20 +432,36 @@ function matchesFilters(row: TriageListRowV1, filters: SurfaceFilterSelectionV1)
     }
     if (filters.scopes.length > 0 && !filters.scopes.some(
         (value) => sameTriageSourceIdentity(value.source, row.entryRef.source)
-            && row.observations.some((observation) => {
-                if (value.sourceInstanceId !== undefined && value.sourceInstanceId !== observation.sourceInstanceId) return false;
-                if (value.unitId !== undefined) {
-                    const unitId = observation.outcome.kind === 'present' ? observation.outcome.snapshot.scopeUnitId : undefined;
-                    return unitId === undefined
-                        ? value.collisionScope !== undefined && value.collisionScope === row.entryRef.collisionScope
-                        : unitId === value.unitId;
-                }
-                return value.collisionScope === undefined || value.collisionScope === row.entryRef.collisionScope;
-            }),
+            && (row.observations === undefined
+                ? value.sourceInstanceId === undefined && value.unitId === undefined
+                    && (value.collisionScope === undefined || value.collisionScope === row.entryRef.collisionScope)
+                : row.observations.some((observation) => {
+                    if (value.sourceInstanceId !== undefined && value.sourceInstanceId !== observation.sourceInstanceId) return false;
+                    if (value.unitId !== undefined) {
+                        const unitId = observation.outcome.kind === 'present' ? observation.outcome.snapshot.scopeUnitId : undefined;
+                        return unitId === undefined
+                            ? value.collisionScope !== undefined && value.collisionScope === row.entryRef.collisionScope
+                            : unitId === value.unitId;
+                    }
+                    return value.collisionScope === undefined || value.collisionScope === row.entryRef.collisionScope;
+                })),
     )) {
         return false;
     }
     return matchesState(row, filters.states) && matchesAttention(row, filters.attention);
+}
+
+/** Pins retain identity and display text, but cannot claim unread status, attention or connection facts. */
+export function createTriageListLensMatcherV1(lens: Pick<TriageListLensV1, 'query' | 'filters'>) {
+    const terms = parseTriageSearchQuery(lens.query);
+    return (entry: TriageListRowV1 | TriageListPinnedEntriesResultV1['pins'][number],
+        searchText?: TriageEntrySearchTextV1): boolean => {
+        if (!matchesFilters(entry, lens.filters)) return false;
+        const text = searchText ?? ('observations' in entry
+            ? projectTriageEntrySearchText(entry.observations)
+            : [entry.displayAtMark.title, entry.displayAtMark.scopeLabel].map(foldTriageSearchValue));
+        return triageEntryMatchesSearch(text, terms);
+    };
 }
 
 /**
@@ -556,7 +583,7 @@ export function foldTriageListWindow(input: Readonly<{
 
     const unfilteredRows: TriageListRowV1[] = [];
     const rows: TriageListRowV1[] = [];
-    const terms = parseTriageSearchQuery(input.lens.query);
+    const matchesLens = createTriageListLensMatcherV1(input.lens);
     for (const [key, { entryRef, observations: answers }] of grouped) {
         // One connection answering for one entry several times in a pass is one
         // connection's answer, unioned. It happens here, before anything reads
@@ -601,13 +628,7 @@ export function foldTriageListWindow(input: Readonly<{
             baseline?.entries.set(key, { row, searchText });
         }
         unfilteredRows.push(row);
-        // Search has one owner, shared with the Composer picker: two matchers
-        // over one projection gave the same query two answers.
-        const matchesQuery = triageEntryMatchesSearch(
-            searchText ?? projectTriageEntrySearchText(observations),
-            terms,
-        );
-        if (matchesFilters(row, input.lens.filters) && matchesQuery
+        if (matchesLens(row, searchText)
             && (row.content === null || triageTaskCompletionMatchesWindowV1(row.content.outcome.snapshot, input.lens.tasks?.completedSinceMs))) rows.push(row);
     }
 

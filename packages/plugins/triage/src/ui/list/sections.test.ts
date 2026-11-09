@@ -6,7 +6,7 @@ import {
   testkitSnapshot,
   testkitViewer,
 } from '../../corpus/testkit/observations.test-support.js';
-import { triageEntryRowKey, type TriageListRowV1 } from '../../projection/listWindow.js';
+import { TRIAGE_LIST_NO_FILTERS_V1, triageEntryRowKey, type TriageListRowV1 } from '../../projection/listWindow.js';
 import type { TriagePinnedEntryV1 } from '../marks/pinCommand.js';
 import { INTERNAL_TASK_SOURCE_V1 } from '../../internalTasks/identity.js';
 import {
@@ -77,6 +77,26 @@ function byGroup(items: readonly TriageListItemV1[]): Readonly<Record<string, re
 }
 
 describe('the PRs & Issues grouping axis', () => {
+  it('applies the active query and facets to unread pins and exact reads outside the window', () => {
+    const input = { rows: [], pins: [pin('unread', 'Repair login'), pin('read', 'Old name')],
+      readRows: [row('read', { lane: CORPUS_LANE.done })], workflowSubjectOf: pullRequests,
+      lens: { query: 'zzqxv-nothing', filters: TRIAGE_LIST_NO_FILTERS_V1 } };
+    const ids = (next: typeof input) => planTriageListItemsV1(next).map(item => item.row.entryRef.entryId);
+    expect(ids(input)).toEqual([]);
+    expect(ids({ ...input, lens: { ...input.lens, query: 'LOGIN' } })).toEqual(['unread']);
+    expect(ids({ ...input, lens: { ...input.lens, query: 'Entry read' } })).toEqual(['read']);
+    expect(ids({ ...input, lens: { query: '', filters: { ...TRIAGE_LIST_NO_FILTERS_V1, states: ['open'] } } })).toEqual([]);
+    expect(ids({ ...input, lens: { query: '', filters: { ...TRIAGE_LIST_NO_FILTERS_V1, states: ['done'] } } })).toEqual(['read']);
+    expect(ids({ ...input, lens: { query: '', filters: { ...TRIAGE_LIST_NO_FILTERS_V1,
+      types: [{ source: SOURCE, kindId: 'issue' }] } } })).toEqual([]);
+    expect(ids({ ...input, lens: { query: 'login', filters: { ...TRIAGE_LIST_NO_FILTERS_V1,
+      scopes: [{ source: SOURCE, collisionScope: 'origin' }] } } })).toEqual(['unread']);
+    expect(ids({ ...input, lens: { query: '', filters: { ...TRIAGE_LIST_NO_FILTERS_V1,
+      sources: [{ source: SOURCE, sourceInstanceId: INSTANCE }] } } })).toEqual(['read']);
+    expect(ids({ ...input, lens: { query: '', filters: { ...TRIAGE_LIST_NO_FILTERS_V1,
+      attention: ['none'] } } })).toEqual(['read']);
+    expect(ids({ ...input, lens: { query: '', filters: TRIAGE_LIST_NO_FILTERS_V1 } })).toEqual(['unread', 'read']);
+  });
   it('keeps personal tasks in Tasks rather than PRs & Issues, including pins and exact pin reads', () => {
     const personal = { ...row('personal', { kindId: 'task', involvement: ['assignee'] }),
       entryRef: { source: INTERNAL_TASK_SOURCE_V1, kindId: 'task', collisionScope: 'personal', entryId: 'personal' } };
@@ -88,6 +108,12 @@ describe('the PRs & Issues grouping axis', () => {
     expect(planTriageListItemsV1({ ...input, tasks: { audience: 'everyone',
       isTask: ref => ref.kindId === 'task' || ref.kindId === 'issue', hasSessions: () => false } })
       .map(item => item.row.entryRef.entryId)).toEqual(['personal', 'issue']);
+  });
+  it('filters a 2000-pin retained projection to the matching entry without needing window rows', () => {
+    const pins = Array.from({ length: 2000 }, (_, index) => pin(String(index)));
+    const items = planTriageListItemsV1({ rows: [], pins, workflowSubjectOf: pullRequests,
+      lens: { query: 'Pinned 1999', filters: TRIAGE_LIST_NO_FILTERS_V1 } });
+    expect(items.map(item => item.row.entryRef.entryId)).toEqual(['1999']);
   });
   it('projects personal task order into only its existing slots, retaining external source order and status groups', () => {
     const personal = (id: string, state: 'unstarted' | 'started' = 'unstarted') => {

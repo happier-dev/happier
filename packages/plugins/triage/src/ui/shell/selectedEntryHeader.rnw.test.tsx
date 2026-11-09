@@ -7,7 +7,7 @@ import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
 import { formatTriageTimestampV1, INTERNAL_TASK_SOURCE_V1, TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1,
     TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_ID_V1, TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_VERSION_V1 } from '@happier-dev/triage-protocol/v1';
 
-import type { JsonValue } from '@happier-dev/plugin-sdk';
+import { PluginError, type JsonValue } from '@happier-dev/plugin-sdk';
 
 import { TRIAGE_READ_ENTRY_DETAIL_ACTION_LOCAL_ID_V1 } from '../../actions/entryDetailProtocol.js';
 import {
@@ -37,6 +37,7 @@ import { TRIAGE_SHELL_FILL_TEST_ID_V1 } from './root.js';
 import * as listSections from '../list/sections.js';
 import { reduceTriageSurfaceV1, TRIAGE_SURFACE_INITIAL_STATE_V1 } from '../state/surface.js';
 import { readTriageWindowLensV1 } from './lens.js';
+import { buildTriageRouteSubPathV1, TRIAGE_ROUTE_DEFAULT_LENS_V1 } from '../navigation/location.js';
 
 // Install the real accepted-render probe before ReactDOM registers its renderer.
 // The browser and composed regression therefore count the same committed work.
@@ -145,11 +146,13 @@ let listsTheEntry = true;
 let exactTitle = ENTRY_TITLE;
 let exactReads = 0;
 let exactNeedsReview = true;
+let exactFailure: PluginError | null = null;
 let publishedContext: unknown;
 
 async function executeAction(action: string): Promise<JsonValue> {
     if (action === TRIAGE_REOBSERVE_ENTRY_ACTION_LOCAL_ID_V1) {
         exactReads += 1;
+        if (exactFailure !== null) throw exactFailure;
         // Reject an unexpected recursive transport sequence rather than leaving the test running forever.
         if (exactReads > 6) throw new Error('Unexpected recursive exact reread');
         const row = listResult(true).window.rows[0]!;
@@ -179,29 +182,35 @@ async function executeAction(action: string): Promise<JsonValue> {
 
 const mounted: PluginUiTestkit[] = [];
 
-async function mountShell(hosted = false) {
-    listsTheEntry = true;
+async function mountShell(hosted = false, options: Readonly<{ pinned?: boolean; listsEntry?: boolean }> = {}) {
+    listsTheEntry = options.listsEntry ?? true;
     exactTitle = ENTRY_TITLE;
     exactReads = 0;
     exactNeedsReview = true;
+    exactFailure = null;
     const ephemeralSharedScope = createTriageEphemeralSharedScopeFixture();
+    const surfaceContext = createSurfaceContextFixture({
+        mount: {
+            kind: 'destination',
+            destination: { pluginId: 'happier.triage', localId: 'triage' },
+            container: 'appPage',
+        },
+    });
+    let subPath: string | undefined;
     let fixture!: PluginUiTestkit;
     await act(async () => {
         fixture = await createPluginUiTestkit({
             identity: { instanceId: 'fixture-instance-181', mountNonce: 'fixture-mount-181' },
             authorPlugin: { id: 'happier.triage', version: '0.0.0' },
-            surface: renderShellSurface,
-            surfaceContext: createSurfaceContextFixture({
-                mount: {
-                    kind: 'destination',
-                    destination: { pluginId: 'happier.triage', localId: 'triage' },
-                    container: 'appPage',
-                },
-            }),
+            surface: context => renderShellSurface({ ...context, ...(subPath === undefined ? {} : { subPath }) }),
+            surfaceContext,
             adapter: createPluginUiRnwSemanticSurfaceAdapter({ ephemeralSharedScope, ...(hosted ? { detailsPane: { available: true } } : {}) }),
             handlers: {
                 publishCurrentUiContext: value => { publishedContext = value; },
-                executeAction: async ({ action }) => await executeAction(action),
+                executeAction: async ({ action }) => action === TRIAGE_LIST_PINNED_ENTRIES_ACTION_LOCAL_ID_V1 && options.pinned
+                    ? { v: 1, pins: [{ entryRef: ENTRY_REF, markedAtMs: 1_760_000_100_000,
+                        displayAtMark: { title: 'Pinned before reading', scopeLabel: ENTRY_REF.collisionScope } }] }
+                    : await executeAction(action),
                 replacePageLocation: ({ subPath }) => subPath,
             },
         });
@@ -210,7 +219,10 @@ async function mountShell(hosted = false) {
     await act(async () => {
         await refreshTriageListWindow('view', fixture.context.hostApi, ephemeralSharedScope);
     });
-    return { shell: fixture, ephemeralSharedScope };
+    return { shell: fixture, ephemeralSharedScope, setSubPath: async (next: string) => {
+        subPath = next;
+        await act(async () => { await fixture.updateSurface(surfaceContext); });
+    } };
 }
 
 async function openTheRow(shell: PluginUiTestkit): Promise<void> {
@@ -239,6 +251,54 @@ afterEach(async () => {
 });
 
 describe('the selected entry once the window stops holding it', () => {
+    it('filters a formerly exact-only pin using its later retained facts', async () => {
+        const { shell, ephemeralSharedScope, setSubPath } = await mountShell(true, { pinned: true, listsEntry: false });
+        await act(async () => { await shell.press(await shell.getByRole('button', { name: 'Pinned before reading' })); });
+        await expect(shell.getByRole('button', { name: ENTRY_TITLE })).resolves.toBeDefined();
+        expect(exactReads).toBe(1);
+
+        // The same mounted pin becomes acquired. Its old exact-only answer remains in the shell cache.
+        listsTheEntry = true;
+        await act(async () => { await refreshTriageListWindow('manual', shell.context.hostApi, ephemeralSharedScope); });
+        await act(async () => { await shell.press(await shell.getByRole('button', { name: 'Close details' })); });
+        const store = readTriageListWindowReadOwner(shell.context.hostApi, ephemeralSharedScope)!;
+        const retained = store.getRow(triageEntryRowKey(ENTRY_REF))!;
+        const observation = retained.observations[0]!;
+        if (observation.outcome.kind !== 'present') throw new Error('Fixture pin must be present');
+        const title = 'Retained source title changed';
+        await act(async () => { store.publishObservation({ ...observation, entryRef: ENTRY_REF,
+            observedAtMs: observation.observedAtMs + 1,
+            outcome: { ...observation.outcome, snapshot: { ...observation.outcome.snapshot, title } } }); });
+        await expect(shell.getByRole('button', { name: title })).resolves.toBeDefined();
+
+        await setSubPath(buildTriageRouteSubPathV1({ ...TRIAGE_ROUTE_DEFAULT_LENS_V1, query: ENTRY_TITLE }));
+        expect(store.getRow(triageEntryRowKey(ENTRY_REF))?.content?.outcome.snapshot.title).toBe(title);
+        expect(store.getSnapshot().window?.rows).toHaveLength(0);
+        await expect(shell.queryByRole('button', { name: ENTRY_TITLE })).resolves.toBeUndefined();
+    });
+    it('settles a listed entry opening failure and retries without losing its identity', async () => {
+        const { shell } = await mountShell(true);
+        exactFailure = new PluginError({ code: 'source_unreachable', retryable: true });
+        await openTheRow(shell);
+
+        await expect(shell.getByRole('heading', { name: ENTRY_TITLE })).resolves.toBeDefined();
+        await expect(shell.getByText('These details could not be read')).resolves.toBeDefined();
+
+        exactFailure = null;
+        await act(async () => { await shell.press(await shell.getByRole('button', { name: 'Retry' })); });
+        await expect(shell.getByText('This connection is no longer configured')).resolves.toBeDefined();
+        await expect(shell.getByRole('heading', { name: ENTRY_TITLE })).resolves.toBeDefined();
+        expect(exactReads).toBe(2);
+    });
+    it('settles a retired opening generation as an unavailable detail', async () => {
+        const { shell } = await mountShell(true);
+        exactFailure = new PluginError({ code: 'plugin_action_generation_retired', retryable: false });
+        await openTheRow(shell);
+
+        await expect(shell.getByRole('heading', { name: ENTRY_TITLE })).resolves.toBeDefined();
+        await expect(shell.getByText('These details could not be read')).resolves.toBeDefined();
+        await expect(shell.queryByRole('button', { name: 'Retry' })).resolves.toBeUndefined();
+    });
     it.each([3, 1_000])('publishes one Task title in %i retained rows without rendering unaffected rows and refreshes referenced blocker names', async (count) => {
         const sourceInstanceId = INTERNAL_TASK_SOURCE_RECORD_V1.value.configured.instance.sourceInstanceId;
         const refs = ['edited', 'dependent', 'blocker', ...Array.from({ length: count - 3 }, (_, index) => `task-${index}`)].map(entryId => ({ source: INTERNAL_TASK_SOURCE_V1,
