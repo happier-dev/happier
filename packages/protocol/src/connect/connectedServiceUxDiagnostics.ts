@@ -35,12 +35,42 @@ export const CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES = {
   postSwitchVerificationFailed: 'post_switch_verification_failed',
   connectedServiceCredentialReconnectRequired: 'connected_service_credential_reconnect_required',
   connectedServiceCredentialRefreshUnavailable: 'connected_service_credential_refresh_unavailable',
-  claudeSubscriptionMissingClaudeCodeScope: 'claude_subscription_missing_claude_code_scope',
-  claudeSubscriptionNativeAuthMaterializationFailed: 'claude_subscription_native_auth_materialization_failed',
-  claudeSubscriptionSetupTokenNotSupportedForUnified: 'claude_subscription_setup_token_not_supported_for_unified',
+  connectedServiceCredentialScopeMissing: 'connected_service_credential_scope_missing',
+  connectedServiceNativeAuthMaterializationFailed: 'connected_service_native_auth_materialization_failed',
+  connectedServiceCredentialModeUnsupported: 'connected_service_credential_mode_unsupported',
 } as const;
 
-export const ConnectedServiceUxDiagnosticCodeV1Schema = lazyZodSchema(() => z.enum([
+// The 0.2 diagnostic vocabulary is read only at ingress. Current producers and
+// presenters use the service-neutral result, including materialization failures.
+export function normalizeLegacyConnectedServiceUxDiagnosticCode(value: string): string;
+export function normalizeLegacyConnectedServiceUxDiagnosticCode(value: unknown): unknown;
+export function normalizeLegacyConnectedServiceUxDiagnosticCode(value: unknown): unknown {
+  switch (value) {
+    case 'claude_subscription_missing_claude_code_scope':
+      return CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.connectedServiceCredentialScopeMissing;
+    case 'claude_subscription_native_auth_materialization_failed':
+      return CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.connectedServiceNativeAuthMaterializationFailed;
+    case 'claude_subscription_setup_token_not_supported_for_unified':
+      return CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.connectedServiceCredentialModeUnsupported;
+    case 'claude_subscription_oauth_outcome_unknown':
+      return 'connected_account_authentication_outcome_unknown';
+    case 'claude_subscription_refresh_token_unavailable':
+      return 'connect_reconnect_required';
+    case 'claude_subscription_oauth_rejected':
+      return 'connected_account_authentication_rejected';
+    case 'claude_subscription_oauth_response_invalid':
+    case 'claude_subscription_oauth_unavailable':
+    case 'claude_subscription_profile_context_unavailable':
+      return 'connected_account_authentication_unavailable';
+    case 'claude_subscription_oauth_identity_mismatch':
+    case 'claude_subscription_profile_identity_mismatch':
+      return 'connected_account_reconnect_provider_identity_mismatch';
+    default:
+      return value;
+  }
+}
+
+export const ConnectedServiceUxDiagnosticCodeV1Schema = lazyZodSchema(() => z.pipe(z.transform(normalizeLegacyConnectedServiceUxDiagnosticCode), z.enum([
   CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.providerSessionStateUnavailableForResume,
   CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.connectedServiceMaterializationIdentityMissing,
   CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.resumeReachabilityInputsMissing,
@@ -52,10 +82,10 @@ export const ConnectedServiceUxDiagnosticCodeV1Schema = lazyZodSchema(() => z.en
   CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.postSwitchVerificationFailed,
   CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.connectedServiceCredentialReconnectRequired,
   CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.connectedServiceCredentialRefreshUnavailable,
-  CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.claudeSubscriptionMissingClaudeCodeScope,
-  CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.claudeSubscriptionNativeAuthMaterializationFailed,
-  CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.claudeSubscriptionSetupTokenNotSupportedForUnified,
-]));
+  CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.connectedServiceCredentialScopeMissing,
+  CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.connectedServiceNativeAuthMaterializationFailed,
+  CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.connectedServiceCredentialModeUnsupported,
+])));
 
 export type ConnectedServiceUxDiagnosticCodeV1 = z.infer<typeof ConnectedServiceUxDiagnosticCodeV1Schema>;
 
@@ -216,9 +246,11 @@ export function normalizeConnectedServiceUxDiagnosticV1(
 }
 
 export function isConnectedServiceUxDiagnosticV1(value: unknown): value is ConnectedServiceUxDiagnosticV1 {
-  return normalizeConnectedServiceUxDiagnosticV1(value) !== null
+  const normalized = normalizeConnectedServiceUxDiagnosticV1(value);
+  return normalized !== null
     && value !== null
     && typeof value === 'object'
     && !Array.isArray(value)
+    && (value as { code?: unknown }).code === normalized.code
     && Array.isArray((value as { suggestedActions?: unknown }).suggestedActions);
 }

@@ -5023,9 +5023,9 @@ localTailscale: {
                 post_switch_verification_failed: 'プロバイダーアカウントを確認できませんでした',
                 connected_service_credential_reconnect_required: "接続済みアカウントの再接続が必要です",
                 connected_service_credential_refresh_unavailable: "接続済みアカウントの更新は一時的に利用できません",
-                claude_subscription_missing_claude_code_scope: 'Claude Code のアクセスには再接続が必要です',
-        claude_subscription_native_auth_materialization_failed: 'Claude Code の認証情報を準備できませんでした',
-        claude_subscription_setup_token_not_supported_for_unified: 'Claude のセットアップトークンでは Unified モードを開始できません',
+                connected_service_credential_scope_missing: "アカウントの再接続が必要です",
+        connected_service_native_auth_materialization_failed: "ネイティブ認証情報を準備できませんでした",
+        connected_service_credential_mode_unsupported: "このログイン方法はサポートされていません",
       },
       status: {
         provider_session_state_unavailable_for_resume: 'セッション状態を引き継げませんでした',
@@ -5039,9 +5039,9 @@ localTailscale: {
                 post_switch_verification_failed: 'プロバイダーアカウントを確認できませんでした',
                 connected_service_credential_reconnect_required: "接続済みアカウントの再接続が必要です",
                 connected_service_credential_refresh_unavailable: "接続済みアカウントの更新が一時的に失敗しました",
-                claude_subscription_missing_claude_code_scope: 'Claude Code 用に Claude サブスクリプションを再接続してください',
-        claude_subscription_native_auth_materialization_failed: 'Claude Code のネイティブ認証を準備できませんでした',
-        claude_subscription_setup_token_not_supported_for_unified: 'Unified モード用に OAuth で Claude を再接続してください',
+                connected_service_credential_scope_missing: "アカウントの再接続が必要です",
+        connected_service_native_auth_materialization_failed: "ネイティブ認証情報を準備できませんでした",
+        connected_service_credential_mode_unsupported: "このログイン方法はサポートされていません",
       },
       body: {
         default: "接続済みアカウントを確認してから再試行してください。",
@@ -5056,9 +5056,9 @@ localTailscale: {
                 post_switch_verification_failed: 'Happier は、プロバイダーが選択したアカウントを採用したことを確認できませんでした。接続済みアカウントを確認するか、切り替えを再試行してください。',
                 connected_service_credential_reconnect_required: "選択した接続済みアカウントを使用するには、再接続する必要があります。プロファイルを再接続してから再試行してください。",
                 connected_service_credential_refresh_unavailable: "選択した接続済みアカウントを更新できませんでした。しばらくしてからもう一度お試しください。",
-                claude_subscription_missing_claude_code_scope: 'この Claude プロファイルは Claude Code のスコープが付与される前に接続されました。再接続してから、セッションまたはグループ切り替えを再試行してください。',
-        claude_subscription_native_auth_materialization_failed: 'Happier はこのプロファイル用の Claude Code ネイティブ認証情報ファイルを作成できませんでした。プロファイルを再接続するか、別のグループメンバーを選択してください。',
-        claude_subscription_setup_token_not_supported_for_unified: 'Claude Unified モードでは、ネイティブ OAuth 認証情報で Claude CLI を起動する必要があります。セットアップトークンではなく OAuth でこのプロファイルを再接続してください。',
+                connected_service_credential_scope_missing: "このアカウントには選択した操作に必要なアクセス権がありません。再接続してから、もう一度お試しください。",
+        connected_service_native_auth_materialization_failed: "Happier はこのアカウントのネイティブ認証ファイルを準備できませんでした。再接続するか、別のアカウントを選択してください。",
+        connected_service_credential_mode_unsupported: "このログイン方法では選択した操作を実行できません。対応する方法で再接続してください。",
       },
       actions: {
         viewLatestFork: "最新のフォークを表示",
@@ -8520,6 +8520,8 @@ localTailscale: {
         body: ({ count }: { count: number }) => count > 0 ? `バックグラウンドの処理が${count}件実行中です。再起動すると、この処理が停止する場合があります。` : '再起動すると、このセッションのバックグラウンド処理が停止する場合があります。',
         confirmAction: '再起動を続行',
     },
+    // How many identical failures one transcript row stands for.
+    transcriptFailureRepeated: ({ count }: { count: number }) => `${count} 回`,
     startFailure: {
         requestId: ({ id }: { id: string }) => `リクエスト ID: ${id}`,
       title: "このセッションを開始できませんでした",
@@ -10139,6 +10141,7 @@ localTailscale: {
     stopAndDeleteSessionWarning: "セッションを停止し、すべてのメッセージとデータを完全に削除します。この操作は取り消せません。",
     deleteSessionWarning:
       "この操作は取り消せません。このセッションに関連するすべてのメッセージとデータが完全に削除されます。",
+    deleteDetachedHistoryWarning: "Happier にあるこの会話のコピーを削除します。マシン上のエージェント自身の会話履歴はそのまま残ります。元に戻せません。",
     failedToDeleteSession: "セッションの削除に失敗しました",
     sessionDeleted: "セッションが正常に削除されました",
     manageSharing: "共有を管理",
@@ -16536,6 +16539,7 @@ settingsSession: {
           page: {
             // usage-board:page
             sourceAccounting: "使用量",
+            sourceAccountingAgent: "使用量 · {agent}",
             sourceClaudeResponses: "Claude の応答",
             sourceClaudeSessionSummaries: "Claude のセッション概要",
             executionHappier: "Happier 内",
@@ -17820,7 +17824,7 @@ settingsSession: {
     },
     placeholders: {
       nameExample: "例: Work OpenAI",
-      valueExample: "sk-...",
+      valueExample: "••••••••",
     },
     validation: {
       nameRequired: "名前は必須です。",
@@ -18564,7 +18568,13 @@ settingsSession: {
         noDataToKeep: "保持するデータはありません。",
         factKeeps: "保持するもの",
         factKeepsValue: "デプロイ履歴とバックアップ",
-        deleteDomains: ({ domains }: { domains: string }) => `これらのドメインも削除します: ${domains}`,
+        factFrees: "解放",
+        factFreesValue: ({ machine }: { machine: string }) => `${machine} のリリースフォルダーとイメージ`,
+        factStopsDomains: ({ domains }: { domains: string }) => `${domains} に到達できなくなります`,
+        removedTitle: "この環境は削除されました",
+        removedBody: "サービス、ルート、リリースフォルダーはなくなりました。過去のデプロイは履歴に残ります。",
+        removedOn: ({ when }: { when: string }) => `${when} に削除`,
+        adminPassword: "管理者パスワード",
         healthServers: ({ healthy, count }: { healthy: number; count: number }) => `${healthy}/${count} 台のサーバーが正常`,
         sectionChecks: "チェックとアラート",
         sectionChecksDescription: "この環境のヘルスチェックと、失敗時に通知を受ける人。",
@@ -18887,6 +18897,7 @@ settingsSession: {
           versionStored: ({ revision }: { revision: number }) => `Compose ファイル、リビジョン ${revision}`,
           replaces: "置き換え対象",
           replacesNothing: "まだ稼働中のものはありません",
+          replacesSame: `現在稼働中と同じバージョン`,
           secrets: "シークレット",
           ingressTunnel: "Cloudflare Tunnel",
           reachedThrough: "アクセス経路",
@@ -18902,6 +18913,7 @@ settingsSession: {
           portLocal: ({ port }: { port: string }) => `ポート ${port}、このマシンのみ`,
           noHealthCheck: "ヘルスチェックなし",
           risksTitle: "承認前に確認",
+          risksNotedTitle: "このレビューで指摘された内容",
           risksOn: ({ machine }: { machine: string }) => `${machine} で承認前に確認`,
           risk: {
             privileged: "マシン上で完全な権限で実行します",

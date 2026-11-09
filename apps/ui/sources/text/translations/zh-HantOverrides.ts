@@ -1,3 +1,4 @@
+import { newSessionActionDefaultTranslations } from './newSessionActionDefaultTranslations';
 import { chatLinksTranslations } from './chatLinksTranslations';
 import { deploymentDefaultsTranslations } from './deploymentDefaultsTranslations';
 import { pluginPublishTranslations } from './pluginPublishTranslations';
@@ -2781,9 +2782,9 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
                 post_switch_verification_failed: '無法驗證提供者帳號',
                 connected_service_credential_reconnect_required: '已連線的帳戶需要重新連線',
                 connected_service_credential_refresh_unavailable: '已連線帳戶的重新整理暫時無法使用',
-                claude_subscription_missing_claude_code_scope: 'Claude Code 存取需要重新連線',
-                claude_subscription_native_auth_materialization_failed: '無法準備 Claude Code 憑證',
-                claude_subscription_setup_token_not_supported_for_unified: 'Claude 設定權杖無法啟動 Unified 模式',
+                connected_service_credential_scope_missing: "需要重新連線帳戶",
+                connected_service_native_auth_materialization_failed: "無法準備原生憑證",
+                connected_service_credential_mode_unsupported: "不支援此登入方式",
             },
             status: {
                 provider_session_state_unavailable_for_resume: '無法帶入工作階段狀態',
@@ -2797,9 +2798,9 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
                 post_switch_verification_failed: '無法驗證提供者帳號',
                 connected_service_credential_reconnect_required: '已連線的帳戶需要重新連線',
                 connected_service_credential_refresh_unavailable: '已連線帳戶的重新整理暫時失敗',
-                claude_subscription_missing_claude_code_scope: '為 Claude Code 重新連線 Claude 訂閱',
-                claude_subscription_native_auth_materialization_failed: '無法準備 Claude Code 原生認證',
-                claude_subscription_setup_token_not_supported_for_unified: '為 Unified 模式使用 OAuth 重新連線 Claude',
+                connected_service_credential_scope_missing: "需要重新連線帳戶",
+                connected_service_native_auth_materialization_failed: "無法準備原生憑證",
+                connected_service_credential_mode_unsupported: "不支援此登入方式",
             },
             body: {
                 default: '檢查已連線帳號後再試一次。',
@@ -2814,9 +2815,9 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
                 post_switch_verification_failed: 'Happier 無法驗證提供者是否採用了所選帳號。請檢查已連線帳號或重試切換。',
                 connected_service_credential_reconnect_required: '使用所選的已連線帳戶前，需要重新連線該帳戶。請重新連線該設定檔，然後重試。',
                 connected_service_credential_refresh_unavailable: 'Happier 無法重新整理所選的已連線帳戶。請稍後再試。',
-                claude_subscription_missing_claude_code_scope: '此 Claude 設定檔是在授予 Claude Code 範圍之前連線的。請重新連線，然後重試工作階段或帳號群組切換。',
-                claude_subscription_native_auth_materialization_failed: 'Happier 無法為此設定檔建立 Claude Code 原生憑證檔案。請重新連線該設定檔，或選擇帳號群組中的其他成員。',
-                claude_subscription_setup_token_not_supported_for_unified: 'Claude Unified 模式必須使用原生 OAuth 憑證啟動 Claude CLI。請使用 OAuth 重新連線此設定檔，而不是設定權杖。',
+                connected_service_credential_scope_missing: "此帳戶缺少所選操作所需的存取權限。請重新連線後重試。",
+                connected_service_native_auth_materialization_failed: "Happier 無法準備此帳戶的原生憑證檔案。請重新連線或選擇其他帳戶。",
+                connected_service_credential_mode_unsupported: "此登入方式不支援所選操作。請使用支援的登入方式重新連線。",
             },
             actions: {
                 viewLatestFork: '查看最新分支',
@@ -6254,7 +6255,8 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
     },
 
   newSession: {
-    terminalHostUnavailableTitle: '終端宿主無法使用',
+
+    actionDefault: newSessionActionDefaultTranslations['zh-Hant'],    terminalHostUnavailableTitle: '終端宿主無法使用',
     terminalHostUnavailableBody: ({ host }: { host: string }) => `請在此機器上安裝或更新 ${host} 並重新啟動其伺服器，或選擇其他終端宿主。草稿已保留。`,
     folder: folderlessSessionTranslations.zhHant.composer,
     ...newSessionMcpTranslationExtension,
@@ -7945,6 +7947,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
         stopAndDeleteSession: '停止並刪除',
         stopAndDeleteSessionWarning: '這將停止工作階段，並永久刪除其所有訊息和資料。此操作無法復原。',
         deleteSessionWarning: '此操作無法復原。與此工作階段相關的所有訊息和資料將被永久刪除。',
+        deleteDetachedHistoryWarning: "這會移除 Happier 中此對話的副本。機器上代理自己的對話紀錄保持不變。此操作無法復原。",
         failedToDeleteSession: '刪除工作階段失敗',
         sessionDeleted: '工作階段刪除成功',
         forkSession: '分支工作階段',

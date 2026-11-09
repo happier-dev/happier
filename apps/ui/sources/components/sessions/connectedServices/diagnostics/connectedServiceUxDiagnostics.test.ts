@@ -82,10 +82,10 @@ describe('resolveConnectedServiceUxDiagnosticPresentation', () => {
     });
 
     it.each([
-        'claude_subscription_missing_claude_code_scope',
-        'claude_subscription_native_auth_materialization_failed',
-        'claude_subscription_setup_token_not_supported_for_unified',
-    ] as const)('maps Claude native-auth diagnostic %s to reconnect presentation data', (code) => {
+        ['claude_subscription_missing_claude_code_scope', 'connected_service_credential_scope_missing'],
+        ['claude_subscription_native_auth_materialization_failed', 'connected_service_native_auth_materialization_failed'],
+        ['claude_subscription_setup_token_not_supported_for_unified', 'connected_service_credential_mode_unsupported'],
+    ] as const)('maps historical native-auth diagnostic %s through generic reconnect presentation', (code, expectedCode) => {
         const presentation = resolveConnectedServiceUxDiagnosticPresentation({
             code,
             failurePhase: 'materialization',
@@ -102,10 +102,10 @@ describe('resolveConnectedServiceUxDiagnosticPresentation', () => {
         });
 
         expect(presentation).toMatchObject({
-            code,
-            titleKey: `connectedServices.diagnostics.title.${code}`,
-            bodyKey: `connectedServices.diagnostics.body.${code}`,
-            statusKey: `connectedServices.diagnostics.status.${code}`,
+            code: expectedCode,
+            titleKey: `connectedServices.diagnostics.title.${expectedCode}`,
+            bodyKey: `connectedServices.diagnostics.body.${expectedCode}`,
+            statusKey: `connectedServices.diagnostics.status.${expectedCode}`,
             actions: [
                 expect.objectContaining({ kind: 'reconnect_profile' }),
                 expect.objectContaining({ kind: 'open_connected_accounts' }),

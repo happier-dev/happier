@@ -4028,7 +4028,7 @@ describe('executeSpawnSessionRequest', () => {
     expect(result).toMatchObject({
       type: 'error',
       errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
-      errorMessage: 'claude_subscription_missing_claude_code_scope',
+      errorMessage: 'connected_service_credential_scope_missing',
     });
     if (result.type !== 'error') throw new Error('expected spawn error');
     expect(isConnectedServiceUxDiagnosticSpawnErrorDetail(result.errorDetail)).toBe(true);
@@ -4036,7 +4036,7 @@ describe('executeSpawnSessionRequest', () => {
       throw new Error('expected connected-service ux diagnostic detail');
     }
     expect(result.errorDetail.uxDiagnostic).toMatchObject({
-      code: 'claude_subscription_missing_claude_code_scope',
+      code: 'connected_service_credential_scope_missing',
       failurePhase: 'materialization',
       source: 'spawn_resume',
       agentId: 'claude',

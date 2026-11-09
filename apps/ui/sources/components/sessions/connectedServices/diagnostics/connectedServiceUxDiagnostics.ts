@@ -47,12 +47,12 @@ const DIAGNOSTIC_TITLE_KEYS = {
         'connectedServices.diagnostics.title.connected_service_credential_reconnect_required',
     [CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.connectedServiceCredentialRefreshUnavailable]:
         'connectedServices.diagnostics.title.connected_service_credential_refresh_unavailable',
-    [CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.claudeSubscriptionMissingClaudeCodeScope]:
-        'connectedServices.diagnostics.title.claude_subscription_missing_claude_code_scope',
-    [CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.claudeSubscriptionNativeAuthMaterializationFailed]:
-        'connectedServices.diagnostics.title.claude_subscription_native_auth_materialization_failed',
-    [CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.claudeSubscriptionSetupTokenNotSupportedForUnified]:
-        'connectedServices.diagnostics.title.claude_subscription_setup_token_not_supported_for_unified',
+    [CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.connectedServiceCredentialScopeMissing]:
+        'connectedServices.diagnostics.title.connected_service_credential_scope_missing',
+    [CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.connectedServiceNativeAuthMaterializationFailed]:
+        'connectedServices.diagnostics.title.connected_service_native_auth_materialization_failed',
+    [CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.connectedServiceCredentialModeUnsupported]:
+        'connectedServices.diagnostics.title.connected_service_credential_mode_unsupported',
 } satisfies Record<ConnectedServiceUxDiagnosticCodeV1, DiagnosticTitleKey>;
 
 const DIAGNOSTIC_BODY_KEYS = {
@@ -78,12 +78,12 @@ const DIAGNOSTIC_BODY_KEYS = {
         'connectedServices.diagnostics.body.connected_service_credential_reconnect_required',
     [CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.connectedServiceCredentialRefreshUnavailable]:
         'connectedServices.diagnostics.body.connected_service_credential_refresh_unavailable',
-    [CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.claudeSubscriptionMissingClaudeCodeScope]:
-        'connectedServices.diagnostics.body.claude_subscription_missing_claude_code_scope',
-    [CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.claudeSubscriptionNativeAuthMaterializationFailed]:
-        'connectedServices.diagnostics.body.claude_subscription_native_auth_materialization_failed',
-    [CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.claudeSubscriptionSetupTokenNotSupportedForUnified]:
-        'connectedServices.diagnostics.body.claude_subscription_setup_token_not_supported_for_unified',
+    [CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.connectedServiceCredentialScopeMissing]:
+        'connectedServices.diagnostics.body.connected_service_credential_scope_missing',
+    [CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.connectedServiceNativeAuthMaterializationFailed]:
+        'connectedServices.diagnostics.body.connected_service_native_auth_materialization_failed',
+    [CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.connectedServiceCredentialModeUnsupported]:
+        'connectedServices.diagnostics.body.connected_service_credential_mode_unsupported',
 } satisfies Record<ConnectedServiceUxDiagnosticCodeV1, DiagnosticBodyKey>;
 
 const DIAGNOSTIC_STATUS_KEYS = {
@@ -109,12 +109,12 @@ const DIAGNOSTIC_STATUS_KEYS = {
         'connectedServices.diagnostics.status.connected_service_credential_reconnect_required',
     [CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.connectedServiceCredentialRefreshUnavailable]:
         'connectedServices.diagnostics.status.connected_service_credential_refresh_unavailable',
-    [CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.claudeSubscriptionMissingClaudeCodeScope]:
-        'connectedServices.diagnostics.status.claude_subscription_missing_claude_code_scope',
-    [CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.claudeSubscriptionNativeAuthMaterializationFailed]:
-        'connectedServices.diagnostics.status.claude_subscription_native_auth_materialization_failed',
-    [CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.claudeSubscriptionSetupTokenNotSupportedForUnified]:
-        'connectedServices.diagnostics.status.claude_subscription_setup_token_not_supported_for_unified',
+    [CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.connectedServiceCredentialScopeMissing]:
+        'connectedServices.diagnostics.status.connected_service_credential_scope_missing',
+    [CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.connectedServiceNativeAuthMaterializationFailed]:
+        'connectedServices.diagnostics.status.connected_service_native_auth_materialization_failed',
+    [CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.connectedServiceCredentialModeUnsupported]:
+        'connectedServices.diagnostics.status.connected_service_credential_mode_unsupported',
 } satisfies Record<ConnectedServiceUxDiagnosticCodeV1, DiagnosticStatusKey>;
 
 export type ConnectedServiceUxDiagnosticPresentationAction = Readonly<{

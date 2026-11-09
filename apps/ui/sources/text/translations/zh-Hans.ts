@@ -4457,9 +4457,9 @@ export const zhHans: TranslationStructure = {
                 post_switch_verification_failed: '无法验证提供商账号',
                 connected_service_credential_reconnect_required: "已连接的账户需要重新连接",
                 connected_service_credential_refresh_unavailable: "已连接账户的刷新暂时不可用",
-                claude_subscription_missing_claude_code_scope: 'Claude Code 访问需要重新连接',
-        claude_subscription_native_auth_materialization_failed: '无法准备 Claude Code 凭据',
-        claude_subscription_setup_token_not_supported_for_unified: 'Claude 设置令牌无法启动 Unified 模式',
+                connected_service_credential_scope_missing: "需要重新连接账户",
+        connected_service_native_auth_materialization_failed: "无法准备原生凭据",
+        connected_service_credential_mode_unsupported: "不支持此登录方式",
       },
       status: {
         provider_session_state_unavailable_for_resume: '无法携带会话状态',
@@ -4473,9 +4473,9 @@ export const zhHans: TranslationStructure = {
                 post_switch_verification_failed: '无法验证提供商账号',
                 connected_service_credential_reconnect_required: "已连接的账户需要重新连接",
                 connected_service_credential_refresh_unavailable: "已连接账户的刷新暂时失败",
-                claude_subscription_missing_claude_code_scope: '为 Claude Code 重新连接 Claude 订阅',
-        claude_subscription_native_auth_materialization_failed: '无法准备 Claude Code 原生认证',
-        claude_subscription_setup_token_not_supported_for_unified: '为 Unified 模式使用 OAuth 重新连接 Claude',
+                connected_service_credential_scope_missing: "需要重新连接账户",
+        connected_service_native_auth_materialization_failed: "无法准备原生凭据",
+        connected_service_credential_mode_unsupported: "不支持此登录方式",
       },
       body: {
         default: "检查已连接账号后重试。",
@@ -4490,9 +4490,9 @@ export const zhHans: TranslationStructure = {
                 post_switch_verification_failed: 'Happier 无法验证提供商是否采用了所选账号。请检查已连接账号或重试切换。',
                 connected_service_credential_reconnect_required: "使用所选的已连接账户前，需要重新连接该账户。请重新连接该配置，然后重试。",
                 connected_service_credential_refresh_unavailable: "Happier 无法刷新所选的已连接账户。请稍后重试。",
-                claude_subscription_missing_claude_code_scope: '此 Claude 配置是在授予 Claude Code 范围之前连接的。请重新连接它，然后重试会话或账号组切换。',
-        claude_subscription_native_auth_materialization_failed: 'Happier 无法为此配置创建 Claude Code 原生凭据文件。请重新连接该配置，或选择账号组中的其他成员。',
-        claude_subscription_setup_token_not_supported_for_unified: 'Claude Unified 模式必须使用原生 OAuth 凭据启动 Claude CLI。请使用 OAuth 重新连接此配置，而不是设置令牌。',
+                connected_service_credential_scope_missing: "此账户缺少所选操作所需的访问权限。请重新连接后重试。",
+        connected_service_native_auth_materialization_failed: "Happier 无法准备此账户的原生凭据文件。请重新连接或选择其他账户。",
+        connected_service_credential_mode_unsupported: "此登录方式不支持所选操作。请使用支持的登录方式重新连接。",
       },
       actions: {
         viewLatestFork: "查看最新分叉",
@@ -7903,6 +7903,8 @@ export const zhHans: TranslationStructure = {
         body: ({ count }: { count: number }) => count > 0 ? `${count} 个后台任务正在运行。重启可能会停止这些工作。` : '重启可能会停止此会话的后台任务。',
         confirmAction: '仍然重启',
     },
+    // How many identical failures one transcript row stands for.
+    transcriptFailureRepeated: ({ count }: { count: number }) => `${count} 次`,
     startFailure: {
         requestId: ({ id }: { id: string }) => `请求 ID：${id}`,
       title: "无法启动此会话",
@@ -9497,6 +9499,7 @@ export const zhHans: TranslationStructure = {
     stopAndDeleteSessionWarning: "这将停止会话，并永久删除其所有消息和数据。此操作无法撤销。",
     deleteSessionWarning:
       "此操作无法撤销。与此会话相关的所有消息和数据将被永久删除。",
+    deleteDetachedHistoryWarning: "这会删除 Happier 中此对话的副本。机器上智能体自己的对话历史保持不变。此操作无法撤销。",
     failedToDeleteSession: "删除会话失败",
     sessionDeleted: "会话删除成功",
     manageSharing: "管理共享",
@@ -15902,6 +15905,7 @@ settingsSession: {
           page: {
             // usage-board:page
             sourceAccounting: "用量",
+            sourceAccountingAgent: "用量 · {agent}",
             sourceClaudeResponses: "Claude 回复",
             sourceClaudeSessionSummaries: "Claude 会话摘要",
             executionHappier: "在 Happier 中",
@@ -17526,7 +17530,7 @@ settingsSession: {
     },
     placeholders: {
       nameExample: "例如：Work OpenAI",
-      valueExample: "sk-...",
+      valueExample: "••••••••",
     },
     validation: {
       nameRequired: "名称为必填项。",
@@ -18269,7 +18273,13 @@ settingsSession: {
         noDataToKeep: "没有需要保留的数据。",
         factKeeps: "保留",
         factKeepsValue: "部署历史和备份",
-        deleteDomains: ({ domains }: { domains: string }) => `也会移除这些域名：${domains}`,
+        factFrees: "释放",
+        factFreesValue: ({ machine }: { machine: string }) => `${machine} 上的发布文件夹和镜像`,
+        factStopsDomains: ({ domains }: { domains: string }) => `${domains} 将无法访问`,
+        removedTitle: "此环境已移除",
+        removedBody: "其服务、路由和发布文件夹已不存在。过去的部署保留在历史记录中。",
+        removedOn: ({ when }: { when: string }) => `已于 ${when} 移除`,
+        adminPassword: "管理员密码",
         healthServers: ({ healthy, count }: { healthy: number; count: number }) => `${healthy}/${count} 台服务器正常`,
         sectionChecks: "检查和警报",
         sectionChecksDescription: "此环境的健康检查，以及检查失败时谁会收到通知。",
@@ -18592,6 +18602,7 @@ settingsSession: {
           versionStored: ({ revision }: { revision: number }) => `Compose 文件，修订 ${revision}`,
           replaces: "替换",
           replacesNothing: "尚无运行中的版本",
+          replacesSame: `与当前运行的版本相同`,
           secrets: "密钥",
           ingressTunnel: "Cloudflare Tunnel",
           reachedThrough: "访问途径",
@@ -18607,6 +18618,7 @@ settingsSession: {
           portLocal: ({ port }: { port: string }) => `端口 ${port}，仅限这台机器`,
           noHealthCheck: "无健康检查",
           risksTitle: "批准前请检查",
+          risksNotedTitle: "此次审查时标记的内容",
           risksOn: ({ machine }: { machine: string }) => `批准前请检查 ${machine}`,
           risk: {
             privileged: "在机器上以完整权限运行",

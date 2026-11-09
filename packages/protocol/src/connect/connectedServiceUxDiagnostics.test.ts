@@ -7,8 +7,22 @@ import {
   ConnectedServiceUxDiagnosticV1Schema,
   isConnectedServiceUxDiagnosticV1,
   normalizeConnectedServiceUxDiagnosticV1,
+  normalizeLegacyConnectedServiceUxDiagnosticCode,
 } from './connectedServiceUxDiagnostics.js';
 import { normalizeActionExecutorThrownError } from '../actions/executor/resultProjection.js';
+
+it.each([
+  ['claude_subscription_oauth_outcome_unknown', 'connected_account_authentication_outcome_unknown'],
+  ['claude_subscription_refresh_token_unavailable', 'connect_reconnect_required'],
+  ['claude_subscription_oauth_rejected', 'connected_account_authentication_rejected'],
+  ['claude_subscription_oauth_response_invalid', 'connected_account_authentication_unavailable'],
+  ['claude_subscription_oauth_unavailable', 'connected_account_authentication_unavailable'],
+  ['claude_subscription_profile_context_unavailable', 'connected_account_authentication_unavailable'],
+  ['claude_subscription_oauth_identity_mismatch', 'connected_account_reconnect_provider_identity_mismatch'],
+  ['claude_subscription_profile_identity_mismatch', 'connected_account_reconnect_provider_identity_mismatch'],
+])('normalizes the released authentication diagnostic %s at ingress', (legacy, current) => {
+  expect(normalizeLegacyConnectedServiceUxDiagnosticCode(legacy)).toBe(current);
+});
 
 it.each(['connected_account_purpose_catalog_unavailable', 'connected_services_default_settings_invalid'] as const)(
   'preserves closed %s provenance without admitting arbitrary exception metadata', reason => {
@@ -184,10 +198,10 @@ describe('ConnectedServiceUxDiagnosticV1', () => {
   });
 
   it.each([
-    'claude_subscription_missing_claude_code_scope',
-    'claude_subscription_native_auth_materialization_failed',
-    'claude_subscription_setup_token_not_supported_for_unified',
-  ])('accepts Claude native-auth diagnostic code %s as a first-class UX diagnostic', (code) => {
+    ['claude_subscription_missing_claude_code_scope', 'connected_service_credential_scope_missing'],
+    ['claude_subscription_native_auth_materialization_failed', 'connected_service_native_auth_materialization_failed'],
+    ['claude_subscription_setup_token_not_supported_for_unified', 'connected_service_credential_mode_unsupported'],
+  ])('normalizes stored native-auth diagnostic %s at ingress', (code, expectedCode) => {
     const diagnostic = ConnectedServiceUxDiagnosticV1Schema.safeParse({
       code,
       failurePhase: 'materialization',
@@ -209,5 +223,16 @@ describe('ConnectedServiceUxDiagnosticV1', () => {
     });
 
     expect(diagnostic.success).toBe(true);
+    if (diagnostic.success) {
+      expect(diagnostic.data.code).toBe(expectedCode);
+      expect(isConnectedServiceUxDiagnosticV1({ ...diagnostic.data, code })).toBe(false);
+      expect(isConnectedServiceUxDiagnosticV1(diagnostic.data)).toBe(true);
+      expect(ConnectedServiceUxDiagnosticV1Schema.parse({
+        ...diagnostic.data,
+        code: expectedCode,
+        serviceId: 'example.service/account',
+        agentId: 'example-agent',
+      })).toMatchObject({ code: expectedCode, serviceId: 'example.service/account' });
+    }
   });
 });

@@ -4425,9 +4425,9 @@ export const ru: TranslationStructure = {
                 post_switch_verification_failed: 'Аккаунт провайдера не удалось проверить',
                 connected_service_credential_reconnect_required: "Подключенную учетную запись нужно переподключить",
                 connected_service_credential_refresh_unavailable: "Обновление подключенной учетной записи временно недоступно",
-                claude_subscription_missing_claude_code_scope: 'Для доступа к Claude Code нужно переподключение',
-        claude_subscription_native_auth_materialization_failed: 'Не удалось подготовить учетные данные Claude Code',
-        claude_subscription_setup_token_not_supported_for_unified: 'Токен настройки Claude не может запустить режим Unified',
+                connected_service_credential_scope_missing: "Нужно повторно подключить аккаунт",
+        connected_service_native_auth_materialization_failed: "Не удалось подготовить нативные учётные данные",
+        connected_service_credential_mode_unsupported: "Способ входа не поддерживается",
       },
       status: {
         provider_session_state_unavailable_for_resume: 'Состояние сессии не удалось перенести',
@@ -4441,9 +4441,9 @@ export const ru: TranslationStructure = {
                 post_switch_verification_failed: 'Аккаунт провайдера не удалось проверить',
                 connected_service_credential_reconnect_required: "Подключенную учетную запись нужно переподключить",
                 connected_service_credential_refresh_unavailable: "Не удалось временно обновить подключенную учетную запись",
-                claude_subscription_missing_claude_code_scope: 'Переподключите подписку Claude для Claude Code',
-        claude_subscription_native_auth_materialization_failed: 'Не удалось подготовить нативную авторизацию Claude Code',
-        claude_subscription_setup_token_not_supported_for_unified: 'Переподключите Claude через OAuth для режима Unified',
+                connected_service_credential_scope_missing: "Нужно повторно подключить аккаунт",
+        connected_service_native_auth_materialization_failed: "Не удалось подготовить нативные учётные данные",
+        connected_service_credential_mode_unsupported: "Способ входа не поддерживается",
       },
       body: {
         default: "Проверьте подключённые аккаунты и повторите попытку.",
@@ -4458,9 +4458,9 @@ export const ru: TranslationStructure = {
                 post_switch_verification_failed: 'Happier не смог проверить, что провайдер принял выбранный аккаунт. Проверьте подключённые аккаунты или повторите переключение.',
                 connected_service_credential_reconnect_required: "Выбранную подключенную учетную запись нужно переподключить перед использованием. Переподключите профиль и повторите попытку.",
                 connected_service_credential_refresh_unavailable: "Не удалось обновить выбранную подключенную учетную запись. Повторите попытку через некоторое время.",
-                claude_subscription_missing_claude_code_scope: 'Этот профиль Claude был подключен до выдачи областей Claude Code. Переподключите его, затем повторите сессию или переключение группы.',
-        claude_subscription_native_auth_materialization_failed: 'Happier не смог создать файл нативных учетных данных Claude Code для этого профиля. Переподключите профиль или выберите другого участника группы.',
-        claude_subscription_setup_token_not_supported_for_unified: 'Режим Claude Unified должен запускать CLI Claude с нативными учетными данными OAuth. Переподключите этот профиль через OAuth вместо токена настройки.',
+                connected_service_credential_scope_missing: "У этого аккаунта нет доступа, необходимого для выбранной операции. Подключите его повторно и попробуйте ещё раз.",
+        connected_service_native_auth_materialization_failed: "Happier не удалось подготовить файлы нативных учётных данных этого аккаунта. Подключите его повторно или выберите другой аккаунт.",
+        connected_service_credential_mode_unsupported: "Этот способ входа не поддерживает выбранную операцию. Подключите аккаунт повторно поддерживаемым способом.",
       },
       actions: {
         viewLatestFork: "Открыть последнюю ветку",
@@ -8270,6 +8270,7 @@ export const ru: TranslationStructure = {
     stopAndDeleteSessionWarning: "Сессия будет остановлена, а все её сообщения и данные будут удалены навсегда. Это действие нельзя отменить.",
     deleteSessionWarning:
       "Это действие нельзя отменить. Все сообщения и данные, связанные с этой сессией, будут удалены навсегда.",
+    deleteDetachedHistoryWarning: "Удаляет копию этой беседы в Happier. Собственная история агента на машине остаётся без изменений. Это нельзя отменить.",
     failedToDeleteSession: "Не удалось удалить сессию",
     sessionDeleted: "Сессия успешно удалена",
     manageSharing: "Управление доступом",
@@ -8666,6 +8667,8 @@ encryptedUnavailable: "Зашифрованные данные недоступ�
         body: ({ count }: { count: number }) => count > 0 ? `Фоновых задач в работе: ${count}. Перезапуск может остановить эту работу.` : 'Перезапуск может остановить фоновую работу в этой сессии.',
         confirmAction: 'Всё равно перезапустить',
     },
+    // How many identical failures one transcript row stands for.
+    transcriptFailureRepeated: ({ count }: { count: number }) => `Повторов: ${count}`,
     startFailure: {
         requestId: ({ id }: { id: string }) => `ID запроса: ${id}`,
       title: "Не удалось запустить эту сессию",
@@ -16205,6 +16208,7 @@ settingsSession: {
           page: {
             // usage-board:page
             sourceAccounting: "использование",
+            sourceAccountingAgent: "использование · {agent}",
             sourceClaudeResponses: "Ответы Claude",
             sourceClaudeSessionSummaries: "Сводки сеансов Claude",
             executionHappier: "В Happier",
@@ -17504,7 +17508,7 @@ settingsSession: {
     },
     placeholders: {
       nameExample: "например, Work OpenAI",
-      valueExample: "ск-...",
+      valueExample: "••••••••",
     },
     validation: {
       nameRequired: "Имя обязательно.",
@@ -18603,7 +18607,13 @@ settingsSession: {
         noDataToKeep: "Нет данных для сохранения.",
         factKeeps: "Сохраняется",
         factKeepsValue: "Историю развёртываний и резервные копии",
-        deleteDomains: ({ domains }: { domains: string }) => `Также удаляет эти домены: ${domains}`,
+        factFrees: "Освобождает",
+        factFreesValue: ({ machine }: { machine: string }) => `Папки релизов и образы на ${machine}`,
+        factStopsDomains: ({ domains }: { domains: string }) => `${domains} больше недоступен`,
+        removedTitle: "Это окружение удалено",
+        removedBody: "Его сервисы, маршрут и папки релизов удалены. Прошлые развёртывания остаются в истории.",
+        removedOn: ({ when }: { when: string }) => `Удалено ${when}`,
+        adminPassword: "Пароль администратора",
         healthServers: ({ healthy, count }: { healthy: number; count: number }) => `${healthy} из ${count} серверов в норме`,
         sectionChecks: "Проверки и оповещения",
         sectionChecksDescription: "Проверки состояния этого окружения и кто узнаёт, когда проверка не проходит.",
@@ -18926,6 +18936,7 @@ settingsSession: {
           versionStored: ({ revision }: { revision: number }) => `Файл Compose, ревизия ${revision}`,
           replaces: "Заменяет",
           replacesNothing: "Пока ничего не работает",
+          replacesSame: `Та же версия, что сейчас запущена`,
           secrets: "Секреты",
           ingressTunnel: "Cloudflare Tunnel",
           reachedThrough: "Доступно через",
@@ -18941,6 +18952,7 @@ settingsSession: {
           portLocal: ({ port }: { port: string }) => `Порт ${port}, только эта машина`,
           noHealthCheck: "Нет проверки состояния",
           risksTitle: "Проверьте перед одобрением",
+          risksNotedTitle: "Отмечено при этой проверке",
           risksOn: ({ machine }: { machine: string }) => `Проверьте перед одобрением на ${machine}`,
           risk: {
             privileged: "Работает с полными привилегиями на машине",

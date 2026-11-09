@@ -13,7 +13,7 @@ import {
 import { ConnectedServiceCredentialResolutionError } from '@/cloud/connectedServices/resolveConnectedServiceCredentials';
 
 describe('buildConnectedServiceCredentialRefreshSpawnErrorResult', () => {
-  it('preserves first-class Claude materialization diagnostic codes on spawn failure', () => {
+  it('normalizes historical materialization failures to generic reconnect diagnostics on spawn failure', () => {
     const result = buildConnectedServiceMaterializationSpawnErrorResult({
       agentId: 'claude',
       diagnostics: [{
@@ -29,14 +29,14 @@ describe('buildConnectedServiceCredentialRefreshSpawnErrorResult', () => {
     expect(result).toMatchObject({
       type: 'error',
       errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
-      errorMessage: 'claude_subscription_missing_claude_code_scope',
+      errorMessage: 'connected_service_credential_scope_missing',
     });
     expect(isConnectedServiceUxDiagnosticSpawnErrorDetail(result.errorDetail)).toBe(true);
     if (!isConnectedServiceUxDiagnosticSpawnErrorDetail(result.errorDetail)) {
       throw new Error('expected connected-service diagnostic spawn detail');
     }
     expect(result.errorDetail.uxDiagnostic).toMatchObject({
-      code: 'claude_subscription_missing_claude_code_scope',
+      code: 'connected_service_credential_scope_missing',
       failurePhase: 'materialization',
       source: 'spawn_resume',
       agentId: 'claude',

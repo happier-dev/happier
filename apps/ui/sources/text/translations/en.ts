@@ -4977,12 +4977,9 @@ const enConnectedServices = {
         'Connected account needs reconnect',
       connected_service_credential_refresh_unavailable:
         'Connected account refresh is temporarily unavailable',
-      claude_subscription_missing_claude_code_scope:
-        'Claude Code access needs reconnect',
-      claude_subscription_native_auth_materialization_failed:
-        'Claude Code credentials could not be prepared',
-      claude_subscription_setup_token_not_supported_for_unified:
-        'Claude setup token cannot start Unified mode',
+      connected_service_credential_scope_missing: "Account access needs reconnect",
+      connected_service_native_auth_materialization_failed: "Native credentials could not be prepared",
+      connected_service_credential_mode_unsupported: "Credential mode is unsupported",
     },
     status: {
       provider_session_state_unavailable_for_resume:
@@ -5001,12 +4998,9 @@ const enConnectedServices = {
         'Connected account needs reconnect',
       connected_service_credential_refresh_unavailable:
         'Connected account refresh failed temporarily',
-      claude_subscription_missing_claude_code_scope:
-        'Reconnect Claude subscription for Claude Code',
-      claude_subscription_native_auth_materialization_failed:
-        'Claude Code native auth could not be prepared',
-      claude_subscription_setup_token_not_supported_for_unified:
-        'Reconnect Claude with OAuth for Unified mode',
+      connected_service_credential_scope_missing: "Account access needs reconnect",
+      connected_service_native_auth_materialization_failed: "Native credentials could not be prepared",
+      connected_service_credential_mode_unsupported: "Credential mode is unsupported",
     },
     body: {
       default: 'Review connected accounts and try again.',
@@ -5032,12 +5026,9 @@ const enConnectedServices = {
         'The selected connected account needs to be reconnected before use. Reconnect the profile, then retry.',
       connected_service_credential_refresh_unavailable:
         'Happier could not refresh the selected connected account. Try again in a moment.',
-      claude_subscription_missing_claude_code_scope:
-        'This Claude profile was connected before Claude Code scopes were granted. Reconnect it, then retry the session or group switch.',
-      claude_subscription_native_auth_materialization_failed:
-        'Happier could not create the native Claude Code credential file for this profile. Reconnect the profile or choose another group member.',
-      claude_subscription_setup_token_not_supported_for_unified:
-        'Claude Unified mode must launch the Claude CLI with native OAuth credentials. Reconnect this profile with OAuth instead of a setup token.',
+      connected_service_credential_scope_missing: "This account lacks access required by the selected operation. Reconnect it, then retry.",
+      connected_service_native_auth_materialization_failed: "Happier could not prepare this account’s native credential files. Reconnect the account or choose another account.",
+      connected_service_credential_mode_unsupported: "This sign-in method cannot be used for the selected operation. Reconnect using a supported sign-in method.",
     },
     actions: {
       viewLatestFork: 'View latest fork',
@@ -9682,6 +9673,8 @@ const enSession = {
     body: ({ count }: { count: number }) => count > 0 ? `${count} background ${count === 1 ? 'activity is' : 'activities are'} running. Restarting may stop this work.` : 'Restarting may stop background work in this session.',
     confirmAction: 'Restart anyway',
   },
+  // How many identical failures one transcript row stands for.
+  transcriptFailureRepeated: ({ count }: { count: number }) => `${count} times`,
   startFailure: {
     requestId: ({ id }: { id: string }) => `Request ID: ${id}`,
     title: 'Couldn’t start this session',
@@ -11515,6 +11508,7 @@ const enSessionInfo = {
   stopAndDeleteSessionWarning: 'This will stop the session and permanently delete all its messages and data. This action cannot be undone.',
   deleteSessionWarning:
     'This action cannot be undone. All messages and data associated with this session will be permanently deleted.',
+  deleteDetachedHistoryWarning: "This removes Happier's copy of this conversation. The Agent's own conversation history on the Machine is left as it is. This can't be undone.",
   failedToDeleteSession: 'Failed to delete session',
   sessionDeleted: 'Session deleted successfully',
   renameSession: 'Rename session',
@@ -16075,11 +16069,11 @@ const enSettingsVoice = {
       ...voiceProviderPrivacyTranslations.en.xai,
       setup: {
         footer:
-          'Your xAI API key is stored as a synced SavedSecret in your Happier account secrets. It is only materialized for the bounded xAI Realtime operation.',
+          'Your xAI API key is protected in your synced account secrets and used to connect to Grok Voice.',
       },
       credential: {
         promptBody:
-          'Paste an xAI API key. Happier protects it as a synced SavedSecret and only materializes it for the bounded xAI Realtime operation.',
+          'Paste an xAI API key to connect to Grok Voice. Happier protects it in your synced account secrets.',
       },
     },
     setup: {
@@ -19753,6 +19747,7 @@ const enUsage = {
     page: {
       // usage-board:page
       sourceAccounting: "usage",
+      sourceAccountingAgent: "usage · {agent}",
       sourceClaudeResponses: "Claude responses",
       sourceClaudeSessionSummaries: "Claude session summaries",
       executionHappier: PUBLIC_USAGE_ORIGINAL_COPY_EN.page.executionHappier,
@@ -20996,7 +20991,7 @@ const enSecrets = {
   },
   placeholders: {
     nameExample: 'e.g. Work OpenAI',
-    valueExample: 'sk-...',
+    valueExample: '••••••••',
   },
   validation: {
     nameRequired: 'Name is required.',
@@ -22083,7 +22078,13 @@ const enProjects = {
       noDataToKeep: "No data to keep.",
       factKeeps: "Keeps",
       factKeepsValue: "The deployment history and backups",
-      deleteDomains: ({ domains }: { domains: string }) => `Also removes these Domains: ${domains}`,
+      factFrees: "Frees",
+      factFreesValue: ({ machine }: { machine: string }) => `Release folders and images on ${machine}`,
+      factStopsDomains: ({ domains }: { domains: string }) => `${domains} no longer reachable`,
+      removedTitle: "This environment was removed",
+      removedBody: "Its services, route and release folders are gone. Past deployments stay in history.",
+      removedOn: ({ when }: { when: string }) => `Removed ${when}`,
+      adminPassword: "Admin password",
       healthServers: ({ healthy, count }: { healthy: number; count: number }) => `${healthy} of ${count} servers healthy`,
       sectionChecks: "Checks & alerts",
       sectionChecksDescription: "Health checks for this environment and who hears when one fails.",
@@ -22422,6 +22423,7 @@ const enProjects = {
         versionStored: ({ revision }: { revision: number }) => `Compose file, revision ${revision}`,
         replaces: "Replaces",
         replacesNothing: "Nothing is serving yet",
+        replacesSame: `Same version that's running now`,
         secrets: "Secrets",
         ingressTunnel: "Cloudflare Tunnel",
         reachedThrough: "Reached through",
@@ -22437,6 +22439,7 @@ const enProjects = {
         portLocal: ({ port }: { port: string }) => `Port ${port}, this Machine only`,
         noHealthCheck: "No health check",
         risksTitle: "Check before approving",
+        risksNotedTitle: "Flagged at this review",
         risksOn: ({ machine }: { machine: string }) => `Check before approving on ${machine}`,
         risk: {
           privileged: "Runs with full privileges on the Machine",
