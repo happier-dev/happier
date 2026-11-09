@@ -39,7 +39,9 @@ export type UsageActionInputById = {
             includeContributions?: boolean | undefined;
             includeComparison?: boolean | undefined;
             includeQuotaHistory?: boolean | undefined;
+            includeQuota?: boolean | undefined;
             includeSessionEvidence?: boolean | undefined;
+            includeCoach?: boolean | undefined;
             includeTranscriptEvidence?: boolean | undefined;
             includeWorkEvidence?: boolean | undefined;
             workProjection?: 'detail' | 'summary' | undefined;
@@ -97,7 +99,9 @@ export type UsageActionInputById = {
             includeContributions?: boolean | undefined;
             includeComparison?: boolean | undefined;
             includeQuotaHistory?: boolean | undefined;
+            includeQuota?: boolean | undefined;
             includeSessionEvidence?: boolean | undefined;
+            includeCoach?: boolean | undefined;
             includeTranscriptEvidence?: boolean | undefined;
             includeWorkEvidence?: boolean | undefined;
             workProjection?: 'detail' | 'summary' | undefined;
@@ -150,7 +154,9 @@ export type UsageActionInputById = {
             includeContributions?: boolean | undefined;
             includeComparison?: boolean | undefined;
             includeQuotaHistory?: boolean | undefined;
+            includeQuota?: boolean | undefined;
             includeSessionEvidence?: boolean | undefined;
+            includeCoach?: boolean | undefined;
             includeTranscriptEvidence?: boolean | undefined;
             includeWorkEvidence?: boolean | undefined;
             workProjection?: 'detail' | 'summary' | undefined;
@@ -224,7 +230,9 @@ export type UsageActionInputById = {
             includeContributions?: boolean | undefined;
             includeComparison?: boolean | undefined;
             includeQuotaHistory?: boolean | undefined;
+            includeQuota?: boolean | undefined;
             includeSessionEvidence?: boolean | undefined;
+            includeCoach?: boolean | undefined;
             includeTranscriptEvidence?: boolean | undefined;
             includeWorkEvidence?: boolean | undefined;
             workProjection?: 'detail' | 'summary' | undefined;
@@ -282,7 +290,9 @@ export type UsageActionInputById = {
             includeContributions?: boolean | undefined;
             includeComparison?: boolean | undefined;
             includeQuotaHistory?: boolean | undefined;
+            includeQuota?: boolean | undefined;
             includeSessionEvidence?: boolean | undefined;
+            includeCoach?: boolean | undefined;
             includeTranscriptEvidence?: boolean | undefined;
             includeWorkEvidence?: boolean | undefined;
             workProjection?: 'detail' | 'summary' | undefined;
@@ -330,7 +340,9 @@ export type UsageActionInputById = {
             includeContributions?: boolean | undefined;
             includeComparison?: boolean | undefined;
             includeQuotaHistory?: boolean | undefined;
+            includeQuota?: boolean | undefined;
             includeSessionEvidence?: boolean | undefined;
+            includeCoach?: boolean | undefined;
             includeTranscriptEvidence?: boolean | undefined;
             includeWorkEvidence?: boolean | undefined;
             workProjection?: 'detail' | 'summary' | undefined;
@@ -374,7 +386,9 @@ export type UsageActionInputById = {
             includeContributions?: boolean | undefined;
             includeComparison?: boolean | undefined;
             includeQuotaHistory?: boolean | undefined;
+            includeQuota?: boolean | undefined;
             includeSessionEvidence?: boolean | undefined;
+            includeCoach?: boolean | undefined;
             includeTranscriptEvidence?: boolean | undefined;
             includeWorkEvidence?: boolean | undefined;
             workProjection?: 'detail' | 'summary' | undefined;
@@ -420,7 +434,9 @@ export type UsageActionInputById = {
             includeContributions?: boolean | undefined;
             includeComparison?: boolean | undefined;
             includeQuotaHistory?: boolean | undefined;
+            includeQuota?: boolean | undefined;
             includeSessionEvidence?: boolean | undefined;
+            includeCoach?: boolean | undefined;
             includeTranscriptEvidence?: boolean | undefined;
             includeWorkEvidence?: boolean | undefined;
             workProjection?: 'detail' | 'summary' | undefined;
@@ -467,7 +483,9 @@ export type UsageActionInputById = {
             includeContributions?: boolean | undefined;
             includeComparison?: boolean | undefined;
             includeQuotaHistory?: boolean | undefined;
+            includeQuota?: boolean | undefined;
             includeSessionEvidence?: boolean | undefined;
+            includeCoach?: boolean | undefined;
             includeTranscriptEvidence?: boolean | undefined;
             includeWorkEvidence?: boolean | undefined;
             workProjection?: 'detail' | 'summary' | undefined;
@@ -660,7 +678,9 @@ export type UsageActionInputById = {
             includeContributions?: boolean | undefined;
             includeComparison?: boolean | undefined;
             includeQuotaHistory?: boolean | undefined;
+            includeQuota?: boolean | undefined;
             includeSessionEvidence?: boolean | undefined;
+            includeCoach?: boolean | undefined;
             includeTranscriptEvidence?: boolean | undefined;
             includeWorkEvidence?: boolean | undefined;
             workProjection?: 'detail' | 'summary' | undefined;
@@ -708,7 +728,9 @@ export type UsageActionInputById = {
             includeContributions?: boolean | undefined;
             includeComparison?: boolean | undefined;
             includeQuotaHistory?: boolean | undefined;
+            includeQuota?: boolean | undefined;
             includeSessionEvidence?: boolean | undefined;
+            includeCoach?: boolean | undefined;
             includeTranscriptEvidence?: boolean | undefined;
             includeWorkEvidence?: boolean | undefined;
             workProjection?: 'detail' | 'summary' | undefined;
@@ -6045,6 +6067,8 @@ export type UsageActionResultById = {
                 includeMessageStats?: boolean | undefined;
                 activityResolution?: 'both' | 'calendar' | 'weekdayHour' | undefined;
                 execution?: 'happier' | 'outside' | 'unknown' | undefined;
+                includeQuota?: boolean | undefined;
+                includeCoach?: boolean | undefined;
             };
             shownQuery: {
                 timeZoneOffsetMinutes: number;
@@ -6087,6 +6111,8 @@ export type UsageActionResultById = {
                 includeMessageStats?: boolean | undefined;
                 activityResolution?: 'both' | 'calendar' | 'weekdayHour' | undefined;
                 execution?: 'happier' | 'outside' | 'unknown' | undefined;
+                includeQuota?: boolean | undefined;
+                includeCoach?: boolean | undefined;
             };
             sources: {
                 source: string;
@@ -10347,6 +10373,8 @@ export type UsageActionResultById = {
                     includeMessageStats?: boolean | undefined;
                     activityResolution?: 'both' | 'calendar' | 'weekdayHour' | undefined;
                     execution?: 'happier' | 'outside' | 'unknown' | undefined;
+                    includeQuota?: boolean | undefined;
+                    includeCoach?: boolean | undefined;
                 };
                 source: {
                     source: string;
@@ -15247,6 +15275,8 @@ export type UsageActionResultById = {
                         includeMessageStats?: boolean | undefined;
                         activityResolution?: 'both' | 'calendar' | 'weekdayHour' | undefined;
                         execution?: 'happier' | 'outside' | 'unknown' | undefined;
+                        includeQuota?: boolean | undefined;
+                        includeCoach?: boolean | undefined;
                     };
                     lookbackMs: number;
                     actionId: 'workflow.trigger.add';

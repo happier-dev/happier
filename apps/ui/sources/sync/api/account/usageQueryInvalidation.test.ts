@@ -348,19 +348,33 @@ it('separates presentation settings and Machine labels from selection eligibilit
     const machine = createMachineFixture({ id: 'projection-machine', activeAt: Date.now() });
     storage.setState({ profileScope: scope, settingsScope: scope, machines: { [machine.id]: machine } });
     const invalidations: string[] = [];
+    let observesSessionMachine = true;
     const release = subscribeUsageQueryStateInvalidation(input => invalidations.push(input), () => ({
-        includeMachineNames: true, poolMachineFilters: [[]], sessionMachineIds: [machine.id],
+        includeMachineNames: true, poolMachineFilters: [[]], sessionMachineIds: observesSessionMachine ? [machine.id] : [],
     }));
     try {
         storage.setState(state => ({ settings: { ...state.settings, usageNightHoursV1: { startHour: 23, endHour: 7 } } }));
         expect(invalidations.splice(0)).toEqual(['projection-inputs']);
+        storage.setState(state => ({ settings: { ...state.settings, usagePacingTargetsV1: [{ id: 'personal', scope: { kind: 'personal' }, utilizationFraction: 0.8 }] } }));
+        expect(invalidations.splice(0)).toEqual(['quota-projection-inputs']);
+        storage.setState(state => ({ profile: { ...state.profile, connectedAccountsV4: [{
+            ref: { service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, accountId: 'work' },
+            status: 'connected', authenticationModeId: 'manual', revisionSemantics: 'revisioned',
+            credentialRevision: 'csr_abcdefghijklmnopqrstuvwxyz', configurationReady: false, configurationRevision: null, scopes: [],
+        }] } }));
+        expect(invalidations.splice(0)).toEqual(['quota-inputs']);
         storage.setState({ machines: { [machine.id]: { ...machine, metadata: { ...machine.metadata!, displayName: 'Renamed' } } } });
         expect(invalidations.splice(0)).toEqual(['projection-inputs']);
         storage.setState({ machines: { [machine.id]: { ...machine, active: false, activeAt: 1 } } });
+        expect(invalidations.splice(0)).toEqual(['material-inputs']);
+        observesSessionMachine = false;
+        storage.setState({ machines: { [machine.id]: machine } });
         expect(invalidations.splice(0)).toEqual(['quota-inputs']);
+        storage.setState({ settingsScope: { ...scope, accountId: 'other-account' } });
+        expect(invalidations.splice(0)).toEqual(['material-inputs']);
     } finally {
         release?.();
-        storage.setState({ profileScope: previous.profileScope, settingsScope: previous.settingsScope,
+        storage.setState({ profile: previous.profile, profileScope: previous.profileScope, settingsScope: previous.settingsScope,
             settings: previous.settings, machines: previous.machines });
     }
 });

@@ -164,12 +164,18 @@ async function performReachableFetch<T>(params: ReachableFetchParams, consumeRes
         });
         reachability = await reachabilityPromise;
         const probeReportScope = peekServerReachabilityScope(params.serverUrl, effectiveToken);
-        params.onIssued?.();
+        let issued = false;
+        const markIssued = () => {
+            if (issued) return;
+            params.onIssued?.();
+            issued = true;
+        };
         let response: Response;
         try {
-            response = await fetchWithCredentialRedirectRefusal(params.url, { ...params.init, headers, signal }, runtimeFetchManualResponse);
+            response = await fetchWithCredentialRedirectRefusal(params.url, { ...params.init, headers, signal },
+                (url, init) => runtimeFetchManualResponse(url, init, markIssued));
         } catch (error) {
-            if (!signal?.aborted) reportServerUnreachable(params.serverUrl, error, effectiveToken);
+            if (issued && !signal?.aborted) reportServerUnreachable(params.serverUrl, error, effectiveToken);
             throw error;
         }
         const probe = classifyEndpointResponse(response, hasAuth);

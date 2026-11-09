@@ -35,7 +35,7 @@ export type SessionInputReader = (sessionId: string, readTranscript: boolean,
     onProgress?: (value: SessionInputEvidence) => void,
     admitted?: SessionInputEvidence, demandKey?: string, sourceReferenceKey?: string,
     /** The caller's demand. A shared read ends once every signalled borrower has left. */
-    signal?: AbortSignal) => Promise<SessionInputEvidence | null>;
+    signal?: AbortSignal) => SessionInputEvidence | null | Promise<SessionInputEvidence | null>;
 /** Selected ids, plus the rows a selection read opened for the borrowers of that same read. */
 export type SessionInputSelection = Readonly<{ ids: readonly string[]; rows?: unknown }>;
 export type SessionInputSelectionReader = (demandKey: string,
@@ -101,7 +101,7 @@ export function createUsageQuerySessionInputs(input: Readonly<{
 }> {
     type InputEntry = { sessionId: string; readTranscript: boolean; sourceReferenceKeys: Set<string>;
         basis: Readonly<{ storage: string; admitted?: string }>; needsAdmission: boolean;
-        value?: SessionInputEvidence; failure?: unknown; read: Promise<SessionInputEvidence | null>;
+        value?: SessionInputEvidence; failure?: unknown; read: ReturnType<SessionInputReader>;
         listeners: Set<(value: SessionInputEvidence) => void>; shared?: SharedRead; lastGood?: SessionInputEvidence };
     const entries = new Map<string, Map<string, InputEntry>>();
     function* allEntries() { for (const group of entries.values()) yield* group.values(); }
@@ -224,26 +224,31 @@ export function createUsageQuerySessionInputs(input: Readonly<{
         const retained = group.get(key);
         const observe = (entry: InputEntry) => {
             if (sourceReferenceKey) entry.sourceReferenceKeys.add(sourceReferenceKey);
-            if (entry.shared) borrowSharedRead(entry.shared, entry.read, signal, () => {
+            const read = entry.read;
+            if (!(read instanceof Promise)) {
+                if (onProgress && read) onProgress(read);
+                return read;
+            }
+            if (entry.shared) borrowSharedRead(entry.shared, read, signal, () => {
                 // Every consumer left before this read settled. End its physical
                 // read and keep the last admitted value for the next demand.
                 entry.shared!.abort.abort();
                 if (group.get(key) !== entry) return;
                 const lastGood = entry.lastGood;
                 if (lastGood) group.set(key, { sessionId, readTranscript, sourceReferenceKeys: entry.sourceReferenceKeys, basis: entry.basis,
-                    needsAdmission: true, value: lastGood, read: Promise.resolve(lastGood), listeners: new Set() });
+                    needsAdmission: true, value: lastGood, read: lastGood, listeners: new Set() });
                 else group.delete(key);
             });
-            if (!onProgress) return entry.read;
+            if (!onProgress) return read;
             entry.listeners.add(onProgress);
             if (entry.value) onProgress(entry.value);
-            return entry.read.finally(() => entry.listeners.delete(onProgress));
+            return read.finally(() => entry.listeners.delete(onProgress));
         };
         if (retained && retained.basis.storage === basis.storage && retained.basis.admitted === basis.admitted
             && !retained.needsAdmission) return observe(retained);
         const entry: InputEntry = { sessionId, readTranscript,
             sourceReferenceKeys: new Set(sourceReferenceKey ? [sourceReferenceKey] : []), basis, needsAdmission: false,
-            read: Promise.resolve<SessionInputEvidence | null>(null), listeners: new Set(),
+            read: null, listeners: new Set(),
             ...(retained?.value && !retained.failure ? { lastGood: retained.value } : {}) };
         group.set(key, entry);
         // Streaming markers change the next admission, not this finite read.
@@ -271,7 +276,7 @@ export function createUsageQuerySessionInputs(input: Readonly<{
                         || sibling.value.callerDataKeyEnvelope !== value.callerDataKeyEnvelope
                         || JSON.stringify(version(sibling.value.session)) !== openedVersion) continue;
                     sibling.value = value;
-                    sibling.read = Promise.resolve(value);
+                    sibling.read = value;
                     for (const listener of sibling.listeners) listener(value);
                 }
             }
@@ -279,18 +284,25 @@ export function createUsageQuerySessionInputs(input: Readonly<{
             // needs fresh admission even at the same Session version.
             if ((!value || readTranscript && !value.messageEvidence && !value.completeMessageCoverage)
                 && group.get(key) === entry) group.delete(key);
+            // Only the completed admission becomes synchronous. Physical I/O
+            // settling alone does not admit a value to later borrowers.
+            entry.read = value;
             return value;
         }).catch(error => {
             if (group.get(key) === entry) {
-                if (error instanceof SessionPartsHttpError || !readUsageHistoryFailure(error).retryable) {
+                const failure = readUsageHistoryFailure(error);
+                if (retained?.value && failure.retryable
+                    && (isTransientConnectivityError(error) || failure.httpStatus !== undefined && failure.httpStatus >= 500)
+                    && witness.isCurrent() && input.lifetime.isCurrent() && readBasis(sessionId) === basis.storage) {
+                    entry.value = retained.value;
+                    entry.needsAdmission = true;
+                    // Keep this input available for its next admission. Whether
+                    // a whole query can retain prior facts belongs to that query.
+                } else if (error instanceof SessionPartsHttpError || !failure.retryable) {
                     // A typed refusal settles this admission, including any
                     // summary published before a private page was refused.
                     entry.failure = error;
                     entry.value = undefined;
-                } else if (retained?.value && isTransientConnectivityError(error) && witness.isCurrent()
-                    && input.lifetime.isCurrent() && readBasis(sessionId) === basis.storage) {
-                    entry.value = retained.value;
-                    entry.needsAdmission = true;
                 } else group.delete(key);
             }
             throw error;

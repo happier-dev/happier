@@ -207,7 +207,7 @@ export function useWorkspaceTabSync(input: Readonly<{
         latest.current.local.restoreAction(action);
         runtime.current?.reconcileLocal();
     }, []);
-    const offProjection = React.useMemo(() => projectWorkspaceSharedTabs(input.local.state), [input.local.state]);
+    const offProjection = React.useMemo(() => syncEnabled ? null : projectWorkspaceSharedTabs(input.local.state), [input.local.state, syncEnabled]);
     const visible = published.binding === binding && published.credentials === credentials && (published.isCurrent?.() ?? true)
         ? published : null;
     return { ...input.local, dispatch, restoreAction, sharedTabs: syncEnabled ? visible?.snapshot.record ?? null : offProjection,

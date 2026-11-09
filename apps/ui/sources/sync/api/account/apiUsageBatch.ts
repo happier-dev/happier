@@ -13,6 +13,7 @@ import type { UsageContributionProjection } from '@happier-dev/protocol/usage/us
 export async function queryUsageAnalyticsBatch(credentials: AuthCredentials,
     input: UsageAnalyticsQueryBatchRequest & Readonly<{ contributionProjection?: UsageContributionProjection }>,
     options: Readonly<{ readTransport: CapturedServerReadTransport; signal: AbortSignal;
+        onIssued?: () => void;
         onChunk: (value: UsageAnalyticsQueryBatchResponse) => void }>): Promise<void> {
     const features = options.readTransport.serverId
         ? await getServerFeaturesSnapshot({ serverId: options.readTransport.serverId, signal: options.signal })
@@ -29,7 +30,7 @@ export async function queryUsageAnalyticsBatch(credentials: AuthCredentials,
     // wire translation until every supported/development Home advertises compactBatch.
     }, body: JSON.stringify(compact || input.contributionQueries === undefined ? wireInput
         : { queries: input.queries, includeContributions: true }) };
-    return options.readTransport.read(path, init, { includeAuth: false }, async response => {
+    return options.readTransport.read(path, init, { includeAuth: false, onIssued: options.onIssued }, async response => {
         throwIfAborted(options.signal);
         if (!response.ok) {
             const code = response.status === 401 || response.status === 403 ? 'denied'

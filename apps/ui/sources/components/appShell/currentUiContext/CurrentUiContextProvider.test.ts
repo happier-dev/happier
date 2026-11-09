@@ -253,6 +253,60 @@ afterEach(() => {
 });
 
 describe('CurrentUiContextProvider', () => {
+    it('reuses the committed descriptor projection while resolving commands from one publication', async () => {
+        const hook = await renderHook(() => ({ publisher: useCurrentUiContextMountPublisher(), reader: useOptionalCurrentUiContextReader() }),
+            { wrapper: CurrentUiContextTestProvider });
+        const reader = requireCurrentUiContextReader(hook.getCurrent().reader);
+        const publication = hook.getCurrent().publisher!.createMount();
+        const commands = Array.from({ length: 128 }, (_, index) => ({ title: `Filter ${index}`,
+            command: { kind: 'hostLocal' as const, invoke: () => true } }));
+        try {
+            await act(async () => { publication.publish({ entity: { kind: 'usage_summary', label: 'Usage' }, commands }); });
+            const admitted = reader.readCurrentUiContext()!;
+            for (const descriptor of admitted.commands) {
+                expect(reader.resolveCurrentUiCommand(descriptor.id)?.command).toBe(commands.find(command => command.title === descriptor.title)!.command);
+            }
+            expect(reader.readCurrentUiContext()).toBe(admitted);
+            // Withdrawal takes effect before React commits its next projection.
+            await act(async () => {
+                publication.clear();
+                expect(reader.readCurrentUiContext()!.commands).toEqual([]);
+                expect(reader.resolveCurrentUiCommand(admitted.commands[0]!.id)).toBeNull();
+            });
+        } finally { await hook.unmount(); }
+    });
+
+    it('matches a refreshed command publication in work proportional to its named commands', async () => {
+        const hook = await renderHook(() => ({ publisher: useCurrentUiContextMountPublisher(), reader: useOptionalCurrentUiContextReader() }),
+            { wrapper: CurrentUiContextTestProvider });
+        const reader = requireCurrentUiContextReader(hook.getCurrent().reader);
+        const publication = hook.getCurrent().publisher!.createMount();
+        const refreshCost = async (count: number) => {
+            const commands = Array.from({ length: count }, (_, index) => ({
+                title: `Filter ${index}`,
+                command: { kind: 'hostLocal' as const, invoke: () => true },
+            }));
+            const publish = () => publication.publish({ entity: { kind: 'usage_summary', label: 'Usage' }, commands });
+            await act(async () => { publish(); });
+            const addresses = reader.readCurrentUiContext()!.commands.map(command => command.id);
+            // Count actual candidate-membership probes through the native Set;
+            // retained candidates short-circuit before reading their titles.
+            const probes = vi.spyOn(Set.prototype, 'has');
+            let cost: number;
+            try {
+                await act(async () => { publish(); });
+                cost = probes.mock.calls.length;
+            } finally { probes.mockRestore(); }
+            expect(reader.readCurrentUiContext()!.commands.map(command => command.id)).toEqual(addresses);
+            return cost;
+        };
+        try {
+            const small = await refreshCost(128);
+            const large = await refreshCost(256);
+            expect(large, 'doubling distinct commands doubles publication matching work').toBeLessThanOrEqual(small * 2);
+        } finally { await hook.unmount(); }
+    });
+
     it('retains unchanged author commands across refresh, reorder and sibling changes, retiring only changed meanings', async () => {
         const hook = await renderHook(() => ({ publisher: useCurrentUiContextMountPublisher(), reader: useOptionalCurrentUiContextReader() }),
             { wrapper: CurrentUiContextTestProvider });

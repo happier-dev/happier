@@ -216,9 +216,12 @@ export function projectUsageQueryBatch(input: UsageQueryProjectionInput): UsageQ
             priorAccounting: priorAccounting.get(key), calendar: calendarQueryKeys.has(key), previous: previous.get(key), prior: input.priorSlices.get(key),
             accountingNowMs, work: work.get(key), detail: detail.get(key), stages: input.howYouWorkSourcesByQuery.get(key),
             settled: input.settledHowYouWorkQueries.has(key), baseDetailStatus: query.includeSessionEvidence ? baseDetailStatus : undefined,
-            quota: input.quota, pools: pools.get(key), mcpCatalog: input.mcpCatalog, locations,
-            pricing: accountSettings.usageModelPriceOverridesV1, night: accountSettings.usageNightHoursV1, preferences: accountSettings.usageCoachPreferencesV1,
-            suppressions: input.coachSuppressions,
+            quota: query.includeQuota !== false ? input.quota : undefined,
+            pools: query.includeQuota !== false ? pools.get(key) : undefined,
+            mcpCatalog: query.includeCoach !== false ? input.mcpCatalog : undefined, locations,
+            pricing: accountSettings.usageModelPriceOverridesV1, night: accountSettings.usageNightHoursV1,
+            preferences: query.includeCoach !== false ? accountSettings.usageCoachPreferencesV1 : undefined,
+            suppressions: query.includeCoach !== false ? input.coachSuppressions : undefined,
             // Snooze expiry remains owned by the canonical suppression
             // projector. Its unchanged result permits reuse without a timer.
             coach: coach && input.coachSuppressions && applyUsageCoachPreferences(coach, input.coachSuppressions, Date.now()) });

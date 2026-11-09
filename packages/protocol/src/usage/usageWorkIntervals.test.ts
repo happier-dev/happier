@@ -1,11 +1,33 @@
-import { describe, expect, it } from 'vitest';
-import { projectUsageWorkIntervals, summarizeUsageRunLengthObservations, type UsageWorkIntervalFact } from './usageWorkIntervals.js';
+import { describe, expect, it, vi } from 'vitest';
+import { projectUsageWorkIntervals, summarizeUsageConcurrency, summarizeUsageRunLengthObservations, type UsageWorkIntervalFact } from './usageWorkIntervals.js';
 
 const at = (value: string) => Date.parse(value);
 const period = { startMs: at('2026-07-01T22:00:00Z'), endMs: at('2026-07-02T22:00:00Z') };
 const busy = (workId: string, start: string, end: string | null, machineId = 'a'): UsageWorkIntervalFact => ({
     workId, machineId, agentId: 'agent', evidenceId: workId, kind: 'busy',
     startMs: at(start), endMs: end === null ? null : at(end),
+});
+
+it('sweeps concurrency without allocating an entry pair for every boundary', () => {
+    const spans = Array.from({ length: 1_000 }, (_, index) => ({ startMs: index, endMs: index + 2 }));
+    let entryPairs = 0;
+    const entries = Map.prototype.entries;
+    // Allocation measurement only: keep the native iterator and every value.
+    const observed = vi.spyOn(Map.prototype, 'entries').mockImplementation(function (this: Map<unknown, unknown>) {
+        const iterator = entries.call(this);
+        const next = iterator.next.bind(iterator);
+        iterator.next = () => {
+            const step = next();
+            if (!step.done) entryPairs++;
+            return step;
+        };
+        return iterator;
+    });
+    let result: ReturnType<typeof summarizeUsageConcurrency>;
+    try { result = summarizeUsageConcurrency(spans); }
+    finally { observed.mockRestore(); }
+    expect(result).toEqual({ maxParallel: 2, parallelBusyMs: 999, peakAtMs: 1 });
+    expect(entryPairs, 'sorting instants needs no copied key/value pairs').toBe(0);
 });
 
 describe('anonymous run-length observations', () => {

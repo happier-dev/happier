@@ -26,10 +26,14 @@ const Time = lazyZodSchema(() => z.number().check(z.int(), z.nonnegative()));
 
 export { UsageSessionMessageEvidenceSchema, UsageSessionStateEvidenceSchema } from './usageWorkEvidence.js';
 
+// Host projection demand never changes the Session evidence wire contract.
+const UsageSessionEvidenceQuerySchema = lazyZodSchema(() => z.pipe(UsageQuerySchema,
+    z.transform(({ includeCoach: _coach, includeQuota: _quota, ...query }) => query)));
+
 export const UsageSessionEvidenceRequestSchema = lazyZodSchema(() => z.strictObject({
     nowMs: Time,
     readWorkFacts: z.optional(z.literal(true)),
-    requests: z.array(z.strictObject({ query: UsageQuerySchema, sessionIds: z.optional(z.array(Id)),
+    requests: z.array(z.strictObject({ query: UsageSessionEvidenceQuerySchema, sessionIds: z.optional(z.array(Id)),
         /** Row-level window question: which of these Sessions belong to the window. Ignored with explicit sessionIds. */
         candidateSessionIds: z.optional(z.array(Id)) })),
 }));
@@ -47,7 +51,7 @@ const UsageSessionEvidenceResultSchema = lazyZodSchema(() => z.safeExtend(Sessio
     messageEvidence: z.optional<z.ZodMiniType<UsageSessionMessageEvidence>>(UsageSessionMessageEvidenceSchema), messagesComplete: z.optional(z.boolean()),
 }));
 const UsageSessionEvidenceHeaderSchema = lazyZodSchema(() => z.strictObject({
-    requests: z.array(z.strictObject({ query: UsageQuerySchema, sessionIds: z.array(Id) })),
+    requests: z.array(z.strictObject({ query: UsageSessionEvidenceQuerySchema, sessionIds: z.array(Id) })),
 }));
 /** Responses correspond positionally to requests, including repeated query identities. */
 export const UsageSessionEvidenceResponseSchema = lazyZodSchema(() => z.strictObject({

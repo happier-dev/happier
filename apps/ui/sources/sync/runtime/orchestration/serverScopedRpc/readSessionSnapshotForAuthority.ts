@@ -142,7 +142,8 @@ export async function readSessionSnapshotsForAuthority(params: Readonly<{
             for (const part of [detail, ...(params.requireTurns && turns ? [turns] : [])]) {
                 if (part.status !== 200) {
                     const requirement = OperationUpdateRequiredV1Schema.safeParse(part.body);
-                    if (requirement.success) throw new SessionPartsHttpError(part.status, part.body, requirement.data);
+                    if (requirement.success || params.requireTurns) throw new SessionPartsHttpError(part.status, part.body,
+                        requirement.success ? requirement.data : undefined);
                 }
             }
             const snapshot = await readSessionSnapshotForAuthority({ ...params, sessionId,

@@ -81,8 +81,7 @@ export function createWorkspaceTabsSync(input: Readonly<{
         if (intent.type === 'move') return { ...intent, tabId: resolvePendingId(intent.tabId), beforeId: intent.beforeId === null ? null : resolvePendingId(intent.beforeId) };
         return { ...intent, tabId: resolvePendingId(intent.tabId) };
     };
-    const rememberLocalAliases = () => {
-        const local = input.getLocalRecord?.();
+    const rememberLocalAliases = (local: SharedWorkspaceTabs | undefined) => {
         const shared = record;
         if (!local || !shared) return;
         // Catalog admission decides which retained local instances correspond to
@@ -94,8 +93,7 @@ export function createWorkspaceTabsSync(input: Readonly<{
         };
         rememberNormalizedAliases(combined, normalize(combined));
     };
-    const localProjection = (value: SharedWorkspaceTabs): SharedWorkspaceTabs => {
-        const local = input.getLocalRecord?.();
+    const localProjection = (value: SharedWorkspaceTabs, local: SharedWorkspaceTabs | undefined): SharedWorkspaceTabs => {
         if (!local) return value;
         const localIds = new Map<string, string>();
         for (const id of local.order) {
@@ -134,11 +132,12 @@ export function createWorkspaceTabsSync(input: Readonly<{
     const project = () => {
         if (!current()) return;
         if (record) record = normalizeWithAliases(record);
-        rememberLocalAliases();
+        const local = input.getLocalRecord?.();
+        rememberLocalAliases(local);
         const value = snapshot().record;
         if (value && value !== publishedRecord) {
             publishedRecord = value;
-            input.onRecord(value, localProjection(value));
+            input.onRecord(value, localProjection(value, local));
         }
         notify();
     };
@@ -169,9 +168,10 @@ export function createWorkspaceTabsSync(input: Readonly<{
         reproject: project,
         reconcileLocal: () => {
             if (!current()) return;
-            rememberLocalAliases();
+            const local = input.getLocalRecord?.();
+            rememberLocalAliases(local);
             const value = snapshot().record;
-            if (value) input.onRecord(value, localProjection(value));
+            if (value) input.onRecord(value, localProjection(value, local));
         },
         refresh: () => {
             // Catalog policy changes apply to the cached projection even if the reread fails.
@@ -201,7 +201,7 @@ export function createWorkspaceTabsSync(input: Readonly<{
             status = pending.length ? 'pending' : 'synced';
             if (!pending.length) {
                 tabAliases.clear();
-                rememberLocalAliases();
+                rememberLocalAliases(input.getLocalRecord?.());
             }
             notify();
         }),

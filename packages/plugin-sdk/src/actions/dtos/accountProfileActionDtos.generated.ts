@@ -81,7 +81,9 @@ export type AccountProfileActionInputById = {
             includeContributions?: boolean | undefined;
             includeComparison?: boolean | undefined;
             includeQuotaHistory?: boolean | undefined;
+            includeQuota?: boolean | undefined;
             includeSessionEvidence?: boolean | undefined;
+            includeCoach?: boolean | undefined;
             includeTranscriptEvidence?: boolean | undefined;
             includeWorkEvidence?: boolean | undefined;
             workProjection?: 'detail' | 'summary' | undefined;
@@ -724,7 +726,9 @@ export type AccountProfileActionInputById = {
             includeContributions?: boolean | undefined;
             includeComparison?: boolean | undefined;
             includeQuotaHistory?: boolean | undefined;
+            includeQuota?: boolean | undefined;
             includeSessionEvidence?: boolean | undefined;
+            includeCoach?: boolean | undefined;
             includeTranscriptEvidence?: boolean | undefined;
             includeWorkEvidence?: boolean | undefined;
             workProjection?: 'detail' | 'summary' | undefined;
@@ -1367,7 +1371,9 @@ export type AccountProfileActionInputById = {
             includeContributions?: boolean | undefined;
             includeComparison?: boolean | undefined;
             includeQuotaHistory?: boolean | undefined;
+            includeQuota?: boolean | undefined;
             includeSessionEvidence?: boolean | undefined;
+            includeCoach?: boolean | undefined;
             includeTranscriptEvidence?: boolean | undefined;
             includeWorkEvidence?: boolean | undefined;
             workProjection?: 'detail' | 'summary' | undefined;
@@ -2106,6 +2112,8 @@ export type AccountProfileActionResultById = {
                 includeMessageStats?: boolean | undefined;
                 activityResolution?: 'both' | 'calendar' | 'weekdayHour' | undefined;
                 execution?: 'happier' | 'outside' | 'unknown' | undefined;
+                includeQuota?: boolean | undefined;
+                includeCoach?: boolean | undefined;
             };
             snapshot: null | {
                 v: 1;
@@ -3132,6 +3140,8 @@ export type AccountProfileActionResultById = {
                 includeMessageStats?: boolean | undefined;
                 activityResolution?: 'both' | 'calendar' | 'weekdayHour' | undefined;
                 execution?: 'happier' | 'outside' | 'unknown' | undefined;
+                includeQuota?: boolean | undefined;
+                includeCoach?: boolean | undefined;
             };
             snapshot: null | {
                 v: 1;
@@ -3655,6 +3665,8 @@ export type AccountProfileActionResultById = {
                 includeMessageStats?: boolean | undefined;
                 activityResolution?: 'both' | 'calendar' | 'weekdayHour' | undefined;
                 execution?: 'happier' | 'outside' | 'unknown' | undefined;
+                includeQuota?: boolean | undefined;
+                includeCoach?: boolean | undefined;
             };
             snapshot: null | {
                 v: 1;
@@ -4178,6 +4190,8 @@ export type AccountProfileActionResultById = {
                 includeMessageStats?: boolean | undefined;
                 activityResolution?: 'both' | 'calendar' | 'weekdayHour' | undefined;
                 execution?: 'happier' | 'outside' | 'unknown' | undefined;
+                includeQuota?: boolean | undefined;
+                includeCoach?: boolean | undefined;
             };
             snapshot: null | {
                 v: 1;
@@ -4701,6 +4715,8 @@ export type AccountProfileActionResultById = {
                 includeMessageStats?: boolean | undefined;
                 activityResolution?: 'both' | 'calendar' | 'weekdayHour' | undefined;
                 execution?: 'happier' | 'outside' | 'unknown' | undefined;
+                includeQuota?: boolean | undefined;
+                includeCoach?: boolean | undefined;
             };
             snapshot: null | {
                 v: 1;
@@ -5224,6 +5240,8 @@ export type AccountProfileActionResultById = {
                 includeMessageStats?: boolean | undefined;
                 activityResolution?: 'both' | 'calendar' | 'weekdayHour' | undefined;
                 execution?: 'happier' | 'outside' | 'unknown' | undefined;
+                includeQuota?: boolean | undefined;
+                includeCoach?: boolean | undefined;
             };
             snapshot: null | {
                 v: 1;
@@ -5747,6 +5765,8 @@ export type AccountProfileActionResultById = {
                 includeMessageStats?: boolean | undefined;
                 activityResolution?: 'both' | 'calendar' | 'weekdayHour' | undefined;
                 execution?: 'happier' | 'outside' | 'unknown' | undefined;
+                includeQuota?: boolean | undefined;
+                includeCoach?: boolean | undefined;
             };
             snapshot: null | {
                 v: 1;

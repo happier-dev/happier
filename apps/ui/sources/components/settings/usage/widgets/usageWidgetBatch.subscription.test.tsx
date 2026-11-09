@@ -23,7 +23,6 @@ import { WidgetFrameDemandContext, WidgetFrameInstanceIdContext } from '@/compon
 import { CoreCollectionScope } from '@/components/ui/lists/collection/CoreCollectionScope';
 import { createUsageWidgetPresets } from '../usageWidgetPresets';
 import { flattenWidgetLayoutWidgetsV1, type UsageBuiltinWidgetIdV1 } from '@happier-dev/protocol/widgets';
-import { useConnectedServiceQuotaSnapshots } from '@/hooks/server/connectedServices/useConnectedServiceQuotaSnapshots';
 import { QualifiedConnectedServiceUsageSourceResolveV4Schema } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
 import { parseQualifiedConnectedAccountV4StructuredQueryValue } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4QueryCodec';
 import { USAGE_COACH_DETECTOR_IDS } from '@happier-dev/protocol/usage/coach/coachDetectorIds';
@@ -133,7 +132,20 @@ it('keeps real How bodies quiet while unrelated current quota answers and Coach 
       metric: { kind: 'value' as const, value: metric } },
   } }))];
   const clauses = readUsageWidgetQueryOverrides(normalizeUsageQuery({ granularity: 'day', timeZoneOffsetMinutes: 0 }));
-  function QuotaReader() { useConnectedServiceQuotaSnapshots(quotas.map(({ ref }) => ({ ref })), { fetchPolicy: 'once' }); return null; }
+  // How bodies do not demand quota or Coach. A sibling acquires those shared
+  // live sources whose publications must leave the How bodies quiet.
+  function QuotaReader() {
+    const demand = React.useContext(WidgetFrameDemandContext);
+    React.useLayoutEffect(() => demand?.place('quota-reader', 'usage_plan_fit', true), [demand]);
+    readModel({ period: { relative: '90days' } }, 'usage_plan_fit');
+    return null;
+  }
+  function CoachReader() {
+    const demand = React.useContext(WidgetFrameDemandContext);
+    React.useLayoutEffect(() => demand?.place('coach-reader', 'usage_coach', true), [demand]);
+    readModel({ period: { relative: '90days' } }, 'usage_coach');
+    return null;
+  }
   let rawSlices: readonly UsageQueryResultSlice[] = [];
   function SourceObserver() { rawSlices = usageWidgetBatch.useUsageWidgetBatchSlices(); return null; }
   function PlacedBody(props: React.ComponentProps<typeof UsageWidgetBody> & Readonly<{ instanceId: string }>) {
@@ -142,8 +154,9 @@ it('keeps real How bodies quiet while unrelated current quota answers and Coach 
     return <UsageWidgetBody {...props} />;
   }
   const screen = await renderScreen(<InjectedAuthProvider credentials={credentials}><CoreCollectionScope>
-    <QuotaReader />
-    <UsageWidgetBatchProvider clauses={clauses} queryWidgetIds={widgets.map(row => row.instance.id)}>
+    <UsageWidgetBatchProvider clauses={clauses} queryWidgetIds={[...widgets.map(row => row.instance.id), 'quota-reader', 'coach-reader']}>
+      <WidgetFrameInstanceIdContext.Provider value="quota-reader"><QuotaReader /></WidgetFrameInstanceIdContext.Provider>
+      <WidgetFrameInstanceIdContext.Provider value="coach-reader"><CoachReader /></WidgetFrameInstanceIdContext.Provider>
       <SourceObserver />
       {widgets.map(({ instance }) => {
         if (instance.definition.kind !== 'builtin') throw new Error('Expected builtin Usage preset');
@@ -178,8 +191,8 @@ it('keeps real How bodies quiet while unrelated current quota answers and Coach 
     changes.clear();
     await act(async () => { storage.getState().applySettingsLocal({ usageCoachPreferencesV1: { ...originalCoachPreferences,
       disabledChecks: [...originalCoachPreferences.disabledChecks, detectorId] } }); });
-    await expect.poll(() => rawSlices.some(slice => slice.shownQuery.includeSessionEvidence) && rawSlices
-      .filter(slice => slice.shownQuery.includeSessionEvidence).every(slice =>
+    await expect.poll(() => rawSlices.some(slice => slice.shownQuery.includeCoach) && rawSlices
+      .filter(slice => slice.shownQuery.includeCoach).every(slice =>
         slice.coach?.evaluations.some(row => row.detectorId === detectorId && row.status === 'disabled'))).toBe(true);
     await flushHookEffects({ cycles: 30 });
     for (const slice of rawSlices) expect(slice.howYouWork, 'Coach-only preference retains the real private projection').toBe(priorSlices.get(slice.key)?.howYouWork);

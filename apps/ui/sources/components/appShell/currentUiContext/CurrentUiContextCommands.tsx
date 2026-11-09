@@ -78,15 +78,20 @@ export function CurrentUiContextCommandsProvider(props: Readonly<{
 }>): React.ReactElement {
     const { execute, executeForCaller, binding } = useMountedActionExecution(props.authority?.scope);
     const execution = React.useMemo(() => ({ execute, executeForCaller, binding }), [execute, executeForCaller, binding]);
-    const [entries, setEntries] = React.useState<readonly Readonly<{ owner: object; commands: ComposedCommands }>[]>([]);
+    const entries = React.useRef<Map<object, ComposedCommands> | null>(null);
+    if (entries.current === null) entries.current = new Map();
+    const registry = entries.current;
+    const [revision, invalidate] = React.useReducer((current: number) => current + 1, 0);
     const latest = React.useRef(props);
     latest.current = props;
     const mounted = React.useRef(true);
     React.useLayoutEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
     const register = React.useCallback((owner: object, commands: ComposedCommands) => {
-        setEntries(current => [...current.filter(entry => entry.owner !== owner), { owner, commands }]);
-        return () => setEntries(current => current.filter(entry => entry.owner !== owner));
-    }, []);
+        registry.delete(owner);
+        registry.set(owner, commands);
+        invalidate();
+        return () => { registry.delete(owner); invalidate(); };
+    }, [registry]);
     const focused = React.useRef<(() => void) | null>(null);
     const focus = React.useCallback((owner: object, commands: ComposedCommands, onRetire: () => void) => {
         focused.current?.();
@@ -115,8 +120,14 @@ export function CurrentUiContextCommandsProvider(props: Readonly<{
         const subscription = authority.onRetire(() => setRetired(authority));
         return () => subscription.dispose();
     }, [props.authority]);
-    const commands = React.useMemo(() => composition.isCurrent() && retired !== props.authority
-        ? entries.flatMap(entry => entry.commands) : EMPTY_COMMANDS, [composition, entries, props.active, retired]);
+    const commands = React.useMemo(() => {
+        if (!composition.isCurrent() || retired === props.authority) return EMPTY_COMMANDS;
+        const combined: ComposedCommands[number][] = [];
+        for (const commands of registry.values()) {
+            for (const command of commands) combined.push(command);
+        }
+        return combined;
+    }, [composition, registry, revision, props.active, retired]);
     return <CompositionContext.Provider value={composition}>
         <CommandsContext.Provider value={commands}>{props.children}</CommandsContext.Provider>
     </CompositionContext.Provider>;

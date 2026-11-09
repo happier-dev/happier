@@ -69,24 +69,23 @@ export function normalizeWorkspaceSingletonTabs(record: SharedWorkspaceTabs, cat
     const firstByDestination = new Map<string, string>();
     const singletonKinds = new Set(workspaceSingletonDestinationIds(catalog));
     const retiredIds = new Map<string, string>();
-    const tabsById = { ...record.tabsById };
+    let tabsById: Record<string, SharedWorkspaceTabs['tabsById'][string]> | null = null;
     const order: string[] = [];
-    let changed = false;
     for (const id of record.order) {
         const tab = record.tabsById[id];
         const key = destinationAdmissionKey(tab.target, singletonKinds);
         const first = key === null ? undefined : firstByDestination.get(key);
         if (first) {
+            tabsById ??= { ...record.tabsById };
             tabsById[first] = { ...tab, id: first };
             delete tabsById[id];
             retiredIds.set(id, first);
-            changed = true;
         } else {
             if (key !== null) firstByDestination.set(key, id);
             order.push(id);
         }
     }
-    if (!changed) return record;
+    if (!tabsById) return record;
     const pairs = pruneWorkspaceTabPairs(record.pairs.map(pair => pair.map(id => retiredIds.get(id) ?? id)), tabsById);
     return { ...record, tabsById, order, pairs };
 }

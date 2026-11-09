@@ -3501,9 +3501,17 @@ retirement clears the private evidence.
 
 Accounting dispatch is acknowledged by the shared read owner before a new
 Resource read publishes or traverses retained Session inputs. This waits for
-request issuance, never its response. Successfully admitted, unchanged Session
+request issuance, never its response. A newly acquired view shows its loading
+shell until that issuance before rendering rich retained facts. Unchanged admitted
+accounting can present immediately; later refreshes preserve visible facts.
+Successfully admitted, unchanged Session
 inputs return directly; only pending or changed inputs allocate asynchronous
 read continuations. The same input owner retains invalidation and cancellation.
+
+A selected layout's loading shell withdraws widget Resource demand until its
+document is admitted. Outgoing frame registrations cannot start another batch
+while they are being removed. Same-document refresh and viewport changes retain
+their existing admitted demand.
 
 The Session-evidence read publishes admitted interval facts before requested
 transcript detail finishes. Its existing source states distinguish

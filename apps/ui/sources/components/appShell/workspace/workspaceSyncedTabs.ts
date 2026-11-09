@@ -1,4 +1,4 @@
-import type { WorkspaceTabsV1 } from '@happier-dev/protocol';
+import type { WorkspaceTabsV1 } from '@happier-dev/protocol/workspace/workspaceTabsV1';
 import { createWorkspaceEmptyTab, reduceWorkspaceState, type WorkspaceAction, type WorkspaceState, type WorkspaceTab } from './workspaceState';
 import { collectSplitCanvasLeaves } from '../splitCanvas/model/splitCanvasTree';
 
@@ -42,6 +42,7 @@ export function projectWorkspaceSharedTabs(state: WorkspaceState, pairs: SharedW
 
 /** Replay only accepted edits, never infer a remote deletion from an older local snapshot. */
 export function applyWorkspaceTabIntents(record: SharedWorkspaceTabs, intents: readonly WorkspaceTabIntent[]): SharedWorkspaceTabs {
+    if (!intents.length) return record;
     const tabsById = { ...record.tabsById };
     let order = [...record.order];
     let pairs = record.pairs;

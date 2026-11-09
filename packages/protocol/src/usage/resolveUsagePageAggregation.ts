@@ -237,9 +237,17 @@ function carryUsageProjectionInputs(value: UsageQueryResultSlice, source: UsageQ
     projection.value === value ? projection : { ...projection, value };
   // Boundary reconciliation can retain an equal prior projection, and the UI
   // may have admitted remedies/preferences. Carry that actual admitted value.
+  // Public profile delivery omits private members after deriving consented
+  // facts. That omission must not erase their admitted calculation inputs.
   const projected: UsagePageProjections = { ...admitted,
-    howYouWork: withValue(admitted.howYouWork, value.howYouWork), coach: withValue(admitted.coach, value.coach),
-    work: withValue(admitted.work, value.work), mergedOutcomes: withValue(admitted.mergedOutcomes, value.mergedOutcomes),
+    howYouWork: Object.prototype.hasOwnProperty.call(value, 'howYouWork')
+      ? withValue(admitted.howYouWork, value.howYouWork) : admitted.howYouWork,
+    coach: Object.prototype.hasOwnProperty.call(value, 'coach')
+      ? withValue(admitted.coach, value.coach) : admitted.coach,
+    work: Object.prototype.hasOwnProperty.call(value, 'work')
+      ? withValue(admitted.work, value.work) : admitted.work,
+    mergedOutcomes: Object.prototype.hasOwnProperty.call(value, 'mergedOutcomes')
+      ? withValue(admitted.mergedOutcomes, value.mergedOutcomes) : admitted.mergedOutcomes,
     planInsights: withValue(admitted.planInsights, value.planInsights), costFactTotals: withValue(admitted.costFactTotals, value.costFactTotals),
     comparisonCostFactTotals: withValue(admitted.comparisonCostFactTotals, value.comparison?.costFactTotals),
   };
@@ -577,8 +585,9 @@ export type UsagePageAggregationInput = Readonly<{
 }>;
 
 /** Shared B admission and source projection for accounting-backed and quota-only slices. */
-function projectUsageQuotaFields(quota: UsagePageAggregationInput['quota'], observedPools: readonly UsageQueryPoolSnapshot[] | undefined,
+function projectUsageQuotaFields(query: UsageQuery, quota: UsagePageAggregationInput['quota'], observedPools: readonly UsageQueryPoolSnapshot[] | undefined,
   previousPools?: readonly UsageQueryPoolSnapshot[]) {
+  if (query.includeQuota === false) return { sources: [] as UsageQuerySourceState[] };
   const pools = observedPools?.map(pool => {
     const previous = previousPools?.find(candidate => sameStrictJsonValue(candidate.group, pool.group));
     if (!previous?.selection.value || !canRetainUsageReadFailure(pool.selection.errorCode)
@@ -625,14 +634,14 @@ export function resolveUsageQuotaPageAggregation(input: Pick<UsagePageAggregatio
     return [getUsageQueryKey(query), query] as const;
   }));
   const results = [...queries].map(([key, query]): UsageQueryResultSlice => {
-    const { sources: quotaSources, ...quotaFields } = projectUsageQuotaFields(input.quota, poolsByQuery.get(key),
+    const { sources: quotaSources, ...quotaFields } = projectUsageQuotaFields(query, input.quota, poolsByQuery.get(key),
       input.previous?.results.find(slice => slice.key === key)?.pools);
     const sources: UsageQuerySourceState[] = [
       { source: 'accounting', status: 'unsupported' },
       { source: 'work', status: 'not_loaded' },
       { source: 'how_you_work', status: 'not_loaded' },
       ...quotaSources,
-      ...(input.sources ?? []).filter(source => source.source.startsWith('quota:')),
+      ...(input.sources ?? []).filter(source => query.includeQuota !== false && source.source.startsWith('quota:')),
     ];
     return { key, requestedQuery: query, shownQuery: query,
       ...quotaFields,
@@ -696,7 +705,8 @@ export function resolveUsagePageAggregation(input: UsagePageAggregationInput): U
     const prior = previous.get(key);
     const admitted = (projectionPrevious.get(key) as ProjectedUsageSlice | undefined)?.[usagePageProjections];
     const pools = poolsByQuery.get(key);
-    const { sources: quotaSources, ...quotaFields } = projectUsageQuotaFields(input.quota, pools, prior?.pools);
+    const { sources: quotaSources, ...quotaFields } = projectUsageQuotaFields(query, input.quota, pools, prior?.pools);
+    const sourceStates = (input.sources ?? []).filter(source => query.includeQuota !== false || !source.source.startsWith('quota:'));
     const snapshot = projectPrices(retainAccountingOnReadFailure(observed, prior?.accounting,
       prior?.sources.find(source => source.source === 'accounting')?.asOfMs));
     const readPeriod = observed?.period ?? (input.nowMs !== undefined ? resolveUsageQueryPeriod(query, input.nowMs)
@@ -819,7 +829,7 @@ export function resolveUsagePageAggregation(input: UsagePageAggregationInput): U
       retained: retainedCoach === admitted?.coach.value && admitted?.coach.inputs.retaining
         ? admitted.coach.inputs.retained : retainedCoach,
     }, () => {
-      if (!query.includeSessionEvidence) return undefined;
+      if (!query.includeSessionEvidence || query.includeCoach === false) return undefined;
       const coach = coachEndMs === null || coachEndMs === undefined || coachEndMs < startMs ? undefined : evaluateUsageCoach({
         ...coachEvidence,
         ...(admittedDetail ? { detail: { ...coachEvidence?.detail,
@@ -862,8 +872,8 @@ export function resolveUsagePageAggregation(input: UsagePageAggregationInput): U
       // An exact-query detail snapshot supersedes the batch-wide initial
       // source. Retaining both lets an unfinished sibling keep this slice
       // pending after its own private evidence has answered.
-      ...(query.includeSessionEvidence ? (input.sources ?? []).filter(source => !detailSnapshot || source.source !== 'how_you_work') : [
-        ...(input.sources ?? []).filter(source => source.source !== 'how_you_work'),
+      ...(query.includeSessionEvidence ? sourceStates.filter(source => !detailSnapshot || source.source !== 'how_you_work') : [
+        ...sourceStates.filter(source => source.source !== 'how_you_work'),
         { source: 'how_you_work', status: 'not_loaded' as const },
       ]),
       ...(detailSnapshot ? [{ source: 'how_you_work', status: detailSourceStatus,
@@ -898,10 +908,10 @@ export function resolveUsagePageAggregation(input: UsagePageAggregationInput): U
     const planInsights = projectAdmittedUsageInputs(admitted?.planInsights, {
       accounting: snapshot?.value, asOfMs: snapshot?.asOfMs, startMs: period.startMs, endMs: period.endMs,
       howYouWork: detailProjection, nowMs: input.nowMs,
-      quota: input.quota?.value && ['available', 'partial', 'stale'].includes(input.quota.status) ? input.quota.value : undefined,
+      quota: query.includeQuota !== false && input.quota?.value && ['available', 'partial', 'stale'].includes(input.quota.status) ? input.quota.value : undefined,
     }, () => projectUsagePlanInsights({ query: { ...query, period }, nowMs: input.nowMs, accounting: snapshot?.value, accountingAsOfMs: snapshot?.asOfMs,
       howYouWork: detailProjection,
-      quota: input.quota?.value && ['available', 'partial', 'stale'].includes(input.quota.status) ? input.quota.value : undefined }));
+      quota: query.includeQuota !== false && input.quota?.value && ['available', 'partial', 'stale'].includes(input.quota.status) ? input.quota.value : undefined }));
     const costFactTotals = projectAdmittedUsageInputs(admitted?.costFactTotals, { facts: snapshot?.value?.costFacts, available: snapshot?.value !== undefined },
       () => snapshot?.value === undefined ? undefined : projectUsageCostFactTotals(snapshot.value.costFacts ?? []));
     const comparisonCostFactTotals = projectAdmittedUsageInputs(admitted?.comparisonCostFactTotals, { facts: comparisonSnapshot?.value?.costFacts,

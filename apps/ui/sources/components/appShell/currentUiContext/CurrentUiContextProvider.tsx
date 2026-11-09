@@ -193,9 +193,16 @@ function createMountRecord(input: Readonly<{
     const sameOwner = prior?.owner === input.owner;
     const sameEntity = sameOwner && sameStrictJsonValue(prior?.enrichment.entity, input.enrichment.entity);
     const retained = new Set<CurrentUiContextMountRecord['semanticCommands'][number]>();
+    const priorByTitle = new Map<string, number[]>();
+    prior?.projection.commands.forEach((descriptor, index) => {
+        const candidates = priorByTitle.get(descriptor.title);
+        if (candidates) candidates.push(index);
+        else priorByTitle.set(descriptor.title, [index]);
+    });
     const semanticCommands = Object.freeze((input.enrichment.commands ?? []).map((entry) => {
-        const unchanged = prior?.semanticCommands.find((candidate, index) => {
-            const descriptor = prior.projection.commands[index]!;
+        const unchangedIndex = priorByTitle.get(entry.title)?.find(index => {
+            const candidate = prior!.semanticCommands[index]!;
+            const descriptor = prior!.projection.commands[index]!;
             return !retained.has(candidate) && !candidate.retirement.signal.aborted
                 && descriptor.title === entry.title && descriptor.description === entry.description
                 && sameStrictJsonValue(candidate.foreground, entry.foreground)
@@ -207,6 +214,7 @@ function createMountRecord(input: Readonly<{
                     || (sameEntity && (entry.command.kind === 'openSurface' || entry.command.kind === 'executeAction')
                         && sameStrictJsonValue(candidate.command, entry.command)));
         });
+        const unchanged = unchangedIndex === undefined ? undefined : prior!.semanticCommands[unchangedIndex];
         if (unchanged) {
             retained.add(unchanged);
             return unchanged;
@@ -403,6 +411,11 @@ function CurrentUiContextProviderContent(props: Readonly<{ children: React.React
             return committedSnapshot;
         }
         const committed = committedSnapshotRef.current!;
+        // The composer already qualified this exact publication. Command
+        // lookup must not clone and re-parse its entire inventory per id.
+        // Imperative publish/clear changes the record before React commits;
+        // those reads still project the current record below.
+        if (committed.mountRecord === currentMountRecordRef.current) return committedSnapshot;
         const mountEnrichment = currentMountProjection(currentMountRecordRef.current,
             committedSnapshot.navigation.area, committed.visibleModalId, committed.modalVisible);
         return composeCurrentUiContextSnapshotFromNavigation(

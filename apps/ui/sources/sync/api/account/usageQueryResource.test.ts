@@ -1191,7 +1191,12 @@ describe('usage query captured Resource adapter', () => {
     const id = 'projected-retry';
     const captured = await context(request => {
       if (request.path === '/v2/usage/query') return Response.json(value);
-      if (request.path === USAGE_SESSION_EVIDENCE_PATH) return Response.json({ error: 'denied' }, { status: 403 });
+      if (request.path === USAGE_SESSION_EVIDENCE_PATH) {
+        const input = UsageSessionEvidenceRequestSchema.parse(request.body);
+        return Response.json({ requests: input.requests.map(demand => ({ query: demand.query, sessionIds: [id] })),
+          results: [{ sessionId: id, detail: { status: 503, body: { error: 'unavailable' } } }],
+        } satisfies UsageSessionEvidenceResponse);
+      }
       return undefined;
     });
     storage.setState({ sessions: { [id]: createSessionFixture({ id, encryptionMode: 'plain', serverId: captured.accountLifetime.scope.serverId }) } });
@@ -1811,6 +1816,7 @@ describe('usage query captured Resource adapter', () => {
     ] };
     const deliveries: unknown[] = [];
     const captured = await context(request => {
+      if (request.method === 'PUT' && /^\/v2\/sessions\/[^/]+\/system-records$/.test(request.path)) return successfulUsageFactWrite(request.body);
       if (request.path === '/v2/usage/query-batch') {
         const input = UsageAnalyticsQueryBatchRequestSchema.parse(request.body);
         const delivered = collectUsageAnalyticsBatchDelivery(projectUsageAnalyticsBatchDelivery({ v: 1,
@@ -2493,7 +2499,7 @@ describe('usage query captured Resource adapter', () => {
         notRead: scenario === 'recovery' ? 3 : 5 });
       expect(slice().coach?.sessionCoverage).toEqual(slice().howYouWork?.sessionCoverage);
       if (scenario === 'recovery') {
-        expect(slice().sources).toContainEqual({ source: 'how_you_work:sessions', status: 'partial' });
+        expect(slice().sources).toContainEqual({ source: 'how_you_work:sessions', status: 'partial', errorCode: 'http_error' });
         expect(slice().howYouWork).toMatchObject({ detailStatus: 'partial',
           intervals: { agentTimeMs: 600 }, runLengths: { coverage: 'partial', sampleCount: 2,
             byAgent: [{ agentId: 'codex', durationsMs: [300, 300] }] } });
@@ -2644,6 +2650,242 @@ describe('usage query captured Resource adapter', () => {
       await expect.poll(() => entry.getSnapshot().value && decodeUsageQueryResource(entry.getSnapshot().value!).results[0]?.sources.find(source => source.source === 'quota')?.status).toBe('unsupported');
       expect(observed(), 'disabling allowance changes no admitted accounting fact').toBe(1);
       expect(home!.requests.filter(request => request.path === '/v2/usage/query')).toHaveLength(1);
+    } finally { release(); }
+  });
+
+  it('acquires no provider allowance for cold non-quota demand and preserves Capacity current reads', async () => {
+    const ref = { service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, accountId: 'quota-demand' };
+    const source = { bindingKind: 'account' as const, ref };
+    const now = Date.now();
+    const recordKey = { providerId: 'codex', accountSubjectId: ref.accountId, subjectKind: 'account', quotaScope: 'account' } as const;
+    const record = ProviderAccountUsageSnapshotV1Schema.parse({ v: 1, recordId: buildProviderAccountUsageRecordId(recordKey), recordKey,
+      providerId: 'codex', accountSubject: { kind: 'providerSubject', id: ref.accountId }, observedAtMs: now, fetchedAtMs: now,
+      staleAfterMs: 600_000, source: 'providerHttp', confidence: 'confirmed', state: 'loaded_empty', meters: [] });
+    let reads = 0;
+    const captured = await context(request => {
+      if (request.path === '/v1/features') return Response.json(createRootLayoutFeaturesResponse({ features: {
+        connectedServices: { enabled: true, quotas: { enabled: true } },
+      } }));
+      if (request.path.startsWith('/v4/connect/qualified/provider-account-usage/')) reads++;
+      if (request.path === '/v4/connect/qualified/provider-account-usage/sources/resolve') return Response.json({ source,
+        recordId: record.recordId, providerAccountId: ref.accountId, fetchedAt: now, staleAfterMs: 600_000 });
+      if (request.path === '/v4/connect/qualified/provider-account-usage/record') return Response.json({ content: { t: 'plain', v: record },
+        metadata: { fetchedAt: now, staleAfterMs: 600_000, status: 'ok' }, sources: [source] });
+      return undefined;
+    }, { connectedAccountsV4: [{ ref, status: 'connected', authenticationModeId: 'manual', revisionSemantics: 'revisioned',
+      credentialRevision: 'csr_abcdefghijklmnopqrstuvwxyz', configurationReady: false, configurationRevision: null, scopes: [] }] });
+    reads = 0;
+    const query = normalizeUsageQuery({ includeQuota: false, includeAccounting: false, includeQuotaHistory: false,
+      includeComparison: false, includeSessionEvidence: false, includeWorkEvidence: false });
+    const chart = await readUiUsageQueryBatch(captured, { queries: [query] });
+    expect.soft(reads, 'an undemanded allowance never crosses the HTTP boundary').toBe(0);
+    expect(chart.results[0]?.quota).toBeUndefined();
+    await readUiUsageQueryBatch(captured, { queries: [normalizeUsageQuery({ ...query, includeQuota: true })] });
+    expect(reads, 'Capacity still acquires current allowance without quota history').toBeGreaterThan(0);
+  });
+
+  it('keeps quota-free Resource demand quiet beside a live mixed allowance consumer', async () => {
+    const now = Date.now();
+    vi.spyOn(Date, 'now').mockReturnValue(now);
+    const ref = { service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, accountId: 'watched-quota-demand' };
+    const source = { bindingKind: 'account' as const, ref };
+    const recordKey = { providerId: 'codex', accountSubjectId: ref.accountId, subjectKind: 'account', quotaScope: 'account' } as const;
+    let usedPct = 20;
+    let enteredPrice = 17;
+    let quotasEnabled = true;
+    let heldQuota: ReturnType<typeof createDeferred<void>> | undefined;
+    const readRecord = () => ProviderAccountUsageSnapshotV1Schema.parse({ v: 1,
+      recordId: buildProviderAccountUsageRecordId(recordKey), recordKey, providerId: 'codex',
+      accountSubject: { kind: 'providerSubject', id: ref.accountId }, observedAtMs: now, fetchedAtMs: now,
+      staleAfterMs: 600_000, source: 'providerHttp', confidence: 'confirmed', state: 'loaded_data',
+      meters: [{ meterId: 'weekly', label: 'Weekly', usedPct, utilizationPct: usedPct, used: null, limit: null,
+        unit: 'count', status: 'ok', resetsAt: now + 3_600_000, windowDurationMs: 7 * 86_400_000 }],
+      subscription: { status: 'subscribed', renewal: 'on', observedAtMs: now, staleAfterMs: 600_000,
+        currentPeriodStartAtMs: now - 86_400_000, currentPeriodEndAtMs: now + 86_400_000 } });
+    const captured = await context(async request => {
+      if (request.path === CONNECTED_PRESENTATION_ROWS_ROUTE_V1) return Response.json(ConnectedPresentationRowReadResponseV1Schema.parse({
+        status: 'present', revision: 1, content: { t: 'plain', v: { v: 1, entries: [{ v: 1, label: '',
+          subject: { kind: 'account', account: ref }, subscriptionMonthlyPrice: { amount: enteredPrice, currency: 'USD', enteredAtMs: now } }] } },
+      }));
+      if (request.path === CONNECTED_ACKNOWLEDGEMENTS_ROWS_ROUTE_V1) return Response.json(ConnectedAcknowledgementsRowReadResponseV1Schema.parse({ status: 'deleted', revision: 1 }));
+      if (request.path === '/v1/features') return Response.json(createRootLayoutFeaturesResponse({ features: {
+        connectedServices: { enabled: true, quotas: { enabled: quotasEnabled } },
+      } }));
+      if (request.path === '/v4/connect/qualified/provider-account-usage/sources/resolve') {
+        await heldQuota?.promise;
+        return Response.json({ source, recordId: readRecord().recordId, providerAccountId: ref.accountId,
+          fetchedAt: now, staleAfterMs: 600_000 });
+      }
+      if (request.path === '/v4/connect/qualified/provider-account-usage/record') return Response.json({
+        content: { t: 'plain', v: readRecord() }, metadata: { fetchedAt: now, staleAfterMs: 600_000, status: 'ok' }, sources: [source] });
+      return undefined;
+    }, { connectedAccountsV4: [{ ref, status: 'connected', authenticationModeId: 'manual', revisionSemantics: 'revisioned',
+      credentialRevision: 'csr_abcdefghijklmnopqrstuvwxyz', configurationReady: false, configurationRevision: null, scopes: [] }] });
+    const query = normalizeUsageQuery({ includeQuota: false, includeAccounting: false, includeQuotaHistory: false,
+      includeComparison: false, includeSessionEvidence: false, includeTranscriptEvidence: false, includeWorkEvidence: false });
+    const store = getUsageQueryResourceStore(captured);
+    const quotaFree = store.getEntry({ hostRead: 'usage.query', input: projectNativeJsonValueForTransport({ queries: [query] }) });
+    // Undefined retains legacy allowance demand, including beside an opt-out slice.
+    const mixed = store.getEntry({ hostRead: 'usage.query', input: projectNativeJsonValueForTransport({
+      queries: [query, normalizeUsageQuery({ ...query, includeQuota: undefined })],
+    }) });
+    let publications = 0;
+    const beforeQuotaFree = home!.requests.length;
+    const releaseQuotaFree = quotaFree.subscribe(() => { publications++; }, true);
+    let releaseMixed = () => {};
+    const mixedSlice = () => mixed.getSnapshot().value && decodeUsageQueryResource(mixed.getSnapshot().value!).results[1];
+    try {
+      await quotaFree.refresh();
+      await expect.poll(() => quotaFree.getSnapshot().subscription === 'live' && quotaFree.getSnapshot().pending === 'idle').toBe(true);
+      publishHomeAccountChange(captured.accountLifetime.scope.serverId, [CONNECTED_PRESENTATION_ACCOUNT_KV_KEY_V1], { changeKinds: ['account'] });
+      await flushHookEffects({ cycles: 20 });
+      expect.soft(home!.requests.slice(beforeQuotaFree).filter(request => request.path === CONNECTED_PRESENTATION_ROWS_ROUTE_V1
+        || request.path === CONNECTED_ACKNOWLEDGEMENTS_ROWS_ROUTE_V1), 'quota-free demand never activates a subscription-price catalog reader').toHaveLength(0);
+      releaseMixed = mixed.subscribe(() => {}, true);
+      await Promise.all([quotaFree.refresh(), mixed.refresh()]);
+      await expect.poll(() => quotaFree.getSnapshot().subscription === 'live' && mixed.getSnapshot().subscription === 'live'
+        && quotaFree.getSnapshot().pending === 'idle' && mixed.getSnapshot().pending === 'idle').toBe(true);
+      await flushHookEffects({ cycles: 20 });
+      expect(mixedSlice()?.quota?.[0]?.current?.meters[0]?.usedPct).toBe(20);
+      const retained = quotaFree.getSnapshot().value;
+      publications = 0;
+      heldQuota = createDeferred<void>();
+      usedPct = 50;
+      publishHomeAccountChange(captured.accountLifetime.scope.serverId, ['provider-account-usage'], {
+        changeKinds: ['account'], usageQueryAffects: true, usageAccountingAffects: false,
+      });
+      expect.soft(quotaFree.isAllowanceReadPending(), 'an opt-out never presents allowance acquisition').toBe(false);
+      expect.soft(quotaFree.getSnapshot(), 'quota-only arrivals keep an opt-out settled').toMatchObject({ pending: 'idle', freshness: 'fresh' });
+      await expect.poll(() => mixed.isAllowanceReadPending()).toBe(true);
+      heldQuota.resolve();
+      heldQuota = undefined;
+      await expect.poll(() => mixedSlice()?.quota?.[0]?.current?.meters[0]?.usedPct).toBe(50);
+      await expect.poll(() => quotaFree.getSnapshot().pending === 'idle' && mixed.getSnapshot().pending === 'idle').toBe(true);
+      await flushHookEffects({ cycles: 20 });
+      expect.soft(publications, 'quota-only Home changes publish nothing to a quota-free consumer').toBe(0);
+      expect.soft(quotaFree.getSnapshot().value).toBe(retained);
+      enteredPrice = 29;
+      publishHomeAccountChange(captured.accountLifetime.scope.serverId, [CONNECTED_PRESENTATION_ACCOUNT_KV_KEY_V1], { changeKinds: ['account'] });
+      await expect.poll(() => mixedSlice()?.quota?.[0]?.current?.subscription?.enteredMonthlyPrice?.amount).toBe(29);
+      await expect.poll(() => mixed.getSnapshot().pending).toBe('idle');
+      await flushHookEffects({ cycles: 20 });
+      expect.soft(publications, 'entered allowance prices publish nothing to a quota-free consumer').toBe(0);
+      expect.soft(quotaFree.getSnapshot().value).toBe(retained);
+      quotasEnabled = false;
+      await getServerFeaturesSnapshot({ serverId: captured.accountLifetime.scope.serverId, force: true });
+      await expect.poll(() => mixedSlice()?.sources.find(state => state.source === 'quota')?.status).toBe('unsupported');
+      await expect.poll(() => mixed.getSnapshot().pending).toBe('idle');
+      await flushHookEffects({ cycles: 20 });
+      expect.soft(publications, 'quota-input changes publish nothing to a quota-free consumer').toBe(0);
+      expect.soft(quotaFree.getSnapshot().value).toBe(retained);
+      const refreshing = quotaFree.refresh();
+      expect.soft(quotaFree.isAllowanceReadPending(), 'explicit refresh preserves the query allowance opt-out').toBe(false);
+      await refreshing;
+      expect(quotaFree.getSnapshot().error).toBeUndefined();
+      expect(decodeUsageQueryResource(quotaFree.getSnapshot().value!).results[0]?.quota).toBeUndefined();
+      expect(home!.requests.filter(request => request.path === '/v2/usage/query'), 'neither no-accounting consumer acquires accounting').toHaveLength(0);
+    } finally { heldQuota?.resolve(); releaseQuotaFree(); releaseMixed(); }
+  });
+
+  it('reopens quota-free accounting without work after a quota-only Home arrival', async () => {
+    const captured = await context(request => request.path === '/v2/usage/query' ? Response.json(value) : undefined);
+    const query = normalizeUsageQuery({ includeQuota: false, includeQuotaHistory: false, includeComparison: false,
+      includeSessionEvidence: false, includeTranscriptEvidence: false, includeWorkEvidence: false });
+    const entry = getUsageQueryResourceStore(captured).getEntry({ hostRead: 'usage.query', input: projectNativeJsonValueForTransport({ queries: [query] }) });
+    let release = entry.subscribe(() => {}, true);
+    const settle = async () => {
+      await expect.poll(() => entry.getSnapshot().subscription === 'live' && entry.getSnapshot().pending === 'idle'
+        && entry.getSnapshot().value !== undefined).toBe(true);
+      await flushHookEffects({ cycles: 20 });
+    };
+    try {
+      await settle();
+      const retained = entry.getSnapshot().value!;
+      const tokens = decodeUsageQueryResource(retained).results[0]!.accounting!.totals.tokens;
+      let factReads = 0;
+      Object.defineProperty(tokens, 'total', { configurable: true, get() { factReads++; return 15; } });
+      const reads = home!.requests.length;
+      release();
+      publishHomeAccountChange(captured.accountLifetime.scope.serverId, ['provider-account-usage'], {
+        changeKinds: ['account'], usageQueryAffects: true, usageAccountingAffects: false,
+      });
+      release = entry.subscribe(() => {}, true);
+      await settle();
+      expect.soft(entry.getSnapshot().value, 'unconsumed allowance changes retain the settled accounting projection').toBe(retained);
+      expect.soft(home!.requests.slice(reads).map(request => request.path), 'reopening does not acquire any unconsumed replacement').toEqual([]);
+      expect.soft(factReads, 'reopening does not walk or serialize unchanged admitted accounting').toBe(0);
+      expect(entry.isAllowanceReadPending()).toBe(false);
+    } finally { release(); }
+  });
+
+  it('keeps quota-free Resource demand quiet when an unused pool selector Machine recovers', async () => {
+    const service = { pluginId: 'happier.agent.codex', localId: 'openai-codex' };
+    const captured = await context(() => undefined, {
+      connectedAccountGroupsV4: [QualifiedConnectedAccountGroupV4Schema.parse({ v: 1, ref: { service, groupId: 'unused-pool' },
+        incarnation: 'incarnation', displayName: 'Unused pool', policy: { strategy: 'priority' }, activeConnectedAccountId: 'work',
+        generation: 1, runtimeStateRevision: 1, state: {}, createdAt: 1, updatedAt: 1,
+        members: [{ v: 1, connectedAccountId: 'work', priority: 1, enabled: true, state: {}, createdAt: 1, updatedAt: 1 }] })],
+    });
+    const scope = captured.accountLifetime.scope;
+    const machine = createMachineFixture({ id: 'unused-selector', active: false, activeAt: 1, presenceProtocolVersion: 1 });
+    storage.getState().applyMachines([machine]);
+    const query = normalizeUsageQuery({ includeQuota: false, includeAccounting: false, includeQuotaHistory: false,
+      includeComparison: false, includeSessionEvidence: false, includeTranscriptEvidence: false, includeWorkEvidence: false });
+    const entry = getUsageQueryResourceStore(captured).getEntry({ hostRead: 'usage.query', input: projectNativeJsonValueForTransport({ queries: [query] }) });
+    let publications = 0;
+    const release = entry.subscribe(() => { publications++; }, true);
+    try {
+      await entry.refresh();
+      await expect.poll(() => entry.getSnapshot().subscription === 'live' && entry.getSnapshot().pending === 'idle').toBe(true);
+      await flushHookEffects({ cycles: 20 });
+      const retained = entry.getSnapshot().value;
+      publications = 0;
+      storage.getState().applyMachines([{ ...machine, active: true, activeAt: Date.now() }]);
+      observeMachinePresenceForTest(scope, [machine.id]);
+      await flushHookEffects({ cycles: 20 });
+      expect.soft(publications, 'an unconsumed pool selector has no Resource publication').toBe(0);
+      expect.soft(entry.getSnapshot()).toMatchObject({ pending: 'idle', freshness: 'fresh' });
+      expect.soft(entry.getSnapshot().value).toBe(retained);
+      expect.soft(entry.isAllowanceReadPending()).toBe(false);
+      expect(home!.requests.filter(request => request.path.startsWith('/v4/connect/qualified/provider-account-usage/'))).toHaveLength(0);
+    } finally { release(); }
+  });
+
+  it('refreshes quota-free Work when its admitted Machine becomes reachable', async () => {
+    const captured = await context(request => request.path === '/v2/usage/query'
+      ? Response.json({ ...value, contributions: [workContribution] }) : undefined);
+    const scope = captured.accountLifetime.scope;
+    const machine = createMachineFixture({ id: 'work-machine', active: false, activeAt: 1, presenceProtocolVersion: 1 });
+    storage.getState().applyMachines([machine]);
+    storage.getState().applySessions([createSessionFixture({ id: 'work-session', active: true, serverId: scope.serverId,
+      metadata: { machineId: machine.id, path: '/repo', host: 'test', homeDir: '/home/test' } })]);
+    const witness: UsageWorkEvidence = { sessionId: 'work-session', turnId: 'turn', repositoryKey: 'repo', checkpointRef: 'checkpoint',
+      checkpointCommitSha: 'a'.repeat(40), commitSha: 'b'.repeat(40), attributionScope: 'no_happier_checkpoint_overlap_observed',
+      pullRequest: { provider: { id: 'forge', kind: 'github', displayName: 'Forge', baseUrl: 'https://github.com',
+        nameWithOwner: 'owner/repo', urlSafety: { allowedSchemes: ['https:'] } }, number: 1, title: 'Merged',
+        url: 'https://github.com/owner/repo/pull/1', baseBranch: 'main', headBranch: 'feature', state: 'merged' } };
+    scmTransport.mockImplementation(async (request: { payload: { state?: string } }) => ({ success: true,
+      branches: [], branchEvidence: [], branchEvidenceStatus: 'partial',
+      pullRequests: request.payload.state === 'merged' ? [witness.pullRequest] : [],
+      workEvidence: request.payload.state === 'merged' ? [witness] : [], workEvidenceStatus: 'partial' }));
+    const query = normalizeUsageQuery({ period: { startMs: 0, endMs: 1000 }, includeQuota: false, includeQuotaHistory: false,
+      includeSessionEvidence: false, includeTranscriptEvidence: false, includeWorkEvidence: true, workProjection: 'summary', includeComparison: false });
+    const entry = getUsageQueryResourceStore(captured).getEntry({ hostRead: 'usage.query', input: projectNativeJsonValueForTransport({ queries: [query] }) });
+    const release = entry.subscribe(() => {}, true);
+    const work = () => entry.getSnapshot().value && decodeUsageQueryResource(entry.getSnapshot().value!).results[0]?.workSummary;
+    try {
+      await entry.refresh();
+      await expect.poll(() => entry.getSnapshot().subscription === 'live' && entry.getSnapshot().pending === 'idle').toBe(true);
+      expect(work()?.mergedPrCount ?? 0).toBe(0);
+      const accountingReads = home!.requests.filter(request => request.path === '/v2/usage/query').length;
+      storage.getState().applyMachines([{ ...machine, active: true, activeAt: Date.now() }]);
+      observeMachinePresenceForTest(scope, [machine.id]);
+      expect(entry.isAllowanceReadPending(), 'Machine recovery has no allowance consumer').toBe(false);
+      await expect.poll(() => work()?.mergedPrCount).toBe(1);
+      await expect.poll(() => entry.getSnapshot().pending).toBe('idle');
+      expect(home!.requests.filter(request => request.path === '/v2/usage/query'), 'Machine recovery keeps admitted accounting').toHaveLength(accountingReads);
+      expect(home!.requests.filter(request => request.path.startsWith('/v4/connect/qualified/provider-account-usage/')),
+        'Machine recovery acquires only consumed Work evidence').toHaveLength(0);
     } finally { release(); }
   });
 
@@ -4302,11 +4544,12 @@ describe('usage query captured Resource adapter', () => {
       await expect.poll(() => decodeUsageQueryResource(entry.getSnapshot().value!).results[0]?.pools?.[0]?.selection.status).toBe('available');
       const beforeWithdrawal = scmTransport.mock.calls.length;
       withdrawMachinePresenceForScope(captured.accountLifetime.scope);
+      await flushHookEffects({ cycles: 20 });
       await expect.poll(() => entry.getSnapshot().pending).toBe('idle');
       expect(decodeUsageQueryResource(entry.getSnapshot().value!).results[0]?.pools?.[0]?.selection)
-        .toMatchObject({ status: 'stale', machineId: 'selected', errorCode: 'MACHINE_RPC_UNREACHABLE',
+        .toMatchObject({ status: 'available', machineId: 'selected',
           value: { selection: { selected: { profileId: 'personal' } } } });
-      expect(scmTransport.mock.calls.length, 'withdrawn presence must not retry a selector before recovery').toBe(beforeWithdrawal);
+      expect(scmTransport.mock.calls.length, 'socket withdrawal supplies no new Machine fact or selector retry').toBe(beforeWithdrawal);
       recordMachineRequestSucceeded({ ...captured.accountLifetime.scope, machineId: 'selected' });
       observeMachinePresenceForTest(captured.accountLifetime.scope, ['selected']);
       await expect.poll(() => decodeUsageQueryResource(entry.getSnapshot().value!).results[0]?.pools?.[0]?.selection.status).toBe('available');
@@ -4428,7 +4671,7 @@ describe('usage query captured Resource adapter', () => {
     const work = createDeferred<unknown>();
     const privateSession = createDeferred<Response>();
     const captured = await context(request => request.path === '/v2/usage/query' ? Response.json(response)
-      : request.path === '/v2/sessions/work-session' ? held ? privateSession.promise : Response.json({ error: 'not_found' }, { status: 404 })
+      : request.path === '/v2/sessions/work-session' ? held ? privateSession.promise : Response.json({ error: 'unavailable' }, { status: 503 })
       : request.path === '/v1/account/encryption/currentness' ? Response.json({ mode: 'plain', version: 1,
         signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 }) : undefined);
     storage.getState().applySessions([createSessionFixture({ id: 'work-session', active: true,
@@ -4658,7 +4901,8 @@ describe('usage query captured Resource adapter', () => {
             React.createElement(UsageCapacityWidget, { ...props, id: 'usage_capacity', testID: 'quota-capacity' }),
             React.createElement(UsagePlanFitWidget, { ...props, id: 'usage_plan_fit', testID: 'quota-fit' })) });
       };
-      const screen = await renderScreen(body());
+      const { renderMountedCurrentUiContext } = await import('@/dev/testkit/harness/mountedCurrentUiContext');
+      const screen = await renderMountedCurrentUiContext(body());
       expect(screen.findByTestId('quota-capacity.cell.ready')).toBeTruthy();
       if (failureFirst) {
         // The current Plans presentation collapses settled never-read accounts
@@ -5586,7 +5830,8 @@ describe('usage query captured Resource adapter', () => {
         notRead: outcome === 'unreadable-transcript' ? 2 : 1 });
       expect(slice()?.howYouWork?.intervals?.agentTimeMs).toBe(outcome === 'unreadable-transcript' ? 600 : 300);
       expect(slice()?.sources).toContainEqual(expect.objectContaining({ source: 'how_you_work', status: 'partial' }));
-      expect(slice()?.sources).toContainEqual({ source: 'how_you_work:transcripts', status: 'partial' });
+      expect(slice()?.sources).toContainEqual(expect.objectContaining({ source: 'how_you_work:transcripts', status: 'partial',
+        ...(outcome === 'refused' ? { errorCode: 'forbidden' } : {}) }));
       expect(slice()?.sources.some(source => source.source.startsWith('how_you_work') && source.status === 'pending')).toBe(false);
     } finally { transcript.resolve(Response.json({ messages: [], hasMore: false })); await reading; release(); }
   });
@@ -6002,7 +6247,7 @@ describe('usage query captured Resource adapter', () => {
       releaseDetail = detail.subscribe(() => {}, false);
       const detailRead = detail.refresh();
       await expect.poll(() => sessionRequests().some(request => request.path.endsWith('/messages'))).toBe(true);
-      expect(slice(detail)?.pending).toBe(true);
+      await expect.poll(() => slice(detail)?.pending).toBe(true);
       expect(slice(summary)?.pending).toBe(false);
       expect(sessionRequests().filter(request => request.path.endsWith('/messages')), 'later detail joins the admitted automatic conversion').toHaveLength(1);
       transcript.resolve(Response.json({ messages: [], hasMore: false }));
@@ -6081,11 +6326,12 @@ describe('usage query captured Resource adapter', () => {
         sessionCoverage: { selected: 2, admitted: 1 }, intervals: { agentTimeMs: 600,
           lanes: [{ workId: '["second","turn"]' }] },
         runLengths: { coverage: 'partial', sampleCount: 1, byAgent: [{ agentId: 'codex', durationsMs: [600] }] } });
-      expect(slice(broad)?.sources).toContainEqual({ source: 'how_you_work:sessions', status: 'partial' });
+      expect(slice(broad)?.sources).toContainEqual({ source: 'how_you_work:sessions', status: 'partial', errorCode: 'forbidden' });
       expect(slice(pinned)?.howYouWork?.intervals).toBeNull();
       expect(slice(pinned)?.howYouWork?.runLengths).toBeNull();
       expect(slice(broad)?.sources.some(source => source.source.startsWith('how_you_work') && source.status === 'pending')).toBe(false);
       holdTranscript = false;
+      publishHomeAccountChange(captured.accountLifetime.scope.serverId, ['first'], { changeKinds: ['session'], usageQueryAffects: true });
       await broad.refresh();
       expect(slice(broad)?.howYouWork?.intervals?.agentTimeMs).toBe(900);
     } finally {
@@ -6270,6 +6516,7 @@ describe('usage query captured Resource adapter', () => {
       ] });
       if (request.path === '/v1/account/encryption/currentness') return Response.json({ mode: 'plain', version: 1,
         signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 });
+      if (request.path === '/v1/sessions/denied-session/turns') return Response.json({ v: 1, sessionId: 'denied-session', updatedAt: 900, turns: [] });
       if (request.path === '/v2/sessions/denied-session') return Response.json({ session: {
         ...ownerSessionAccess,
         effectiveAccess: { v: 1, level: deniedAccess.level, sources: [{ kind: 'direct', shareId: 'denied-share' }],
@@ -6421,7 +6668,7 @@ describe('usage query captured Resource adapter', () => {
   });
 
   it.each([404, 403, 410].flatMap(status => ['summary', 'messages'].map(phase => ({ status, phase }))))(
-    'settles read-batch HTTP $status ($phase) across demand wakes and sibling borrowers until Retry or a Session change', async ({ status, phase }) => {
+    'settles read-batch HTTP $status ($phase) across demand wakes and reopens at supported recovery boundaries', async ({ status, phase }) => {
     const ids = ['terminal-one', 'terminal-two', 'terminal-three'];
     let failed = true;
     const captured = await context(request => {
@@ -6432,7 +6679,7 @@ describe('usage query captured Resource adapter', () => {
         return Response.json({ error: 'refused' }, { status });
       }
       for (const id of ids) {
-        if (request.path === `/v2/sessions/${id}`) return Response.json({ session: createPlainSessionCurrentProjectionRecordFixture({ id }) });
+        if (request.path === `/v2/sessions/${id}`) return Response.json({ session: createPlainSessionCurrentProjectionRecordFixture({ id, seq: storage.getState().sessions[id]?.seq ?? 1 }) });
         if (request.path === `/v1/sessions/${id}/turns`) return Response.json({ v: 1, sessionId: id, updatedAt: 900,
           turns: [{ turnId: 'turn', agentId: 'codex', status: 'completed', startedAt: 100, terminalAt: 900, updatedAt: 900 }] });
         if (request.path === `/v1/sessions/${id}/messages`) return Response.json({ messages: [], hasMore: false });
@@ -6473,14 +6720,25 @@ describe('usage query captured Resource adapter', () => {
           errorCode: 'update_required', updateRequired: expect.objectContaining({ component: 'server', reason: 'usage_session_evidence_unsupported' }) }));
       }
       await entries[0]!.refresh();
-      expect(reads(), 'user Retry opens exactly one fresh failed read').toBe(ids.length + 1);
+      const lastingRefusal = status === 403 || status === 404;
+      expect(reads(), 'Retry reopens retryable failures while lasting coverage waits for changed Session inputs')
+        .toBe(ids.length + (lastingRefusal ? 0 : 1));
+      if (lastingRefusal) {
+        storage.getState().applySessions([{ ...storage.getState().sessions[ids[0]!]!, seq: 2 }]);
+        await expect.poll(reads).toBe(ids.length + 1);
+        await expect.poll(() => entries[0]!.getSnapshot().pending).toBe('idle');
+      }
       storage.getState().applySessions([{ ...storage.getState().sessions[ids[1]!]!, seq: 2 }]);
       await flushHookEffects({ cycles: 30 });
       await expect.poll(reads).toBe(ids.length + 2);
       await expect.poll(() => entries.every(entry => entry.getSnapshot().pending === 'idle')).toBe(true);
       expect(reads(), 'a real Session advance reopens only the changed input').toBe(ids.length + 2);
       failed = false;
-      await entries[0]!.refresh();
+      if (lastingRefusal) {
+        storage.getState().applySessions([{ ...storage.getState().sessions[ids[0]!]!, seq: 3 }]);
+        await expect.poll(reads).toBe(ids.length + 3);
+        await expect.poll(() => entries[0]!.getSnapshot().pending).toBe('idle');
+      } else await entries[0]!.refresh();
       expect(reads()).toBe(ids.length + 3);
       const recovered = decodeUsageQueryResource(entries[0]!.getSnapshot().value!).results[0]!;
       expect(recovered.howYouWork?.intervals?.agentTimeMs).toBe(800);
@@ -6521,6 +6779,7 @@ describe('usage query captured Resource adapter', () => {
     const unavailable = decodeUsageQueryResource((await retry.refresh()).value!);
     expect(unavailable.results[0]?.sources.every(source => source.updateRequired === undefined)).toBe(true);
     missingSession = false;
+    publishHomeAccountChange(captured.accountLifetime.scope.serverId, ['upgrade-session'], { changeKinds: ['session'], usageQueryAffects: true });
     const recovered = await readUiUsageQueryBatch(captured, input, undefined, unavailable);
     expect(recovered.results[0]?.howYouWork?.intervals?.agentTimeMs).toBe(800);
     expect(recovered.results[0]?.sources.every(source => source.updateRequired === undefined)).toBe(true);
@@ -6612,10 +6871,19 @@ describe('usage query captured Resource adapter', () => {
     expect(JSON.stringify(result)).not.toContain('never-export-this');
   });
 
-  it.each([403, 503])('keeps admitted Agent-time partial after refusal and retains stale facts after ordinary failure (%s)', async status => {
+  it.each([
+    { status: 403, retainQuery: true, batchFailure: false },
+    { status: 503, retainQuery: true, batchFailure: false },
+    { status: 503, retainQuery: false, batchFailure: false },
+    { status: 503, retainQuery: true, batchFailure: true },
+    { status: 503, retainQuery: false, batchFailure: true },
+  ])('keeps admitted Agent-time partial after refusal and retains stale facts after ordinary failure ($status, retained query: $retainQuery, batch failure: $batchFailure)', async ({ status, retainQuery, batchFailure }) => {
     let failing = false;
     const captured = await context(request => {
       if (request.path === '/v2/usage/query') return Response.json(value);
+      if (failing && batchFailure && request.path === USAGE_SESSION_EVIDENCE_PATH) {
+        return Response.json({ error: 'unavailable' }, { status: 503 });
+      }
       const sessionId = request.path === '/v2/sessions/shared' ? 'shared'
         : request.path === '/v2/sessions/other' ? 'other' : null;
       if (sessionId) return failing && sessionId === 'shared'
@@ -6640,10 +6908,18 @@ describe('usage query captured Resource adapter', () => {
     const input = { queries: [normalizeUsageQuery({ period: { startMs: 0, endMs: 1000 }, includeWorkEvidence: false })] };
     const settled = await readUiUsageQueryBatch(captured, input);
     expect(settled.results[0]?.howYouWork?.intervals?.agentTimeMs).toBe(900);
+    // Coach and How share Session input demand, but a first How query has no
+    // admitted aggregate whose complete population it can retain on failure.
+    const nextInput = retainQuery ? input : { queries: [normalizeUsageQuery({ ...input.queries[0], includeCoach: false })] };
     failing = true;
     publishHomeAccountChange(captured.accountLifetime.scope.serverId, ['shared'], { changeKinds: ['session'], usageQueryAffects: true });
-    const replacement = await readUiUsageQueryBatch(captured, input, undefined, settled);
-    if (status === 503) {
+    const replacement = await readUiUsageQueryBatch(captured, nextInput, undefined, settled);
+    if (batchFailure && !retainQuery) {
+      expect(replacement.results[0]?.howYouWork).toMatchObject({ detailStatus: 'unknown', intervals: null });
+      expect(replacement.results[0]?.sources).toContainEqual(expect.objectContaining({
+        source: 'how_you_work', status: 'error', errorCode: 'usage_session_evidence_read_failed',
+      }));
+    } else if (status === 503 && retainQuery) {
       expect(replacement.results[0]?.howYouWork?.intervals, 'retain the complete admitted population, never only the surviving Session')
         .toEqual(settled.results[0]?.howYouWork?.intervals);
       expect(replacement.results[0]?.sources).toEqual(expect.arrayContaining([
@@ -6654,10 +6930,12 @@ describe('usage query captured Resource adapter', () => {
         sessionCoverage: { selected: 2, admitted: 1 }, intervals: { agentTimeMs: 600,
           lanes: [{ workId: '["other","turn"]' }] },
         runLengths: { coverage: 'partial', sampleCount: 1, byAgent: [{ agentId: 'codex', durationsMs: [600] }] } });
-      expect(replacement.results[0]?.sources).toContainEqual({ source: 'how_you_work:sessions', status: 'partial' });
+      expect(replacement.results[0]?.sources).toContainEqual({ source: 'how_you_work:sessions', status: 'partial',
+        errorCode: status === 403 ? 'forbidden' : 'http_error' });
     }
     failing = false;
-    const recovered = await readUiUsageQueryBatch(captured, input, undefined, replacement);
+    if (status === 403) publishHomeAccountChange(captured.accountLifetime.scope.serverId, ['shared'], { changeKinds: ['session'], usageQueryAffects: true });
+    const recovered = await readUiUsageQueryBatch(captured, nextInput, undefined, replacement);
     expect(recovered.results[0]?.howYouWork?.intervals).toEqual(settled.results[0]?.howYouWork?.intervals);
     expect(recovered.results[0]?.sources.find(source => source.source === 'how_you_work')?.errorCode).toBeUndefined();
   });

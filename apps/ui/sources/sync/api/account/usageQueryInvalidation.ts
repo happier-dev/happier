@@ -206,8 +206,10 @@ export function getUsageQueryMachineInvalidationKey(machines: Readonly<Record<st
     return consumedMachineKey(readUsageMachineFacts(machines, nowMs, scope), consumers);
 }
 
+export type UsageQueryStateInvalidation = 'quota-inputs' | 'quota-projection-inputs' | 'material-inputs' | 'projection-inputs';
+
 /** State invalidation for the Account-owned Usage Resource; not a second data reader. */
-export function subscribeUsageQueryStateInvalidation(invalidate: (input: 'quota-inputs' | 'projection-inputs') => void,
+export function subscribeUsageQueryStateInvalidation(invalidate: (input: UsageQueryStateInvalidation) => void,
     readMachineConsumers: (machines: Readonly<Record<string, Machine>>) => UsageQueryMachineConsumers = () => NO_MACHINE_CONSUMERS,
     observe: (attach: () => () => void) => () => void = attach => attach()): (() => void) | null {
     const readInputs = () => {
@@ -262,14 +264,21 @@ export function subscribeUsageQueryStateInvalidation(invalidate: (input: 'quota-
         const machineAdmissionChanged = !machineFactsCurrent
             && consumedMachineKey(machineFacts.facts, { ...consumers!, includeMachineNames: false })
                 !== consumedMachineKey(observedMachineFacts.facts, { ...previousConsumers!, includeMachineNames: false });
-        // Groups and selector/SCM eligibility need fresh admission. Only names
-        // and preferences can reuse already-admitted A, B and private evidence.
-        const quotaInputsChanged = [0, 1, 2, 4, 7].some(index => changedInputs[index]) || machineAdmissionChanged;
+        const sessionMachineAdmissionChanged = machineAdmissionChanged
+            && consumedMachineKey(machineFacts.facts, { includeMachineNames: false, poolMachineFilters: [],
+                sessionMachineIds: consumers!.sessionMachineIds })
+                !== consumedMachineKey(observedMachineFacts.facts, { includeMachineNames: false, poolMachineFilters: [],
+                    sessionMachineIds: previousConsumers!.sessionMachineIds });
+        // Session targets and Account scopes also serve quota-free Work.
+        // Connected accounts, groups and pool selectors serve allowance demand.
+        const materialInputsChanged = [0, 4].some(index => changedInputs[index]) || sessionMachineAdmissionChanged;
+        const quotaInputsChanged = [1, 2].some(index => changedInputs[index]) || machineAdmissionChanged;
         observedInputs = inputs;
         observedUsageCapabilities = readUsageCapabilities();
         observedMachineFacts = machineFacts;
         observedReachabilityRevision = reachabilityRevision;
-        if (changed) invalidate(quotaInputsChanged ? 'quota-inputs' : 'projection-inputs');
+        if (changed) invalidate(materialInputsChanged ? 'material-inputs' : quotaInputsChanged ? 'quota-inputs'
+            : changedInputs[7] ? 'quota-projection-inputs' : 'projection-inputs');
     };
     return observe(() => {
         reconcile();

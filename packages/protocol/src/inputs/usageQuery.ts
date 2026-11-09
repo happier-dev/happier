@@ -37,7 +37,11 @@ export const UsageQuerySchema = lazyZodSchema(() => {
     includeContributions: z._default(z.boolean(), false),
     includeComparison: z._default(z.boolean(), true),
     includeQuotaHistory: z._default(z.boolean(), true),
+    // Host demand; omitted retains current-allowance reads for direct callers.
+    includeQuota: z.optional(z.boolean()),
     includeSessionEvidence: z._default(z.boolean(), true),
+    // Omitted preserves direct callers; widgets request Coach only when they render it.
+    includeCoach: z.optional(z.boolean()),
     includeTranscriptEvidence: z._default(z.boolean(), true),
     includeWorkEvidence: z._default(z.boolean(), true),
     workProjection: z._default(z.enum(['summary', 'detail']), 'detail'),
@@ -148,7 +152,7 @@ export function usageQueryToAnalyticsRequest(value: UsageQuery, nowMs = Date.now
   const query = normalizeUsageQuery(value);
   const { period: _period, agents, machines, projects, sources, execution, session, costBasis, metric: _metric,
     includeAccounting: _accounting, includeContributions: _contributions, includeComparison: _comparison,
-    includeQuotaHistory: _quotaHistory, includeSessionEvidence: _sessionEvidence, includeTranscriptEvidence: _transcriptEvidence,
+    includeQuotaHistory: _quotaHistory, includeQuota: _quota, includeSessionEvidence: _sessionEvidence, includeCoach: _coach, includeTranscriptEvidence: _transcriptEvidence,
     includeWorkEvidence: _workEvidence, workProjection: _workProjection, breakdown,
     modelIds, workspaceIds, backendModes, population, ...clauses } = query;
   const selected = (values: string[]) => values.length ? values : undefined;

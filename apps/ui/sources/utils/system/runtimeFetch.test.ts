@@ -23,6 +23,65 @@ afterEach(() => {
 });
 
 describe('runtimeFetch', () => {
+    it.each(['ready', 'cancelled'] as const)('acknowledges server issuance only when the selected runtime fetch is invoked (%s)', async (outcome) => {
+        vi.resetModules();
+        vi.doMock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
+        let releaseAdapter!: () => void;
+        let adapterStarted!: () => void;
+        const adapterGate = new Promise<void>(resolve => { releaseAdapter = resolve; });
+        const resolvingAdapter = new Promise<void>(resolve => { adapterStarted = resolve; });
+        let releaseResponse!: (response: Response) => void;
+        const response = new Promise<Response>(resolve => { releaseResponse = resolve; });
+        const events: string[] = [];
+        const nativeFetch = vi.fn(() => { events.push('fetch'); return response; });
+        // The native SDK is the external adapter boundary. Its module may load
+        // asynchronously before the runtime can invoke the selected fetch.
+        vi.doMock('@tauri-apps/plugin-http', async () => {
+            adapterStarted();
+            await adapterGate;
+            return { fetch: nativeFetch };
+        });
+        setTauriInternals({ invoke: () => null });
+        const { createServerFetchAtEndpoint } = await import('@/sync/http/client');
+        const request = createServerFetchAtEndpoint({ endpointUrl: 'https://api.example.test', credentials: null });
+        const controller = new AbortController();
+        const issued = vi.fn(() => { events.push('issued'); });
+        const operation = request('/v2/usage/query-batch', { method: 'POST', signal: controller.signal }, {
+            includeAuth: false, retry: 'none', onIssued: issued,
+        });
+        const settlement = operation.then(value => ({ value }), error => ({ error }));
+        await resolvingAdapter;
+        expect(issued).not.toHaveBeenCalled();
+        expect(nativeFetch).not.toHaveBeenCalled();
+        if (outcome === 'cancelled') controller.abort();
+        releaseAdapter();
+        if (outcome === 'cancelled') {
+            expect(await settlement).toMatchObject({ error: { name: 'AbortError' } });
+            expect(issued).not.toHaveBeenCalled();
+            expect(nativeFetch).not.toHaveBeenCalled();
+        } else {
+            await vi.waitFor(() => expect(nativeFetch).toHaveBeenCalledTimes(1));
+            expect(issued).toHaveBeenCalledTimes(1);
+            expect(events).toEqual(['issued', 'fetch']);
+            releaseResponse(new Response(null, { status: 200 }));
+            expect(await settlement).toMatchObject({ value: { status: 200 } });
+            expect(issued).toHaveBeenCalledTimes(1);
+        }
+    });
+
+    it('does not acknowledge issuance when runtime adapter preparation fails', async () => {
+        vi.resetModules();
+        vi.doMock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
+        vi.stubGlobal('fetch', undefined);
+        const { createServerFetchAtEndpoint } = await import('@/sync/http/client');
+        const request = createServerFetchAtEndpoint({ endpointUrl: 'https://api.example.test', credentials: null });
+        const issued = vi.fn();
+        await expect(request('/v2/usage/query-batch', { method: 'POST' }, {
+            includeAuth: false, retry: 'none', onIssued: issued,
+        })).rejects.toThrow('globalThis.fetch is not available');
+        expect(issued).not.toHaveBeenCalled();
+    });
+
     it('leaves manual hops to one credential-aware redirect follower', async () => {
         const hops: Array<{ path: string; credential: string | string[] | undefined }> = [];
         const server = createServer((request, response) => {

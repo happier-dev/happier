@@ -64,7 +64,7 @@ import {
   isUsageQueryWidget,
   useUsageWidgetPageRetry,
   useUsageWidgetBatchSelection,
-  useUsageWidgetBatchInventorySlice,
+  useUsageWidgetBatchInventorySelection,
   useUsageWidgetBatchCostBasisOptions,
   useUsageWidgetBatchHistory,
 } from './widgets/usageWidgetBatch';
@@ -230,7 +230,7 @@ function UsagePageDocument(props: UsagePageDocumentProps) {
   // The pending context still renders the admitted layout. Its cached batch must
   // not consume the new selection's caller before that context is admitted.
   const callerContext = admittedContext === props.context ? props.page.callerContext : undefined;
-  return <UsageWidgetBatchProvider clauses={admittedContext?.queryOverrides ?? props.context.queryOverrides} inventoryQuery={inventoryQuery} inventoryOnly={inventoryOnly} callerContext={callerContext} callerQuery={callerContext ? props.page.callerQuery : undefined}
+  return <UsageWidgetBatchProvider enabled={layout.state.status === 'ready'} clauses={admittedContext?.queryOverrides ?? props.context.queryOverrides} inventoryQuery={inventoryQuery} inventoryOnly={inventoryOnly} callerContext={callerContext} callerQuery={callerContext ? props.page.callerQuery : undefined}
     queryWidgetIds={queryWidgetIds}>
     <UsagePageDocumentContent {...props} layout={layout} />
   </UsageWidgetBatchProvider>;
@@ -239,13 +239,12 @@ function UsagePageDocument(props: UsagePageDocumentProps) {
 function UsagePageDocumentContent(props: UsagePageDocumentProps & Readonly<{ layout: ReturnType<typeof useWidgetAreaLayout> }>) {
   const { binding, page } = props;
   const layout = props.layout;
-  const inventorySlice = useUsageWidgetBatchInventorySlice();
-  const needsFilterFallback = inventorySlice === undefined;
+  const needsFilterFallback = !useUsageWidgetBatchInventorySelection(Boolean, Object.is);
   const selectPageFacts = React.useCallback((slices: readonly UsageQueryResultSlice[]) =>
     readUsagePageFacts(slices, needsFilterFallback), [needsFilterFallback]);
   const pageRead = useUsageWidgetBatchSelection(selectPageFacts, sameUsagePageFacts);
   const { facts } = pageRead;
-  const filterSlices = React.useMemo(() => inventorySlice ? [inventorySlice] : pageRead.filterFallback ?? [], [inventorySlice, pageRead.filterFallback]);
+  const filterSlices = React.useMemo(() => pageRead.filterFallback ?? [], [pageRead.filterFallback]);
   const presets = React.useMemo(() => USAGE_WIDGET_PRESET_IDS.map(id => ({ id, name: props.names[id] })), [props.names]);
   const publishedLayoutSelection = React.useRef<((layoutId: string, callerContext?: ActionExecutorContext) => Promise<boolean>) | null>(null);
   const selectPublishedLayout = React.useCallback((layoutId: string, callerContext?: ActionExecutorContext) => {
@@ -409,6 +408,22 @@ function UsagePageDocumentContent(props: UsagePageDocumentProps & Readonly<{ lay
     [],
   );
   const preset = ready?.preset ?? null;
+  const metricPending = layoutLoading || pendingMetric === metricLifetime;
+  const changeMetric = layoutLoading || (usageWidgets.length && ready?.canEdit) ? onMetricChange : null;
+  const filterBar = React.useMemo(() => <UsageFilterBar
+    page={page}
+    coverageIncomplete={facts.coverageIncomplete}
+    scopeFilters={admittedFilters}
+    onPeriodChange={selectPeriod}
+    onCostBasisChange={selectCostBasis}
+    costBasisOptions={costBasisOptions}
+    costBasisPending={costBasisPending}
+    metric={metric}
+    metricPending={metricPending}
+    onMetricChange={changeMetric}
+    testID="usage-filters"
+  />, [page, facts.coverageIncomplete, admittedFilters, selectPeriod, selectCostBasis, costBasisOptions,
+    costBasisPending, metric, metricPending, changeMetric]);
 
   // The selected document and the named-view inventory settle independently.
   return (
@@ -427,21 +442,7 @@ function UsagePageDocumentContent(props: UsagePageDocumentProps & Readonly<{ lay
         labels={labels}
         testID="usage-views"
       />
-      <UsageFilterBar
-        page={page}
-        coverageIncomplete={facts.coverageIncomplete}
-        scopeFilters={admittedFilters}
-        onPeriodChange={selectPeriod}
-        onCostBasisChange={selectCostBasis}
-        costBasisOptions={costBasisOptions}
-        costBasisPending={costBasisPending}
-        metric={metric}
-        metricPending={layoutLoading || pendingMetric === metricLifetime}
-        onMetricChange={
-          layoutLoading || (usageWidgets.length && ready?.canEdit) ? onMetricChange : null
-        }
-        testID="usage-filters"
-      />
+      {filterBar}
       {preset?.isEdited && ready ? (
         <WidgetAreaPresetLine
           preset={preset}

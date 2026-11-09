@@ -10462,6 +10462,30 @@ export type ManagedMachinesActionResultById = {
         };
         base?: undefined | {
             launch: PluginJsonValueV2;
+            prerequisites?: undefined | {
+                requirement: {
+                    kind: 'managedDependency';
+                    id: string | {
+                        pluginId: string;
+                        localId: string;
+                    };
+                } | {
+                    kind: 'systemTool';
+                    id: string | {
+                        pluginId: string;
+                        localId: string;
+                    };
+                };
+                status: 'available' | 'unavailable' | 'unknown';
+                reason?: string | undefined;
+                repairAction?: undefined | {
+                    action: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    input: PluginJsonValueV2;
+                };
+            }[];
             effectReview?: undefined | {
                 kind: 'devcontainer';
                 reviewedEffectDigest: string;

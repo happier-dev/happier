@@ -37,7 +37,7 @@ export type UsageWidgetBodyModel = Readonly<{
 const EMPTY_SNAPSHOT: PluginUiResourceSnapshot = Object.freeze({ freshness: 'unknown', pending: 'idle', subscription: 'ended' });
 type UsageWidgetBodySnapshot = Readonly<Pick<PluginUiResourceSnapshot, 'freshness' | 'error'> & {
     pending: boolean; readActivity: boolean;
-    current: boolean; authorityLost: boolean; slice: UsageQueryResultSlice | undefined;
+    current: boolean; authorityLost: boolean; presentationReady: boolean; slice: UsageQueryResultSlice | undefined;
     row: UsageWidgetQueryRow | undefined;
     identity: UsageWidgetQueryIdentity | null;
     retained: UsageWidgetPrior | null;
@@ -143,7 +143,8 @@ function useUsageWidgetQueryModelSelection<T>(resource: UsageWidgetResource | nu
         return (): UsageWidgetBodySnapshot => {
             const snapshot = entry?.getSnapshot() ?? EMPTY_SNAPSHOT;
             const authorityLost = isPluginUiResourceReadAuthorityLost(snapshot);
-            const slices = lifetime?.isCurrent() === true && !authorityLost && snapshot.value
+            const presentationReady = entry?.isPresentationReady() !== false;
+            const slices = presentationReady && lifetime?.isCurrent() === true && !authorityLost && snapshot.value
                 ? decodeUsageQueryResource(snapshot.value).results : [];
             const matchedSlice = slices.find(value => acceptsSlice(value) && rows.some(row => row.key === value.key));
             const projectedSlice = matchedSlice && projectSlice(matchedSlice, previous?.slice);
@@ -177,10 +178,11 @@ function useUsageWidgetQueryModelSelection<T>(resource: UsageWidgetResource | nu
                 || slice.sources.some(source => source.source === 'accounting' && source.status === 'pending')
                 || slice.comparison?.source.status === 'pending';
             const readActivity = current && snapshot.pending !== 'idle' && shownReadPending;
-            const pending = current && (slice?.pending === true || readActivity || !slice && snapshot.pending !== 'idle');
+            const pending = current && (!presentationReady || slice?.pending === true || readActivity || !slice && snapshot.pending !== 'idle');
             // The Resource retains unchanged slice references. Select before React
             // renders so sibling progress cannot repeat this body's model work.
             if (previous && previous.slice === slice && previous.current === current && previous.authorityLost === authorityLost
+                && previous.presentationReady === presentationReady
                 && previous.pending === pending && previous.readActivity === readActivity
                 && previous.freshness === freshness && previous.error === snapshot.error && previous.row === row) {
                 return previous;
@@ -194,7 +196,7 @@ function useUsageWidgetQueryModelSelection<T>(resource: UsageWidgetResource | nu
             const periodContinuity = { sameMeaning,
                 changed: sameMeaning && getUsageQueryKey(priorValue!.identity.query) !== key };
             const retained = current && !authorityLost && priorValue?.lifetime === lifetime && sameMeaning ? priorValue : null;
-            previous = { row, slice, current, authorityLost, pending, readActivity, freshness, error: snapshot.error,
+            previous = { row, slice, current, authorityLost, presentationReady, pending, readActivity, freshness, error: snapshot.error,
                 identity, retained, periodContinuity };
             return previous;
         };

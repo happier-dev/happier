@@ -5,6 +5,35 @@ import { createWorkspaceState, reduceWorkspaceState } from './workspaceState';
 import { reconcileWorkspaceSyncedTabs, type SharedWorkspaceTabs } from './workspaceSyncedTabs';
 
 describe('workspace destination admission', () => {
+    it('copies tab entries only when singleton admission actually merges a collision', () => {
+        const catalog = [{ id: 'workflows', kind: 'builtin', title: 'Workflows', icon: 'tree-structure', order: 0,
+            placement: { kind: 'rail', region: 'app' }, activation: 'navigate', availability: 'available', routePath: '/workflows',
+        }] satisfies readonly CompactAppDestination[];
+        const first = { id: 'first', target: { kind: 'workflows', params: { page: 'first' } }, pinned: false };
+        const other = { id: 'other', target: { kind: 'session', params: { id: 'session-1' } }, pinned: false };
+        const duplicate = { id: 'duplicate', target: { kind: 'workflows', params: { page: 'latest' } }, pinned: true };
+        let copiedEntries = 0;
+        // Forward native table enumeration while measuring the real owner's copies.
+        const observe = (tabs: SharedWorkspaceTabs['tabsById']) => new Proxy(tabs, {
+            ownKeys: target => {
+                const keys = Reflect.ownKeys(target);
+                copiedEntries += keys.length;
+                return keys;
+            },
+        });
+        const admitted: SharedWorkspaceTabs = { v: 1, order: ['first', 'other'], pairs: [], tabsById: observe({ first, other }) };
+        expect(normalizeWorkspaceSingletonTabs(admitted, catalog)).toBe(admitted);
+        expect(copiedEntries).toBe(0);
+        const colliding: SharedWorkspaceTabs = { v: 1, order: ['first', 'other', 'duplicate'], pairs: [['duplicate', 'other']],
+            tabsById: observe({ first, other, duplicate }) };
+        const normalized = normalizeWorkspaceSingletonTabs(colliding, catalog);
+        expect(copiedEntries).toBe(colliding.order.length);
+        expect(normalized.order).toEqual(['first', 'other']);
+        expect(normalized.tabsById.first).toEqual({ ...duplicate, id: 'first' });
+        expect(normalized.pairs).toEqual([['first', 'other']]);
+        expect(colliding.tabsById.first).toBe(first);
+        expect(colliding.tabsById.duplicate).toBe(duplicate);
+    });
     it('uses the catalog resource identity for navigation and portable rebase, excluding in-tab state and index qualifiers', () => {
         const catalog = [{ id: 'resources', kind: 'builtin', title: 'Resources', icon: 'desktop', order: 0,
             placement: { kind: 'rail', region: 'account' }, activation: 'navigate', availability: 'available', routePath: '/resources',

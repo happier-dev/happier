@@ -301,9 +301,9 @@ export function summarizeUsageConcurrency(segments: readonly UsageWorkIntervalSe
     let maxParallel = 0;
     let parallelBusyMs = 0;
     let peakAtMs: number | null = null;
-    for (const [instant, change] of [...boundaries.entries()].sort((a, b) => a[0] - b[0])) {
+    for (const instant of [...boundaries.keys()].sort((a, b) => a - b)) {
         if (previous !== null && active > 1) parallelBusyMs += instant - previous;
-        active += change;
+        active += boundaries.get(instant)!;
         if (active > maxParallel) { maxParallel = active; peakAtMs = instant; }
         previous = instant;
     }

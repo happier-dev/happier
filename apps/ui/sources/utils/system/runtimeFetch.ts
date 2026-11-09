@@ -1,4 +1,5 @@
 import { Platform } from 'react-native';
+import { throwIfAborted } from '@/utils/runtime/abortSignals';
 
 export type RuntimeFetch = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 
@@ -40,7 +41,7 @@ async function resolveDefaultRuntimeFetch(input: RequestInfo | URL): Promise<Rea
     return { fetch: (input, init) => globalThis.fetch(input, init), host: 'browser' };
 }
 
-const defaultRuntimeFetch: RuntimeFetch = async (input, init) => {
+const defaultRuntimeFetch = async (input: RequestInfo | URL, init?: RequestInit, onIssued?: () => void): Promise<Response> => {
     // Some fetch implementations (notably in certain Expo/React Native web builds) default `credentials`
     // to `include`, which breaks cross-origin requests against servers that correctly use
     // `Access-Control-Allow-Origin: *` (wildcard is not permitted when credentials are included).
@@ -52,13 +53,19 @@ const defaultRuntimeFetch: RuntimeFetch = async (input, init) => {
         : ({ credentials: 'same-origin' } satisfies RequestInit);
     // Platform adapters retain their required receiver, even when passed as ports.
     const { fetch: resolvedFetch } = await resolveDefaultRuntimeFetch(input);
+    throwIfAborted(init?.signal ?? undefined);
+    onIssued?.();
     return resolvedFetch(input, mergedInit);
 };
 
-let activeRuntimeFetch: RuntimeFetch = defaultRuntimeFetch;
+let activeRuntimeFetch = defaultRuntimeFetch;
 
 export function setRuntimeFetch(next: RuntimeFetch): void {
-    activeRuntimeFetch = next;
+    activeRuntimeFetch = (input, init, onIssued) => {
+        throwIfAborted(init?.signal ?? undefined);
+        onIssued?.();
+        return next(input, init);
+    };
 }
 
 export function resetRuntimeFetch(): void {
@@ -70,10 +77,10 @@ export function runtimeFetch(input: RequestInfo | URL, init?: RequestInit): Prom
 }
 
 /** Browsers follow opaque hops; native responses use the shared HTTP redirect owner. */
-export async function runtimeFetchManualResponse(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+export async function runtimeFetchManualResponse(input: RequestInfo | URL, init?: RequestInit, onIssued?: () => void): Promise<Response> {
     const redirect = init?.redirect ?? 'manual';
     // Expo's URLSession delegate does not establish cross-origin credential stripping.
     // Native manual responses let nextPluginHttpRedirect apply that policy itself.
     const nativeFollow = redirect === 'follow' && await readRuntimeFetchHost(input) === 'native';
-    return activeRuntimeFetch(input, { ...init, redirect: nativeFollow ? 'manual' : redirect });
+    return activeRuntimeFetch(input, { ...init, redirect: nativeFollow ? 'manual' : redirect }, onIssued);
 }

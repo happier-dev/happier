@@ -140,6 +140,18 @@ function UsageQueryWidgetContent(props: UsageWidgetBodyInput & Readonly<{
   const style = props.input.style, colourBy = props.input.colourBy, day = props.input.day;
   // Keyed on the three scalars so an unrelated input change keeps the body's props stable.
   const ownInputs = React.useMemo(() => readUsagePresentationInputs({ ...(style !== undefined ? { style } : {}), ...(colourBy !== undefined ? { colourBy } : {}), ...(day !== undefined ? { day } : {}) }), [style, colourBy, day]);
+  // Frame activity and batch registration do not change admitted facts. Bodies
+  // consume only the refresh command from the Resource model; keep that narrow
+  // contract at the dispatch boundary while loading and frame meta still update.
+  const factBody = React.useMemo(() => slice ? <Body
+    id={props.id}
+    model={{ refresh: model.refresh }}
+    slice={slice}
+    query={slice.shownQuery}
+    serverId={props.serverId}
+    testID={props.testID}
+    presentation={ownInputs}
+  /> : null, [Body, props.id, model.refresh, slice, props.serverId, props.testID, ownInputs]);
   // A first read holds the room of the shape that lands (Period summary's figures, the Coach's strip), so the
   // widgets below it do not move when the facts arrive; every other body holds three list rows.
   const presentation = useWidgetPresentation();
@@ -201,15 +213,7 @@ function UsageQueryWidgetContent(props: UsageWidgetBodyInput & Readonly<{
       style={[styles.body, replacing ? styles.replacing : null]}
       accessibilityState={{ busy: replacing }}
     >
-      <Body
-        id={props.id}
-        model={model}
-        slice={slice}
-        query={slice.shownQuery}
-        serverId={props.serverId}
-        testID={props.testID}
-        presentation={ownInputs}
-      />
+      {factBody}
     </View>
   );
 }

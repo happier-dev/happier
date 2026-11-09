@@ -35,15 +35,17 @@ export function createUsageAccountingReader(context: Readonly<{
                 return affected(JSON.parse(queryKey) as UsageAnalyticsQueryRequest);
             });
         },
-        async read(request: UsageAnalyticsQueryRequest, signal?: AbortSignal, includeContributions = true, includeSessionIds = false, workOnly = false): Promise<UsageAnalyticsQueryResponse> {
+        async read(request: UsageAnalyticsQueryRequest, signal?: AbortSignal, includeContributions = true, includeSessionIds = false, workOnly = false,
+            onIssued?: () => void): Promise<UsageAnalyticsQueryResponse> {
             const cancellation = mergeAbortSignals([signal, ownerSignal]);
             // An opaque invocation closure cannot prove neutral cancellation or
             // cross-invocation borrowing. Signed/legacy callers keep their exact transport.
-            if (!captured) return queryUsageAnalytics(context.credentials, request, { request: context.request, signal: cancellation.signal })
+            if (!captured) return queryUsageAnalytics(context.credentials, request, { request: (path, init, options) =>
+                context.request(path, init, { ...options, onIssued }), signal: cancellation.signal })
                 .finally(cancellation.dispose);
             const { transport, binding } = captured;
             const key = getUsageAccountingReadKey(request, includeContributions, includeSessionIds, workOnly);
-            const values = await pending.run(binding, [key], async (keys, physicalSignal, publish) => {
+            const values = await pending.run(binding, [key], async (keys, physicalSignal, publish, issued) => {
                 // Keys are this reader's own canonical serialization of admitted
                 // requests, not external strings or another input grammar.
                 const selected = new Map<string, { query: UsageAnalyticsQueryRequest; detail: boolean; sessions: boolean; fullDetail: boolean; keys: string[] }>();
@@ -70,7 +72,7 @@ export function createUsageAccountingReader(context: Readonly<{
                     details: { issues: [{ code, path }] } });
                 await queryUsageAnalyticsBatch(context.credentials, { queries, includeContributions: false, contributionQueries, sessionQueries,
                     ...(contributionProjection ? { contributionProjection } : {}) },
-                    { readTransport: transport, signal: physicalSignal, onChunk(batch) {
+                    { readTransport: transport, signal: physicalSignal, onIssued: issued, onChunk(batch) {
                         priceCatalog ??= batch.priceCatalog;
                         const chunk = new Map<string, AccountingRead>();
                         const complete = (id: string, value: AccountingRead) => {
@@ -120,7 +122,7 @@ export function createUsageAccountingReader(context: Readonly<{
                     } });
                 if (wanted.size) throw invalid('incomplete_batch', [pages.size ? 'contributionPages' : 'results']);
                 return resolved;
-            }, { scope: transport.scope ?? binding, signal: cancellation.signal }).finally(cancellation.dispose);
+            }, { scope: transport.scope ?? binding, signal: cancellation.signal, onIssued }).finally(cancellation.dispose);
             const result = values.get(key)!;
             if ('error' in result) throw new HappyError('Usage slice unavailable', false,
                 result.error === 'not_found' ? { status: 404, code: 'denied' } : { code: 'usage_query_failed' });

@@ -5,6 +5,7 @@ import { renderHook, standardCleanup } from '@/dev/testkit';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { createRenderCommitCounter, useRenderCommitCounter } from '@/dev/testkit/performance/counts';
 import { storage } from '@/sync/domains/state/storage';
+import { getActiveServerSnapshot } from '@/sync/domains/server/serverProfiles';
 import { resolveMachineDisplayNames } from '@/utils/sessions/machineDisplayNames';
 import { readUsageWidgetPageScope } from './usageWidgetPageContext';
 import { useUsageWidgetPageContext } from './useUsageWidgetPageContext';
@@ -21,7 +22,7 @@ it('retains the drill choices when a batch changes only facts outside its scope 
     const hook = await renderHook(() => {
         const page = useUsageWidgetPageContext({ authority: null,
             initialFilters: { period: '7days', metric: 'tokens', costMode: 'auto', focus: null, scope } });
-        return useUsageWidgetPageFilters(page, slices, false);
+        return useUsageWidgetPageFilters(page, slices, false, getActiveServerSnapshot().serverId);
     });
     try {
         const retained = hook.getCurrent();
@@ -48,7 +49,7 @@ it('keeps filter consumers quiet through Machine runtime changes while names, lo
     const hook = await renderHook(() => {
         const page = useUsageWidgetPageContext({ authority: null,
             initialFilters: { period: '7days', metric: 'tokens', costMode: 'auto', focus: null, scope } });
-        const filters = useUsageWidgetPageFilters(page, [], false);
+        const filters = useUsageWidgetPageFilters(page, [], false, getActiveServerSnapshot().serverId);
         useRenderCommitCounter(counter);
         return filters.find(filter => filter.field === 'machines')!;
     });

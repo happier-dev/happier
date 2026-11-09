@@ -7,6 +7,8 @@ export type ScopedReadOptions = Readonly<{
     scope?: ReadPartitionScope;
     /** A required fresh witness cannot join an earlier ordinary acquisition. */
     fresh?: boolean;
+    /** Observe physical issuance without owning its continuation. */
+    onIssued?: () => void;
 }>;
 
 type ReadScope = object | string;
@@ -14,9 +16,7 @@ type ReadPartitionScope = ReadScope | readonly ReadScope[];
 
 export type ScopedPhysicalReadOptions = ScopedReadOptions & Readonly<{
     /** Register physical custody or a selected batch item before dispatch/borrower retirement. */
-    onPhysicalAcquire?: (signal: AbortSignal) => (() => void | Promise<void>) | void;
-    /** Each live borrower observes issuance without owning the shared physical continuation. */
-    onIssued?: () => void;
+    onPhysicalAcquire?: (signal: AbortSignal, onIssued: () => void) => (() => void | Promise<void>) | void;
 }>;
 
 /** Ordered existing references partition pending work without assigning identities to them. */
@@ -105,25 +105,27 @@ export function createScopedResolutionSingleFlight<T>(ownerSignal?: AbortSignal)
             if (!flight) {
                 const abort = new AbortController();
                 const physicalSignal = ownerSignal ?? abort.signal;
+                let issued = false;
+                const onIssued = () => {
+                    issued = true;
+                    for (const listener of [...(flight?.issuanceListeners ?? [])]) listener();
+                    throwIfAborted(physicalSignal);
+                };
                 let dispose: (() => void | Promise<void>) | void;
                 try {
-                    dispose = options.onPhysicalAcquire?.(physicalSignal);
+                    dispose = options.onPhysicalAcquire?.(physicalSignal, onIssued);
                 } catch (error) {
                     if (partition.size === 0) partitions.forget(scope, partition);
                     throw error;
                 }
                 const operation = Promise.resolve().then(() => {
                     throwIfAborted(physicalSignal);
-                    return resolve(physicalSignal, () => {
-                        created.issued = true;
-                        for (const listener of [...(created.issuanceListeners ?? [])]) listener();
-                        throwIfAborted(physicalSignal);
-                    });
+                    return resolve(physicalSignal, onIssued);
                 });
                 // Also disposes a selected capture when its final borrower
                 // leaves before the deferred resolver gets a chance to run.
                 const result = dispose ? operation.finally(dispose) : operation;
-                flight = { result, abort, waiters: 0, settled: false, issued: false };
+                flight = { result, abort, waiters: 0, settled: false, get issued() { return issued; } };
                 const created = flight;
                 partition.set(key, created);
                 const finish = () => { created.settled = true; forget(created); };
@@ -196,7 +198,7 @@ export function createScopedResolutionSingleFlight<T>(ownerSignal?: AbortSignal)
 }
 
 type BatchRead<T> = (ids: readonly string[], signal: AbortSignal,
-    publish: (values: ReadonlyMap<string, T>) => void) => Promise<ReadonlyMap<string, T>>;
+    publish: (values: ReadonlyMap<string, T>) => void, onIssued: () => void) => Promise<ReadonlyMap<string, T>>;
 
 /** Finite work belonging to one delivered physical chunk, partitioned by its real destination. */
 export type ScopedBatchResolutionContext = Readonly<{
@@ -262,7 +264,8 @@ export function createScopedBatchResolutionSingleFlight<T>(configuration: Readon
     const defaultScope = {};
     type Resolved = { value: T; batch: ReturnType<typeof createBatchResolutionContext> };
     type ItemResult = T | Resolved;
-    type Item = { id: string; signal: AbortSignal; read: BatchRead<T>; accept: (value: ItemResult) => void; reject: (error: unknown) => void };
+    type Item = { id: string; signal: AbortSignal; read: BatchRead<T>; onIssued: () => void;
+        accept: (value: ItemResult) => void; reject: (error: unknown) => void };
     type Batch = { items: Item[]; preparations: number; scheduled: boolean };
     type Partition = { reads: ScopedResolutionSingleFlight<ItemResult>; groups: Map<string, Batch>; users: number; physical: number };
     const partitions = createReadPartitions<Partition>();
@@ -354,7 +357,13 @@ export function createScopedBatchResolutionSingleFlight<T>(configuration: Readon
                 }
                 cancelIfUnwanted();
             };
-            const result = await first.read(items.map(item => item.id), abort.signal, publish);
+            const result = await first.read(items.map(item => item.id), abort.signal, publish, () => {
+                for (const item of items) {
+                    try { item.onIssued(); }
+                    catch (error) { if (!item.signal.aborted) throw error; }
+                }
+                throwIfAborted(abort.signal);
+            });
             if (pending.size > 0) {
                 const completed = new Map<string, T>();
                 // Map.has establishes presence even when T itself permits undefined.
@@ -378,12 +387,18 @@ export function createScopedBatchResolutionSingleFlight<T>(configuration: Readon
         onResolved?: (id: string, value: T, context?: ScopedBatchResolutionContext) => void) {
         const invocation = new AbortController();
         const cancellation = mergeAbortSignals([invocation.signal, options.signal, signal]);
+        let issued = false;
         try {
             throwIfAborted(cancellation.signal);
             const pending = Promise.all([...new Set(ids)].map(async id => {
                 let selected!: Promise<ItemResult>;
                 const value = await acquisition.partition.reads.run(JSON.stringify([groupKey, id]), () => selected, {
                     signal: cancellation.signal,
+                    onIssued: options.onIssued ? () => {
+                        if (issued) return;
+                        issued = true;
+                        options.onIssued!();
+                    } : undefined,
                     ...(materializePhysicalChunks ? {
                         onPhysicalResolved: (result: ItemResult, borrowers: number) => (result as Resolved).batch.expect(borrowers),
                         onResolved: (result: ItemResult, live: boolean) => {
@@ -392,11 +407,11 @@ export function createScopedBatchResolutionSingleFlight<T>(configuration: Readon
                             finally { resolved.batch.delivered(); }
                         },
                     } : {}),
-                    onPhysicalAcquire: signal => {
+                    onPhysicalAcquire: (signal, onIssued) => {
                         // Selection is synchronous: a ready flush may already
                         // be queued when another preparation settles its ids.
                         selected = new Promise<ItemResult>((accept, reject) => {
-                            batch.items.push({ id, signal, read, accept, reject });
+                            batch.items.push({ id, signal, read, onIssued, accept, reject });
                         });
                         // The last borrower can leave before the deferred
                         // resolver runs; dispatch still settles its queued item.

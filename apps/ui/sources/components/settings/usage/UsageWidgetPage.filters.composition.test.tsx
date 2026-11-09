@@ -662,7 +662,7 @@ describe('mounted Usage page scope commands', () => {
         expect(shownAccounting, 'every committed scroll frame retains the loaded facts').not.toContain(null);
     });
 
-    it('waits for the default Overview Coach body to be near before requesting its transcript facts', async () => {
+    it("defers the default Overview Coach until near and reuses the visible Summary's transcript facts", async () => {
         const nowMs = 1_710_000_000_000;
         vi.spyOn(Date, 'now').mockReturnValue(nowMs);
         const { createPlainSessionWithDisplayRecordFixture } = await import('@/dev/testkit/fixtures/sessionDisplayFixtures');
@@ -711,19 +711,27 @@ describe('mounted Usage page scope commands', () => {
         await sync.awaitBootstrapForegroundAcquisition();
         const evidence = () => home!.httpRequests.filter(request => request.path === USAGE_SESSION_EVIDENCE_PATH)
             .flatMap(request => UsageSessionEvidenceRequestSchema.parse(request.body).requests);
+        const coachEvidence = () => evidence().filter(demand => demand.query.includeTranscriptEvidence
+            && !demand.query.includeWorkEvidence);
         expect(evidence(), 'the cold page has not admitted a physical viewport').toHaveLength(0);
         await act(async () => screen.findByTestId('usage-page')!.props.onLayout?.({ nativeEvent: { layout: { x: 0, y: 0, width: 1000, height: 900 } } }));
         await waitForHomeGovernance(() => expect(screen.findAllByType(UsagePeriodSummaryWidget)[0]?.props.slice.howYouWork?.intervals?.agentTimeMs).toBe(300));
+        const coachFrame = 'usage-area.widget.overview:group:0:widget:4';
+        expect(positions.get(coachFrame), 'Coach is physically below the canonical viewport build window').toBe(2_010);
+        expect(screen.findHostByTestId(`${coachFrame}.deferred`), 'Coach frame remains deferred before the scroll').not.toBeNull();
+        expect(screen.findHostByTestId(`${coachFrame}.bodyHeight`), 'Coach has no mounted body before the scroll').toBeNull();
         expect(screen.findAllByType(UsageCoachWidget), 'never-near Coach has no body or transcript demand').toHaveLength(0);
         expect(evidence().length, 'visible Summary still consumes its real interval facts').toBeGreaterThan(0);
-        expect(evidence().filter(demand => demand.query.includeTranscriptEvidence)).toHaveLength(0);
+        expect(evidence().filter(demand => demand.query.includeTranscriptEvidence && demand.query.includeWorkEvidence
+            && demand.query.workProjection === 'summary'), 'visible Summary owns the shared Today history conversion').toHaveLength(1);
+        expect(coachEvidence(), 'a far Coach adds no private evidence request').toHaveLength(0);
         await act(async () => {
             offset = 1111;
             screen.findByTestId('usage-page')!.props.onScroll({ nativeEvent: { contentOffset: { x: 0, y: offset } } });
         });
         await waitForHomeGovernance(() => expect(screen.findAllByType(UsageCoachWidget)[0]?.props.slice.sources)
             .toContainEqual({ source: 'how_you_work:transcripts', status: 'available' }));
-        expect(evidence().filter(demand => demand.query.includeTranscriptEvidence)).toHaveLength(1);
+        expect(coachEvidence(), 'near Coach reuses the Summary transcript admission without another request').toHaveLength(0);
     });
 
     it.each([false, true])('acquires one private evidence cohort through the cold Today Overview entry (quota arrival: %s)', async connected => {

@@ -78,7 +78,7 @@ export type ServerFetchOptions = Readonly<{
     retry?: 'default' | 'none';
     /** Opt into a request bound. Requests are unbounded when omitted; zero also disables it. */
     timeoutMs?: number;
-    /** Called once after pre-dispatch guards pass and before bytes enter the transport. */
+    /** Called once after adapter preparation, immediately before invoking the selected transport. */
     onIssued?: () => void;
 }>;
 
@@ -708,8 +708,8 @@ async function requestAtEndpoint<T>(
     let issued = false;
     const markIssued = () => {
         if (issued) return;
-        issued = true;
         options.onIssued?.();
+        issued = true;
     };
     try {
         for (let attempt = 0; attempt < 2; attempt += 1) {
@@ -754,13 +754,15 @@ async function requestAtEndpoint<T>(
                 const probeReportScope = isSupervisedOrigin
                     ? peekServerReachabilityScope(context.endpointUrl, usedToken)
                     : null;
-                markIssued();
                 const request = { ...init, headers, signal: requestController.signal };
                 try {
                     response = await fetchWithCredentialRedirectRefusal(requestUrl, request,
-                        homeCarrier ? (url, init) => homeCarrier.request(String(url), init ?? {}) : runtimeFetchManualResponse);
+                        homeCarrier ? (url, init) => {
+                            markIssued();
+                            return homeCarrier.request(String(url), init ?? {});
+                        } : (url, init) => runtimeFetchManualResponse(url, init, markIssued));
                 } catch (error) {
-                    if (probeReportScope && !requestController.signal.aborted
+                    if (issued && probeReportScope && !requestController.signal.aborted
                         && !(error instanceof CredentialRequestRedirectError)
                         && !(error instanceof Error && error.name === 'AbortError')) {
                         const errorMessage = sanitizeEndpointErrorMessage(error) ?? 'Network request failed';

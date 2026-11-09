@@ -42,6 +42,9 @@ import { flattenWidgetLayoutWidgetsV1 } from '@happier-dev/protocol/widgets';
 import { USAGE_SESSION_EVIDENCE_PATH, UsageSessionEvidenceRequestSchema, UsageSessionEvidenceResponseSchema } from '@happier-dev/protocol/usage/usageSessionEvidence';
 import type { JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { WidgetFrameDemandContext, WidgetFrameInstanceIdContext } from '@/components/widgets/frame/widgetFrameDemand';
+import { USAGE_COACH_SUPPRESSIONS_KV_KEY } from '@happier-dev/protocol/usage/coach/coachActions';
+import { buildProviderAccountUsageRecordId, ProviderAccountUsageSnapshotV1Schema } from '@happier-dev/protocol/connect/account-usage-primitives';
+import { getServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeaturesClient';
 
 const accounting: UsageAnalyticsQueryResponse = {
   v: 1,
@@ -105,12 +108,40 @@ function Body(
 
 describe('Usage page batch', () => {
   it('reuses admitted facts when switching the canonical Coach and How you work cohorts, and displays changed accounting', async () => {
+    // Measurement only: the real evaluator still owns every finding and decision.
+    const coachEvaluations = vi.spyOn(await import('@happier-dev/protocol/usage/coach/evaluateUsageCoach'), 'evaluateUsageCoach');
+    const allowanceEvaluations = vi.spyOn(await import('@/sync/api/account/apiProviderAccountUsage'), 'getProviderAccountUsageQuota');
+    let observeAdmission = false;
+    let activityIssued = false;
+    let inputsBeforeActivity = 0;
+    let asynchronousSwitchInputs = 0;
+    const sessionInputs = await import('@/sync/api/account/usageQuerySessionInputs');
+    const createInputs = sessionInputs.createUsageQuerySessionInputs;
+    // Count the real owner's reads at the HTTP boundary without replacing its decisions.
+    vi.spyOn(sessionInputs, 'createUsageQuerySessionInputs').mockImplementation(input => {
+      const owner = createInputs(input);
+      return { ...owner, read: (...args) => {
+        if (observeAdmission && !activityIssued) inputsBeforeActivity++;
+        const result = owner.read(...args);
+        if (observeAdmission && args[0] === 'switch-session' && result instanceof Promise) asynchronousSwitchInputs++;
+        return result;
+      } };
+    });
     const nowMs = Date.UTC(2026, 10, 7, 12);
     vi.spyOn(Date, 'now').mockReturnValue(nowMs);
     let eventCount = 1;
     let revision = 1;
     let agentTimeMs = 300;
     let denySession = false;
+    let coachPreferenceReadsOnSwitch = 0;
+    let quotaReadsOnSwitch = 0;
+    let quotaReads = 0;
+    const ref = { service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, accountId: 'work' };
+    const source = { bindingKind: 'account' as const, ref };
+    const recordKey = { providerId: 'codex', accountSubjectId: ref.accountId, subjectKind: 'account', quotaScope: 'account' } as const;
+    const record = ProviderAccountUsageSnapshotV1Schema.parse({ v: 1, recordId: buildProviderAccountUsageRecordId(recordKey), recordKey,
+      providerId: 'codex', accountSubject: { kind: 'providerSubject', id: ref.accountId }, observedAtMs: nowMs, fetchedAtMs: nowMs,
+      staleAfterMs: 600_000, source: 'providerHttp', confidence: 'confirmed', state: 'loaded_empty', meters: [] });
     let visits = 0;
     const compactInput = await import('@/sync/api/account/usageCompactInput');
     const open = compactInput.openUsageCompactInput;
@@ -129,9 +160,26 @@ describe('Usage page batch', () => {
     });
     home = await serveAccountHomes({ homes: [{ key: 'a', serverUrl: 'https://usage-coach-switch.test', accountId: 'account-a' }],
       route: request => {
-        if (request.path === '/v1/features' || request.path === '/v1/features/authenticated') return Response.json(createRootLayoutFeaturesResponse());
-        if (request.path === '/v2/usage/query') return Response.json({ ...accounting, totals: { ...accounting.totals, eventCount },
-          activity: { calendarDays: [{ date: '2026-11-07', eventCount }], weekdayHourBuckets: [{ weekday: 6, hour: 23, eventCount }] } });
+        if (observeAdmission && request.path === '/v1/kv/bulk' && request.body !== null && typeof request.body === 'object'
+          && 'keys' in request.body && Array.isArray(request.body.keys) && request.body.keys.includes(USAGE_COACH_SUPPRESSIONS_KV_KEY)) {
+          coachPreferenceReadsOnSwitch++;
+        }
+        if (request.path.startsWith('/v4/connect/qualified/provider-account-usage/')) {
+          quotaReads++;
+          if (observeAdmission) quotaReadsOnSwitch++;
+        }
+        if (request.path === '/v4/connect/qualified/provider-account-usage/sources/resolve') return Response.json({ source,
+          recordId: record.recordId, providerAccountId: ref.accountId, fetchedAt: nowMs, staleAfterMs: 600_000 });
+        if (request.path === '/v4/connect/qualified/provider-account-usage/record') return Response.json({ content: { t: 'plain', v: record },
+          metadata: { fetchedAt: nowMs, staleAfterMs: 600_000, status: 'ok' }, sources: [source] });
+        if (request.path === '/v1/features' || request.path === '/v1/features/authenticated') return Response.json(createRootLayoutFeaturesResponse({
+          features: { connectedServices: { enabled: true, quotas: { enabled: true } } },
+        }));
+        if (request.path === '/v2/usage/query') {
+          if (UsageAnalyticsQueryRequestSchema.parse(request.body).includeActivity) activityIssued = true;
+          return Response.json({ ...accounting, totals: { ...accounting.totals, eventCount },
+            activity: { calendarDays: [{ date: '2026-11-07', eventCount }], weekdayHourBuckets: [{ weekday: 6, hour: 23, eventCount }] } });
+        }
         if (request.path === USAGE_SESSION_EVIDENCE_PATH) {
           const input = UsageSessionEvidenceRequestSchema.parse(request.body);
           return Response.json({ requests: input.requests.map(demand => ({ query: demand.query, sessionIds: demand.sessionIds ?? ['switch-denied', 'switch-session'] })),
@@ -160,7 +208,11 @@ describe('Usage page batch', () => {
     const server = home.homes.a!;
     publishAppliedActiveServerSnapshot({ serverId: server.id, serverUrl: server.serverUrl, generation: 0 });
     storage.setState({ profileScope: { serverId: server.id, accountId: 'account-a' },
-      settingsScope: { serverId: server.id, accountId: 'account-a' }, profile: AccountProfileSchema.parse({ id: 'account-a' }) });
+      settingsScope: { serverId: server.id, accountId: 'account-a' }, profile: AccountProfileSchema.parse({ id: 'account-a', connectedAccountsV4: [{
+        ref, status: 'connected', authenticationModeId: 'manual', revisionSemantics: 'revisioned',
+        credentialRevision: 'csr_abcdefghijklmnopqrstuvwxyz', configurationReady: false, configurationRevision: null, scopes: [],
+      }] }) });
+    await getServerFeaturesSnapshot({ serverId: server.id, force: true });
     const { TokenStorage } = await import('@/auth/storage/tokenStorage');
     const credentials = (await TokenStorage.getCredentialsForServerUrl(server.serverUrl))!;
     const originalNightHours = storage.getState().settings.usageNightHoursV1;
@@ -191,12 +243,14 @@ describe('Usage page batch', () => {
       React.useEffect(() => () => { models.delete(props.id); }, [props.id]);
       return null;
     }
-    const page = (presetId: 'coach' | 'how-you-work') => {
+    const page = (presetId: 'coach' | 'how-you-work', layoutReady = true) => {
       const widgets = flattenWidgetLayoutWidgetsV1(presets.find(preset => preset.id === presetId)!.items);
       return <InjectedAuthProvider credentials={credentials}>
-      <UsageWidgetBatchProvider clauses={clauses} queryWidgetIds={widgets.map(row => row.instance.id)}>
+      <UsageWidgetBatchProvider clauses={clauses} enabled={layoutReady}
+        inventoryQuery={layoutReady ? normalizeUsageQuery({ period: { relative: '90days' } }) : undefined}
+        queryWidgetIds={layoutReady ? widgets.map(row => row.instance.id) : undefined}>
         <CostChoiceProbe />
-        {widgets.map(row => {
+        {layoutReady && widgets.map(row => {
           if (row.instance.definition.kind !== 'builtin') throw new Error('Usage presets require builtin widgets');
           return <WidgetFrameInstanceIdContext.Provider key={row.instance.id} value={row.instance.id}><Probe id={row.instance.id}
             widgetId={row.instance.definition.id as Exclude<UsageBuiltinWidgetIdV1, 'usage_sources'>}
@@ -216,6 +270,10 @@ describe('Usage page batch', () => {
     const evidenceReads = () => home!.httpRequests.filter(request => request.path === USAGE_SESSION_EVIDENCE_PATH).length;
     try {
       await settle(1);
+      expect(coachEvaluations.mock.calls.length).toBeGreaterThan(0);
+      expect([...models.values()][0]?.slice?.coach, 'Coach still publishes its admitted findings').toBeDefined();
+      expect(quotaReads, 'Coach renders no provider allowance facts').toBe(0);
+      expect(allowanceEvaluations.mock.calls.length, 'Coach never enters provider allowance projection').toBe(0);
       expect([...models.values()][0]?.slice?.howYouWork?.intervals?.agentTimeMs).toBe(300);
       visits = 0;
       const coldReads = reads();
@@ -223,8 +281,28 @@ describe('Usage page batch', () => {
       const coachOpenings = openings.mock.calls.length;
       const firstRenderStart = renders;
       const firstWidgetRenders = new Map(rendersByWidget);
+      const coachCallsBeforeSwitch = coachEvaluations.mock.calls.length;
+      const allowanceCallsBeforeSwitch = allowanceEvaluations.mock.calls.length;
+      observeAdmission = true;
+      activityIssued = false;
+      // A newly selected document first renders its loading shell. The old
+      // frame registrations still exist in the provider during that render.
+      await screen.update(page('coach', false));
+      expect.soft(coachEvaluations.mock.calls.length - coachCallsBeforeSwitch,
+        'the selected layout loading shell never admits another outgoing Coach cohort').toBe(0);
+      expect.soft(quotaReadsOnSwitch, 'a loading document cannot reacquire the outgoing allowance').toBe(0);
       await screen.update(page('how-you-work'));
       await settle(8);
+      observeAdmission = false;
+      expect(activityIssued).toBe(true);
+      expect.soft(inputsBeforeActivity, 'new accounting dispatch precedes retained Session input work').toBe(0);
+      expect.soft(asynchronousSwitchInputs, 'admitted Session inputs need no asynchronous continuations on a warm view switch').toBe(0);
+      expect.soft(coachEvaluations.mock.calls.length - coachCallsBeforeSwitch,
+        'a non-Coach view switch evaluates zero Coach detectors').toBe(0);
+      expect.soft(coachPreferenceReadsOnSwitch, 'a non-Coach switch does not acquire Coach preferences').toBe(0);
+      expect.soft(quotaReadsOnSwitch, 'How you work acquires no unused provider allowance').toBe(0);
+      expect.soft(allowanceEvaluations.mock.calls.length - allowanceCallsBeforeSwitch,
+        'How you work never enters provider allowance acquisition, even with a warm transport').toBe(0);
       const admittedReads = reads();
       const firstSwitchVisits = visits;
       console.info('USAGE-COACH-SWITCH first', JSON.stringify({ firstSwitchReads: admittedReads - coldReads,
@@ -287,12 +365,15 @@ describe('Usage page batch', () => {
       revision++;
       visits = 0;
       const changedWidgetRenders = new Map(rendersByWidget);
+      const allowanceCallsBeforeRefresh = allowanceEvaluations.mock.calls.length;
       await act(async () => {
         storage.getState().applySessions([createSessionFixture({ id: 'switch-session', serverId: server.id,
           seq: revision, encryptionMode: 'plain', metadataVersion: 1, agentStateVersion: 1 })]);
         await [...models.values()][0]!.refresh();
       });
       await settle(8);
+      expect.soft(allowanceEvaluations.mock.calls.length - allowanceCallsBeforeRefresh,
+        'refreshing How you work acquires its changed accounting and Session facts without unused allowance').toBe(0);
       expect([...models.values()].every(model => model.slice?.accounting?.totals.eventCount === 2)).toBe(true);
       for (const id of models.keys())
         expect(rendersByWidget.get(id)! - (changedWidgetRenders.get(id) ?? 0), `${id}: changed accounting reaches its real consumer`).toBeGreaterThan(0);

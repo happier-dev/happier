@@ -108,7 +108,7 @@ describe('Usage widget shared Resource selection', () => {
             const model = useUsageWidgetBodyModel(resource, 'first');
             mounted.model = model;
             const slices = React.useMemo(() => model.slice ? [model.slice] : [], [model.slice]);
-            const filters = useUsageWidgetPageFilters(page, slices, false);
+            const filters = useUsageWidgetPageFilters(page, slices, false, home!.homes.a!.id);
             const commands = filters.flatMap(filter => filter.options.map(option => ({
                 field: filter.field, id: option.id, title: `${filter.title}: ${option.label}`,
                 invoke: (context?: ActionExecutorContext) => filter.select(option.id, context),
@@ -331,6 +331,7 @@ describe('Usage widget shared Resource selection', () => {
     });
     it('preserves the agent caller and Resource cancellation after its selection command retires', async () => {
         const { ProviderAccountUsageSnapshotV1Schema, buildProviderAccountUsageRecordId } = await import('@happier-dev/protocol/connect/account-usage-primitives');
+        const { ProviderAccountUsagePageProjectionWriteV1Schema } = await import('@happier-dev/protocol/connect/providerAccountUsageHistory');
         const { createRootLayoutFeaturesResponse } = await import('@/dev/testkit/fixtures/featureFixtures');
         const { getServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
         const ref = { service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, accountId: 'resource-origin' };
@@ -342,6 +343,7 @@ describe('Usage widget shared Resource selection', () => {
         const held = createDeferred<void>();
         let holdRead = false;
         let resourceSignal: AbortSignal | null | undefined;
+        let projection: ReturnType<typeof ProviderAccountUsagePageProjectionWriteV1Schema.parse> | null = null;
         const credentials = await mountHome(async request => {
             if (request.path === '/v2/usage/query') {
                 if (holdRead) { resourceSignal = request.signal; await held.promise; }
@@ -354,6 +356,15 @@ describe('Usage widget shared Resource selection', () => {
             if (request.path === '/v4/connect/qualified/provider-account-usage/record') return Response.json({
                 content: { t: 'plain', v: snapshot }, metadata: { fetchedAt: nowMs, staleAfterMs: 60_000, status: 'ok' },
                 sources: [{ bindingKind: 'account', ref }] });
+            if (request.path === '/v4/connect/qualified/provider-account-usage/history') {
+                if (request.method === 'PUT') {
+                    projection = ProviderAccountUsagePageProjectionWriteV1Schema.parse(request.body);
+                    return Response.json({ success: true });
+                }
+                const historyQuery: unknown = JSON.parse(request.url.searchParams.get('query') ?? 'null');
+                return Response.json(historyQuery && typeof historyQuery === 'object' && 'projection' in historyQuery
+                    ? { projection, complete: projection !== null } : { entries: [], nextCursor: null });
+            }
             if (request.path === '/v2/pending/reset-starts/read') return Response.json({ entries: [] });
             return undefined;
         });
@@ -372,7 +383,9 @@ describe('Usage widget shared Resource selection', () => {
         let receivedContext: ActionExecutorContext | undefined;
         function SelectedBody(props: Readonly<{ agents: readonly string[]; period: UsagePeriod }>) {
             model = useUsageWidgetModel({ agents: [...props.agents], period: { relative: props.period },
-                metric: query.metric }, 'usage_breakdowns').model;
+                // Plan fit consumes both accounting and allowance; a breakdown
+                // intentionally cannot exercise nested quota admission.
+                metric: query.metric }, 'usage_plan_fit').model;
             return null;
         }
         function Page() {
@@ -687,6 +700,87 @@ describe('Usage widget shared Resource selection', () => {
         await expect.poll(() => hook.getCurrent().requestedQuery?.query.period).toEqual({ startMs: 2000 });
         expect(secondReads).toBeGreaterThan(0);
     });
+    it('withholds newly mounted rich cached facts until changed accounting is physically issued', async () => {
+        let amount = 1;
+        let activityPosts = 0;
+        let held: ReturnType<typeof createDeferred<Response>> | undefined;
+        let cancelled: ReturnType<typeof createDeferred<Response>> | undefined;
+        const response = () => Response.json({ ...accounting, totals: { ...accounting.totals,
+            cost: { ...accounting.totals.cost, reportedUsd: amount } },
+            breakdowns: { agent: [{ key: 'codex', ...accounting.totals,
+                cost: { ...accounting.totals.cost, reportedUsd: amount } }] } });
+        const credentials = await mountHome(request => {
+            if (request.path !== '/v2/usage/query') return undefined;
+            activityPosts++;
+            return held ? held.promise.then(value => value.clone()) : response();
+        });
+        const input = { metric: 'cost', period: { startMs: 1_000, endMs: 2_000 }, breakdown: ['agent'] };
+        const clauses = readUsageWidgetQueryOverrides(normalizeUsageQuery({ granularity: 'day', timeZoneOffsetMinutes: 0,
+            includeCoach: false, includeQuota: false, includeQuotaHistory: false, includeComparison: false,
+            includeSessionEvidence: false, includeTranscriptEvidence: false, includeWorkEvidence: false }));
+        let screen: Awaited<ReturnType<typeof renderScreen>> | undefined;
+        let observing = false;
+        let beforeReopenPosts = 0;
+        let preIssueFactBodies = 0;
+        // React's Profiler observes the real rich subtree's commit before the
+        // enclosing batch's layout-effect subscription can acquire its read.
+        const observeFacts: React.ProfilerOnRenderCallback = () => {
+            if (observing && activityPosts === beforeReopenPosts)
+                preIssueFactBodies += screen?.findAllByType(UsageBreakdownsWidget).length ?? 0;
+        };
+        function Page(props: Readonly<{ visible: boolean }>) {
+            return <InjectedAuthProvider credentials={credentials}><CoreCollectionScope>
+                {props.visible ? <UsageWidgetBatchProvider clauses={clauses}>
+                    <React.Profiler id="issued-facts" onRender={observeFacts}>
+                        <UsageWidgetBody id="usage_breakdowns" input={input} serverId={home!.homes.a!.id} testID="issued-facts" />
+                    </React.Profiler>
+                </UsageWidgetBatchProvider> : null}
+            </CoreCollectionScope></InjectedAuthProvider>;
+        }
+        const values = () => screen!.findAllByType(RankedRows).flatMap(row => row.props.rows
+            .filter((entry: { id: string }) => entry.id === 'codex').map((entry: { value: number }) => entry.value));
+        screen = await renderScreen(<Page visible />);
+        try {
+            await expect.poll(values).toEqual([1]);
+            await flushHookEffects({ cycles: 20 });
+            await screen.update(<Page visible={false} />);
+            amount = 2;
+            held = createDeferred<Response>();
+            invalidateUsageQueryResources();
+            beforeReopenPosts = activityPosts;
+            observing = true;
+            await screen.update(<Page visible />);
+            await expect.poll(() => activityPosts).toBe(beforeReopenPosts + 1);
+            expect(preIssueFactBodies, 'cached rich bodies must not run ahead of the required physical request').toBe(0);
+            expect(values(), 'issuance releases retained facts without waiting for the held response').toEqual([1]);
+            await flushHookEffects({ cycles: 20 });
+            expect(activityPosts, 'fact presentation joins the already issued cohort').toBe(beforeReopenPosts + 1);
+            await act(async () => { held!.resolve(response()); });
+            await expect.poll(values).toEqual([2]);
+            // A cancelled progress snapshot can keep the same admission inputs
+            // and pending state. It does not prove the next read has issued.
+            held = createDeferred<Response>();
+            amount = 3;
+            invalidateUsageQueryResources();
+            await expect.poll(() => activityPosts).toBe(beforeReopenPosts + 2);
+            expect(values(), 'an already presented body retains facts during refresh').toEqual([2]);
+            cancelled = held;
+            await screen.update(<Page visible={false} />);
+            held = createDeferred<Response>();
+            beforeReopenPosts = activityPosts;
+            preIssueFactBodies = 0;
+            await screen.update(<Page visible />);
+            await expect.poll(() => activityPosts).toBe(beforeReopenPosts + 1);
+            expect(preIssueFactBodies, 'cancelled progress cannot admit rich facts before the replacement request').toBe(0);
+            expect(values(), 'replacement issuance releases the retained facts').toEqual([2]);
+            await act(async () => { cancelled!.resolve(response()); });
+            await flushHookEffects({ cycles: 20 });
+            expect(values(), 'the cancelled response cannot replace current facts').toEqual([2]);
+            expect(activityPosts, 'the mounted facts keep the one replacement cohort').toBe(beforeReopenPosts + 1);
+            await act(async () => { held!.resolve(response()); });
+            await expect.poll(values).toEqual([3]);
+        } finally { cancelled?.resolve(response()); held?.resolve(response()); await screen.unmount(); }
+    });
     it('renders seven admitted fact bodies once on unchanged reopen while frame refresh activity remains truthful', async () => {
         let amount = 1;
         let held: ReturnType<typeof createDeferred<Response>> | undefined;
@@ -713,12 +807,13 @@ describe('Usage widget shared Resource selection', () => {
             selected = model;
             return model.slice && query ? <ObserveView model={model} query={query} /> : null;
         }
-        function Page(props: Readonly<{ visible: boolean; style?: string }>) {
+        function Page(props: Readonly<{ visible: boolean; style?: string; colourBy?: string; day?: string }>) {
             return <InjectedAuthProvider credentials={credentials}><CoreCollectionScope>
                 <WidgetFrameResourceActivityContext.Provider value={reportActivity}>
                     {props.visible ? <UsageWidgetBatchProvider clauses={clauses}>
                         {bodyIds.map(id => <UsageWidgetBody key={id} id="usage_breakdowns"
-                            input={{ ...input, ...(props.style ? { style: props.style } : {}) }}
+                            input={{ ...input, ...(props.style ? { style: props.style } : {}),
+                                ...(props.colourBy ? { colourBy: props.colourBy } : {}), ...(props.day ? { day: props.day } : {}) }}
                             serverId={home!.homes.a!.id} testID={id} />)}
                         <ObserveFacts />
                     </UsageWidgetBatchProvider> : null}
@@ -803,6 +898,16 @@ describe('Usage widget shared Resource selection', () => {
             console.info('usage-real-fact-change-counts', { visibleBodies: bodyIds.length, pendingRenders,
                 replacementRenders: totalRenders() - [...beforeData.values()].reduce((sum, count) => sum + count, 0),
                 changedNewModels: views.size - builtViews });
+            await screen.update(<Page visible style="crew" />);
+            await expect.poll(() => screen.findAllByType(UsageBreakdownsWidget)
+                .map(body => body.props.presentation?.style), 'a real presentation change still reaches every fact body')
+                .toEqual(bodyIds.map(() => 'crew'));
+            await screen.update(<Page visible style="crew" colourBy="agent" />);
+            await expect.poll(() => screen.findAllByType(UsageBreakdownsWidget).map(body => body.props.presentation?.colourBy))
+                .toEqual(bodyIds.map(() => 'agent'));
+            await screen.update(<Page visible style="crew" colourBy="agent" day="2026-11-08" />);
+            await expect.poll(() => screen.findAllByType(UsageBreakdownsWidget).map(body => body.props.presentation?.day))
+                .toEqual(bodyIds.map(() => '2026-11-08'));
         } finally { held?.resolve(response()); release(); await screen.unmount(); }
     });
     it('keeps admitted accounting available to seven mounted bodies while their query batch expands and reopens', async () => {

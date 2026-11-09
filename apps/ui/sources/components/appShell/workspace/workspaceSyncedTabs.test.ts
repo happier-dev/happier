@@ -7,6 +7,24 @@ const tab = (id: string) => ({ id, target: { kind: 'session', params: { id, serv
 const record = (...ids: string[]) => ({ v: 1 as const, tabsById: Object.fromEntries(ids.map(id => [id, tab(id)])), order: ids, pairs: [] });
 
 describe('workspace synced tab intent owner', () => {
+    it('does not enumerate tab entries for an empty replay and still applies a real pin edit', () => {
+        const original = record('a', 'b', 'c');
+        let enumeratedEntries = 0;
+        // Forward native table enumeration, including replay copies and equality serialization.
+        const observed = { ...original, tabsById: new Proxy(original.tabsById, {
+            ownKeys: target => {
+                const keys = Reflect.ownKeys(target);
+                enumeratedEntries += keys.length;
+                return keys;
+            },
+        }) };
+        expect(applyWorkspaceTabIntents(observed, [])).toBe(observed);
+        expect(enumeratedEntries).toBe(0);
+        const changed = applyWorkspaceTabIntents(observed, [{ type: 'patch', tabId: 'a', pinned: true }]);
+        expect(changed.tabsById.a.pinned).toBe(true);
+        expect(changed.order).toEqual(original.order);
+        expect(observed.tabsById.a.pinned).toBe(false);
+    });
     it('keeps the device active destination when another client retargets its shared tab', () => {
         const local = createWorkspaceState({ ...tab('workflows'), pinned: true, target: {
             kind: 'workflows', params: { workspacePathname: '/workflows/new', definitionDraftSeedId: 'SECOND' },

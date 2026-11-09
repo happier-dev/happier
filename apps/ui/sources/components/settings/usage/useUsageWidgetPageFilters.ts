@@ -11,6 +11,7 @@ import type { UsageWidgetPageContextState } from './useUsageWidgetPageContext';
 import { toggleUsageScopeSelection } from './usageWidgetPageContext';
 import { usageSourceAgentId } from '@/sync/domains/usage/usageLabels';
 import { readUsageCoverageGaps, useUsageProjectAnchorOf, usageAgentTitle, usageSourceTitle, usageCoverageDescription } from './widgets/usageBodyKit';
+import { useUsageWidgetBatchInventorySelection } from './widgets/usageWidgetBatch';
 
 export const USAGE_SCOPE_FILTER_ALL = '\u0000all';
 type ScopeField = 'sources' | 'agents' | 'machines' | 'projects';
@@ -31,6 +32,15 @@ export type UsageWidgetPageFilter = Readonly<{
     select(id: string, callerContext?: ActionExecutorContext, invocation?: CurrentUiContextCommandInvocation): boolean | Promise<boolean>;
 }>;
 
+function sameFilter(left: UsageWidgetPageFilter, right: UsageWidgetPageFilter): boolean {
+    return left.field === right.field && left.title === right.title
+        && sameStrictJsonValue(left.selected, right.selected) && sameStrictJsonValue(left.options, right.options);
+}
+
+function sameFilters(left: readonly UsageWidgetPageFilter[], right: readonly UsageWidgetPageFilter[]): boolean {
+    return left.length === right.length && left.every((filter, index) => sameFilter(filter, right[index]!));
+}
+
 const CAPTURE_KIND_KEY = {
     measured: 'usage.board.page.sourceKindMeasured',
     from_logs: 'usage.board.page.sourceKindFromLogs',
@@ -50,12 +60,14 @@ function sourceOptionDetail(slices: readonly UsageQueryResultSlice[], source: st
 }
 
 /** One choice/toggle owner consumed by both the toolbar and mounted current-context commands. */
-export function useUsageWidgetPageFilters(page: UsageWidgetPageContextState, slices: readonly UsageQueryResultSlice[], sessionScoped: boolean,
+export function useUsageWidgetPageFilters(page: UsageWidgetPageContextState, fallbackSlices: readonly UsageQueryResultSlice[], sessionScoped: boolean,
     serverId: string) {
     // Usage stamped by a checkout before it joined a Project is offered under that Project (owner 11-08).
     const projectAnchorOf = useUsageProjectAnchorOf(serverId);
     const { scope, setScope } = page;
-    const referencedMachineIds = React.useMemo(() => sessionScoped ? [] : [...readUsageScopeOptions(slices, 'machines', scope.machines).keys()], [sessionScoped, slices, scope.machines]);
+    const selectMachineIds = React.useCallback((inventory: UsageQueryResultSlice | null) => sessionScoped ? []
+        : [...readUsageScopeOptions(inventory ? [inventory] : fallbackSlices, 'machines', scope.machines).keys()], [sessionScoped, fallbackSlices, scope.machines]);
+    const referencedMachineIds = useUsageWidgetBatchInventorySelection(selectMachineIds, sameStrictJsonValue);
     // Filters consume names, not Machine runtime/presence. Select the canonical
     // display strings so those publications cannot invalidate every chart's drill.
     const machineNames = useAllMachines(React.useCallback(machines => {
@@ -65,8 +77,9 @@ export function useUsageWidgetPageFilters(page: UsageWidgetPageContextState, sli
             ...referencedMachineIds.filter(id => !listed.has(id)).map(id => ({ id, absence: 'unlisted' as const }))]));
     }, [referencedMachineIds, sessionScoped]));
     const retained = React.useRef<Readonly<{ setScope: typeof setScope; filters: readonly UsageWidgetPageFilter[] }> | null>(null);
-    return React.useMemo((): readonly UsageWidgetPageFilter[] => {
-        const filters = sessionScoped ? [] :
+    const selectFilters = React.useCallback((inventory: UsageQueryResultSlice | null): readonly UsageWidgetPageFilter[] => {
+        const slices = inventory ? [inventory] : fallbackSlices;
+        return sessionScoped ? [] :
         (['sources', 'agents', 'machines', 'projects'] as const).map(field => {
             const selected = scope[field];
             const labels = readUsageScopeOptions(slices, field, selected, field === 'projects' ? projectAnchorOf.resolve : undefined);
@@ -92,17 +105,16 @@ export function useUsageWidgetPageFilters(page: UsageWidgetPageContextState, sli
                 return setScope({ [field]: id === USAGE_SCOPE_FILTER_ALL ? [] : toggleUsageScopeSelection(selected, id, listed) }, callerContext);
             } };
         });
-        // Batch progress can change evidence without changing any offered
-        // choice. Keep that progress out of every chart's shared drill context.
-        const previous = retained.current;
-        const shared = previous?.setScope === setScope ? filters.map((filter, index) => {
-            const prior = previous.filters[index];
-            return prior?.field === filter.field && prior.title === filter.title
-                && sameStrictJsonValue(prior.selected, filter.selected) && sameStrictJsonValue(prior.options, filter.options)
-                ? prior : filter;
-        }) : filters;
-        if (previous && previous.filters.length === shared.length && shared.every((filter, index) => filter === previous.filters[index])) return previous.filters;
-        retained.current = { setScope, filters: shared };
-        return shared;
-    }, [machineNames, projectAnchorOf, scope, setScope, sessionScoped, slices]);
+    }, [machineNames, projectAnchorOf, scope, setScope, sessionScoped, fallbackSlices]);
+    const filters = useUsageWidgetBatchInventorySelection(selectFilters, sameFilters);
+    // Retain the rendered choices, rather than intermediate selector reads
+    // that React can coalesce during one Resource publication.
+    const previous = retained.current;
+    const shared = previous?.setScope === setScope ? filters.map((filter, index) => {
+        const prior = previous.filters[index];
+        return prior && sameFilter(prior, filter) ? prior : filter;
+    }) : filters;
+    if (previous && previous.filters.length === shared.length && shared.every((filter, index) => filter === previous.filters[index])) return previous.filters;
+    retained.current = { setScope, filters: shared };
+    return shared;
 }

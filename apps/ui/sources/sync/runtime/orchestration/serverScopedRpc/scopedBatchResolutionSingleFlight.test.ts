@@ -4,6 +4,35 @@ import { createScopedBatchResolutionSingleFlight } from './scopedResolutionSingl
 import { createDeferred } from '@/dev/testkit';
 
 describe('scoped batch pending reads', () => {
+    it('reports physical issuance to current and later borrowers before the response settles', async () => {
+        const reads = createScopedBatchResolutionSingleFlight<string>();
+        const started = createDeferred<void>();
+        const response = createDeferred<ReadonlyMap<string, string>>();
+        const observed: string[] = [];
+        let issue: (() => void) | undefined;
+        const request = async (_ids: readonly string[], _signal: AbortSignal,
+            _publish: (values: ReadonlyMap<string, string>) => void, onIssued: () => void) => {
+            issue = onIssued;
+            started.resolve();
+            return response.promise;
+        };
+        const first = reads.run('accounting', ['a'], request, { onIssued: () => observed.push('first') });
+        const second = reads.run('accounting', ['a'], request, { onIssued: () => observed.push('second') });
+        try {
+            await started.promise;
+            expect(observed).toEqual([]);
+            expect(issue).toBeTypeOf('function');
+            issue!();
+            expect(observed).toEqual(['first', 'second']);
+            const later = reads.run('accounting', ['a'], request, { onIssued: () => observed.push('later') });
+            expect(observed).toEqual(['first', 'second', 'later']);
+            response.resolve(new Map([['a', 'answer']]));
+            expect(await later).toEqual(new Map([['a', 'answer']]));
+        } finally {
+            response.resolve(new Map([['a', 'answer']]));
+            await Promise.all([first, second]);
+        }
+    });
     it('keeps Account-owned physical work joinable after the last borrower leaves, until owner retirement', async () => {
         const owner = new AbortController();
         const caller = new AbortController();

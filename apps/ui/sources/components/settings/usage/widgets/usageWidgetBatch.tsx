@@ -28,7 +28,6 @@ import {
 } from '../usageWidgetPageContext';
 import {
   useUsageWidgetBodyModel,
-  useUsageWidgetQueryModel,
   useUsageWidgetQuerySliceSelection,
   useUsageWidgetResource,
   useUsageWidgetResourceSubscription,
@@ -49,15 +48,15 @@ const USAGE_WIDGET_DEMAND = {
   usage_flow: { includeSeries: true, includeModelTimeline: true, includeSessionEvidence: false, includeWorkEvidence: false },
   usage_efficiency: { includeInsights: true, includeComparison: true, includeSessionEvidence: false, includeWorkEvidence: false },
   usage_breakdowns: { includeSessionEvidence: false, includeWorkEvidence: false },
-  usage_capacity: { includeAccounting: false, includeSessionEvidence: false, includeWorkEvidence: false },
-  usage_projections: { includeAccounting: false, includeQuotaHistory: true, includeSessionEvidence: false, includeWorkEvidence: false },
-  usage_resets: { includeAccounting: false, includeQuotaHistory: true, includeSessionEvidence: false, includeWorkEvidence: false },
+  usage_capacity: { includeAccounting: false, includeQuota: true, includeSessionEvidence: false, includeWorkEvidence: false },
+  usage_projections: { includeAccounting: false, includeQuota: true, includeQuotaHistory: true, includeSessionEvidence: false, includeWorkEvidence: false },
+  usage_resets: { includeAccounting: false, includeQuota: true, includeQuotaHistory: true, includeSessionEvidence: false, includeWorkEvidence: false },
   // Plan fit also renders the recorded-week projection, whose producer consumes calendar activity.
-  usage_plan_fit: { includeActivity: true, includeQuotaHistory: true, includeSessionEvidence: false, includeWorkEvidence: false },
+  usage_plan_fit: { includeActivity: true, includeQuota: true, includeQuotaHistory: true, includeSessionEvidence: false, includeWorkEvidence: false },
   usage_project_ledger: { includeSessionEvidence: false, includeWorkEvidence: true },
   usage_session_value: { includeSessionEvidence: false, includeWorkEvidence: true },
   usage_outcomes: { includeSessionEvidence: false, includeWorkEvidence: true },
-  usage_coach: { includeSessionEvidence: true, includeTranscriptEvidence: true, includeWorkEvidence: false },
+    usage_coach: { includeSessionEvidence: true, includeCoach: true, includeTranscriptEvidence: true, includeWorkEvidence: false },
   // Rhythm's declared default metric is Busy time, which only witnessed intervals can answer.
   usage_rhythm: { includeActivity: true, includeInsights: true, includeSessionEvidence: true, includeWorkEvidence: false },
   usage_parallel: { includeActivity: true, includeSessionEvidence: true, includeWorkEvidence: false },
@@ -79,7 +78,7 @@ const USAGE_WIDGET_DEMAND = {
   usage_machines: { includeAccounting: false, includeSessionEvidence: false, includeWorkEvidence: false },
   usage_projects: { includeAccounting: false, includeSessionEvidence: false, includeWorkEvidence: false },
 } satisfies Record<UsageQueryWidgetId, Readonly<Pick<UsageQuery, 'includeSessionEvidence' | 'includeWorkEvidence'> & Partial<Pick<UsageQuery,
-  'includeAccounting' | 'includeQuotaHistory' | 'includeTranscriptEvidence' | 'includeSeries' | 'includeInsights' | 'includeActivity' | 'includeComparison'
+  'includeAccounting' | 'includeCoach' | 'includeQuota' | 'includeQuotaHistory' | 'includeTranscriptEvidence' | 'includeSeries' | 'includeInsights' | 'includeActivity' | 'includeComparison'
   | 'includeLeaders' | 'includeModelTimeline' | 'includeMessageStats' | 'workProjection'>>>>;
 
 export function isUsageQueryWidget(id: string): boolean {
@@ -135,6 +134,8 @@ export function buildUsageWidgetQueryPlan(
 export function UsageWidgetBatchProvider(
   props: Readonly<{
     clauses: UsageWidgetQueryOverrides;
+    /** Only an admitted layout may demand reads from its registered bodies. */
+    enabled?: boolean;
     callerContext?: ActionExecutorContext;
     callerQuery?: UsageQuery;
     inventoryQuery?: UsageQuery;
@@ -201,7 +202,7 @@ export function UsageWidgetBatchProvider(
     ? normalizeUsageQuery({ ...props.inventoryQuery,
       includeSeries: false, includeInsights: false, includeActivity: false, includeLeaders: false,
       includeModelTimeline: false, includeMessageStats: false, includeQuotaHistory: false, includeComparison: false,
-      includeSessionEvidence: false, includeTranscriptEvidence: false, includeWorkEvidence: false,
+      includeSessionEvidence: false, includeTranscriptEvidence: false, includeWorkEvidence: false, includeCoach: false, includeQuota: false,
     }) : undefined, [props.inventoryQuery]);
   // A visible frame can still be binding its inputs after its neighbours mount.
   // Admit their complete cohort, using the frame and binder owners' facts, once.
@@ -218,7 +219,7 @@ export function UsageWidgetBatchProvider(
   );
   const resource = useUsageWidgetResource({
     credentials: auth.credentials,
-    enabled: auth.credentials != null,
+    enabled: props.enabled !== false && auth.credentials != null,
     retainPendingDemand: true,
     callerContext: props.callerContext,
     callerQuery: props.callerQuery,
@@ -328,7 +329,7 @@ function resolveQuery(
     const query = normalizeUsageQuery({ ...clauses, ...queryInput, includeAccounting: true,
       includeSeries: false, includeInsights: false, includeActivity: false, activityResolution: 'both',
       includeLeaders: false, includeModelTimeline: false, includeMessageStats: false, includeQuotaHistory: false, includeComparison: false,
-      includeTranscriptEvidence: false,
+      includeTranscriptEvidence: false, includeCoach: false, includeQuota: false,
       ...USAGE_WIDGET_DEMAND[widgetId],
       ...(typeof queryInput.includeQuotaHistory === 'boolean' ? { includeQuotaHistory: queryInput.includeQuotaHistory } : {}),
       // Ranked rows consume accounting totals and selected breakdowns. Crew
@@ -476,12 +477,20 @@ export function useUsageWidgetBatchHistory(): UsageHistoryModel {
     return useUsageHistory({ credentials: auth.credentials, query });
 }
 
-/** Unnarrowed choices share the page's canonical request, lifetime, decode and Resource owner. */
-export function useUsageWidgetBatchInventorySlice(): UsageQueryResultSlice | undefined {
+/** Select inventory facts before React through the page's canonical request, lifetime and Resource owner. */
+export function useUsageWidgetBatchInventorySelection<T>(select: (slice: UsageQueryResultSlice | null) => T,
+    equal: (left: T, right: T) => boolean): T {
     const batch = React.useContext(UsageWidgetBatchContext);
     const query = batch?.inventoryQuery;
     const rows = React.useMemo(() => query ? [{ query, key: getUsageQueryKey(query) }] : [], [query]);
-    return useUsageWidgetQueryModel(batch?.resource ?? null, 'inventory', rows, hasAccounting).slice ?? undefined;
+    return useUsageWidgetQuerySliceSelection(batch?.resource ?? null, 'inventory', rows, select, equal, hasAccounting);
+}
+
+const selectInventorySlice = (slice: UsageQueryResultSlice | null) => slice ?? undefined;
+
+/** Unnarrowed choices share the page's canonical request, lifetime, decode and Resource owner. */
+export function useUsageWidgetBatchInventorySlice(): UsageQueryResultSlice | undefined {
+    return useUsageWidgetBatchInventorySelection(selectInventorySlice, Object.is);
 }
 
 const NO_COST_BASES: readonly UsageQuery['costBasis'][] = Object.freeze([]);

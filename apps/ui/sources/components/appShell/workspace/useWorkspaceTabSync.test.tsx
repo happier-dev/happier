@@ -16,6 +16,7 @@ import { getActiveServerAccountScope } from '@/sync/domains/scope/activeServerAc
 import { dispatchKvBatchUpdate } from '@/sync/engine/socket/kvUpdateDispatcher';
 import { ACCOUNT_SETTINGS_QUIET_FLUSH_DELAY_MS } from '@/sync/engine/pending/pendingSettings';
 import type { SharedWorkspaceTabs } from './workspaceSyncedTabs';
+import * as workspaceSyncedTabs from './workspaceSyncedTabs';
 import { getVitestNodeBuiltin } from '@/dev/vitestNodeBuiltins';
 import { createWorkspaceState, reduceWorkspaceState, type WorkspaceState } from './workspaceState';
 import { admitWorkspaceSingletonState, workspaceSingletonDestinationIds } from './workspaceDestinationPolicy';
@@ -118,6 +119,31 @@ function Probe() {
 describe('live workspace tab sync hook', () => {
     beforeEach(() => { boundary.layouts = {}; });
     afterEach(async () => { vi.useRealTimers(); standardCleanup(); await connection?.dispose(); connection = null; restoreModuleLoader?.(); restoreModuleLoader = null; resetRuntimeFetch(); boundary.layouts = {}; boundary.enabled = true; boundary.ready = true; boundary.observations = []; boundary.catalog = []; });
+    it.each([true, false])('builds a local render projection only while sync is off: sync=%s', async syncEnabled => {
+        boundary.enabled = syncEnabled;
+        // No credentials isolates render work from the controller's necessary projections.
+        const projection = vi.spyOn(workspaceSyncedTabs, 'projectWorkspaceSharedTabs');
+        try {
+            const screen = await renderScreen(<Probe />);
+            const owner = () => screen.root.findByType('WorkspaceOwner').props.owner as ReturnType<typeof useWorkspaceTabSync>;
+            if (syncEnabled) expect(projection).not.toHaveBeenCalled();
+            else expect(owner().sharedTabs?.order).toEqual([]);
+            projection.mockClear();
+            act(() => owner().dispatch({ type: 'openTab', groupId: 'group:1', tab: { ...portableTab('local'), preview: false } }));
+            expect(owner().state.tabs.local.target).toEqual(portableTab('local').target);
+            expect(projection).toHaveBeenCalledTimes(syncEnabled ? 0 : 1);
+            if (!syncEnabled) expect(owner().sharedTabs?.order).toEqual(['local']);
+            projection.mockClear();
+            const target = { kind: 'settings', params: { pageId: 'usage', window: 'month' } };
+            act(() => owner().dispatch({ type: 'setTarget', tabId: 'local', target }));
+            expect(owner().state.tabs.local.target).toEqual(target);
+            expect(projection).toHaveBeenCalledTimes(syncEnabled ? 0 : 1);
+            if (!syncEnabled) expect(owner().sharedTabs?.tabsById.local.target).toEqual(target);
+            await screen.unmount();
+        } finally {
+            projection.mockRestore();
+        }
+    });
     it.each(['workflows', 'plugin:acme.notes:notes'])('keeps retained %s contents while pin and later close reach the shared singleton', async kind => {
         const home = await mountHome('https://workspace-retained-singleton.test');
         boundary.scope = { serverId: home.id, accountId: 'alice' };

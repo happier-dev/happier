@@ -14,6 +14,35 @@ const singletonCatalog = [{ id: singletonKind, kind: 'plugin', container: 'appPa
 }] satisfies readonly CompactAppDestination[];
 
 describe('workspace KV synchronization', () => {
+    it('reads one local projection per reconciliation while retaining singleton identity and changed pins', async () => {
+        const editor = { ...tab('device-editor'), target: { kind: singletonKind, params: { subPath: 'SECOND' } }, preview: false };
+        const peer = { ...tab('peer-editor'), target: { kind: singletonKind, params: { subPath: 'FIRST' } } };
+        let local = createWorkspaceState(editor);
+        let localReads = 0;
+        const controller = createWorkspaceTabsSync({ transport: {
+            read: async () => ({ value: { v: 1, tabsById: { [peer.id]: peer }, order: [peer.id], pairs: [] }, version: 1 }),
+            compareAndSet: async () => ({ success: true as const, version: 2 }),
+        }, getLocalRecord: () => { localReads++; return projectWorkspaceSharedTabs(local); },
+        normalizeRecord: value => normalizeWorkspaceSingletonTabs(value, singletonCatalog),
+        onRecord: (_value, localValue) => {
+            const retained = local;
+            local = admitWorkspaceSingletonState(reconcileWorkspaceSyncedTabs(local, localValue, () => 'blank'), singletonCatalog, () => 'blank', retained);
+        } });
+        await controller.refresh();
+        localReads = 0;
+        controller.reconcileLocal();
+        expect(localReads).toBe(1);
+        expect(local.tabs[editor.id].target).toBe(editor.target);
+        expect(local.tabs[peer.id]).toBeUndefined();
+        controller.enqueue([{ type: 'patch', tabId: editor.id, pinned: true }]);
+        localReads = 0;
+        controller.reproject();
+        expect(localReads).toBe(1);
+        expect(local.tabs[editor.id].pinned).toBe(true);
+        expect(local.tabs[editor.id].target).toBe(editor.target);
+        expect(controller.getSnapshot().record?.tabsById[peer.id].pinned).toBe(true);
+        controller.stop();
+    });
     it('maps retained singleton membership, order and split pairs without changing its local destination', async () => {
         const editor = { ...tab('device-editor'), target: { kind: singletonKind, params: { subPath: 'SECOND' } }, preview: false };
         const peer = { ...tab('peer-editor'), target: { kind: singletonKind, params: { subPath: 'FIRST' } } };

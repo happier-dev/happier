@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import * as coachEvaluation from './coach/evaluateUsageCoach.js';
 import { normalizeUsageQuery, resolveUsageQueryPeriod, usageQueryToAnalyticsRequest } from '../inputs/usageQuery.js';
 import { UsageAnalyticsQueryResponseSchema, UsageAnalyticsSourceCoverageSchema, type UsageAnalyticsQueryResponse } from './usageAnalyticsContracts.js';
 import { resolveUsagePageAggregation, resolveUsagePageAccountingRequests, projectUsageAccountingSnapshotPrices, projectUsageAccountingSnapshotCalendar, retainUsageQueryResultReferences, UsageQueryBatchResultSchema } from './resolveUsagePageAggregation.js';
@@ -17,6 +18,39 @@ import { projectUsageAnalyticsResponseDemand } from './usageAnalyticsDemandProje
 const tokens = { input: 12, output: 4, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 16 };
 const accounting = UsageAnalyticsQueryResponseSchema.parse({
   v: 1, totals: { eventCount: 1, tokens, cost: { reportedUsd: 0.02, estimatedUsd: 0, currency: 'USD' } },
+});
+
+it('evaluates no Coach detectors for chart demand while retaining Session interval facts', () => {
+  const evaluations = vi.spyOn(coachEvaluation, 'evaluateUsageCoach');
+  try {
+    const chart = normalizeUsageQuery({ period: { startMs: 0, endMs: 1000 }, includeSessionEvidence: true, includeCoach: false });
+    const read = (query: typeof chart) => resolveUsagePageAggregation({ queries: [query], nowMs: 1000,
+      accounting: [{ query, value: accounting, status: 'available', asOfMs: 1000 }],
+      howYouWork: [{ query, asOfMs: 1000, detail: { status: 'available', facts: [{ workId: 'work', evidenceId: 'turn',
+        agentId: 'codex', machineId: null, kind: 'busy', startMs: 100, endMs: 400 }] } }] }).results[0]!;
+    const first = read(chart);
+    expect(evaluations.mock.calls.length).toBe(0);
+    expect(first.coach).toBeUndefined();
+    expect(first.howYouWork?.intervals?.agentTimeMs).toBe(300);
+    const coach = read(normalizeUsageQuery({ ...chart, includeCoach: true }));
+    expect(evaluations.mock.calls.length).toBe(1);
+    expect(coach.coach).toBeDefined();
+    expect(coach.howYouWork?.intervals?.agentTimeMs).toBe(300);
+  } finally { evaluations.mockRestore(); }
+});
+
+it.each([false, true])('does not attach or await undemanded quota sources (accounting %s)', includeAccounting => {
+  const query = normalizeUsageQuery({ includeAccounting, includeQuota: false, includeComparison: false,
+    includeSessionEvidence: false, includeWorkEvidence: false });
+  const slice = resolveUsagePageAggregation({ queries: [query], nowMs: 1000,
+    accounting: [{ query, value: accounting, status: 'available', asOfMs: 1000 }],
+    quota: { status: 'pending', value: [] },
+    sources: [{ source: 'quota:other-visible-widget', status: 'pending' }],
+  }).results[0]!;
+  expect(slice.quota).toBeUndefined();
+  expect(slice.pools).toBeUndefined();
+  expect(slice.sources.filter(source => source.source.startsWith('quota'))).toEqual([]);
+  expect(slice.pending).toBe(false);
 });
 
 it.each([false, true])('uses the selected All calendar bounds in rich and compact snapshots (compact %s)', compact => {

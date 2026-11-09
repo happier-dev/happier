@@ -13,7 +13,7 @@ import { createOperationAccountCurrentnessSource } from './fetchSessionByIdWithS
 import { runWithServerRequestAuthorityForServerAccountScope } from './createServerRequestWithServerScope';
 import { readSessionSnapshotForAuthority, readSessionSnapshotsForAuthority } from './readSessionSnapshotForAuthority';
 import { createSessionReadBatchHttpBoundary } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
-import { prepareSessionPartsRead, readSessionBatchForAuthority } from './readSessionBatchForAuthority';
+import { prepareSessionPartsRead, readSessionBatchForAuthority, SessionPartsHttpError, SessionPartsInvalidResponseError } from './readSessionBatchForAuthority';
 
 let home: Awaited<ReturnType<typeof serveAccountHomes>> | undefined;
 afterEach(async () => { standardCleanup(); retireActiveServerAccountScopeLifetime(); await home?.dispose(); home = undefined; });
@@ -84,14 +84,43 @@ it('gathers overlapping same-authority Session projections across independent co
     });
 });
 
+it.each([403, 503])('preserves required prefetched turns HTTP %s while optional metadata stays readable', async status => {
+    const sessionId = 'required-turns-http';
+    home = await serveAccountHomes({ homes: [{ key: 'a', serverUrl: 'https://required-turns-http.test', accountId: 'account-a' }],
+        route: () => undefined });
+    publishAppliedActiveServerSnapshot({ serverId: home.homes.a!.id, serverUrl: home.homes.a!.serverUrl, generation: 0 });
+    const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+    const credentials = (await TokenStorage.getCredentialsForServerUrl(home.homes.a!.serverUrl))!;
+    const context = captureUiUsageQueryAccountContext(credentials)!;
+    await runWithServerRequestAuthorityForServerAccountScope({ scope: context.accountLifetime.scope, activeRequest: context.request }, async authority => {
+        // These wire parts came from the Usage HTTP boundary. Required interval
+        // evidence must preserve their cause when opening the admitted batch.
+        const prefetched = new Map([[sessionId, {
+            detail: { status: 200, body: { session: createPlainSessionCurrentProjectionRecordFixture({ id: sessionId }) } },
+            turns: { status, body: { error: status === 403 ? 'forbidden' : 'unavailable' } },
+        }]]);
+        const optional = (await readSessionSnapshotsForAuthority({ authority, sessionIds: [sessionId], prefetched,
+            requireTurns: false })).get(sessionId);
+        expect(optional).toMatchObject({ ok: true, snapshot: { session: { id: sessionId } } });
+        const required = (await readSessionSnapshotsForAuthority({ authority, sessionIds: [sessionId], prefetched,
+            requireTurns: true })).get(sessionId);
+        expect(required?.ok).toBe(false);
+        if (required?.ok === false) {
+            expect(required.error).toBeInstanceOf(SessionPartsHttpError);
+            expect(required.error).toMatchObject({ httpStatus: status });
+        }
+    });
+});
+
 it.each(['single', 'batch'] as const)('requires admitted turns only for interval demand through %s reads', async transport => {
-    let turnsOutcome: 'failed' | 'invalid' | 'empty' | 'populated' = 'failed';
+    let turnsOutcome: 'failed' | 'unavailable' | 'invalid' | 'empty' | 'populated' = 'failed';
     const sessionId = 'retry-turns';
     const boundary = createSessionReadBatchHttpBoundary(request => {
         if (request.path === `/v2/sessions/${sessionId}`) return Response.json({ session:
             createPlainSessionCurrentProjectionRecordFixture({ id: sessionId, seq: 1, updatedAt: 900 }) });
         if (request.path === `/v1/sessions/${sessionId}/turns`) {
             if (turnsOutcome === 'failed') return Response.json({ error: 'unavailable' }, { status: 503 });
+            if (turnsOutcome === 'unavailable') return Response.json({ error: 'not_found' }, { status: 404 });
             return Response.json({ v: 1, sessionId: turnsOutcome === 'invalid' ? 'wrong-session' : sessionId, updatedAt: 900,
                 turns: turnsOutcome === 'empty' ? [] : [
                     { turnId: 'turn', agentId: 'codex', status: 'completed', startedAt: 100, terminalAt: 700, updatedAt: 900 },
@@ -118,9 +147,14 @@ it.each(['single', 'batch'] as const)('requires admitted turns only for interval
             const optional = await read(false);
             expect(optional.session.id).toBe(sessionId);
             expect(optional.session.sessionTurns).toBeUndefined();
-            await expect(read(true)).rejects.toMatchObject({ name: 'RetryableServerResponseError', status: 503 });
+            await expect(read(true)).rejects.toMatchObject(transport === 'single'
+                ? { name: 'RetryableServerResponseError', status: 503 } : { httpStatus: 503 });
+            turnsOutcome = 'unavailable';
+            await expect(read(true)).rejects.toMatchObject(transport === 'single'
+                ? { errorCode: 'turns_unavailable' } : { httpStatus: 404 });
             turnsOutcome = 'invalid';
-            await expect(read(true)).rejects.toMatchObject({ errorCode: 'turns_unavailable' });
+            if (transport === 'single') await expect(read(true)).rejects.toMatchObject({ errorCode: 'invalid_response' });
+            else await expect(read(true)).rejects.toBeInstanceOf(SessionPartsInvalidResponseError);
             turnsOutcome = 'populated';
             const recovered = await read(true);
             expect(projectSessionUsageWorkEvidence(recovered.session).facts).toMatchObject([
@@ -171,7 +205,10 @@ it.each([false, true])('opens identical single and batch Usage evidence with sha
             // Match Hermes' supported AbortSignal surface at the platform boundary.
             Object.defineProperty(abort.signal, 'throwIfAborted', { value: undefined });
             const singles = await Promise.all(ids.map(sessionId => readSessionSnapshotForAuthority({ authority, sessionId, accountCurrentnessSource: currentness })));
-            const batch = await readSessionSnapshotsForAuthority({ authority, sessionIds: [...ids, 'denied'], accountCurrentnessSource: currentness, signal: abort.signal });
+            const sessionDataKeys = new Map([...ids, 'denied'].map(id => [id, new Uint8Array(32).fill(71)]));
+            const sessionDataKeyEnvelopes = new Map([...ids, 'denied'].map(id => [id, 'previous-envelope']));
+            const batch = await readSessionSnapshotsForAuthority({ authority, sessionIds: [...ids, 'denied'], accountCurrentnessSource: currentness,
+                sessionDataKeys, sessionDataKeyEnvelopes, signal: abort.signal });
             ids.forEach((id, index) => {
                 const result = batch.get(id);
                 expect(result).toMatchObject({ ok: true, snapshot: singles[index] });
@@ -179,6 +216,10 @@ it.each([false, true])('opens identical single and batch Usage evidence with sha
                 expect(projectSessionUsageWorkEvidence(result.snapshot.session)).toEqual(projectSessionUsageWorkEvidence(singles[index]!.session));
             });
             expect(batch.get('denied')).toMatchObject({ ok: false });
+            // Admission of plain full tuples retires their old staged encryption
+            // material. A failed sibling cannot mutate another Session's keys.
+            expect([...sessionDataKeys.keys()]).toEqual(['denied']);
+            expect([...sessionDataKeyEnvelopes.keys()]).toEqual(['denied']);
             const batchRequests = home!.requests.filter(request => request.path === '/v2/sessions/read-batch');
             expect(batchRequests).toHaveLength(2);
             expect(batchRequests.every(request => SessionReadBatchRequestV1Schema.parse(request.body).accessProjectionVersion

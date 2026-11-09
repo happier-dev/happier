@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod/mini';
+import { UsageSessionEvidenceRequestSchema } from '../usage/usageSessionEvidence.js';
 import { getUsageQueryBatchKey, getUsageQueryKey, normalizeUsageQuery, normalizeUsageQueryBatchInput, usageAnalyticsRequestToQuery, usageQueryToAnalyticsRequest, UsageQuerySchema, USAGE_QUERY_INPUT_FIELDS, readUsagePeriodOptions } from './usageQuery.js';
 import { UsageAnalyticsQueryRequestSchema } from '../usage/usageAnalyticsContracts.js';
 import { InputFieldHintSchema } from './inputFields.js';
@@ -7,6 +8,19 @@ import { resolveEffectiveInputFields } from './inputFieldRuntime.js';
 import { projectInputOptionsDependencies } from './inputOptionsDependencies.js';
 import * as usageQuery from './usageQuery.js';
 import { createStoredReadSchema } from '../json/storedReadSchema.js';
+
+it('keeps host projection demand out of accounting and Session evidence transports', () => {
+  const base = normalizeUsageQuery({ includeSessionEvidence: true });
+  const coach = normalizeUsageQuery({ ...base, includeCoach: true, includeQuota: true });
+  const chart = normalizeUsageQuery({ ...base, includeCoach: false, includeQuota: false });
+  expect(getUsageQueryKey(chart)).not.toBe(getUsageQueryKey(coach));
+  expect(usageQueryToAnalyticsRequest(chart)).toEqual(usageQueryToAnalyticsRequest(base));
+  const project = (query: typeof base) => UsageSessionEvidenceRequestSchema.parse({ nowMs: 1000, requests: [{ query }] });
+  expect(project(chart)).toEqual(project(base));
+  expect(project(coach)).toEqual(project(base));
+  expect(JSON.stringify(project(chart))).not.toContain('includeCoach');
+  expect(JSON.stringify(project(chart))).not.toContain('includeQuota"');
+});
 
 describe('shared UsageQuery', () => {
   it('asks for every key a selected Project\'s usage may carry when given its scope (owner 11-08)', () => {

@@ -7,11 +7,11 @@ import type { PluginActionWorkflowBlockV1 } from './pluginActionDtoSupport.gener
 export type WorkflowDiagnosticsActionInputById = {
     readonly "workflow.trigger.test": {
         trigger: null | {
-            sourceInstanceId: string;
             eventRef: {
                 pluginId: string;
                 localId: string;
             };
+            sourceInstanceId: string;
             sourceContractVersion: number;
             filter: null | {
                 v: 1;
@@ -28,11 +28,11 @@ export type WorkflowDiagnosticsActionInputById = {
             maximumObservationAgeMs: null | number;
         };
         observation: {
-            sourceInstanceId: string;
             eventRef: {
                 pluginId: string;
                 localId: string;
             };
+            sourceInstanceId: string;
             sourceContractVersion: number;
             occurredAt: number;
             observationReceivedAt: number;
