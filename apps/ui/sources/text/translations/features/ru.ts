@@ -8483,6 +8483,9 @@ const Domain_machinePoolTranslations = (() => {
 const en = Shared_machinePoolTranslations.en;
 
 const ru = {
+    membersPrivate: "Машины приватны",
+    teamAudience: "Команда",
+    teamSharingNotice: "Участники могут использовать этот пул через общие шаблоны машин. Машины остаются приватными; публикация не даёт прямого доступа.",
     machinesSection: "Машины",
     tierPrimaryDescription: "Пробуется первым.",
     tierFallbackDescription: "Пробуется, когда ни одна предыдущая машина не в сети.",

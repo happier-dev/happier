@@ -8451,6 +8451,9 @@ const Domain_machinePoolTranslations = (() => {
 const en = Shared_machinePoolTranslations.en;
 
 const ja = {
+    membersPrivate: "マシンは非公開です",
+    teamAudience: "チーム",
+    teamSharingNotice: "チームメンバーは共有マシンプリセットを通じてこのプールを利用できます。マシンは非公開のままで、共有によって直接アクセスは付与されません。",
     machinesSection: "マシン",
     tierPrimaryDescription: "最初に試します。",
     tierFallbackDescription: "前のマシンがどれもオンラインでないときに試します。",

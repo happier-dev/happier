@@ -124,7 +124,8 @@ export async function resolveManagedActionMachineAdmissionInTx(reader: Tx,
         } else {
             if (!acquiring || !projected || projected.input.selection.kind !== 'preset') return denied;
             const selected = await resolveMachinePresetForAcquireInTx(reader, { accountId: input.actorAccountId,
-                authentication: input.authentication, ...projected.input.selection, checkCapacity: false });
+                authentication: input.authentication, ...projected.input.selection, checkCapacity: false,
+                boundController: resolveManagedAcquireReviewV1(projected.input).controller });
             const review = resolveManagedAcquireReviewV1(projected.input);
             if (selected.kind !== 'ready' || !selected.delegated || !review.controller || !sameManagedInput(selected.preset.controller, review.controller)
                 || review.controller.machineId !== input.machineId) return denied;

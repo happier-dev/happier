@@ -96,7 +96,7 @@ export async function admitManagedAcquire(params: Readonly<{
                 declaration = validated.declaration;
             } else {
                 const selected = await resolveMachinePresetForAcquireInTx(tx, { accountId: params.requesterAccountId, authentication: params.authentication,
-                    ...request.input.selection, reviewedFacts: request.input.reviewedFacts });
+                    ...request.input.selection, reviewedFacts: request.input.reviewedFacts, boundController: review.controller });
                 if (selected.kind === "conflict") throw new ManagedMachineError("request_conflict");
                 if (selected.kind === "refused") throw new ManagedMachineError(selected.code);
                 if (!sameManagedInput(selected.preset.controller, review.controller)) throw new ManagedMachineError("controller_retired");

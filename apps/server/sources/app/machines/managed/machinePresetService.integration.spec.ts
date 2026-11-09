@@ -9,6 +9,7 @@ import * as prisma from '@/storage/prisma';
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
 import { createAuthenticatedTestApp } from "@/app/api/testkit/sqliteFastify";
 import { machinesRoutes } from "@/app/api/routes/machines/machinesRoutes";
+import { registerMachinePoolRoutes } from '@/app/api/routes/machines/pools/registerMachinePoolRoutes';
 import { getOrCreateServerIdentityId } from "@/app/serverIdentity/serverIdentity";
 import { inTx, type Tx } from "@/storage/inTx";
 import { createQualifiedConnectedAccountIdentityDigest } from '@/app/api/routes/connect/qualifiedConnectedAccounts/identity';
@@ -16,7 +17,7 @@ import { resolveMachinePresetForAcquireInTx } from "./machinePresetService";
 import { resolveMachineSetup } from './machineSetup';
 import { archiveTeamInTx, restoreTeamInTx } from '@/app/teams/lifecycle';
 import { createEmptyMachineSetupDesiredV1 } from '@happier-dev/protocol/machines/setup/machineSetupSourcesV1';
-import { createReleaseLessDeclarationV1 } from "@/app/plugins/availability/currentDeclaration";
+import { createReleaseLessDeclarationV1, mergeReleaseLessDeclarationV2 } from "@/app/plugins/availability/currentDeclaration";
 import { admitManagedAcquire } from "./managedAcquire";
 import { buildManagedConfigurationFactsV1 } from '@happier-dev/protocol/machines/managed/managedConfigurationV1';
 import { createPluginJsonSchemaZodValueAdapter } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
@@ -28,7 +29,7 @@ import { defineMachineProvisionerSchemas, MachineProvisionerCheckResultProtocolV
 
 const launch = { provider: { pluginId: "happier.machine.lima", localId: "lima" }, schemaVersion: 1, name: "Launch guest", choices: { image: "linux" } };
 
-async function seedCurrentProvisioner(accountId: string, homeId: string, credentialPurpose?: string | readonly string[]) {
+async function seedCurrentProvisioner(accountId: string, homeId: string, credentialPurpose?: string | readonly string[], includePrerequisite = false) {
     const credentialPurposes = typeof credentialPurpose === 'string' ? [credentialPurpose] : credentialPurpose ?? [];
     const controller = { machineId: `${accountId}-controller`, installationId: `${accountId}-installation` };
     await db.machine.create({ data: { id: controller.machineId, accountId, metadata: "{}", installationId: controller.installationId, pluginMaterializationRevision: BigInt(1) } });
@@ -49,7 +50,7 @@ async function seedCurrentProvisioner(accountId: string, homeId: string, credent
             scope: { serviceRefs: ["native-account"], operations: ["use"] } })), optional: [] } } : {}), contributes: {
             machineProvisioners: [{ id: launch.provider.localId, title: "Guest", icon: "machine", resourceKind: "vm", schemaVersion: 1,
                 launchSchema: launchSchema.jsonSchema, resourceSchema: native.jsonSchema,
-                platforms: ["linux"], prerequisites: [], billing: { location: "local", stoppedBilling: "not-billed" }, retention: { supportedIntents: ["start", "stop", "delete"] },
+                platforms: ["linux"], prerequisites: includePrerequisite ? [{ kind: 'systemTool', id: 'shell' }] : [], billing: { location: "local", stoppedBilling: "not-billed" }, retention: { supportedIntents: ["start", "stop", "delete"] },
                 actions: { check: "check", acquire: "acquire", bootstrap: "bootstrap", inspect: "inspect", power: "power", destroy: "destroy" } }],
             actions: actions.map(action => ({ ...action, title: action.id, execution: { target: "daemon" },
                 surfaces: ["plugin"], scopes: ["global"], dangerLevel: "safe", ...(action.id === "acquire" && credentialPurposes.length ? { hostAccess: credentialPurposes } : {}) })),
@@ -854,6 +855,230 @@ describe("Machine preset relational owner", () => {
         expect(await select(3)).toEqual({ kind: 'refused', code: 'preset_archived' });
         await db.teamMembership.update({ where: { teamId_accountId: { teamId: team.id, accountId: member } }, data: { status: 'suspended' } });
         expect(await select(3)).toEqual({ kind: 'refused', code: 'preset_not_found' });
+    });
+
+    it('keeps pool review unbound and admits a member-owned guest on the bound eligible controller', async () => {
+        const homeId = await getOrCreateServerIdentityId();
+        const owner = 'preset-pool-owner';
+        const member = 'preset-pool-member';
+        const stranger = 'preset-pool-stranger';
+        await db.account.createMany({ data: [owner, member, stranger].map(id => ({ id, publicKey: null, encryptionMode: 'plain' })) });
+        const team = await db.team.create({ data: { name: 'Pool guests' } });
+        await db.teamMembership.createMany({ data: [
+            { teamId: team.id, accountId: owner, role: 'admin' },
+            { teamId: team.id, accountId: member, role: 'member' },
+        ] });
+        const controller = await seedCurrentProvisioner(owner, homeId, undefined, true);
+        const key = new Uint8Array(tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(21)).publicKey);
+        await db.machine.update({ where: { id: controller.machineId }, data: { installationPublicKey: key } });
+        const outsideController = { machineId: 'pool-owner-outside', installationId: 'pool-outside-installation' };
+        const offlineController = { machineId: 'pool-owner-offline', installationId: 'pool-offline-installation' };
+        const ineligibleController = { machineId: 'pool-owner-no-provider', installationId: 'pool-no-provider-installation' };
+        await db.machine.createMany({ data: [outsideController, offlineController, ineligibleController].map(value => ({
+            id: value.machineId, installationId: value.installationId, accountId: owner, metadata: '{}',
+            installationPublicKey: key, pluginMaterializationRevision: BigInt(1),
+        })) });
+        const occurrence = await db.pluginMachineMaterialization.findFirstOrThrow({ where: { machineId: controller.machineId } });
+        await db.pluginMachineMaterialization.create({ data: { accountId: owner, serverIdentityId: homeId,
+            machineId: offlineController.machineId, materializationId: offlineController.installationId,
+            pluginId: occurrence.pluginId, version: occurrence.version, sourceClass: occurrence.sourceClass,
+            portableRelease: occurrence.portableRelease, archiveDigestSha256: occurrence.archiveDigestSha256,
+            uiArtifacts: [], enabled: true, trustState: 'trusted', observedAt: new Date() } });
+        const poolId = 'f127dff1-8bd4-41ec-9993-d81ec851d7da';
+        await db.machinePool.create({ data: { id: poolId, accountId: owner, teamId: team.id, name: 'Builders',
+            members: { create: [{ machineId: controller.machineId, priorityTier: 1, enabled: true },
+                { machineId: offlineController.machineId, priorityTier: 0, enabled: true },
+                { machineId: ineligibleController.machineId, priorityTier: 0, enabled: true }] } } });
+        const definition = { id: 'preset-pool-guests', homeId, name: 'Fresh guest', owner: { kind: 'team', teamId: team.id },
+            controllerPoolId: poolId, launch, teamAcquireDelegated: true, simultaneousLimit: { maximum: 1 } };
+        const saved = await requestPreset(owner, 'create', definition);
+        expect(saved.statusCode, saved.body).toBe(200);
+        expect(saved.json(), saved.body).toMatchObject({ kind: 'saved', preset: { controllerPoolId: poolId } });
+        const projected = (await requestPreset(member, 'get', { homeId, id: definition.id })).json().preset;
+        expect(projected).not.toHaveProperty('controller');
+        expect(projected.delegatedAcquire).toMatchObject({ kind: 'ready', reviewedFacts: { optionStatus: 'current' } });
+        expect(projected.delegatedAcquire).not.toHaveProperty('controller');
+        expect(projected.delegatedAcquire.reviewedFacts).not.toHaveProperty('controller');
+        expect(projected.delegatedAcquire.reviewedFacts.prerequisites).toEqual([
+            { requirement: { kind: 'systemTool', id: 'shell' }, status: 'unknown' },
+        ]);
+        expect(JSON.stringify(projected)).not.toContain(controller.machineId);
+        const select = (accountId: string) => inTx(tx => resolveMachinePresetForAcquireInTx(tx, { accountId,
+            homeId, id: definition.id, revision: 0, boundController: controller }));
+        expect(await select(stranger)).toEqual({ kind: 'refused', code: 'preset_not_found' });
+        const selected = await select(member);
+        expect(selected).toMatchObject({ kind: 'ready', delegated: true, custodianAccountId: owner, preset: { controller } });
+        if (selected.kind !== 'ready') throw new Error('Expected pool admission');
+        const reviewedFacts = { ...projected.delegatedAcquire.reviewedFacts, controller };
+        const poolApp = createAuthenticatedTestApp();
+        let connectedIds = [controller.machineId, ineligibleController.machineId];
+        registerMachinePoolRoutes(poolApp, { io: { in: () => ({ fetchSockets: async () => connectedIds.map(machineId => ({
+            data: { clientType: 'machine-scoped', userId: owner, machineId },
+        })) }) } });
+        await poolApp.ready();
+        try {
+            const payload = { poolId, requestKey: 'fresh-pool-request', purpose: 'managed-preset',
+                preset: { homeId, id: definition.id, revision: 0 } };
+            const resolved = await poolApp.inject({ method: 'POST', url: '/v1/machines/pools/resolve',
+                headers: { 'x-test-user-id': member }, payload });
+            expect(resolved.statusCode, resolved.body).toBe(200);
+            expect(resolved.json()).toMatchObject({ kind: 'resolved', machineId: controller.machineId,
+                managedPreset: { controller, reviewedFacts } });
+            connectedIds = [ineligibleController.machineId];
+            const unavailable = await poolApp.inject({ method: 'POST', url: '/v1/machines/pools/resolve',
+                headers: { 'x-test-user-id': member }, payload });
+            expect(unavailable.json()).toMatchObject({ kind: 'unavailable', code: 'controller_unavailable', reason: 'no_available_machine' });
+            const denied = await poolApp.inject({ method: 'POST', url: '/v1/machines/pools/resolve',
+                headers: { 'x-test-user-id': stranger }, payload });
+            expect(denied.json()).toMatchObject({ kind: 'unavailable', code: 'preset_not_found' });
+            await db.managedMachinePreset.update({ where: { id: definition.id }, data: { teamAcquireDelegated: false } });
+            for (const inventory of [[controller.machineId], []]) {
+                connectedIds = inventory;
+                const notDelegated = await poolApp.inject({ method: 'POST', url: '/v1/machines/pools/resolve',
+                    headers: { 'x-test-user-id': member }, payload });
+                expect(notDelegated.json()).toEqual({ kind: 'unavailable', poolId,
+                    reason: 'managed_preset_unavailable', code: 'permission_denied' });
+            }
+            await db.managedMachinePreset.update({ where: { id: definition.id }, data: { teamAcquireDelegated: true } });
+        } finally { await poolApp.close(); }
+        await expect(admitManagedAcquire({ custodianAccountId: owner, requesterAccountId: member,
+            requestEnvelopeDigest: 'pool-forged', input: { requestId: 'pool-forged', continuationPresent: false, input: {
+                enrollmentIdentity: { kind: 'guestProcess', role: 'sandbox' },
+                controller: outsideController,
+                selection: { kind: 'preset', homeId, id: definition.id, revision: 0 },
+                retention: reviewedFacts.retention, wakeOnAcceptedMessage: reviewedFacts.wakeOnAcceptedMessage,
+                reviewedFacts: { ...reviewedFacts, controller: outsideController },
+            } } })).rejects.toMatchObject({ code: 'controller_unavailable' });
+        const acquired = await admitManagedAcquire({ custodianAccountId: owner, requesterAccountId: member,
+            requestEnvelopeDigest: 'pool-guest', input: { requestId: 'pool-guest-create', continuationPresent: false, input: {
+                enrollmentIdentity: { kind: 'guestProcess', role: 'sandbox' }, controller,
+                selection: { kind: 'preset', homeId, id: definition.id, revision: 0 },
+                retention: reviewedFacts.retention, wakeOnAcceptedMessage: reviewedFacts.wakeOnAcceptedMessage, reviewedFacts,
+            } } });
+        expect(acquired.machine).toMatchObject({ enrollmentAccountId: member, custodianAccountId: owner, controller });
+        expect(await db.machineAccountGrant.count({ where: { machineId: controller.machineId, accountId: member } })).toBe(0);
+        expect(await select(member)).toEqual({ kind: 'refused', code: 'preset_limit_reached' });
+        await db.managedMachine.update({ where: { id: acquired.machine.id }, data: { allocation: 'confirmed-absent' } });
+        await db.managedMachinePreset.update({ where: { id: definition.id }, data: { teamAcquireDelegated: false } });
+        await expect(select(member)).rejects.toMatchObject({ code: 'permission_denied' });
+        await db.managedMachinePreset.update({ where: { id: definition.id }, data: { teamAcquireDelegated: true } });
+        await db.teamMembership.update({ where: { teamId_accountId: { teamId: team.id, accountId: member } }, data: { status: 'suspended' } });
+        expect(await select(member)).toEqual({ kind: 'refused', code: 'preset_not_found' });
+        await db.teamMembership.update({ where: { teamId_accountId: { teamId: team.id, accountId: member } }, data: { status: 'active' } });
+        expect(await inTx(tx => archiveTeamInTx(tx, { actorAccountId: owner, teamId: team.id }))).toMatchObject({ ok: true });
+        expect(await select(member)).toEqual({ kind: 'refused', code: 'preset_archived' });
+        expect(await inTx(tx => restoreTeamInTx(tx, { actorAccountId: owner, teamId: team.id }))).toMatchObject({ ok: true });
+        await db.machinePool.delete({ where: { id: poolId } });
+        await expect(select(member)).rejects.toMatchObject({ code: 'controller_unavailable' });
+    });
+
+    it('binds a custodian Account pool with its saved credential selections without disclosing material', async () => {
+        const homeId = await getOrCreateServerIdentityId();
+        const accountId = 'preset-pool-own-credentials';
+        await db.account.create({ data: { id: accountId, publicKey: null, encryptionMode: 'plain' } });
+        const controller = await seedCurrentProvisioner(accountId, homeId, 'acquire-authentication');
+        await db.machine.update({ where: { id: controller.machineId }, data: {
+            installationPublicKey: new Uint8Array(tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(24)).publicKey) } });
+        const ref = { service: { pluginId: launch.provider.pluginId, localId: 'native-account' }, accountId: 'saved-pool-profile' };
+        expect((await mutateQualifiedConnectedServiceCredential({ accountId, ref, expectedCredentialRevision: null,
+            authenticationModeId: 'api-key', content: { t: 'plain', v: { token: 'pool-material-never-disclosed' } },
+            metadata: { displayName: 'Pool profile', scopes: [] } })).status).toBe('written');
+        const savedLaunch = { ...launch, credentials: [{ purpose: { consumer: launch.provider, purpose: 'acquire-authentication' }, account: ref }] };
+        const poolId = crypto.randomUUID();
+        await db.machinePool.create({ data: { id: poolId, accountId, name: 'Credential pool',
+            members: { create: { machineId: controller.machineId, priorityTier: 0 } } } });
+        const preset = { id: `${accountId}-preset`, homeId, name: 'Credential guest', owner: { kind: 'account', accountId },
+            controllerPoolId: poolId, launch: savedLaunch };
+        const saved = await requestPreset(accountId, 'create', preset);
+        expect(saved.statusCode, saved.body).toBe(200);
+        expect(saved.json().preset.launch.credentials).toEqual(savedLaunch.credentials);
+        const app = createAuthenticatedTestApp();
+        registerMachinePoolRoutes(app, { io: { in: () => ({ fetchSockets: async () => [{
+            data: { clientType: 'machine-scoped', userId: accountId, machineId: controller.machineId },
+        }] }) } });
+        await app.ready();
+        try {
+            const resolved = await app.inject({ method: 'POST', url: '/v1/machines/pools/resolve',
+                headers: { 'x-test-user-id': accountId }, payload: { poolId, requestKey: 'own-credential-pool',
+                    purpose: 'managed-preset', preset: { homeId, id: preset.id, revision: 0 } } });
+            expect(resolved.statusCode, resolved.body).toBe(200);
+            expect(resolved.json()).toMatchObject({ kind: 'resolved', managedPreset: { controller } });
+            expect(resolved.body).not.toContain('pool-material-never-disclosed');
+            const facts = resolved.json().managedPreset.reviewedFacts;
+            const acquired = await admitManagedAcquire({ custodianAccountId: accountId, requesterAccountId: accountId,
+                requestEnvelopeDigest: 'own-credential-pool', input: { requestId: 'own-credential-pool', continuationPresent: false,
+                    input: { enrollmentIdentity: { kind: 'guestProcess', role: 'sandbox' }, controller,
+                        selection: { kind: 'preset', homeId, id: preset.id, revision: 0 }, retention: facts.retention,
+                        wakeOnAcceptedMessage: facts.wakeOnAcceptedMessage, reviewedFacts: facts } } });
+            expect(acquired.machine.launch.credentials).toEqual(savedLaunch.credentials);
+        } finally { await app.close(); }
+    });
+
+    it('refuses controller pools for Account-hosted provisioning', async () => {
+        const homeId = await getOrCreateServerIdentityId();
+        const owner = 'preset-pool-account-provisioner';
+        await db.account.create({ data: { id: owner, publicKey: null, encryptionMode: 'plain' } });
+        const controller = await seedCurrentProvisioner(owner, homeId);
+        await db.machine.update({ where: { id: controller.machineId }, data: {
+            installationPublicKey: new Uint8Array(tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(23)).publicKey) } });
+        const intent = await db.accountPluginIntent.findUniqueOrThrow({ where: { accountId_pluginId: {
+            accountId: owner, pluginId: launch.provider.pluginId } } });
+        const stored = intent.releaseLessDeclaration;
+        if (!stored || typeof stored !== 'object' || Array.isArray(stored) || !('manifest' in stored)) throw new Error('Missing declaration');
+        const manifest = PluginManifestV2Schema.parse(stored.manifest);
+        const declaration = createReleaseLessDeclarationV1(PluginManifestV2Schema.parse({ ...manifest, contributes: {
+            ...manifest.contributes, actions: manifest.contributes?.actions?.map(action => ({ ...action,
+                execution: { target: 'account', account: { artifactId: 'account-runtime', exportName: 'activateAccount' } },
+            })),
+        } }));
+        await db.accountPluginIntent.update({ where: { accountId_pluginId: { accountId: owner, pluginId: manifest.id } },
+            data: { releaseLessDeclaration: declaration } });
+        await db.pluginMachineMaterialization.updateMany({ where: { accountId: owner, machineId: controller.machineId },
+            data: { archiveDigestSha256: declaration.manifestDigestSha256 } });
+        const poolId = crypto.randomUUID();
+        await db.machinePool.create({ data: { id: poolId, accountId: owner, name: 'Unused controller pool',
+            members: { create: { machineId: controller.machineId, priorityTier: 0 } } } });
+        const result = await requestPreset(owner, 'create', { id: `${owner}-preset`, homeId, name: 'Account provisioning',
+            owner: { kind: 'account', accountId: owner }, controllerPoolId: poolId, launch });
+        expect(result.json(), result.body).toMatchObject({ kind: 'refused', code: 'provider_unavailable' });
+    });
+
+    it.each(['billing', 'retention'] as const)('refuses pool review when eligible installations disagree on %s', async difference => {
+        const homeId = await getOrCreateServerIdentityId();
+        const owner = `preset-pool-facts-${difference}`;
+        await db.account.create({ data: { id: owner, publicKey: null, encryptionMode: 'plain' } });
+        const controller = await seedCurrentProvisioner(owner, homeId);
+        const second = { machineId: `${owner}-second`, installationId: `${owner}-second-installation` };
+        const key = new Uint8Array(tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(22)).publicKey);
+        await db.machine.update({ where: { id: controller.machineId }, data: { installationPublicKey: key } });
+        await db.machine.create({ data: { id: second.machineId, accountId: owner, metadata: '{}',
+            installationId: second.installationId, installationPublicKey: key, pluginMaterializationRevision: BigInt(1) } });
+        const intent = await db.accountPluginIntent.findUniqueOrThrow({ where: { accountId_pluginId: {
+            accountId: owner, pluginId: launch.provider.pluginId } } });
+        const stored = intent.releaseLessDeclaration;
+        if (!stored || typeof stored !== 'object' || Array.isArray(stored) || !('manifest' in stored)) throw new Error('Missing declaration');
+        const manifest = PluginManifestV2Schema.parse(stored.manifest);
+        const contribution = manifest.contributes!.machineProvisioners![0]!;
+        const changed = createReleaseLessDeclarationV1(PluginManifestV2Schema.parse({ ...manifest, contributes: {
+            ...manifest.contributes, machineProvisioners: [{ ...contribution,
+                ...(difference === 'billing' ? { billing: { location: 'cloud', stoppedBilling: 'billed' } }
+                    : { retention: { supportedIntents: ['delete'] } }),
+            }],
+        } }));
+        const first = createReleaseLessDeclarationV1(manifest);
+        const scoped = mergeReleaseLessDeclarationV2({ stored, declaration: first, publisher: controller }).stored;
+        await db.accountPluginIntent.update({ where: { accountId_pluginId: { accountId: owner, pluginId: manifest.id } },
+            data: { releaseLessDeclaration: mergeReleaseLessDeclarationV2({ stored: scoped, declaration: changed, publisher: second }).stored } });
+        await db.pluginMachineMaterialization.create({ data: { accountId: owner, serverIdentityId: homeId,
+            machineId: second.machineId, materializationId: second.installationId, pluginId: manifest.id, version: manifest.version,
+            sourceClass: 'bundledFirstParty', portableRelease: false, archiveDigestSha256: changed.manifestDigestSha256,
+            uiArtifacts: [], enabled: true, trustState: 'trusted', observedAt: new Date() } });
+        const poolId = crypto.randomUUID();
+        await db.machinePool.create({ data: { id: poolId, accountId: owner, name: 'Mixed installations',
+            members: { create: [controller, second].map(value => ({ machineId: value.machineId, priorityTier: 0 })) } } });
+        const result = await requestPreset(owner, 'create', { id: `${owner}-preset`, homeId, name: 'Mixed facts',
+            owner: { kind: 'account', accountId: owner }, controllerPoolId: poolId, launch });
+        expect(result.json(), result.body).toMatchObject({ kind: 'refused', code: 'provider_unavailable' });
     });
 
     it("counts uncertain and retained stopped resources until confirmed absence, independent of archive", async () => {

@@ -316,6 +316,50 @@ describe('MachinePoolEditorScreen', () => {
         expect(boundaries.create).not.toHaveBeenCalled();
     });
 
+    it('keeps a Team member pool read-only using the pool owner access result', async () => {
+        const view = poolView(1);
+        boundaries.pools = [{ ...view, pool: { ...view.pool, audience: { kind: 'team', teamId: 'team-build' }, members: [] },
+            availability: { state: 'unknown' }, access: { canManage: false, canResolve: false, canViewMembers: false } }];
+        await act(async () => publishBoundaryState());
+        const { MachinePoolEditorScreen } = await import('./MachinePoolEditorScreen');
+        const screen = await renderScreen(<MachinePoolEditorScreen serverId={boundaries.serverId} poolId={view.pool.id} />);
+        await vi.waitFor(() => expect(screen.findByTestId('settings.machinePools.editor.name')?.props.value).toBe('Development'));
+        expect(screen.findByTestId('settings.machinePools.editor.name')?.props.editable).toBe(false);
+        expect(screen.findByTestId('settings.machinePools.editor.save')?.props.disabled).toBe(true);
+        expect(screen.findByTestId('settings.machinePools.editor.delete')).toBeNull();
+        expect(screen.findByTestId('settings.machinePools.editor.addMachines')).toBeNull();
+        expect(boundaries.update).not.toHaveBeenCalled();
+    });
+
+    it('preserves the Team audience when the custodian saves pool details', async () => {
+        const view = poolView(1);
+        boundaries.pools = [{ ...view, pool: { ...view.pool, audience: { kind: 'team', teamId: 'team-build' } },
+            access: { canManage: true, canResolve: true, canViewMembers: true } }];
+        await act(async () => publishBoundaryState());
+        const { MachinePoolEditorScreen } = await import('./MachinePoolEditorScreen');
+        const screen = await renderScreen(<MachinePoolEditorScreen serverId={boundaries.serverId} poolId={view.pool.id} />);
+        await act(async () => screen.changeTextByTestId('settings.machinePools.editor.name', 'Team build farm'));
+        await act(async () => screen.pressByTestId('settings.machinePools.editor.save'));
+        await vi.waitFor(() => expect(boundaries.update).toHaveBeenCalledOnce());
+        expect(boundaries.update.mock.calls[0]?.[1]).toMatchObject({ audience: { kind: 'team', teamId: 'team-build' } });
+    });
+
+    it('withdraws the Team audience through the existing audience field', async () => {
+        const view = poolView(1);
+        boundaries.pools = [{ ...view, pool: { ...view.pool, audience: { kind: 'team', teamId: 'team-build' } },
+            access: { canManage: true, canResolve: true, canViewMembers: true } }];
+        await act(async () => publishBoundaryState());
+        const { MachinePoolEditorScreen } = await import('./MachinePoolEditorScreen');
+        const screen = await renderScreen(<MachinePoolEditorScreen serverId={boundaries.serverId} poolId={view.pool.id} />);
+        const field = screen.root.findAll(node => node.props.testID === 'settings.machinePools.editor.audience'
+            && typeof node.props.row?.onChange === 'function')[0];
+        if (!field) throw new Error('Expected the pool audience field');
+        await act(async () => field.props.row.onChange(''));
+        await act(async () => screen.pressByTestId('settings.machinePools.editor.save'));
+        await vi.waitFor(() => expect(boundaries.update).toHaveBeenCalledOnce());
+        expect(boundaries.update.mock.calls[0]?.[1]).toMatchObject({ audience: { kind: 'private' } });
+    });
+
     it('hands Create and Cancel to the native header on a phone instead of stacking them under the title', async () => {
         const [{ MachinePoolEditorScreen }, { NavigationTitleChromeProvider }] = await Promise.all([
             import('./MachinePoolEditorScreen'),

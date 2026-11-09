@@ -1,11 +1,11 @@
-import { readServerEnabledBit } from '@happier-dev/protocol/features/serverEnabledBit';
-
 import { getCachedServerFeaturesSnapshot, getServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeaturesClient';
+import { resolveRuntimeFeatureDecisionFromSnapshot } from '@/sync/domains/features/featureDecisionRuntime';
 import { areServerProfileIdentifiersEquivalent, resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
 import { storage } from '@/sync/domains/state/storage';
 import { createScopedSnapshotLoader } from '@/sync/engine/scope/scopedSnapshotLoader';
 import { refreshMachinePools } from '@/sync/ops/machinePools';
 import { isHomeAdministrationAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
+import { TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1 } from '@happier-dev/protocol/changes';
 
 type MachinePoolProjectionTarget = Readonly<{
     key: string;
@@ -26,7 +26,8 @@ const loader = createScopedSnapshotLoader<MachinePoolProjectionTarget>({
     // Focused Pool writes already refresh this owner through the awaited change planner.
     // Preserve Account/configuration and content-free recovery wakes without also replaying
     // every unrelated exact page (or issuing a second refresh for the same Pool write).
-    matchesWake: isHomeAdministrationAccountChange,
+    matchesWake: event => isHomeAdministrationAccountChange(event)
+        || event.entityIds?.includes(TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1) === true,
     load: async (target, context) => {
         const forceFeaturesRequested = forceFeatureRefreshByServerId.delete(target.serverId);
         const forceFeatures = target.forceFeatures || forceFeaturesRequested;
@@ -35,8 +36,9 @@ const loader = createScopedSnapshotLoader<MachinePoolProjectionTarget>({
             // Missing, malformed and disabled feature state fails closed. Wakes may discover a
             // newly enabled Home, but never send an unsupported Pool Action speculatively.
             if (
-                featureSnapshot.status !== 'ready'
-                || readServerEnabledBit(featureSnapshot.features, 'machines.pools') !== true
+                resolveRuntimeFeatureDecisionFromSnapshot({
+                    featureId: 'machines.pools', settings: storage.getState().settings, snapshot: featureSnapshot,
+                })?.state !== 'enabled'
             ) return;
         }
         await refreshMachinePools(target.serverId);
@@ -49,8 +51,10 @@ const loader = createScopedSnapshotLoader<MachinePoolProjectionTarget>({
     shouldLoadOnObserve: (target) => {
         const snapshot = getCachedServerFeaturesSnapshot({ serverId: target.serverId });
         if (
-            snapshot?.status !== 'ready'
-            || readServerEnabledBit(snapshot.features, 'machines.pools') !== true
+            !snapshot
+            || resolveRuntimeFeatureDecisionFromSnapshot({
+                featureId: 'machines.pools', settings: storage.getState().settings, snapshot,
+            })?.state !== 'enabled'
         ) return false;
         const state = storage.getState();
         return !Array.isArray(state.machinePoolListByServerId[target.serverId])

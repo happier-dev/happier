@@ -8446,6 +8446,9 @@ const Domain_machinePoolTranslations = (() => {
 const en = Shared_machinePoolTranslations.en;
 
 const zhHans = {
+    membersPrivate: "机器为私有",
+    teamAudience: "团队",
+    teamSharingNotice: "团队成员可以通过共享的机器预设使用此池。池中的机器仍保持私有；共享不会授予直接访问权限。",
     machinesSection: "机器",
     tierPrimaryDescription: "优先尝试。",
     tierFallbackDescription: "在前面的机器都不在线时尝试。",

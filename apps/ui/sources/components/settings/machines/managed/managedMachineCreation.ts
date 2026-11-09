@@ -103,10 +103,10 @@ export async function runManagedMachineCreation(input: Readonly<{
         return fail('native_intent_unsupported');
     }
     if (!acquisition.managedId && (input.draft.receipt.optionStatus !== 'current'
-        || input.draft.receipt.prerequisites.some(item => item.status !== 'available'))) return fail('review_required');
+        || input.draft.receipt.prerequisites.some(item => item.status === 'unavailable'))) return fail('review_required');
     const context = { surface: 'ui' as const, authority: 'present_user' as const,
         serverId: input.scope.serverId, expectedAccountId: input.scope.accountId, signal: input.signal };
-    const controller = input.draft.receipt.controller;
+    let controller = input.draft.receipt.controller;
     const withActionDispatch = (dispatch: FrontDoorActionExecute['confirmed']) => async (actionId: ManagedMachineActionIdV1 | 'machines.managed.bootstrap.respond', actionInput: unknown, nativeTarget?: string) =>
         awaitActionApprovalResult<unknown, { kind: 'completed'; value: unknown } | { kind: 'failed'; code: string }>({
             signal: input.signal,
@@ -201,12 +201,13 @@ export async function runManagedMachineCreation(input: Readonly<{
     const awaitingSetupWithoutGuestOperation = alreadyAdmitted?.machineSetup
         && (alreadyAdmitted.machineSetup.state === 'pending' || alreadyAdmitted.machineSetup.state === 'running')
         && !alreadyAdmitted.machineSetup.operation;
+    // Pool selection binds the controller at admission. Continue from that exact
+    // admitted row rather than selecting again or requiring a controller grant.
+    const scopedMachine = alreadyAdmitted ?? (acquisition.operation && acquisition.selection.kind === 'preset' ? await read() : null);
+    if (!current()) return fail('continuation_retired');
+    if (acquisition.operation && acquisition.selection.kind === 'preset' && !scopedMachine) return { kind: 'failed', code: 'managed_read_failed' };
+    controller ??= scopedMachine?.controller;
     if (controller && acquisition.operation && (!alreadyAdmitted?.enrolledMachineId || awaitingSetupWithoutGuestOperation)) {
-        // A fresh preset admission may belong to the requester without any controller grant.
-        // Resolve that fact from the admitted row, never from the selected preset or caller hints.
-        const scopedMachine = alreadyAdmitted ?? (acquisition.selection.kind === 'preset' ? await read() : null);
-        if (!current()) return fail('continuation_retired');
-        if (acquisition.selection.kind === 'preset' && !scopedMachine) return { kind: 'failed', code: 'managed_read_failed' };
         const requesterMachine = scopedMachine && scopedMachine.enrollmentAccountId === input.scope.accountId
             && scopedMachine.custodianAccountId !== input.scope.accountId ? scopedMachine : null;
         input.onProgress({ kind: 'acquiring', managedId: acquisition.managedId });

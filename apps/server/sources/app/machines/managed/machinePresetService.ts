@@ -30,6 +30,11 @@ import {
     sameManagedInput, projectManagedControllerAccess, readManagedProjectionFactsInTx,
     type ManagedDeclaration, type ManagedProjectionFacts, readManagedReviewedDeclaration,
 } from "./managedRows";
+import { readTeamResourcePublicationAudienceInTx } from '@/app/teams/resourcePublicationAudience';
+import { readManagedPresetPoolCandidatesInTx, buildManagedPoolPresetReview } from './machinePresetPool';
+import { selectMachinePoolCandidate } from '@happier-dev/protocol/machines/pools';
+import type { ManagedControllerV1, ManagedControllerAccessV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import type { MachineDaemonPresenceInventory } from '@/app/machines/machineDaemonPresence';
 
 type StoredPreset = Prisma.ManagedMachinePresetGetPayload<Record<string, never>>;
 type PresetCreation = Pick<ManagedMachinePresetV1, 'homeId'> & ManagedMachinePresetCreationV1
@@ -41,11 +46,13 @@ type PresetCredentialProfiles = ReadonlyMap<string, ReadonlyMap<string, Qualifie
 /** Split the known storage-only presentation field; the existing Preset reader validates launch. */
 const StoredPresetLaunchReadSchema = z.looseObject({
     controllerDisplayName: ManagedMachinePresetV1Schema.shape.controllerDisplayName,
+    controllerPoolId: ManagedMachinePresetV1Schema.shape.controllerPoolId,
 });
 
-function storePresetLaunch(preset: Pick<ManagedMachinePresetV1, 'launch' | 'controllerDisplayName'>) {
+function storePresetLaunch(preset: Pick<ManagedMachinePresetV1, 'launch' | 'controllerDisplayName' | 'controllerPoolId'>) {
     return preset.launch ? { ...preset.launch,
         ...(preset.controllerDisplayName === undefined ? {} : { controllerDisplayName: preset.controllerDisplayName }),
+        ...(preset.controllerPoolId === undefined ? {} : { controllerPoolId: preset.controllerPoolId }),
     } : getActivePrismaRuntime().DbNull;
 }
 
@@ -88,11 +95,12 @@ function inheritPresetOwnerArchive(row: StoredPreset, teamArchivedAt: Date | nul
 function projectPreset(row: StoredPreset, declaration?: ManagedDeclaration | null): ManagedMachinePresetV1 {
     const schema = declaration ? createStoredReadSchema(createManagedMachinePresetV1Schema(createPluginJsonSchemaZodValueAdapter(declaration.launchSchema))) : ManagedMachinePresetV1ReadSchema;
     const storedLaunch = row.launch === null ? null : StoredPresetLaunchReadSchema.parse(row.launch);
-    const { controllerDisplayName, ...launch } = storedLaunch ?? {};
+    const { controllerDisplayName, controllerPoolId, ...launch } = storedLaunch ?? {};
     return ManagedMachinePresetV1Schema.parse(schema.parse({
         id: row.id, homeId: row.homeId, revision: row.revision, name: row.name,
         owner: ownerOf(row),
         ...(storedLaunch ? { launch, ...(controllerDisplayName === undefined ? {} : { controllerDisplayName }) } : {}),
+        ...(controllerPoolId === undefined ? {} : { controllerPoolId }),
         ...(row.controllerMachineId !== null || row.controllerInstallationId !== null
             ? { controller: { machineId: row.controllerMachineId, installationId: row.controllerInstallationId } } : {}),
         ...(row.setup !== null ? { setup: row.setup } : {}),
@@ -105,10 +113,26 @@ function projectPreset(row: StoredPreset, declaration?: ManagedDeclaration | nul
 }
 
 async function projectPresetInTx(tx: Tx, row: StoredPreset,
-    context?: Readonly<{ accountId: string; canManageController: boolean }>,
+    context?: PresetContext & Readonly<{ canManageController: boolean }>,
     credentialProfiles?: PresetCredentialProfiles, facts?: ManagedProjectionFacts): Promise<ManagedMachinePresetV1> {
     const preset = projectPreset(row);
     if (!hasManagedMachinePresetCreationV1(preset)) return preset;
+    if (preset.controllerPoolId && context) {
+        const { credentials: _credentials, ...launch } = preset.launch;
+        const publicPreset = { ...preset, launch };
+        try {
+            if (row.archivedAt) throw new ManagedMachineError('preset_archived');
+            const pool = await readManagedPresetPoolCandidatesInTx(tx, context, preset);
+            if (pool.custodianAccountId !== context.accountId && !row.teamAcquireDelegated) throw new ManagedMachineError('permission_denied');
+            const declaration = pool.candidates[0]!.declaration;
+            return ManagedMachinePresetV1Schema.parse({ ...publicPreset,
+                ...(pool.custodianAccountId === context.accountId ? { launch: preset.launch } : {}), delegatedAcquire: { kind: 'ready',
+                provisioner: declaration.provisioner, reviewedFacts: buildManagedPoolPresetReview(preset, declaration) } });
+        } catch (error) {
+            if (!(error instanceof ManagedMachineError)) throw error;
+            return { ...publicPreset, delegatedAcquire: { kind: 'unavailable', code: error.code } };
+        }
+    }
     if (context && !context.canManageController && row.teamId && preset.controller) {
         const { credentials: _credentials, ...launch } = preset.launch;
         const publicPreset = { ...preset, launch };
@@ -140,9 +164,10 @@ async function projectPresetInTx(tx: Tx, row: StoredPreset,
 }
 
 /** Mutation replies obey the same controller-private boundary as preset reads. */
-async function projectPresetForActorInTx(tx: Tx, row: StoredPreset, accountId: string): Promise<ManagedMachinePresetV1> {
-    const projection = row.teamId && row.controllerMachineId ? { accountId,
-        canManageController: await resolveEffectiveMachineRoleInTx(tx, { actorAccountId: accountId, machineId: row.controllerMachineId }) === 'manage' } : undefined;
+async function projectPresetForActorInTx(tx: Tx, row: StoredPreset, accountId: string,
+    authentication?: PresetContext['authentication']): Promise<ManagedMachinePresetV1> {
+    const projection = row.teamId || projectPreset(row).controllerPoolId ? { accountId, authentication,
+        canManageController: row.controllerMachineId !== null && await resolveEffectiveMachineRoleInTx(tx, { actorAccountId: accountId, machineId: row.controllerMachineId }) === 'manage' } : undefined;
     return projectPresetInTx(tx, row, projection);
 }
 
@@ -173,8 +198,7 @@ export async function invalidatePresetInTx(tx: Tx, row: StoredPreset): Promise<v
 
 export async function readMachinePresetPublicationAudienceInTx(tx: Tx, owner: ManagedMachinePresetV1['owner']): Promise<string[]> {
     return owner.kind === 'team'
-        ? (await tx.teamMembership.findMany({ where: { teamId: owner.teamId, status: TeamMembershipStatus.active,
-            account: { status: AccountStatus.active } }, select: { accountId: true } })).map(member => member.accountId)
+        ? readTeamResourcePublicationAudienceInTx(tx, owner.teamId)
         : [owner.accountId];
 }
 
@@ -218,6 +242,11 @@ async function requireManagedLaunchManagerInTx(tx: Tx, context: PresetContext, m
 /** Save and acquire consume the same current declaration and credential-source readers. No material is read. */
 export async function validateManagedLaunchInTx(tx: Tx, context: PresetContext, preset: PresetCreation,
     reviewedFacts?: unknown): Promise<Readonly<{ declaration: ManagedDeclaration | null; custodianAccountId: string }>> {
+    if (preset.controllerPoolId) {
+        const pool = await readManagedPresetPoolCandidatesInTx(tx, context, preset);
+        if (pool.custodianAccountId !== context.accountId) throw new ManagedMachineError('permission_denied');
+        return { declaration: pool.candidates[0]!.declaration, custodianAccountId: pool.custodianAccountId };
+    }
     if (!preset.controller) {
         await requireHomeInTx(tx, preset.homeId);
         if (preset.owner?.kind === 'team' || (await tx.account.findUnique({ where: { id: context.accountId }, select: { status: true } }))?.status !== AccountStatus.active) {
@@ -236,7 +265,7 @@ export async function validateManagedLaunchInTx(tx: Tx, context: PresetContext, 
 }
 
 /** Source validation is shared; only preset admission can substitute its explicit spend approval for Manage. */
-async function validateStoredManagedLaunchInTx(tx: Tx, preset: PresetCreation,
+export async function validateStoredManagedLaunchInTx(tx: Tx, preset: PresetCreation,
     credentialProfiles?: PresetCredentialProfiles, facts?: ManagedProjectionFacts) {
     if (!preset.controller) throw new ManagedMachineError('invalid_request');
     const controller = facts ? facts.controllers.get(preset.controller.machineId)
@@ -306,7 +335,7 @@ export async function createMachinePreset(params: PresetContext & Readonly<{ inp
             if (!await resolvePresetAccessInTx(tx, params, ownerOf(existing), 'manage') || existing.homeId !== input.homeId) return { kind: "refused", code: "permission_denied" } as const;
             const current = await projectPresetInTx(tx, existing);
             return sameManagedInput(definition(current), input)
-                ? { kind: "saved", preset: await projectPresetForActorInTx(tx, existing, params.accountId) } as const
+                ? { kind: "saved", preset: await projectPresetForActorInTx(tx, existing, params.accountId, params.authentication) } as const
                 : { kind: "conflict", currentRevision: current.revision } as const;
         }
         if (hasManagedMachinePresetCreationV1(input)) await validateManagedLaunchInTx(tx, params, input);
@@ -324,7 +353,7 @@ export async function createMachinePreset(params: PresetContext & Readonly<{ inp
             simultaneousMaximum: input.simultaneousLimit?.maximum,
         } });
         await invalidatePresetInTx(tx, row);
-        return { kind: "saved", preset: await projectPresetForActorInTx(tx, row, params.accountId) } as const;
+        return { kind: "saved", preset: await projectPresetForActorInTx(tx, row, params.accountId, params.authentication) } as const;
     });
     try { return await execute(); }
     catch (error) { if (isPrismaUniqueConstraintError(error)) return await execute(); return refusal(error); }
@@ -340,7 +369,7 @@ export async function getMachinePresetInTx(tx: Tx, params: PresetContext & Reado
     const row = await tx.managedMachinePreset.findFirst({ where: { id: params.input.id, homeId: params.input.homeId } });
     const access = row ? await resolvePresetAccessInTx(tx, params, ownerOf(row), 'read') : null;
     if (!row || !access) return { kind: "refused", code: "preset_not_found" };
-    return { kind: "found", preset: await projectPresetForActorInTx(tx, inheritPresetOwnerArchive(row, access.teamArchivedAt), params.accountId) };
+    return { kind: "found", preset: await projectPresetForActorInTx(tx, inheritPresetOwnerArchive(row, access.teamArchivedAt), params.accountId, params.authentication) };
 }
 
 export async function listMachinePresets(params: PresetContext & Readonly<{ input: ManagedMachinePresetListInputV1 }>): Promise<ManagedMachinePresetListResultV1> {
@@ -388,8 +417,8 @@ export async function listMachinePresets(params: PresetContext & Readonly<{ inpu
             && row.teamAcquireDelegated && !row.archivedAt
             && projectionAccess.get(row.controllerMachineId)?.get(params.accountId) !== 'manage'), projectionFacts);
         const presets: ManagedMachinePresetV1[] = [];
-        for (const row of rows) presets.push(await projectPresetInTx(tx, row, row.teamId
-            ? { accountId: params.accountId, canManageController: row.controllerMachineId !== null && projectionAccess.get(row.controllerMachineId)?.get(params.accountId) === 'manage' }
+        for (const row of rows) presets.push(await projectPresetInTx(tx, row, row.teamId || projectPreset(row).controllerPoolId
+            ? { accountId: params.accountId, authentication: params.authentication, canManageController: row.controllerMachineId !== null && projectionAccess.get(row.controllerMachineId)?.get(params.accountId) === 'manage' }
             : undefined, credentialProfiles, projectionFacts));
         return { kind: "listed", presets } as const;
     }); } catch (error) { return refusal(error); }
@@ -409,12 +438,14 @@ export async function updateMachinePreset(params: PresetContext & Readonly<{ inp
         if (!row || !await resolvePresetAccessInTx(tx, params, ownerOf(row), 'manage')) return { kind: "refused", code: "preset_not_found" } as const;
         const current = await projectPresetInTx(tx, row);
         if (row.revision !== input.expectedRevision) return { kind: "conflict", currentRevision: row.revision } as const;
-        const { retention, wakeOnAcceptedMessage, simultaneousLimit, setup, launch, controller, controllerDisplayName, ...definitionPatch } = input.patch;
+        const { retention, wakeOnAcceptedMessage, simultaneousLimit, setup, launch, controller, controllerPoolId, controllerDisplayName, ...definitionPatch } = input.patch;
         const nextDefinition = { ...current, ...definitionPatch };
         if (launch === null) delete nextDefinition.launch;
         else if (launch !== undefined) nextDefinition.launch = launch;
         if (controller === null) delete nextDefinition.controller;
         else if (controller !== undefined) nextDefinition.controller = controller;
+        if (controllerPoolId === null) delete nextDefinition.controllerPoolId;
+        else if (controllerPoolId !== undefined) nextDefinition.controllerPoolId = controllerPoolId;
         if (controllerDisplayName !== undefined && controllerDisplayName !== null && nextDefinition.controller && nextDefinition.launch) {
             nextDefinition.controllerDisplayName = controllerDisplayName;
         } else if (controllerDisplayName === null || !nextDefinition.launch || !nextDefinition.controller
@@ -438,13 +469,14 @@ export async function updateMachinePreset(params: PresetContext & Readonly<{ inp
         // Every edit to an approved delegated recipe keeps its controller's spend
         // approver. Withdrawal needs Manage even if the selected credential retired.
         const requiresDelegationManager = row.teamAcquireDelegated || input.patch.teamAcquireDelegated !== undefined;
-        const validateLaunch = input.patch.launch !== undefined || input.patch.controller !== undefined
+        const validateLaunch = input.patch.launch !== undefined || input.patch.controller !== undefined || input.patch.controllerPoolId !== undefined
             || next.teamAcquireDelegated === true && !row.teamAcquireDelegated;
         const nextCreation = hasManagedMachinePresetCreationV1(next) ? next : undefined;
         const delegatedControllerMachineId = requiresDelegationManager ? row.controllerMachineId ?? next.controller?.machineId : undefined;
         if (validateLaunch && nextCreation) await validateManagedLaunchInTx(tx, params, nextCreation);
+        else if (requiresDelegationManager && nextCreation?.controllerPoolId) await validateManagedLaunchInTx(tx, params, nextCreation);
         else if (delegatedControllerMachineId) await requireManagedLaunchManagerInTx(tx, params, delegatedControllerMachineId);
-        if (sameManagedInput(next, current)) return { kind: "saved", preset: await projectPresetForActorInTx(tx, row, params.accountId) } as const;
+        if (sameManagedInput(next, current)) return { kind: "saved", preset: await projectPresetForActorInTx(tx, row, params.accountId, params.authentication) } as const;
         recheckPresetMutationAdmissionBeforePublication(tx, params, ownerOf(row),
             validateLaunch ? nextCreation : undefined, delegatedControllerMachineId);
         const result = await tx.managedMachinePreset.updateMany({ where: { id: row.id, revision: input.expectedRevision }, data: {
@@ -459,7 +491,7 @@ export async function updateMachinePreset(params: PresetContext & Readonly<{ inp
         const stored = await tx.managedMachinePreset.findUniqueOrThrow({ where: { id: row.id } });
         if (!result.count) return { kind: "conflict", currentRevision: stored.revision } as const;
         await invalidatePresetInTx(tx, stored);
-        return { kind: "saved", preset: await projectPresetForActorInTx(tx, stored, params.accountId) } as const;
+        return { kind: "saved", preset: await projectPresetForActorInTx(tx, stored, params.accountId, params.authentication) } as const;
     }); } catch (error) { return refusal(error); }
 }
 
@@ -478,13 +510,13 @@ async function setArchived(params: PresetContext & Readonly<{ input: ManagedMach
         if (!row || !access) return { kind: "refused", code: "preset_not_found" } as const;
         if (row.revision !== params.input.expectedRevision) return { kind: "conflict", currentRevision: row.revision } as const;
         const effective = inheritPresetOwnerArchive(row, access.teamArchivedAt);
-        if ((effective.archivedAt !== null) === archived) return { kind: "saved", preset: await projectPresetForActorInTx(tx, effective, params.accountId) } as const;
+        if ((effective.archivedAt !== null) === archived) return { kind: "saved", preset: await projectPresetForActorInTx(tx, effective, params.accountId, params.authentication) } as const;
         recheckPresetMutationAdmissionBeforePublication(tx, params, ownerOf(row));
         const result = await tx.managedMachinePreset.updateMany({ where: { id: row.id, revision: row.revision }, data: { archivedAt: archived ? new Date() : null, revision: { increment: 1 } } });
         const current = await tx.managedMachinePreset.findUniqueOrThrow({ where: { id: row.id } });
         if (!result.count) return { kind: "conflict", currentRevision: current.revision } as const;
         await invalidatePresetInTx(tx, current);
-        return { kind: "saved", preset: await projectPresetForActorInTx(tx, current, params.accountId) } as const;
+        return { kind: "saved", preset: await projectPresetForActorInTx(tx, current, params.accountId, params.authentication) } as const;
     }); } catch (error) { return refusal(error); }
 }
 
@@ -497,7 +529,10 @@ export async function resolveMachinePresetForAcquireInTx(tx: Tx, params: PresetC
     /** Preflight/proof reads omit capacity; the inserting admission always enforces it. */
     checkCapacity?: boolean;
     reviewedFacts?: unknown;
-}>): Promise<Readonly<{ kind: "ready"; preset: ManagedMachinePresetV1 & ManagedMachinePresetCreationV1; declaration: ManagedDeclaration; custodianAccountId: string; delegated: boolean }> | PresetRefusal | Extract<PresetMutationResultV1, { kind: "conflict" }>> {
+    boundController?: ManagedControllerV1;
+    poolSelection?: Readonly<{ requestKey: string; presence: MachineDaemonPresenceInventory }>;
+}>): Promise<Readonly<{ kind: "ready"; preset: ManagedMachinePresetV1 & ManagedMachinePresetCreationV1; declaration: ManagedDeclaration; custodianAccountId: string; delegated: boolean;
+    controllerAccess?: ManagedControllerAccessV1; poolPriorityTier?: number }> | PresetRefusal | Extract<PresetMutationResultV1, { kind: "conflict" }>> {
     await requireHomeInTx(tx, params.homeId);
     const stored = await tx.managedMachinePreset.findFirst({ where: { id: params.id, homeId: params.homeId } });
     const access = stored ? await resolvePresetAccessInTx(tx, params, ownerOf(stored), 'read') : null;
@@ -509,6 +544,21 @@ export async function resolveMachinePresetForAcquireInTx(tx: Tx, params: PresetC
     if (!hasManagedMachinePresetCreationV1(preset)) return { kind: 'refused', code: 'invalid_request' };
     // Admission's controller Account fence serializes this preset's count/create.
     if (params.checkCapacity !== false && row.simultaneousMaximum !== null && await tx.managedMachine.count({ where: { homeId: row.homeId, presetId: row.id, allocation: { not: "confirmed-absent" } } }) >= row.simultaneousMaximum) return { kind: "refused", code: "preset_limit_reached" };
+    if (preset.controllerPoolId) {
+        const pool = await readManagedPresetPoolCandidatesInTx(tx, params, preset, params.poolSelection?.presence);
+        const delegated = pool.custodianAccountId !== params.accountId;
+        if (delegated && (!row.teamId || row.teamAcquireDelegated !== true)) throw new ManagedMachineError('permission_denied');
+        const selection = params.poolSelection ? selectMachinePoolCandidate({ members: pool.snapshot.members,
+            availableMachineIds: new Set(pool.candidates.filter(candidate => pool.snapshot.availableMachineIds.has(candidate.controller.machineId))
+                .map(candidate => candidate.controller.machineId)), requestKey: params.poolSelection.requestKey, purpose: 'session' }) : null;
+        const controller = selection ? pool.candidates.find(candidate => candidate.controller.machineId === selection.machineId)?.controller : params.boundController;
+        const selected = controller && pool.candidates.find(candidate => sameManagedInput(candidate.controller, controller));
+        if (!selected) throw new ManagedMachineError('controller_unavailable');
+        const { controllerPoolId: _pool, ...definition } = preset;
+        return { kind: 'ready', preset: { ...definition, controller: selected.controller }, delegated,
+            custodianAccountId: pool.custodianAccountId, declaration: selected.declaration, controllerAccess: selected.access,
+            ...(selection ? { poolPriorityTier: selection.priorityTier } : {}) };
+    }
     if (!preset.controller) {
         if (preset.owner.kind !== 'account' || preset.owner.accountId !== params.accountId) throw new ManagedMachineError('permission_denied');
         const validated = await validateManagedLaunchInTx(tx, params, preset, params.reviewedFacts);

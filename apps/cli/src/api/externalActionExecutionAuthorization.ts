@@ -25,8 +25,8 @@ import { ManagedMachineV1Schema, matchesManagedMachineEnrollmentAdminAccessV1, m
   type ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { MachineSetupApplyInputV1Schema, managedMachineActionEndpointPathV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { readManagedMachine } from '@/machines/managed/readManagedMachine';
-import { ManagedMachinePresetGetResultV1Schema } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
-import { machinePresetActionEndpointPathV1 } from '@happier-dev/protocol/machines/managed/machinePresetActionsV1';
+import type { ManagedPresetAcquireOriginV1 } from '@happier-dev/cli-common/machines/managed';
+import { prepareOriginalAccountManagedPresetAcquire } from './managedPresetOrigination';
 import { projectExternalActionManagedAdmissionV1, projectDeploymentPreparationAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { isManagedControllerCodecActionV1, isReviewedMachineSetupCodecV1, sealManagedControllerActionCodecV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { randomBytes } from 'node:crypto';
@@ -89,6 +89,7 @@ import { isMachineTerminalActionId } from '@happier-dev/protocol/actions/specs/m
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
 import type { ManagedWakeTargetV1 } from '@happier-dev/protocol/machines/managed/managedIntentV1';
 import { MachineSetupPlanInputV1Schema, ManagedEnrollmentInstallationV1Schema, readMachineSetupPlanChildInputV1, isMachineSetupPlanRpcChildV1, MANAGED_CONTROL_ACTION_IDS_V1,
+  ManagedAcquireInputV1Schema, resolveManagedAcquireReviewV1,
   type MachineSetupApplyInputV1, type MachineSetupPlanInputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { matchesMachineSetupCreationSourcesV1 } from '@happier-dev/protocol/machines/setup/machineSetupSourcesV1';
 import { readRequesterAccountActionContext, rebindRequesterAccountActionContext, requesterAccountEncryptionMode, type RequesterAccountAuthorizationHeaders } from "@/daemon/sessionEncryption/requesterAccountActionContext";
@@ -635,6 +636,8 @@ type OriginalAccountActionInput = Readonly<{
   input: unknown;
   requestId: string;
   target: ExternalActionTargetV1;
+  /** Private result retained by the fresh preset origin, never read from Action input. */
+  managedPresetOrigin?: Extract<ManagedPresetAcquireOriginV1, { kind: 'bound' }>;
   credentials: StoredCredentials;
   serverHttpBaseUrl: string;
   serverIdentityId?: string;
@@ -707,6 +710,24 @@ export function requiresOriginalAccountMachineActionProof(actionId: string, inpu
     || MANAGED_CONTROL_ACTION_IDS_V1.some(id => id === actionId);
 }
 
+/** Controllerless pool presets bind before CLI/MCP placement, without a local daemon or Machine grant. */
+export async function prepareOriginalAccountPoolPresetAcquire(
+  params: Omit<OriginalAccountActionInput, 'target' | 'managedPresetOrigin'>,
+): Promise<(() => Promise<ActionExecuteResult>) | null> {
+  const parsed = params.actionId === 'machines.managed.acquire' ? ManagedAcquireInputV1Schema.safeParse(params.input) : null;
+  if (!parsed?.success || parsed.data.selection.kind !== 'preset'
+    || resolveManagedAcquireReviewV1(parsed.data).controller) return null;
+  if (parsed.data.selection.homeId !== params.serverIdentityId)
+    return async () => ({ ok: false, errorCode: 'server_target_mismatch', error: 'server_target_mismatch' });
+  const bound = await prepareOriginalAccountManagedPresetAcquire({ ...params, input: parsed.data, poolOnly: true });
+  if (!bound) return null;
+  if (bound.kind === 'refused') return async () => ({ ok: false, errorCode: bound.code, error: bound.code });
+  const controller = resolveManagedAcquireReviewV1(bound.input).controller;
+  if (!controller) return async () => ({ ok: false, errorCode: 'controller_unavailable', error: 'controller_unavailable' });
+  return () => dispatchOriginalAccountAction({ ...params, input: bound.input, managedPresetOrigin: bound,
+    target: { kind: 'machine', machineId: controller.machineId } });
+}
+
 export function dispatchOriginalAccountAction(input: OriginalAccountActionInput & Readonly<{ foreignTargetOnly: true }>): Promise<ActionExecuteResult | null>;
 export function dispatchOriginalAccountAction(input: OriginalAccountActionInput): Promise<ActionExecuteResult>;
 /** Original Account/terminal delivery enters Home before a retained guest can accept it.
@@ -766,7 +787,7 @@ export async function dispatchOriginalAccountAction(input: OriginalAccountAction
   // This branch only chooses the incumbent own-account path. Home still owns
   // authentication and the destination owns its Action admission.
   let machines: Awaited<ReturnType<typeof listCurrentAccountMachines>> | undefined;
-  const managedAdmission = projectExternalActionManagedAdmissionV1(input.actionId, input.input);
+  let managedAdmission = projectExternalActionManagedAdmissionV1(input.actionId, input.input);
   let scopedController: (NonNullable<ManagedMachineV1['controllerAccess']> & ManagedMachineV1['controller']) | undefined;
   if (managedAdmission && managedAdmission.actionId !== 'machines.managed.power.set'
     && managedAdmission.actionId !== 'machines.managed.delete'
@@ -784,28 +805,21 @@ export async function dispatchOriginalAccountAction(input: OriginalAccountAction
         if (!row.controllerAccess) return fail('controller_unavailable');
         scopedController = { ...row.controller, ...row.controllerAccess };
       }
-    } else if ('selection' in managed && managed.selection.kind === 'preset' && 'controller' in managed) {
-      const response = await axios.post<unknown>(`${homeUrl}${machinePresetActionEndpointPathV1('machines.presets.get')}`,
-        { homeId: managedHomeId, id: managed.selection.id }, { headers: { Authorization: `Bearer ${input.credentials.token}` },
-          ...(input.signal ? { signal: input.signal } : {}) });
-      const projected = ManagedMachinePresetGetResultV1Schema.safeParse(response.data);
-      if (!projected.success) return fail('managed_response_invalid');
-      if (projected.data.kind === 'refused') return fail(projected.data.code);
-      const preset = projected.data.preset;
-      if (preset.id !== managed.selection.id || preset.homeId !== managedHomeId
-        || preset.revision !== managed.selection.revision) return fail('request_conflict');
-      if (!preset.controller || !sameStrictJsonValue(preset.controller, managed.controller)
-        || preset.controller.machineId !== input.target.machineId) return fail('controller_retired');
-      const delegated = preset.delegatedAcquire;
-      if (delegated?.kind === 'unavailable') return fail(delegated.code);
-      if (delegated?.kind === 'ready') {
-        if (preset.owner.kind !== 'team' || !preset.teamAcquireDelegated
-          || !sameStrictJsonValue(managed.retention, delegated.reviewedFacts.retention)
-          || managed.wakeOnAcceptedMessage !== delegated.reviewedFacts.wakeOnAcceptedMessage) return fail('permission_denied');
-        scopedController = { ...preset.controller, ...delegated.controller };
-      }
+    } else if ('selection' in managed && managed.selection.kind === 'preset') {
+      const bound = input.managedPresetOrigin ?? await prepareOriginalAccountManagedPresetAcquire({
+        input: ManagedAcquireInputV1Schema.parse(managed), requestId: input.requestId, credentials: input.credentials,
+        serverHttpBaseUrl: homeUrl, ...(input.signal ? { signal: input.signal } : {}),
+      });
+      if (!bound) return fail('managed_response_invalid');
+      if (bound.kind === 'refused') return fail(bound.code);
+      const controller = resolveManagedAcquireReviewV1(bound.input).controller;
+      if (!controller) return fail('controller_retired');
+      if ('controller' in managed && managed.controller && controller.machineId !== input.target.machineId) return fail('controller_retired');
+      input = { ...input, input: bound.input, target: { kind: 'machine', machineId: controller.machineId } };
+      managedAdmission = projectExternalActionManagedAdmissionV1(input.actionId, input.input);
+      if (bound.controllerAccess) scopedController = { ...controller, ...bound.controllerAccess };
     }
-    if (scopedController && (scopedController.machineId !== input.target.machineId
+    if (scopedController && (input.target.kind !== 'machine' || scopedController.machineId !== input.target.machineId
       || !await isCurrent())) return fail('controller_retired');
   }
   if (input.foreignTargetOnly && !workflow && !scopedController) {
@@ -1057,7 +1071,7 @@ export async function dispatchOriginalAccountAction(input: OriginalAccountAction
         authorization = sealExternalActionRequesterAccountContextV1({ authorization,
           credentials: { ...encodeStoredCredentials(input.credentials), token: input.credentials.token }, purpose: { kind: 'external_action' },
           ...(input.invocation ? { invocation: input.invocation } : {}),
-          installationPublicKey: decodeBase64(installed.installationPublicKey), randomBytes });
+          installationPublicKey: decodeBase64(installed.installationPublicKey, scopedController ? 'base64url' : 'base64'), randomBytes });
       }
       const wake = authorization.managedFiniteWake;
       if (wake) {

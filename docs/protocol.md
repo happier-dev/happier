@@ -812,7 +812,7 @@ Live socket rows, including sidechain rows, remain visible while canonical defer
 
 Sparse repair uses bounded affected ranges identified by message identities and available sequence hints, rather than replaying between distant edits. Each group uses the configured page size and may refresh already-materialized neighbors without inserting unseen, unrequested spill rows; only explicitly hinted rows receive authoritative replacement semantics. Repair suppresses historical lifecycle events without changing target-window or forward paging cursors, and missing or unavailable rows remain outstanding. Completion acknowledges the captured immutable stale-message map, retaining newer marks that arrive during the request. Account-change hints are coalesced per Session and retain only the latest hint, not a complete edit journal, so bounded repair cannot certify the freshness of every historical row outside the fetched ranges.
 
-### Personal Machine Pool changes (0.3 development)
+### Machine Pool changes (0.3 development)
 
 `machinePool` is an additive known `AccountChange.kind`. Each committed Pool
 definition mutation advances the existing Account change cursor with the Pool ID
@@ -830,6 +830,11 @@ teaching them Pool semantics.
 
 The Pool wire schemas live in `packages/protocol/src/machines/pools/v1.ts`. A
 `MachinePoolViewV1` separates the saved definition from observed availability.
+Its optional audience identifies private or Team publication; its access projection
+decides management, ordinary resolution and roster visibility. The Account remains
+the custodian. Active Team members receive the public summary with no members and
+unknown availability, never a controller grant or direct Pool dispatch permission.
+The existing Team actor and resource audience owners decide membership and sharing.
 Member state can be `connected`, `offline`, `revoked`, `replaced`, `temporary`, or
 `unknown`; an unavailable observation is not rewritten as offline. Pool-level
 availability is the separate `{ state: 'known', connectedCount, enabledCount }` or
@@ -847,6 +852,22 @@ membership, request key, candidate list, or authority, and is omitted before fir
 dispatch when the negotiated Machine-operation compatibility projection does not
 positively support it. The exact target remains authoritative; Pool selection policy
 does not enter the daemon/session spawn protocol.
+
+Pool-backed managed presets retain a `controllerPoolId` in the existing preset
+launch storage alongside the saved display label; the reference survives Pool
+deletion and becomes unavailable rather than turning into a controller-free
+preset. The `managed-preset` purpose on the existing resolve Action binds an exact
+controller plus its public reviewed facts before signed managed acquisition.
+Candidates share one compatible public provisioner/billing/retention description;
+native prerequisites without observations remain unknown. The selected controller
+continues through the existing managed custody and requester-enrollment protocol.
+There is no Pool candidate list or placement policy in daemon dispatch.
+
+These audience and preset additions belong to unreleased 0.3. Stable 0.2 has no
+Machine Pool or managed-preset contract; the existing 0.3 upgrade requirement
+applies rather than adding a mixed-version Pool fallback. The nullable Pool Team
+relation is additive for SQLite, PostgreSQL and MySQL; existing Pools remain
+private. No retained database is reset or re-created to adopt it.
 
 The corresponding user intents are exactly `machines.pools.list`,
 `machines.pools.get`, `machines.pools.create`, `machines.pools.update`,

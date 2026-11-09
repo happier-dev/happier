@@ -144,7 +144,8 @@ function MachinePresetViewBody(props: Readonly<{ serverId: string; presetId: str
     // Named apart from same-named machines in this Home, as the Machines list and the configurator chip name it.
     // A controller with no readable name is "the computer that manages it" in sentences, never "Unknown".
     const knownControllerName = getMachineDisplayName(controller, machines ?? undefined) ?? visiblePreset.controllerDisplayName;
-    const controllerName = knownControllerName ?? t('managedMachines.receipt.managingComputer');
+    const controllerName = visiblePreset.controllerPoolId ? t('machinePresets.controllerPool')
+        : knownControllerName ?? t('managedMachines.receipt.managingComputer');
     const controllerSentenceName = controller ? getMachineSentenceName(controller, controllerName) : controllerName;
     const memberCreateOn = visiblePreset.teamAcquireDelegated === true;
     const presenceLabel = (machine: NonNullable<typeof controller>) => {
@@ -207,7 +208,7 @@ function MachinePresetViewBody(props: Readonly<{ serverId: string; presetId: str
     const receipt = buildManagedConfigurationReceipt({ launch: visibleCreation.launch, reviewedFacts: configuration.facts ?? undefined,
         credentialPresentations: credentialAccounts.presentationsByKey, ...(lastSaved ? { lastSaved } : {}),
         providerTitle: presentation.title, localized: presentation.localized,
-        controllerName: knownControllerName, homeName, declaredBilling: presentation.billing, setup: visiblePreset.setup,
+        controllerName: visiblePreset.controllerPoolId ? controllerName : knownControllerName, homeName, declaredBilling: presentation.billing, setup: visiblePreset.setup,
         preset: { id: visiblePreset.id, revision: visiblePreset.revision, name: visiblePreset.name },
         presetPolicy: { ...(visiblePreset.retention ? { retention: visiblePreset.retention } : {}),
             ...(visiblePreset.wakeOnAcceptedMessage !== undefined ? { wakeOnAcceptedMessage: visiblePreset.wakeOnAcceptedMessage } : {}) },
@@ -244,8 +245,9 @@ function MachinePresetViewBody(props: Readonly<{ serverId: string; presetId: str
             : { title: visiblePreset.simultaneousLimit
                 ? `${t('machinePresets.atMost')} ${visiblePreset.simultaneousLimit.maximum}` : t('machinePresets.limitNone'),
                 ...(visiblePreset.simultaneousLimit ? { subtitle: t('machinePresets.limitWaits') } : {}) } },
-        controller: { description: t('managedMachines.controller.required', { controller: controllerSentenceName }),
-            row: controllerChoices.length ? {
+        controller: { description: visiblePreset.controllerPoolId ? t('machinePresets.controllerPoolHelp')
+            : t('managedMachines.controller.required', { controller: controllerSentenceName }),
+            row: visiblePreset.controllerPoolId ? { title: t('machinePresets.controllerPool') } : controllerChoices.length ? {
                 title: t('machinePresets.controllerRow'),
                 ...(controller ? { subtitle: presenceLabel(controller) } : {}),
                 choices: controllerChoices.map(machine => ({ id: machine.id, title: getMachineDisplayName(machine, machines ?? undefined) ?? machine.id,
@@ -255,7 +257,7 @@ function MachinePresetViewBody(props: Readonly<{ serverId: string; presetId: str
                     const machine = controllerChoices.find(candidate => candidate.id === id);
                     if (!machine?.installationId || id === visibleCreation.controller?.machineId
                         && machine.installationId === visibleCreation.controller?.installationId) return;
-                    edit({ controller: { machineId: machine.id, installationId: machine.installationId } });
+                    edit({ controller: { machineId: machine.id, installationId: machine.installationId }, controllerPoolId: null });
                 },
             } : { title: knownControllerName ?? t('common.unknown') } },
         // Under "Made from this preset" a row is the machine, who made it and its state (lab m-presets); an

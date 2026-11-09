@@ -10,6 +10,18 @@ import { encodeBase64 } from '../../crypto/base64.js';
 import tweetnacl from 'tweetnacl';
 
 describe('managed preset launch contracts', () => {
+  it('preserves pool targets without manufacturing an exact controller', () => {
+    const preset = { id: 'pool-preset', homeId: 'home', name: 'Team guest',
+      owner: { kind: 'team', teamId: 'team' }, teamAcquireDelegated: true,
+      launch: { provider: { pluginId: 'custom.compute', localId: 'vm' }, schemaVersion: 1, name: 'Guest', choices: {} },
+      controllerPoolId: 'c1d23348-62b4-4584-aeb2-3c8e312acc8c' };
+    expect(protocol.ManagedMachinePresetCreateInputV1Schema.parse(preset)).toEqual(preset);
+    expect(protocol.ManagedMachinePresetV1ReadSchema.parse({ ...preset, revision: 0 })).toMatchObject({ controllerPoolId: preset.controllerPoolId });
+    expect(protocol.ManagedMachinePresetCreateInputV1Schema.safeParse({ ...preset,
+      controller: { machineId: 'controller', installationId: 'installation' } }).success).toBe(false);
+    expect(protocol.ManagedMachinePresetUpdateInputV1Schema.parse({ homeId: 'home', id: preset.id, expectedRevision: 0,
+      patch: { controller: null, controllerPoolId: preset.controllerPoolId } })).toMatchObject({ patch: { controllerPoolId: preset.controllerPoolId } });
+  });
   it('round-trips an optional author-saved controller label outside native launch choices', () => {
     const create = { id: 'named-controller', homeId: 'home', name: 'Team guest',
       owner: { kind: 'team', teamId: 'team' },

@@ -39,6 +39,17 @@ const pool = {
 };
 
 describe('useMachinePoolGroups', () => {
+    it('keeps Team metadata-only pools out of ordinary Session destinations', async () => {
+        storage.setState({ machinePoolListByServerId: { [boundary.serverId]: [{ ...pool,
+            pool: { ...pool.pool, audience: { kind: 'team', teamId: 'team-build' } },
+            access: { canManage: false, canResolve: false, canViewMembers: false } }] },
+            machinePoolListStatusByServerId: { [boundary.serverId]: 'idle' },
+            machinePoolAccountIdByServerId: { [boundary.serverId]: 'account-a' } });
+        const groups = [{ serverId: boundary.serverId, serverName: 'Pool Groups Test', machines: [] }];
+        const rendered = await renderHook(() => useMachinePoolGroups(groups));
+        expect(rendered.getCurrent()[0]?.pools).toEqual([]);
+        await rendered.unmount();
+    });
     beforeEach(async () => {
         resetMachinePoolSyncRuntimeForTests();
         resetServerFeaturesClientForTests();
@@ -106,7 +117,7 @@ describe('useMachinePoolGroups', () => {
         const hook = await renderHook(() => useMachinePoolGroups(groups));
 
         await vi.waitFor(() => {
-            expect(boundary.requests.filter((url) => !url.endsWith('/v1/features'))).toEqual([
+            expect(boundary.requests.filter((url) => new URL(url).pathname.startsWith('/v1/machines/pools/'))).toEqual([
                 'https://new-session-pool-groups.test/v1/machines/pools/list',
             ]);
             expect(hook.getCurrent()[0]?.pools).toEqual([pool]);

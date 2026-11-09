@@ -6926,7 +6926,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ## `doc.edit.propose`
 
-**Propose a document edit** — Use this action when asked to suggest an edit or rewrite of a document passage: it creates a reviewable Doc suggestion, while a conversational reply draft does not. Supply after as the replacement for exactly the quoted passage, discussionRef from the thread context suggestEdit.discussionRef (or doc.threadRef.discussion), and localId, with an optional reason. after replaces only the quoted characters; text outside the quote is preserved. Read documentPassage.prefix and documentPassage.suffix as the unchanged surrounding words, not part of the replacement. Check the resulting text as prefix + after + suffix. For prefix "we will " and quote "keep prices steady", after "keep prices steady and welcome neighbors" yields "we will keep prices steady and welcome neighbors"; do not repeat "we will" in after. If surrounding context is absent or insufficient, use doc.read before composing a mid-clause replacement. The stored thread supplies the exact passage, quote and full revision before approval; use doc.read with the context docRef as ref to read document text. Explicit target/baseRevision/before inputs also work. A pending approval is not yet a submitted suggestion. A proposal never changes document text.
+**Propose a document edit** — Use this action when asked to suggest an edit or rewrite of a document passage: it creates a reviewable Doc suggestion, while a conversational reply draft does not. Rewrite the complete paragraph(s) in the context suggestEdit.before, including words that remain unchanged. Supply that full replacement as after, discussionRef from suggestEdit.discussionRef (or doc.threadRef.discussion), and localId, with an optional reason. documentPassage.quote is the person’s highlight; it may start or end mid-sentence. A paragraph includes the full sentences around the highlight and avoids splitting at soft wraps or abbreviations. The tool replaces the whole containing paragraph(s), never just that fragment. If suggestEdit.before is absent or the Doc changed, use doc.read with doc.docRef as ref and rewrite the complete current paragraph(s) containing the passage. The thread supplies the exact full-paragraph target and revision before approval. Explicit target/baseRevision/before inputs retain their authored exact span; when composing a rewrite from a selection, supply the whole containing paragraph(s). after is used verbatim. A pending approval is not yet a submitted suggestion. A proposal never changes document text.
 
 - Safety: `danger`; side effect: `danger`.
 - Approval: `optional` result; `deferred` flow.
@@ -10258,6 +10258,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `poolId` (text, required): Pool id
 - `name` (text, required): Name
 - `description` (textarea): Description
+- `audience` (json): Pool audience
 - `members` (json, required): Machine members and priority tiers
 
 ## `machines.pools.delete`
@@ -10318,6 +10319,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `poolId` (text, required): Pool id
 - `requestKey` (text, required): Selection request key
 - `purpose` (text): Execution purpose
+- `preset` (json): Managed preset identity and revision
 - `workspace` (json): Workspace
 - `memoryDemand` (json): Memory demand
 
@@ -10337,6 +10339,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `expectedRevision` (integer, required): Expected revision
 - `name` (text, required): Name
 - `description` (textarea): Description
+- `audience` (json): Pool audience
 - `members` (json, required): Machine members and priority tiers
 
 ## `machines.presence.read`
@@ -10388,6 +10391,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `owner` (json, required): Owner
 - `launch` (json): Provisioning launch
 - `controller` (json): Controller
+- `controllerPoolId` (text): Controller pool id
 - `setup` (json): Machine setup
 - `retention` (json): Retention policy
 - `wakeOnAcceptedMessage` (boolean): Wake on accepted message
@@ -20695,7 +20699,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ## `session.stop`
 
-**Stop session** — Stop the specified session. Explicit Stop holds automatic wake until Resume; lifecycle control only frees the runner.
+**Stop session** — Stop the specified session. Explicit Stop holds automatic wake until a person Resumes or Sends; lifecycle control only frees the runner.
 
 - Safety: `safe`; side effect: `write`.
 - Approval: `none` result; `deferred` flow.

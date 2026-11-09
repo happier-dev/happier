@@ -1,4 +1,6 @@
 import * as React from 'react';
+import tweetnacl from 'tweetnacl';
+import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { installApprovalCommonModuleMocks } from '@/components/approvals/approvalsTestHelpers';
@@ -10,7 +12,8 @@ import { DaemonContributionRegistryProjectionDescribeResponseSchema } from '@hap
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { PLUGIN_PROVIDER_DAEMON_PROJECTION_FIXTURE } from '@/dev/testkit/fixtures/pluginProviderDaemonProjection';
-import { createManagedControllerMachineFixture as createMachineFixture, createManagedCpuOptionsFixture } from '@/dev/testkit/fixtures/machineProvisionerFixtures';
+import { createManagedControllerMachineFixture as createMachineFixture, createManagedCpuOptionsFixture, createDelegatedManagedPresetFixture } from '@/dev/testkit/fixtures/machineProvisionerFixtures';
+import { ManagedMachinePresetV1Schema } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
 import type { MachineProvisionersListResultV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 
 const nativeBoundary = vi.hoisted(() => ({ rpc: vi.fn() }));
@@ -33,6 +36,44 @@ beforeEach(async () => {
 afterEach(() => standardCleanup());
 
 describe('ordinary managed machine picker demand', () => {
+    it('opens a pool-backed preset directly and carries its preset selection without resolving or reading a controller', async () => {
+        const serverId = await harness.addHome({ name: 'Compute', serverUrl: 'https://compute.example', serverIdentityId: 'srv_compute', accountId: 'owner', currentAccount: true });
+        const descriptor = { id: 'vm', title: 'Virtual machine', icon: 'server' as const, resourceKind: 'VM' as const,
+            schemaVersion: 1, launchSchema: { type: 'object' as const, properties: {}, additionalProperties: false },
+            resourceSchema: { type: 'object' as const, properties: {}, additionalProperties: false }, platforms: ['linux' as const], prerequisites: [],
+            enrollmentRole: 'sandbox' as const, billing: { location: 'cloud' as const, stoppedBilling: 'billed' as const },
+            retention: { supportedIntents: ['delete' as const] },
+            actions: { check: 'check', options: 'options', acquire: 'acquire', bootstrap: 'bootstrap', inspect: 'inspect', destroy: 'destroy' } };
+        const exact = createDelegatedManagedPresetFixture({ preset: { id: 'pooled', homeId: 'srv_compute', revision: 2, name: 'Build guest',
+            owner: { kind: 'account', accountId: 'owner' }, controller: { machineId: 'host', installationId: 'installation' },
+            launch: { provider: { pluginId: 'custom.compute', localId: 'vm' }, schemaVersion: 1, name: 'Build guest', choices: {} } },
+            descriptor, custodianAccountId: 'owner', installationPublicKey: encodeBase64(tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(3)).publicKey, 'base64url') });
+        if (exact.delegatedAcquire?.kind !== 'ready') throw new Error('Expected public review');
+        const preset = ManagedMachinePresetV1Schema.parse({ ...exact, controller: undefined,
+            controllerPoolId: '6be84651-2df7-4125-aac4-0d093217b198', delegatedAcquire: { ...exact.delegatedAcquire,
+                controller: undefined, reviewedFacts: { ...exact.delegatedAcquire.reviewedFacts, controller: undefined } } });
+        harness.answer(serverId, '/v1/machines/presets/list', { body: { kind: 'listed', presets: [preset] } });
+        harness.answer(serverId, '/v1/machines/presets/get', { body: { kind: 'found', preset } });
+        const { storage } = await import('@/sync/domains/state/storage');
+        storage.getState().applyMachines([], true, { sourceServerId: serverId, sourceAccountId: 'owner' });
+        storage.getState().markMachineListSettled(serverId);
+        const onSelectManagedMachine = vi.fn();
+        const { NewSessionMachineSelectionContent } = await import('./NewSessionMachineSelectionContent');
+        const { ModalProvider } = await import('@/modal');
+        const screen = await renderScreen(<ModalProvider><NewSessionMachineSelectionContent groups={[]} selectedMachine={null}
+            selectedServerId={serverId} recentMachines={[]} favoriteMachines={[]} onSelectMachine={vi.fn()}
+            onSelectScopedMachine={vi.fn()} onSelectManagedMachine={onSelectManagedMachine} testIdPrefix="pool-picker" showSearch={false} /></ModalProvider>);
+        await waitForHomeGovernance(() => expect(screen.findByTestId('pool-picker-managed-machine:srv_compute:preset:pooled:2')).not.toBeNull());
+        await act(async () => screen.pressByTestId('pool-picker-managed-machine:srv_compute:preset:pooled:2'));
+        await waitForHomeGovernance(() => expect(screen.findByTestId('managed-config.use')?.props.disabled).toBe(false));
+        await act(async () => screen.pressByTestId('managed-config.use'));
+        expect(onSelectManagedMachine.mock.calls[0]?.[0]).toMatchObject({ selection: { kind: 'preset', homeId: 'srv_compute', id: 'pooled', revision: 2 } });
+        expect(onSelectManagedMachine.mock.calls[0]?.[0].receipt.controller).toBeUndefined();
+        expect(harness.requests.filter(request => request.path.includes('machines.provisioners') || request.path.includes('pools/resolve')
+            || request.path.includes('pools/list') || request.path.includes('machines.managed.acquire'))).toHaveLength(0);
+        expect(nativeBoundary.rpc).not.toHaveBeenCalled();
+        await screen.unmount();
+    });
     it('mounts current-Home presets and one-off rows beside published artifacts without acquiring', async () => {
         const serverId = await harness.addHome({ name: 'Compute', serverUrl: 'https://compute.example', serverIdentityId: 'srv_compute', accountId: 'owner', currentAccount: true });
         const preset = { id: 'launch', homeId: 'srv_compute', revision: 2, name: 'Build guest',

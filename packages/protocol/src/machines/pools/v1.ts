@@ -2,6 +2,10 @@ import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod/mini';
 import { WorkspaceExecutionConfigAddressV1Schema } from '../../workspaces/projectWorkerPreferencesV1.js';
 import { ProjectMemoryDemandV1Schema } from '../../workspaces/projectSetup/projectMemoryDemandV1.js';
+import { ManagedControllerV1Schema, ManagedControllerAccessV1Schema } from '../managed/managedMachineV1.js';
+import { ManagedConfigurationFactsV1Schema } from '../managed/managedConfigurationV1.js';
+import { MachineProvisionerContributionV1Schema } from '../../plugins/contributions/machineProvisioners.js';
+import { ManagedRefusalCodeV1Schema } from '../managed/providerFactsV1.js';
 
 /** Closed purpose model: automation and Boards remain own-Machine destinations. */
 export const MachineDestinationPurposeV1Schema = lazyZodSchema(() => z.enum([
@@ -13,18 +17,33 @@ export const MachinePoolPlacementPurposeV1Schema = lazyZodSchema(() => z.enum(['
 export type MachinePoolPlacementPurposeV1 = z.infer<typeof MachinePoolPlacementPurposeV1Schema>;
 
 /**
- * Personal Machine Pool wire model.
+ * Machine Pool wire model.
  *
- * A pool is a reusable named set of the Account's own persistent Machines on one Home. It confers
- * no Team, Session, Machine or credential authority: membership is a saved preference that later
- * exact dispatch still revalidates at its own canonical owners. Nothing here carries Account
- * ownership supplied by a caller — the authenticated Account is the owner — and no candidate list,
- * request key, score or selection result is part of the persisted definition.
+ * A pool is a reusable named set of its custodian's persistent Machines on one Home. It confers
+ * no Session, Machine or credential authority: sharing exposes metadata to its Team. Membership
+ * is a saved preference that later exact dispatch revalidates at its own canonical owners.
+ * Creation derives custody from the authenticated Account, never a caller-supplied owner field.
+ * No candidate list, request key, score or selection result is part of the persisted definition.
  */
 
 /** The stable pool identity. The authoring host mints it once and reuses it for retry. */
 export const MachinePoolIdV1Schema = lazyZodSchema(() => z.string().check(z.uuid()));
 export type MachinePoolIdV1 = z.infer<typeof MachinePoolIdV1Schema>;
+
+/** Sharing permits preset discovery; it never grants access to a controller Machine. */
+export const MachinePoolAudienceV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
+  z.strictObject({ kind: z.literal('private') }),
+  z.strictObject({ kind: z.literal('team'), teamId: z.string().check(z.minLength(1)) }),
+]));
+export type MachinePoolAudienceV1 = z.infer<typeof MachinePoolAudienceV1Schema>;
+
+/** The pool owner projects these permissions once; consumers do not infer them from audience. */
+export const MachinePoolAccessV1Schema = lazyZodSchema(() => z.strictObject({
+  canManage: z.boolean(),
+  canResolve: z.boolean(),
+  canViewMembers: z.boolean(),
+}));
+export type MachinePoolAccessV1 = z.infer<typeof MachinePoolAccessV1Schema>;
 
 /** Informational provenance retained after a pool has resolved to an exact Machine. */
 export const MachinePoolSelectionOriginV1Schema = lazyZodSchema(() => z.strictObject({
@@ -103,6 +122,7 @@ export const MachinePoolSummaryV1Schema = lazyZodSchema(() => z.strictObject({
   revision: z.number().check(z.int(), z.nonnegative()),
   createdAt: z.number().check(z.int(), z.nonnegative()),
   updatedAt: z.number().check(z.int(), z.nonnegative()),
+  audience: z.optional(MachinePoolAudienceV1Schema),
   members: z.array(MachinePoolMemberV1Schema),
 }));
 export type MachinePoolSummaryV1 = z.infer<typeof MachinePoolSummaryV1Schema>;
@@ -126,6 +146,7 @@ export type MachinePoolAvailabilityV1 = z.infer<typeof MachinePoolAvailabilityV1
 export const MachinePoolViewV1Schema = lazyZodSchema(() => z.strictObject({
   pool: MachinePoolSummaryV1Schema,
   availability: MachinePoolAvailabilityV1Schema,
+  access: z.optional(MachinePoolAccessV1Schema),
 }));
 export type MachinePoolViewV1 = z.infer<typeof MachinePoolViewV1Schema>;
 
@@ -139,11 +160,15 @@ export const MachinePoolResolveResultV1Schema = lazyZodSchema(() => z.discrimina
     poolId: MachinePoolIdV1Schema,
     machineId: z.string().check(z.minLength(1)),
     priorityTier: MachinePoolPriorityTierV1Schema,
+    managedPreset: z.optional(z.strictObject({ controller: ManagedControllerV1Schema,
+      controllerAccess: ManagedControllerAccessV1Schema, provisioner: MachineProvisionerContributionV1Schema,
+      reviewedFacts: ManagedConfigurationFactsV1Schema })),
   }),
   z.strictObject({
     kind: z.literal('unavailable'),
     poolId: MachinePoolIdV1Schema,
-    reason: z.enum(['empty', 'no_available_machine', 'presence_unavailable', 'worker_status_unavailable']),
+    reason: z.enum(['empty', 'no_available_machine', 'presence_unavailable', 'worker_status_unavailable', 'managed_preset_unavailable']),
+    code: z.optional(ManagedRefusalCodeV1Schema),
   }),
 ]));
 export type MachinePoolResolveResultV1 = z.infer<typeof MachinePoolResolveResultV1Schema>;
@@ -200,6 +225,7 @@ export const MachinePoolCreateInputV1Schema = lazyZodSchema(() => z.strictObject
   poolId: MachinePoolIdV1Schema,
   name: MachinePoolNameV1Schema,
   description: z.optional(z.nullable(MachinePoolDescriptionV1Schema)),
+  audience: z.optional(MachinePoolAudienceV1Schema),
   members: MachinePoolMembersInputV1Schema,
 }));
 export type MachinePoolCreateInputV1 = z.infer<typeof MachinePoolCreateInputV1Schema>;
@@ -210,6 +236,7 @@ export const MachinePoolUpdateInputV1Schema = lazyZodSchema(() => z.strictObject
   expectedRevision: z.number().check(z.int(), z.nonnegative()),
   name: MachinePoolNameV1Schema,
   description: z.optional(z.nullable(MachinePoolDescriptionV1Schema)),
+  audience: z.optional(MachinePoolAudienceV1Schema),
   members: MachinePoolMembersInputV1Schema,
 }));
 export type MachinePoolUpdateInputV1 = z.infer<typeof MachinePoolUpdateInputV1Schema>;
@@ -232,6 +259,13 @@ export type MachinePoolDeleteOutputV1 = z.infer<typeof MachinePoolDeleteOutputV1
  * persisted, and reopening an already resolved draft keeps its exact target instead of re-resolving.
  */
 export const MachinePoolResolveInputV1Schema = lazyZodSchema(() => z.union([
+  z.strictObject({
+    poolId: MachinePoolIdV1Schema,
+    requestKey: z.string().check(z.minLength(1)),
+    purpose: z.literal('managed-preset'),
+    preset: z.strictObject({ homeId: z.string().check(z.minLength(1)), id: z.string().check(z.minLength(1)),
+      revision: z.number().check(z.int(), z.nonnegative()) }),
+  }),
   z.strictObject({
     poolId: MachinePoolIdV1Schema,
     requestKey: z.string().check(z.minLength(1)),

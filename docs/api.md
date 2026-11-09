@@ -2675,10 +2675,12 @@ Exact owner reads retain revoked rows. Managed Machine listing explicitly
 includes revoked owned controllers so retained resources, cleanup, and archived
 history remain visible.
 
-#### Personal Machine Pools (0.3 development)
+#### Machine Pools (0.3 development)
 
-Machine Pools are Account-owned, Home-local saved groups of the Account's own
-persistent Machines. The development contract exposes six strict POST Actions:
+Machine Pools are Account-custodied, Home-local saved groups of the custodian's own
+persistent Machines. They are private by default; a Team administrator can publish
+a Pool to that Team using the existing Team resource audience. The development
+contract exposes six strict POST Actions:
 
 - `POST /v1/machines/pools/list` (`machines.pools.list`)
 - `POST /v1/machines/pools/get` (`machines.pools.get`)
@@ -2690,10 +2692,21 @@ persistent Machines. The development contract exposes six strict POST Actions:
 Every request and response body is a closed strict schema from
 `packages/protocol/src/machines/pools/v1.ts`; unknown properties are rejected
 rather than ignored. List returns `{ pools: [...] }` and get returns one entry of
-the same shape: `{ pool, availability }`, where the saved definition and the
+the same shape: `{ pool, availability, access }`, where the saved definition and the
 separately observed availability never merge into one field. `availability` is
 either `{ state: 'known', connectedCount, enabledCount }` or `{ state: 'unknown' }`
 when the Home could not observe its Machine sockets.
+
+Create and update accept `audience: { kind: 'private' }` or
+`{ kind: 'team', teamId }`; omission creates a private Pool or preserves the
+existing audience on update. Publishing to a Team requires its administrative
+permission; an unchanged audience retains the custodian's management authority. The
+canonical projection supplies `access.canManage`, `access.canResolve` and
+`access.canViewMembers`. The custodian retains Pool management and ordinary exact
+Machine resolution. An active member of the published Team can list and read its
+public summary, with an empty member list, unknown availability and no management,
+roster or ordinary resolve permission. Team membership does not grant access to a
+controller Machine. Missing or unauthorized Pools remain indistinguishable.
 
 List also accepts optional `memberMachineIds`. In that case it returns
 `memberEligibility` alongside `pools`, with one decision per requested ID:
@@ -2734,6 +2747,29 @@ form the existing `SessionExecutionTargetV1`; the server does not invent that
 client-side Home identity. An unavailable result distinguishes no enabled members
 (including an empty or all-disabled Pool), no available Machine, and unavailable
 presence observation.
+
+The same resolve Action accepts `purpose: 'managed-preset'` with the preset's
+`{ homeId, id, revision }`. This is the member's delegated guest-creation path,
+not ordinary Pool resolution permission. The preset must reference the requested
+Pool. For Team delegation it must publish to the same active Team and permit
+delegated acquisition. The Pool
+owner supplies the private candidate snapshot internally. Current controller
+lifecycle, installed provisioner declaration, saved launch schema and credential
+eligibility filter candidates before the existing selector runs once. Eligible
+candidates must agree on the public provisioner, billing and retention facts;
+unobserved native prerequisites are explicitly unknown. A disagreement or no
+compatible controller returns typed managed-preset unavailability. This common
+recipe includes enabled, otherwise-valid offline members, so review does not
+change with transient presence; only connected candidates participate in actual
+selection. Pool placement applies to daemon-executed guest provisioners, while
+Account-hosted provisioning retains its existing controller-free path.
+
+Successful managed-preset resolution includes the exact controller, its delegated
+access projection, provisioner and reviewed facts. UI and CLI bind that result
+before the existing signed managed-acquire ingress. Later custody, requester guest
+enrollment, preset cap, retention and native prerequisite execution consume the
+bound controller without another Pool selection. This creates no direct Machine
+grant, scheduler, capacity reservation or automatic retry.
 
 A successfully observed unavailable resolution is still HTTP 200 carrying the
 discriminated result, not a transport failure. Failures use four stable domain

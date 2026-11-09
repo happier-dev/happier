@@ -3,10 +3,10 @@ import { isPersistentMachine } from '@happier-dev/protocol/machines/machineKind'
 import { readMachineIrohEndpointAuthorityV1 } from '@happier-dev/protocol/machines/operationProtocolCapabilitiesV1';
 import type { MachinePoolCreateInputV1, MachinePoolDeleteInputV1, MachinePoolDeleteOutputV1, MachinePoolErrorV1, MachinePoolResolveInputV1, MachinePoolResolveResultV1, MachinePoolUpdateInputV1, MachinePoolViewV1 } from '@happier-dev/protocol/machines/pools/v1';
 
-import { acquireAccountChangePublicationLocksInTx, markAccountChanged } from "@/app/changes/markAccountChanged";
+import { acquireAccountChangePublicationLocksInTx, markAccountsChanged } from "@/app/changes/markAccountChanged";
 import { classifyMachineAvailabilityState } from "@/app/machines/machineStateGuards";
 import { db, isPrismaUniqueConstraintError } from "@/storage/db";
-import { inTx, type Tx } from "@/storage/inTx";
+import { inReadSnapshot, inTx, type Tx } from "@/storage/inTx";
 import { portableQueryChunks } from "@/storage/portableQueryChunks";
 import {
     getMachineDaemonPresenceInventory,
@@ -18,6 +18,9 @@ import { selectMachinePoolCandidate } from "@happier-dev/protocol/machines/pools
 import { acquireTeamCredentialBrokerPoolAdmissionInTx, clearTeamCredentialBrokerPoolReferencesInTx } from "@/app/teams/credentials/resourceBrokerPoolLifecycle";
 import { acquireMachinePoolMutationFenceInTx } from "./machinePoolMutationFence";
 import { validateMachinePoolMembersInTx } from './machinePoolMemberAdmission';
+import { canReadMachinePoolTeamInTx, canSetMachinePoolAudienceInTx, CUSTODIAN_POOL_ACCESS, TEAM_POOL_ACCESS, machinePoolAudience, readableMachinePoolTeamsInTx,
+    readMachinePoolPublicationAudienceInTx, resolveMachinePoolAccessInTx, type MachinePoolActor } from './machinePoolAccess';
+import type { MachinePoolAccessV1, MachinePoolAudienceV1 } from '@happier-dev/protocol/machines/pools/v1';
 
 const poolAggregate = {
     include: {
@@ -90,10 +93,11 @@ function normalizedMembers(members: readonly Readonly<{ machineId: string; prior
 
 function sameDefinition(
     stored: StoredPool,
-    input: Readonly<{ name: string; description?: string | null; members: readonly Readonly<{ machineId: string; priorityTier: number; enabled: boolean }>[] }>,
+    input: Readonly<{ name: string; description?: string | null; audience?: MachinePoolAudienceV1; members: readonly Readonly<{ machineId: string; priorityTier: number; enabled: boolean }>[] }>,
 ): boolean {
     return stored.name === input.name.trim()
         && stored.description === normalizeDescription(input.description)
+        && (input.audience === undefined || stored.teamId === (input.audience.kind === 'team' ? input.audience.teamId : null))
         && JSON.stringify(normalizedMembers(stored.members)) === JSON.stringify(normalizedMembers(input.members));
 }
 
@@ -106,7 +110,8 @@ function classifyPoolMemberState(member: StoredPoolMember, inventory: MachineDae
     return presence === 'disconnected' ? 'offline' as const : presence;
 }
 
-function projectPool(stored: StoredPool, inventory: MachineDaemonPresenceInventory): MachinePoolViewV1 {
+function projectPool(stored: StoredPool, inventory: MachineDaemonPresenceInventory,
+    access: MachinePoolAccessV1 = CUSTODIAN_POOL_ACCESS): MachinePoolViewV1 {
     const members = [...stored.members]
         .sort((left, right) => left.priorityTier - right.priorityTier || left.machineId.localeCompare(right.machineId))
         .map((member) => ({
@@ -130,9 +135,11 @@ function projectPool(stored: StoredPool, inventory: MachineDaemonPresenceInvento
             revision: stored.revision,
             createdAt: stored.createdAt.getTime(),
             updatedAt: stored.updatedAt.getTime(),
-            members,
+            audience: machinePoolAudience(stored),
+            members: access.canViewMembers ? members : [],
         },
-        availability,
+        availability: access.canViewMembers ? availability : { state: 'unknown' },
+        access,
     };
 }
 
@@ -148,27 +155,53 @@ async function inventoryFor(accountId: string, io: MachineDaemonPresenceSocketSe
         machineIds: pools.flatMap(pool => pool.members.map(member => member.machineId)) });
 }
 
+async function publishMachinePoolChangedInTx(tx: Tx, pool: StoredPool, previous?: StoredPool): Promise<void> {
+    const accountIds = [...new Set([
+        ...await readMachinePoolPublicationAudienceInTx(tx, pool),
+        ...(previous ? await readMachinePoolPublicationAudienceInTx(tx, previous) : []),
+    ])];
+    await markAccountsChanged(tx, { accountIds, kind: 'machinePool', entityId: pool.id });
+}
+
 export async function listMachinePools(params: Readonly<{
     accountId: string;
+    authentication?: MachinePoolActor['authentication'];
     io: MachineDaemonPresenceSocketServer;
 }>): Promise<readonly MachinePoolViewV1[]> {
-    const stored = await db.machinePool.findMany({
+    const stored = await inReadSnapshot(async tx => {
+        const teamIds = await readableMachinePoolTeamsInTx(tx, params);
+        const owned = await tx.machinePool.findMany({
             where: { accountId: params.accountId },
             orderBy: [{ createdAt: "asc" }, { id: "asc" }],
             ...poolAggregate,
         });
-    const inventory = await inventoryFor(params.accountId, params.io, stored);
-    return stored.map((pool) => projectPool(pool, inventory));
+        const shared: StoredPool[] = [];
+        for (const ids of portableQueryChunks({ values: teamIds, bindingsPerValue: 1, fixedBindings: 2 })) {
+            const rows = await tx.machinePool.findMany({ where: { teamId: { in: [...ids] }, accountId: { not: params.accountId } } });
+            shared.push(...rows.map(pool => ({ ...pool, members: [] })));
+        }
+        return [...owned, ...shared].sort((left, right) => left.createdAt.getTime() - right.createdAt.getTime() || left.id.localeCompare(right.id));
+    });
+    const inventory = await inventoryFor(params.accountId, params.io, stored.filter(pool => pool.accountId === params.accountId));
+    return stored.map(pool => projectPool(pool, inventory, pool.accountId === params.accountId
+        ? CUSTODIAN_POOL_ACCESS : TEAM_POOL_ACCESS));
 }
 
 export async function getMachinePool(params: Readonly<{
     accountId: string;
+    authentication?: MachinePoolActor['authentication'];
     poolId: string;
     io: MachineDaemonPresenceSocketServer;
 }>): Promise<PoolResult<MachinePoolViewV1>> {
-    const stored = await readOwnedPool(db, params.accountId, params.poolId);
-    return stored
-        ? { ok: true, value: projectPool(stored, await inventoryFor(params.accountId, params.io, [stored])) }
+    const result = await inReadSnapshot(async tx => {
+        const stored = await tx.machinePool.findUnique({ where: { id: params.poolId }, ...poolAggregate });
+        if (!stored) return null;
+        const access = await resolveMachinePoolAccessInTx(tx, params, stored);
+        return access ? { stored, access } : null;
+    });
+    return result
+        ? { ok: true, value: projectPool(result.stored, result.access.canViewMembers
+            ? await inventoryFor(params.accountId, params.io, [result.stored]) : { state: 'unavailable' }, result.access) }
         : { ok: false, error: { code: "pool_not_found" } };
 }
 
@@ -187,21 +220,26 @@ async function settleCreateCollision(params: Readonly<{
 
 export async function createMachinePool(params: Readonly<{
     accountId: string;
+    authentication?: MachinePoolActor['authentication'];
     input: MachinePoolCreateInputV1;
     io: MachineDaemonPresenceSocketServer;
 }>): Promise<PoolResult<MachinePoolViewV1>> {
     let stored: StoredPool;
     try {
         const result = await inTx(async (tx) => {
-            await acquireAccountChangePublicationLocksInTx(tx, [params.accountId], { includeSingleAccount: true });
+            await acquireAccountChangePublicationLocksInTx(tx, await readMachinePoolPublicationAudienceInTx(tx, {
+                accountId: params.accountId, teamId: params.input.audience?.kind === 'team' ? params.input.audience.teamId : null,
+            }), { includeSingleAccount: true });
             const existing = await tx.machinePool.findUnique({ where: { id: params.input.poolId }, ...poolAggregate });
             if (existing) return { kind: "collision" as const };
+            if (!await canSetMachinePoolAudienceInTx(tx, params, params.input.audience)) return { kind: 'not_found' as const };
             const invalid = await validateMachinePoolMembersInTx({ tx, accountId: params.accountId, members: params.input.members });
             if (invalid.length > 0) return { kind: "invalid" as const, machineIds: invalid };
             await tx.machinePool.create({
                 data: {
                     id: params.input.poolId,
                     accountId: params.accountId,
+                    teamId: params.input.audience?.kind === 'team' ? params.input.audience.teamId : null,
                     name: params.input.name.trim(),
                     description: normalizeDescription(params.input.description),
                 },
@@ -219,10 +257,11 @@ export async function createMachinePool(params: Readonly<{
             }
             const created = await readOwnedPool(tx, params.accountId, params.input.poolId);
             if (!created) throw new Error("machine_pool_create_missing");
-            await markAccountChanged(tx, { accountId: params.accountId, kind: "machinePool", entityId: created.id });
+            await publishMachinePoolChangedInTx(tx, created);
             return { kind: "created" as const, stored: created };
         });
         if (result.kind === "collision") return await settleCreateCollision(params);
+        if (result.kind === 'not_found') return { ok: false, error: { code: 'pool_not_found' } };
         if (result.kind === "invalid") {
             return { ok: false, error: { code: "member_machine_not_eligible", machineIds: [...result.machineIds] } };
         }
@@ -236,13 +275,20 @@ export async function createMachinePool(params: Readonly<{
 
 export async function updateMachinePool(params: Readonly<{
     accountId: string;
+    authentication?: MachinePoolActor['authentication'];
     input: MachinePoolUpdateInputV1;
     io: MachineDaemonPresenceSocketServer;
 }>): Promise<PoolResult<MachinePoolViewV1>> {
     const result = await inTx(async (tx) => {
-        await acquireAccountChangePublicationLocksInTx(tx, [params.accountId], { includeSingleAccount: true });
         const current = await readOwnedPool(tx, params.accountId, params.input.poolId);
         if (!current) return { kind: "not_found" as const };
+        await acquireAccountChangePublicationLocksInTx(tx, [
+            ...await readMachinePoolPublicationAudienceInTx(tx, current),
+            ...await readMachinePoolPublicationAudienceInTx(tx, { accountId: params.accountId,
+                teamId: params.input.audience?.kind === 'team' ? params.input.audience.teamId : null }),
+        ], { includeSingleAccount: true });
+        if (params.input.audience?.kind === 'team' && params.input.audience.teamId !== current.teamId
+            && !await canSetMachinePoolAudienceInTx(tx, params, params.input.audience)) return { kind: 'not_found' as const };
         if (sameDefinition(current, params.input)) return { kind: "settled" as const, stored: current };
         if (current.revision !== params.input.expectedRevision) return { kind: "conflict" as const, stored: current };
         const invalid = await validateMachinePoolMembersInTx({
@@ -257,6 +303,7 @@ export async function updateMachinePool(params: Readonly<{
             data: {
                 name: params.input.name.trim(),
                 description: normalizeDescription(params.input.description),
+                ...(params.input.audience === undefined ? {} : { teamId: params.input.audience.kind === 'team' ? params.input.audience.teamId : null }),
                 revision: { increment: 1 },
             },
         });
@@ -269,7 +316,7 @@ export async function updateMachinePool(params: Readonly<{
         }
         const stored = await readOwnedPool(tx, params.accountId, current.id);
         if (!stored) throw new Error("machine_pool_update_missing");
-        await markAccountChanged(tx, { accountId: params.accountId, kind: "machinePool", entityId: current.id });
+        await publishMachinePoolChangedInTx(tx, stored, current);
         return { kind: "updated" as const, stored };
     });
     if (result.kind === "not_found") return { ok: false, error: { code: "pool_not_found" } };
@@ -292,10 +339,11 @@ export async function deleteMachinePool(params: Readonly<{
     io: MachineDaemonPresenceSocketServer;
 }>): Promise<PoolResult<MachinePoolDeleteOutputV1>> {
     const result = await inTx(async (tx) => {
+        const current = await readOwnedPool(tx, params.accountId, params.input.poolId);
+        if (!current) return { kind: 'not_found' as const };
+        await acquireAccountChangePublicationLocksInTx(tx, await readMachinePoolPublicationAudienceInTx(tx, current), { includeSingleAccount: true });
         const resourceScope = { custodianAccountId: params.accountId, poolId: params.input.poolId };
         const recheckAdmission = await acquireTeamCredentialBrokerPoolAdmissionInTx(tx, resourceScope);
-        const current = await readOwnedPool(tx, params.accountId, params.input.poolId);
-        if (!current) return { kind: "not_found" as const };
         if (current.revision !== params.input.expectedRevision) return { kind: "conflict" as const, stored: current };
         if (!await acquireMachinePoolMutationFenceInTx({
             tx,
@@ -314,7 +362,7 @@ export async function deleteMachinePool(params: Readonly<{
         // the transaction boundary's rollback signal; map it back to the
         // established optimistic-concurrency result outside the transaction.
         if (deleted.count !== 1) throw new MachinePoolDeleteCasLost();
-        await markAccountChanged(tx, { accountId: params.accountId, kind: "machinePool", entityId: current.id });
+        await publishMachinePoolChangedInTx(tx, current);
         return { kind: "deleted" as const };
     }).catch((error: unknown) => {
         if (error instanceof MachinePoolDeleteCasLost) return { kind: "cas_lost" as const };
@@ -381,6 +429,28 @@ function projectMachinePoolCandidateSnapshot(
             && stored.members.some(member => member.enabled && !queriedMachineIds.has(member.machineId))
             ? 'partial' : presence.state,
     });
+}
+
+/** Internal preset admission reads candidates without granting the requester controller access. */
+export async function resolveMachinePoolForManagedPresetInTx(tx: Tx, params: Readonly<{
+    actorAccountId: string;
+    teamId?: string;
+    poolId: string;
+    presence: MachineDaemonPresenceInventory;
+    authentication?: MachinePoolActor['authentication'];
+}>): Promise<PoolResult<Readonly<{ custodianAccountId: string; snapshot: MachinePoolCandidateSnapshot }>>> {
+    const stored = await tx.machinePool.findUnique({ where: { id: params.poolId }, ...poolCandidateAggregate });
+    if (!stored || (params.teamId ? stored.teamId !== params.teamId : stored.accountId !== params.actorAccountId)) {
+        return { ok: false, error: { code: 'pool_not_found' } };
+    }
+    // A Team preset retains its Team boundary even when its custodian is the caller.
+    if (params.teamId) {
+        if (!await canReadMachinePoolTeamInTx(tx, { accountId: params.actorAccountId, authentication: params.authentication }, params.teamId)) {
+            return { ok: false, error: { code: 'pool_not_found' } };
+        }
+    }
+    return { ok: true, value: { custodianAccountId: stored.accountId,
+        snapshot: projectMachinePoolCandidateSnapshot(stored, params.presence) } };
 }
 
 async function readOwnedPools(accountId: string, poolIds: readonly string[]): Promise<StoredCandidatePool[]> {
@@ -479,7 +549,7 @@ export async function resolveMachinePool(params: Readonly<{
     io: MachineDaemonPresenceSocketServer;
 }>): Promise<PoolResult<MachinePoolResolveResultV1>> {
     // Worker selection needs exact target status at the Action caller, not server presence alone.
-    if (params.input.purpose === "finite" || params.input.purpose === "service-start") {
+    if (params.input.purpose === "finite" || params.input.purpose === "service-start" || params.input.purpose === 'managed-preset') {
         return { ok: false, error: { code: "invalid_request", message: "Worker placement requires the Action resolver." } };
     }
     const snapshot = await getMachinePoolCandidateSnapshot({

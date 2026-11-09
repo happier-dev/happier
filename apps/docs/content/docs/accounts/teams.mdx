@@ -66,6 +66,35 @@ complete usable journey. See
 [Direct delivery](/accounts/team-credentials#direct-delivery-on-a-shared-machine)
 before choosing a shared target.
 
+### Team pools and presets in 0.3 development
+
+An administrator can make a Machine Pool available to a Team from the existing
+Pool editor. The Pool still belongs to its custodian Account. Team members see its
+public details without its controller list or permission to run directly on those
+controllers.
+
+When editing a Team Machine preset, choose a Pool as the controller location and
+enable **Members may create**. Members can then choose that preset in **New
+Session**. Creating the Machine chooses one eligible, connected Pool controller
+and enrolls a fresh container or VM to the requesting member's Account. The
+preset keeps its creation cap and retention policy.
+
+Pool placement is available for provisioners that create a guest through a
+Machine's daemon. Account-hosted provisioners keep their existing creation flow.
+The review shows one recipe common to the Pool's enabled, compatible controllers,
+including any that are offline. If their declared recipes differ, the preset is
+unavailable until the Pool or preset is updated. Only connected controllers can
+be selected for creation. A prerequisite
+that has not been observed is shown as unknown; an executor can refuse creation
+if it is missing. If no eligible controller is available, Happier reports that
+creation is unavailable. It does not wait for capacity or silently try another
+controller after creation starts. Removing a member or withdrawing delegation
+prevents their next creation request; work already admitted keeps its existing
+lifecycle.
+
+These controls are unreleased 0.3 development features. See
+[Machine Pools](/apps/daemon#machine-pools) for availability and exact-target behavior.
+
 ## Create a Team
 
 Open **Settings → Teams** and choose **New Team**. Give it a **Name** and, if it

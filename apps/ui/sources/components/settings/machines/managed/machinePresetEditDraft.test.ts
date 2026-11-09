@@ -2,6 +2,19 @@ import { describe, expect, it } from 'vitest';
 import { machinePresetEditContinuationDraft, machinePresetEditDraftContent, machinePresetEditDraftUpdatePatch, type MachinePresetEditDraft } from './machinePresetEditDraft';
 
 describe('Preset edit intent', () => {
+    it('persists a pool target and clears the previous exact controller when saving the full draft', () => {
+        const launch = { provider: { pluginId: 'custom.compute', localId: 'native' }, schemaVersion: 1,
+            name: 'Guest', choices: { cpu: 2 } };
+        const pool = '6be84651-2df7-4125-aac4-0d093217b198';
+        const content = machinePresetEditDraftContent({ name: 'Pooled guest', creation: { launch, controllerPoolId: pool } });
+        expect(content).toMatchObject({ launch, controllerPoolId: pool });
+        expect(content).not.toHaveProperty('controller');
+        expect(machinePresetEditDraftUpdatePatch({ name: 'Pooled guest', creation: { launch, controllerPoolId: pool } }))
+            .toMatchObject({ controllerPoolId: pool, controller: null });
+        expect(machinePresetEditDraftUpdatePatch({ name: 'Exact guest', creation: { launch,
+            controller: { machineId: 'host', installationId: 'installation' } } }))
+            .toMatchObject({ controllerPoolId: null, controller: { machineId: 'host', installationId: 'installation' } });
+    });
     it('authors a new non-catalog app key once in the draft and preserves legacy items without assigning keys', () => {
         const definition = { name: 'Dashboard', project: { kind: 'create' as const }, bindings: [],
             definition: { from: 'compose' as const, document: 'services: {}', profiles: [], services: [] } };
@@ -35,7 +48,7 @@ describe('Preset edit intent', () => {
     it('removes the complete creation pair and delegated acquire without changing retained setup', () => {
         const setup = { scripts: [{ body: '\r\necho retained\r\n', affects: 'none' as const }] };
         const patch = machinePresetEditDraftUpdatePatch({ name: 'Setup only', setup, creation: undefined });
-        expect(patch).toEqual({ name: 'Setup only', setup, launch: null, controller: null,
+        expect(patch).toEqual({ name: 'Setup only', setup, launch: null, controller: null, controllerPoolId: null,
             teamAcquireDelegated: false, retention: null, wakeOnAcceptedMessage: null, simultaneousLimit: null });
         expect(patch.setup).toBe(setup);
     });

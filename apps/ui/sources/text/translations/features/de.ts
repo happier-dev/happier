@@ -8448,6 +8448,9 @@ const Domain_machinePoolTranslations = (() => {
 const en = Shared_machinePoolTranslations.en;
 
 const de = {
+    membersPrivate: "Maschinen sind privat",
+    teamAudience: "Team",
+    teamSharingNotice: "Teammitglieder können diesen Pool über geteilte Maschinenvorlagen nutzen. Die Maschinen bleiben privat; das Teilen gewährt keinen direkten Zugriff.",
     machinesSection: "Rechner",
     tierPrimaryDescription: "Wird zuerst versucht.",
     tierFallbackDescription: "Wird versucht, wenn kein früherer Rechner online ist.",

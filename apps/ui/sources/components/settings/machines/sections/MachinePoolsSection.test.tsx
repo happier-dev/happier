@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { MachinePoolViewV1 } from '@happier-dev/protocol';
+import type { MachinePoolViewV1 } from '@happier-dev/protocol/machines/pools/v1';
 
 import { createMachineFixture, renderScreen, findTestInstanceByTypeWithProps } from '@/dev/testkit';
 import { Item } from '@/components/ui/lists/Item';
@@ -295,6 +295,17 @@ describe('MachinePoolsSection', () => {
         // An empty Pool is a valid saved configuration. Saying "no machine pools yet" under its own
         // name tells the user their Pool does not exist.
         expect(row?.props.subtitle).toBe('machinePools.noMembers');
+    });
+
+    it('describes Team pool roster privacy without claiming the pool is empty', async () => {
+        const shared: MachinePoolViewV1 = { ...POOL_A, pool: { ...POOL_A.pool,
+            audience: { kind: 'team', teamId: 'team-build' }, members: [] },
+            availability: { state: 'unknown' }, access: { canManage: false, canResolve: false, canViewMembers: false } };
+        await act(async () => publishPools([shared]));
+        const { MachinePoolsSection } = await import('./MachinePoolsSection');
+        const screen = await renderScreen(<MachinePoolsSection groups={[group('idle')]} />);
+        const row = findTestInstanceByTypeWithProps(screen, Item, { testID: `settings.machinePools.row.${boundary.serverId}.${shared.pool.id}` });
+        expect(row?.props.subtitle).toBe('machinePools.membersPrivate');
     });
 
     it('previews enabled members even when disabled members appear first', async () => {

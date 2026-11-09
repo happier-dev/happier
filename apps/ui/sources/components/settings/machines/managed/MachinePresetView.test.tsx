@@ -98,10 +98,11 @@ const { AllMachinesIndex: MachinesSettingsView } =
 const { ManagedMachineConfigurationView } =
   await import('./ManagedMachineConfigurationView');
 const { MachineProvisionerPicker } = await import('./MachineProvisionerPicker');
+const { SegmentedChoiceItem } = await import('@/components/ui/lists/SegmentedChoiceItem');
 const { Item } = await import('@/components/ui/lists/Item');
 const { MachineConfigurationReceipt } =
   await import('./MachineConfigurationReceipt');
-const { MachinePresetDetail } = await import('./MachinePresetDetail');
+const { MachinePresetDetail, ManagedFieldRow } = await import('./MachinePresetDetail');
 const { DropdownMenu } =
   await import('@/components/ui/forms/dropdown/DropdownMenu');
 const { HappierBrandMark } =
@@ -308,13 +309,14 @@ function sizeControl(screen: Awaited<ReturnType<typeof renderSettingsView>>) {
   )[0];
 }
 
-async function seed() {
+async function seed(machinePoolsEnabled?: boolean) {
   const serverId = await harness.addHome({
     name: 'History',
     serverUrl: 'https://history.example',
     serverIdentityId: 'srv_history',
     accountId: 'owner',
     currentAccount: true,
+    machinePoolsEnabled,
   });
   await harness.addHome({
     name: 'Other',
@@ -373,6 +375,10 @@ async function seedConfiguration(serverId: string) {
     harness.answer(serverId, `/v1/actions/${actionId}`, {
       select: (value) => {
         const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
+        // The picker also asks the Account catalog for controller-free offers.
+        if (actionId === 'machines.provisioners.list' && request.target.kind !== 'machine') return {
+          body: { v: 1, actionId, requestId: request.requestId, execution: { ok: true, result: { provisioners: [] } } },
+        };
         expect(request.target).toEqual({
           kind: 'machine',
           machineId: preset.controller.machineId,
@@ -700,6 +706,43 @@ describe('reachable preset detail', () => {
     } finally {
       await hook.unmount();
     }
+  });
+  it.each(['use', 'edit'] as const)('keeps a pool preset review unbound and preserves unknown prerequisites (%s)', async intent => {
+    const serverId = await seed();
+    const scopeId = resolveServerProfileScopeIdForIdentifier(serverId);
+    const exact = createDelegatedManagedPresetFixture({ preset, descriptor: { ...provisioner.descriptor, enrollmentRole: 'sandbox' },
+      custodianAccountId: 'owner', installationPublicKey: encodeBase64(tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(3)).publicKey, 'base64url') });
+    if (exact.delegatedAcquire?.kind !== 'ready') throw new Error('Expected public review');
+    const pooled = ManagedMachinePresetV1Schema.parse({ ...exact, controller: undefined,
+      ...(intent === 'edit' ? { launch: { ...exact.launch, credentials: [savedCredential] } } : {}),
+      controllerPoolId: '6be84651-2df7-4125-aac4-0d093217b198', delegatedAcquire: { ...exact.delegatedAcquire, controller: undefined,
+        reviewedFacts: { ...exact.delegatedAcquire.reviewedFacts, controller: undefined,
+          prerequisites: [{ requirement: { kind: 'systemTool', id: 'docker' }, status: 'unknown' }] } } });
+    harness.answer(serverId, '/v1/machines/presets/get', { body: { kind: 'found', preset: pooled } });
+    harness.answer(serverId, '/v1/machines/presets/update', { body: { kind: 'saved', preset: { ...pooled, revision: pooled.revision + 1 } } });
+    const { storage } = await import('@/sync/domains/state/storage');
+    storage.getState().applyMachines([], true, { sourceServerId: scopeId, sourceAccountId: 'owner' });
+    storage.getState().markMachineListSettled(scopeId);
+    const onUse = vi.fn();
+    const screen = await renderSettingsView(<ManagedMachineConfigurationView serverId={scopeId}
+      provisioner={buildQualifiedPluginContributionKey(preset.launch.provider)} presetId={preset.id}
+      {...(intent === 'edit' ? { presetOnly: true } : { onUse })} />);
+    const primary = intent === 'edit' ? 'managed-config.create' : 'managed-config.use';
+    await waitForHomeGovernance(() => expect(screen.tree.findByType(MachineConfigurationReceipt).props.model.primary).toMatchObject({ disabled: false }));
+    expect(screen.findByTestId('managed-config.repair:systemTool:docker')).not.toBeNull();
+    await act(async () => screen.pressByTestId(primary));
+    if (intent === 'edit') {
+      await waitForHomeGovernance(() => expect(harness.requestsFor('/v1/machines/presets/update')).toHaveLength(1));
+      expect(harness.requestsFor('/v1/machines/presets/update')[0]?.input).toMatchObject({ patch: {
+        controllerPoolId: pooled.controllerPoolId, controller: null, launch: { credentials: [savedCredential] } } });
+    } else {
+      expect(onUse.mock.calls[0]?.[0]).toMatchObject({ selection: { kind: 'preset', homeId: preset.homeId, id: preset.id, revision: preset.revision },
+        receipt: { prerequisites: [{ requirement: { kind: 'systemTool', id: 'docker' }, status: 'unknown' }] } });
+      expect(onUse.mock.calls[0]?.[0].receipt.controller).toBeUndefined();
+    }
+    expect(harness.requests.filter(request => request.path.includes('machines.provisioners') || request.path.includes('pools/resolve'))).toHaveLength(0);
+    expect(boundary.rpc).not.toHaveBeenCalled();
+    await screen.unmount();
   });
   it.each([['use', undefined], ['create', 'Company builder']] as const)(
     'admits current delegated reviewed facts with the live catalog disabled, without controller inventory or private probes (%s)',
@@ -2030,6 +2073,123 @@ describe('reachable preset detail', () => {
     expect(harness.requestsFor('/v1/actions/machines.managed.acquire')).toEqual(
       [],
     );
+  });
+
+  it.each(['exact', 'pool'] as const)('saves a new %s controller target from the real preset editor without acquiring', async target => {
+    const serverId = await seed(target === 'pool');
+    const scopeId = await seedConfiguration(serverId);
+    const providerKey = buildQualifiedPluginContributionKey(preset.launch.provider);
+    const screen = await renderSettingsView(
+      <ManagedMachineConfigurationView
+        serverId={scopeId}
+        provisioner={providerKey}
+        presetOnly
+        initialController={preset.controller}
+      />,
+    );
+    await waitForHomeGovernance(() =>
+      expect(
+        sizeControl(screen)?.props.sizes.some(
+          (size: { id: string }) => size.id === 'large',
+        ),
+      ).toBe(true),
+    );
+    await act(async () => sizeControl(screen)?.props.onChange('large'));
+    await waitForHomeGovernance(() => expect(screen.findByTestId('managed-config.create')?.props.disabled).toBe(false));
+    const poolId = '6be84651-2df7-4125-aac4-0d093217b198';
+    if (target === 'pool') {
+      const pool = { id: poolId, name: 'Build controllers', description: null, revision: 1, createdAt: 1, updatedAt: 1, members: [] };
+      harness.answer(serverId, '/v1/machines/pools/list', { body: { pools: [
+        { pool, availability: { state: 'known', connectedCount: 0, enabledCount: 0 }, access: { canManage: true, canResolve: true, canViewMembers: true } },
+        { pool: { ...pool, id: '6be84651-2df7-4125-aac4-0d093217b199', name: 'Shared view only' },
+          availability: { state: 'known', connectedCount: 0, enabledCount: 0 }, access: { canManage: false, canResolve: false, canViewMembers: false } },
+      ] } });
+      const targetControl = () => screen.tree.findAllByType(SegmentedChoiceItem)
+        .find(row => row.props.testIDPrefix === 'managed-config.controller-target');
+      expect(targetControl()?.props.disabled).toBe(false);
+      await act(async () => screen.pressByTestId('managed-config.controller-target:pool'));
+      expect(targetControl()?.props.value).toBe('pool');
+      const poolRow = () => screen.tree.findAllByType(ManagedFieldRow).find(row => row.props.testID === 'managed-config.controller-pool');
+      await waitForHomeGovernance(() => expect(poolRow()?.props.row.choices).toEqual([{ id: poolId, title: 'Build controllers' }]));
+      await act(async () => poolRow()?.props.row.onChange(poolId));
+      // Moving back to Exact adopts the same visible controller; moving to Pool clears it in the save.
+      await act(async () => screen.pressByTestId('managed-config.controller-target:exact'));
+      expect(targetControl()?.props.value).toBe('exact');
+      await waitForHomeGovernance(() => expect(screen.findByTestId('managed-config.create')?.props.disabled).toBe(false));
+      await act(async () => screen.pressByTestId('managed-config.controller-target:pool'));
+      expect(targetControl()?.props.value).toBe('pool');
+      await waitForHomeGovernance(() => expect(poolRow()?.props.row.disabled).toBe(false));
+      await act(async () => poolRow()?.props.row.onChange(poolId));
+    }
+    expect(
+      screen.findByTestId('managed-config.receipt:keep:choice:deadline'),
+    ).toBeNull();
+    harness.answer(serverId, '/v1/machines/presets/create', {
+      select: (input) => {
+        expect(input).toMatchObject({
+          homeId: preset.homeId,
+          name: 'Custom compute',
+          owner: preset.owner,
+          ...(target === 'pool' ? { controllerPoolId: poolId } : { controller: preset.controller }),
+          launch: {
+            ...preset.launch,
+            name: 'Custom compute',
+            choices: { cpu: 4 },
+          },
+        });
+        const id =
+          input && typeof input === 'object' && 'id' in input ? input.id : null;
+        expect(typeof id).toBe('string');
+        if (target === 'pool') expect(input).not.toHaveProperty('controller');
+        return {
+          body: {
+            kind: 'saved',
+            preset: {
+              ...preset,
+              id,
+              revision: 1,
+              name: 'Custom compute',
+              launch: {
+                ...preset.launch,
+                name: 'Custom compute',
+                choices: { cpu: 4 },
+              },
+            },
+          },
+        };
+      },
+    });
+    await waitForHomeGovernance(() =>
+      expect(screen.findByTestId('managed-config.create')?.props.disabled).toBe(
+        false,
+      ),
+    );
+    await act(async () => screen.pressByTestId('managed-config.create'));
+    await waitForHomeGovernance(() =>
+      expect(harness.requestsFor('/v1/machines/presets/create')).toHaveLength(
+        1,
+      ),
+    );
+    const createdInput = harness.requestsFor('/v1/machines/presets/create')[0]
+      ?.input;
+    if (
+      !createdInput ||
+      typeof createdInput !== 'object' ||
+      !('id' in createdInput) ||
+      typeof createdInput.id !== 'string'
+    ) {
+      throw new Error('Expected the strict preset creation input');
+    }
+    const createdId = createdInput.id;
+    await waitForHomeGovernance(() =>
+      expect(route.replace).toHaveBeenLastCalledWith(
+        `/settings/machines/presets/${createdId}?serverId=${encodeURIComponent(scopeId)}`,
+      ),
+    );
+    expect(harness.requestsFor('/v1/actions/machines.managed.acquire')).toEqual(
+      [],
+    );
+    expect(harness.requestsFor('/v1/machines/pools/resolve')).toEqual([]);
   });
 
   it('preserves an edited launch after rejection and revision conflict, then saves through normal approval', async () => {

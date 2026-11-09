@@ -20,6 +20,7 @@ const contribution = { path: 'contribution', title: 'Provisioner', widget: 'json
 const credentials = { path: 'credentials', title: 'Credential selections', widget: 'json' } as const;
 const members = { path: 'members', title: 'Machine members and priority tiers', widget: 'json', required: true } as const;
 const description = { path: 'description', title: 'Description', widget: 'textarea' } as const;
+const poolAudience = { path: 'audience', title: 'Pool audience', widget: 'json' } as const;
 // Revision is required only for immediate effects; the strict domain union
 // validates deferred effects without making the absent arm unreviewable.
 const nativeEffectOptions = [
@@ -47,6 +48,7 @@ export const MACHINE_PRESET_INPUT_FIELDS = {
   'machines.presets.get': [home, preset],
   'machines.presets.create': [home, preset, name, { ...owner, required: true },
     { path: 'launch', title: 'Provisioning launch', widget: 'json' }, { ...controller, required: false },
+    { path: 'controllerPoolId', title: 'Controller pool id', widget: 'text' },
     { path: 'setup', title: 'Machine setup', widget: 'json' },
     { ...retention, required: false }, { ...wake, required: false },
     { path: 'simultaneousLimit', title: 'Simultaneous machine limit', widget: 'json' }],
@@ -59,12 +61,13 @@ export const MACHINE_PRESET_INPUT_FIELDS = {
 export const MACHINE_POOL_INPUT_FIELDS = {
   'machines.pools.list': [{ path: 'memberMachineIds', title: 'Machines to check for pool membership', widget: 'json' }],
   'machines.pools.get': [pool],
-  'machines.pools.create': [pool, name, description, members],
-  'machines.pools.update': [pool, revision, name, description, members],
+  'machines.pools.create': [pool, name, description, poolAudience, members],
+  'machines.pools.update': [pool, revision, name, description, poolAudience, members],
   'machines.pools.delete': [pool, revision],
   'machines.pools.resolve': [pool,
     { path: 'requestKey', title: 'Selection request key', widget: 'text', required: true },
     { path: 'purpose', title: 'Execution purpose', widget: 'text' },
+    { path: 'preset', title: 'Managed preset identity and revision', widget: 'json' },
     { path: 'workspace', title: 'Workspace', widget: 'json' },
     { path: 'memoryDemand', title: 'Memory demand', widget: 'json' }],
 } satisfies Record<MachinePoolActionIdV1, ActionInputFieldHint[]>;

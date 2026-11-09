@@ -813,6 +813,107 @@ describe('ordinary managed creation continuation', () => {
             .toMatchObject({ kind: 'enrolled', machine: { id: 'paid' } });
         expect(boundary.actions.filter(value => value.actionId === 'machines.managed.acquire')).toHaveLength(1);
     });
+    it.each(['available', 'unknown', 'unavailable'] as const)(
+        'continues fresh pool creation with honest %s prerequisites through the admitted controller and installer prompt', async status => {
+        const { installRealActionExecutorModuleLoader } = await import('@/dev/testkit/harness/actionHomesHttpHarness');
+        const restoreLoader = await installRealActionExecutorModuleLoader();
+        const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
+        const { ExternalActionExecutionAuthorizationRequestV1Schema, ExternalActionExecutionAuthorizationV1Schema,
+            ExternalActionRequestEnvelopeV1Schema, projectExternalActionManagedAdmissionV1 } = await import('@happier-dev/protocol/actions/externalActionApi');
+        const { computeExternalActionRequestEnvelopeDigestV1 } = await import('@happier-dev/protocol/actions/externalActionExecutionAuthorization');
+        const { ManagedMachinePresetV1Schema } = await import('@happier-dev/protocol/machines/managed/managedMachinePresetV1');
+        const { encodeBase64 } = await import('@happier-dev/protocol/crypto/base64');
+        const { installManagedInstallationResponseBoundary } = await import('@/dev/testkit/harness/managedInstallationResponseBoundary');
+        const { Modal } = await import('@/modal');
+        const confirmation = vi.spyOn(Modal, 'confirm').mockResolvedValue(true);
+        const nacl = (await import('tweetnacl')).default;
+        const homeId = 'srv_fresh_pool_continuation';
+        const serverUrl = `https://fresh-pool-${status}.test`;
+        const token = createAccountTokenForTests('account', { currentAccount: true });
+        await homes.reset();
+        let installation: ReturnType<typeof installManagedInstallationResponseBoundary> | undefined;
+        try {
+            const serverId = await homes.addHome({ name: 'Requester Home', serverUrl, serverIdentityId: homeId,
+                accountId: 'account', currentAccount: true, credentials: { token } });
+            const requirement = { kind: 'systemTool' as const, id: { pluginId: 'custom.compute', localId: 'docker' } };
+            const exactPreset = createDelegatedManagedPresetFixture({ preset: { id: 'pool-preset', homeId, revision: 1,
+                name: 'Pool sandbox', owner: { kind: 'team', teamId: 'team' }, launch, controller,
+                retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false }, custodianAccountId: 'company',
+                installationPublicKey: encodeBase64(nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(6)).publicKey, 'base64url'),
+                descriptor: { id: 'native', title: 'Compute', icon: 'server', resourceKind: 'VM', schemaVersion: 1,
+                    launchSchema: { type: 'object', properties: {}, additionalProperties: false },
+                    resourceSchema: { type: 'object', properties: {}, additionalProperties: false }, platforms: ['linux'],
+                    prerequisites: [requirement], billing: draft.receipt.billing, retention: draft.receipt.retentionCapabilities,
+                    actions: { check: 'check', acquire: 'acquire', bootstrap: 'bootstrap', inspect: 'inspect', power: 'power', destroy: 'destroy' } } });
+            if (exactPreset.delegatedAcquire?.kind !== 'ready') throw new Error('Expected exact public creation facts');
+            const poolId = '4d783830-8626-4da8-8fde-a6da516025e1';
+            const prerequisites = [{ requirement, status }];
+            const receipt = { ...exactPreset.delegatedAcquire.reviewedFacts, controller: undefined, prerequisites };
+            const preset = ManagedMachinePresetV1Schema.parse({ ...exactPreset, controller: undefined, controllerPoolId: poolId,
+                delegatedAcquire: { ...exactPreset.delegatedAcquire, controller: undefined, reviewedFacts: receipt } });
+            const selection = { kind: 'preset' as const, homeId, id: preset.id, revision: preset.revision };
+            let machine: ManagedMachineV1 = { ...baseMachine, homeId, custodianAccountId: 'company', enrollmentAccountId: 'account',
+                controllerAccess: exactPreset.delegatedAcquire.controller };
+            let answered = false;
+            installation = installManagedInstallationResponseBoundary({ homes, serverId, serverUrl, homeId, token,
+                enrollmentAccountId: 'account', readMachine: () => machine, onAnswer: () => { answered = true; } });
+            homes.answer(serverId, '/v1/machines/presets/get', { body: { kind: 'found', preset } });
+            homes.answer(serverId, '/v1/machines/pools/resolve', { body: { kind: 'resolved', poolId,
+                machineId: controller.machineId, priorityTier: 0, managedPreset: { controller,
+                    controllerAccess: exactPreset.delegatedAcquire.controller, provisioner: exactPreset.delegatedAcquire.provisioner,
+                    reviewedFacts: { ...receipt, controller } } } });
+            for (const actionId of ['machines.managed.acquire', 'action.operations.get'] as const) {
+                homes.answer(serverId, `/v1/actions/${actionId}/execution-authorization`, { select: value => {
+                    const { envelope } = ExternalActionExecutionAuthorizationRequestV1Schema.parse(value);
+                    const managedAdmission = envelope.v === 1 ? projectExternalActionManagedAdmissionV1(actionId, envelope.input) : envelope.managedAdmission;
+                    return { body: ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'exact-pool-root', binding: {
+                        serverIdentityId: homeId, accountId: 'account', authentication: { kind: 'account', tokenEpoch: 0 },
+                        machineId: controller.machineId, installationId: controller.installationId, custodianAccountId: 'company',
+                        accountEncryptionMode: 'plain', actionId, requestId: envelope.requestId, target: envelope.target,
+                        requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
+                        ...(actionId === 'action.operations.get' ? { managedAdmission } : {}),
+                    } }) };
+                } });
+                homes.answer(serverId, `/v1/actions/${actionId}`, { select: value => {
+                    const request = ExternalActionExecutionAuthorizationRequestV1Schema.parse(value);
+                    const envelope = ExternalActionRequestEnvelopeV1Schema.parse(request.envelope);
+                    expect(envelope.target).toEqual({ kind: 'machine', machineId: controller.machineId });
+                    if (actionId === 'machines.managed.acquire') expect(envelope.input).toMatchObject({ controller,
+                        reviewedFacts: { controller, prerequisites } });
+                    else expect(envelope.input).toMatchObject({ machineId: controller.machineId,
+                        managed: { homeId, managedId: machine.id }, operationId: 'pool-install', includeManagedPrompt: true });
+                    if (answered) machine = { ...machine, enrolledMachineId: 'guest' };
+                    return { body: { v: 1, requestId: envelope.requestId, actionId, execution: { ok: true,
+                        result: actionId === 'machines.managed.acquire' ? { managedId: machine.id, operation: { operationId: 'pool-install' } }
+                            : { kind: 'found', operation: { version: 1, operationId: 'pool-install', revision: answered ? 2 : 1,
+                                actionId: 'machines.managed.acquire', state: answered ? 'succeeded' : 'running',
+                                scope: { accountId: 'account', machineId: controller.machineId }, title: 'Create pool sandbox',
+                                createdAt: 1, startedAt: 2, ...(answered ? { settledAt: 3 } : {}), cancellation: 'supported',
+                                domainRef: { kind: 'managedMachine', id: machine.id, resource: machine.resource, controller,
+                                    ...(!answered ? { bootstrapTask: { id: 'pool-task', taskKind: 'remote.ssh.bootstrapMachine.v1',
+                                        prompt: { kind: 'auth.approveRemoteProvisioning', message: 'Pair the created guest' } } } : {}) } } },
+                    } } };
+                } });
+            }
+            const progress: unknown[] = [];
+            const result = await runManagedMachineCreation({ draft: { ...draft, selection, receipt },
+                acquisition: { ...initial, selection }, scope: { serverId, accountId: 'account' },
+                signal: new AbortController().signal, isCurrent: () => true, onAcquisitionChange: () => {},
+                onProgress: value => progress.push(value), onApprovalPending: () => { throw new Error('Create already confirmed'); },
+                executeAction: createFrontDoorActionExecute(createDefaultActionExecutor()) });
+            expect(result, JSON.stringify(result)).toMatchObject(status === 'unavailable'
+                ? { kind: 'failed', code: 'review_required' } : { kind: 'enrolled', machine: { id: machine.id, enrolledMachineId: 'guest' } });
+            expect(homes.requestsFor('/v1/machines/pools/resolve')).toHaveLength(status === 'unavailable' ? 0 : 1);
+            expect(homes.requestsFor('/v1/actions/machines.managed.acquire')).toHaveLength(status === 'unavailable' ? 0 : 1);
+            expect(installation.answers).toHaveLength(status === 'unavailable' ? 0 : 1);
+            if (status !== 'unavailable') {
+                expect(installation.answers[0]).toMatchObject({ controller, operationId: 'pool-install', taskId: 'pool-task',
+                    expectedPromptKind: 'auth.approveRemoteProvisioning', answer: { approved: true } });
+                expect(progress).toContainEqual(expect.objectContaining({ kind: 'acquiring', operation: expect.objectContaining({ state: 'succeeded' }) }));
+            }
+            expect(homes.requestsFor('/v1/machines/read-batch')).toHaveLength(0);
+        } finally { installation?.dispose(); confirmation.mockRestore(); restoreLoader(); await homes.reset(); }
+    });
     it('observes the admitted requester creation operation through exact resource scope without a controller grant', async () => {
         const { installRealActionExecutorModuleLoader } = await import('@/dev/testkit/harness/actionHomesHttpHarness');
         const restoreLoader = await installRealActionExecutorModuleLoader();

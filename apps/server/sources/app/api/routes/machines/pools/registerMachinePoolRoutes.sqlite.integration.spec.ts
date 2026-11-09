@@ -79,9 +79,98 @@ describe("Machine Pool HTTP routes (SQLite integration)", () => {
             () => db.accountChange.deleteMany(),
             () => db.machinePoolMember.deleteMany(),
             () => db.machinePool.deleteMany(),
+            () => db.teamMembership.deleteMany(),
+            () => db.team.deleteMany(),
             () => db.machine.deleteMany(),
             () => db.account.deleteMany(),
         ]);
+    });
+
+    it('shares only pool metadata with current Team members and never grants ordinary controller resolution', async () => {
+        await seedAccounts();
+        const team = await db.team.create({ data: { name: 'Build team' } });
+        await db.teamMembership.createMany({ data: [
+            { teamId: team.id, accountId, role: 'admin' },
+            { teamId: team.id, accountId: otherAccountId, role: 'member' },
+        ] });
+        await withPoolRoutes(async app => {
+            const definition = { poolId, name: 'Shared builders', audience: { kind: 'team', teamId: team.id },
+                members: [{ machineId, priorityTier: 0, enabled: true }] };
+            const created = await app.inject({ method: 'POST', url: '/v1/machines/pools/create', headers, payload: definition });
+            expect(created.statusCode).toBe(200);
+            expect(created.json()).toMatchObject({ pool: { audience: definition.audience },
+                access: { canManage: true, canResolve: true, canViewMembers: true } });
+            const memberRead = await app.inject({ method: 'POST', url: '/v1/machines/pools/get', headers: otherHeaders, payload: { poolId } });
+            expect(memberRead.statusCode).toBe(200);
+            expect(memberRead.json()).toMatchObject({ pool: { name: definition.name, audience: definition.audience, members: [] },
+                availability: { state: 'unknown' }, access: { canManage: false, canResolve: false, canViewMembers: false } });
+            expect(JSON.stringify(memberRead.json())).not.toContain(machineId);
+            const listed = await app.inject({ method: 'POST', url: '/v1/machines/pools/list', headers: otherHeaders, payload: {} });
+            expect(listed.json()).toEqual({ pools: [memberRead.json()] });
+            const resolved = await app.inject({ method: 'POST', url: '/v1/machines/pools/resolve', headers: otherHeaders,
+                payload: { poolId, requestKey: 'member-must-not-spawn' } });
+            expect(resolved.statusCode).toBe(404);
+            expect(resolved.json()).toEqual({ code: 'pool_not_found' });
+            const edited = await app.inject({ method: 'POST', url: '/v1/machines/pools/update', headers: otherHeaders,
+                payload: { ...definition, expectedRevision: 0, members: [] } });
+            expect(edited.statusCode).toBe(404);
+            expect(await db.machinePoolMember.count({ where: { poolId } })).toBe(1);
+            await db.teamMembership.deleteMany({ where: { accountId: otherAccountId } });
+            const removed = await app.inject({ method: 'POST', url: '/v1/machines/pools/get', headers: otherHeaders, payload: { poolId } });
+            expect(removed.statusCode).toBe(404);
+            expect(removed.json()).toEqual({ code: 'pool_not_found' });
+            const ownerRead = await app.inject({ method: 'POST', url: '/v1/machines/pools/get', headers, payload: { poolId } });
+            expect(ownerRead.statusCode).toBe(200);
+            await db.teamMembership.create({ data: { teamId: team.id, accountId: otherAccountId, role: 'member' } });
+            await db.team.update({ where: { id: team.id }, data: { authenticationPolicy: { v: 99 } } });
+            expect((await app.inject({ method: 'POST', url: '/v1/machines/pools/get', headers: otherHeaders, payload: { poolId } })).statusCode).toBe(404);
+            expect((await app.inject({ method: 'POST', url: '/v1/machines/pools/list', headers: otherHeaders, payload: {} })).json()).toEqual({ pools: [] });
+            await db.team.update({ where: { id: team.id }, data: { authenticationPolicy: { v: 1, mode: 'inherit' }, archivedAt: new Date() } });
+            const archived = await app.inject({ method: 'POST', url: '/v1/machines/pools/get', headers: otherHeaders, payload: { poolId } });
+            expect(archived.statusCode).toBe(404);
+            expect(await db.machineAccountGrant.count({ where: { machineId } })).toBe(0);
+        });
+    });
+
+    it('publishes sharing and withdrawal to both audiences and refuses a non-admin Team publication', async () => {
+        await seedAccounts();
+        const team = await db.team.create({ data: { name: 'Build team' } });
+        await db.teamMembership.createMany({ data: [
+            { teamId: team.id, accountId, role: 'member' },
+            { teamId: team.id, accountId: otherAccountId, role: 'member' },
+        ] });
+        await withPoolRoutes(async app => {
+            const definition = { poolId, name: 'Builders', members: [{ machineId, priorityTier: 0, enabled: true }] };
+            const denied = await app.inject({ method: 'POST', url: '/v1/machines/pools/create', headers,
+                payload: { ...definition, audience: { kind: 'team', teamId: team.id } } });
+            expect(denied.statusCode).toBe(404);
+            expect(await db.machinePool.count()).toBe(0);
+            expect((await app.inject({ method: 'POST', url: '/v1/machines/pools/create', headers, payload: definition })).statusCode).toBe(200);
+            expect((await app.inject({ method: 'POST', url: '/v1/machines/pools/get', headers: otherHeaders, payload: { poolId } })).statusCode).toBe(404);
+            await db.teamMembership.update({ where: { teamId_accountId: { teamId: team.id, accountId } }, data: { role: 'admin' } });
+            const shared = await app.inject({ method: 'POST', url: '/v1/machines/pools/update', headers,
+                payload: { ...definition, expectedRevision: 0, audience: { kind: 'team', teamId: team.id } } });
+            expect(shared.statusCode).toBe(200);
+            expect(await db.accountChange.count({ where: { accountId: otherAccountId, kind: 'machinePool', entityId: poolId } })).toBe(1);
+            await db.teamMembership.update({ where: { teamId_accountId: { teamId: team.id, accountId } }, data: { role: 'member' } });
+            const explicitUnchangedAudience = await app.inject({ method: 'POST', url: '/v1/machines/pools/update', headers,
+                payload: { ...definition, name: 'Renamed builders', expectedRevision: 1, audience: { kind: 'team', teamId: team.id } } });
+            expect(explicitUnchangedAudience.statusCode).toBe(200);
+            const omittedAudience = await app.inject({ method: 'POST', url: '/v1/machines/pools/update', headers,
+                payload: { ...definition, name: 'Renamed again', expectedRevision: 2 } });
+            expect(omittedAudience.statusCode).toBe(200);
+            expect(omittedAudience.json().pool.audience).toEqual(explicitUnchangedAudience.json().pool.audience);
+            const before = await db.account.findUniqueOrThrow({ where: { id: otherAccountId }, select: { seq: true } });
+            const withdrawn = await app.inject({ method: 'POST', url: '/v1/machines/pools/update', headers,
+                payload: { ...definition, expectedRevision: 3, audience: { kind: 'private' } } });
+            expect(withdrawn.statusCode).toBe(200);
+            const after = await db.account.findUniqueOrThrow({ where: { id: otherAccountId }, select: { seq: true } });
+            expect(after.seq).toBeGreaterThan(before.seq);
+            const hidden = await app.inject({ method: 'POST', url: '/v1/machines/pools/get', headers: otherHeaders, payload: { poolId } });
+            expect(hidden.statusCode).toBe(404);
+            expect(hidden.json()).toEqual({ code: 'pool_not_found' });
+            expect((await app.inject({ method: 'POST', url: '/v1/machines/pools/list', headers: otherHeaders, payload: {} })).json()).toEqual({ pools: [] });
+        });
     });
 
     it("creates, lists, gets, resolves, updates and deletes one aggregate through the authenticated contract", async () => {
@@ -108,6 +197,7 @@ describe("Machine Pool HTTP routes (SQLite integration)", () => {
                     id: poolId,
                     name: "HTTP pool",
                     description: null,
+                    audience: { kind: 'private' },
                     revision: 0,
                     createdAt: expect.any(Number),
                     updatedAt: expect.any(Number),
@@ -117,6 +207,7 @@ describe("Machine Pool HTTP routes (SQLite integration)", () => {
                     ],
                 },
                 availability: { state: "known", enabledCount: 2, connectedCount: 1 },
+                access: { canManage: true, canResolve: true, canViewMembers: true },
             });
             expect(await db.machinePoolMember.count({ where: { poolId } })).toBe(2);
             expect(await countOwnerChanges()).toBe(1);

@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { getActionSpec, resolveActionExecutionPlacementForInput, isActionSpecSurfacedOn, PublicActionIdSchema, SignedRootActionIdSchema } from '@happier-dev/protocol/actions/actionSpecs';
 import { ActionIdSchema, isWorkspaceSyncRelationshipWriteActionId } from '@happier-dev/protocol/actions/actionIds';
 import { WorkspaceSyncRelationshipWriteActionInputV1Schema } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
+import { ProjectServiceRelocateInputV1Schema } from '@happier-dev/protocol/workspaces/projectServiceRelocationV1';
 import { isActionExecutableFromStandaloneMcp } from '@happier-dev/protocol/actions/actionToolExposure';
 import { normalizeServerIdentityIdCapability } from '@happier-dev/protocol/features/payload/capabilities/serverIdentityCapabilities';
 import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
@@ -22,9 +23,10 @@ import {
 import { registerHappierMcpBuiltInTools } from '@/mcp/server/registerHappierMcpBuiltInTools';
 import { cacheMcpToolList } from '@/mcp/server/cacheMcpToolList';
 import { createCliActionExecutorHarness } from '@/session/actions/createCliActionExecutorHarness';
+import { createHostApprovalOriginCurrentness } from '@/session/actions/approvals/hostOriginCurrentness';
 import { isControllerDeploymentMutationAction } from '@/session/actions/createCliActionDeps';
 import { createCliActionExecutorFromCredentials, resolveAccountWorkspaceMachine } from '@/session/actions/createCliActionExecutorFromCredentials';
-import { dispatchOriginalAccountAction, readExternalActionRequesterInvocation } from '@/api/externalActionExecutionAuthorization';
+import { dispatchOriginalAccountAction, prepareOriginalAccountPoolPresetAcquire, readExternalActionRequesterInvocation } from '@/api/externalActionExecutionAuthorization';
 import { resolveSessionEncryptionContextFromCredentials } from '@/session/transport/encryption/sessionEncryptionContext';
 import { createDaemonPluginActionExecutor } from '@/session/actions/createDaemonPluginActionExecutor';
 import { executeAccountPluginAction } from '@/session/actions/executeAccountPluginAction';
@@ -175,6 +177,8 @@ export function createExternalMcpServer(params: Readonly<{
             invokeContributedAction: async (request) => pluginExecutor.invokeContributedAction(request),
             ...accountServerActionPorts,
             ...followDeps,
+            isApprovalExecutionOriginCurrent: createHostApprovalOriginCurrentness({ credentials: params.credentials,
+              serverId, serverApiUrl: serverHttpBaseUrl, resolveServerFeaturesSnapshot }),
             ...createDiscussionActionDeps({
               credentials: params.credentials,
               serverId,
@@ -220,6 +224,16 @@ export function createExternalMcpServer(params: Readonly<{
         return {
           execute: async (...args: Parameters<typeof baseExecutor.execute>) => {
             const [actionId, input, context] = args;
+            if (actionId === 'machines.managed.acquire') {
+              const invocation = readExternalActionRequesterInvocation({ ...context,
+                surface: 'mcp', authority: context?.authority ?? 'account_automation' });
+              if (!invocation) return { ok: false as const, errorCode: 'admission_unavailable', error: 'admission_unavailable' };
+              const selected = await prepareOriginalAccountPoolPresetAcquire({ actionId, input,
+                requestId: context?.actionRequestId ?? randomUUID(), credentials: params.credentials,
+                serverHttpBaseUrl, ...(serverIdentityId ? { serverIdentityId } : {}),
+                invocation, authority: invocation.authority, ...(context?.signal ? { signal: context.signal } : {}) });
+              if (selected) return await selected();
+            }
             if (isControllerDeploymentMutationAction(actionId)) {
               const parsed = DeploymentActionInputSchemasV1[actionId].safeParse(input);
               if (!parsed.success) return { ok: false as const, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
@@ -239,11 +253,16 @@ export function createExternalMcpServer(params: Readonly<{
               return { ok: true as const, result };
             }
             const builtInActionId = ActionIdSchema.safeParse(actionId);
-            if (builtInActionId.success && isWorkspaceSyncRelationshipWriteActionId(builtInActionId.data)) {
-              const parsed = WorkspaceSyncRelationshipWriteActionInputV1Schema.safeParse(input);
+            const syncWrite = builtInActionId.success && isWorkspaceSyncRelationshipWriteActionId(builtInActionId.data);
+            if (builtInActionId.success && (syncWrite || builtInActionId.data === 'projects.service.relocate')) {
+              const parsed = syncWrite ? WorkspaceSyncRelationshipWriteActionInputV1Schema.safeParse(input)
+                : ProjectServiceRelocateInputV1Schema.safeParse(input);
               if (!parsed.success) return { ok: false as const, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
+              const workspace = 'sourceWorkspaceRefId' in parsed.data
+                ? { serverId: serverIdentityId ?? serverId, id: parsed.data.sourceWorkspaceRefId }
+                : { serverId: parsed.data.workspace.serverId, id: parsed.data.workspace.refId };
               const source = await resolveAccountWorkspaceMachine({ credentials: params.credentials,
-                workspace: { serverId: serverIdentityId ?? serverId, id: parsed.data.sourceWorkspaceRefId }, serverId,
+                workspace, serverId,
                 ...(serverIdentityId ? { serverIdentityId } : {}), serverApiUrl: serverHttpBaseUrl,
                 ...(context?.signal ? { signal: context.signal } : {}) });
               if (!source.ok) return { ok: false as const, errorCode: source.code, error: source.code };
@@ -255,7 +274,7 @@ export function createExternalMcpServer(params: Readonly<{
                 surface: 'mcp', authority: context?.authority ?? 'account_automation' });
               if (!invocation) return { ok: false as const, errorCode: 'admission_unavailable', error: 'admission_unavailable' };
               // Home admits the original requester before the source daemon
-              // creates Ask; approval retains that authority for target phases.
+              // creates Ask; approval and Move's worker children retain that root.
               return await dispatchOriginalAccountAction({ actionId: builtInActionId.data, input: parsed.data,
                 requestId: context?.actionRequestId ?? randomUUID(), target: { kind: 'machine', machineId: source.machineId },
                 credentials: params.credentials, serverHttpBaseUrl,

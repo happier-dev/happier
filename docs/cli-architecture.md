@@ -8369,7 +8369,12 @@ broker location. The source-owning daemons report content-free eligibility for t
 currently available candidates, the Home applies the canonical selector once, and
 the broker and restricted Runner paths continue with the selected exact Machine.
 This remains development-only with loaded-Provider validation open. Capacity-aware
-admission, Machine sharing, and Team-owned Pools remain deferred rather than removed.
+admission remains deferred. In current 0.3 source a custodian can publish a Machine
+Pool to a Team without granting direct controller access. A pool-backed Team preset
+binds one eligible exact controller before the existing signed managed-acquire
+ingress. CLI, UI and MCP Action consumers use that bound controller through the
+existing custody, requester enrollment, preset cap and retention path; downstream
+execution never re-ranks the Pool. Team publication does not transfer ownership.
 
 ### Machine state
 

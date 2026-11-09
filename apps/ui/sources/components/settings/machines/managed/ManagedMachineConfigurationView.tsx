@@ -217,7 +217,7 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
     };
     // Adopted in this render, so no effect ever sees a draft placed by the other role.
     const declaredAcquireTarget = delegatedProvisioner ? undefined : catalogProvisioner?.acquireExecutionTarget;
-    const hostAvailability = !creationPreset && catalogProvisioner && declaredAcquireTarget && accountHost !== null && accountHost !== 'unavailable'
+    const hostAvailability = !creationPreset && !pooledDraft && catalogProvisioner && declaredAcquireTarget && accountHost !== null && accountHost !== 'unavailable'
         ? readMachineProvisionerHostAvailability({ host: accountHost, provisioner: catalogProvisioner.descriptor,
             acquireExecutionTarget: declaredAcquireTarget, controller: controllerCandidate }) : null;
     const effectiveAcquireTarget = creationPreset || declaredAcquireTarget === 'daemon' ? declaredAcquireTarget : hostAvailability?.executionTarget;

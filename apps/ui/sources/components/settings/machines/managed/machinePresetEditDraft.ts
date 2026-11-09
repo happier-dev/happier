@@ -38,7 +38,8 @@ export function machinePresetEditDraftContent(draft: MachinePresetEditDraft) {
         name: draft.name,
         ...(creation ? {
             launch: creation.launch,
-            controller: creation.controller,
+            ...(creation.controllerPoolId ? { controllerPoolId: creation.controllerPoolId }
+                : creation.controller ? { controller: creation.controller } : {}),
             ...(creation.retention === undefined ? {} : { retention: creation.retention }),
             ...(creation.wakeOnAcceptedMessage === undefined ? {} : { wakeOnAcceptedMessage: creation.wakeOnAcceptedMessage }),
             ...(creation.simultaneousLimit === undefined ? {} : { simultaneousLimit: creation.simultaneousLimit }),
@@ -51,7 +52,9 @@ export function machinePresetEditDraftContent(draft: MachinePresetEditDraft) {
 export function machinePresetEditDraftUpdatePatch(draft: MachinePresetEditDraft): ManagedMachinePresetUpdateInputV1['patch'] {
     const content = machinePresetEditDraftContent(draft);
     return { ...content,
-        ...(draft.creation ? {} : { launch: null, controller: null, teamAcquireDelegated: false }),
+        controller: content.controller ?? null,
+        controllerPoolId: content.controllerPoolId ?? null,
+        ...(draft.creation ? {} : { launch: null, teamAcquireDelegated: false }),
         setup: content.setup ?? null, retention: content.retention ?? null,
         wakeOnAcceptedMessage: content.wakeOnAcceptedMessage ?? null,
         simultaneousLimit: content.simultaneousLimit ?? null };

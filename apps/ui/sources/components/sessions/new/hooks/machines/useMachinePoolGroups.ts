@@ -26,7 +26,7 @@ export function useMachinePoolGroups(
         serverId: projection.serverId,
         accountId: projection.accountId,
         serverName: machineGroups[index]?.serverName ?? resolveHomeDisplayLabel(getServerProfileById(projection.serverId), projection.serverId),
-        pools: projection.pools,
+        pools: projection.pools.filter(pool => pool.access?.canResolve !== false),
         featureStatus: projection.featureStatus,
         // Feature discovery is part of this same Home projection's currentness. Retained rows stay
         // visible but cannot become selectable while that decision is unresolved or failed.

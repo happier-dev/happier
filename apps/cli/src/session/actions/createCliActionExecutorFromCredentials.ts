@@ -53,7 +53,7 @@ import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/action
 import { isPluginActionExecutionDispatchId, type PluginActionExecutionRequestOwner } from './createDaemonPluginActionExecutor';
 import { parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import { withExecutionRunStartFailureDetails } from '@happier-dev/protocol/execution/runs/responseSchemas';
-import { ActionIdSchema } from '@happier-dev/protocol/actions/actionIds';
+import { ActionIdSchema, isLocalServiceStopActionIdV1 } from '@happier-dev/protocol/actions/actionIds';
 import { isSettingsDeclarationActionIdV1, SettingsDeclarationActionInputSchemasV1 } from '@happier-dev/protocol/actions/settingsDeclarationActionFamily';
 import { deploymentPreparationOperationForActionV1 } from '@happier-dev/protocol/deployments/deploymentPreparationAdmissionV1';
 import { enrichCliActionApprovalContext } from './enrichCliActionApprovalContext';
@@ -106,7 +106,7 @@ import { resolveAccountSettingsScopeKeyForToken } from '@/settings/accountSettin
 import { resolveFilesystemTransferCustodyFailure } from './filesystemTransferCustody';
 import { ensureCliActionPolicySettings } from './ensureCliActionPolicySettings';
 import { reconcileExternalActionTarget, requiresManagedMachineDaemonIngress, resolveManagedControlControllerTarget, resolveExternalActionMachineTarget, resolveSelectedExternalActionMachineTarget } from '@/daemon/externalActions/reconcileExternalActionTarget';
-import { dispatchLocalManagedMachineSetup, dispatchLocalManagedMachineSetupPlan, dispatchOriginalAccountAction, readExternalActionInstalledMachine, readExternalActionRequesterInvocation, requiresOriginalAccountMachineActionProof, resolveExternalActionServerRequestHeaders, type ExternalActionMachineRequestSigningKey } from '@/api/externalActionExecutionAuthorization';
+import { dispatchLocalManagedMachineSetup, dispatchLocalManagedMachineSetupPlan, dispatchOriginalAccountAction, prepareOriginalAccountPoolPresetAcquire, readExternalActionRequesterInvocation, requiresOriginalAccountMachineActionProof, resolveExternalActionServerRequestHeaders, type ExternalActionMachineRequestSigningKey } from '@/api/externalActionExecutionAuthorization';
 import { observeManagedChildApprovalExecution } from '@/api/managedChildApproval';
 import { MachineSetupApplyInputV1Schema, MachineSetupPlanInputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { isMachineSetupPlanOrApplyActionIdV1, MACHINE_SETUP_APPLY_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
@@ -152,9 +152,7 @@ import { createInvocationSavedSecretOperationContextV1 } from "@/settings/secret
 import { createCliPersonalSavedSecretActionExecute } from '@/settings/secrets/personalSavedSecretActionHost';
 import { readApprovalRequesterDecisionV1, resolveApprovalExecutor } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { isMachineTerminalActionId } from '@happier-dev/protocol/actions/specs/machineTerminal';
-import { verifyExternalActionApprovalInputV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
-import { decodeBase64, encodeBase64 } from '@happier-dev/protocol/crypto/base64';
-import { MachineInstallationPublicKeySchema } from '@happier-dev/protocol/machines/identity/installationIdentity';
+import { createHostApprovalOriginCurrentness } from './approvals/hostOriginCurrentness';
 import { runTracedExternalActionStage, runTracedExternalActionInnerStage } from '@/daemon/externalActions/externalActionPhase';
 import { rethrowRequesterHomeReadFailure } from "@/daemon/sessionEncryption/requesterCurrentness";
 
@@ -961,68 +959,38 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
               && !invocationSignal?.aborted })
         : undefined);
 
-    const isApprovalExecutionOriginCurrent: NonNullable<ActionExecutorDeps['isApprovalExecutionOriginCurrent']> = async (args) => {
-      // Account/client proposals belong to the deciding Account, not the old
-      // runner. The signature authenticates unchanged proposal provenance.
-      if (resolveApprovalExecutor(args.request).kind !== 'daemon') {
-        const { origin, request, signal } = args;
-        if (origin.accountId !== undefined && origin.accountId !== readAccountIdFromToken(credentials.token)) return false;
-        const snapshot = await resolveServerFeaturesSnapshot();
-        if (signal?.aborted || !snapshot || snapshot.status !== 'ready' || snapshot.provenance !== 'authenticated'
-          || (origin.serverIdentityId ? origin.serverIdentityId !== snapshot.features.capabilities.serverIdentity.serverIdentityId
-            : origin.serverId !== approvalServerId)) return false;
-        const authorization = origin.externalActionExecutionAuthorization;
-        if (!authorization) return true;
-        if (request.v !== 2 || !origin.machineId || !origin.target || !origin.externalActionInputSignature
-          || origin.actionId !== request.actionId
-          || (authorization.binding.actionId !== request.actionId && authorization.binding.actionId !== 'approval.request.create')
-          || (origin.caller.kind === 'session' ? request.createdBy.sessionId !== origin.caller.sessionId
-            : origin.caller.kind !== 'host')) return false;
-        // The terminal verifies the issuing installation's signature. Only the
-        // recorded daemon can recheck its signed Home root and live custody;
-        // the existing approved-Artifact replay does that before the effect.
-        const source = await readExternalActionInstalledMachine({ serverHttpBaseUrl: approvalServerApiUrl,
-          machineId: origin.machineId, headers: { Authorization: `Bearer ${credentials.token}` }, ...(signal ? { signal } : {}) });
-        if (!source?.installationPublicKey || source.installationId !== authorization.binding.installationId
-          || signal?.aborted) return false;
-        const publicKey = decodeBase64(source.installationPublicKey, 'base64');
-        if (encodeBase64(publicKey, 'base64') !== source.installationPublicKey
-          || !MachineInstallationPublicKeySchema.safeParse(encodeBase64(publicKey, 'base64url')).success) return false;
-        const current = verifyExternalActionApprovalInputV1({ authorizationToken: authorization.token,
-          actionId: request.actionId, input: request.actionArgs, target: origin.target,
-          ...(request.v === 2 && request.requesterConfirmation ? { requesterConfirmation: request.requesterConfirmation } : {}),
-          signature: origin.externalActionInputSignature, publicKey });
-        if (!current) args.reportStale?.('credential_changed');
-        return current;
-      }
-      // A daemon's live-custody callback owns exact replay, not an Account proposal.
-      if (params.isApprovalExecutionOriginCurrent) return await params.isApprovalExecutionOriginCurrent(args);
-      // A standalone fixed-Home terminal approval already names its exact
-      // Machine. Reconcile that signed request through the existing selector;
-      // the currentness checker still verifies Home, Account and installation.
-      const terminalTarget = isMachineTerminalActionId(args.request.actionId)
-        ? resolveExternalActionMachineTarget({ actionId: args.request.actionId,
-            rawInput: args.request.actionArgs, target: args.origin.target }) : null;
-      if (terminalTarget?.kind === 'rejected') return false;
-      const currentMachineId = readNonEmptyString(params.machineId)
-        ?? (terminalTarget?.kind === 'ready' ? terminalTarget.machineId : null)
-        ?? (fixedServerId === null
-          ? readNonEmptyString((await readSettings().catch(() => null))?.machineId)
-          : null);
-      if (!currentMachineId) return false;
-      const { createDaemonApprovalExecutionOriginCurrentnessFromCredentials } = await import(
-        '@/daemon/externalActions/daemonExternalActionTargetResolver'
-      );
-      const checker = createDaemonApprovalExecutionOriginCurrentnessFromCredentials({
-        credentials,
-        machineId: currentMachineId,
-        serverId: approvalServerId,
-        serverApiUrl: approvalServerApiUrl,
-        resolveServerFeaturesSnapshot,
-        ...(params.isAutomationRunCurrent ? { isAutomationRunCurrent: params.isAutomationRunCurrent } : {}),
-      });
-      return checker ? await checker(args) : false;
-    };
+    const isApprovalExecutionOriginCurrent = createHostApprovalOriginCurrentness({
+      credentials, serverId: approvalServerId, serverApiUrl: approvalServerApiUrl, resolveServerFeaturesSnapshot,
+      checkDaemonOrigin: async args => {
+        // A daemon's live-custody callback owns exact replay, not an Account proposal.
+        if (params.isApprovalExecutionOriginCurrent) return await params.isApprovalExecutionOriginCurrent(args);
+        // A standalone fixed-Home terminal approval already names its exact
+        // Machine. Reconcile that signed request through the existing selector;
+        // the currentness checker still verifies Home, Account and installation.
+        const terminalTarget = isMachineTerminalActionId(args.request.actionId)
+          ? resolveExternalActionMachineTarget({ actionId: args.request.actionId,
+              rawInput: args.request.actionArgs, target: args.origin.target }) : null;
+        if (terminalTarget?.kind === 'rejected') return false;
+        const currentMachineId = readNonEmptyString(params.machineId)
+          ?? (terminalTarget?.kind === 'ready' ? terminalTarget.machineId : null)
+          ?? (fixedServerId === null
+            ? readNonEmptyString((await readSettings().catch(() => null))?.machineId)
+            : null);
+        if (!currentMachineId) return false;
+        const { createDaemonApprovalExecutionOriginCurrentnessFromCredentials } = await import(
+          '@/daemon/externalActions/daemonExternalActionTargetResolver'
+        );
+        const checker = createDaemonApprovalExecutionOriginCurrentnessFromCredentials({
+          credentials,
+          machineId: currentMachineId,
+          serverId: approvalServerId,
+          serverApiUrl: approvalServerApiUrl,
+          resolveServerFeaturesSnapshot,
+          ...(params.isAutomationRunCurrent ? { isAutomationRunCurrent: params.isAutomationRunCurrent } : {}),
+        });
+        return checker ? await checker(args) : false;
+      },
+    });
 
     const sessionFollowActionDeps = createSessionFollowActionDeps({
       token: credentials.token,
@@ -1665,6 +1633,9 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
       // Consent belongs to the Account approval owner, regardless of the outer
       // Machine selector. Its approved-Artifact continuation owns placement.
       if (actionId === 'approval.request.decide' && hasStoredSessionCredentialProvenance(credentials)) return { context };
+      // Stop's exact handle needs no requester credentials. Keep its proposal
+      // and Ask at this Account; native delivery spends a new signed Stop.
+      if (isOriginalCliActionContext(context) && isLocalServiceStopActionIdV1(actionId)) return { context };
       const mountedFilesystemCopy = params.filesystemActionExecute && actionId === 'daemon.filesystem.copy'
         && (FilesystemPreparedCopyInputSchema.safeParse(input).success || FilesystemTargetCopyInputSchema.safeParse(input).success);
       // Finite original CLI work is admitted at Home before the selected
@@ -1755,6 +1726,17 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
           settings: policy.getActionsSettings(), context: { ...context, surface: 'cli', authority } }).required;
       }
       const executionPlacement = resolveActionExecutionPlacementForInput(spec, admittedInput);
+      if (originalCliCaller && actionId === 'machines.managed.acquire' && executionPlacement === 'account') {
+        const invocation = readExternalActionRequesterInvocation({ ...context, surface: 'cli',
+          authority: context.authority ?? 'account_automation' });
+        if (!invocation) return { context,
+          invocation: createOneShotPatInvocation(async () => actionFailure('admission_unavailable')) };
+        const selected = await prepareOriginalAccountPoolPresetAcquire({ actionId, input: admittedInput,
+          requestId: context.actionRequestId ?? randomUUID(), credentials,
+          serverHttpBaseUrl: resolveActionServerApiUrl(), serverIdentityId: context.serverIdentityId ?? params.serverIdentityId,
+          invocation, authority: invocation.authority, ...(context.signal ? { signal: context.signal } : {}) });
+        if (selected) return { context, invocation: createOneShotPatInvocation(selected) };
+      }
       const controlControllerTarget = originalCliCaller
         ? await resolveManagedControlControllerTarget({ actionId, rawInput: admittedInput, credentials,
           serverHttpBaseUrl: resolveActionServerApiUrl(), ...(context.signal ? { signal: context.signal } : {}) }) : null;

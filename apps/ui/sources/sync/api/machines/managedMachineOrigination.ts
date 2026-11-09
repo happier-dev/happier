@@ -7,17 +7,17 @@ import { ExternalActionRequesterInvocationV1Schema } from '@happier-dev/protocol
 import type { LazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
 import { ManagedMachinePresetGetResultV1Schema } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
 import { machinePresetActionEndpointPathV1 } from '@happier-dev/protocol/machines/managed/machinePresetActionsV1';
+import { machinePoolActionEndpointPathV1 } from '@happier-dev/protocol/machines/pools/actionsV1';
 import type { ManagedControllerAccessV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { ActionOperationActionInputSchemasV1, ActionOperationActionOutputSchemasV1 } from '@happier-dev/protocol/actions/specs/actionOperations';
 import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';
-import { pluginJsonValuesEqual } from '@happier-dev/protocol/plugins/contributions/jsonSchemaValues';
 import { createManagedMachineActionClient, ManagedMachineActionError } from './managedMachineActions';
 import { readManagedMachineActionOutputV1 } from './managedMachineResponse';
 import { executeOriginalAccountActionTransport, executeOriginalAccountMachineAction, readOriginalAccountActionAuthentication,
     readOriginalAccountActionMachine, resolveOriginalAccountPluginInvocation } from '@/sync/api/externalActionAccountTransport';
 import { bindPresentUserActionConfirmation } from '@/sync/ops/actions/presentUserConfirmation';
 import { isPresentUserHostInvocation } from '@happier-dev/protocol/actions/invocationAuthority';
-import { ManagedMachineControllerError } from '@happier-dev/cli-common/machines/managed';
+import { bindManagedPresetAcquireOriginV1, ManagedMachineControllerError } from '@happier-dev/cli-common/machines/managed';
 import { SystemTaskExecutionError } from '@happier-dev/cli-common/systemTasks/nativeRemoteSshBootstrap';
 import { executeUiManagedAccountAcquire, executeUiManagedAccountRecovery } from './managedMachineAccountAcquire';
 import { executeUiManagedAccountControl } from './managedMachineAccountControl';
@@ -67,8 +67,8 @@ export async function executeManagedMachineNativeAction(params: ManagedMachineNa
         ? ActionOperationActionInputSchemasV1[actionId].safeParse(params.input)
         : ManagedMachineActionInputSchemasV1[actionId].safeParse(params.input);
     if (!parsedInput.success) return failure('invalid_parameters');
-    const input = parsedInput.data;
-    const review = actionId === 'machines.managed.acquire'
+    let input = parsedInput.data;
+    let review = actionId === 'machines.managed.acquire'
         ? resolveManagedAcquireReviewV1(ManagedMachineActionInputSchemasV1['machines.managed.acquire'].parse(input)) : null;
     const managedObservation = 'managed' in input ? input.managed : undefined;
     if (operationActionId && !managedObservation) return failure('admission_unavailable');
@@ -132,18 +132,22 @@ export async function executeManagedMachineNativeAction(params: ManagedMachineNa
             if (!projected.success) return failure('managed_response_invalid');
             if (projected.data.kind === 'refused') return failure(projected.data.code);
             if (!response.ok) return failure('admission_unavailable');
-            const preset = projected.data.preset;
-            if (preset.id !== acquire.selection.id || preset.homeId !== homeId) return failure('managed_response_invalid');
-            if (preset.revision !== acquire.selection.revision) return failure('request_conflict');
-            if (!pluginJsonValuesEqual(preset.controller, controller)) return failure('controller_retired');
-            const delegated = preset.delegatedAcquire;
-            if (delegated?.kind === 'unavailable') return failure(delegated.code);
-            if (delegated?.kind === 'ready') {
-                if (preset.owner.kind !== 'team' || preset.teamAcquireDelegated !== true
-                    || !pluginJsonValuesEqual(review?.retention, delegated.reviewedFacts.retention)
-                    || review?.wakeOnAcceptedMessage !== delegated.reviewedFacts.wakeOnAcceptedMessage) return failure('permission_denied');
-                scopedControllerAccess = delegated.controller;
-            }
+            const bound = await bindManagedPresetAcquireOriginV1({ input: acquire, preset: projected.data.preset, requestKey: requestId,
+                resolvePool: async body => {
+                    const resolved = await account.request(machinePoolActionEndpointPathV1('machines.pools.resolve'), {
+                        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+                        ...(params.signal ? { signal: params.signal } : {}),
+                    }, { includeAuth: true, retry: 'none' });
+                    let payload: unknown;
+                    try { payload = await resolved.json(); } catch { return undefined; }
+                    account.assertCurrent();
+                    return payload;
+                } });
+            if (bound.kind === 'refused') return failure(bound.code);
+            input = bound.input;
+            review = resolveManagedAcquireReviewV1(bound.input);
+            controller = review.controller;
+            scopedControllerAccess = bound.controllerAccess;
         }
     }
     const managedId = managedObservation?.managedId ?? ('managedId' in input ? input.managedId

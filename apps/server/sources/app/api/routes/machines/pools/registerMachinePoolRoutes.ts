@@ -14,6 +14,8 @@ import {
 } from "@/app/machines/pools/machinePoolService";
 import type { Fastify } from "../../../types";
 import { getMachinePoolMemberEligibility } from '@/app/machines/pools/machinePoolMemberAdmission';
+import { readTeamOperationAuthenticationFromRequest } from '@/app/teams/actorContext';
+import { resolveManagedPresetPool } from '@/app/machines/managed/machinePresetPool';
 
 function statusForError(code: string): 400 | 404 | 409 {
     if (code === "pool_not_found") return 404;
@@ -39,7 +41,7 @@ export function registerMachinePoolRoutes(
     }, async (request, reply) => {
         if (request.validationError) return await reply.code(400).send({ code: "invalid_request", message: "Invalid Machine Pool request." });
         const [pools, memberEligibility] = await Promise.all([
-            listMachinePools({ accountId: request.userId, io: deps.io }),
+            listMachinePools({ accountId: request.userId, io: deps.io, authentication: readTeamOperationAuthenticationFromRequest(request) }),
             request.body.memberMachineIds === undefined ? undefined : getMachinePoolMemberEligibility({
                 accountId: request.userId, machineIds: request.body.memberMachineIds,
             }),
@@ -53,7 +55,7 @@ export function registerMachinePoolRoutes(
         schema: { body: MachinePoolGetInputV1Schema, response: { 200: MachinePoolViewV1Schema, ...errors } },
     }, async (request, reply) => {
         if (request.validationError) return await reply.code(400).send({ code: "invalid_request", message: "Invalid Machine Pool request." });
-        const result = await getMachinePool({ accountId: request.userId, poolId: request.body.poolId, io: deps.io });
+        const result = await getMachinePool({ accountId: request.userId, poolId: request.body.poolId, io: deps.io, authentication: readTeamOperationAuthenticationFromRequest(request) });
         return result.ok ? await reply.send(result.value) : await reply.code(statusForError(result.error.code)).send(result.error);
     });
 
@@ -63,7 +65,7 @@ export function registerMachinePoolRoutes(
         schema: { body: MachinePoolCreateInputV1Schema, response: { 200: MachinePoolViewV1Schema, ...errors } },
     }, async (request, reply) => {
         if (request.validationError) return await reply.code(400).send({ code: "invalid_request", message: "Invalid Machine Pool request." });
-        const result = await createMachinePool({ accountId: request.userId, input: request.body, io: deps.io });
+        const result = await createMachinePool({ accountId: request.userId, input: request.body, io: deps.io, authentication: readTeamOperationAuthenticationFromRequest(request) });
         return result.ok ? await reply.send(result.value) : await reply.code(statusForError(result.error.code)).send(result.error);
     });
 
@@ -73,7 +75,7 @@ export function registerMachinePoolRoutes(
         schema: { body: MachinePoolUpdateInputV1Schema, response: { 200: MachinePoolViewV1Schema, ...errors } },
     }, async (request, reply) => {
         if (request.validationError) return await reply.code(400).send({ code: "invalid_request", message: "Invalid Machine Pool request." });
-        const result = await updateMachinePool({ accountId: request.userId, input: request.body, io: deps.io });
+        const result = await updateMachinePool({ accountId: request.userId, input: request.body, io: deps.io, authentication: readTeamOperationAuthenticationFromRequest(request) });
         return result.ok ? await reply.send(result.value) : await reply.code(statusForError(result.error.code)).send(result.error);
     });
 
@@ -93,7 +95,9 @@ export function registerMachinePoolRoutes(
         schema: { body: MachinePoolResolveInputV1Schema, response: { 200: MachinePoolResolveResultV1Schema, ...errors } },
     }, async (request, reply) => {
         if (request.validationError) return await reply.code(400).send({ code: "invalid_request", message: "Invalid Machine Pool request." });
-        const result = await resolveMachinePool({ accountId: request.userId, input: request.body, io: deps.io });
+        const result = request.body.purpose === 'managed-preset'
+            ? await resolveManagedPresetPool({ accountId: request.userId, authentication: readTeamOperationAuthenticationFromRequest(request), input: request.body, io: deps.io })
+            : await resolveMachinePool({ accountId: request.userId, input: request.body, io: deps.io });
         return result.ok ? await reply.send(result.value) : await reply.code(statusForError(result.error.code)).send(result.error);
     });
 }

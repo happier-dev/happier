@@ -10,6 +10,7 @@ import { ManagedControllerV1Schema, ManagedControllerAccessV1Schema, ReusableRet
 import { MachineSetupV1Schema } from './machineSetupV1.js';
 import { ManagedConfigurationFactsV1Schema } from './managedConfigurationV1.js';
 import { MachineProvisionerContributionV1Schema } from '../../plugins/contributions/machineProvisioners.js';
+import { MachinePoolIdV1Schema } from '../pools/v1.js';
 export { MachineSetupV1Schema, MachineSetupV1ReadSchema, MachineSetupScriptV1Schema, mergeMachineSetupsV1, type MachineSetupV1, type MachineSetupScriptV1 } from './machineSetupV1.js';
 
 const id = () => z.string().check(z.trim(), z.minLength(1));
@@ -20,7 +21,7 @@ export const ManagedMachinePresetOwnerV1Schema = lazyZodSchema(() => z.union([
 ]));
 export const ManagedMachinePresetLimitV1Schema = lazyZodSchema(() => z.strictObject({ maximum: z.number().check(z.int(), z.positive()) }));
 export const ManagedMachinePresetDelegatedAcquireV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
-  z.strictObject({ kind: z.literal('ready'), controller: ManagedControllerAccessV1Schema,
+  z.strictObject({ kind: z.literal('ready'), controller: z.optional(ManagedControllerAccessV1Schema),
     provisioner: MachineProvisionerContributionV1Schema, reviewedFacts: ManagedConfigurationFactsV1Schema
       .check(z.refine(facts => facts.launch.credentials === undefined, { message: 'Delegated review never exposes credential selections.' })) }),
   z.strictObject({ kind: z.literal('unavailable'), code: ManagedRefusalCodeV1Schema }),
@@ -34,6 +35,7 @@ function createManagedMachinePresetShapeV1<Choices extends z.core.$ZodType>(choi
     owner: ManagedMachinePresetOwnerV1Schema,
     launch: z.optional(createValidatedLaunchSnapshotV1Schema(choices)),
     controller: z.optional(ManagedControllerV1Schema),
+    controllerPoolId: z.optional(MachinePoolIdV1Schema),
     /** Author-saved presentation content; never grants access to the controller's metadata. */
     controllerDisplayName: z.optional(id()),
     setup: z.optional(MachineSetupV1Schema),
@@ -48,11 +50,13 @@ function createManagedMachinePresetShapeV1<Choices extends z.core.$ZodType>(choi
 }
 
 /** Account creation may be portable; explicit delegation retains its installed controller. */
-function hasValidPresetParts(preset: { launch?: unknown; controller?: unknown; setup?: unknown;
+function hasValidPresetParts(preset: { launch?: unknown; controller?: unknown; controllerPoolId?: unknown; setup?: unknown;
   teamAcquireDelegated?: boolean; delegatedAcquire?: unknown }): boolean {
-  return (preset.controller === undefined || preset.launch !== undefined)
+  return (!(preset.controller !== undefined && preset.controllerPoolId !== undefined))
+    && (preset.controller === undefined && preset.controllerPoolId === undefined || preset.launch !== undefined)
     && (preset.launch !== undefined || preset.setup !== undefined)
-    && (!(preset.teamAcquireDelegated || preset.delegatedAcquire !== undefined) || preset.controller !== undefined);
+    && (!(preset.teamAcquireDelegated || preset.delegatedAcquire !== undefined)
+      || preset.controller !== undefined || preset.controllerPoolId !== undefined);
 }
 
 export function createManagedMachinePresetV1Schema<Choices extends z.core.$ZodType>(choices: Choices) {
@@ -68,6 +72,7 @@ export type ManagedMachinePresetV1 = z.infer<typeof ManagedMachinePresetV1Schema
 export type ManagedMachinePresetCreationV1 = {
   launch: NonNullable<ManagedMachinePresetV1['launch']>;
   controller?: NonNullable<ManagedMachinePresetV1['controller']>;
+  controllerPoolId?: NonNullable<ManagedMachinePresetV1['controllerPoolId']>;
 };
 
 /** Presence guard for typed Preset values and drafts; boundary schemas own validation. */
@@ -92,6 +97,7 @@ export const ManagedMachinePresetUpdateInputV1Schema = lazyZodSchema(() => z.str
     name: z.optional(id()),
     launch: mini.optional(mini.nullable(createValidatedLaunchSnapshotV1Schema(PluginJsonValueV2Schema))),
     controller: mini.optional(mini.nullable(ManagedControllerV1Schema)),
+    controllerPoolId: mini.optional(mini.nullable(MachinePoolIdV1Schema)),
     controllerDisplayName: z.optional(z.nullable(id())),
     setup: z.optional(z.nullable(MachineSetupV1Schema)),
     retention: mini.optional(mini.nullable(ReusableRetentionV1Schema)),

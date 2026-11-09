@@ -27,6 +27,18 @@ A Machine Pool is a named group of your own persistent Machines on one Home. In
 enable or disable members, and place members in priority tiers. Offline Machines can
 stay in a Pool so you can configure or repair it before they reconnect.
 
+In current 0.3 development, a Team administrator can share a Pool they manage with
+that Team. The Account keeps custody of its Machines and the Pool's member list.
+Team members can see the Pool's name and description, but sharing does not reveal
+its Machine list or let members start sessions directly on those Machines.
+
+A Team Machine preset can use the shared Pool as its controller location. With
+**Members may create** enabled on the preset, a member chooses the preset in
+**New Session** and receives a fresh guest Machine enrolled to their own Account.
+Happier chooses one eligible, connected controller from the Pool when creating the
+guest. The preset's creation cap and retention rules still apply. See
+[Team pools and presets](/accounts/teams#team-pools-and-presets-in-03-development).
+
 Each save replaces the whole definition together: its details, enabled members, and
 tiers share one revision. If another device saved the Pool first, Happier reports the
 conflict and keeps your unsaved form so you can reload the current definition. Empty
@@ -69,7 +81,7 @@ clients through the Account change feed; the notification carries only the Pool
 identity, and each client reloads the definition from that same Home.
 
 Six generated Actions are also exposed for listing, reading, creating,
-updating, deleting, and resolving personal Machine Pools. They use the same
+updating, deleting, and resolving Machine Pools. They use the same
 authenticated Home and Account permissions as the UI. They do not make Pool
 membership a permission grant.
 
@@ -82,7 +94,8 @@ membership a permission grant.
   Pool as its broker location. For a new broker connection, the source-owning Machines
   report whether that credential source is usable without returning credentials or
   settings; the Home selects one eligible exact Machine, and the ordinary broker path
-  continues there. Capacity-aware admission and Team-owned Pools do not exist today.
+  continues there. Capacity-aware admission remains deferred. Team publication
+  retains the Pool's Account custodian; it does not transfer Machine ownership.
   Machine sharing is incomplete 0.3 development work and has not shipped.
 </Callout>
 
@@ -322,6 +335,8 @@ set when the daemon can answer. It is not a blanket cleanup of every related
 process. See [the CLI process guide](/apps/cli).
 
 ### Connection and repair checks
+
+In unreleased 0.3 builds, detached launches retain native fatal stderr under `$HAPPIER_HOME_DIR/logs/*-pid-<launcher PID>-*-stderr-daemon.log`; daemon startup records its own PID inside, and the existing daemon-log retention policy owns cleanup.
 
 - **Check status**: `happier service status`
 - **Find logs**: `happier service logs`

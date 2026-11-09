@@ -3,7 +3,7 @@ import { Pressable, View } from 'react-native';
 import { useNavigation, useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { useIsFocused } from '@/components/appShell/workspace/destinationRoute';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import type { MachinePoolMemberEligibilityV1, MachinePoolMemberInputV1, MachinePoolViewV1 } from '@happier-dev/protocol/machines/pools/v1';
+import type { MachinePoolAudienceV1, MachinePoolMemberEligibilityV1, MachinePoolMemberInputV1, MachinePoolViewV1 } from '@happier-dev/protocol/machines/pools/v1';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { Item } from '@/components/ui/lists/Item';
@@ -49,14 +49,17 @@ import {
 } from '../sections/MachinePoolsSection';
 import { useCollectionDraftTitle } from '@/components/ui/lists/collection/CollectionDraftTitle';
 import { isApprovalRequestV2InFlightStatus } from '@happier-dev/protocol/approvals/approvalRequestV1';
+import { useTeamsDirectory } from '@/hooks/teams/useTeamsDirectory';
+import { ManagedFieldRow } from '../managed/MachinePresetDetail';
 
-type Draft = Readonly<{ name: string; description: string; members: readonly MachinePoolMemberInputV1[]; tierCount: number }>;
+type Draft = Readonly<{ name: string; description: string; audience: MachinePoolAudienceV1; members: readonly MachinePoolMemberInputV1[]; tierCount: number }>;
 const draftFromView = (view: MachinePoolViewV1 | null): Draft => {
     const tierState = createMachinePoolEditorTierState(view?.pool.members.map(({ machineId, priorityTier, enabled }) => ({ machineId, priorityTier, enabled })) ?? []);
-    return { name: view?.pool.name ?? '', description: view?.pool.description ?? '', ...tierState };
+    return { name: view?.pool.name ?? '', description: view?.pool.description ?? '', audience: view?.pool.audience ?? { kind: 'private' }, ...tierState };
 };
 const single = (value: string | string[] | undefined) => Array.isArray(value) ? value[0] ?? '' : value ?? '';
 const NO_MACHINES: readonly Machine[] = [];
+const MORE_TEAMS = '__more_teams__';
 const tierLabel = (tier: number) => tier === 0 ? t('machinePools.primary') : t('machinePools.fallback', { number: tier });
 
 function MachinePoolSelectionListModalContent(props: Readonly<{
@@ -153,6 +156,16 @@ function MachinePoolEditorContent(props: MachinePoolEditorContentProps) {
     const [draft, setDraft] = React.useState<Draft>(() => draftFromView(existing));
     // The saved values the draft is compared with: Save waits for a change, Create for a name.
     const [baseline, setBaseline] = React.useState<Draft>(() => draftFromView(existing));
+    const teams = useTeamsDirectory({ serverIds: [props.serverId], enabled: poolProjection?.featureEnabled === true });
+    const selectedTeamId = draft.audience.kind === 'team' ? draft.audience.teamId : '';
+    const audienceChoices = [
+        { id: '', title: t('machinePresets.ownerPersonal') },
+        ...teams.rows.filter(row => row.team.capabilities.manageSettings || row.team.id === selectedTeamId)
+            .map(row => ({ id: row.team.id, title: row.team.name })),
+        ...(selectedTeamId && !teams.rows.some(row => row.team.id === selectedTeamId)
+            ? [{ id: selectedTeamId, title: t('machinePools.teamAudience') }] : []),
+        ...(teams.hasMore ? [{ id: MORE_TEAMS, title: t('machinePresets.moreTeams') }] : []),
+    ];
     // A new pool's draft row in the Machines collection shows its name as it is typed.
     const { publish: publishMachinePoolDraftTitle } = useCollectionDraftTitle();
     React.useEffect(() => {
@@ -241,7 +254,8 @@ function MachinePoolEditorContent(props: MachinePoolEditorContentProps) {
         || homeOffline
         || !poolProjection?.featureEnabled
         || waitingForExisting
-        || existingMissing;
+        || existingMissing
+        || existing?.access?.canManage === false;
     const availableMachines = React.useMemo(() => {
         const memberIds = new Set(draft.members.map(member => member.machineId));
         return machines.filter(machine => !memberIds.has(machine.id));
@@ -449,8 +463,8 @@ function MachinePoolEditorContent(props: MachinePoolEditorContentProps) {
         setSaving(true); setError(null); setApprovalId(null); setInvalidMemberIds(new Set()); setConflict(undefined);
         try {
             const members = normalizeMachinePoolEditorMembers(draft.members);
-            if (isNew) await createMachinePool(props.serverId, { poolId: createIdRef.current, name: draft.name, description: draft.description || null, members });
-            else await updateMachinePool(props.serverId, { poolId: props.poolId!, expectedRevision: loadedRevisionRef.current ?? existing?.pool.revision ?? 0, name: draft.name, description: draft.description || null, members });
+            if (isNew) await createMachinePool(props.serverId, { poolId: createIdRef.current, name: draft.name, description: draft.description || null, audience: draft.audience, members });
+            else await updateMachinePool(props.serverId, { poolId: props.poolId!, expectedRevision: loadedRevisionRef.current ?? existing?.pool.revision ?? 0, name: draft.name, description: draft.description || null, audience: draft.audience, members });
             if (!lifetimeCurrentRef.current) return;
             safeRouterBack({ router, navigation, fallbackHref: '/settings/machines' });
         } catch (cause) {
@@ -533,7 +547,7 @@ function MachinePoolEditorContent(props: MachinePoolEditorContentProps) {
                 cancelAction={cancelAction ?? undefined}
                 actions={(
                     <View style={styles.headerActions}>
-                        {!isNew && !featureUnavailable && !existingMissing ? (
+                        {!isNew && !featureUnavailable && !existingMissing && existing?.access?.canManage !== false ? (
                             <PageHeaderMenu
                                 testID="settings.machinePools.editor.menu"
                                 actions={[{
@@ -626,7 +640,19 @@ function MachinePoolEditorContent(props: MachinePoolEditorContentProps) {
                     />}
                 />
             </ItemGroup>
-            <ItemGroup
+            <ItemGroup title={t('machinePresets.audience')} description={t('machinePools.teamSharingNotice')}>
+                <ManagedFieldRow testID="settings.machinePools.editor.audience" row={{
+                    title: t('machinePresets.canUse'),
+                    choices: audienceChoices,
+                    value: selectedTeamId,
+                    disabled: formDisabled,
+                    onChange: id => {
+                        if (id === MORE_TEAMS) teams.loadMore();
+                        else setDraft(current => ({ ...current, audience: id ? { kind: 'team', teamId: id } : { kind: 'private' } }));
+                    },
+                }} />
+            </ItemGroup>
+            {existing?.access?.canViewMembers !== false ? <><ItemGroup
                 title={t('machinePools.machinesSection')}
                 description={t('machinePools.placementChangeNotice')}
                 surface="none"
@@ -707,7 +733,7 @@ function MachinePoolEditorContent(props: MachinePoolEditorContentProps) {
                     onPress={() => openMemberPicker(tier)}
                     disabled={formDisabled}
                 />}
-            </ItemGroup>)}
+            </ItemGroup>)}</> : null}
         </ItemList>
     </>;
 }

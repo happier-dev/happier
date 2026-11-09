@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { MachinePoolViewV1 } from '@happier-dev/protocol';
+import type { MachinePoolViewV1 } from '@happier-dev/protocol/machines/pools/v1';
+import { TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1 } from '@happier-dev/protocol/changes';
 
 import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { createAccountTokenForTests } from '@/dev/testkit/harness/homeGovernanceHarness';
@@ -118,6 +119,22 @@ describe('machinePoolSyncRuntime', () => {
         } finally {
             release();
         }
+    });
+
+    it('refreshes the visible pool audience once for a Team membership wake', async () => {
+        const release = observeMachinePoolProjection(boundary.serverId);
+        try {
+            await vi.waitFor(() => expect(boundary.pendingResponses).toHaveLength(1));
+            boundary.pendingResponses[0]?.(Response.json({ pools: [poolView('Team builders', 1)] }));
+            await vi.waitFor(() => expect(getStorage().getState().machinePoolListStatusByServerId[boundary.serverId]).toBe('idle'));
+            for (let i = 0; i < 20; i += 1) publishHomeAccountChange(boundary.serverId, ['unrelated-session']);
+            expect(boundary.listRequests).toBe(1);
+            publishHomeAccountChange(boundary.serverId, [TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1]);
+            await vi.waitFor(() => expect(boundary.pendingResponses).toHaveLength(2));
+            boundary.pendingResponses[1]?.(Response.json({ pools: [] }));
+            await vi.waitFor(() => expect(getStorage().getState().machinePoolListByServerId[boundary.serverId]).toEqual([]));
+            expect(boundary.listRequests).toBe(2);
+        } finally { release(); }
     });
 
     it('replays an invalidation received during a list request and publishes the fresh cycle', async () => {

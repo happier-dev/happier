@@ -1400,7 +1400,7 @@ describe('ordinary Account managed Action origination', () => {
         } finally { await instance.close(); }
     });
 
-    it('admits only an explicitly delegated Team preset through issuance, dispatch and installed-controller proof without a Machine grant', async () => {
+    it.each(['exact', 'pool'] as const)('admits only an explicitly delegated Team %s preset through issuance, dispatch and installed-controller proof without a Machine grant', async targetKind => {
         const controller = await fixture(true);
         const requester = await fixture(true);
         const outsider = await fixture(true);
@@ -1409,8 +1409,13 @@ describe('ordinary Account managed Action origination', () => {
             { teamId: team.id, accountId: controller.account.id, role: 'owner' },
             { teamId: team.id, accountId: requester.account.id, role: 'member' },
         ] });
+        const pool = targetKind === 'pool' ? await db.machinePool.create({ data: {
+            id: crypto.randomUUID(), accountId: controller.account.id, teamId: team.id, name: 'Team compute',
+            members: { create: { machineId: controller.controller.machineId, priorityTier: 0 } },
+        } }) : null;
         const preset = { id: crypto.randomUUID(), homeId, name: 'Team guest', owner: { kind: 'team' as const, teamId: team.id },
-            launch: controller.input.selection.launch, controller: controller.controller, teamAcquireDelegated: true,
+            launch: controller.input.selection.launch,
+            ...(pool ? { controllerPoolId: pool.id } : { controller: controller.controller }), teamAcquireDelegated: true,
             retention: { kind: 'until-delete' as const }, wakeOnAcceptedMessage: false };
         expect(await createMachinePreset({ accountId: controller.account.id,
             authentication: { authenticationAuthority: 'present_user' }, input: preset })).toMatchObject({ kind: 'saved' });
@@ -1455,9 +1460,30 @@ describe('ordinary Account managed Action origination', () => {
         const issue = (token = requester.token, requestedEnvelope = envelope) => instance.inject({ method: 'POST',
             url: bindExternalActionExecutionAuthorizationHttpPathV1('machines.managed.acquire'),
             headers: { authorization: `Bearer ${token}` },
-            payload: { v: 1, machineId: controller.controller.machineId, envelope: requestedEnvelope } });
+            payload: { v: 1, machineId: requestedEnvelope.target.machineId, envelope: requestedEnvelope } });
         try {
             expect((await issue(outsider.token)).statusCode).toBe(409);
+            if (pool) {
+                const outside = await db.machine.create({ data: { id: crypto.randomUUID(), accountId: controller.account.id,
+                    metadata: encodePlainMachineStoredContent({ host: 'outside', platform: 'linux', happyCliVersion: 'test',
+                        homeDir: '/home/controller', happyHomeDir: '/home/controller/.happier' }),
+                    dataEncryptionKey: decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER, 'base64'),
+                    installationId: crypto.randomUUID(), installationPublicKey: new Uint8Array(controller.keys.publicKey),
+                    active: true, pluginMaterializationRevision: BigInt(1),
+                    operationProtocolCapabilitiesRevision: 1, operationProtocolCapabilities: capabilities } });
+                const installed = await db.pluginMachineMaterialization.findFirstOrThrow({ where: {
+                    accountId: controller.account.id, machineId: controller.controller.machineId } });
+                await db.pluginMachineMaterialization.create({ data: { accountId: controller.account.id,
+                    serverIdentityId: homeId, machineId: outside.id, materializationId: outside.installationId!,
+                    pluginId: installed.pluginId, version: installed.version, sourceClass: installed.sourceClass,
+                    portableRelease: installed.portableRelease, archiveDigestSha256: installed.archiveDigestSha256,
+                    uiArtifacts: [], enabled: true, trustState: 'trusted', observedAt: new Date() } });
+                const forged = await issue(requester.token, { ...envelope, requestId: crypto.randomUUID(),
+                    target: { kind: 'machine', machineId: outside.id }, input: ManagedAcquireInputV1Schema.parse({ ...input,
+                        controller: { machineId: outside.id, installationId: outside.installationId! } }) });
+                expect(forged.statusCode, forged.body).toBe(409);
+                expect(await db.managedMachine.count({ where: { presetId: preset.id } })).toBe(0);
+            }
             const issued = await issue();
             expect(issued.statusCode, issued.body).toBe(200);
             const root = ExternalActionExecutionAuthorizationV1Schema.parse(issued.json());

@@ -24,6 +24,8 @@ import { managedSizeMemoryRecommendation } from './managedSizeMemoryRecommendati
 export type ManagedConfiguratorDraft = Readonly<{
     provisioner: MachineProvisionersListResultV1['provisioners'][number];
     controller?: ManagedControllerV1; name: string;
+    /** A pool stays unbound until acquire; the editor never selects one of its Machines. */
+    controllerPoolId?: string;
     enrollmentIdentity?: ManagedMachineEnrollmentIdentityV1;
     /** Derived defaults follow guest selection; an explicit caller identity remains intentional. */
     enrollmentIdentityDefaulted?: true;
@@ -162,7 +164,7 @@ export function selectManagedConfiguratorDimension(draft: ManagedConfiguratorDra
     return refreshEnrollmentDefault({ ...draft, dimensionSelection: selection, selected: projection?.kind === 'ready' ? selectedProjection(draft, projection, selection) : null,
         optionsSelectorsEdited: projection?.kind === 'ready' ? undefined : draft.optionsSelectorsEdited });
 }
-export function createManagedConfiguratorDraft(input: Pick<ManagedConfiguratorDraft, 'provisioner' | 'controller' | 'name' | 'enrollmentIdentity' | 'credentials' | 'setup' | 'optionsSelectors' | 'categoryPreferences' | 'override' | 'preset' | 'delegatedFacts'>): ManagedConfiguratorDraft {
+export function createManagedConfiguratorDraft(input: Pick<ManagedConfiguratorDraft, 'provisioner' | 'controller' | 'controllerPoolId' | 'name' | 'enrollmentIdentity' | 'credentials' | 'setup' | 'optionsSelectors' | 'categoryPreferences' | 'override' | 'preset' | 'delegatedFacts'>): ManagedConfiguratorDraft {
     return { ...input,
         enrollmentIdentity: input.enrollmentIdentity ?? managedConfiguratorEnrollmentDefault({ provisioner: input.provisioner, selected: null }).identity,
         enrollmentIdentityDefaulted: input.enrollmentIdentity === undefined ? true : undefined,
@@ -170,7 +172,7 @@ export function createManagedConfiguratorDraft(input: Pick<ManagedConfiguratorDr
             launch: input.delegatedFacts.launch.choices, nativeFacts: input.delegatedFacts.nativeFacts,
             prices: input.delegatedFacts.prices, billing: input.delegatedFacts.billing, retention: input.delegatedFacts.retentionCapabilities } : null,
         optionStatus: input.delegatedFacts?.optionStatus ?? 'loading',
-        ...(input.delegatedFacts ? { check: { available: input.delegatedFacts.optionStatus === 'current' } } : {}),
+        ...(input.delegatedFacts ? { check: { available: input.delegatedFacts.optionStatus === 'current', prerequisites: input.delegatedFacts.prerequisites } } : {}),
         choicesSchema: createPluginJsonSchemaZodValueAdapter(input.provisioner.descriptor.launchSchema) };
 }
 /** Saved launchs use the existing persistence projection; current edits remain strictly admitted. */
@@ -239,7 +241,7 @@ export function managedConfiguratorFacts(draft: ManagedConfiguratorDraft, projec
     if (draft.delegatedFacts) {
         const facts = draft.delegatedFacts;
         return draft.preset?.id === facts.preset?.id && draft.preset?.revision === facts.preset?.revision
-            && draft.name === facts.launch.name && pluginJsonValuesEqual(draft.controller, facts.controller)
+            && draft.name === facts.launch.name && pluginJsonValuesEqual(draft.controller ?? null, facts.controller ?? null)
             && pluginJsonValuesEqual(draft.selected?.launch, facts.launch.choices) ? facts : null;
     }
     const selected = draft.selected;

@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { useMachinesDoor } from '@/components/machines/page/machinesDoor';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
-import type { MachinePoolViewV1 } from '@happier-dev/protocol';
+import type { MachinePoolViewV1 } from '@happier-dev/protocol/machines/pools/v1';
 import { EmptyState } from '@/components/ui/empty/EmptyState';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -47,6 +47,7 @@ function availabilityText(view: MachinePoolViewV1): string {
 }
 
 function memberPreview(view: MachinePoolViewV1, machines: ReadonlyArray<Machine>): string {
+    if (view.access?.canViewMembers === false) return t('machinePools.membersPrivate');
     return resolveMachinePoolEnabledMemberLabels(view, machines, { limit: MEMBER_PREVIEW_LIMIT }).join(', ');
 }
 
@@ -163,6 +164,7 @@ export const MachinePoolsSection = React.memo(function MachinePoolsSection(props
                 ].filter(Boolean).join(' · ');
                 const openable = featureEnabled && !homeOffline;
                 return <Item
+                    rowRole="catalogRow"
                     key={view.pool.id}
                     testID={rowTestId}
                     pressableRef={openable && !rail

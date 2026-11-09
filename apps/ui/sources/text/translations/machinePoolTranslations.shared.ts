@@ -1,6 +1,9 @@
 
 
 export const en = {
+    membersPrivate: "Machines are private",
+    teamAudience: "Team",
+    teamSharingNotice: "Team members can use this pool through shared machine presets. Its machines stay private; sharing does not grant direct access.",
     machinesSection: "Machines",
     tierPrimaryDescription: "Tried first.",
     tierFallbackDescription: "Tried when no earlier machine is online.",

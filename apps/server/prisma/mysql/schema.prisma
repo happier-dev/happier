@@ -311,6 +311,7 @@ enum TeamAdmissionMode {
 }
 
 model Team {
+    machinePools MachinePool[]
     managedMachinePresets ManagedMachinePreset[]
     machineGrants MachineTeamGrant[]
     artifactGrants ArtifactTeamGrant[]
@@ -2840,6 +2841,8 @@ model MachineKeyEnvelope {
 model MachinePool {
     id          String   @id
     accountId   String
+    teamId      String?
+    team        Team?    @relation(fields: [teamId], references: [id], onDelete: SetNull)
     name        String @db.LongText
     description String? @db.LongText
     /// Bumped once per actual definition change; the client's expected value is the CAS token.
@@ -2851,6 +2854,7 @@ model MachinePool {
     credentialResources TeamCredentialResource[]
 
     @@index([accountId, id])
+    @@index([teamId, id])
 }
 
 model MachinePoolMember {
