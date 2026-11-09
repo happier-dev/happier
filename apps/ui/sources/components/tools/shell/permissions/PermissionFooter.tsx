@@ -7,7 +7,8 @@ import { formatPermissionRequestSummary } from '@happier-dev/protocol/activity/a
 import type { SessionPermissionDecisionActorV1 } from '@happier-dev/protocol/sessions/permissions/v1';
 import type { ResolvedMcpToolIdentityV1 } from '@happier-dev/protocol/mcp/servers/tools/mcpToolIdentityV1';
 import React, { useRef, useState } from 'react';
-import { View, Platform } from 'react-native';
+import { View, Platform, type LayoutChangeEvent } from 'react-native';
+import { isHappierPageRowNarrow } from '@happier-dev/plugin-ui/presentation';
 import { useSessionTranscriptSource } from '@/components/sessions/transcript/source/SessionTranscriptSourceContext';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { glassContentFill } from '@/components/ui/glass/glassSurfacePaint';
@@ -120,6 +121,12 @@ const stylesheet = StyleSheet.create((theme) => ({
         flexWrap: 'wrap',
         alignItems: 'center',
         gap: theme.space.s6,
+    },
+    buttonContainerStacked: {
+        flexDirection: 'column',
+        flexWrap: 'nowrap',
+        alignItems: 'flex-start',
+        gap: theme.space.s2,
     },
     // The decisions stay visible but visibly withheld while an answer is unconfirmed.
     buttonContainerWithheld: {
@@ -302,6 +309,13 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
     const catalogScopeResolution = useServerCredentialAccountScopeResolution(serverId ?? source.serverId ?? undefined);
     const catalogScope = catalogScopeResolution.kind === 'bound' ? catalogScopeResolution.scope : null;
     const alignedButtonStyle = alignFirstButtonToStart ? styles.buttonAlignedToStart : null;
+    // The shared narrow-row rule: where the decisions cannot share one line (a popover, a phone), they
+    // stack one per line in their order instead of wrapping into staggered rows.
+    const [stacked, setStacked] = useState(false);
+    const onDecisionsLayout = React.useCallback((event: LayoutChangeEvent) => {
+        const next = isHappierPageRowNarrow(event.nativeEvent.layout.width);
+        setStacked((current) => (current === next ? current : next));
+    }, []);
     // The Session transport below is reachable only when no Execution Run owns
     // the request: that origin renders its own two decisions and never reads
     // or answers a Session.
@@ -867,7 +881,7 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
 
     if (isApproved && permission.decisionActor?.kind === 'approvalReviewer') {
         return (
-            <View style={[styles.container, embedded ? styles.containerEmbedded : styles.containerStandalone]}>
+            <View onLayout={onDecisionsLayout} style={[styles.container, embedded ? styles.containerEmbedded : styles.containerStandalone]}>
                 <Text testID="permission-footer.approvalReviewer">{t('roles.delegation.approvedByReviewer')}</Text>
             </View>
         );
@@ -883,8 +897,8 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
             { key: 'deny', onPress: handleDeny, label: t('common.no'), pendingStyle: styles.buttonTextDeny, spinnerColor: styles.loadingIndicatorDeny.color },
         ] as const;
         return (
-            <View style={[styles.container, embedded ? styles.containerEmbedded : styles.containerStandalone]}>
-                <View style={[styles.buttonContainer, answerUnconfirmed && styles.buttonContainerWithheld]}>
+            <View onLayout={onDecisionsLayout} style={[styles.container, embedded ? styles.containerEmbedded : styles.containerStandalone]}>
+                <View style={[styles.buttonContainer, stacked && styles.buttonContainerStacked, answerUnconfirmed && styles.buttonContainerWithheld]}>
                     {decisions.map((decision) => (
                         <PermissionDecisionButton
                             key={decision.key}
@@ -928,8 +942,8 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
     if (copy.protocol === 'unavailable') {
         const actionsDisabled = !isPending || answerUnconfirmed || loadingButton !== null;
         return (
-            <View style={[styles.container, embedded ? styles.containerEmbedded : styles.containerStandalone]}>
-                <View style={[styles.buttonContainer, answerUnconfirmed && styles.buttonContainerWithheld]}>
+            <View onLayout={onDecisionsLayout} style={[styles.container, embedded ? styles.containerEmbedded : styles.containerStandalone]}>
+                <View style={[styles.buttonContainer, stacked && styles.buttonContainerStacked, answerUnconfirmed && styles.buttonContainerWithheld]}>
                     <PermissionDecisionButton
                         testID="permission-footer.deny"
                         ref={primaryAnswerRef}
@@ -980,8 +994,8 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
     if (copy.protocol === 'codexDecision') {
         const actionsDisabled = !isPending || answerUnconfirmed || loadingButton !== null || loadingForSession || loadingExecPolicy;
         return (
-            <View style={[styles.container, embedded ? styles.containerEmbedded : styles.containerStandalone]}>
-                <View style={[styles.buttonContainer, answerUnconfirmed && styles.buttonContainerWithheld]}>
+            <View onLayout={onDecisionsLayout} style={[styles.container, embedded ? styles.containerEmbedded : styles.containerStandalone]}>
+                <View style={[styles.buttonContainer, stacked && styles.buttonContainerStacked, answerUnconfirmed && styles.buttonContainerWithheld]}>
                     {/* Decision protocol: Yes button */}
                     <PermissionDecisionButton
                         testID="permission-footer.allow"
@@ -1186,8 +1200,8 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
     const primaryActionsDisabled = !isPending || answerUnconfirmed || loadingButton !== null || loadingAllEdits || loadingForSession;
     const ruleActionsDisabled = primaryActionsDisabled || loadingForSessionPrefix || loadingForSessionCommandName;
     return (
-        <View style={[styles.container, embedded ? styles.containerEmbedded : styles.containerStandalone]}>
-            <View style={[styles.buttonContainer, answerUnconfirmed && styles.buttonContainerWithheld]}>
+        <View onLayout={onDecisionsLayout} style={[styles.container, embedded ? styles.containerEmbedded : styles.containerStandalone]}>
+            <View style={[styles.buttonContainer, stacked && styles.buttonContainerStacked, answerUnconfirmed && styles.buttonContainerWithheld]}>
                 <PermissionDecisionButton
                     testID="permission-footer.allow"
                     ref={primaryAnswerRef}
