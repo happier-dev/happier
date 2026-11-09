@@ -52,8 +52,6 @@ const AgentStatePendingEvidenceSchema = z.looseObject({
   completedRequests: z.nullish(z.record(z.string(), z.unknown())),
 });
 
-const requestCoverageOptions = resolveAgentStateRequestCoverageOptions({ kind: 'localPermissionBridge' });
-
 /**
  * The whole Account currentness response travels together on purpose: the mode and the recipient
  * readiness are one Account's facts, and splitting them into separate arguments would let a
@@ -111,6 +109,7 @@ function buildCliSessionAwarenessInputFromPresentationV1(
     && row.pendingUserActionRequestCount !== undefined;
 
   const parsedAgentState = AgentStatePendingEvidenceSchema.safeParse(params.agentState?.value);
+  const requestCoverageOptions = resolveAgentStateRequestCoverageOptions({ metadata });
   const useAgentState = parsedAgentState.success && params.agentState
     && ((row.pendingPermissionRequestCount === undefined && row.pendingUserActionRequestCount === undefined)
       || params.agentState.observedAtMs > (readNumber(row.pendingRequestObservedAt) ?? 0));

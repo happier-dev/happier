@@ -32,6 +32,7 @@ import { answerClaudeUnifiedRegisteredDialog } from '../tuiControls/dialogAnswer
 import { captureScreenState } from '../tuiControls/controlRuntime.js';
 import {
   buildClaudeUnifiedDialogQuestionInput,
+  buildClaudeUnifiedDialogTraceSummary,
   getClaudeUnifiedDialogIdentity,
   getClaudeUnifiedRecognizedDialogRegistryEntry,
   resolveClaudeUnifiedDialogSelectedOption,
@@ -511,6 +512,7 @@ export function createClaudeUnifiedResumeChoiceStartupHandler(params: Readonly<{
       toolCallId: requestId,
       toolName: 'AskUserQuestion',
       input: buildClaudeUnifiedDialogQuestionInput(dialog),
+      traceSummary: buildClaudeUnifiedDialogTraceSummary(dialog),
       reason: dialog.requestReason,
     }, {
       signal: abort.signal,

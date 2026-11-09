@@ -173,7 +173,7 @@ import { resolveAgentToolsDelivery } from '@/agent/tools/happierTools/runtime/re
 import {
   resolveSessionPendingQueueDeliveryTiming,
 } from '@/agent/runtime/session/input/pendingQueueDrainPolicy';
-import type { ToolTraceProtocol } from '@/agent/tools/trace/toolTrace';
+import type { ToolNormalizationSourceV3 } from '@happier-dev/protocol/tools/v2/meta';
 import { resolveAttachedRunRuntimeContext } from '@/agent/runtime/resolveAttachedRunRuntimeContext';
 import { MessageBuffer } from '@/ui/ink/messageBuffer';
 import { MessageQueue2 } from '@/agent/runtime/modeMessageQueue';
@@ -246,7 +246,7 @@ import {
   applyDisplayTitleSessionMetadata,
   createModelIntentMetadataCasCandidate,
 } from '@happier-dev/agents/session/state/metadataWriters';
-import type { RuntimeCheckpointToolProtocolV1 } from '@happier-dev/agents/session/controls/checkpoints';
+import type { RuntimeCheckpointToolSourceV1 } from '@happier-dev/agents/session/controls/checkpoints';
 import type { SessionRuntimeControls } from '@/rpc/handlers/sessionControls';
 import { buildScopedProcessEnv, normalizeUnsetEnvKeys } from '@/utils/processEnv/buildScopedProcessEnv';
 import { isAgentSessionContinuationUnreachableError } from '@/session/shared/spawnSessionContract';
@@ -563,6 +563,8 @@ export type HostSessionRuntimeHookRuntime = SessionProviderInputOutcomePort & Re
 export type HostSessionRuntimeFactoryParams = Readonly<{
   directory: string;
   metadata: Metadata;
+  /** Actual host protocol selected while the admitted Agent opens its Session. */
+  onToolNormalizationSource?: (source: ToolNormalizationSourceV3) => void;
   /** Verified invocation placement, never reconstructed from persisted Session metadata. */
   currentTerminalMetadata?: Readonly<Pick<Metadata, 'terminal' | 'startedBy'>>;
   machineId: string;
@@ -749,10 +751,6 @@ function resolveHostActiveModelSelection(params: Readonly<{
 }
 
 export type HostSessionKeepAliveMode = 'terminal' | 'remote';
-type PermissionToolTrace = Readonly<{
-  protocol: ToolTraceProtocol;
-  provider: string;
-}>;
 
 type TerminalDisplayProps = {
   messageBuffer: MessageBuffer;
@@ -867,7 +865,7 @@ export type HostSessionRuntimeConfig = {
   waitingForCommandLabel: string;
   agentMessageType: ACPProvider;
   providerSessionMetadataKey?: string | null;
-  checkpointToolProtocol?: RuntimeCheckpointToolProtocolV1;
+  checkpointToolSource?: RuntimeCheckpointToolSourceV1;
   mcpServerIdentities?: Readonly<Record<string, McpServerIdentity>>;
   runtimeActivityApplicability: RuntimeActivityApplicability;
   /** Reads the acknowledged current delivery, including live reload and refusal. */
@@ -920,11 +918,6 @@ export type HostSessionRuntimeConfig = {
   /** Explicit host Action/MCP authority; absent for ordinary Account runtimes. */
   runtimeAuthority?: HostSessionRuntimeAuthority;
   resolveKeepAliveMode?: () => HostSessionKeepAliveMode;
-  resolvePermissionToolTrace?: (params: {
-    opts: HostSessionRuntimeRunOptions;
-    session: ApiSessionClient;
-    metadata: Metadata;
-  }) => PermissionToolTrace | null;
   /** Exact runtime-registry currentness for a mediated permission source. */
   isMediatorPluginCurrent?: (pluginId: string) => boolean;
   /** Exact runtime-registry currentness for a mediator contribution. */
@@ -1036,6 +1029,7 @@ export async function runHostSessionRuntime(
   config: HostSessionRuntimeConfig,
   deps: HostSessionRuntimeDeps = {},
 ): Promise<void> {
+  let toolNormalizationSource = config.checkpointToolSource ?? null;
   const startupStartedAt = performance.now();
   let startupPhaseStartedAt = startupStartedAt;
   let startupPhase = 'entered';
@@ -1488,6 +1482,8 @@ export async function runHostSessionRuntime(
     runtimeSelection: runtimeOpts.modelSelection,
     lifecycleSelection: initialModelSelection ?? undefined,
   });
+  const permissionAgent = (config.pluginRuntimeRegistryLease?.registry.contributes ?? readAgentCatalogSnapshot())
+    .agentDefinitionsById.get(policyAgentId);
   const permissionModeSeed = resolvePermissionModeSeedForAgentStart({
     agentId: policyAgentId,
     backendTarget: runtimeOpts.backendTarget,
@@ -2283,6 +2279,7 @@ export async function runHostSessionRuntime(
   let resolveFreshSessionSystemPrompt: SessionPromptPlanResolver | null = null;
   permissionHandler = createProviderEnforcedPermissionHandlerFn({
     session,
+    requestCoverage: permissionAgent?.richDefinition?.definition.requestCoverage,
     logPrefix: config.uiLogPrefix,
     pushSender: activityPushSender,
     getAccountSettings: () => runtimeOpts.accountSettingsContext?.settings ?? null,
@@ -2291,11 +2288,7 @@ export async function runHostSessionRuntime(
     getMcpToolContext: () => readMcpToolContext(),
     getAccountSettingsSecretsReadKeys: () => runtimeOpts.accountSettingsContext?.settingsSecretsReadKeys ?? [],
     onAbortRequested: () => abortRequestedCallback?.(),
-    toolTrace: config.resolvePermissionToolTrace?.({
-      opts: runtimeOpts,
-      session,
-      metadata: runtimeContextMetadataFallback(metadata, session),
-    }) ?? null,
+    toolTrace: () => toolNormalizationSource,
     ...(config.isMediatorPluginCurrent
       ? { isMediatorPluginCurrent: config.isMediatorPluginCurrent }
       : {}),
@@ -3064,6 +3057,7 @@ export async function runHostSessionRuntime(
   });
   let runtimePublicationMetadata: ReturnType<typeof subscribeSessionRuntimePublicationToMetadata> | null = null;
   const sessionRuntimeParams: HostSessionRuntimeFactoryParams = {
+    onToolNormalizationSource: (source) => { toolNormalizationSource = source; },
     directory: runtimeDirectory,
     metadata: runtimeMetadata,
     ...(runtimeOpts.terminalRuntime ? {
@@ -3894,6 +3888,7 @@ export async function runHostSessionRuntime(
         })
       : null;
     currentLifecycleSession.setSessionRuntimeControls({
+      readToolNormalizationSource: () => toolNormalizationSource,
       resolveAccountSettingsSnapshot: resolveSessionAccountSettingsSnapshot,
       readReferenceAction,
       readPermissionHandler: () => permissionHandler,
@@ -4029,6 +4024,7 @@ export async function runHostSessionRuntime(
       opts: runtimeOpts,
       config: {
         ...config,
+        ...(toolNormalizationSource ? { checkpointToolSource: toolNormalizationSource } : {}),
         mcpServerIdentities,
         readSkillDelivery: () => readAppliedSessionSkillDelivery({ current: runnerSkills,
           initialDelivery: sessionRuntimeParams.skills, skillsDelivered }),

@@ -1,4 +1,6 @@
+import { resolveAgentStateRequestCoverageOptions } from '@happier-dev/agents';
 import * as z from 'zod/mini';
+
 import { openSessionStateValue } from '@happier-dev/sync-client';
 import { AgentStateSchema } from '@happier-dev/session-core/state';
 
@@ -45,6 +47,8 @@ import {
   resolveSessionEncryptionContextFromCredentials,
   resolveSessionStoredContentEncryptionMode,
   resolveSessionTransportContextFromMaterial,
+  readSessionPresentationContent,
+  readSessionPresentationContentFromMaterial,
   type SessionEncryptionContext,
   type SessionStoredContentEncryptionMode,
 } from '@/session/transport/encryption/sessionEncryptionContext';
@@ -494,6 +498,12 @@ export function createSessionFollowSourceHydrator(input: Readonly<{
                 row: rawSession,
                 nowMs: Date.now(),
               });
+      const requestCoverage = resolveAgentStateRequestCoverageOptions({ metadata: runnerPresentationMaterial
+        ? readSessionPresentationContentFromMaterial({ rawSession, material: runnerPresentationMaterial }).metadata
+        : useRunnerProjection ? null : readSessionPresentationContent({ credentials: input.credentials,
+          accountEncryptionMode: transport.accountEncryptionCurrentness.mode,
+          recipientEnvelopeReadiness: transport.accountEncryptionCurrentness.recipientEnvelopeReadiness,
+          rawSession }).metadata });
 
       if (awareness.sessionId !== observation.sourceSessionId) {
         return null;
@@ -658,7 +668,7 @@ export function createSessionFollowSourceHydrator(input: Readonly<{
           }, source.agentState);
           if (opened.status !== 'ready') return null;
           const parsed = AgentStateSchema.safeParse(opened.value);
-          return parsed.success ? readActiveForegroundAgentRequests(parsed.data) : null;
+          return parsed.success ? readActiveForegroundAgentRequests(parsed.data, requestCoverage) : null;
       };
       if ('kind' in observation && 'sourceRequests' in observation.delivery.original) {
         const original = observation.delivery.original.sourceRequests;

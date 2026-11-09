@@ -41,6 +41,8 @@ import {
 import { PluginOptionalStringSchema } from '../_shared.js';
 import { PluginClientExecutionReferenceV1Schema } from './clientExecution.js';
 import {
+  AgentSessionModeDescriptorSchema,
+  AgentStateRequestCoverageOptionsSchema,
   PluginAgentSessionCompactionCapabilityV2Schema,
   type PluginAgentSessionCompactionCapabilityV2,
   type AgentSessionCompactionCapability,
@@ -48,6 +50,8 @@ import {
   PluginAgentSessionCapabilitiesV2Schema,
   type PluginAgentSessionCapabilitiesV2,
 } from './agentSessionCapabilities.js';
+export { AgentSessionModeDescriptorSchema, type AgentSessionModeDescriptor } from './agentSessionCapabilities.js';
+export { AgentStateRequestCoverageOptionsSchema, type AgentStateRequestCoverageOptions } from './agentSessionCapabilities.js';
 import {
   PluginActionContributionV2Schema,
   PluginActionAvailabilityV2Schema,
@@ -636,6 +640,8 @@ const PluginAgentDisplayV2Shape = {
   metadata: z.optional(z.record(z.string(), PluginJsonValueV2Schema)),
   connectedAccounts: z.optional(ConnectedAccountPurposeDeclarationsV1Schema),
   providerRequirements: z.optional(AgentProviderRequirementsV1Schema),
+  sessionModeDescriptor: z.optional(AgentSessionModeDescriptorSchema),
+  requestCoverage: z.optional(AgentStateRequestCoverageOptionsSchema),
   accountSettings: z.optional(z.strictObject({
     settingLocalIds: z.array(PluginSettingFieldIdV2Schema).check(z.minLength(1)),
   })),

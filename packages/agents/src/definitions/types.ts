@@ -5,6 +5,7 @@ import type { AgentLocalCliConfig } from '../localCli.js';
 import type { AnyAgentRuntimeKindsManifest } from '../runtimeKinds.js';
 import type { EngineSpec } from '../runtime/engine/contracts.js';
 import type { AgentProviderRequirementsV1 } from '@happier-dev/protocol/providers/binding-compatibility';
+import type { AgentStateRequestCoverageOptions } from '../runtime/agentStateRequestCoverage.js';
 
 export type AgentCatalogDefinition = Readonly<{
   id: AgentId;
@@ -14,6 +15,7 @@ export type AgentCatalogDefinition = Readonly<{
   sessionModesKind: AgentSessionModesKind;
   modelConfig: AgentModelConfig | null;
   localCli: AgentLocalCliConfig | null;
+  requestCoverage?: AgentStateRequestCoverageOptions;
 }>;
 
 /**

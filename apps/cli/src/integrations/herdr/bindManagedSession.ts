@@ -1,4 +1,6 @@
+import { resolveCatalogAgentRequestCoverageOptions } from '@/agent/catalog/registry';
 import type { EventEmitter } from 'node:events';
+
 import { resolveManagedCliToolNameForRing } from '@happier-dev/cli-common/firstPartyRuntime';
 import type { PublicReleaseRingId } from '@happier-dev/release-runtime/releaseRings';
 
@@ -117,7 +119,8 @@ export function bindManagedHerdrSession(params: Readonly<{
   managedHerdrBindings.set(params.session, sessionBindings);
 
   const resolveState = (thinking: boolean): 'idle' | 'working' | 'blocked' => {
-    const activity = deriveActivitySummaryFromAgentState(params.session.getAgentStateSnapshot());
+    const activity = deriveActivitySummaryFromAgentState(params.session.getAgentStateSnapshot(), undefined,
+      resolveCatalogAgentRequestCoverageOptions({ metadata: params.session.getMetadataSnapshot?.() }));
     if (activity.pendingPermissionRequestCount > 0 || activity.pendingUserActionRequestCount > 0) return 'blocked';
     return thinking ? 'working' : 'idle';
   };

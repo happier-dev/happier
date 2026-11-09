@@ -1,4 +1,4 @@
-import { isAgentStateRequestCoveredByCompletedRequests, resolveAgentStateRequestCoverageOptions } from '@happier-dev/agents';
+import { isAgentStateRequestCoveredByCompletedRequests, type AgentStateRequestCoverageOptions } from '@happier-dev/agents';
 import { readRunScopedExecutionPermissionRequestIdentity } from '@happier-dev/protocol/execution/runs/runPrimitives';
 import { SessionQuestionContextV1Schema, SessionQuestionHandlerV1Schema } from '@happier-dev/protocol/sessions/permissions/v1';
 import { resolveRequestFollowEventV1, type FollowEventV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowPolicyV1';
@@ -21,12 +21,12 @@ export function readForegroundAgentRequestFollowEvent(request: Readonly<{
 /** The foreground request owner's exact active originals; state version is not request identity. */
 export function readActiveForegroundAgentRequests<Request extends object>(state: Readonly<{
   requests?: Readonly<Record<string, Request>> | null; completedRequests?: Record<string, unknown> | null;
-}>): readonly (
+}>, requestCoverage?: AgentStateRequestCoverageOptions): readonly (
   readonly [requestId: string, request: Request]
 )[] {
   return Object.entries(state.requests ?? {}).filter(([requestId, request]) => !('sidechainId' in request && request.sidechainId)
     && !readRunScopedExecutionPermissionRequestIdentity(requestId)
     && !isAgentStateRequestCoveredByCompletedRequests({ requestId, request, completedRequests: state.completedRequests,
-      options: resolveAgentStateRequestCoverageOptions({ kind: 'localPermissionBridge' }) }))
+      options: requestCoverage }))
     .sort(([left], [right]) => left.localeCompare(right));
 }

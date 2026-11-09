@@ -1,3 +1,5 @@
+import { resolveCatalogAgentRequestCoverageOptions } from '@/agent/catalog/registry';
+import { NativePermissionChoiceAnswerV1Schema, NativePermissionChoicesV1Schema, type NativePermissionChoiceAnswerV1, type NativePermissionChoicesV1 } from '@happier-dev/protocol/sessions/permissions/respondRpcParamsV1';
 import { readRunScopedExecutionPermissionRequestIdentity } from '@happier-dev/protocol/execution/runs/runPrimitives';
 import type { AgentState } from '@/api/types';
 import { updateAgentStateBestEffort } from '@/api/session/sessionWritesBestEffort';
@@ -12,10 +14,7 @@ import type { PermissionRequestPushSender } from '@/agent/permissions/BasePermis
 import { logger } from '@/ui/logger';
 import { serializeAxiosErrorForLog } from '@/api/client/serializeAxiosErrorForLog';
 import { deepEqual } from '@/utils/deterministicJson';
-import {
-    isAgentStateRequestCoveredByCompletedRequests,
-    resolveAgentStateRequestCoverageOptions,
-} from '@happier-dev/agents';
+import { isAgentStateRequestCoveredByCompletedRequests, type AgentStateRequestCoverageOptions } from '@happier-dev/agents';
 import { PluginIdSchema } from '@happier-dev/protocol/plugins/plugin-id';
 import { SessionPermissionApprovalReviewerClaimV1Schema, SessionPermissionAccountUserDecisionActorV1Schema, SessionPermissionExternalHumanDecisionActorV1Schema, SessionPermissionIdempotencyKeyV1Schema, SessionPermissionSourceRefV1Schema, SessionPermissionSourceRevisionOrEpochV1Schema } from '@happier-dev/protocol/sessions/permissions/v1';
 import { TurnIdSchema } from '@happier-dev/protocol/sessions/idsV1';
@@ -25,7 +24,7 @@ import type { FollowEventV1 } from '@happier-dev/protocol/sessions/follow/sessio
 import type { SessionActivityChangedResult } from '@/daemon/sessions/sessionActivityChangedContract';
 import { SESSION_FOLLOW_RULE_EVIDENCE_META_KEY_V1, projectSessionFollowRuleSharedSourceEvidenceV1, SessionFollowRuleSourceEvidenceV1Schema, type SessionFollowRuleSourceEvidenceV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowRuleOccurrenceV1';
 import type { SessionQuestionContextV1, SessionQuestionHandlerV1 } from '@happier-dev/protocol/sessions/permissions/v1';
-import type { StructuredQuestionAnswersV1 } from '@happier-dev/protocol/tools/structuredQuestionAnswersV1';
+import type { StructuredQuestionAnswerDetailsV1, StructuredQuestionAnswersV1 } from '@happier-dev/protocol/tools/structuredQuestionAnswersV1';
 import { ResolvedMcpToolIdentityV1Schema, type ResolvedMcpToolIdentityV1 } from '@happier-dev/protocol/mcp/servers/tools/mcpToolIdentityV1';
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
 import type { AccountSettings, SessionPermissionApprovalReviewerClaimV1, SessionPermissionAccountUserDecisionActorV1, SessionPermissionExternalHumanDecisionActorV1 } from '@happier-dev/protocol';
@@ -75,6 +74,7 @@ export type PermissionResponseClaim =
     | Readonly<{
         version: 1;
         origin: 'presentUser';
+        nativeChoice?: NativePermissionChoiceAnswerV1;
         actor: SessionPermissionAccountUserDecisionActorV1;
         /** Exact host turn for current stamped requests; absent only for released legacy rows. */
         turnId?: string;
@@ -84,6 +84,7 @@ export type PermissionResponseClaim =
     | Readonly<{
         version: 1;
         origin: 'remoteMediation';
+        nativeChoice?: NativePermissionChoiceAnswerV1;
         actor: SessionPermissionExternalHumanDecisionActorV1;
         mediatorPluginId: string;
         /** Exact host-stamped turn custody for this Session-scoped request key. */
@@ -116,10 +117,6 @@ export type PermissionResponseClaimSettlement =
     | Readonly<{ status: 'rejoined' }>
     | Readonly<{ status: 'conflict' }>
     | Readonly<{ status: 'not_settled' }>;
-
-const PENDING_REQUEST_COVERAGE_OPTIONS = resolveAgentStateRequestCoverageOptions({
-    kind: 'localPermissionBridge',
-});
 
 export type AgentStateRequestResponseTarget = Readonly<{ kind: string } & Record<string, unknown>>;
 
@@ -215,6 +212,7 @@ export type AgentStateOutstandingRequest = Readonly<{
     requestId: string;
     toolName: string;
     toolInput: unknown;
+    nativeChoices?: NativePermissionChoicesV1 | null;
     questionV1?: SessionQuestionContextV1;
     currentHandler?: SessionQuestionHandlerV1;
     createdAt: number;
@@ -270,6 +268,7 @@ type AgentStateRequestPublication = Readonly<{
     requestId: string;
     toolName: string;
     toolInput: unknown;
+    nativeChoices?: NativePermissionChoicesV1 | null;
     questionV1?: SessionQuestionContextV1;
     currentHandler?: SessionQuestionHandlerV1;
     createdAt: number;
@@ -317,6 +316,7 @@ export type AgentStateRequestCompletion = Readonly<{
     status: string;
     answeredBy?: SessionQuestionHandlerV1;
     structuredAnswersV1?: StructuredQuestionAnswersV1;
+    answerDetails?: StructuredQuestionAnswerDetailsV1;
     decision?: string;
     reason?: string;
     mode?: string;
@@ -330,6 +330,7 @@ export type AgentStateRequestCompletion = Readonly<{
     isCurrent?: () => boolean;
     fallback?: Readonly<{
         toolName: string;
+        nativeChoices?: NativePermissionChoicesV1 | null;
         questionV1?: SessionQuestionContextV1;
         currentHandler?: SessionQuestionHandlerV1;
         mcpTool?: ResolvedMcpToolIdentityV1;
@@ -377,6 +378,8 @@ function pendingIdentity(entry: unknown): unknown {
 }
 
 export class AgentStateRequestStore {
+    private readonly declaredRequestCoverage?: AgentStateRequestCoverageOptions;
+
     private readonly pendingPublications = new Map<string, Readonly<{
         request: AgentStateRequestEntry;
         completedBeforePublication: AgentStateCompletedEntry | undefined;
@@ -410,11 +413,15 @@ export class AgentStateRequestStore {
         getAccountSettingsSecretsReadKeys?: (() => ReadonlyArray<Uint8Array | null | undefined>) | null;
         getSessionTitle?: (() => string | null) | null;
         getAgentDisplayName?: (() => string | null) | null;
+        requestCoverage?: AgentStateRequestCoverageOptions;
     }>) {
         if ((params.session ? 1 : 0) + (params.target ? 1 : 0) !== 1) {
             throw new Error('AgentStateRequestStore requires exactly one persistence target');
         }
         this.session = params.session ?? null;
+        this.declaredRequestCoverage = 'requestCoverage' in params
+            ? params.requestCoverage
+            : resolveCatalogAgentRequestCoverageOptions({ metadata: params.session?.getMetadataSnapshot?.() });
         this.target = params.target
             ? { ...params.target, settleRequests: async updater => { await params.target!.updateState(updater); } }
             : createSessionPersistenceTarget(params.session!);
@@ -640,7 +647,7 @@ export class AgentStateRequestStore {
                 || deepEqual(pending.currentHandler, nextHandler)
                 || isAgentStateRequestCoveredByCompletedRequests({ requestId: params.requestId,
                     request: pending, completedRequests: state.completedRequests,
-                    options: PENDING_REQUEST_COVERAGE_OPTIONS })) return state;
+                    options: this.declaredRequestCoverage })) return state;
             changed = { ...pending, currentHandler: nextHandler };
             const requests = cloneStringKeyedRecordToNullProto<AgentStateRequestEntry>(state.requests);
             requests[params.requestId] = changed;
@@ -801,7 +808,7 @@ export class AgentStateRequestStore {
 
         const completed = this.target.readState()?.completedRequests?.[params.requestId];
         const entry = clonePlainObjectToNullProto(completed);
-        if (!entry || typeof entry.tool !== 'string' || resolveAgentRequestKind(entry.tool) !== 'permission') {
+        if (!entry || typeof entry.tool !== 'string' || resolveAgentRequestKind(entry.tool, entry.kind) !== 'permission') {
             return { status: 'not_settled' };
         }
 
@@ -816,6 +823,7 @@ export class AgentStateRequestStore {
             origin: 'presentUser',
             actor: actor.data,
             ...(turnId.success ? { turnId: turnId.data } : {}),
+            ...(entry.nativeChoice !== undefined ? { nativeChoice: entry.nativeChoice } : {}),
             decision: entry.decision,
             scope: entry.decision === 'approved_for_session' ? 'session' : 'request',
         });
@@ -899,14 +907,14 @@ export class AgentStateRequestStore {
             const completedRequests = cloneStringKeyedRecordToNullProto<AgentStateCompletedEntry>(currentState.completedRequests);
             const existingOutstanding = clonePlainObjectToNullProto(requests[params.requestId]);
             const entry = Object.assign(Object.create(null), entryTemplate) as AgentStateRequestEntry;
-            if (existingOutstanding && Object.prototype.hasOwnProperty.call(existingOutstanding, 'permissionResponseClaimV1')) {
+            const sameOccurrence = existingOutstanding && isSameAgentStateRequestOccurrence(existingOutstanding, entry);
+            if (sameOccurrence && Object.prototype.hasOwnProperty.call(existingOutstanding, 'permissionResponseClaimV1')) {
                 // A restarted handler can republish the same canonical
                 // outstanding request. Preserve even a malformed prior
                 // value so acquisition continues to fail closed rather
                 // than accidentally clearing a first-answer authority.
                 entry.permissionResponseClaimV1 = existingOutstanding.permissionResponseClaimV1;
             }
-            const sameOccurrence = existingOutstanding && isSameAgentStateRequestOccurrence(existingOutstanding, entry);
             if (sameOccurrence) {
                 // Native notifier acceptance belongs to the original request,
                 // so a handler reload must not reopen its delivered alert.
@@ -941,7 +949,7 @@ export class AgentStateRequestStore {
                 requestId: params.requestId,
                 request: entry,
                 completedRequests,
-                options: PENDING_REQUEST_COVERAGE_OPTIONS,
+                options: this.declaredRequestCoverage,
             })) {
                 const coveredState: AgentState = {
                     ...currentState,
@@ -1174,6 +1182,7 @@ export class AgentStateRequestStore {
         completedEntry.status = params.status;
         if (params.answeredBy) completedEntry.answeredBy = SessionQuestionHandlerV1Schema.parse(params.answeredBy);
         if (params.structuredAnswersV1) completedEntry.structuredAnswersV1 = params.structuredAnswersV1;
+        if (params.answerDetails !== undefined) completedEntry.answerDetails = params.answerDetails;
         if (typeof params.decision === 'string') completedEntry.decision = params.decision;
         if (typeof params.reason === 'string' && params.reason.length > 0) completedEntry.reason = params.reason;
         if (typeof params.mode === 'string') completedEntry.mode = params.mode;
@@ -1195,6 +1204,7 @@ export class AgentStateRequestStore {
 
         completedRequests[params.requestId] = completedEntry as AgentStateCompletedEntry;
         removeRequestsCoveredByCompletedEntry({
+            requestCoverage: this.declaredRequestCoverage,
             completedRequestId: params.requestId,
             completedEntry: completedEntry as AgentStateCompletedEntry,
             requests,
@@ -1327,6 +1337,7 @@ export class AgentStateRequestStore {
                 removePermissionResponseClaim(entry as Record<string, unknown>);
                 completedRequests[params.requestId] = entry;
                 removeRequestsCoveredByCompletedEntry({
+                    requestCoverage: this.declaredRequestCoverage,
                     completedRequestId: params.requestId,
                     completedEntry: entry,
                     requests,
@@ -1556,7 +1567,7 @@ export class AgentStateRequestStore {
             permissionId: params.permissionId,
             toolName: params.toolName,
             toolInput: params.toolInput,
-            requestKind: resolveAgentRequestKind(params.toolName),
+            requestKind: resolveAgentRequestKind(params.toolName, this.target.readState()?.requests?.[params.permissionId]?.kind),
             ...(typeof params.createdAtMs === 'number' ? { createdAtMs: params.createdAtMs } : {}),
         });
     }
@@ -1728,6 +1739,7 @@ export class AgentStateRequestStore {
 }
 
 type AgentStateRequestMetadata = Readonly<{
+    nativeChoices?: NativePermissionChoicesV1 | null;
     questionV1?: SessionQuestionContextV1;
     currentHandler?: SessionQuestionHandlerV1;
     source?: string;
@@ -1770,6 +1782,7 @@ function readAgentStateRequestMetadata(entry: unknown): AgentStateRequestMetadat
     const record = clonePlainObjectToNullProto(entry);
     if (!record) return {};
 
+    const nativeChoices = NativePermissionChoicesV1Schema.safeParse(record.nativeChoices);
     const responseTarget = readResponseTarget(record.responseTarget);
     const turnId = TurnIdSchema.safeParse(record.turnId);
     const permissionSuggestions = Array.isArray(record.permissionSuggestions)
@@ -1780,6 +1793,7 @@ function readAgentStateRequestMetadata(entry: unknown): AgentStateRequestMetadat
     const question = SessionQuestionContextV1Schema.safeParse(record.questionV1);
     const handler = SessionQuestionHandlerV1Schema.safeParse(record.currentHandler);
     return {
+        ...(record.nativeChoices !== undefined ? { nativeChoices: nativeChoices.success ? nativeChoices.data : null } : {}),
         ...(question.success ? { questionV1: question.data } : {}),
         ...(handler.success ? { currentHandler: handler.data } : {}),
         ...(typeof record.source === 'string' ? { source: record.source } : {}),
@@ -1797,6 +1811,7 @@ function readAgentStateRequestMetadata(entry: unknown): AgentStateRequestMetadat
 function applyAgentStateRequestMetadata(
     entry: Record<string, unknown>,
     metadata: Readonly<{
+        nativeChoices?: NativePermissionChoicesV1 | null;
         questionV1?: SessionQuestionContextV1;
         currentHandler?: SessionQuestionHandlerV1;
         turnId?: string;
@@ -1809,6 +1824,7 @@ function applyAgentStateRequestMetadata(
         mcpTool?: ResolvedMcpToolIdentityV1;
     }>,
 ): void {
+    if (metadata.nativeChoices !== undefined) entry.nativeChoices = metadata.nativeChoices;
     const turnId = TurnIdSchema.safeParse(metadata.turnId);
     const question = SessionQuestionContextV1Schema.safeParse(metadata.questionV1);
     const handler = SessionQuestionHandlerV1Schema.safeParse(metadata.currentHandler);
@@ -1893,6 +1909,7 @@ function copyCompletedCoverageFields(
 }
 
 function removeRequestsCoveredByCompletedEntry(params: Readonly<{
+    requestCoverage?: AgentStateRequestCoverageOptions;
     completedRequestId: string;
     completedEntry: AgentStateCompletedEntry;
     requests: Record<string, AgentStateRequestEntry>;
@@ -1909,7 +1926,7 @@ function removeRequestsCoveredByCompletedEntry(params: Readonly<{
             requestId,
             request,
             completedRequests: completedRequestsForCoverage,
-            options: PENDING_REQUEST_COVERAGE_OPTIONS,
+            options: params.requestCoverage,
         })) {
             continue;
         }
@@ -1954,13 +1971,16 @@ function readPermissionResponseClaim(value: unknown, source: 'input' | 'stored' 
             : null;
     }
 
+    const hasNativeChoice = record.nativeChoice !== undefined;
+    const nativeChoice = hasNativeChoice ? NativePermissionChoiceAnswerV1Schema.safeParse(record.nativeChoice) : null;
+    if (nativeChoice && !nativeChoice.success) return null;
     if (record.origin === 'presentUser') {
         const hasTurnId = Object.prototype.hasOwnProperty.call(record, 'turnId');
         if (source === 'input' && !hasExactlyKeys(
             record,
-            hasTurnId
+            [...(hasTurnId
                 ? ['version', 'origin', 'actor', 'turnId', 'decision', 'scope']
-                : ['version', 'origin', 'actor', 'decision', 'scope'],
+                : ['version', 'origin', 'actor', 'decision', 'scope']), ...(hasNativeChoice ? ['nativeChoice'] : [])],
         )) return null;
         const actor = (source === 'stored' ? createStoredReadSchema(SessionPermissionAccountUserDecisionActorV1Schema) : SessionPermissionAccountUserDecisionActorV1Schema).safeParse(record.actor);
         const turnId = hasTurnId ? TurnIdSchema.safeParse(record.turnId) : null;
@@ -1981,6 +2001,7 @@ function readPermissionResponseClaim(value: unknown, source: 'input' | 'stored' 
         return {
             version: 1,
             origin: 'presentUser',
+            ...(nativeChoice?.success ? { nativeChoice: nativeChoice.data } : {}),
             actor: actor.data,
             ...(turnId?.success ? { turnId: turnId.data } : {}),
             decision: record.decision,
@@ -2000,6 +2021,7 @@ function readPermissionResponseClaim(value: unknown, source: 'input' | 'stored' 
         'idempotencyKey',
         'decision',
         'scope',
+        ...(hasNativeChoice ? ['nativeChoice'] : []),
     ])) return null;
     const actor = (source === 'stored' ? createStoredReadSchema(SessionPermissionExternalHumanDecisionActorV1Schema) : SessionPermissionExternalHumanDecisionActorV1Schema).safeParse(record.actor);
     const mediatorPluginId = PluginIdSchema.safeParse(record.mediatorPluginId);
@@ -2021,6 +2043,7 @@ function readPermissionResponseClaim(value: unknown, source: 'input' | 'stored' 
     return {
         version: 1,
         origin: 'remoteMediation',
+        ...(nativeChoice?.success ? { nativeChoice: nativeChoice.data } : {}),
         actor: actor.data,
         mediatorPluginId: mediatorPluginId.data,
         turnId: turnId.data,
@@ -2049,11 +2072,13 @@ function permissionResponseClaimsEqual(
         return left.turnId === right.turnId;
     }
     if (left.origin === 'presentUser' && right.origin === 'presentUser') {
+        if (!deepEqual(left.nativeChoice, right.nativeChoice)) return false;
         return left.actor.accountId === right.actor.accountId
             && left.actor.relationship === right.actor.relationship
             && left.turnId === right.turnId;
     }
     if (left.origin !== 'remoteMediation' || right.origin !== 'remoteMediation') return false;
+    if (!deepEqual(left.nativeChoice, right.nativeChoice)) return false;
     return (
         left.actor.namespace === right.actor.namespace
         && left.actor.principalId === right.actor.principalId

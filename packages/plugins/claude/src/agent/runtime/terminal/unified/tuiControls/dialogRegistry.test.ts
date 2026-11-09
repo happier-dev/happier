@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { parseClaudeScreenState } from '../screenState.js';
 import {
   buildClaudeUnifiedDialogQuestionInput,
+  buildClaudeUnifiedDialogTraceSummary,
   CLAUDE_UNIFIED_RECOGNIZED_DIALOG_REGISTRY,
   getClaudeUnifiedDialogIdentity,
   resolveClaudeUnifiedDialogBlockedReason,
@@ -167,6 +168,9 @@ describe('Claude unified recognized dialog registry', () => {
         question: 'This session is 18h 2m old and 560.4k tokens.',
         options: [{ label: 'Delete history' }, { label: 'Continue anyway' }],
       }],
+    });
+    expect(buildClaudeUnifiedDialogTraceSummary(dialog!)).toEqual({
+      kind: 'unrecognized', id: 'unrecognized_confirmation', mode: 'generic', itemCount: 1, optionCount: 2,
     });
     expect(resolveClaudeUnifiedDialogBlockedReason(parseClaudeScreenState(UNKNOWN_DIALOG)))
       .toBe('unrecognized_confirmation_dialog');

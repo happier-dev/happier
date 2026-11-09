@@ -1,4 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { withToolTraceFile } from '@/testkit/logger/toolTraceFile';
 import { accountSettingsParse } from '@happier-dev/protocol';
 import { resetActiveAccountSettingsSnapshotForTests, setActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import type { AgentSessionRuntimeContext } from '@happier-dev/plugin-sdk/agents/runtime';
@@ -6,7 +8,9 @@ import type { AgentState } from '@/api/types';
 import type { ApiSessionClient } from '@/api/session/sessionClient';
 import { createMutableApiSessionClientFixture } from '@/testkit/backends/sessionFixtures';
 import type { AgentInvocationTurnAdmissionWitness } from '@/plugins/runtime/invocation/services/types';
-import { ProviderEnforcedPermissionHandler } from '@/agent/permissions/providerEnforced/handler';
+import { createProviderEnforcedPermissionHandler } from '@/agent/permissions/providerEnforced/createHandler';
+import { PluginAgentContributionV2Schema } from '@happier-dev/protocol/plugins/contributions/v2';
+import type { AgentStateRequestCoverageOptions } from '@happier-dev/agents';
 import { ServerBoundPermissionRpcHandlerManager } from '@/agent/permissions/testkit/serverBoundPermissionRpcHandlerManager';
 import { createRunScopedExecutionPermissionHandler } from '@/agent/executionRuns/policy/runScopedExecutionPermissionHandler';
 import { resolveExecutionRunPermissionInteractionMode } from '@/agent/executionRuns/policy/executionRunPermissionInteractionPolicy';
@@ -36,8 +40,9 @@ const NEXT_DIALOG = [
     'Enter to confirm · Esc to cancel',
 ].join('\n');
 
-function createFixture(runPermissionMode?: string) {
+function createFixture(runPermissionMode?: string, trace = false, requestCoverage?: AgentStateRequestCoverageOptions) {
     let state: AgentState = { requests: {}, completedRequests: {} };
+    let stateWrites = 0;
     let stateWriteBarrier: Promise<void> | null = null;
     const sessionId = 'native-startup-question';
     const rpcHandlerManager = new ServerBoundPermissionRpcHandlerManager(sessionId);
@@ -47,6 +52,7 @@ function createFixture(runPermissionMode?: string) {
         updateAgentState: async (update: (previous: AgentState) => AgentState) => {
             if (stateWriteBarrier) await stateWriteBarrier;
             state = update(state);
+            stateWrites += 1;
         },
         updateAgentStateRequestSettlement: async (update: (previous: AgentState) => AgentState) => {
             await persistence.updateAgentState(update);
@@ -57,7 +63,8 @@ function createFixture(runPermissionMode?: string) {
     vi.spyOn(session.rpcHandlerManager, 'registerHandler').mockImplementation(
         rpcHandlerManager.registerHandler.bind(rpcHandlerManager),
     );
-    const permissions = new ProviderEnforcedPermissionHandler(session, { logPrefix: '[StartupQuestion]' });
+    const permissions = createProviderEnforcedPermissionHandler({ session, logPrefix: '[StartupQuestion]', requestCoverage,
+        ...(trace ? { toolTrace: () => ({ protocol: 'codex' as const, provider: 'custom' }) } : {}) });
     const occurrence = new AbortController();
     let witness: AgentInvocationTurnAdmissionWitness | null = null;
     const runScope = runPermissionMode ? createRunScopedExecutionPermissionHandler({
@@ -83,6 +90,7 @@ function createFixture(runPermissionMode?: string) {
     } as unknown as AgentSessionRuntimeContext;
     return { sessionId, permissions, occurrence, services, context, native: createClaudeNativeAgentSdkContext(context),
         state: () => state,
+        stateWrites: () => stateWrites,
         setWitness: (next: AgentInvocationTurnAdmissionWitness | null) => { witness = next; },
         pauseStateWrites: () => {
             let release!: () => void;
@@ -98,6 +106,57 @@ function createFixture(runPermissionMode?: string) {
 }
 
 describe('native startup question permission composition', () => {
+    it('suppresses a retried native request using the selected contributed Agent declaration', async () => {
+        const declaration = PluginAgentContributionV2Schema.parse({
+            id: 'custom', title: { key: 'fixture.custom', fallback: 'Custom' },
+            runtime: { kind: 'custom' }, primary: 'sessions',
+            capabilities: { sessions: { open: ['create'], delivery: ['newTurn'], cancel: true } },
+            requestCoverage: { equivalentSources: ['custom_native_dialog'], equivalentCompletedStatuses: ['canceled'],
+                equivalentCompletedReasons: ['Native dialog stopped'] },
+        });
+        const fixture = createFixture(undefined, false, declaration.requestCoverage);
+        await fixture.permissions.abortPendingRequestsAndFlush('fixture initialization');
+        const input = { questions: [{ question: 'Proceed?' }] };
+        fixture.state().completedRequests!.original = { tool: 'AskUserQuestion', arguments: input,
+            owner: { kind: 'plugin', pluginId: 'happier.agent.claude', runtimeId: 'claude' },
+            source: 'custom_native_dialog', status: 'canceled', reason: 'Native dialog stopped', completedAt: Date.now() };
+        const writesBeforeRequest = fixture.stateWrites();
+        const pending = fixture.services.sessions.current!.permissions.requestDecision({
+            requestId: 'custom-retry', toolName: 'AskUserQuestion', source: 'custom_native_dialog', input,
+        }).catch(() => null);
+        try {
+            await vi.waitFor(() => expect(fixture.stateWrites()).toBeGreaterThan(writesBeforeRequest));
+            expect(fixture.state().requests?.['custom-retry']).toBeUndefined();
+            expect(fixture.state().completedRequests?.original?.status).toBe('canceled');
+        } finally {
+            fixture.occurrence.abort();
+            await fixture.permissions.abortPendingRequestsAndFlush('test cleanup');
+            await pending;
+        }
+    });
+    it('carries producer trace facts through the public native permission service without private input', async () => {
+        await withToolTraceFile('native-private-dialog-', async filePath => {
+            const fixture = createFixture(undefined, true);
+            const traceSummary = { kind: 'recognized', id: 'custom_dialog', itemCount: 1, optionCount: 2 };
+            const pending = fixture.services.sessions.current!.permissions.requestDecision({
+                requestId: 'custom-private-dialog', toolName: 'AskUserQuestion', source: 'custom_native_dialog',
+                input: { questions: [{ question: 'private-question', options: [{ label: 'private-option' }] }] },
+                traceSummary,
+            }).catch(() => null);
+            try {
+                await vi.waitFor(() => expect(fixture.state().requests?.['custom-private-dialog']).toBeDefined());
+                const requestTrace = readFileSync(filePath, 'utf8').trim().split('\n').map(line => JSON.parse(line))
+                    .find(event => event.kind === 'permission-request');
+                expect(requestTrace.payload.options.input).toEqual({ redacted: true, ...traceSummary });
+                expect(JSON.stringify(requestTrace)).not.toContain('private-question');
+                expect(JSON.stringify(requestTrace)).not.toContain('private-option');
+            } finally {
+                fixture.occurrence.abort();
+                await fixture.permissions.abortPendingRequestsAndFlush('test cleanup');
+                await pending;
+            }
+        });
+    });
     beforeEach(() => {
         resetActiveAccountSettingsSnapshotForTests();
         setActiveAccountSettingsSnapshot({ scopeKey: 'startup-question-test', source: 'network', settingsVersion: 1,

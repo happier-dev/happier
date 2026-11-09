@@ -1,3 +1,4 @@
+import { resolveCatalogAgentRequestCoverageOptions } from '@/agent/catalog/registry';
 import { createSessionUsageLimitRecoveryRuntime } from '@/session/usageLimitRecoveryControls/createSessionUsageLimitRecoveryRuntime';
 import { createDiscussionActionDeps } from '@/discussions/discussionActionDeps';
 import { materializeDiscussionInputAttachments, DiscussionAttachmentPreparationError,
@@ -29,7 +30,7 @@ import { projectSessionAwarenessV1 } from '@happier-dev/protocol/sessions/awaren
 import { readSessionWorkStateV1FromMetadata } from '@happier-dev/protocol/sessions/work/state/sessionWorkStateV1';
 import type { FollowEventV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowPolicyV1';
 import { resolveAgentRequestKind } from '@happier-dev/protocol/activity/agentRequestSummary';
-import { isAgentStateRequestCoveredByCompletedRequests, resolveAgentStateRequestCoverageOptions } from '@happier-dev/agents';
+import { isAgentStateRequestCoveredByCompletedRequests } from '@happier-dev/agents';
 import { SESSION_FOLLOW_RULE_EVIDENCE_META_KEY_V1, projectSessionFollowRuleSharedSourceEvidenceV1, SessionFollowRuleSourceEvidenceV1Schema, type SessionFollowRuleSourceEvidenceV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowRuleOccurrenceV1';
 import type { QuestionSessionSnapshot } from '@/agent/permissions/sessionQuestionManager';
 import { readSessionManagerSessionIdV1 } from '@happier-dev/protocol/sessions/follow/sessionManagerV1';
@@ -2829,9 +2830,10 @@ export class ApiSessionClient extends EventEmitter {
             latestTurnStatusObservedAtMs: this.materializationRuntime.getLatestTurnStatusObservedAt() };
         const activityState = this.runtimeActivityProjection.runtimeActivityState;
         const activityActiveCount = this.runtimeActivityProjection.runtimeActivityActiveCount;
+        const requestCoverage = resolveCatalogAgentRequestCoverageOptions({ metadata: this.metadata });
         const requests = Object.entries(this.agentState?.requests ?? {}).filter(([requestId, request]) => !isAgentStateRequestCoveredByCompletedRequests({
             requestId, request, completedRequests: this.agentState?.completedRequests,
-            options: resolveAgentStateRequestCoverageOptions({ kind: 'localPermissionBridge' }),
+            options: requestCoverage,
         })).map(([, request]) => resolveAgentRequestKind({ toolName: request.tool, requestKind: request.kind }));
         const awareness = projectSessionAwarenessV1({
             sessionId: this.sessionId, nowMs, origin: this.rolePromptOrganization.origin,
@@ -2905,7 +2907,7 @@ export class ApiSessionClient extends EventEmitter {
             return this.sessionSyncPendingInputServerContractResult
                 && supportsSessionPublisherAuthorityCheckV1(this.sessionSyncPendingInputServerContractResult) ? null : undefined;
         }
-        const active = readActiveForegroundAgentRequests(state);
+        const active = readActiveForegroundAgentRequests(state, resolveCatalogAgentRequestCoverageOptions({ metadata: this.metadata }));
         if (!active.some(([requestId]) => requestId === input.requestId) || this.agentStateVersion <= 0) return null;
         const requestEvidence = active.map(([requestId, request]) => {
             const evidence = SessionFollowRuleSourceEvidenceV1Schema.safeParse(
@@ -3121,7 +3123,7 @@ export class ApiSessionClient extends EventEmitter {
     sendAgentMessageEphemeral(
         provider: ACPProvider,
         body: ACPMessageData,
-        opts: { localId: string; createdAt: number; updatedAt?: number; meta?: Record<string, unknown>; tick?: number },
+        opts: Parameters<SessionClientTranscriptApi['sendAgentMessageEphemeral']>[2],
     ): EphemeralSendOutcome {
         return this.transcriptApi.sendAgentMessageEphemeral(provider, body, opts);
     }
@@ -3135,7 +3137,7 @@ export class ApiSessionClient extends EventEmitter {
     sendAgentMessageEphemeralDelta(
         provider: ACPProvider,
         body: ACPMessageData,
-        opts: { localId: string; tick: number; baseLength: number; createdAt: number; updatedAt?: number; meta?: Record<string, unknown> },
+        opts: Parameters<SessionClientTranscriptApi['sendAgentMessageEphemeralDelta']>[2],
     ): EphemeralSendOutcome {
         return this.transcriptApi.sendAgentMessageEphemeralDelta(provider, body, opts);
     }

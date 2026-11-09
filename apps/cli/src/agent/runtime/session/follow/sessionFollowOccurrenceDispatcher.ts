@@ -1,4 +1,6 @@
+import { resolveAgentStateRequestCoverageOptions } from '@happier-dev/agents';
 import axios from '@/api/client/credentialAxios';
+
 import { randomUUID } from 'node:crypto';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { evaluateSessionFollowRuleOccurrenceV1, type SessionFollowRuleSourceOccurrenceV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowRuleOccurrenceV1';
@@ -427,7 +429,11 @@ export function createSessionFollowOccurrenceDispatcher(input: Readonly<{
           if (parsed?.success) requestState = parsed.data;
         }
         return { accountEncryption, source, agentStateVersion: source.agentStateVersion, origin: source.origin ?? null,
-          requests: requestState ? new Map(readActiveForegroundAgentRequests(requestState)) : null };
+          requests: requestState ? new Map(readActiveForegroundAgentRequests(requestState,
+            resolveAgentStateRequestCoverageOptions({ metadata: tryDecryptSessionOwnerMetadataView({
+              credentials: input.credentials, accountEncryptionMode: accountEncryption.mode,
+              recipientEnvelopeReadiness: accountEncryption.recipientEnvelopeReadiness, rawSession: source,
+            }) }))) : null };
       };
       let preparedSource: Awaited<ReturnType<typeof prepareSource>> | undefined;
       const prepareRuleSource = async () => {
@@ -930,7 +936,11 @@ export function createSessionFollowOccurrenceDispatcher(input: Readonly<{
           } : null,
         }, source.agentState);
         const state = openedState.status === 'ready' ? AgentStateSchema.safeParse(openedState.value) : null;
-        if (state?.success) for (const [requestId, foregroundRequest] of readActiveForegroundAgentRequests(state.data)) {
+        const requestCoverage = resolveAgentStateRequestCoverageOptions({ metadata: tryDecryptSessionOwnerMetadataView({
+          credentials: input.credentials, accountEncryptionMode: transport.accountEncryptionCurrentness.mode,
+          recipientEnvelopeReadiness: transport.accountEncryptionCurrentness.recipientEnvelopeReadiness, rawSession: source,
+        }) });
+        if (state?.success) for (const [requestId, foregroundRequest] of readActiveForegroundAgentRequests(state.data, requestCoverage)) {
           if (typeof foregroundRequest.createdAt !== 'number' || !Number.isFinite(foregroundRequest.createdAt)) continue;
           const event = readForegroundAgentRequestFollowEvent(foregroundRequest);
           const evidence = event ? captureSemanticSessionFollowRuleSourceEvidence({ serverId: input.serverId,

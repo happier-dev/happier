@@ -1,6 +1,6 @@
 import {
   isAgentStateRequestCoveredByCompletedRequests,
-  resolveAgentStateRequestCoverageOptions,
+  type AgentStateRequestCoverageOptions,
 } from '@happier-dev/agents';
 import type { AgentState } from '../types';
 import { resolveAgentRequestKind } from '@/agent/permissions/requestKind';
@@ -17,20 +17,17 @@ type ActivitySummary = Readonly<{
   newUserActionRequiredOccurrences: readonly SessionUserActionRequiredOccurrenceV1[];
 }>;
 
-const PENDING_REQUEST_COVERAGE_OPTIONS = resolveAgentStateRequestCoverageOptions({
-  kind: 'localPermissionBridge',
-});
-
 function isCoveredByCompletedRequest(
   completedRequests: NonNullable<AgentState['completedRequests']> | null | undefined,
   requestId: string,
   request: unknown,
+  requestCoverage?: AgentStateRequestCoverageOptions,
 ): boolean {
   return isAgentStateRequestCoveredByCompletedRequests({
     requestId,
     request,
     completedRequests: completedRequests as Record<string, unknown> | null | undefined,
-    options: PENDING_REQUEST_COVERAGE_OPTIONS,
+    options: requestCoverage,
   });
 }
 
@@ -45,6 +42,7 @@ function readRequestCreatedAt(request: unknown): number | null {
 export function deriveActivitySummaryFromAgentState(
   agentState: AgentState | null | undefined,
   previousAgentState?: AgentState | null,
+  requestCoverage?: AgentStateRequestCoverageOptions,
 ): ActivitySummary {
   const requests = agentState?.requests;
   const completedRequests = agentState?.completedRequests ?? null;
@@ -68,7 +66,7 @@ export function deriveActivitySummaryFromAgentState(
     if (!request || typeof request !== 'object') continue;
     const toolName = typeof request.tool === 'string' ? request.tool : '';
     if (!toolName) continue;
-    if (isCoveredByCompletedRequest(completedRequests, requestId, request)) continue;
+    if (isCoveredByCompletedRequest(completedRequests, requestId, request, requestCoverage)) continue;
 
     const kind = request.kind === 'user_action' || request.kind === 'permission'
       ? request.kind

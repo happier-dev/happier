@@ -2,6 +2,7 @@ import type { AgentModelConfig } from '../models.js';
 import type { AgentSessionModeDescriptor, AgentSessionModesKind } from '../sessionModes.js';
 import type { AgentCore, AgentId } from '../types.js';
 import type { PluginAgentCliMetadata } from '@happier-dev/protocol';
+import type { AgentStateRequestCoverageOptions } from '../runtime/agentStateRequestCoverage.js';
 
 type DeepReadonly<T> = T extends (...args: never[]) => unknown
   ? T
@@ -34,6 +35,8 @@ export type AgentDefinition = Readonly<{
   sessionModesKind: AgentSessionModesKind;
   /** Agent-owned native permission labels, projected from the same mapping used at launch. */
   nativePermissionModes?: Readonly<Record<string, string>>;
+  /** Runtime-owned equivalence facts for replacement permission requests. */
+  requestCoverage?: AgentStateRequestCoverageOptions;
   /**
    * Optional static model facts for catalog and preflight fallback use.
    *

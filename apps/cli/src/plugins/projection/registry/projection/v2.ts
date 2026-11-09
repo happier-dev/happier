@@ -674,6 +674,12 @@ export function buildAgentsById(
         const uiBehavior = projectAgentUiBehavior(agent);
         agentsById[agent.id] = {
             id: agent.id,
+            ...(agent.richDefinition?.definition.sessionModeDescriptor
+                ? { sessionModeDescriptor: agent.richDefinition.definition.sessionModeDescriptor }
+                : {}),
+            ...(agent.richDefinition?.definition.requestCoverage
+                ? { requestCoverage: agent.richDefinition.definition.requestCoverage }
+                : {}),
             identity,
             title: readAgentTitle(agent),
             subtitle: readAgentSubtitle(agent),

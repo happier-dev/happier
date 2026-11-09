@@ -4,6 +4,23 @@ import { z } from 'zod/mini';
 import { asProtocolZod } from '../actions/internalProtocolZodAdapter.js';
 import { PluginContributionLocalIdSchema } from '../contributionIdentity.js';
 
+/** Declared Session-mode behavior, shared by bundled and contributed Agents. */
+export const AgentSessionModeDescriptorSchema = lazyZodSchema(() => z.strictObject({
+  source: z.enum(['none', 'acp', 'provider-native']),
+  semantics: z.enum(['none', 'policy-presets', 'agent-modes']),
+  runtimeSwitch: z.enum(['none', 'metadata-gating', 'acp-setSessionMode', 'provider-native']),
+}));
+export type AgentSessionModeDescriptor = Readonly<z.infer<typeof AgentSessionModeDescriptorSchema>>;
+
+/** Agent-owned facts consumed by the shared request-completion comparator. */
+export const AgentStateRequestCoverageOptionsSchema = lazyZodSchema(() => z.readonly(z.strictObject({
+  equivalentSources: z.optional(z.readonly(z.array(z.string()))),
+  equivalentCompletedStatuses: z.optional(z.readonly(z.array(z.string()))),
+  equivalentCompletedReasons: z.optional(z.readonly(z.array(z.string()))),
+  equivalentCompletionWindowMs: z.optional(z.number()),
+})));
+export type AgentStateRequestCoverageOptions = z.infer<typeof AgentStateRequestCoverageOptionsSchema>;
+
 /**
  * The one declared Agent Session capability set.
  *

@@ -2,17 +2,35 @@ import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
+import { PluginAgentContributionV2Schema } from '@happier-dev/protocol/plugins/contributions/v2';
 
 import {
     isAgentStateRequestCoveredByCompletedRequests,
     resolveAgentStateRequestCoverageOptions,
 } from './agentStateRequestCoverage';
 
-const bridgeCoverageOptions = resolveAgentStateRequestCoverageOptions({ kind: 'localPermissionBridge' });
-const LOCAL_PERMISSION_BRIDGE_REQUEST_SOURCE = bridgeCoverageOptions.equivalentSources?.[0] ?? '';
-const LOCAL_PERMISSION_BRIDGE_STOPPED_REASON = bridgeCoverageOptions.equivalentCompletedReasons?.[0] ?? '';
+const bridgeCoverageOptions = resolveAgentStateRequestCoverageOptions({ agentId: 'claude' });
+const LOCAL_PERMISSION_BRIDGE_REQUEST_SOURCE = bridgeCoverageOptions?.equivalentSources?.[0] ?? '';
+const LOCAL_PERMISSION_BRIDGE_STOPPED_REASON = bridgeCoverageOptions?.equivalentCompletedReasons?.[0] ?? '';
 
 describe('isAgentStateRequestCoveredByCompletedRequests', () => {
+    it('uses a selected custom declaration without covering an undeclared source', () => {
+        const request = { tool: 'NativeChoice', source: 'custom_native_dialog', arguments: { choice: 1 }, createdAt: 10_400 };
+        const completedRequests = { original: { ...request, status: 'canceled', reason: 'Native dialog stopped', completedAt: 10_000 } };
+        const declaration = PluginAgentContributionV2Schema.parse({
+            id: 'custom', title: { key: 'fixture.custom', fallback: 'Custom' },
+            runtime: { kind: 'custom' }, primary: 'sessions',
+            capabilities: { sessions: { open: ['create'], delivery: ['newTurn'], cancel: true } },
+            requestCoverage: {
+                equivalentSources: ['custom_native_dialog'], equivalentCompletedStatuses: ['canceled'],
+                equivalentCompletedReasons: ['Native dialog stopped'],
+            },
+        });
+        expect(isAgentStateRequestCoveredByCompletedRequests({ requestId: 'retry', request, completedRequests,
+            options: declaration.requestCoverage })).toBe(true);
+        expect(isAgentStateRequestCoveredByCompletedRequests({ requestId: 'retry', request, completedRequests,
+            options: resolveAgentStateRequestCoverageOptions({ agentId: 'unregistered-agent' }) })).toBe(false);
+    });
     it('resolves local permission bridge coverage options without a provider-specific caller import', () => {
         expect(bridgeCoverageOptions).toEqual({
             equivalentSources: ['claude_local_permission_bridge'],

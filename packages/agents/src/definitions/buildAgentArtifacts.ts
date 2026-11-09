@@ -31,6 +31,7 @@ function createAgentCatalogDefinition(agentId: BundledAgentId): AgentCatalogDefi
     sessionModesKind: CANONICAL_AGENT_SESSION_MODES[agentId],
     modelConfig: CANONICAL_AGENT_MODEL_CONFIG[agentId],
     localCli: CANONICAL_AGENT_LOCAL_CLI_CONFIG[agentId],
+    ...(bundledDefinition?.requestCoverage ? { requestCoverage: bundledDefinition.requestCoverage } : {}),
   };
 }
 

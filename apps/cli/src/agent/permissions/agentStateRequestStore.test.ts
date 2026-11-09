@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { resolveAgentStateRequestCoverageOptions } from '@happier-dev/agents';
+import type { AgentStateRequestCoverageOptions } from '@happier-dev/agents';
 import { accountSettingsParse } from '@happier-dev/protocol';
 import type { AgentState } from '@/api/types';
 import { configuration } from '@/configuration';
@@ -17,12 +17,17 @@ import { notificationSettingsSnapshotFixture } from '@/notifications/activity/ac
 import type { SessionActivityChangedResult } from '@/daemon/sessions/sessionActivityChangedContract';
 import { resetActiveAccountSettingsSnapshotForTests } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 
-const localPermissionBridgeCoverageOptions = resolveAgentStateRequestCoverageOptions({ kind: 'localPermissionBridge' });
-const LOCAL_PERMISSION_BRIDGE_REQUEST_SOURCE = localPermissionBridgeCoverageOptions.equivalentSources?.[0] ?? '';
-const LOCAL_PERMISSION_BRIDGE_STOPPED_REASON = localPermissionBridgeCoverageOptions.equivalentCompletedReasons?.[0] ?? '';
+const localPermissionBridgeCoverageOptions = {
+    equivalentSources: ['test_local_bridge'],
+    equivalentCompletedStatuses: ['canceled'],
+    equivalentCompletedReasons: ['Test bridge stopped'],
+} satisfies AgentStateRequestCoverageOptions;
+const LOCAL_PERMISSION_BRIDGE_REQUEST_SOURCE = localPermissionBridgeCoverageOptions?.equivalentSources?.[0] ?? '';
+const LOCAL_PERMISSION_BRIDGE_STOPPED_REASON = localPermissionBridgeCoverageOptions?.equivalentCompletedReasons?.[0] ?? '';
 
 class FakeSession {
     sessionId = 'session-test';
+    getMetadataSnapshot() { return { flavor: 'claude' }; }
     agentState: AgentState = {
         requests: Object.create(null),
         completedRequests: Object.create(null),
@@ -62,6 +67,31 @@ async function flushMicrotasks(): Promise<void> {
 }
 
 describe('AgentStateRequestStore', () => {
+    it('releases an obsolete native offer claim while preserving claims for the same occurrence', async () => {
+        const session = new FakeSession();
+        const store = new AgentStateRequestStore({ session, logPrefix: '[Native reoffer]' });
+        const nativeChoices = { requirementId: 'first-offer', source: 'native', choices: [{
+            id: 'run', label: 'Run', decision: 'approved', scope: 'once', response: { approved: true },
+        }] } as const;
+        const publication = { requestId: 'native-reoffer', toolName: 'NativeTool', toolInput: {}, createdAt: 1, nativeChoices };
+        const claim = { version: 1, origin: 'presentUser', actor: {
+            kind: 'accountUser', accountId: 'owner', relationship: 'owner',
+        }, decision: 'approved', scope: 'request', nativeChoice: { requirementId: 'first-offer', choiceId: 'run' } } as const;
+        try {
+            store.publishRequest(publication);
+            await expect(store.acquirePermissionResponseClaim({ requestId: publication.requestId, claim })).resolves.toEqual({ status: 'acquired' });
+            store.publishRequest(publication);
+            await expect(store.rejoinPermissionResponseClaim({ requestId: publication.requestId, claim })).resolves.toEqual({ status: 'rejoined' });
+            const malformed = { predecessor: 'opaque-answer' };
+            session.agentState.requests![publication.requestId].permissionResponseClaimV1 = malformed;
+            store.publishRequest(publication);
+            await expect(store.acquirePermissionResponseClaim({ requestId: publication.requestId, claim })).resolves.toEqual({ status: 'conflict' });
+            store.publishRequest({ ...publication, nativeChoices: { ...nativeChoices, requirementId: 'replacement-offer' } });
+            await expect(store.acquirePermissionResponseClaim({ requestId: publication.requestId,
+                claim: { ...claim, nativeChoice: { ...claim.nativeChoice, requirementId: 'replacement-offer' } },
+            })).resolves.toEqual({ status: 'acquired' });
+        } finally { store.dispose(); }
+    });
     it.each(['pending', 'late_failure', 'completed', 'newer_request', 'canceled', 'cancel_rejected', 'scoped_cancel', 'disposed', 'replaced'] as const)(
         'reconciles an unacknowledged publication after reconnect: %s', async outcome => {
         let online = false;
@@ -836,11 +866,12 @@ describe('AgentStateRequestStore', () => {
         })).toEqual({ status: 'conflict' });
     });
 
-    it('skips publishing a generated local-bridge request covered by a recent canonical cancellation', () => {
+    it.each([true, false])('applies recent canonical cancellation coverage only when the bridge declares it: %s', covered => {
         const session = new FakeSession();
         const store = new AgentStateRequestStore({
             session,
             logPrefix: '[Test]',
+            requestCoverage: covered ? localPermissionBridgeCoverageOptions : undefined,
         });
         const question = { questions: [{ question: 'How should I proceed?', options: [{ label: 'Continue' }] }] };
 
@@ -864,7 +895,8 @@ describe('AgentStateRequestStore', () => {
             source: LOCAL_PERMISSION_BRIDGE_REQUEST_SOURCE,
         });
 
-        expect(session.agentState.requests!['perm_generated']).toBeUndefined();
+        if (covered) expect(session.agentState.requests!['perm_generated']).toBeUndefined();
+        else expect(session.agentState.requests!['perm_generated']).toMatchObject({ source: LOCAL_PERMISSION_BRIDGE_REQUEST_SOURCE });
     });
 
     it('does not send a permission push for an async publish skipped by completed request coverage', async () => {
@@ -876,6 +908,7 @@ describe('AgentStateRequestStore', () => {
         const store = new AgentStateRequestStore({
             session,
             logPrefix: '[Test]',
+            requestCoverage: localPermissionBridgeCoverageOptions,
             pushSender: { sendToAllDevicesAsync, fetchSessionNotificationContext: async (sessionId) => createSessionNotificationContextFixture(sessionId) },
             getAccountSettings: () => settings,
             getSessionTitle: () => 'Session',
@@ -916,6 +949,7 @@ describe('AgentStateRequestStore', () => {
         const store = new AgentStateRequestStore({
             session,
             logPrefix: '[Test]',
+            requestCoverage: localPermissionBridgeCoverageOptions,
         });
         const question = { questions: [{ question: 'How should I proceed?', options: [{ label: 'Continue' }] }] };
 

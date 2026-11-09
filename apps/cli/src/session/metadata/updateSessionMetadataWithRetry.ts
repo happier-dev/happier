@@ -1,5 +1,7 @@
+import { resolveCatalogAgentRequestCoverageOptions } from '@/agent/catalog/registry';
 import { randomBytes as nodeRandomBytes } from 'node:crypto';
 import { readSessionModelSelectionV2FromMetadata } from '@happier-dev/agents/session/state/metadataReaders';
+
 import { SessionModelSelectionIntentV1Schema } from '@happier-dev/protocol/providers/model-selection';
 
 import {
@@ -733,12 +735,15 @@ export async function updateSessionMetadataEnvelopeTupleWithRetry(
     let teamCredentialBindings = params.teamCredentialBindings;
     let acceptedTeamCredentialBinding = params.acceptedTeamCredentialBinding;
     const mutation = params.mutation;
+    const requestCoverage = mutation.kind === 'agentState'
+      ? resolveCatalogAgentRequestCoverageOptions({ metadata: params.initialSnapshot.value.metadata })
+      : undefined;
     const mutationWithSummary: MetadataTupleMutation = mutation.kind === 'agentState'
       ? {
           ...mutation,
           update: async (previous: AgentState) => {
             const next = await mutation.update(previous);
-            const summary = deriveActivitySummaryFromAgentState(next, previous);
+            const summary = deriveActivitySummaryFromAgentState(next, previous, requestCoverage);
             activitySummaryV1 = {
               pendingPermissionRequestCount: summary.pendingPermissionRequestCount,
               pendingUserActionRequestCount: summary.pendingUserActionRequestCount,

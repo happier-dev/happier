@@ -1,39 +1,18 @@
-export type AgentStateRequestCoverageRecord = Readonly<Record<string, unknown>>;
+import { BUNDLED_AGENT_DEFINITIONS_BY_ID } from '../generated/bundledAgentDefinitions.js';
+import { resolveAgentIdFromSessionMetadata } from '../resolveAgentIdFromSessionMetadata.js';
+import type { AgentStateRequestCoverageOptions } from '@happier-dev/protocol/plugins/contributions/agentSessionCapabilities';
+export type { AgentStateRequestCoverageOptions } from '@happier-dev/protocol/plugins/contributions/agentSessionCapabilities';
 
-export type AgentStateRequestCoverageOptions = Readonly<{
-    equivalentSources?: readonly string[];
-    equivalentCompletedStatuses?: readonly string[];
-    equivalentCompletedReasons?: readonly string[];
-    equivalentCompletionWindowMs?: number;
-}>;
+export type AgentStateRequestCoverageRecord = Readonly<Record<string, unknown>>;
 
 export const DEFAULT_AGENT_STATE_EQUIVALENT_REQUEST_COMPLETION_WINDOW_MS = 5_000;
 
-export type AgentStateRequestCoverageOptionsKind = 'localPermissionBridge';
-
-const AGENT_STATE_REQUEST_COVERAGE_OPTIONS: Record<
-    AgentStateRequestCoverageOptionsKind,
-    AgentStateRequestCoverageOptions
-> = {
-    localPermissionBridge: {
-        equivalentSources: ['claude_local_permission_bridge'],
-        equivalentCompletedStatuses: ['canceled'],
-        equivalentCompletedReasons: ['Local permission bridge stopped'],
-    },
-};
-
 export function resolveAgentStateRequestCoverageOptions(input: Readonly<{
-    kind: AgentStateRequestCoverageOptionsKind;
-}>): AgentStateRequestCoverageOptions {
-    const options = AGENT_STATE_REQUEST_COVERAGE_OPTIONS[input.kind];
-    return {
-        equivalentSources: [...(options.equivalentSources ?? [])],
-        equivalentCompletedStatuses: [...(options.equivalentCompletedStatuses ?? [])],
-        equivalentCompletedReasons: [...(options.equivalentCompletedReasons ?? [])],
-        ...(typeof options.equivalentCompletionWindowMs === 'number'
-            ? { equivalentCompletionWindowMs: options.equivalentCompletionWindowMs }
-            : {}),
-    };
+    agentId?: string | null;
+    metadata?: unknown;
+}>): AgentStateRequestCoverageOptions | undefined {
+    const agentId = input.agentId ?? resolveAgentIdFromSessionMetadata(input.metadata);
+    return agentId ? BUNDLED_AGENT_DEFINITIONS_BY_ID[agentId]?.requestCoverage : undefined;
 }
 
 function readRecord(value: unknown): AgentStateRequestCoverageRecord | null {

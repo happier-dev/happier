@@ -516,6 +516,21 @@ export function buildClaudeUnifiedDialogQuestionInput(
   };
 }
 
+/** Only structural dialog facts may leave the private native presentation in traces. */
+export function buildClaudeUnifiedDialogTraceSummary(dialog: ClaudeUnifiedVisibleDialog) {
+  const questions = dialog.kind === 'native' && dialog.dialogId === 'ask_user_question' ? dialog.questions : null;
+  return {
+    kind: dialog.kind === 'unrecognized' ? 'unrecognized' : 'recognized',
+    ...(/^[a-z0-9_]{1,80}$/.test(dialog.dialogId) ? { id: dialog.dialogId } : {}),
+    ...(dialog.kind === 'unrecognized' ? { mode: dialog.mode } : {}),
+    itemCount: questions ? questions.length : 1,
+    optionCount: questions
+      ? questions.reduce((count, question) => count + (question && typeof question === 'object'
+        && 'options' in question && Array.isArray(question.options) ? question.options.length : 0), 0)
+      : dialog.options.length,
+  };
+}
+
 /** Full visible identity used for request replacement and the final pre-byte recapture guard. */
 export function getClaudeUnifiedDialogIdentity(dialog: ClaudeUnifiedVisibleDialog): string {
   if (dialog.kind === 'native') {

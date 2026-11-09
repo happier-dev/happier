@@ -101,6 +101,8 @@ import {
 } from '../plugins/ui/composer.js';
 import {
   PluginAgentCapabilitiesV2Schema,
+  AgentSessionModeDescriptorSchema,
+  AgentStateRequestCoverageOptionsSchema,
   PluginAgentCatalogV2Schema,
   AgentUiProjectedDeclarationV1Schema,
   PluginResourceContextV1Schema,
@@ -1300,6 +1302,8 @@ export const PluginProjectedAgentV2Schema = lazyZodSchema(() => z.strictObject({
   connectedServiceIds: z.optional(PluginProjectedAgentConnectedServiceIdsV2Schema),
   connectedAccounts: z.optional(PluginProjectedAgentConnectedAccountsV2Schema),
   providerRequirements: z.optional(AgentProviderRequirementsV1Schema),
+  sessionModeDescriptor: z.optional(AgentSessionModeDescriptorSchema),
+  requestCoverage: z.optional(AgentStateRequestCoverageOptionsSchema),
   providerOwnedEnvironmentKeys: z._default(PluginProjectedProviderOwnedEnvironmentKeysV2Schema, []),
   capabilities: zMini.optional(PluginAgentCapabilitiesV2Schema),
   cli: zMini.optional(PluginAgentCliMetadataSchema),

@@ -5,6 +5,7 @@ import { INTERNAL_CLAUDE_EVENT_TYPES } from './transcripts/internalEventTypes.js
 import { claudeAuthStateSharingDescriptor } from './auth/services/stateSharing.js';
 import { CLAUDE_CONFIG_DIR_ENV_KEYS, CLAUDE_NATIVE_CONFIG_DIR_ENV_KEY } from './environment.js';
 import { CLAUDE_NATIVE_PERMISSION_MODES } from './permissionModes.js';
+import { CLAUDE_LOCAL_PERMISSION_BRIDGE_REQUEST_SOURCE, CLAUDE_LOCAL_PERMISSION_BRIDGE_STOPPED_REASON } from './permissions/requestSource.js';
 
 const { providerId: _providerId, ...stateSharing } = claudeAuthStateSharingDescriptor;
 export const AGENT_STATE_SHARING_DESCRIPTOR = {
@@ -101,6 +102,11 @@ export const AGENT_DEFINITION = defineAgentWithPublicModelConfig({
   },
   sessionModesKind: 'staticAgentModes',
   nativePermissionModes: CLAUDE_NATIVE_PERMISSION_MODES,
+  requestCoverage: {
+    equivalentSources: [CLAUDE_LOCAL_PERMISSION_BRIDGE_REQUEST_SOURCE],
+    equivalentCompletedStatuses: ['canceled'],
+    equivalentCompletedReasons: [CLAUDE_LOCAL_PERMISSION_BRIDGE_STOPPED_REASON],
+  },
   releasedOutputTranscriptRecordReader: {
     nonTranscriptRecordTypes: [...INTERNAL_CLAUDE_EVENT_TYPES],
   },

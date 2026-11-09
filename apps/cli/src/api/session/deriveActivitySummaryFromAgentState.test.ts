@@ -3,9 +3,9 @@ import { describe, expect, it } from 'vitest';
 import { resolveAgentStateRequestCoverageOptions } from '@happier-dev/agents';
 import { deriveActivitySummaryFromAgentState } from './deriveActivitySummaryFromAgentState';
 
-const localPermissionBridgeCoverageOptions = resolveAgentStateRequestCoverageOptions({ kind: 'localPermissionBridge' });
-const LOCAL_PERMISSION_BRIDGE_REQUEST_SOURCE = localPermissionBridgeCoverageOptions.equivalentSources?.[0] ?? '';
-const LOCAL_PERMISSION_BRIDGE_STOPPED_REASON = localPermissionBridgeCoverageOptions.equivalentCompletedReasons?.[0] ?? '';
+const localPermissionBridgeCoverageOptions = resolveAgentStateRequestCoverageOptions({ agentId: 'claude' });
+const LOCAL_PERMISSION_BRIDGE_REQUEST_SOURCE = localPermissionBridgeCoverageOptions?.equivalentSources?.[0] ?? '';
+const LOCAL_PERMISSION_BRIDGE_STOPPED_REASON = localPermissionBridgeCoverageOptions?.equivalentCompletedReasons?.[0] ?? '';
 
 describe('deriveActivitySummaryFromAgentState', () => {
   it('projects question delivery intent without disclosing its assumption or manager identity', () => {
@@ -90,7 +90,7 @@ describe('deriveActivitySummaryFromAgentState', () => {
           source: LOCAL_PERMISSION_BRIDGE_REQUEST_SOURCE,
         },
       },
-    } as any)).toEqual({
+    } as any, undefined, localPermissionBridgeCoverageOptions)).toEqual({
       pendingPermissionRequestCount: 0,
       pendingUserActionRequestCount: 0,
       pendingRequestNewestCreatedAt: null,
