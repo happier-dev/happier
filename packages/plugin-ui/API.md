@@ -835,6 +835,7 @@ Declaration: `dist/index.d.ts`
 - value `HappierPublicLinkCard` from `dist/index.d.ts`
 - type `HappierPublicLinkCardProps` from `dist/index.d.ts`
 - value `HappierPublicProfile` from `dist/index.d.ts`
+- value `HappierPublicProfileDataProvider` from `dist/index.d.ts`
 - type `HappierPublicProfileLabels` from `dist/index.d.ts`
 - type `HappierPublicProfileProps` from `dist/index.d.ts`
 - type `HappierPublicProfileUsageHost` from `dist/index.d.ts`
@@ -1307,6 +1308,7 @@ Declaration: `dist/index.d.ts`
 - type `PluginUiResourceProjectionResult` from `dist/index.d.ts`
 - type `PluginUiResourceProjectionSnapshot` from `dist/index.d.ts`
 - type `PluginUiResourceReference` from `dist/index.d.ts`
+- type `PluginUiResourceRefreshOptions` from `dist/index.d.ts`
 - type `PluginUiResourceResult` from `dist/index.d.ts`
 - type `PluginUiResourceSnapshot` from `dist/index.d.ts`
 - type `PluginUiWidgetAreaPortV1` from `dist/index.d.ts`
@@ -1594,6 +1596,7 @@ Declaration: `dist/index.d.ts`
 - type `VoiceMarkProps` from `dist/index.d.ts`
 - value `VoicePresence` from `dist/index.d.ts`
 - type `VoicePresenceProps` from `dist/index.d.ts`
+- type `VoiceReadAloudPhase` from `dist/index.d.ts`
 - value `VoiceStatusLine` from `dist/index.d.ts`
 - type `VoiceStatusLineProps` from `dist/index.d.ts`
 - value `VoiceTransport` from `dist/index.d.ts`
@@ -1917,6 +1920,7 @@ Declaration: `dist/index.d.ts`
 - value `useSurfaceContext` from `dist/index.d.ts`
 - value `useTabPanelActivity` from `dist/index.d.ts`
 - value `useVoiceAttempt` from `dist/index.d.ts`
+- value `useVoiceReadAloudPhase` from `dist/index.d.ts`
 - value `useWidgetAreaPort` from `dist/index.d.ts`
 - value `useWidgetPresentation` from `dist/index.d.ts`
 - value `validatePluginListFilterSelectionsV1` from `dist/index.d.ts`
@@ -2790,6 +2794,7 @@ Declaration: `dist/components/index.d.ts`
 - value `HappierPublicLinkCard` from `dist/components/index.d.ts`
 - type `HappierPublicLinkCardProps` from `dist/components/index.d.ts`
 - value `HappierPublicProfile` from `dist/components/index.d.ts`
+- value `HappierPublicProfileDataProvider` from `dist/components/index.d.ts`
 - type `HappierPublicProfileLabels` from `dist/components/index.d.ts`
 - type `HappierPublicProfileProps` from `dist/components/index.d.ts`
 - type `HappierPublicProfileUsageHost` from `dist/components/index.d.ts`
@@ -3514,6 +3519,7 @@ Declaration: `dist/components/index.d.ts`
 - type `VoiceMarkProps` from `dist/components/index.d.ts`
 - value `VoicePresence` from `dist/components/index.d.ts`
 - type `VoicePresenceProps` from `dist/components/index.d.ts`
+- type `VoiceReadAloudPhase` from `dist/components/index.d.ts`
 - value `VoiceStatusLine` from `dist/components/index.d.ts`
 - type `VoiceStatusLineProps` from `dist/components/index.d.ts`
 - value `VoiceTransport` from `dist/components/index.d.ts`
@@ -3813,6 +3819,7 @@ Declaration: `dist/components/index.d.ts`
 - value `useSurfaceContext` from `dist/components/index.d.ts`
 - value `useTabPanelActivity` from `dist/components/index.d.ts`
 - value `useVoiceAttempt` from `dist/components/index.d.ts`
+- value `useVoiceReadAloudPhase` from `dist/components/index.d.ts`
 - value `useWidgetPresentation` from `dist/components/index.d.ts`
 - value `validatePluginListFilterSelectionsV1` from `dist/components/index.d.ts`
 - value `widgetFootprintBodyRows` from `dist/components/index.d.ts`
@@ -3959,6 +3966,7 @@ Declaration: `dist/hostApi/index.d.ts`
 - type `PluginUiResourceProjectionResult` from `dist/hostApi/index.d.ts`
 - type `PluginUiResourceProjectionSnapshot` from `dist/hostApi/index.d.ts`
 - type `PluginUiResourceReference` from `dist/hostApi/index.d.ts`
+- type `PluginUiResourceRefreshOptions` from `dist/hostApi/index.d.ts`
 - type `PluginUiResourceResult` from `dist/hostApi/index.d.ts`
 - type `PluginUiResourceSnapshot` from `dist/hostApi/index.d.ts`
 - type `PluginUiWidgetAreaPortV1` from `dist/hostApi/index.d.ts`
