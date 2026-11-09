@@ -935,9 +935,13 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
       // Finish optional source reads before the effect, so its accepted receipt needs no reread.
       const projected = await projectedDefinition(row);
       const prepared: PreparedTriggerProjection = { fields: {
-        health: projected.set.health, target: projected.set.target, context: projected.set.context,
-        destinations: projected.set.destinations, sourceSavedBy: projected.set.sourceSavedBy, sourceSavedAt: projected.set.sourceSavedAt,
-        legacy: projected.set.legacy,
+        health: projected.set.health,
+        ...(projected.set.target === undefined ? {} : { target: projected.set.target }),
+        ...(projected.set.context === undefined ? {} : { context: projected.set.context }),
+        ...(projected.set.destinations === undefined ? {} : { destinations: projected.set.destinations }),
+        ...(projected.set.sourceSavedBy === undefined ? {} : { sourceSavedBy: projected.set.sourceSavedBy }),
+        ...(projected.set.sourceSavedAt === undefined ? {} : { sourceSavedAt: projected.set.sourceSavedAt }),
+        ...(projected.set.legacy === undefined ? {} : { legacy: projected.set.legacy }),
       }, definition: projected.definition, children: projected.children };
       const committed = await deps.automations.reconcile(row.id, {
         expectedTemplateVersion: row.templateVersion, name: row.name, description: row.description, enabled: row.enabled,

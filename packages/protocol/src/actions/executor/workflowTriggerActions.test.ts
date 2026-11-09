@@ -23,7 +23,7 @@ import { openAutomationTriggerDefinitionStoredEnvelopeV1, sealAutomationTriggerD
 import { markSessionListQueryResultV1 } from '../../sessions/awareness/action.js';
 import { ActionIdSchema } from '../actionIds.js';
 import { getActionSpec } from '../actionSpecs.js';
-import { actionSpecToActionDefinitionV1, freezeWorkflowActionContractV1 } from '../actionCatalog.js';
+import { actionSpecToActionDefinitionV1, freezeWorkflowActionContractV1, readWorkflowActionOutputSchemaV1 } from '../actionCatalog.js';
 import { resolveActionCurrentSessionScopeFailure } from './sessionListAccess.js';
 import { AutomationStoredWorkflowDefinitionRecipeV2Schema } from '../../automations/automationWorkflowRecipeV2.js';
 import { SessionInitialTriggerAdmissionV1Schema } from '../../sessions/creation/sessionInitialTriggerAdmissionV1.js';
@@ -35,6 +35,24 @@ import { DeploymentEnvironmentHeaderV1Schema } from '../../deployments/deploymen
 
 import type { ArtifactRevisionProvenanceV1, ArtifactSavedByV1 } from '../../artifacts/artifactBinaryV1.js';
 import { createNightlyBackupsWorkflowV1 } from '../../workflows/builtins/backupExamples.js';
+import { prepareActionCompletionV1 } from '../actionCompletion.js';
+import { StrictJsonValueSchema } from '../../json/strictJsonValue.js';
+import { normalizePluginJsonSchema } from '../../plugins/actions/protocolComposableSchema.js';
+import { validateExecutionRunProfileResult } from '../../execution/runs/resultContract.js';
+
+function expectDeclaredActionOutput(actionId: Parameters<typeof getActionSpec>[0], result: unknown) {
+  const spec = getActionSpec(actionId);
+  const strict = StrictJsonValueSchema.safeParse(result);
+  expect(strict.success, strict.success ? '' : JSON.stringify(strict.error.issues)).toBe(true);
+  if (!strict.success) throw new Error('Expected a strict JSON Action result');
+  expect(spec.outputSchema?.safeParse(result).success).toBe(true);
+  expect(prepareActionCompletionV1(spec.completion, { ok: true, result })).toMatchObject({ kind: 'completed' });
+  const contract = freezeWorkflowActionContractV1(actionSpecToActionDefinitionV1(spec));
+  if (!contract) throw new Error('Expected the declared Workflow Action contract');
+  expect(validateExecutionRunProfileResult(strict.data, { kind: 'json',
+    schema: normalizePluginJsonSchema(readWorkflowActionOutputSchemaV1(contract)),
+  })).toMatchObject({ ok: true });
+}
 
 const definition = WorkflowDefinitionV1Schema.parse({ version: 1,
   defaults: { agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } } },
@@ -1933,6 +1951,7 @@ describe('workflow trigger Automation composition', () => {
     expect((await actions.list({ workflow })).sets[0]?.health).toBe('source_unavailable');
     const removed = await actions.remove({ automationId: added.set.automationId, triggerId: added.triggerId! });
     expect(removed.set.triggers).toEqual([]);
+    expectDeclaredActionOutput('workflow.trigger.remove', removed);
     expect(rows.size).toBe(1);
     await actions.removeForWorkflow(workflow);
     expect(rows.size).toBe(0);
@@ -2193,15 +2212,20 @@ describe('workflow trigger Automation composition', () => {
       defaults: { ...definition.defaults, conversation: { kind: 'origin_session' } } });
     const added = await actions.sessionAdd({ sessionId: 'session-one', target: { kind: 'inline', definition: scopedDefinition }, trigger,
       onComplete: { kind: 'originating_session' } });
+    expectDeclaredActionOutput('session.trigger.add', added);
     expect(rows.get(added.set.automationId)).toMatchObject({ scopeSessionId: 'session-one', assignments: [{ machineId: project.machineId }] });
     expect(added.set.context).toMatchObject({ workspace: { directory: project.directory }, onComplete: { kind: 'originating_session' } });
     expect(added.set.destinations).toMatchObject({ targetSessionIds: ['session-one'] });
-    expect((await actions.sessionList({ sessionId: 'session-other' })).sets).toEqual([]);
+    expectDeclaredActionOutput('session.trigger.list', await actions.sessionList({ sessionId: 'session-one' }));
+    const empty = await actions.sessionList({ sessionId: 'session-other' });
+    expect(empty.sets).toEqual([]);
+    expectDeclaredActionOutput('session.trigger.list', empty);
     expect((await actions.list({ scope: 'account_inline' })).sets).toEqual([]);
     const updated = await actions.sessionUpdate({ sessionId: 'session-one', triggerId: added.triggerId!, expectedRevision: added.set.revision,
       patch: { enabled: false } });
     expect(updated.set.triggers[0]?.enabled).toBe(false);
-    await actions.sessionRemove({ sessionId: 'session-one', triggerId: added.triggerId! });
+    expectDeclaredActionOutput('session.trigger.update', updated);
+    expectDeclaredActionOutput('session.trigger.remove', await actions.sessionRemove({ sessionId: 'session-one', triggerId: added.triggerId! }));
     expect((await actions.sessionList({ sessionId: 'session-one' })).sets[0]?.triggers).toEqual([]);
   });
   it('deletes an empty Session trigger set through the Account Action and strict receipt reader', async () => {
@@ -2491,6 +2515,41 @@ describe('workflow trigger Automation composition', () => {
     rows.set(added.set.automationId, { ...rows.get(added.set.automationId)!, scopeSessionId: 'foreign-session' });
     expect(await boundary.execute('session.trigger.remove', { sessionId: 'session-one', triggerId: added.triggerId! }, caller))
       .toMatchObject({ ok: false, errorCode: 'content_unavailable' });
+  });
+  it.each(['builtin', 'artifact', 'unavailable source'] as const)('completes a real firing-trigger detach receipt, including an already detached occurrence: %s', async (source) => {
+    const f = fixture();
+    let firing: { sessionId: string; triggerId: string; automationId: string } | null = null;
+    const actions = createWorkflowTriggerActions({ ...f.deps,
+      resolveSession: async () => ({ project, nativeGoalOwner: false }),
+      resolveRunTrigger: async () => firing,
+    });
+    const added = await actions.sessionAdd({ sessionId: 'session-one',
+      target: { kind: 'workflow', ref: source === 'builtin' ? 'builtin:keep-going' : workflow },
+      trigger: { kind: 'sessionLifecycle', enabled: true, sourceSessionId: 'session-one',
+        events: ['parentTurnCompleted'], policy: { kind: 'everyMatch' } },
+    });
+    if (!added.triggerId) throw new Error('Expected a firing trigger');
+    if (source === 'unavailable source') f.loseSource();
+    firing = { sessionId: 'session-one', triggerId: added.triggerId, automationId: added.set.automationId };
+    const caller = { surface: 'agent' as const, actionCaller: { kind: 'workflowRun' as const, runId: 'run-detach',
+      authorization: { principal: { kind: 'host' as const }, admittedPermissionCeiling: 'read-only' as const } } };
+    const boundary = f.executor(actions);
+    const spec = getActionSpec('session.trigger.remove');
+    for (const _occurrence of ['first', 'coalesced']) {
+      const executed = await boundary.execute(spec.id, { sessionId: firing.sessionId, triggerId: firing.triggerId }, caller);
+      expect(executed).toMatchObject({ ok: true, result: { set: { triggers: [] } } });
+      if (!executed.ok) throw new Error('Expected an accepted detach');
+      expectDeclaredActionOutput(spec.id, executed.result);
+      const receipt = WorkflowTriggerWriteResultV1Schema.parse(executed.result);
+      expect(receipt.set.revision).toBeGreaterThan(added.set.revision);
+      if (source === 'unavailable source') expect(receipt.set.health).toBe('source_unavailable');
+      else {
+        expect(receipt.set).toMatchObject({ health: 'available', target: added.set.target,
+          context: added.set.context, destinations: added.set.destinations });
+        expect(receipt.set.sourceSavedAt).toBe(added.set.sourceSavedAt);
+        expect(receipt.set.sourceSavedBy).toEqual(added.set.sourceSavedBy);
+      }
+    }
   });
   it('consumes session trigger writes directly through the real Action executor without an approval', async () => {
     const { deps, rows } = fixture();
