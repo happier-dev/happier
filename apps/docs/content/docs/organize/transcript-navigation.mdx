@@ -69,6 +69,29 @@ carry an instruction rather than a bare quote. Three placeholders are available:
 A template without `{{MESSAGES}}` is accepted but warned about, since the
 selection would have nowhere to go.
 
+## Quoting and annotating a passage
+
+<Callout type="info">
+  Quote and Annotate are part of 0.3 development builds. They are not a promise
+  of availability in the current stable or preview apps.
+</Callout>
+
+Select part of a completed user or assistant message. In a browser or desktop
+app, choose **Quote** or **Annotate** from the floating selection toolbar. On
+iOS and Android, use the same actions in the text-selection menu for prose.
+
+**Quote** appends the selected passage to this session's draft as ordinary text.
+**Annotate** lets you add a separate note, then attaches it to the composer as
+an editable, removable chip. You can add several annotations to one message.
+Neither action sends anything: use the composer's normal Send action when ready.
+
+The sent message shows the quoted excerpt and note, with **Go to source** to
+open the original message. Thinking, tool output, media-only messages and
+messages that are still streaming do not offer these actions. Read-only history
+also cannot add to a draft. If you are editing a queued message, finish or cancel
+that edit before adding a passage to the ordinary session draft; a refused Add
+keeps your note available to retry.
+
 ## Copying code blocks and tables
 
 Code blocks and tables that are wider than the screen scroll sideways. A code

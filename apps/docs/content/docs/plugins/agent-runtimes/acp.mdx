@@ -85,6 +85,160 @@ tool-name shaping, function-valued extensions, and other executable behavior
 belong in custom ACP composition. Happier still owns session and turn lifecycle,
 input custody, transcript persistence, activity, and terminal process facts.
 
+### In-flight steering
+
+In 0.3 development source, contribute `definition.delivery.steer` to adapt a
+native steering method. The host admits the input against the active turn and
+keeps custody; the plugin only supplies the wire codec:
+
+```ts
+import type { AgentAcpInFlightSteerDefinition } from '@happier-dev/plugin-sdk/agents/runtime';
+
+const steer: AgentAcpInFlightSteerDefinition = {
+  method: 'my-agent/steer',
+  isSupported: caps => caps !== null && typeof caps === 'object'
+    && !Array.isArray(caps) && caps.myAgentSteering === true,
+  buildParams: ({ providerSessionId, inputIds, input }) => ({
+    sessionId: providerSessionId, inputId: inputIds[0], text: input.text,
+  }),
+  isAccepted: response => response === 'absorbed',
+  isRejected: response => response === 'dropped',
+};
+```
+
+Require the native advertised capability in `isSupported`. Return `null` from
+`buildParams` for content the native method cannot represent, before any write.
+`isRejected` is for a definite refusal: the host surfaces it through its existing
+retry/resend contract without ending the running turn. Other unaccepted replies
+or transport failures leave custody unknown; they must not trigger a blind resend.
+Live user-message echoes remain observations, rather than duplicate transcript
+writes. These callbacks require matching development host and SDK source; an
+older host cannot safely ignore their capability or custody decisions.
+
+## Configuration catalogs
+
+In unreleased 0.3 development source, declare `modelConfigOptionId` when your
+Agent has a dedicated model selector. The host uses that exact id for both
+preflight discovery and running Sessions. Categories are optional UX hints;
+multiple options may have category `model`, and their advertised array order
+sets display priority. A Provider selector remains a separate setting that can
+change the model catalog. The observed model's controls appear with that model.
+The optional catalog-root `modelConfigOptionId` carries the resolved selector id
+to clients; absence means unresolved and does not authorize client inference.
+
+The composer preserves the full config catalog, including native ids, category,
+labels, descriptions, flat choices and groups. Initial snapshots, successful
+setter responses and config notifications use the same owner. A full returned
+snapshot replaces previous choices and values, including removed controls;
+failed setters retain the last observed catalog. Select values remain strings
+when the native Agent sends strings, including `"true"` and `"false"`.
+Native model ids are nonblank opaque strings. The development model Action,
+Session selection references and transition coordinator preserve their bytes;
+Provider-connection model ids retain their separate validation rules.
+
+In 0.3 development source, a custom ACP definition can delegate validation of
+explicit unlisted model choices to the native Agent:
+
+```ts
+import type { AgentAcpRuntimeDefinition } from '@happier-dev/plugin-sdk/agents/runtime';
+
+const definition: AgentAcpRuntimeDefinition = {
+  modelConfigOptionId: 'model',
+  allowExplicitUnlistedModels: true,
+};
+```
+
+The host supplies `configuration.model.selectionSource` as `explicit` for a
+qualified user or Action choice and `inherited` for inherited state. Omission
+remains inherited. Only an explicit choice plus this opt-in bypasses catalog
+membership; the native Agent must accept it or return its visible refusal.
+An inherited unlisted startup choice clears to the native default, while an
+already-current model is retained. This does not add a freeform picker or
+another model catalog. It requires matching development host and SDK source.
+
+Custom preflight callbacks forward the draft's `configOptionOverrides` and
+declared model selector id to `probeDeclaredAcpSessionControls`. The host applies
+standalone overrides to its temporary Session before deriving dependent model
+choices. A failed native setter returns the last accepted observations with
+`refreshError` and optional `refreshErrorMessage`; preserve that guidance rather
+than presenting the requested value as accepted.
+An accepted model snapshot, including an empty catalog, survives a later setter
+failure instead of being replaced by an older cached catalog for that scope.
+
+Custom Session runtimes can publish the same observation through their existing
+event stream. For example, this event advertises a native configuration choice:
+
+```ts
+import type { AgentSessionRuntimeEvent } from '@happier-dev/plugin-sdk/agents/runtime';
+
+const catalog: AgentSessionRuntimeEvent = {
+  kind: 'config-options',
+  sequence: 1,
+  sessionId: 'host-session-id',
+  emittedAtMs: Date.now(),
+  configOptions: [{
+    id: 'reasoning', name: 'Reasoning effort', category: 'thought_level',
+    type: 'select', currentValue: 'high',
+    options: [{ value: 'high', name: 'High' }, { value: 'low', name: 'Low' }],
+  }],
+};
+```
+
+Use the opened host Session id and your runtime's ordered event sequence when
+publishing. The event has no turn id and grants no mutation authority. Its
+envelope, options, choices and groups reject undeclared fields. This new event
+requires matching development host and SDK source; it does not promise support
+from an older SDK binary.
+
+## Native update metadata
+
+In 0.3 development source, custom ACP composition can supply a thin
+`sessionUpdates.project` codec in its runtime definition. Decode only your
+Agent's extension namespace. Leave standard session titles and tool names to
+the host, which preserves an existing Session title and retains tool identity
+across partial updates.
+
+```ts
+import type { AgentAcpRuntimeDefinition } from '@happier-dev/plugin-sdk/agents/runtime';
+
+function record(value: unknown): Readonly<Record<string, unknown>> | null {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    ? value as Readonly<Record<string, unknown>> : null;
+}
+
+const sessionUpdates: NonNullable<AgentAcpRuntimeDefinition['sessionUpdates']> = {
+  project(update) {
+    const input = record(update);
+    const native = record(record(input?._meta)?.myAgent);
+    if (!input || !native) return null;
+    if (input.sessionUpdate === 'tool_call'
+      && typeof native.server === 'string' && typeof native.tool === 'string') {
+      return { toolMetadata: { mcp: { server: native.server, tool: native.tool } } };
+    }
+    if (input.sessionUpdate === 'session_info_update' && native.retrying === true) {
+      return { diagnostic: { code: 'provider_retry', severity: 'info',
+        message: 'The model provider is retrying this response.' } };
+    }
+    return null;
+  },
+};
+// Pass sessionUpdates in the definition supplied to context.protocols.acp.open.
+```
+
+The host merges tool provenance through its existing accumulator and publishes
+diagnostics through the Session's informational event owner. A diagnostic
+does not complete, pause, or retry a turn. Keep retries with their existing
+Agent or host owner, and do not filter ordinary assistant chunks using text
+heuristics. This optional executable contract requires the matching development
+host; it is separate from the ACP wire epoch and a declarative manifest's
+data-only definition.
+
+If your Agent temporarily emits a nonstandard prompt stop reason, the same
+codec object can implement `projectStopReason(raw)`. Return an equivalent ACP
+v1 value, or `null` when there is no equivalent. Unknown reasons end safely with
+the raw value in diagnostics and an unclassified outcome; do not guess success
+or failure from a vendor string.
+
 If the custom Agent also supports execution-runs, no second registration is
 needed: a session-capable Agent's finite Execution Runs are host-derived from
 its registered `sessions` factory, and `AgentRuntime` never carries both

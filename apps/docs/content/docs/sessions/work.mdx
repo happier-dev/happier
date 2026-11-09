@@ -60,8 +60,9 @@ Use **Edit notes** in **Notes**, change the text, and **Save**.
 Cancel retains the previous notes. Notes supplement the role instructions;
 they are not another chat message. Workers copy them when they start.
 
-The **Goal** row opens the session goal control. **Triggers** owns this
-session's automatic workflow habits and their history; its own trigger runs
+The **Goal** row opens the session goal control. In unreleased 0.3 source,
+**Habits** on the Session's **Info** page owns its automatic workflows and
+their history; its own trigger runs
 are not duplicated among unrelated workflow work. See
 [Workflows and automations](/extras/automations) for execution and review rules.
 
@@ -98,6 +99,16 @@ List/Map selection and peek placement are client presentation, not a second
 execution Action. Use the [host Action reference](/plugins/api/host-actions)
 for exact input, approval and surface contracts. A run wait timing out means
 observation ended, not that the run failed or stopped.
+
+In matching 0.3 development components, recover a failed resumable bounded run
+with `session.message.send`: select its exact Run recipient, supply a fresh
+`localId` and message, and set
+`requestedAction: { v: 2, kind: 'recover_execution_run' }`. Ordinary input does
+not resume failed work. Recovery keeps the retained native conversation; a
+missing checkpoint is refused. An older daemon returns
+`session_input_target_update_required` for this operation. Waiting observes
+the new input's completed turn, rather than treating recovery admission as
+completion.
 
 ## Related
 

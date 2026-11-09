@@ -46,6 +46,15 @@ Before a session starts, Happier can run `grok models` through its bounded Agent
 
 When an advertised model supports reasoning effort, the engine picker shows that model's provider-advertised choices, such as **Low**, **Medium**, and **High**. Model and effort changes remain provider-authoritative: Happier accepts only advertised effort values and updates the selected state only after Grok acknowledges the exact model.
 
+## Other model Providers
+
+Grok's [native custom models](https://github.com/xai-org/grok-build/blob/main/crates/codegen/xai-grok-pager/docs/user-guide/11-custom-models.md)
+can use other inference endpoints. Happier does not yet bind its Provider
+connections to Grok Sessions: Grok's saved endpoint and per-model configuration
+can override the process environment, including the destination, protocol, and
+credential. Configure custom models through Grok itself and use the model it
+advertises over ACP.
+
 ## Questions, permissions, and tools
 
 - Grok structured questions use Happier's native question UI. Zero-option questions accept freeform text; additional freeform text is translated to Grok's `Other` answer and notes annotation without flattening commas or newlines.

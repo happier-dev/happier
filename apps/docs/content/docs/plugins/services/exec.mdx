@@ -1,9 +1,9 @@
 ---
 title: Exec service
-description: Launch declared processes and protocol clients through the binary-safe host runtime.
+description: Launch processes and protocol clients through the binary-safe host runtime.
 ---
 
-Use `context.services.exec` to resolve system tools, check Agent CLI readiness, run or spawn declared executables, and create supported protocol clients.
+Use `context.services.exec` to resolve system tools, check Agent CLI readiness, run or spawn executables, and create supported protocol clients.
 
 Happier ships binary installers and must work without a system Node.js runtime or package manager. The exec service centralizes managed executable resolution, bounded output, cancellation, lifecycle, and binary-safe platform behavior.
 
@@ -53,8 +53,155 @@ that containers were removed.
 
 ## Rules
 
-- Reference declared managed executables; do not construct ambient executable paths.
+- Use managed-executable and system-tool references rather than constructing ambient executable paths.
 - Never spawn raw Node.js or package-manager commands from shipped plugin runtime paths.
 - Bound captured output and do not log secrets or raw credential-bearing command lines.
 - Honor abort signals and dispose process or protocol-client handles with their owning runtime.
 - Treat `wait()` as observed process evidence; do not publish host-owned terminal session state directly.
+
+In unreleased 0.3 development source, process and environment declarations are
+installation disclosures. Exec inherits the supplied host environment and does
+not enforce per-plugin environment-key or system-tool argument allowlists.
+Machine-native system-tool execution still uses the host's requester admission,
+execution placement and Agent isolation policy.
+
+Plugins are trusted, unsandboxed code. Exec's host-owned identity and Workspace
+checks protect execution for the admitted requester; they do not sandbox a
+plugin. A working directory or caller-selected path does not grant Workspace
+access. Preserve the admitted invocation and use the host-provided executable
+and launch context rather than selecting an operating-system user yourself.
+Unsupported isolated execution returns a typed refusal before launch; it does
+not fall back to the daemon's user. Per-member Linux isolation is still being
+integrated, and Windows/macOS isolation is unavailable in this implementation.
+See [Machine sharing and its current limits](/accounts/session-sharing).
+
+## Deployment environment custody (0.3 development source)
+
+In unreleased 0.3 source, an own-server deployment that cannot resolve Docker
+returns `plugin_exec_system_tool_unavailable` with a typed Docker remedy. Install
+Docker Engine with Compose on the selected Machine, make `docker` available on
+the daemon PATH and allow the daemon user to access Docker. This refusal reports
+a missing executable; Engine access and Compose-version failures are separate.
+
+Caddy setup also distinguishes an invalid elevated-helper response, an
+unavailable or unsupported prerequisite, and a failed native effect. Repair or
+update the Machine's managed Happier CLI for an invalid helper response; use
+the Machine's setup diagnostics to resolve prerequisite or effect failures.
+These failures do not by themselves mean that Admin Access is missing. An
+uncertain effect remains an unknown outcome rather than a confirmed refusal.
+
+The built-in own-server host composes a `DeploymentExecEnvPortV1` alongside
+its source and Exec ports. The public facade also supports admitted operational
+adapters; external deployment-target context integration remains under
+development. Prepare the phase that the host admitted, then pass the resulting
+attachment as `deploymentEnv` on an Exec request. The attachment exposes
+disposal; the host retains the selected inputs.
+
+The matching `DeploymentSourceMaterializationPortV1.materialize` accepts only
+the admitted Environment/Deployment ids and an optional reviewed manifest
+fingerprint. The host chooses the exact repository commit or stored Compose
+revision and digest, and the contained release destination. A stored definition
+uses the same manifest/blob materializer without a repository lookup or synthetic
+commit. Its digest covers the uninterpolated document. Inline `configs.content`
+is preserved and requires [Docker Compose 2.23.1 or later](https://docs.docker.com/reference/compose-file/configs/);
+an older or unrecognized tool version refuses that feature before native rendering.
+Relative host binds, build contexts, includes, `extends`,
+`env_file`, `label_file`, and file-backed configs or secrets require moving the
+definition to a repository. Create and update check that same source policy
+before writing prepared content. This is development-source behavior, not
+released availability.
+
+The returned source handle has no requester or Workspace authority.
+Call `assertCurrent()` before execution. `abort()` removes only its uncommitted
+staging; `commit()` settles that custody without depending on caller cancellation,
+so cancellation after activation cannot remove a serving release.
+After commit, `assertCurrent()` checks the retained release's physical custody;
+logs and controls are authorized separately for their current caller by the
+managed-service owner, without retaining the original deployer's approval.
+
+```ts
+const deploymentEnv = await execEnv.prepare(
+  { source, phase: 'runtime' },
+  { signal },
+);
+try {
+  const result = await exec.run(
+    { executable, args, cwd: source.rootPath, deploymentEnv },
+    { signal },
+  );
+  // Process capture and live output redact the delivered secret values.
+  return result;
+} finally {
+  await deploymentEnv.dispose();
+}
+```
+
+Each phase attachment belongs to one source and invocation and can be consumed
+once. Trusted plugin code chooses its Exec service and launch directory and may
+add environment values; admitted binding values retain precedence. Application
+bindings remain separate from sanctioned Docker/Compose controls and reach only
+their selected services. The host rechecks source and binding authority before dispatch; stale,
+cancelled or foreign attachments refuse before a process starts. Build and
+runtime inputs are prepared separately, including when they run on one Machine.
+
+An operational adapter requests its exact binding identity instead of fabricating
+a repository source or variable phase. Use the canonical identity producer;
+the identity carries no secret value and grants no authority by itself:
+
+```ts
+import { environmentSecretBindingIdentityV1 } from '@happier-dev/deployment-protocol';
+
+const deploymentEnv = await execEnv.prepare(
+  { bindingIdentity: environmentSecretBindingIdentityV1(binding) },
+  { signal },
+);
+try {
+  return await exec.run({ executable, args, deploymentEnv }, { signal });
+} finally {
+  await deploymentEnv.dispose();
+}
+```
+
+The host compares the identity with the operation's admitted current binding and
+delivers only its registry, backup, Domain or data-role slot through the adapter's
+protected file, standard input or process environment. A different slot or retired
+invocation refuses before materialization. Platform `uploadDeploy` is a
+source-only role in the deployment contract: it takes no exec-environment
+attachment; provider variables use the HTTP env-sync path. Its role-dispatch
+integration remains under development.
+
+An admitted S3 backup adapter can select the current destination's complete role
+group through that same port:
+
+```ts
+const deploymentEnv = await execEnv.prepare(
+  { backupDestination: { configKey: 'destination' } },
+  { signal },
+);
+try {
+  // Reuse deploymentEnv for this job's config, snapshots and tree commands.
+  for (const args of metadataCommands) {
+    await exec.run({ executable, args, deploymentEnv }, { signal });
+  }
+} finally {
+  deploymentEnv.dispose();
+}
+```
+
+Use the backup/restore job's signal and retain the same attachment until that job
+ends; commands do not prepare credentials again. Disposal or job cancellation
+refuses further use immediately. Protected files remain until an active command
+settles, then are removed; an idle job releases them immediately. Source-backed
+and single-binding operational attachments remain single-use. The host selects
+the exact `repositoryPassword`, `accessKeyId`, `secretAccessKey`, and optional
+`sessionToken` bindings. It keeps the repository password in an operation-private
+protected file and supplies only the restic password-file path and standard AWS
+process environment slots. The attachment exposes no role values or file contents;
+these credentials never become application runtime variables. Native backup
+configuration/execution integration remains under development.
+
+For Compose, the managed generation retains its secret sanitizer after detached
+`up` exits. Ordinary values such as ports and commit identifiers stay readable.
+Redaction protects Happier output; Docker administrators can still read container
+environment values. This contract is development source and is not released
+availability.

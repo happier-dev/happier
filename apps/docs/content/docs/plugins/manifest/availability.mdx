@@ -21,8 +21,8 @@ This reference describes 0.3 development source. It does not establish released
 availability or verify a loaded runtime.
 
 At the time this page was generated: **65 of 65 contribution families**,
-**23 of 23 services**, **10 of 13 host-access capabilities**
-and **55 of 55 SDK entrypoints** are implemented.
+**24 of 24 services**, **10 of 13 host-access capabilities**
+and **53 of 53 SDK entrypoints** are implemented.
 
 ## Contribution families available in Developer Preview
 
@@ -34,24 +34,24 @@ and **55 of 55 SDK entrypoints** are implemented.
 | `accountCollections` | `available` | `accountCollections` | `.` | any |
 | `actions` | `available` | `actions` | `.` | any |
 | `agents` | `available` | `agents` | `.` | any |
-| `atmospherePictures` | `available` | `atmospherePictures` | `.` | any |
+| `atmospherePictures` | `preview` | `atmospherePictures` | `.` | any |
 | `backgroundServices` | `available` | `backgroundServices` | `.` | any |
+| `backupDestinations` | `available` | `backupDestinations` | `.` | any |
 | `browserActions` | `available` | `browserActions` | `.` | any |
 | `browserTargets` | `available` | `browserTargets` | `.` | any |
-| `captureSources` | `available` | `captureSources` | `.` | any |
-| `commands` | `available` | `commands` | `.` | any |
+| `captureSources` | `preview` | `captureSources` | `.` | any |
 | `composerAttachments` | `available` | `composer` | `.` | any |
 | `composerControls` | `available` | `composer` | `.` | any |
 | `composerReferences` | `available` | `composer` | `.` | any |
 | `composerRegions` | `available` | `composer` | `.` | any |
 | `connectedAccountDescriptors` | `available` | `connectedAccountDescriptors` | `.` | any |
-| `daemonDatabases` | `available` | `daemonDatabases` | `.` | any |
-| `deploymentTargets` | `available` | `deploymentTargets` | `.` | any |
+| `daemonDatabases` | `preview` | `daemonDatabases` | `.` | any |
+| `deploymentTargets` | `preview` | `deploymentTargets` | `.` | any |
 | `dragSources` | `available` | `dragSources` | `.` | any |
 | `dropTargets` | `available` | `dropTargets` | `.` | any |
 | `events` | `available` | `events` | `.` | any |
 | `executionRunProfiles` | `available` | `executionRunProfiles` | `.` | any |
-| `healthCheckKinds` | `available` | `healthCheckKinds` | `.` | any |
+| `healthCheckKinds` | `preview` | `healthCheckKinds` | `.` | any |
 | `hooks` | `available` | `hooks` | `.` | any |
 | `inputTypes` | `available` | `inputTypes` | `.` | any |
 | `languageServers` | `available` | `languageServers` | `.` | any |
@@ -60,10 +60,10 @@ and **55 of 55 SDK entrypoints** are implemented.
 | `machineSetupPresets` | `available` | `machineSetupPresets` | `.` | any |
 | `managedDependencies` | `available` | `managedDependencies` | `.` | any |
 | `mcp.discoverySources` | `available` | `mcp` | `.` | any |
-| `mcp.servers` | `available` | `mcp` | `.` | any |
-| `notificationChannels` | `available` | `notificationChannels` | `.` | any |
+| `mcp.servers` | `preview` | `mcp` | `.` | any |
+| `notificationChannels` | `preview` | `notificationChannels` | `.` | any |
 | `notifications` | `available` | `notifications` | `.` | any |
-| `openableContentViewers` | `available` | `openableContentViewers` | `.` | any |
+| `openableContentViewers` | `preview` | `openableContentViewers` | `.` | any |
 | `pluginContributionPoints` | `available` | `contributionPoints` | `.` | any |
 | `projectNativeAdapters` | `available` | `projectNativeAdapters` | `.` | any |
 | `promptAssets` | `available` | `promptAssets` | `.` | any |
@@ -80,21 +80,21 @@ and **55 of 55 SDK entrypoints** are implemented.
 | `sessionInfoSections` | `available` | `sessionInfoSections` | `.` | any |
 | `settings` | `available` | `settings` | `.` | any |
 | `settings.fields` | `available` | `settings` | `.` | any |
-| `skills` | `available` | `skills` | `.` | any |
+| `skills` | `preview` | `skills` | `.` | any |
 | `systemTools` | `available` | `systemTools` | `.` | any |
 | `targetedPluginContributions` | `available` | `contributesTo` | `.` | any |
-| `tools` | `available` | `tools` | `.` | any |
 | `transcriptActivities` | `available` | `transcriptActivities` | `.` | any |
+| `ui.listExtensions` | `available` | `ui` | `.` | any |
 | `ui.renderers` | `available` | `ui` | `.` | any |
 | `ui.settingsGroups` | `available` | `ui` | `.` | any |
 | `ui.settingsPages` | `available` | `ui` | `.` | any |
 | `ui.translations` | `available` | `ui` | `.` | any |
 | `ui.views` | `available` | `ui` | `.` | any |
-| `voiceModelPacks` | `available` | `voiceModelPacks` | `.` | any |
+| `voiceModelPacks` | `preview` | `voiceModelPacks` | `.` | any |
 | `voiceProviders` | `available` | `voiceProviders` | `.` | any |
 | `webhooks` | `available` | `webhooks` | `.` | any |
-| `workflows` | `available` | `workflows` | `.` | any |
-| `workItems` | `available` | `workItems` | `.` | any |
+| `workflows` | `preview` | `workflows` | `.` | any |
+| `workItems` | `preview` | `workItems` | `.` | any |
 
 ## Contribution families that are deferred
 
@@ -110,6 +110,7 @@ Reached through `context.services` inside a plugin invocation.
 | `context.services.backgroundServices` | `available` | `BackgroundServicesService` | `./background-services` | invocation-scoped |
 | `context.services.composerContent` | `available` | `ComposerContentService` | `.` | invocation-scoped |
 | `context.services.connectedAccounts` | `available` | `ConnectedAccountsService` | `./connected-accounts` | invocation-scoped |
+| `context.services.deploymentSource` | `preview` | `DeploymentSourceMaterializationPortV1` | `.` | invocation-scoped |
 | `context.services.events` | `available` | `EventsService` | `./events` | invocation-scoped |
 | `context.services.exec` | `available` | `ExecService` | `./exec` | invocation-scoped |
 | `context.services.fs` | `available` | `FileSystemService` | `./fs` | invocation-scoped |
@@ -182,16 +183,14 @@ names suggest.
 | `./events` | `available` | any |
 | `./exec` | `available` | daemon |
 | `./exec/protocol-clients` | `available` | any |
-| `./first-party/claude` | `available` | any |
-| `./first-party/connected-accounts` | `available` | any |
 | `./fs` | `available` | daemon |
 | `./hooks` | `available` | daemon |
 | `./http` | `available` | any |
 | `./interactions` | `available` | any |
 | `./machine-provisioners` | `available` | any |
 | `./machine-provisioners/lima` | `available` | daemon |
-| `./machine-provisioners/ssh` | `available` | daemon |
-| `./managed-services` | `available` | any |
+| `./machine-provisioners/ssh` | `available` | any |
+| `./managed-services` | `available` | daemon |
 | `./managed-services/native` | `available` | daemon |
 | `./manifest` | `available` | any |
 | `./mcp` | `available` | daemon |

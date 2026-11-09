@@ -36,8 +36,10 @@ them.
 ## Account key-value storage
 
 `storage.account` is optional on the service bag because Account Data can be
-unavailable or not admitted. If the plugin cannot proceed without it, declare
-`storage.account` HostAccess and use `requireAccountStorage(...)` from
+unavailable or not admitted. In unreleased 0.3 development source,
+`storage.account` HostAccess is installation-consent metadata, not a service
+availability gate; the Account owner retains authorization and encryption-mode
+checks. If the plugin cannot proceed without it, use `requireAccountStorage(...)` from
 `@happier-dev/plugin-sdk/storage` at the call site so malformed direct
 invocations fail closed.
 

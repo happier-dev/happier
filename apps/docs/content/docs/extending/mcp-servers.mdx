@@ -21,7 +21,22 @@ Open **Settings → MCP servers**, then use **+**. The development add flow offe
 
 Manual configuration supports a **Local command** (`stdio`), **Remote HTTP** (Streamable HTTP), or **Remote SSE**. A local command has arguments, environment values and an optional working directory. Remote configuration has a URL and optional headers. Per-machine differences can override configuration without changing which places enable the server.
 
+A local command uses the executable you configure, including a specific
+executable path. Happier keeps its arguments and environment values; its working
+directory follows your server setting, or uses the Session directory for a package
+runner without that setting. Install the command and its prerequisites
+on the machine that will run it. Happier does not replace a configured package
+runner or retry execution errors through another runner.
+
 To adjust a copy, choose **Duplicate** from a saved server's menu. Happier opens the new server with a unique name and the same configuration. Its reach starts at Everywhere, and an OAuth server needs its own sign-in.
+
+### Cloudflare remote servers
+
+In 0.3 development, the existing create Action offers four individually selectable suggestions: **Cloudflare API**, **Cloudflare Docs**, **Cloudflare Browser Run** and **Cloudflare Containers**. Agents can read the same choices with `action.options.resolve` using `actionId: "mcp.servers.create"` and `fieldPath: "suggestionId"`, then create just the selected entry with its returned id and chosen reach. Browsing suggestions does not contact Cloudflare or grant access.
+
+The suggestions use Cloudflare's [current Streamable HTTP endpoints](https://developers.cloudflare.com/agents/model-context-protocol/cloudflare/servers-for-cloudflare/). Docs is [public](https://developers.cloudflare.com/agents/model-context-protocol/guides/connect-mcp-client/); the other three retain OAuth intent and use the existing **Sign in** flow after saving. Adding a configuration does not start browser consent, create Cloudflare resources or reuse a deployment or inference credential.
+
+Review permissions in Cloudflare's consent screen. API Code Mode execution can change resources; keep tool approval at **Ask** unless you deliberately choose otherwise. Browser Run and Containers tools can create resources or incur charges. A Containers MCP entry supplies remote tools, not a Happier machine.
 
 ### Paste a config
 
@@ -43,11 +58,18 @@ A bare `url` defaults to **Streamable HTTP**. An explicit `type: "sse"` or `tran
 
 Resolve each imported value to a Saved Secret, a machine environment reference or a nonsensitive literal. Importing does not silently discard credentials. Review any unsupported-field warnings and the resulting server definition.
 
+For an HTTP server that requires OAuth, put `"auth": { "kind": "oauth" }` beside its `url` in the imported definition. The preview and saved row retain the sign-in requirement, and sharing or reimporting its install link keeps that intent. The link carries no tokens, app registrations or existing grants. Omit `auth` for a public server such as Cloudflare Docs. Invalid or credential-bearing auth objects, and OAuth intent on imported stdio or SSE definitions, are refused.
+
 ### Found on your machines
 
 The **Found on your machines** view reads definitions from Agent-native configuration on the selected machine and directory. Detection is read-only; add a definition to make it Happier-managed. Discovery does not prove an Agent loads it in a Happier Session. In particular, Codex's native definitions are not included as loaded native servers in Happier-session preview.
 
 Sources belong to their declaring Agent, including plugin-contributed Agents. An unavailable scan reports its failure; offline last-known information is dated. Bring the machine online to retrieve current configuration.
+
+Adding a found definition asks for any required values and uses that exact
+machine and Agent. If the machine goes offline while you are filling them in,
+your answers stay in the open form and Add becomes unavailable. Reconnect it,
+then explicitly retry. Adoption leaves the Agent's original configuration alone.
 
 ## Where it's on
 
@@ -57,9 +79,37 @@ Agent exceptions apply across places unless a rule for that same Agent overrides
 
 Servers declared by a plugin use the same reach rules and Session selection. The built-in **happier** tool server keeps its own [Actions settings](/extending/happier-tools).
 
+## Select Session tools from the CLI
+
+`happier session create --mcp-selection-json <json>` accepts a selection object.
+For example, omit saved MCP defaults and built-in Happier tools for this Session:
+
+```bash
+happier session create --mcp-selection-json '{"v":1,"managedServersEnabled":false,"happierToolsEnabled":false}'
+```
+
+All fields are optional. The version defaults to `1`, managed defaults and
+built-in Happier tools default to enabled, and `forceIncludeServerIds` and
+`forceExcludeServerIds` default to empty arrays. These arrays contain saved server
+IDs; exclusion wins over inclusion. An explicit include still selects a server
+when managed defaults are disabled. Unknown fields such as `{"servers":[]}` and
+values that are not objects are rejected.
+
+`managedServersEnabled` controls saved server defaults independently from
+`happierToolsEnabled`. The latter omits built-in native MCP tools, native extension
+tools, and their prompt guidance. User-selected custom MCP servers remain
+independent, including explicit discovery through the Session bridge. Changes to
+the built-in policy take effect on the next Session start or restart.
+
+This is **unreleased development behavior** and requires an updated CLI and the
+updated daemon on the target machine. Older runners ignore the opt-out. It
+controls delivered tools, rather than the Agent's native tools, filesystem,
+network or permission to invoke an installed CLI. Run
+`happier session create --help` for your installed CLI's accepted fields.
+
 ## Sign in to a remote server
 
-For a server configured for OAuth, choose **Sign in** on its detail. Happier starts an Account-owned attempt through a connected daemon. Complete authorization in the browser, use the phone handoff, or paste the **full callback URL** into the fallback form, including its `state` and any `iss` value.
+For a server configured for OAuth, choose **Sign in** on its detail to start an Account-owned attempt through a connected daemon. The collection's **Needs sign-in** fix opens that same saved-server detail; it does not start authorization automatically. Complete authorization in the browser, use the phone handoff, or paste the **full callback URL** into the fallback form, including its `state` and any `iss` value.
 
 The stable client metadata URL is
 `https://app.happier.dev/oauth/mcp/client-metadata.json`, and its callback is
@@ -68,6 +118,10 @@ The stable client metadata URL is
 Sign-in requires HTTPS for the resource and its authorization discovery, registration, browser and token endpoints, including localhost. Happier requires PKCE S256 and uses client metadata when the service supports it, otherwise a saved app registration or dynamic registration. Pasting a callback completes an existing attempt, rather than bypassing registration.
 
 The grant belongs to your Account's Connected Accounts, not a separate machine token store. Storage follows the [Account encryption mode](/security/encryption). A scope challenge shows **Needs more access**; reconnect explicitly to approve the combined scopes. Signing out asks for confirmation. Another origin cannot complete the attempt, and an issuer mismatch is refused before token exchange.
+
+Hiding the sign-in page or putting the app in the background does not extend the
+authorization link's expiry. Returning shows the time still remaining, or the
+expired state if its deadline passed.
 
 For SSE, an advertised message endpoint may use another path on the initial server's origin. An endpoint on another origin is refused; the token remains bound to the original resource.
 
@@ -105,7 +159,34 @@ The detail names Agents where **Tool settings don't apply to &lt;Agent&gt;**. Ha
 
 Testing resolves configuration and values, starts or connects to the server, and reads its tool inventory. Development remote tests read every tool page and retain the server's identity, version and instructions. The detail reports current machine results and dates any last-known state.
 
+On a shared Machine, testing a **Local command** executes third-party code,
+including when testing an unsaved configuration. Saved-server selection must use
+the requester's configuration and selected credentials; choosing a Machine is
+not permission to borrow its owner's catalog or credentials. The same execution
+boundary applies to ordinary Session stdio servers and custom MCP tools.
+
+These shared-Machine protections are incomplete, unreleased 0.3 development
+work. Unsupported requester identity, launch or custody paths must refuse before
+starting the command; a refusal is not proof that a usable isolated transport is
+ready. Separate Linux member users and requester-private MCP material are being
+integrated; their end-to-end launch and cleanup are not yet verified. The first
+isolation step shares one Agent operating-system user among
+members and the owner's isolated Agent, so selected MCP credentials and readable
+Session context are not private from those peers. The Machine owner can inspect
+material delivered there even after members receive separate users. See
+[shared-machine trust](/accounts/session-sharing).
+
+The MCP home reuses already-held Test results, sign-in state and Saved Secret
+availability to identify items that need attention. Opening the home does not
+run Test or scan all machines. Open the affected server for its fix; a changed
+configuration needs a new Test rather than borrowing an earlier result.
+
 If Test fails, check the executable and working directory for a local server, the URL and chosen transport for a remote server, its sign-in or Saved Secret bindings, and the target machine's environment. Testing from one machine does not establish readiness on another.
+
+For a missing local command, install the configured tool on the selected machine,
+make it available in the daemon's environment, or configure its executable path,
+then test again. Happier's managed package installers do not replace the command
+in your MCP configuration.
 
 **Strict mode**, under **Settings → Sessions**, refuses startup when an enabled effective server cannot be resolved or started. With strict mode Off, optional server failures can let the Session continue with healthy servers and a visible capability notice. Read that notice before assuming all tools are available.
 

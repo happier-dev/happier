@@ -21,7 +21,10 @@ asking you to guess from a list of executable names.
 The machine must be connected to your Home, its daemon must be answering, and
 your Account must have access to it. The machine's custodian—the Account that
 manages it—can see all Happier-owned work. A person using a shared machine sees
-their own work, with other Accounts' work represented only by a count.
+their own work, with other Accounts' work represented only by a count. Environment
+deployment processes are a separate read boundary: even the custodian needs current
+read access to that Environment in its Home. An Environment deployment is not
+assigned to a fabricated requester Account.
 
 ## Find the work using resources
 
@@ -65,6 +68,13 @@ cannot be read or its holder has ended. macOS has no equivalent fence: parent
 chains and inherited markers can prove ownership, while detached work that
 clears its marker may be only Likely—or remain unattributed.
 
+For admitted native Compose services, the development Linux runtime can join a
+full container identity to its processes using a matching cgroup-v2 fence. Detail
+ancestry stops at that fence. A container PID alone is not proof: Docker Desktop's
+VM, a remote engine, unreadable containment or an unsupported cgroup layout may
+leave host-process attribution unavailable. Service-level resource observations
+do not imply that inspectable host process rows are available.
+
 A process carrying only a shared Happier daemon marker can be Proven work under
 **Happier** without being Left behind. The marker alone does not prove that its
 spawner ended, and does not authorize an automatic sweep of similarly tagged
@@ -78,8 +88,8 @@ processes after its runner exits; possible survivors can enter the Left behind
 flow. A session stopped from Processes can wake on your next message under your
 automatic-resume setting. Resource Stops from widgets, Guard, Storage holder
 cleanup and the machine's Runs section use the same behavior. **Stop session**
-from session Info and CLI Stop instead keep the session held until you explicitly
-resume it; a resource Stop does not clear an existing hold. **Start again** can restart
+from session Info and CLI Stop instead keep the session from starting again on its own
+until you resume it or a message is sent to it (from you, an agent or an automation); a resource Stop does not clear an existing hold. **Start again** can restart
 supported service or browser work; it is not a way to relaunch every arbitrary
 process.
 
@@ -126,8 +136,12 @@ setting. Turning it on there does not turn it on for your other machines.
 
 Unrelated apps are grouped by app or executable name. Their command lines,
 working folders and environment are never sent to the app. Processes belonging
-to a different operating-system user are shown only as an aggregate count,
+to a different operating-system user are normally shown only as an aggregate count,
 resource totals and available user names or identities—not as inspectable or killable rows.
+The exception is a process inside an admitted native container's proven fence:
+current Environment read access can reveal its process name and resources even
+when the container uses another OS user. This does not open other users' command
+lines, working folders or environment, or unrelated host-process details.
 Home Account access and operating-system process ownership are separate checks.
 
 Even with All processes enabled, Happier can kill unrelated work only as one

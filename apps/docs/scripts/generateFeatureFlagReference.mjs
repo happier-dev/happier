@@ -174,6 +174,12 @@ find the row, that switch is almost always why.
 A toggle only offers what the server already allows. Turning something on
 locally cannot enable a feature the server has not advertised.
 
+In 0.3 development, Account toggles control presentation and new work. Turning
+one off does not cancel work already started or delete saved data. Deployments
+and Bots default on; their new-work Actions follow the same decision. Existing
+Bots remain readable and deletable, and deployment receipts, cancellation,
+unlinking and teardown remain available for recovery.
+
 ## Features the server decides
 
 These have no user-facing switch. A self-hoster sets them through the

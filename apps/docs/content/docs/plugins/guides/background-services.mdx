@@ -81,9 +81,49 @@ no polling loop or guessed idle delay.
 
 ## Observe a checkpointed Event source
 
-The unreleased 0.3 development SDK supplies the observation lifecycle through
-`runCheckpointedPluginEventObserverV1` from the daemon-only
-`@happier-dev/plugin-sdk/background-services` entrypoint.
+The unreleased 0.3 development SDK supplies one observation lifecycle through
+`runCheckpointedPluginEventObserverV1`. Import it and
+`PluginCheckpointedEventSourceAdapterV1` from the daemon-only
+`@happier-dev/plugin-sdk/background-services` entrypoint. Keep strict Event and
+source-setup declarations in the [Event authoring contract](/plugins/api/events).
+
+```ts
+import { runCheckpointedPluginEventObserverV1 } from
+  '@happier-dev/plugin-sdk/background-services';
+import { issueSource } from './issueSource.js';
+
+// Inside the plugin's existing definePlugin declaration:
+backgroundServices: [{
+  declaration: { id: 'observe-issues', title: 'Observe issues' },
+  runner: context => runCheckpointedPluginEventObserverV1({
+    context,
+    source: issueSource,
+  }),
+}],
+```
+
+The source adapter decodes admitted configuration, performs one finite scan
+with its existing client and pagination, and returns observations, an optional
+candidate checkpoint, completeness and the next eligible time. Its save port
+keeps the existing provider cursor format and compare-and-swap storage.
+Eligibility comes from provider retry headers or a deliberate source period;
+the SDK adds no polling default. A handled provider failure may return the
+existing source-status `state` and `code` with that eligibility.
+
+The runner uses its own host-stamped `context.materialization` to admit the
+source assignment once for each finite cycle. An absent or mismatched value leaves observation
+unavailable. Caller materialization describes a different invocation and cannot
+replace this stamp. The runner shares one native-source cycle across Event
+declarations and subscribers and owns the interruptible wake, invalidation,
+cancellation and checkpoint-safe admission decision. Empty scans create no
+user work; a healthy empty catalog waits for an authenticated invalidation with
+no timer or provider request.
+
+An authenticated provider wake may reconcile early. Its provider request owner
+must still honor any vendor rate-header not-before deadline; the migrated
+GitHub client enforces that gate before HTTP. Sources without such ingress,
+including the Sentry and PostHog pull adapters, keep their unchanged source's
+eligibility across catalog invalidations.
 
 The runner confirms definitions on adoption, definition changes and reconnect
 or gap recovery. Provider wakes and eligibility deadlines use the already
@@ -91,6 +131,74 @@ adopted catalog. Credential or Settings wakes still let unavailable sources
 recover, without rereading definitions or shortening a numeric provider
 deadline. The host marks these wakes with `definitionsChanged: false`; plugin
 adapters do not need their own catalog cache or refresh timer.
+
+Return a candidate only when useful state changed. The runner calls `save`
+only after every returned occurrence is checkpoint-safe. During an admitted
+cycle, honor `context.signal`; `isCurrent()` reports that local cancellation
+state without rereading the catalog. Source or assignment edits apply at the
+next cycle. Server Event admission and cursor CAS retain their own checks.
+Keep provider failures, incomplete
+pages and an unsettled admission from fabricating recovery.
+
+Safe to checkpoint does not mean execution was admitted. The same save input
+includes `disposition.admissions`: the exact server result for each observation,
+definition selector and transport scope. A filtered or outside-freshness Event
+can safely save cursor or notice facts without starting work. For an
+admitted-only effect, match that observation's identity and current definition
+and require `result.kind` to be `admitted` or `rejoined`. Missing metadata,
+all-skipped results or an unsettled attempt never authorizes the effect.
+
+When a provider already observes through an Account-bound target Action,
+`processCheckpointedPluginEventAttemptV1` supplies the same finite admission
+and commit decision inside that Action's existing custody. It does not start a
+second observer; its commit callback receives the same final disposition. A
+finite recovery Action can read the same strict catalog
+through `readCheckpointedPluginEventSourcesV1`.
+
+### Settle a platform deployment receipt
+
+In unreleased 0.3 development source, the same runtime-link observer can
+settle deployments that a platform accepted as queued or running, in production
+and non-production Environments. Changing protection retains the same enrollment,
+source configuration and checkpoint. During its
+existing finite cycle, list pending receipts for that Environment and select
+only receipts belonging to the link being observed:
+
+```ts
+const pending = await context.services.actions.execute('deployments.receipts.list', {
+  serverId, environmentId, inProgressOnly: true,
+}, { signal: context.signal });
+if ('ok' in pending && pending.ok && 'items' in pending) {
+  for (const receipt of pending.items) {
+    if (receipt.targetLinkId !== targetLinkId) continue;
+    await context.services.actions.execute('deployments.receipts.observe', {
+      serverId, environmentId, deploymentId: receipt.id,
+    }, { signal: context.signal });
+  }
+}
+```
+
+Consume list continuations through the existing pagination contract. Run on
+the Environment's controller: the host opens the recorded platform receipt,
+invokes its declared `observe` role with the exact provider deployment id and
+credential principal, then writes through the existing installation-signed
+deployment transition. It never sends another Deploy. Completed receipts return
+their retained outcome without invoking the platform again; own-server receipts
+are unsupported. A controller reassignment does not transfer an already accepted
+receipt's custody. Keep observation on the source's existing eligibility and wake
+path; it needs no separate queue or scheduler.
+
+The runner does not create an interval: the finite adapter returns
+`nextEligibleAt`. For a person-configured watch period, retain the explicit
+positive `periodMs` in the source's existing private `sourceConfig`. While an
+observation still reports a queued or running receipt, return
+`nextEligibleAt: now() + source.periodMs`; return `null` after settlement so idle
+sources have no timer. The same configured period can govern recovery from an
+unavailable pending observation through `retryAt`. Do not infer a period from
+another source's checks or add a numeric fallback. Without a configured period
+or a provider-documented eligibility value, report that configuration is required.
+Change that source through `workflow.trigger.update` on its existing Automation
+and trigger ids, preserving the single enrollment and checkpoint identity.
 
 ## Services in the child
 
@@ -102,9 +210,322 @@ the daemon's storage owner.
 
 Other services, including Secrets, managed services, UI and demanding another
 background service from the child, are unavailable in this contract. Check
-`context.services.availability(serviceId)` and declare required HostAccess
-truthfully: an unsupported required service prevents admission. A child process
+`context.services.availability(serviceId)` and handle the typed unavailable
+result. Manifest HostAccess remains installation-consent metadata. A child process
 does not sandbox trusted plugin code.
+
+## Control an existing native service in development
+
+The discovery, Start/Restart and accounting callbacks below are available in
+the **unreleased 0.3 development SDK** and survive public adapter registration.
+Machine discovery and service-control consumers are still under integration;
+SDK support alone does not make that complete flow available.
+
+The **unreleased 0.3 development SDK** also lets a `projectNativeAdapters`
+contribution implement `nativeServiceLifecycle`. This is separate from a
+`backgroundServices` runner: it observes an existing native resource through
+the managed-services owner. Import `ManagedServiceNativeLifecycleV1` from
+`@happier-dev/plugin-sdk/managed-services`.
+
+The lifecycle's optional `start` and `restart` callbacks return the same native
+observation as `inspect`, or the existing typed native-adapter failure. They
+operate on the exact admitted instance and
+existing generation. They must not recreate a missing resource or rerun a
+project launcher. A host capture keeps omitted methods absent, so the owning
+front door can report unsupported capability. Machine discovery and the full
+Machine service Action flow are still being integrated; these callbacks alone
+do not establish their availability.
+
+The optional `discover(machine, options, context)` callback receives the exact
+`{ serverId, machineId }`, cancellation signal and admitted invocation context.
+It receives no fabricated Project or working directory. Return `kind: 'ready'`
+or `kind: 'partial'` with `candidates` and `failures`: each candidate carries
+`instance`, `name` and `observation`; each failure uses the existing native
+adapter `{ kind, code }` shape. Qualify every instance with this contribution's
+`{ pluginId, localId }`. A completely unavailable discovery returns that typed
+failure directly. Discovery observes existing resources without starting them.
+
+The optional `accounting(instances, options, context)` callback samples the
+requested qualified instances together. Return `kind: 'sample'` with a `samples`
+array of `{ instance, cpuPercent, memoryBytes }`, or a typed native-adapter
+failure. Use `null` for an unobserved fact; missing native CPU accounting is not
+zero CPU usage. The host requests accounting for visible detail or an explicit
+Refresh; the callback adds no sampling timer. These public adapter methods are
+SDK preparation; the full Machine discovery and accounting consumers remain
+under integration.
+
+For example, an adapter for your declared `example.service` system tool can
+share its native state reader across both controls:
+
+```ts
+import type { ManagedServiceNativeLifecycleV1 } from
+  '@happier-dev/plugin-sdk/managed-services';
+
+export const nativeServiceLifecycle: ManagedServiceNativeLifecycleV1 = {
+  async inspect(instance, options, context) {
+    if (!context) throw new Error('Native service context unavailable');
+    const result = await context.services.exec.run({
+      executable: { kind: 'systemTool', id: 'example.service' },
+      args: ['status', instance.nativeResourceId],
+    }, options);
+    if (result.exitCode !== 0) {
+      return { phase: 'unknown', readiness: 'not_reported', endpoint: null };
+    }
+    const state = new TextDecoder().decode(result.stdout).trim();
+    return {
+      phase: state === 'running' || state === 'stopped' ? state : 'unknown',
+      readiness: 'not_reported',
+      endpoint: null,
+    };
+  },
+  async start(instance, options, context) {
+    if (!context) throw new Error('Native service context unavailable');
+    const result = await context.services.exec.run({
+      executable: { kind: 'systemTool', id: 'example.service' },
+      args: ['start', instance.nativeResourceId],
+    }, options);
+    if (result.exitCode !== 0) throw new Error('Native start failed');
+    return nativeServiceLifecycle.inspect(instance, options, context);
+  },
+  async restart(instance, options, context) {
+    if (!context) throw new Error('Native service context unavailable');
+    const result = await context.services.exec.run({
+      executable: { kind: 'systemTool', id: 'example.service' },
+      args: ['restart', instance.nativeResourceId],
+    }, options);
+    if (result.exitCode !== 0) throw new Error('Native restart failed');
+    return nativeServiceLifecycle.inspect(instance, options, context);
+  },
+  async stop(instance, options, context) {
+    if (!context) throw new Error('Native service context unavailable');
+    const result = await context.services.exec.run({
+      executable: { kind: 'systemTool', id: 'example.service' },
+      args: ['stop', instance.nativeResourceId],
+    }, options);
+    if (result.exitCode !== 0) return { status: 'termination_incomplete' };
+    const observed = await nativeServiceLifecycle.inspect(instance, options, context);
+    return { status: observed.phase === 'stopped' ? 'stopped' : 'termination_incomplete' };
+  },
+};
+```
+
+Declare the adapter's `nativeServiceLifecycle` role and register this object
+through `api.projectNativeAdapters.register` in `activate(api)`. Execution uses
+the admitted callback context and cancellation signal. Host integrations must
+validate current plugin occurrence and exact native-instance identity before
+dispatching these optional operations. The host owns approval, native-effect
+admission and process settlement. A
+callback is not authority to bypass those owners. Cancelled native processes
+must settle before the host releases their invocation custody.
+
+In the unreleased 0.3 contract, Stop returns `stopped` only for confirmed
+termination, `accepted` for acknowledged dispatch without that observation,
+`unsupported` when the operation is unavailable, or `termination_incomplete`
+when termination remains unconfirmed. The host preserves those distinctions.
+An accepted Action receipt does not claim that the service stopped. Retiring
+observation after dispatch does not erase a settled native result, but it does
+withdraw access to the old service state. Unconfirmed settlement retains the
+same operation's uncertainty rather than automatically retrying the effect.
+
+## Read bounded native logs in development
+
+The unreleased 0.3 contract extends the same optional
+`ManagedServiceNativeLifecycleV1.logs` method. It returns a page, a source
+change, or a typed unavailable result. It no longer returns a string.
+The host supplies its existing diagnostic byte budget and reads only on
+explicit demand or a new failure diagnostic. Healthy and unchanged native
+observations do not request logs.
+
+Import the cursor, page and result types from
+`@happier-dev/plugin-sdk/managed-services`. For example, an adapter can wrap
+its native reader as follows. The native reader must supply the revision of
+the actual container generation, journal boot/rotation or log-file occurrence:
+
+```ts
+import type {
+  ManagedServiceNativeInstanceV1,
+  ManagedServiceNativeLifecycleV1,
+  ManagedServiceNativeLogReadV1,
+  ManagedServiceNativeLogWatchV1,
+  ManagedServiceNativeLogResultV1,
+} from '@happier-dev/plugin-sdk/managed-services';
+import type { Disposable } from '@happier-dev/plugin-sdk';
+
+export function boundedLogs(read: (
+  instance: ManagedServiceNativeInstanceV1,
+  signal?: AbortSignal,
+) => Promise<{ sourceRevision: string; redactedText: string }>):
+  NonNullable<ManagedServiceNativeLifecycleV1['logs']> {
+  function logs(instance: ManagedServiceNativeInstanceV1,
+    request: ManagedServiceNativeLogReadV1): Promise<ManagedServiceNativeLogResultV1>;
+  function logs(instance: ManagedServiceNativeInstanceV1,
+    request: ManagedServiceNativeLogWatchV1): Promise<Disposable>;
+  async function logs(instance: ManagedServiceNativeInstanceV1,
+    request: ManagedServiceNativeLogReadV1 | ManagedServiceNativeLogWatchV1) {
+    request.signal?.throwIfAborted();
+    // This reader supplies a tail, without a native push source.
+    if (request.kind === 'watch') {
+      request.emit({ kind: 'unavailable', reason: 'unsupported' });
+      return { dispose() {} };
+    }
+    const output = await read(instance, request.signal);
+    request.signal?.throwIfAborted();
+    if (request.cursor && request.cursor.sourceRevision !== output.sourceRevision) {
+      return { kind: 'source-changed' as const, sourceRevision: output.sourceRevision };
+    }
+    const bytes = new TextEncoder().encode(output.redactedText);
+    return { kind: 'page' as const, page: {
+      sourceRevision: output.sourceRevision,
+      text: new TextDecoder().decode(bytes.subarray(0, request.maxBytes), { stream: true }),
+      nextCursor: null,
+      truncated: bytes.byteLength > request.maxBytes,
+    } };
+  }
+  return logs;
+}
+```
+
+Bound the upstream native read as well. This example returns a bounded tail;
+`nextCursor: null` does not promise access to earlier history. Redact before
+truncating, keep source identity separate from log content, and refuse bytes
+when generation redaction material is unavailable. An adapter with native push
+implements the same method's `kind: 'watch'` arm: emit bounded result pages and
+return a disposable that waits for native cleanup. Honor the supplied signal;
+source replacement reports `source-changed` rather than continuing the old source.
+The host applies the same redaction and byte budget to reads and every emission,
+cancels on caller cancellation or retirement, and waits for watch settlement before releasing its
+native capture. Resume accepts the retained cursor in a fresh demand.
+
+Machine-native adapters can use the existing filesystem service's development
+`observeMachinePath` method for metadata wakeups on a valid native path inside a
+Machine-native invocation. Manifest filesystem locations disclose intended use.
+It reports identity and size, not file contents or log-read
+authority. For example, inside an admitted invocation:
+
+```ts
+const observation = await fs.observeMachinePath(
+  { absolutePath: nativeLogPath },
+  event => onNativeMetadata(event),
+  { signal },
+);
+try {
+  await consumeNativeLogDemand(observation);
+} finally {
+  await observation.dispose();
+}
+```
+
+Its guarded `read()` rechecks current metadata. Keep actual bytes behind the same
+bounded native reader, current generation and redaction checks. Equal metadata
+does not require another read. Await disposal; cancellation or revoked invocation
+custody must not leave an observer or disclose late bytes. This does not enable
+Machine paths in generic file reads, writes or command working directories.
+
+In this unreleased contract, an adapter denied access to the system journal can
+return a recipe reference for the existing setup review flow:
+
+```ts
+const denied: ManagedServiceNativeLogResultV1 = {
+  kind: 'unavailable',
+  reason: 'denied',
+  recipeRemedy: {
+    pluginId: 'happier.machine.recipes',
+    recipeId: 'journal-reader',
+    revision: '1',
+  },
+};
+```
+
+The reference is not approval or permission to run setup. Do not guess a journal
+group, attach setup inputs, or elevate automatically; the existing recipe review
+must resolve and approve the actual Machine's setup before a fresh log request.
+
+This is host and SDK development support. The original-Account Machine logs
+Resource binding is implemented in development source. Bundled native activation,
+built-in Compose follow and the journal-reader setup journey remain under integration;
+this example does not establish their loaded-runtime availability. Resource subscribe/resume must
+still enter the originating logs Action's actual-owner policy before native reads.
+
+## Health check kinds (development source)
+
+The unreleased `healthCheckKinds` author contract lets a plugin describe a finite
+health observation for an Environment or a watched Machine service. Check the
+generated [availability report](/plugins/manifest/availability) for the SDK and
+host you target. Declaration admission alone does not establish an installed
+observer or alert-delivery lifecycle.
+
+Declare a kind through `definePlugin` and reference an Action from the same
+plugin:
+
+```ts
+healthCheckKinds: {
+  endpoint: {
+    title: 'External endpoint',
+    configSchema: configuration.jsonSchema,
+    action: 'observe-health',
+  },
+},
+```
+
+The record key becomes the local kind id; the catalog qualifies it with the
+plugin id. Every configuration object, including nested objects, must be closed.
+The referenced Action runs on the daemon and omits `operation` so a finite
+observation creates no tracked activity operation. Its safety and read-only
+labels do not restrict trusted plugin code; invocation follows the person's
+ordinary Action policy. Its explicit input and result schemas are recursively
+closed. Use the root SDK's `HealthCheckResultV1ProtocolSchema` as the result
+schema, rather than recreating it. The result contains `status`, `observedAt`,
+optional `latencyMs` and fenced evidence; response bodies and credentials do not
+belong in evidence.
+
+The root SDK also exports `HealthCheckResultV1`, its finite
+`HealthCheckStatusV1`, and the built-in `HealthCheckKindV1` vocabulary with
+`HEALTH_CHECK_KINDS_V1`. These are forwarded from the same Protocol owner as
+the result schema. For example, an adapter can advertise its built-in subset
+without maintaining a second list:
+
+```ts
+import { HEALTH_CHECK_KINDS_V1, type HealthCheckKindV1,
+  type HealthCheckResultV1, type HealthCheckStatusV1 } from '@happier-dev/plugin-sdk';
+
+const supportedKinds: readonly HealthCheckKindV1[] =
+  HEALTH_CHECK_KINDS_V1.filter(kind => kind === 'http' || kind === 'certificate');
+declare const result: HealthCheckResultV1;
+const status: HealthCheckStatusV1 = result.status;
+```
+
+Built-in kinds are distinct from the qualified id of a plugin-declared custom
+kind. These exports are part of the unreleased 0.3 development source contract.
+
+`HealthCheckSubjectV1ProtocolSchema` accepts the Environment and Machine-service
+subjects. The host still admits the exact subject, observation Machine and
+network access for each invocation; the descriptor grants no access or policy
+waiver. Keep scheduling and transition admission with the host's existing
+source observer. The maintained SDK `public-authoring/healthChecks.ts` example
+shows one finite adapter serving both subjects without its own timer or registry.
+
+Strict author validation rejects an invalid declaration. During installed
+manifest loading, the host withdraws the invalid kind with a diagnostic while
+retaining valid siblings. Correct its Action reference, effect metadata or
+schema and rebuild through the normal plugin development loop.
+
+In 0.3 development source, a daemon Action or source observer can spend an
+already-admitted saved source through `context.services.healthChecks`:
+
+```ts
+const results = await context.services.healthChecks.read({
+  sourceInstanceId: selector.sourceInstanceId,
+  checkIds: [selector.checkId],
+}, { signal: context.signal });
+const result = results.find(value => value.checkId === selector.checkId)?.result;
+```
+
+This finite service accepts saved selectors, not replacement URLs or observer
+identities. The current first-party binding supports watched Machine-service
+HTTP and certificate checks in source; bundled activation remains incomplete.
+Environment/Domain integration is not established by that binding. Background
+sources use the shared checkpointed Event runner;
+they do not add a second timer or write a Workflow run for every observation.
 
 ## Related
 

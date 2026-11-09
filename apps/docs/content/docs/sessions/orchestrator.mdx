@@ -33,6 +33,13 @@ Actions. Session roles start conversations; background-run roles start runs.
 Review and Plan have their own launch controls, and **Second opinion** starts
 the read-only role. Existing sessions can join the tree through **Put under**.
 
+Workers copy the lead's resolved roles and notes when they start. Later edits
+reach existing reporting sessions through `session.roles.apply_to_reports`,
+and only for sessions owned by the same account. Ordinary birth and Apply
+use the lead's applied Agent/model, rather than a pending model choice. A
+workflow-step session instead uses its own resolved Agent/model for roles that
+are not already frozen; the origin session need not still be running.
+
 ## Orchestrate an issue
 
 In **PRs & Issues**, open an issue's menu and choose **Orchestrate this**.
@@ -63,6 +70,12 @@ delivery, and an offline machine leaves updates pending. Follow does not steer a
 turn. Open the worker's peek or run to inspect the full result; a truncated
 card retains a source pointer.
 
+Stalled-turn updates also reach ordinary followers and sessions selected only
+by a Follow rule. A selected wake can resume an eligible inactive receiver;
+next-turn delivery waits for ordinary input. Private rule definitions and
+progress stay with the configuring account. Delivery is recorded only after
+the receiving Agent accepts the context.
+
 ## Tree and lifecycle limits
 
 **Put under** changes the reporting relation, not access, approval rights,
@@ -79,6 +92,15 @@ starts and trigger writes enforce the same limit. A `work_depth_exceeded`
 refusal means the agent must do the work itself or ask you to change the
 delegation choices. Human starts are not limited by this agent-depth check.
 Work depth follows the cause of work, rather than the editable reporting tree.
+When terminal policy disallows present-user authority, the automatic approval
+reviewer runs as account automation under the causing turn's depth and the
+session's permission ceiling; it receives no human depth exemption. A retired
+turn cannot be replaced by a later turn to start that review.
+
+For a focused exchange rather than a new reporting tree, use the composer's
+**Run…** choice to run a [collaboration pattern](/extras/automations#run-a-collaboration-pattern-development-source).
+It uses an ordinary Workflow and the same participant, approval and Run-control
+owners. This entry describes current 0.3 development source.
 
 ## The same tasks through Actions
 
@@ -106,6 +128,13 @@ Discover exact fields and surfaces in the
 [host Action reference](/plugins/api/host-actions); neither tool discovery
 nor a reporting relation grants permission to invoke an Action. Waits observe
 existing work and ending a wait does not stop it.
+
+Voice can use Session Role/notes edits, Role reads, review comments,
+accepted-findings Apply, Work presentation and the confirmed **Orchestrate
+this** start. Account Role mutations, Apply roles to reports, Launch Profile
+publishing and the Session approval-reviewer toggle Action remain excluded
+from Voice. Opening an external HTTP(S) link asks by default unless its Voice
+approval preference waives confirmation.
 
 The manager link is a Follow relation. A session has at most one manager;
 following that same source separately is independent and survives detaching

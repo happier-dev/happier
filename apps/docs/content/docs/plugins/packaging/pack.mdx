@@ -35,6 +35,13 @@ or maintain those fields in source metadata: they are derived from the
 canonical manifest and generated UI inventory, including the exact staged
 manifest digest.
 
+In the 0.3 development publisher, reviewed publication fields apply once to the
+staged package. The effective runtime manifest, cold manifest, package metadata,
+and discovery projection agree on that operation's version and listing while
+the author source stays intact. See
+[Publish a plugin](/plugins/packaging/authoring-cli#publish-a-plugin) for candidate
+review, npm approval, and recovery.
+
 ## Include
 
 - the generated `.happier-plugin/plugin.json` cold projection

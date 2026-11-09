@@ -5,6 +5,15 @@ description: Understand Happier's package-level trusted-code boundary.
 
 Plugins are trusted code packages, not sandboxed extensions. A plugin can contain daemon code and React Native client code with the privileges of the Happier process or client realm in which it runs.
 
+In 0.3 development source, network `privateNetwork` declarations disclose local
+network use during installation. They do not restrict socket access or trigger
+private-address classification in the plugin HTTP service. Other HostAccess
+scope fields likewise remain consent metadata rather than per-plugin runtime
+fences. Host-held credentials
+still stay scoped to their declared origins; redirect handling drops credentials
+on cross-origin hops and refuses to forward a host-filled secret body across
+origins. See [Network access](/plugins/security/network).
+
 ## Trusted-code decision
 
 Happier validates and projects the cold manifest before importing executable

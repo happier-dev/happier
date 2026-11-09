@@ -16,6 +16,30 @@ A `PluginPath` names a supported root plus a relative path:
 
 The service exposes `readFile`, `writeFile`, `stat`, `list`, and `remove`. Methods are abortable, reads can be byte-bounded, and listings are cursor-bounded.
 
+In 0.3 development source, pass `maxBytes` or a page `limit` when the owning
+operation needs a budget. The in-process service has no additional read-byte or
+page-size ceiling; omitting those options reads or lists the complete result.
+
+## Observe native file metadata in development
+
+The unreleased `observeMachinePath` method is available only inside an admitted
+Machine-native invocation with a valid native path. Manifest filesystem
+locations disclose intended access; they do not restrict trusted plugin code.
+It reports file identity and size changes, not content. Its guarded `read()`
+rechecks metadata, and `dispose()` waits for native observer cleanup. Honor the
+invocation's cancellation and await disposal when demand ends.
+
+This does not add a Machine root to `PluginPath`, grant writes, or permit a
+Machine path as a command working directory. A log reader still needs its own
+current-generation admission and redaction. See the
+[native log observation example](/plugins/guides/background-services#read-bounded-native-logs-in-development).
+
+Ordinary `PluginPath` operations retain relative portable-path validation,
+root-binding availability and operating-system errors. In 0.3 development
+source, a selected workspace symlink may resolve outside that root; manifest
+path prefixes and read/write declarations do not add per-plugin access fences.
+Untrusted native Agent payloads retain their separate root validation.
+
 ## Rules
 
 - Do not write Happier session, transcript, daemon, or registry state files directly.

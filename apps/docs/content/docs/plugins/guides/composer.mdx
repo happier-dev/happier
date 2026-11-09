@@ -30,10 +30,22 @@ feature needs; each entry's key is its local id.
 - **`references`** — searchable candidates the person inserts inline (`@`-style).
 - **`attachments`** — structured values the draft carries alongside its text.
 - **`controls`** — the affordances shown in the Composer toolbar.
-- **`regions`** — a surface mounted directly before or after the Composer.
+- **`regions`** — a surface mounted directly before or after the Composer, or in its status strip.
 
 A control is the affordance; an attachment is what the draft ends up holding.
 They are separate local ids on purpose.
+
+In 0.3 development builds, a region with `placement: 'statusStrip'` appears
+beside the host status items. Render it with
+[`ComposerStatusBadge`](/plugins/ui/react-native#composer-status-item-03-development)
+from `@happier-dev/plugin-ui/components`. The strip supplies its existing
+compact and collapsed layout; your surface owns its popover and anchor. Set
+`scopes: ['session']` for a Session-only item. Read the mounted Session from
+`useSurfaceContext()` and use `useLivePluginResource` for its Resource; the host
+preserves the Home and shares demand with other presentations. This placement
+requires a matching development SDK and host. Match the region's `emphasis`
+to its `ComposerStatusBadge`: `'quiet'` yields width before prominent items;
+omitting it defaults to `'prominent'` in both declarations and badges.
 
 In 0.3 development builds, a control can request an initial toolbar placement
 with `defaultPlacement: 'pinned'`. Omit it, or use `'overflow'`, for the + menu.
@@ -229,6 +241,13 @@ this mount. `active()` and an exact `get(ref)` remain available on generic
 mounts. Always pass the `expectedRevision` you read: the host rejects an apply
 built on a stale draft instead of silently overwriting the person's edits.
 
+In unreleased 0.3, a helper opened from a Composer stays bound to that opener
+for its mounted lifetime. `active()` still resolves the opener when focus moves
+into the helper or another Composer; reads and edits cannot switch to that other
+document. Closing the opener or changing Account retires that access. On a
+generic, non-Composer mount, `active()` instead looks up the focused Composer and
+returns `null` when none is available.
+
 ### Attach and mention in one transaction
 
 In unreleased 0.3, `attachment.add` accepts an optional `mentionAt` range in
@@ -305,6 +324,19 @@ text and optional navigation, or `unavailable` with a safe reason and no text
 or navigation. These components do not read a source, grant access or turn a
 displayed Task reference into a Discussion reply target; the caller retains
 those decisions.
+
+Set `form="passage"` on `ReplyQuote` when your surface already names the source
+(a second opinion on one answer, a note on selected messages): the quoted words
+appear alone, up to two lines, in the same filled box core uses.
+
+`AccountByline` shows who sent a message, the way Happier's transcript does: the
+name, then the person's mark. Pass the Account's classified label
+(`{ kind: 'profile', label }`, `self`, `unnamed` or `former`); Happier supplies
+the words for You, a member without a name and a former member, and the line is
+read once as "Sent by …". `useAccountActorName` returns the same name for your
+own sentences, such as "Waiting for {name} to confirm". Classifying the Account
+and deciding who may confirm stay with your plugin; the component reads no
+profile and grants no access.
 
 The development `ExecutableParticipantPicker` component from the same public
 entrypoint renders the host's shared searchable choice list. Supply admitted

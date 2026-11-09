@@ -45,6 +45,28 @@ From the user point of view, this is one product surface:
 - preview what a session will get
 - see the resulting tool activity in the normal session transcript
 
+## Session messaging (0.3 development)
+
+In unreleased 0.3 source, Send shares information and Ask requests one answer
+through the same Action. Ask can wait inline or retain a later answer for its
+admitted source Session. A timeout ends observation without stopping accepted
+work. Answering or passing settles the original request; a returned answer
+does not ask for another acknowledgment. Use
+[CLI reply modes](/apps/cli-sessions#reply-modes-03-development) for scripting and
+[the host Action reference](/plugins/api/host-actions) for current input schemas.
+
+The app's **To** picker uses the same target resolver. **Matching** opens the
+Session list's shared filter editor and shows the current authorized selection.
+**Use these** becomes available when that preview is complete and nonempty;
+it keeps the filter in your draft. Sending resolves the current selection, and
+any required approval retains those exact Sessions. Choosing the filter alone
+sends nothing. Discussion selection includes executable Session participants,
+not people, and grants no access. An unavailable preview cannot be treated as
+an empty or complete group.
+
+Voice invokes the same operations after resolving names; see
+[Voice messaging](/voice#session-messages-in-development).
+
 ## Native MCP vs shell bridge
 
 Different providers accept tools in different ways.

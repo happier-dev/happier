@@ -134,6 +134,15 @@ them; a keyless device sees a locked trigger and can delete it. Switching the Ac
 to plaintext and recovering older triggers keep the old encryption key on that
 device, even when no encrypted history is currently listed.
 
+A server's word alone never switches a device that holds the Account's encryption
+keys to plaintext. When the Account is switched to plaintext on another device,
+your other devices pause Account changes and show **Switched to unencrypted on
+another device** in Account encryption settings. **Keep keys and continue** keeps
+the keys for older encrypted history and continues in plaintext on that device. If
+no one on your account made the change, don't continue. On a computer, run
+`happier auth keep-encryption-keys`, or sign in again without the key. This is the
+current 0.3 development flow.
+
 **Forget the old encryption key** explicitly removes that device's historical key.
 Its confirmation lists known encrypted Sessions, triggers and run history; if the
 list cannot be loaded, the key is kept. Older encrypted Sessions on that device

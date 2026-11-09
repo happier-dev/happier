@@ -106,6 +106,27 @@ Saved Home selection is the normal form. Ad-hoc URL flags remain available for a
 
 Deep reference (host setup and security): [MCP host setup](/extending/mcp-hosts).
 
+### Filesystem authority on a shared machine
+
+The external server's startup credentials identify its Account. Selecting a
+Session or supplying a filesystem root does not grant access to arbitrary host
+files. In-session Happier MCP uses its Session's admitted requester context;
+copying that context must not turn an Agent into the present Machine owner's
+unrestricted administration path. File tools and transfers consume the target
+Machine's current admission and filesystem authority, including their byte source
+and destination.
+
+This shared-Machine boundary is incomplete, **unreleased 0.3 development** work.
+Unsupported identity-bound file effects must refuse before returning bytes or
+changing files. A typed refusal is not a verified usable isolated file path.
+Native file effects under separate Linux member users are being integrated;
+their end-to-end byte access and cleanup are not yet verified.
+The first isolation step's shared Agent user still allows members and the owner's
+isolated Agent to copy selected credentials and readable Session context from
+one another. The Machine owner can inspect material delivered to it even after
+separate member users are available. See [Sharing](/accounts/session-sharing)
+for these trust limits.
+
 ## Quick smoke test
 
 If you want to verify the server is wired correctly, point any MCP host or inspector at:

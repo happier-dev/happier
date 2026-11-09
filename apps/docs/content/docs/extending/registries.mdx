@@ -43,6 +43,42 @@ the same Actions. Consult the generated [host Action catalog](/plugins/api/host-
 for current argument schemas and approval requirements. CLI and Agent callers
 ask by default; browsing does not grant installation or token disclosure.
 
+## App templates in development
+
+The built-in Dokploy source lists its published catalog and reads only the
+selected app's Compose and TOML files. Review includes the Compose document and
+any public supporting files. Contained relative binds keep their native Compose
+behavior, including writable directories; host mounts remain visible for review.
+Happier preserves vendor file paths and contents. An upstream template's file,
+directory or unused environment mismatch is not silently repaired.
+
+In unreleased 0.3 source, routed app-template Domains can declare an HTTP health
+path and exact expected status. A supported Compose HTTP status assertion can
+supply them. A template without these operands still installs through ordinary
+reviewed approval; health remains **Not checked**. Happier does not substitute
+`/` and HTTP 200, run an invented probe, or exempt an unprobed route from
+authentication. Supplied health declarations must be valid.
+
+Installing a template with a required Domain creates its Environment, runs the
+reviewed deployment, then adds the Domain. If deployment is refused or fails,
+the Environment remains and no Domain is added. Retry uses that retained
+Environment for a new deploy attempt before adding the Domain.
+
+## Browser extensions in development
+
+The development `browserExtension` catalog kind supplies Chrome Web Store IDs
+to the managed Chromium browser. Packages and enablement belong to a persistent
+profile on the selected Machine. Load-unpacked uses a directory on that Machine.
+Installing, updating, enabling or removing an extension needs Machine Manage
+access. Package changes apply when the browser restarts; an active profile asks
+for confirmation first.
+
+Extension updates use the existing Store update check and review flow. An update
+that adds permissions needs another permission review. Action popups and options
+pages run as managed browser views. Native webviews use the “available in the
+managed browser” presentation state. The Store screens for these contracts are
+still being integrated and reviewed in 0.3 development source.
+
 ## Private sources
 
 Create a private Saved Secret, then select it when adding a source:
@@ -78,6 +114,26 @@ An explicit refresh retries the current request. Last-known items are not a
 substitute for current source authority: disabling/removing a source or retiring
 its supplier withdraws its old results. If a skill write succeeded but a later
 reach step failed, repair that step rather than install another copy.
+
+In 0.3 development source, `registries.updates.check` returns each failed
+check's source ID and, when available, its source title alongside the existing
+reason. Plugin authors can present those facts from the typed Action result:
+
+```ts
+import type { RegistriesActionResultById } from '@happier-dev/plugin-sdk/actions';
+
+function failedSources(check: RegistriesActionResultById['registries.updates.check']) {
+  return check.results.flatMap(item => item.upstream.state === 'unchecked'
+    ? [{ source: item.sourceTitle ?? item.sourceId, reason: item.upstream.reason }]
+    : []);
+}
+```
+
+Older results may omit the source labels; their reason remains usable. These
+labels do not grant permission to read or install from a source. Store Updates
+uses the existing Skills, MCP server and Agent observations; Plugins have no
+update-availability producer there and are excluded from its count. Plugin
+updates retain their installed-source installation and access review.
 
 ## Related
 

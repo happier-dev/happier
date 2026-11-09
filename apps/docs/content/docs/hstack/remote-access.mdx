@@ -43,6 +43,68 @@ Useful knobs:
 - `HAPPIER_TAILSCALE_BIN` (preferred unified override)
 - `HAPPIER_STACK_TAILSCALE_BIN` (legacy stack-specific alias)
 
+In current 0.3 development source, `hstack tailscale disable` and its `reset`
+alias remove only the current stack's matching HTTPS route. Other paths and
+listeners, including database routes, remain configured. Setting
+`HAPPIER_STACK_TAILSCALE_RESET_ON_EXIT=1` uses the same scoped cleanup.
+Enabling Serve refuses to replace an unrelated root mapping on that listener.
+
+For authorization failures, see [Serve change refused](/apps/relay-access#serve-change-refused).
+
+## Development Iroh relay
+
+In current unreleased **0.3 development source**, a fresh `hstack start` or
+`hstack dev` ensures one persistent native Iroh relay on the stack host, shared
+by its stacks. This is a development/QA transport relay, not a production relay
+deployment. Existing running stacks pick up the change at their owner's next start.
+
+The host must be signed into Tailscale with HTTPS certificates enabled and
+permission to configure Serve and obtain a certificate. Forwarding uses
+`https://<machine>.<tailnet>.ts.net:8443`; QAD listens on the host's tailnet
+address at **UDP 7842**, which the host firewall and tailnet policy must permit.
+[Tailscale Serve](https://tailscale.com/docs/reference/tailscale-cli/serve)
+handles HTTPS/TCP forwarding, not UDP. The existing Home/UI HTTPS 443 route and
+database mappings remain configured.
+
+The stack reuses the pinned deployment profile: stock `iroh-relay` 1.1.0 with
+forwarding and QUIC address discovery (QAD). The native process runs with
+`--dev`, forwarding over loopback HTTP behind Serve's HTTPS listener while using
+a real certificate for QAD. It selects an exact-version binary from
+`HAPPIER_STACK_IROH_RELAY_BIN`, the host tools cache, or PATH; otherwise Cargo
+installs the locked crate with the `server` feature into the host tools cache.
+No repository dependency install is needed. You can prepare or inspect it with:
+
+```bash
+hstack tools iroh-relay install
+hstack tools iroh-relay status
+```
+
+Only a verified ready HTTPS URL is passed to stack-managed Home servers,
+Machine daemons and UI processes as `HAPPIER_IROH_RELAY_URLS`, with policy
+`automatic`, including placed processes and later stack CLI wrappers/service
+installation. Explicit external relay settings retain their values. If managed
+relay setup is disabled or degraded, hstack clears the relay URL and selects
+policy `disabled`; the usual Home HTTPS path remains available. Inspect
+`hstack stack info <name> --json` at `runtime.irohRelay` and `hstack doctor --json` at
+`irohRelay` for readiness or the failure reason.
+
+Stopping a stack leaves the host relay running for other stacks. To stop it
+explicitly, run `hstack tools iroh-relay stop`, or set
+`HAPPIER_STACK_IROH_RELAY=0` for the next stack start. This stops the shared host
+relay and removes only its matching HTTPS 8443 route. A later start without the
+opt-out ensures it again.
+
+[File-based Tailscale certificates](https://tailscale.com/docs/how-to/set-up-https-certificates)
+expire after 90 days and require owner renewal. There is no custom renewal
+timer: arrange an explicit relay stop and the owner's next stack start to obtain
+and load renewed certificate files.
+
+A cloud guest outside the tailnet cannot reach this relay unless it joins the
+tailnet or uses a separately reachable public relay. Public relay/Funnel exposure
+is a follow-up, not enabled by hstack; outside-tailnet reachability remains a
+release check. See [Iroh transport relay](/self-hosting/iroh-relay) for the
+separate operator-managed profile.
+
 ## Using the native mobile app (optional)
 
 The Happier mobile app has an “API Endpoint” (or “Custom server URL”) setting in developer mode.

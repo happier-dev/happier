@@ -105,6 +105,14 @@ session is live. From your side you see the same sequence, ending at **Session i
 ready**, and from then on it is an ordinary session: same transcript, same
 steering, same approvals.
 
+The Runner's exact-request approval above is separate from permission to watch
+or control its desktop. In current 0.3 development source, Computer Actions use
+the ordinary Action approval policy, including applicable per-Action waivers;
+the daemon does not add another approval prompt. Selected-source consent,
+See/Use access and OS permissions still apply. See
+[Watching a computer](/sessions/session-settings#watching-a-computer-in-development-builds)
+for that separate workflow.
+
 ## Lifetime, and stopping it
 
 Access lasts until the session is stopped. Happier Runner keeps **Stop Session**

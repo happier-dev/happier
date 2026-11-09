@@ -31,3 +31,191 @@ ordinary author use; do not rely on it; consult its unblock condition.
 Use `context.ui` only for invocation-local presentation such as status and
 notifications. Interactions belong to `context.services.interactions`; neither
 service is a way to persist host state or bypass its lifecycle.
+
+## Portable Account services in development
+
+Unreleased 0.3 source gives Account Action contexts admitted `services.http` and
+`services.secrets` in both CLI and UI hosts. Use these ports rather than adding
+a Machine dependency to a portable handler. They do not provide native exec or
+filesystem access. HTTP keeps credential substitution, redirect handling,
+redaction and cancellation with the host; secret reads keep the captured
+Account and the selected Resource's encryption mode.
+
+An Account entry uses the same `activate(api)` ABI to register its Connected
+Account runtime:
+
+```ts
+import type { PluginAccountApi } from '@happier-dev/plugin-sdk';
+import { portableAuthentication } from './portableAuthentication.js';
+
+export function activate(api: PluginAccountApi): void {
+  api.connectedAccounts.register('example', portableAuthentication);
+}
+```
+
+Type the runtime as `ConnectedAccountAuthenticationRuntime` from
+`@happier-dev/plugin-sdk/connected-accounts` and name the entry in the Connected
+Account descriptor's `authentication.account: { artifactId, exportName }`.
+Authentication receives admitted HTTP and the existing attempt, configuration
+and staged-credential ports, not the full native Connected Account runtime.
+Native import and refresh remain with the native runtime. Portable materialization
+can use the same Account entry, as described below. The
+maintained public-authoring `portableAuthentication.ts` example exercises this
+registration contract. Host lifecycle integration and loaded-runtime cloud
+creation are separate from declaring or registering the entry.
+
+## HTTP and TLS metadata in development
+
+The unreleased 0.3 HTTP service accepts `responseBody: 'discard'` when a read
+needs only response metadata. The host releases the body without reading it.
+Omit this option when the response body is needed; the existing body budget,
+deadline, cancellation, redirect and credential policies still apply.
+
+Add `observeTlsPeer: true` to request native validated HTTPS peer metadata on
+that same request. When available, `response.tlsPeer` contains its URL, SHA-256
+fingerprint and validity timestamps. A TLS trust or hostname failure rejects
+the request. Missing metadata remains unknown; an HTTP status alone does not
+prove certificate health. Peer metadata grants no endpoint or subject authority.
+
+```ts
+const response = await context.services.http.request({
+  url: selectedEndpoint,
+  method: 'GET',
+  redirect: 'error',
+  responseBody: 'discard',
+  observeTlsPeer: true,
+}, { signal: context.signal });
+```
+
+Use the source-development host that implements these options. For saved health
+checks, the canonical source owner must still admit the subject, selected
+observer and every destination before I/O; ordinary plugin network disclosure
+does not provide that saved-check admission. See the maintained public-authoring
+example's `readEndpointMetadata` helper.
+
+## Accepted machine starts in development
+
+In unreleased 0.3 source, only a provisioner whose native start returns before
+boot may return `{ kind: 'bound', resource, startPending: true }` from acquire
+after that start is accepted (currently Lume HTTP 202). Use the public `defineMachineProvisionerSchemas` or
+`defineMachineProvisionerReconciliationSchemas` result schema. Omit the fact
+when no start was accepted or the resource is already confirmed Running.
+Lima awaits its native start and does not emit this fact.
+
+The matching development host keeps that invocation waiting for its exact
+resource's first Running observation before bootstrap, using the existing
+cancelable readiness cadence. Absence or an unavailable native read settles
+with a typed refusal. The host does not store the acceptance on the managed
+record, and a later stopped observation cannot reuse it. Read-only Inspect and
+reconcile must not infer start acceptance from retained native custody. See the
+maintained machine-provisioner authoring fixture's accepted-start case and the
+[SDK API surface](/plugins/api/surface) for the public helpers.
+
+Read-only reconciliation receives either the retained native operation or the
+original correlation, including the managed-row id and reviewed launch. Use that
+launch's backend and namespace when identifying an existing resource. Crabbox
+recovers its exact lease this way after a lost first report, through a coordinator
+read or native inspect. Recovery never repeats acquisition or warmup, and an
+unavailable read remains uncertain rather than proving absence.
+
+## Pending machine deletion in development
+
+In unreleased 0.3 source, an acknowledged deletion that remains unfinished
+returns `{ kind: 'pending' }`. Use `destroyResult` from
+`defineMachineProvisionerReconciliationSchemas` for the destroy Action. Return
+`{ kind: 'accepted', nativeOperationRef }` when the host must retain a native
+operation handle. The matching development host observes the exact resource
+or continues that handle under the admitted Delete until absence is confirmed.
+
+An uncertain delivery or a native failure remains `unknown` with its diagnostic
+code and optional native cause; it cannot establish pending deletion. The closed
+`pending` result has no code or cause. See the maintained machine-provisioner
+authoring fixture and the [SDK API surface](/plugins/api/surface).
+
+## Native credential headers in development
+
+The unreleased provisioner source contract adds optional
+`nativeCredentialDelivery` on the existing machine-provisioner contribution.
+It names a declared same-plugin daemon apply Action and advertises HTTPS header
+substitution with endpoint preservation and per-binding matching. Omission is
+unsupported; an omitted runtime check result is unknown. Declaration and actual
+tenant/resource qualification are separate. The generated
+[SDK API surface](/plugins/api/surface) owns exact public symbols; this source
+contract does not establish loaded or released support.
+
+Declare the apply Action's input with
+`defineMachineProvisionerSchemas({launch, resource}).nativeCredentialApplyInput`
+from the public machine-provisioner entrypoint. It retains the complete managed
+resource envelope while validating `resource.value` against your declared resource
+schema. The generic `MachineProvisionerNativeCredentialApplyInputV1Schema` is a
+parser, not the schema for authoring that manifest Action.
+
+Within an admitted native apply invocation, call
+`context.services.machineProvisioners.materializeNativeCredentialHeaders({bindingKey})`
+for a binding in that invocation's complete desired policy. A successful result
+contains rendered headers; other bindings and ordinary invocations return
+`native_credential_binding_unavailable`. The key only selects within private
+invocation custody. It grants no source, Account or resource authority.
+
+The host owns source selection, complete-policy composition, exact managed
+placement and lifecycle. The leaf owns vendor encoding and IO. Keep rendered
+headers out of Action inputs/results, retained operations, presets, logs and
+guest files. Preserve sibling bindings and the egress baseline, await required
+live and saved acknowledgements, and retain partial/unknown updates as
+unconfirmed. Cleanup and pre-resume preparation consume the same host owner;
+do not create a policy store, poller or second reconciliation loop.
+
+## Guest-host key installation in development
+
+In unreleased 0.3 source, an admitted daemon SSH acquire installer obtains the
+generated guest-host OpenSSH private key with
+`context.services.machineProvisioners.materializeGuestHostCredential()`.
+This is not the person's bootstrap/login credential, and other invocations
+cannot acquire it. Install the bytes privately and dispose the existing lease:
+
+```ts
+import type { MachineProvisionersService } from '@happier-dev/plugin-sdk/services';
+
+async function installGuestHostKey(
+  service: MachineProvisionersService,
+  install: (privateKey: Uint8Array) => Promise<void>,
+) {
+  const lease = await service.materializeGuestHostCredential();
+  try {
+    await install(lease.bytes);
+  } finally {
+    await lease.dispose();
+  }
+}
+```
+
+Never return or log the private key or place it in Action inputs, receipts or
+presets. Disposal and invocation settlement zero the lease's bytes. This source
+contract does not claim released or loaded-runtime availability.
+
+## Portable Account materialization in development
+
+The same Account artifact registration can provide authentication and an optional
+`materialize` callback through `ConnectedAccountPortableRuntime`. Its
+`ConnectedAccountPortableReadContext` supplies the selected account, configuration,
+credential reader, cancellation and HTTP service; it supplies no Machine or native
+process capability. Authentication-only Account runtimes remain valid.
+
+An Account Action uses its declared Connected Account HostAccess purpose through
+`context.services.connectedAccounts.getBinding`, `.listAccounts`, `.materialize`
+and `.materializeListedAccount`. Listing returns metadata for the purpose's
+selected Account or group, including configured origins and bases; materializing
+a listed Account must stay within that same target. Account contexts do not
+expose the daemon's native-account watch. Purpose selection and listed-account
+membership are admitted before credential acquisition, not re-checked afterward;
+local cancellation and captured credential-revision checks still apply.
+Selection, configuration and credential
+opening remain host-owned. When an Action already
+has an admitted exact Account selection, pass `expectedAccount` to materialization;
+a different selected Account is refused rather than substituted. Portable
+materialization never falls back to native credentials. Host-admitted managed
+roles use their captured launch selection and retained configuration; plugins do
+not supply that custody through an Action operand. Keep materialized values
+out of Action results and logs. See the public `portableAuthentication.ts` author
+example in the SDK for a credential-reader callback. This is unreleased source
+behavior, not a released-client availability claim.

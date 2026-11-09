@@ -173,6 +173,51 @@ same readers. The `contentSearch` declaration advertises standard scanning;
 it does not itself enable indexing or grant consent. Explain local plaintext
 storage to users via [local memory search](/organize/local-memory-search).
 
+### Selected transcript previews
+
+In the **0.3 development/preview contract**, `pageTranscript` may receive an
+optional `sourceItemId` identifying the selected content-search hit. A source
+can use that locator to serve a preview from its available history, even when
+that history is incomplete. Validate the locator against the admitted source
+and conversation; it grants no additional file or path access.
+
+An available-history preview must return `truncated: true` and no `tailCursor`:
+it cannot establish a follow tail or claim complete history. Ordinary full
+reads without `sourceItemId` keep their existing behavior. Existing plugins may
+safely ignore the optional field and continue their ordinary read path.
+
+For example, wrap the ordinary contribution with your source's own available
+history reader (the declared reader below is plugin code, not an SDK helper):
+
+```ts
+import type {
+  AgentExternalSessionsContribution,
+  AgentExternalSessionsPageTranscriptRequest,
+  AgentExternalSessionsTranscriptPage,
+} from '@happier-dev/plugin-sdk/sessions/external';
+
+declare const ordinary: AgentExternalSessionsContribution;
+declare function readSelectedFromAvailableHistory(
+  request: AgentExternalSessionsPageTranscriptRequest,
+): Promise<AgentExternalSessionsTranscriptPage>;
+
+const externalSessions = {
+  ...ordinary,
+  async pageTranscript(request) {
+    if (request.sourceItemId === undefined) {
+      return ordinary.pageTranscript(request);
+    }
+    const preview = await readSelectedFromAvailableHistory(request);
+    return {
+      items: preview.items,
+      nextCursor: preview.nextCursor,
+      hasMore: preview.hasMore,
+      truncated: true,
+    };
+  },
+} satisfies AgentExternalSessionsContribution;
+```
+
 ## Callback invocation services
 
 Each of the six callbacks receives caller-owned invocation controls: required
@@ -244,7 +289,8 @@ the six required methods.
 `pageTranscript` and `readAfterTranscript` return
 `AgentExternalSessionTranscriptItem`s. Every item's `raw` must be the canonical
 repository-wide transcript record `AgentExternalSessionTranscriptRawRecord` —
-the same declaration the host persists and every transcript reader parses:
+the host's admitted source declaration. Transient image bytes are consumed by
+the Session media owner before persistence:
 
 ```ts
 import type {
@@ -271,8 +317,29 @@ record wraps the provider-native body in an agent record; `{ type: 'acp',
 agentId, data }` is the general form for an Agent without a first-party content
 dialect.
 
-Extensibility is on the agent content wrapper only. Both records are strict at
-the top level: `role` and `content` are the only admitted keys, and a record
+Both records may additionally carry `media`, an array of standard inline ACP
+image blocks. For example:
+
+```ts
+function imageTurn(imageBase64: string): AgentExternalSessionTranscriptRawRecord {
+  return {
+    role: 'user',
+    content: { type: 'text', text: '' },
+    media: [{ type: 'image', mimeType: 'image/png', data: imageBase64 }],
+  };
+}
+```
+
+The host stages and adopts those images through the existing Session attachment
+store; source bytes are never persisted inline. These closed blocks admit only
+`type`, `mimeType` and `data`, not a file path or URL. The source owns native
+snapshot and handle validation. Preserve an image-only turn, and return an
+explicit image-unavailable placeholder with partial coverage when restoration
+fails. This development extension requires a matching host; an older strict
+host rejects the field instead of silently accepting a text-only import.
+
+Extensibility otherwise stays on the agent content wrapper. Both records are strict at
+the top level: `role`, `content` and optional `media` are the only admitted keys, and a record
 carrying a sibling such as `meta` is rejected. The user `content` is strict too
 — `type` and `text` and nothing else. The agent `content` is the extensible
 one: keep the canonical `type` (and, for `acp`, a non-empty `agentId`) and any
@@ -352,9 +419,11 @@ identifiers are never diagnostics.
 
 The host preserves the containing operation's deadline and explicit item/byte
 budgets. It does not add an ordinary 15-second deadline or a shorter host ceiling.
-Without a deadline, cancellation and occurrence retirement still stop admission.
-Honor `request.signal` and any supplied `request.deadlineAtMs`; cancelled, retired,
-or late results are discarded. Paged reads must fit their requested byte/item
+Occurrence retirement refuses new admission and closes an ongoing follow stream.
+A bounded callback already admitted under that occurrence keeps its captured
+source through completion. Honor `request.signal` and any supplied
+`request.deadlineAtMs`; caller cancellation and deadline expiry still stop the
+operation. Paged reads must fit their requested byte/item
 budget. Source and identity resolution have no implicit serialized-result budget.
 
 This is an unreleased 0.3 source-contract change. Update and rebuild callbacks
@@ -760,10 +829,11 @@ The callback receives:
   `linkedDirectory` context, each limited to 10,000 code units.
 
 Persisted session metadata alone is never launch authority. The wrapper binds
-the call to the current Agent occurrence, combines caller cancellation with
-occurrence retirement, preserves the caller deadline and the takeover callback's
-declared result budget, and rejects malformed, oversized, cancelled, retired, or
-late results instead of truncating or admitting them. Cancellation is
+the call to the admitted Agent occurrence, preserves caller cancellation, the
+caller deadline and the takeover callback's declared result budget, and rejects
+malformed, oversized, cancelled, or late results instead of truncating or admitting
+them. Retirement refuses the next admission rather than cancelling an already
+admitted bounded callback. Cancellation is
 cooperative, so callbacks must honor `request.signal` and
 `request.deadlineAtMs`. `remoteSessionId` is limited to 2,000 code units, and
 `resolveLaunch` takes exactly this one request argument—there is no

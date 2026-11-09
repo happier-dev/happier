@@ -44,7 +44,7 @@ is the implementation. It gives you four properties that an inline write cannot:
 
 ### Tuning it
 
-All five knobs are read from the environment, per CLI process, and clamped:
+All four knobs are read from the environment, per CLI process, and clamped:
 
 | Variable | Default |
 | --- | --- |
@@ -52,7 +52,6 @@ All five knobs are read from the environment, per CLI process, and clamped:
 | `HAPPIER_SESSION_MUTATION_OUTBOX_MAX_RETRY_MS` | `30000` |
 | `HAPPIER_SESSION_MUTATION_OUTBOX_JITTER_MS` | `250` |
 | `HAPPIER_SESSION_MUTATION_OUTBOX_MAX_ATTEMPTS` | `12` |
-| `HAPPIER_SESSION_MUTATION_OUTBOX_TRANSCRIPT_FLUSH_BATCH_LIMIT` | `25` |
 
 Backoff is `min(maxRetryMs, baseRetryMs * 2 ** attempt)` with the exponent
 capped at 8, plus up to `jitterMs` of jitter. At the defaults that reaches the

@@ -46,6 +46,11 @@ The sidebar's **Move to folder** action organizes sessions within their project;
   daemons need compatible builds; editing their checkout does not update them.
 </Callout>
 
+In 0.3 development builds, a daemon does not accept a move initiated by a 0.2.11
+daemon. It returns “Update both computers to move this Session.” Update both
+computers to compatible builds before retrying; leaving **Transfer session data**
+on does not bypass this requirement.
+
 For a move to another machine, **Transfer session data** is on by default. It copies this
 session's conversation history to the other machine. Turn it off only when the exact
 Agent-native session is already there, for example because you have already synchronized
@@ -57,7 +62,8 @@ repairing Agent-native data. If it is missing, the dialog stays open and asks yo
 Workspace copying is also off in this mode, so the target must already have the files it needs.
 
 Both daemons must support the same no-transfer handoff protocol. Otherwise the toggle stays
-on and disabled with an update hint. Update both daemons, or keep ordinary transfer enabled.
+on and disabled with an update hint. Update both daemons, or keep ordinary transfer enabled
+when both running daemons support it.
 Mixing a 0.2 daemon and a 0.3 daemon does not enable no-transfer handoff merely because each
 version has a transfer toggle. Agents without an existing-state resolver must use transfer.
 Claude and Codex have development existing-state resolvers; OpenCode continues to use transfer.
@@ -373,33 +379,21 @@ together and is not legal advice.
 
 ## Data from the retired replication engine
 
-The 0.3 line replaces an earlier workspace replication engine. Data left behind by that
-engine is never executed — the new engine fails closed rather than trying to interpret it.
+In current 0.3 development builds, data left by the retired 0.2 workspace replication
+engine stays unchanged in its original folder. It does not prevent daemon startup or a
+new workspace link. The new engine never executes, imports or renames that data, so a
+later downgrade can still find the old files. This is development behavior, not a
+claim about an already published release.
 
-The same refusal protects the handoff itself. If one machine still runs a Happier version that
+Disk preservation does not enable retired workspace transfers. If one machine still runs a Happier version that
 offers the retired workspace transfer, a handoff that tries to use it fails with an
 update-required error and moves nothing. Update Happier on both machines, or choose
 **Don't move files** — the session itself still moves.
 
-When Happier recognizes retired data on a machine, it moves it into a private quarantine
-folder and disables workspace sync on that machine. The UI then shows you the quarantine
-path, copyable, with **Open Folder** where the platform supports it.
-
-Happier does not delete that folder for you. Removing it is a deliberate, offline step:
-
-<Steps>
-
-### Stop every Happier daemon that can use that data directory
-
-### Remove exactly the quarantine folder shown in the UI, using your operating system
-
-### Restart the daemons, then reinspect from the same screen
-
-</Steps>
-
-If Happier cannot classify what it found — an unexpected shape, a symlink, a permissions
-mismatch — it leaves the data completely untouched and reports the path instead. It will not
-guess, and it will not delete on a guess.
+No old-state cleanup is required to use new sync. Existing quarantine folders created
+by earlier development builds also remain untouched; Happier does not automatically
+restore or delete them. Keeping these files does not run the retired engine alongside
+the new one or make old relationships into new links.
 
 ## Session handoff settings
 
@@ -519,12 +513,6 @@ The managed sync engine is not installed for that machine's platform. The sessio
 handoff, and everything unrelated to workspace sync remain available, but the selected workspace
 action cannot continue. Retry after the component is available, or choose **Don't move files**
 to move only the session. See [The sync engine, and its licence](#the-sync-engine-and-its-licence).
-
-### Workspace sync is disabled on one machine
-
-That machine still holds data from the retired replication engine. Happier quarantined it and
-disabled sync there deliberately; clearing it is the offline step described in
-[Data from the retired replication engine](#data-from-the-retired-replication-engine).
 
 ### A workspace action fails and asks for an update
 

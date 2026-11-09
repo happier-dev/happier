@@ -12,8 +12,8 @@ Happier plugins are trusted code packages. The Plugin SDK is a supported interfa
 - Dependencies and build outputs belong to the same package trust decision.
 
 Bundled and externally installed plugins are eligible for the same host
-capabilities; each plugin still receives the services and contributions its
-manifest and activation declare. Eligible host Actions start **Allowed** on the
+capabilities. Services depend on the invocation host's actual bindings;
+contributions must be declared and registered. Eligible host Actions start **Allowed** on the
 **Trusted plugins** integration; a present user can change an individual Action
 to **Ask first** or **Off** under **Settings → Actions → Integrations**. Happier
 stamps the calling plugin and its current process-local occurrence, so a plugin
@@ -22,7 +22,12 @@ Approval decisions and security controls that require a present user remain
 discoverable where useful but return `present_user_required` to plugin
 automation.
 
-Manifest host-access requests constrain host-mediated services. They do not prevent trusted code from using ambient process capabilities, so review package source and dependencies before accepting the package-level trusted-code decision.
+In unreleased 0.3 development source, manifest host-access requests disclose
+intended access for installation consent; they do not impose per-plugin
+process, filesystem or network fences. Account and Team authorization, selected
+credential bindings, credential-origin handling and secret redaction remain
+with their host owners. Review package source and dependencies before accepting
+the package-level trusted-code decision.
 
 ## Isolated UI
 

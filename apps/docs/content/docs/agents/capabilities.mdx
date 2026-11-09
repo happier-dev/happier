@@ -86,6 +86,24 @@ works and is not yet considered settled.
 | Pi Coding Agent CLI | Supported | Not supported | Not supported | Not supported |
 | Qwen CLI | Supported | Not supported | Supported | Not supported |
 
+## Applying Session skills
+
+In **0.3 development source**, open **More → Skills** on a Session rail or the
+Skills row in Info to inspect and change that Session's selection. Both open the
+same pane. Skills starts in More and can be placed in Pinned or Hidden.
+
+When the Session belongs to a different Home from your active Home, the pane
+shows **Unavailable** and **View** and **All skills** navigation
+stay disabled. Cross-Home skill management is not yet supported.
+
+The pane and a saved-skill card distinguish selection from acknowledged runtime
+application. Supported library-skill reload paths can apply live; other changes
+wait for a settled turn or restart with resume. A terminal-started Session keeps
+its manual restart explanation, and an Agent without the required resume path
+reports that the change applies to new Sessions. Saving a skill alone never
+establishes that it is live. See [Skills](/extending/skills#choose-skills-for-a-session)
+for selection, attachment recovery and default reach.
+
 ## Compacting while idle
 
 **Development only:** these controls are available in the 0.3 development source.

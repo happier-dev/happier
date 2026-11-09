@@ -72,8 +72,8 @@ effort options remain on the Agent's existing configuration controls rather
 than becoming a second model-selection format.
 
 See [Account Provider setup](/agents/provider-integrations#account-setup-in-03-development)
-for connection configuration without a machine. The live refresh behavior below
-still runs from the selected machine.
+for connection configuration without a machine. Personal live refresh runs from
+the selected machine; shared Team sources follow the route described below.
 
 ## Source visibility and changes in 0.3 development
 
@@ -127,7 +127,7 @@ continue to follow its definitions and model rules.
 
 ## Live model lists
 
-Provider connections and some native Agent runtimes expose models dynamically. Happier probes from the selected machine and shows the current merged catalog.
+Provider connections and some native Agent runtimes expose models dynamically. For personal sources, Happier probes from the selected machine and shows the current merged catalog.
 
 This matters because the available list can depend on:
 
@@ -150,11 +150,32 @@ may still return cached choices.
 Refreshing available choices does not change the model already running. Select a model separately;
 the Agent's normal apply timing still applies.
 
+### Team model discovery in 0.3 development
+
+In unreleased 0.3 development, a brokered Team Connected account or Pool uses
+the credential owner's selected source on the broker machine for model discovery.
+Direct delivery instead uses the execution machine's accepted source context:
+after delivery, the running session publishes its Agent's model observation
+through the existing in-session model list. Browsing Direct declarations before
+launch does not deliver credentials or borrow the broker's observation.
+
+An observed model list replaces the static declarations, including when a
+successful observation returns no models. Without an observation, the static
+fallback is labelled **Not checked**. Route readiness alone does not verify
+Account entitlement or a successful model request. Experimental Team
+Agent/model pairings show an **Experimental** badge and require no confirmation
+from either the credential owner or the recipient; hard incompatibility and
+ordinary access checks still apply. The badge is separate from catalog confidence.
+See [Shared credentials for a Team](/accounts/team-credentials#model-discovery-in-03-development)
+for the delivery choices and their limits.
+
 ## Static model lists
 
 Not every Agent or Provider has a dynamic model API.
 
 For static-only sources, Happier uses verified plugin catalog metadata. Claude instead starts from that static catalog and, by default, asks Anthropic for the models available to the selected Connected Service or native Claude Code login.
+
+In 0.3 development, native Claude discovery also supports enabled user settings helpers and configured gateways. Happier executes the user helper as a shell command on the machine running Claude, in the selected workspace directory. If it fails, the picker shows the built-in catalog and a failed refresh without substituting another account's credentials. See [Claude discovery settings](/agents/claude#settings-reference-claude-remote) for credential and failure behavior.
 
 Static model lists can still change when Happier updates its provider catalog.
 

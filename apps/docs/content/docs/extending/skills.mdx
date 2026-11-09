@@ -36,6 +36,13 @@ defaults in existing Accounts; reading the library does not save new rules.
 
 Open **Settings → Skills**, then use **+**. The add dialog offers **Browse**, **From a link**, **Upload** and **Write**.
 
+Write stays inside that dialog and creates only when you choose Add. Switching
+modes keeps this task's drafts and selected files. Closing with unsaved input
+offers Keep editing or Discard; valid Write drafts and selected Link/Upload previews also offer Save. Opening an
+already added skill does not create another copy. Link and Upload batch Add uses
+the ticked set with its default reach; **Add only** in a selected detail uses that
+skill's own Where and sibling choices instead.
+
 1. In **Browse**, choose a registry and open a skill's details. Happier picks appear first when that catalog supplies entries. **From a link** previews the skills in a repository, a skills.sh pack (`https://skills.sh/p/<pack-id>`) or an HTTPS `.well-known/skills/index.json` index; select the ones you want. You can paste `npx skills add <url>` as text into the same field. Happier reads the link without running that command. **Upload** accepts a skill folder or ZIP on the web, or a ZIP through the native document picker. **Write** opens a draft in the skill editor.
 2. Review the instructions, files, source revision and whether the skill has scripts. Browse and link additions keep the reviewed revision, including supporting files and executable modes, even if the source branch advances before you press Add. Updates can offer the newer revision later. When a skill refers to another skill folder from the same repository or upload, for example `../prisma-orm-setup/SKILL.md`, the preview says "Also adds" that skill and includes it; untick it to leave it out. A skill you already added is not added twice. Other files outside the skill's own folder are not imported, and the preview says so. A folder or ZIP holding several skills lists each one to tick.
 3. Choose **Where it's on**, or keep **Everywhere**. Add the skill to the library, or save your written draft.
@@ -45,6 +52,25 @@ The skill detail lets you edit instructions and supporting files, move the item 
 Pack and well-known index links use the same checklist, including skills already in your library. Pack links need a reachable machine to fetch their files; other index links follow the [registry source fetch rules](/extending/registries). Each skill is pinned to the content reviewed in the preview. When an index publishes a digest, Happier verifies the downloaded artifact and shows **Verified by digest** with its source host. An index without one shows **No digest published**; Happier still records a content digest to pin the reviewed copy. These sources have no Git commit. Unreadable or unverifiable items are left out of the preview while valid items remain available. Happier fetches and verifies the selected content again when you add it: if a selected item changed since preview or fails verification, Add fails before saving any selected skills. Your preview stays open. Review a fresh preview or deselect the affected item before retrying.
 
 If Happier saved the item but could not save its defaults, it reports that partial result. Use **Try again** to repair where it's on; the saved skill stays in the library and stays Off until a rule or Session selection enables it.
+
+The Skills home shows where your library can reach your machines and Agents,
+with a summary and items that need a look. On a phone, this overview appears
+above the library list. An ordinary local modification or an Off skill alone
+does not mean something needs your attention; an upstream change, unreadable
+content, removed source or native-folder collision can offer a review or fix.
+
+Use the Source and Machine filters to narrow your library independently of text
+search. Selecting a machine from the reach map adds the same Machine condition.
+Removing that condition keeps your source selection and search text.
+**Updates** remains reachable while the library is narrowed.
+
+In 0.3 development, **Made by** also narrows the held library to **You**, **Any
+Bot**, a particular Bot or **From registries**. It combines with the other
+filters. Written skills show their recorded creator; editing or restoring one
+does not change that attribution. Older skills with no recorded creator remain
+findable under **Anyone**. A creator's current name and face can become
+unavailable without making the skill disappear. Open the creator's Session only
+when your Account still has access.
 
 ## Where it's on
 
@@ -85,17 +111,35 @@ Registry, link and well-known index additions track their source and reviewed re
 
 Updates affect later delivery of the skill. The update receipt does not offer Undo: the source might no longer supply the earlier revision. A failed source check keeps your library content and reports the failure.
 
+If applying a reviewed update fails, your local files and per-file choices stay
+available for another attempt. Apply uses the reviewed library revision; a
+conflict requires reviewing the current content rather than overwriting it.
+
 **Not used recently** means Happier has recorded no use in more than 30 days, with enough observation to support that claim. Recorded uses include Claude's SDK skill invocations, Codex skill mentions, and successful Session reads through Happier. Other Agent or launch paths may not report use, so this is not a complete usage history.
 
 ## Existing library and Profile seeds
 
 An upgraded library offers **Choose what's on** for your library skills that have no defaults. Those skills stay off until you choose; the built-in Happier guides follow the defaults above. Suggested selections come from recorded use; without recorded use, none are selected automatically.
 
+**Not now** dismisses this invitation on the current device without changing
+rules. **Turn on** keeps the selected skills available for retry if the write
+fails; the invitation settles only after the change succeeds.
+
 Legacy enabled skill attachments migrate once: Account context becomes Everywhere rules, Project context becomes Project rules, Profile context becomes Profile seeds, and Session context becomes Session includes. Retained disabled inherited entries become Session excludes. Legacy records stay readable but no longer paste skill instructions; voice skill attachments stop contributing while the skill stays in the library.
 
 A Profile's skill seeds add skills to Sessions started with that Profile, at the Session level. They do not create another Where-it's-on level. In the development Profile editor, use **Skills this Profile adds** to add or remove library skills, then save the Profile. A seed whose skill has left the library stays visible so you can remove it. Changing a Profile does not retroactively change an existing Session's selection.
 
 ## Choose skills for a Session
+
+Open **More → Skills** on the Session rail, or the **Skills** row in Info, to
+reach the same Session pane. Use **+** to choose from the shared picker, remove
+a selection, or use **Undo** to restore the previous selection. Navigation
+placement lets you keep Skills in Pinned, More or Hidden; its default is More.
+
+These controls currently require the Session's Home to be your active Home.
+For a Session on another Home, the pane shows **Unavailable**, and **View** and
+**All skills** navigation stay disabled. Cross-Home skill
+management is not yet supported.
 
 The development **This session gets** sheet groups Skills and MCP servers separately. Add, remove or reset a skill there without changing its saved defaults. Library `$` groups add skills to the Session instead of pasting their instructions; those composer groups are still being integrated. Native suggestions remain dependent on the selected Agent and machine.
 
@@ -105,7 +149,20 @@ Library-skill changes can reload live on supported Claude and Codex paths. Other
 
 The same [Actions](/plugins/api/host-actions) back the library, rules, Found and update operations. Agent, CLI and MCP writes ask for approval by default; change that policy under **Settings → Actions**. Your own reversible taps act directly; deletion and outside-install removal confirm.
 
-An Agent-created, installed, copied or adopted skill starts On for its creating Session only. Turning it on more widely is a separate rules Action.
+An Agent-created, installed, copied or adopted skill starts On for its creating
+Session only. Only a person can widen a Bot-created skill beyond that Session;
+approving an Agent's wider rules request does not make it a person-initiated
+change. Existing skills without recorded creator evidence keep the normal
+rules approval path.
+
+A successful `skills.create` shows a saved-skill card with **View** and the
+Session's actual application status. Saved or selected does not mean loaded.
+If attachment failed after saving, **Attach again** uses that saved skill rather
+than creating another copy. A pending change follows the existing next-turn or
+restart notice; **Restart now** appears only when that launch path supports it.
+Offline and terminal-started Sessions retain their availability or manual
+restart explanation. Exported skill files do not contain private creator
+Session ids.
 
 ```bash
 happier skills list

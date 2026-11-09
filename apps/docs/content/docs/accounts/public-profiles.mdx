@@ -1,14 +1,14 @@
 ---
 title: Public profiles
-description: Current development status and the consent boundaries for public profiles.
+description: Set up a development public profile, review what you share, and withdraw it.
 ---
 
-A public profile is intended to let you review and publish selected facts on one
+A public profile lets you review and publish selected facts on one
 Account service, then share a page, badge or card without giving visitors access
 to your Account.
 
 > **Availability:** Public profiles are under development for 0.3. Publication
-> is not available as a complete workflow in the current integration. This page
+> works in development builds, with integration gaps listed below. This page
 > does not claim stable or preview availability. Username claim, check and
 > release are separate [Account identity operations](/accounts/friends).
 
@@ -18,65 +18,113 @@ Development source includes eligible-fact preparation in the app and CLI,
 publication storage, report configuration and anonymous delivery. Supporting
 servers advertise the capability by default, with an operator opt-out;
 set `HAPPIER_FEATURE_ACCOUNT_PUBLIC_PROFILES__ENABLED=0` to disable it.
-See [feature availability](/extras/feature-flags). The complete owner workflow,
-applied-image HTML header and loaded-runtime validation remain unfinished, so
-there are no publication setup steps to follow yet. Creating a username or
+See [feature availability](/extras/feature-flags). Your service needs a configured
+[public ingress and report contact](/self-hosting/env#public-profiles), and the
+client must receive its enabled Public profiles feature. Creating a username or
 enabling Friends does not publish a profile. Profiles and Friends use the same
 username on that Account service; profile-enabled username operations do not
 require Friends to be enabled.
 Existing [Session sharing](/accounts/session-sharing) remains a separate flow.
 
+## Set up your page in a development build
+
+1. Open **Settings → Account → Public profile** on the service where you want
+   the page. Choose a username first if prompted, then choose **Preview my profile**.
+2. In **Public data**, review the fields you intend to share. Use **Details**
+   for the period, bio, links, public repositories and visitor theme. Use the
+   page's widget controls to arrange blocks and **Look** to choose a background.
+   The eyes beside Totals figures change those same field permissions; a hidden
+   figure stays visible to you while editing. The eyes are disabled while a
+   consent change is pending.
+3. Choose **Publish** and review the prepared public edition, selected facts,
+   visible image pixels, public URL and daily-refresh disclosure. Cancelling
+   leaves the edition unpublished.
+4. Open the resulting page and check it as a visitor. Use the profile's sharing
+   controls for a link, badge or card. Creating a snippet does not copy it;
+   use the explicit Copy control.
+
+Private layout and Look changes need **Apply** after publication. Where offered,
+Undo restores the previous applied edition through the same Action policy.
+A changed picture may need selecting again and cannot always be restored by Undo.
+Field consent is separate: changing a field on an existing edition submits that
+change immediately through the Action policy. Wait for its acknowledgement;
+an uncertain save is not confirmation that the field was hidden.
+
 ## Consent and private drafts
 
-The planned distinction is between fields and placement: fields decide what is
+Fields and placement have separate meanings: fields decide what is
 public, while blocks decide where it appears. Removing a block is not the same
 as revoking a field; selected facts can still appear in public JSON or badges.
 
-Widget layouts and Look choices are intended to remain private drafts until an
-explicit reviewed Apply. Draft edits and later plugin changes must not silently
-change the public edition or consent. Refresh is intended to update permitted
+Widget layouts and Look choices remain private drafts until an
+explicit Apply. The first Publish opens a review of the public edition; later
+Apply and Undo go directly through the selected Action policy without another
+profile review sheet. Draft edits and later plugin changes must not silently
+change the public edition or consent. Refresh updates permitted
 facts only, without applying drafts or publishing/resuming a profile.
 
-The public-data design uses one period and time offset. Generated facts exclude
+Public data uses one period and time offset. Generated facts exclude
 money, prompts, paths, private repository identities and known Team usage:
 usage through a Happier Team or a confirmed company subscription. Other usage,
 including API-key usage and imported history without known ownership, counts
 with the same reconciliation as private Usage. Missing data is unavailable,
 not a measured zero.
-The service must not claim to certify a client's synchronized totals. Exact
-field choices and source coverage will be explained in the runnable review flow.
+The service does not certify a client's synchronized totals. Core identity,
+summary numbers and activity-level fields start selected; bio, links, finer
+detail, projects and Footprint start off. Review the actual selection before
+publishing. Turning a field off masks it across the page, JSON, badge and card,
+including repeated blocks. Weekly peaks also require Peak parallel to be public.
+
+The calendar exposes activity levels, not daily amounts, but it still reveals
+which days were active. Weekly Agent mix together with public token totals can
+let a visitor estimate amounts. Turn lengths omit names, timestamps and Session
+links. Day and night uses the selected Night shift hours; machine-kind detail
+does not identify individual machines and remains unavailable without recorded
+support. Missing window history or finished-turn evidence also stays unavailable.
+Footprint currently reports insufficient basis rather than an invented estimate.
 
 ## Images and encryption
 
-The planned image flow keeps selection and preview local. Only reviewed Publish
-or Apply sends the selected normalized image and appearance as an independent
+Image selection and preview stay local. Only Publish
+or an explicit Apply sends the selected normalized image and appearance as an independent
 public copy.
 
 That copy is server-readable plaintext for both plain and end-to-end encrypted
 Accounts. Publication must not change Account encryption or upload private keys.
 Review includes the visible pixels: field controls cannot redact private
 information already baked into a selected photo or screenshot. Later private
-Look, library or plugin changes must not alter the applied image.
+Look, library or plugin changes do not alter the applied image.
+The current development identity uses a planet avatar with an
+Account-image-unavailable reason, including on the paused page. It does not
+publish your Account photo or a private storage or provider image URL. This
+avatar is separate from the reviewed background picture chosen in Look.
 
 ## Sharing and withdrawal
 
 Existing private recap images keep their seven styles and three formats.
 Development delivery includes HTML and JSON, SVG badges, SVG or PNG cards and
-PNG social previews; these are not yet available as a complete user workflow.
+PNG social previews. These use the applied public edition, not private recap
+field selections or unpublished layout drafts.
 Public pages name the Account service with its configured
 `HAPPIER_ACCOUNT_SERVICE_DISPLAY_NAME`. Without one, they show only the public
 ingress host, omitting its scheme, port and path; links still use the complete
 public URL.
 Development-only native daemon wiring checks for facts-only refresh after 24
-hours. Preparation is connected, but the complete publication and refresh
-journey remains unverified.
-It requires the refresh Action to be Allowed specifically for CLI; permission
-on another surface does not authorize unattended refresh. Producing a snippet
-is separate from actually copying it.
+hours. Actual unattended due/startup/reconnect execution still needs loaded
+integration validation; invoking Refresh manually does not prove that schedule.
+Publishing includes daily facts refresh while an authorized native daemon is
+running, and the first Publish review states that the page refreshes daily.
+There is no separate permission to enable by default. An explicit Action-policy
+override can still disable unattended refresh or require approval; the daemon
+does not open an approval prompt. Refresh cannot resume a paused page, widen
+fields or apply drafts. Producing a snippet is separate from actually copying it.
 
-The development lifecycle distinguishes pause, unpublish and username release.
-Unpublish keeps the username and private drafts; explicit release applies the
-30-day hold described in
+Pause hides public facts while retaining the applied edition; Resume uses its
+existing consent without applying a draft. Unpublish erases the public edition
+and keeps the username and private drafts. Renaming keeps the profile
+published at the new handle and frees the old handle. Explicit release withdraws
+the profile and makes the released handle immediately claimable, including by
+its former holder; it does not publish again when a handle is claimed. See
 [Friends](/accounts/friends#choosing-or-releasing-a-username-03-development).
 
 Development server reads check current policy and state before serving content
@@ -84,10 +132,26 @@ or accepting a cached-response validator. Copies already downloaded, pasted into
 a README, proxied or unfurled elsewhere cannot be recalled. The noindex default is a crawler
 instruction, not a secrecy guarantee.
 
-Report is intended to open this service's operator contact, without submitting
+Report opens this service's operator contact, without submitting
 diagnostics or claiming that a report was sent. Server moderation and explicit
-operator handle reclaim are implemented in development source; their complete
-owner and operator interface integration remains unfinished.
+operator handle reclaim are implemented in development source. Restrict/restore
+controls are available through [Home administration](/self-hosting/home-administration#public-profile-moderation-in-development).
+An explicit operator reclaim withdraws the profile, releases the exact reviewed
+handle and posts the operator's notice in the owner's People Activity. If the
+handle changed after review, the operation refuses that stale target.
+
+## When a development flow is unavailable
+
+Missing ingress, report contact, a username or eligible facts leaves a visible
+unavailable state; configuring one prerequisite does not invent the others.
+An older or feature-missing server cannot provide the public-eligible query by
+falling back to private Usage. Native blocking Ask-result delivery and supported
+older-server combinations remain integration gaps. If approval or a save does
+not settle, check the current profile before retrying instead of assuming it
+published or withdrew anything.
+
+This page describes current development source, not complete program acceptance or public HTTPS,
+external image-cache, physical-device or packaged-app certification.
 
 ## Related
 

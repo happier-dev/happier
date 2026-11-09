@@ -19,10 +19,15 @@ If you want to change the Agent without branching at all, see [Continue with ano
 
 ## How fork selection works
 
-In the current development flow, each fork entry point opens a strategy chooser before it starts any
+In the current development flow, session and message fork controls open a strategy chooser before starting
 work. You can choose a **Native fork** when the Agent and fork point support one, **Replay fork** to
 start a child with a bounded transcript seed, or **Configure a new session** to continue through the
 normal new-session screen.
+
+In the current 0.3 development source, sending `/fork` in the session composer forks from the latest
+conversation using Native or Replay according to session support and your replay settings, then opens
+the child. This command starts the fork directly. If the request is refused or fails, Happier reports
+the error and restores `/fork` in the composer so you can retry.
 
 An explicit Native choice is strict: if the provider-native fork is unavailable or fails, Happier
 reports that outcome instead of silently creating a replay child. Existing callers that explicitly

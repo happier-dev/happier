@@ -485,6 +485,20 @@ retained answer, even when the return Session runs on another machine.
 Returned information never requests an acknowledgment. Pass, failure,
 cancellation and no result remain distinct outcomes.
 
+To pass on an admitted request, name its original input in the receiving
+Session. This fulfills the request rather than sending a new message:
+
+```bash
+hdev session actions execute <receiving-session-id> session.message.reply \
+  --input-json '{"requestLocalId":"<original-input-id>","reply":{"kind":"pass"}}' --json
+```
+
+Use `session.message.reply`'s answer arm to answer explicitly, or let the
+accepted turn's final answer fulfill the request. Inspect its current schema
+with `hdev session actions describe session.message.reply --json`; a timeout or
+empty response is not a pass. Questions addressed to the person use the
+separate `session.user_action.answer` operation and its authority rules.
+
 Use [Action discovery](/plugins/api/host-actions) for Session selectors and
 current operation support. A group resolves before approval, and approval keeps
 the reviewed concrete sessions even if relations change. Selection never grants

@@ -8,11 +8,28 @@ Plugin compatibility has four independent axes:
 | Axis | Author field | Meaning |
 | --- | --- | --- |
 | Manifest schema | `schemaVersion` | Selects the strict JSON manifest contract. |
-| Happier host | `engines.happier` | Selects compatible host releases. |
-| Runtime API | `runtime.apiVersion` | Selects the host/plugin ABI generation; every manifest must declare the generated current value. |
+| Happier host | Optional `engines.happier` | Restricts compatible host releases when the plugin requires a particular host contract. |
+| Runtime API | Host-derived `runtime.apiVersion` | The host/plugin ABI generation, defaulted by authoring and manifest ingestion. |
 | SDK package API | Package SemVer plus its API inventory and declaration report | Selects the public API contract of a published SDK package. |
 
 Package SemVer does not replace the manifest, host, or runtime compatibility fields. A package version can change without a wire-epoch or runtime-ABI change, and vice versa.
+
+Ordinary `definePlugin` declarations omit `runtime` and `engines`. Set
+`engines.happier` only when your plugin needs a specific compatible host range;
+`'^0.0.0'` is not a useful placeholder. Hook API versions and hook catalog facts
+are host-owned and need no author declaration.
+
+The 0.3 development host follows **strict author, tolerant load**. Authoring,
+pack and doctor retain strict manifest validation. At load, an invalid
+contribution or unknown family is skipped with a plugin diagnostic. An unknown
+field anywhere inside a contribution skips the entire contribution, since it
+may carry a restriction. Healthy declarations continue loading; skipped
+declarations cannot register executable handlers. Unknown envelope fields, identity, integrity
+and runtime ABI failures remain fatal. An incompatible declared `engines.happier`
+range refuses the whole plugin with `plugin_manifest_engine_incompatible` for
+all source kinds, including local development and bundled plugins. An omitted
+range creates no version requirement. Declare a narrower range when an older
+host cannot safely ignore new semantics.
 
 {/* public-toolchain-compatibility:versioning-facts:start */}
 

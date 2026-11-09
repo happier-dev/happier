@@ -126,8 +126,11 @@ Home's Board capability. Transcript-only creation does not enable the Board.
 The transcript stores a small reference to the shared Session item, not its
 HTML or a second copy. Pin and Unpin change that same item's Board placements;
 Unpin does not delete a transcript visual. Loading, encrypted, unreadable,
-removed and unavailable states come from the same record. Executable content
-runs in one host at a time; other placements remain references. Visual layout
+removed and unavailable states come from the same record. Each presented surface
+renders its own body. Moving a live visual between the transcript, panel and
+Board loads a fresh page, so its in-page input and counters reset. Within the
+transcript, the latest demanded occurrence renders it unless you choose **Show here**
+on another visible occurrence. Visual layout
 and loaded-platform QA are still being completed, so this is not a released
 cross-platform availability claim.
 
@@ -151,7 +154,11 @@ item and its placements; it does not uninstall the plugin.
 
 If another editor changes the same item or layout, Happier reports a conflict and
 refreshes the shared state for review instead of silently overwriting it. While
-offline, the last-known Board can remain visible, but editing pauses. If a request
+offline, the last-known Board can remain visible and admitted local HTML keeps
+running. Widgets still report their own Resource or plugin availability, and
+edits need their normal transport and authorization. A stale record refresh alone
+does not pause a visual. A denied read or removed record
+withdraws it. If a request
 loses its result and Happier cannot tell whether it committed, refresh the Board
 before retrying; it does not guess or submit the change again automatically.
 Viewer-layout requests from an agent follow the same rule: they can open or focus

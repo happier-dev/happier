@@ -106,6 +106,91 @@ Use `context.ui.notify(...)` instead when the intent belongs to the current
 present-user invocation rather than the notification system; it does not fall
 back to the notification service.
 
+### Notice lifecycle acknowledgements (development)
+
+In 0.3 development source, a send with `itemId` returns optional `notice`
+acknowledgement containing `artifactId`, `changed` and `opened`. It appears only
+after the private Account notice write succeeds. `opened` means that write
+created or reopened the condition; evidence updates, equal writes and request
+replays return false. A failed write rejects instead of returning an opening.
+An older host without this acknowledgement supplies no opening proof.
+
+An enrolled health source adds `healthPhase: 'open' | 'recovered'` to the same
+send. Recovery uses `type: 'update', resolved: false` so the recovered item stays
+unread in Updates until read or dismissed. A later open reuses the same item.
+Ordinary plugin notices omit `healthPhase` and retain their existing lifecycle.
+
+A provider notice can also persist `investigation: { kind: 'alertEntry', entry:
+{ entryRef, sourceInstanceId } }` on that same private item. The bounded entry
+reference must belong to the sending plugin. It retains no configured Action,
+Session, Agent, placement or permission choice. The Inbox data hook can pass it
+to the existing configured Triage handoff, which re-admits the native entry and
+current choices. Notices without the operand retain their prior behavior.
+
+```ts
+const result = await context.services.notifications.send({
+  clientRequestId: occurrenceId,
+  categoryId: 'issue-alerts',
+  itemId: `${sourceInstanceId}:${issueFingerprint}`,
+  title: 'Issue needs attention',
+  type: 'update',
+  resolved: false,
+  healthPhase: phase === 'resolved' ? 'recovered' : 'open',
+  investigation: { kind: 'alertEntry', entry: { entryRef, sourceInstanceId } },
+}, { signal: context.signal });
+```
+
+An automatic investigation also requires explicit source-local opt-in, an
+admitted open transition and current source authority. It uses the configured
+Triage Action with `result.notice?.opened === true`; the acknowledgement grants
+no Machine, Agent or Session permission. Updates and recovery never start it.
+
+### Private host-health evidence
+
+In 0.3 development source, the SDK's `/protocol` entrypoint exposes the host's
+existing `ProtocolServiceHealthNoticeSourceV1Schema` and
+`ProtocolServiceHealthNoticePageV1Schema` as composable schemas. Embed these
+values in a feature protocol rather than copying a service identity or page
+parser. `ProtocolArtifactGetOutputV1Schema` admits an ordinary fresh
+`artifact.get` result; `readOwnedNoticeArtifactV1(artifact, accountId)` then
+requires the admitted Account's private, owned notice with matching header and
+body. Obtain `accountId` from the authenticated mount or client Action's
+`context().accountScope`, never from evidence text.
+
+An admitted plugin can use the ordinary exact `artifact.get` read for its
+Account's private owned notice evidence. This does not grant notice creation,
+acknowledgement, deletion or export; foreign, shared or mismatched evidence is
+refused.
+
+The [public-authoring companion](/plugins/examples) demonstrates these exports
+in `healthNoticeAuthoring.readServiceHealthEvidence`. A parsed notice is evidence,
+not authority. Investigate uses configured Triage and the existing Session
+owners; target access, same-Machine placement and the chosen Agent must be
+re-admitted there. Native logs remain untrusted evidence. Restart, rollback and
+other writes retain their separate Actions and approval. These are development
+source contracts, not a claim that released hosts provide health monitoring.
+
+Environment notices do not imply a diagnosis Machine. The development-source
+`ProtocolDeploymentEnvironmentGetResultV1Schema` and
+`ProtocolServiceHealthNoticeMachineV1Schema` exports parse the fresh Environment
+read and explicit Machine choice; the public-authoring companion demonstrates
+them in `healthNoticeAuthoring.readEnvironmentInvestigationSelection`.
+Configured Triage still re-admits the exact notice, current Environment/link,
+Machine and optional Project workspace. Resource-limit notices retain their
+canonical vitals payload and use a transient Machine target rather than a
+stored service-health page.
+
+An ordinary `openNewSession` seed can carry the existing
+`directoryIntent: { kind: 'managed' }` with an exact Machine placement. The
+Session draft then owns its no-folder choice; the target Session owner alone
+allocates the private directory. Do not combine this intent with a placement
+path or a checkout-creation request. A host that does not admit the development
+seed shape refuses it; the caller must not retry with a guessed directory.
+
+Configured Triage opens that ordinary draft before returning a composed
+`newSessionDraft` destination. Treat the destination as an acknowledgement;
+opening another draft would discard the configured selection and evidence.
+
 ## Add native notification buttons
 
 In Developer Preview source, a category can declare buttons with plugin-chosen

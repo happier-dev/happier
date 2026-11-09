@@ -20,6 +20,9 @@ The installer places `fx` in `~/.local/bin`. You can launch the same login flow
 from **Settings → Agents → FX**. Happier detects the system CLI; it does not run
 a package manager on your behalf.
 
+Sign in on each Agent machine. FX instances on the same machine share the saved
+login when they use the same native user profile.
+
 FX publishes macOS and Linux builds only (x86_64 and arm64), so Happier offers
 no Windows install recipe for it.
 
@@ -30,8 +33,49 @@ configuration options advertised by FX's ACP server instead of keeping a
 separate model list. New sessions, resume, cancellation, follow-up prompts, and
 execution runs use the shared ACP lifecycle.
 
+In 0.3 development, Safe-YOLO selects FX's advertised `auto` mode, or `code`
+on older versions that advertise that name. It never selects `full-access`.
+Read-only selects FX's `ask` policy. These are native permission policies;
+they do not sandbox FX's process or prevent it from accessing the filesystem.
+If FX advertises no matching mode, Happier refuses to apply the preset.
+
+In FX 0.0.14, choosing a mode in Happier also saves FX's default for future
+sessions, including terminal sessions using the same user profile.
+
+FX 0.0.14 does not surface subagent approval requests over ACP. Approvals needed
+by supervised child tasks cannot be shown or answered in Happier.
+
+In-flight text steering is also supported in 0.3 development when FX advertises
+its steering extension. FX accepts text up to 64 KiB in UTF-8, including separators
+between text blocks. Images and larger inputs cannot be steered into the active
+turn. If FX reports that a steer was dropped, Happier reports a retryable input
+rejection so it can be resent; an unknown delivery outcome is kept distinct to
+avoid an automatic duplicate. FX's echoed input does not add another user entry.
+
 FX receives selected Happier tools as per-session ACP MCP descriptors. Project
 and user MCP configuration remains owned by FX.
+
+## Other model Providers
+
+In 0.3 development, a Happier Vercel AI Gateway connection can supply credentials
+and the initial Provider route for a new FX process. The running session's
+advertised **Provider** setting remains authoritative: changing it uses FX's own
+configuration controls. Happier does not keep a separate live Provider selector
+or reapply the initial route after startup.
+
+FX's saved credential source can override environment keys. If that preference
+would use another credential, Happier refuses the bound startup. Use FX's
+`/provider` control to select `AI_GATEWAY_API_KEY`, then retry.
+
+FX's [native custom connections](https://fx.sh/docs/configure-fx/custom-model-connections)
+support OpenAI Chat Completions endpoints, with an optional bearer key supplied
+through an environment variable. Connection definitions live in FX's private
+user settings. `FX_PROVIDER` and `FX_MODEL` select an existing definition;
+Happier does not create session-only definitions for custom endpoints or write
+your global FX settings. Configure those connections through FX and use the
+models its ACP server advertises. See FX's
+[authentication guide](https://fx.sh/docs/getting-started/authentication) for native
+credential selection.
 
 ## Interactive terminal
 
@@ -43,6 +87,8 @@ Happier session runtime or promise that terminal and ACP session IDs match.
 
 - Run `fx --version` on the Agent machine if FX is not detected.
 - Run `fx login` again if FX reports an authentication error.
+- Happier checks native sign-in status through `fx status --json` when an
+  authentication check is requested; it does not continuously probe FX.
 - If a model or mode is missing, check what the installed `fx acp` advertises.
 
 ## Related

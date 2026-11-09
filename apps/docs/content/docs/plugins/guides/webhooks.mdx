@@ -9,6 +9,24 @@ availability authority; this guide is the task-oriented workflow for the
 available webhook family. “Available” here means the current source author
 contract, not public package or release availability.
 
+## Record-only heartbeat (0.3 development source)
+
+A heartbeat contribution uses `verifier: { kind: 'capabilityUrl_v1' }` and
+`delivery: 'recordReceiptOnly'` without a handler Action. Explicit health-check
+setup enrolls the endpoint through the host; the saved source stores only its
+endpoint id. Obtain its URL through the existing guarded endpoint-read flow.
+Treat the complete URL as a secret: possession admits GET or POST without a
+signature or body. Do not place it in source configuration, logs or transcripts.
+Rotation and revocation use the existing endpoint lifecycle.
+
+Accepted pings update only the endpoint's monotonic receipt timestamp and hint
+the assigned Machine. They do not enqueue a delivery or run an Action. The
+existing health observer reads that receipt on adoption/reconnect; before the
+first ping it reports unknown, and it becomes late only after period plus grace.
+The observer's existing loop owns that deadline and the configured failure
+threshold, then parks until a new hint. This is the development author contract;
+it does not assert released package or loaded UI availability.
+
 ## Declare the verifier and handler Action together
 
 The declaration names a host-supported verifier and the exact plugin-local
@@ -63,6 +81,21 @@ export const { manifest, activate } = definePlugin({
   },
 });
 ```
+
+The host supports two signed verifiers. Each checks an HMAC-SHA256 signature
+over the exact raw body and selects one provider event header into the Action
+input:
+
+| `verifier.kind` | Routing | Signature header | Delivery id header | `request.headers[0].name` / `verified.eventType` |
+| --- | --- | --- | --- | --- |
+| `github_hmac_sha256_v1` | `accountEndpoint` or `providerInstallation` | `X-Hub-Signature-256` (`sha256=<hex>`) | `X-GitHub-Delivery` | `x-github-event` |
+| `sentry_hmac_sha256_v1` | `accountEndpoint` only | `Sentry-Hook-Signature` (bare hex, keyed by the integration Client Secret) | `Request-ID` | `sentry-hook-resource` (for example `issue`) |
+
+Sentry's `Sentry-Hook-Timestamp` is not covered by its signature, so the host
+does not use it. A Sentry issue delivery's `action` (`created`, `resolved`,
+`assigned`, `archived`, `unresolved`) is in the raw body for the plugin to parse.
+Endpoint credentials are currently server-generated only; storing a Sentry
+integration's own Client Secret on an endpoint is not available yet.
 
 Decode the raw body only after `PluginWebhookActionInputSchema` admits the
 input. The verifier has already authenticated the delivery; the Action should

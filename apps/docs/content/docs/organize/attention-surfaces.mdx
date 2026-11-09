@@ -43,6 +43,8 @@ When you use several [Homes](/accounts/multi-server) on one device, the app-icon
 
 On a phone, Home also shows a row of your Bots' faces under the greeting. Tap a face to open that Bot; swipe the row sideways when there are more than fit. Turn it off in **Settings → Appearance → Bot faces on Home**.
 
+In development builds, **Settings → Appearance → Bot motion** controls the faces in the Bots rail, roster and summary, and the Bot moons on Home. **Lively** includes reactions, a working breath and occasional resting gestures. **Reactions only** plays finite reactions without the breath or idle gestures. In both, a Bot's face in the rail, roster or summary gives a small hop and a quick grin when you point at it, or when you press it on a touch screen. **Still** keeps the faces still. Your system's Reduce motion preference also keeps them still. A completed Bot keeps its grin until you read the result; a failed turn uses a short, level mouth.
+
 ## Webhook destinations
 
 A webhook payload carries session titles, preview text, and the channel signature, and it is sent from the machine your sessions run on. Happier therefore checks the destination before every delivery:
@@ -82,6 +84,8 @@ Default behavior is tuned by channel:
 - Live Activities and home widgets keep updating silently.
 
 This means lock-screen and glanceable surfaces can stay useful without waking you up.
+
+**Development builds:** choose a custom quiet-hours schedule in notification settings for the Account or this device. Add time windows, choose their weekdays and an IANA time zone such as `Europe/Amsterdam`, then save. Windows can cross midnight. Changes remain a draft until Save succeeds; Cancel keeps the existing schedule. The editor uses the same delivery policy as the existing nightly preset. OS Focus and Do Not Disturb remain separate controls.
 
 ## Notification sounds
 
@@ -153,6 +157,7 @@ does not relax a Home’s or this device’s privacy rules. The separate pet act
 modes also retire without changing Show Bots. A pet previously limited to
 attention remains on screen while enabled. Account pet enable and selection
 defaults, and each device’s inheritance or explicit overrides, are preserved.
+Pet position remains local UI state rather than an Account preference.
 
 ### Bots in the notch
 

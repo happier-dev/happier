@@ -84,6 +84,14 @@ terminal host. It is an auxiliary interactive surface; it does not create a
 second Happier session runtime or promise that terminal and ACP session IDs
 match.
 
+## Other model Providers
+
+Kimi's [native Provider configuration](https://github.com/MoonshotAI/kimi-cli/blob/main/docs/en/configuration/providers.md)
+supports several inference protocols. Happier's Kimi integration does not yet
+bind a Happier Provider connection to a Session. The current `kimi acp` server
+uses Kimi's saved configuration and requires its native sign-in; the ordinary
+CLI's inline configuration options do not configure that ACP server.
+
 ## Troubleshooting
 
 - Run `kimi --version` on the Agent machine if Kimi is not detected.

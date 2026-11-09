@@ -97,6 +97,12 @@ request to turn an eligible assistant message into a reusable workflow; you
 choose when to send it. Pending-message recovery controls remain available. If you
 switch Pin off, existing pin indicators still let you unpin those messages.
 
+With a mouse, a message's time and actions appear when you hover it. On a phone
+or other touch screen they stay out of the way until you tap the message;
+tapping elsewhere or scrolling hides them again, and only one message shows
+them at a time. In the mobile app, a long-press opens the same actions as a
+menu, and a screen reader reaches them through **Show message actions**.
+
 ### Actions for prompts
 
 The [generated Actions catalog](/plugins/api/host-actions) owns exact inputs,
@@ -279,9 +285,8 @@ Topic detail and archive facts are not included in that prompt block.
 
 An optional `maxChars` budget selects complete index entries; it does not cut facts
 mid-line or budget the source label. Without a budget, the complete eligible index
-loads. Existing flat facts/archive documents and index-only documents remain
-readable through the same memory adapter. Index and topics remain inside one
-document, with its existing sharing permissions—not separate topic documents.
+loads. Index and topics remain inside one document, with its existing sharing
+permissions—not separate topic documents.
 
 Account memory preferences apply when creating a Session: ordinary Sessions
 default off and Bots default on, unless creation supplies an explicit choice.

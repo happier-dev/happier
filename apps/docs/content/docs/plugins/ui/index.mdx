@@ -11,10 +11,83 @@ Happier has three public Plugin UI models. Choose the narrowest one that fits th
 
 React Native plugin code is trusted package code and runs in the client realm; it is not a sandbox.
 
+In 0.3 development source, `CapabilityAddBody` places the selected item's single
+primary action below its identity and purpose. Supply the action descriptor through
+`detailFooter` and render `CapabilityAddDetailAction` once at that position in
+`renderDetail`. The [configuration recipe](/plugins/ui/configuration-pages) shows
+the shared Add body and its input modes.
+
 For a full Project destination in 0.3 development source, use the existing
 `appPage` family with a Project target. The
 [Project page recipe](/plugins/ui/configuration-pages#project-pages) covers
 accepted context, the shared host DetailsPane and local page navigation.
+
+## Session skills in development
+
+In **0.3 development source**, a Session contribution uses the existing
+`rightSidebarTab` placement and `target: { kind: 'session' }`. The mounted
+surface context supplies the Session identity; placement and navigation remain
+with the host. There is no separate Bot rail contribution family.
+
+The maintained public-authoring companion's `session-skill-reference` view
+demonstrates this slot with a typed `skills.read` host Action and
+`HappierSavedSkillCard` from `@happier-dev/plugin-ui`. The component
+takes semantic text and action controls and performs no reads or mutations.
+The example reads only when requested and explicitly leaves runtime application
+unknown. A successful read or save is not proof that the running Agent loaded
+the skill.
+
+The generated [host Actions](/plugins/api/host-actions) include selected
+`skills.list({ skillIds })` reads and acknowledged `skills.create` summaries.
+Use the existing Actions for capabilities and reach changes. A live surface may
+route those controls through its mounted host; immutable transcript snapshots
+retain their supported presentation profile and cannot gain live resources or
+mutation controls by embedding a shared card.
+
+## Machine pages in development
+
+In **0.3 development source**, declare a full Machine destination with
+`placement: 'appPage'` and `target: { kind: 'machine' }` through
+`defineUiSurfaceDefinition`. The existing Surface Registry admits it into the
+Machine page catalog. This is an unreleased source contract; check the installed
+SDK and host before depending on it.
+
+The mounted `useSurfaceContext().target` (or `await hostApi.context()` in hosted
+code) carries `{ kind: 'machine', serverId, machineId }`. Both routing ids are
+required. When known, the same target also carries `homeId` (the verified Home
+identity, not a device-local profile id) and `installationId` from the addressed
+Machine's current enrollment. Missing facts stay absent; do not substitute the
+plugin's execution Machine or invent an installation. Read these host-supplied
+facts instead of parsing a route or choosing another Machine from a global
+inventory. The authored target optionally names
+`serverIdPath` and `machineIdPath` for launch-input bindings; those path names
+are not mounted identity values.
+
+Use `target: { kind: 'services' }` only for a `servicesPanel`. A Services panel
+does not become a Machine page by carrying the same ids. A retired, conflicting
+or unavailable contribution cannot keep mounting through a second registry or
+fallback target. Ordinary Actions and Resources keep their own authorization,
+currentness and cancellation checks; a page target grants no native control.
+Contributed plugin Actions still execute at the plugin's selected execution
+origin. For a controller-addressed host Action such as
+`machines.provisioners.check`, explicitly pass this target's `homeId` and
+`controller: { machineId, installationId }`; if those facts are absent, keep that
+operation unavailable. Opening a Machine page does not relocate the plugin.
+
+To open Happier's existing managed-Machine configuration draft from this page,
+call `hostApi.openManagedMachineConfiguration({ provisioner: { pluginId, localId } }, { signal })`.
+Check `hostApi.version().methods` for `openManagedMachineConfiguration` when
+supporting an older host. Only a current admitted Machine mount with known Home
+and installation facts offers this method. Happier validates the current Account
+and exact provisioner, and supplies this Machine as the controller. Opening the
+draft creates no Machine and performs no native acquisition; the existing final
+review and Action admission still apply. A retired mount or unavailable
+provisioner refuses the handoff.
+
+The [Machine page example](/plugins/examples/action-resource-ui-plugin#add-a-machine-page-in-development)
+uses only public SDK and Plugin UI imports. Universal service inventory,
+controls and logs stay with Happier's Services owners; a plugin page can present
+its integration-specific facts without creating another service model.
 
 ## Hosted web scaffold and availability
 
@@ -300,7 +373,8 @@ the host does not strip unknown declaration fields or execute a bundle to infer 
 An `appPage` whose loaded page draws a Collection toolbar that leads with the page's name (instead of a page
 header) declares `headerStyle: 'toolbar'`. The host then says the page's identity as that same toolbar row while
 the surface loads, in the page's full content area with the table's rows, so nothing changes width or shape when the
-surface arrives. Omit it for a page header (the default).
+surface arrives. On a phone the host draws that page's name as a large title above the toolbar,
+as Happier's Inbox does, so the toolbar row leaves it out. Omit it for a page header (the default).
 
 From an admitted surface, request another declared view through the one host
 dispatcher rather than a local router:
@@ -324,9 +398,21 @@ function OpenDetails({ reviewId }: { reviewId: string }) {
 }
 ```
 
-A `subPath` is only a location inside that plugin's `appPage`; it is ignored by
-non-page destinations such as `rightSidebarTab`. Do not construct host routes,
+A `subPath` is only a location inside that plugin's `appPage`; non-page
+destinations such as `rightSidebarTab` reject it. Do not construct host routes,
 choose another plugin's namespace, or add a local fallback destination.
+
+In unreleased 0.3 development builds, request a desktop window with
+`hostApi.openSurface('review-detail', undefined, { presentation: 'window', subPath: 'recent' })`.
+The matching host uses the same destination and window Action as the app. You can
+also pass `presentation="window"` to plugin-ui's `Action.OpenSurface`. Omit the
+option for ordinary placement. A host or destination without support rejects
+with `unsupported_method`; it never silently changes the requested presentation.
+
+Moving or reopening a surface restores its existing persisted state. Launch input
+is one-shot, so a new window or relaunch uses the existing restoration fallback
+rather than a copied input or component state. Dirty work that is not persisted
+uses the host's existing Save/Discard/Keep guard. There is no checkpoint hook.
 
 In the current development build, an app page can read
 `useSurfaceContext().page?.columnVisible` to see whether its host-provided
@@ -388,6 +474,32 @@ press that would visibly do nothing. Any navigation your page did not perform
 itself retires the step. `replacePageLocation` is advertised only on a full-page
 destination; check `hostApi.version().methods` before relying on it, and never
 reach for browser history or a local router instead.
+
+### Protecting unsaved edits (development)
+
+In **0.3 development source**, an `appPage` plugin can declare its mount's dirty
+state with `await hostApi.setUnsavedChanges(isDirty)`. Check
+`hostApi.version().methods` for `setUnsavedChanges`; it is unavailable outside a
+page. Native and hosted surfaces share this contract. Publish `true` when edits
+become unsaved and `false` after a successful save. The host stores only that
+boolean, not the notes or a durable draft.
+
+Back, page close, opening another page and a changed `replacePageLocation` use Happier's existing
+**Keep editing / Discard** confirmation. Before changing a selected editor's
+target, await the location replacement and render its returned `subPath`:
+**Keep editing** returns the current location, so retain the current editor and
+its text. Updating only `backLocation` at the same location needs no departure.
+Browser tab/window unload uses the browser's own confirmation. Account or
+credential retirement clears private state immediately without asking; this
+declaration cannot prolong that authority or supply a navigation-blocking callback.
+
+For a **React Native/RNW** editor that stays mounted while its layout expands
+into a full page, pass `preserveUnsavedChanges: true` with `backLocation` to
+`replacePageLocation`. The replacement and its single Back step then keep the
+dirty fact armed; a later page close still asks. Use this only when the same
+editor and its text continue, including through Back. Hosted document replacement
+cannot retain that editor and refuses this option; use the ordinary guarded
+replacement there.
 
 The current registry admits every declared UI binding on web/desktop and
 native tablet. On native phone, it admits only `appPage`/`app`,
@@ -559,7 +671,8 @@ loaded-platform certification.
 In current development source, `WidgetGlanceRow` is the row Happier's own
 widgets draw inside a body: a mark, a name with an optional short `tag`, an
 optional quiet `fact` beneath (`factTone="attention"` when it needs the person),
-and one `trailing` element. Give it `onPress` when the row leads somewhere; leave
+and one `trailing` element. With `tagSentence` the tag continues the name as one
+sentence (`5 files not committed · 3 included`) that wraps instead of shortening it. Give it `onPress` when the row leads somewhere; leave
 it out when the row carries its own control. `variant="fact"` draws a quiet
 one-line statement instead of a named thing. `DiffStat` draws lines added and
 removed (`+53 −5`) in the host's version-control inks and leaves out a side that
@@ -729,6 +842,13 @@ reads and release watches when the host marks their surface inactive. They keep
 the last ready snapshot, ignore late callbacks, and re-read when activity resumes.
 Providers without a host activity fact keep their existing live behavior.
 
+The hooks distinguish a successful `null` snapshot (`status: 'missing'`) from
+a failed read (`status: 'unavailable'`). Keep a missing Session's relationship
+visible, but do not offer Retry as though its activity read had failed.
+For failed reads, `retryable: false` preserves an explicit non-retryable refusal.
+Set readers expose `refresh()` for an explicit recovery attempt; they never
+start a retry loop. A refused watch still allows a one-shot snapshot read.
+
 `state.agent`, when present, contains the catalog's `agentId` and `displayName`,
 not the Session title. Its optional `brand.pluginId` targets the public
 `<BrandMark pluginId={state.agent.brand.pluginId} />` renderer. Keep generic
@@ -751,16 +871,17 @@ at its normal text size.
 
 | Host method | What it does |
 |---|---|
-| `readSession(sessionId)` | Returns the Session's current state, or `null` when this Account cannot reach it. |
+| `readSession(sessionId)` | Returns the Session's current state, or `null` for confirmed absence or denied access. A failed hydration rejects with its error code and retryability; it does not imply that the Session is missing. |
 | `watchSession(sessionId, listener)` | Subscribes to changes. It uses the same acknowledged-async setup and bounded `invalidated` signal as `watchResource`. After each `invalidated` event, re-read with `readSession`. An `error` event means the Session became unreachable. |
 | `respondToSessionPermission({ sessionId, requestId, answer })` | Answers one pending permission request with `allowOnce`, `allowForSession` or `deny`. |
 
 ```tsx
-import { Button, usePluginHostApi, useSessionState } from '@happier-dev/plugin-ui';
+import { Button, Text, usePluginHostApi, useSessionState } from '@happier-dev/plugin-ui';
 
 function AgentStep({ sessionId }: { sessionId: string }) {
   const host = usePluginHostApi();
   const { status, state } = useSessionState(sessionId);
+  if (status === 'missing') return <Text value="Linked Session unavailable" />;
   const request = state?.pendingPermissions[0];
   if (status !== 'ready' || !request) return null;
   // request.summary / request.command say what it wants to run;
@@ -940,6 +1061,35 @@ does not immediately propose the PR again. Handle `conflict` by re-reading and
 does not prove a write succeeded. A created PR becomes a Session-derived
 candidate only after it is linked to that Session. Keep the writer, resolver
 and storage private to Triage; callers submit intent and render the resolved read.
+
+### Initial task status (development)
+
+In **0.3 development source**, a task source can advertise the states its
+create Action accepts through `taskCapabilities.initialStatuses`:
+
+```ts
+import { TriageSourceDescriptorV1Schema } from '@happier-dev/triage-protocol/v1';
+
+const descriptor = TriageSourceDescriptorV1Schema.parse({
+  v: 1, purpose: 'example-tasks', displayName: 'Example tasks',
+  kinds: [{ id: 'task', workflowSubject: 'issue', task: true,
+    taskCapabilities: { createFields: ['title'], initialStatuses: [
+      { id: 'planned', label: 'Planned', isDefault: true, state: { presentation: 'active', stage: 'backlog' } },
+    ] },
+  }],
+});
+```
+
+The draft offers that catalog and submits the chosen id as optional
+`initialStatusId` beside `fields` in the source's create input. Omission keeps
+your existing default. Optional `isDefault: true` marks that default's catalog
+entry; omit the marker when the source cannot identify its default. The marker
+describes creation and does not select a status or change the create handler.
+Apply the requested state in the same creation or
+return a refusal; never silently ignore it. Omit the catalog when creation
+cannot choose a status, and refuse an explicit status before writing. These
+closed V1 inputs require matching development source and do not change the
+separate transition Action or the stored task format.
 
 ## Accessibility, currentness, and offline behavior
 

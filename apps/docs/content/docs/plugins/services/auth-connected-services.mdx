@@ -5,6 +5,138 @@ description: Select and materialize host-managed account credentials.
 
 Use `context.services.connectedAccounts` for host-managed account connections. Access is purpose-bound: a plugin declares why one contribution needs an account, and the host/user binds that purpose to one compatible account or account group. Plugins cannot enumerate unrelated accounts or choose a group member.
 
+## Authorization-code callback in development
+
+In 0.3 development source, authorization-code Connected Accounts can declare the
+shared callback `https://app.happier.dev/oauth/connected-account/callback`.
+Register that exact URL with the upstream service and require PKCE:
+
+```ts
+import type { PluginConnectedAccountAuthenticationModeV2 } from '@happier-dev/plugin-sdk/connected-accounts';
+import { CONNECTED_ACCOUNT_OAUTH_CALLBACK_URL_V1 } from '@happier-dev/protocol/connect/oauthAuthorizationResponse';
+
+const oauthMode = {
+  id: 'oauth',
+  kind: 'oauthAuthorizationCode',
+  callbackUrl: CONNECTED_ACCOUNT_OAUTH_CALLBACK_URL_V1,
+  scopes: ['example.read'], // Use the upstream service's documented scopes.
+  pkce: 'required',
+  outcomeReconciliation: 'none',
+} satisfies PluginConnectedAccountAuthenticationModeV2;
+```
+
+The initiating daemon's existing authentication attempt supplies state and the
+S256 challenge to the runtime's `begin` method. Its `complete` method receives
+the authorization code, callback URL and verifier only after host validation.
+Implement exchange, refresh, revocation and identity/granted-scope verification in that
+daemon runtime. The callback page never exchanges a code or contacts a vendor.
+
+The page captures the answer once and removes the query before waiting for
+authentication or Actions. It forwards only the OAuth response fields to an
+opener at the exact callback origin. Without an opener, it reads the exact
+attempt on reachable Machines in the signed-in Account and completes through
+the existing authentication Action. A state prefix is a routing hint; it grants
+no service, account, return-path or credential authority.
+
+When signed out, on another Account, disconnected, or unfinished, the page keeps
+the original callback URL available to copy into the initiating connection
+screen. A denial never exchanges a code or cancels an attempt guessed from
+state. The MCP callback keeps its existing URL and opener message through the
+same controller.
+
+This unreleased 0.3 behavior also applies when a callback opens in an already
+running app. If the signed-in Account cannot find the exact attempt, the page
+offers the original answer for Paste, as it does without a ready signed-in
+Account. Opening the callback in a running app does not require restarting it.
+
+This relay does not make any vendor's OAuth integration available. A service
+still needs registration, permission and token-lifecycle validation; retain a
+manual-token mode wherever that proof is missing.
+
+### Vercel deployment connections in development
+
+The shared Vercel connection in 0.3 development source accepts a
+personal access token for a selected team and, optionally, one project. Create
+the token on [Vercel's token page](https://vercel.com/account/tokens), select its
+scope and expiration, then supply the matching team and project IDs. Project
+tokens are checked against that exact project without requiring access to
+broader user or team endpoints.
+
+Deployments and sandboxes use this same connection. Sandboxes require a project
+and a token that can read the selected team's plan; deployment project tokens do
+not need that broader access. An older development-only deployment connection
+must be reconnected and selected again. Its stored data is preserved.
+
+The runtime stages the token only after the selected scope responds successfully.
+That read confirms authentication and scope identity. Setup does not prove write
+rights: Vercel enforces each operation's permissions, and a denied operation
+returns the existing typed missing-permission refusal. No role name or guessed
+permission query supplies that decision. Refresh checks the retained token again;
+expired or revoked credentials require reconnecting. When a scoped token cannot
+revoke itself, use the token page to revoke it. An uncertain revocation result
+requires checking Vercel before retrying.
+
+Vercel OAuth remains unavailable without deployment-permission, selected-tenant
+entitlement and token-lifecycle proof. Supported private-beta access is eligible;
+launch status adds no restriction, and an identity token never substitutes for
+deployment authority. The generic callback alone does not establish that proof.
+
+### Cloudflare deployment connections in development
+
+In 0.3 development source, Cloudflare manual-token connections verify the
+token's actual policies and the selected account before staging credentials.
+Workers uses a [user-owned token](https://dash.cloudflare.com/profile/api-tokens):
+the [Workers Builds API](https://developers.cloudflare.com/workers/ci-cd/builds/api-reference/)
+requires that token type. Pages, Tunnel and DNS also support
+[account-owned tokens](https://dash.cloudflare.com/?to=/:account/api-tokens).
+One API token method shows a permission checklist for each feature. Choose the
+token owner because Cloudflare uses different verification endpoints, and
+restrict its permissions to the account ID configured for that connection.
+
+Verification reads token activity, its matching policy record and the provider's
+permission catalog. Workers requires both script and Git-build authority;
+Pages requires its project/deployment authority. Tunnel and DNS need their own
+write permissions; DNS also checks the configured zone and its owning account.
+The token needs read access to its policies, and Workers and Pages need account
+identity read access. Validation reports the enabled features. An active token,
+a read-only grant, another account's permissions or
+a matching deny policy cannot complete the connection. Verification makes no
+deployment, configuration or token-management writes. Zone routing and DNS
+operations require their own exact permissions; connecting does not grant them.
+
+Refresh checks the retained manual token rather than rotating it. Expired or
+revoked credentials need a replacement through reconnect; revoke the old token
+on its Cloudflare token page. The plugin has read-only token-management access
+and reports that remote revocation must be done there. Materialization supplies
+only the authorization header for the Cloudflare API origin.
+
+Cloudflare OAuth uses a registered public client, the shared callback and required
+S256 PKCE. In 0.3 development source, the Home operator may configure a
+public client through [Home configuration](/self-hosting/env#cloudflare-public-oauth-client).
+The same Sign in with Cloudflare method accepts your own registered client.
+Those fields are optional Advanced configuration when the Home has a client,
+and required when it has none. Cloudflare consent chooses authorized accounts;
+Happier selects the sole account automatically or offers their names afterward.
+Register Account Settings Read and the feature permissions your client offers:
+Workers Scripts Write and Workers CI Write, Pages Write, Cloudflare Tunnel Write,
+or DNS Write. The
+runtime also requests `openid offline_access` for subject identity and refresh.
+The [scope catalog](https://developers.cloudflare.com/api/resources/iam/subresources/oauth_scopes/methods/list/)
+maps registered IDs to those permission names; it is not a token-grant endpoint.
+Only the token response supplies the granted scopes. Identity and grants validate
+before temporary attempt custody; exact selected-account access must validate
+before the connection can be saved.
+
+OAuth setup does not prove effective write rights. Cloudflare enforces permission
+on each operation, which retains the typed missing-permission refusal. A member's
+role is never used to infer permission. Expired access cannot be materialized;
+the host's existing refresh lifecycle stages a verified replacement. A revoked
+refresh grant requires reconnecting. Revocation uses Cloudflare's documented
+endpoint, and an uncertain response stays unknown without automatically retrying.
+Real consent, refresh and revocation with an authorized registered client remain
+release checks; this describes development source, not released availability.
+
+
 ## Declare a purpose
 
 An Agent declares purposes in its contribution:
@@ -35,18 +167,15 @@ localized `title` for the selection UI; it may be a plain string or a
 built-in and external contributions, so do not derive a user-facing label from
 the raw purpose ID.
 
-An action or hook uses the ID of its existing `connectedAccounts` HostAccess request as the purpose. Do not declare that purpose a second time. The request's `serviceRefs` are compatible alternatives for one binding, and its operations authorize methods:
+An action or hook uses the ID of its existing `connectedAccounts` HostAccess
+request as the purpose. Do not declare that purpose a second time. The request's
+`serviceRefs` are compatible alternatives for one binding.
 
-- `select` permits `requestSelection()`.
-- `use` permits `getBinding()`, `listAccounts()`, and `watch()`.
-
-Raw credential materialization additionally requires the declaration or
-HostAccess scope to list the exact requested `materializationKinds` value:
-`httpHeaders`, `environment`, or `files`. A `connectedAccounts` HostAccess
-scope may list these kinds only when its operations include `use`. When
-present, the list must be nonempty and contain no duplicates. Omitting
-`materializationKinds` still permits binding inspection and observation, but
-permits no raw credential materialization.
+In unreleased 0.3 development source, `operations` and `materializationKinds`
+remain accepted installation-consent metadata. They do not veto service methods
+or credential forms at runtime. The host still requires a known purpose, its
+compatible service and the exact selected Account or authorized group member.
+An invocation pinned to a captured purpose subject cannot change that selection.
 
 ## Inspect and select the binding
 
@@ -58,8 +187,8 @@ Only `requestSelection()` requires an available current-session interaction
 owner. If the user cancels, it fails with `plugin_interaction_cancelled`; if no
 interaction owner is available, it fails with `plugin_interaction_unavailable`.
 An already-bound, currently authorized purpose can still use `getBinding()` and
-`watch()` outside a session, and can use `materialize()` there when its exact
-requested kind is authorized. The selection flow never returns the host-private
+`watch()` outside a session, and can use `materialize()` there when the selected
+binding is authorized. The selection flow never returns the host-private
 account inventory to the plugin.
 
 In 0.3 development source, Settings pages can open the same host purpose setup
@@ -71,13 +200,17 @@ Use the qualified `account` reference to select the result in your draft; it
 contains no credentials. Older hosts return `undefined`, so re-read your
 account options in that case. Existing callers can keep ignoring the result.
 The consumer is the qualified Action or Resource whose installed declaration
-owns the purpose. The host validates that declaration on the invoking machine,
+owns the purpose. The host validates that declaration in the invoking Account,
+or on the exact invoking Machine when one is supplied,
 offers compatible accounts and pools, and saves the choice through the existing
 approval-controlled `connectedServices.purposes.default.set` Action. Agents use
-that Action directly with `machineId`, the qualified `purpose`, and an account
-or group `target`. Creating a connection alone does not select a purpose.
+that Action directly with the qualified `purpose` and an account or group
+`target`. Omit `machineId` for Account-origin configuration, which works without
+an online Machine; supply it for Machine-origin configuration, which requires
+that exact Machine and never falls back to the Account declaration. Creating a
+connection alone does not select a purpose.
 Triage source authors supply `connectedAccountPurpose` to the shared source
-settings factory; discovery needs only `use`, because setup owns selection.
+settings factory; setup owns selection.
 
 ## List the accounts authorized for a purpose
 
@@ -99,8 +232,8 @@ Each entry also carries `connectedAccountBases`: the same configuration seen as
 service bases. A base is an origin plus the path segment a deployment lives
 beneath — an organization, a collection, or a path-prefixed self-hosted install
 — and it is what a source routes requests by. Every base begins with one of that
-account's `connectedAccountOrigins`, because HostAccess still admits network
-access by origin alone. Declare a base with a `connectedAccountBase`
+account's `connectedAccountOrigins`, preserving the configured origin identity.
+Declare a base with a `connectedAccountBase`
 configuration field; a `connectedAccountOrigin` field keeps meaning exactly
 `scheme://host[:port]` and rejects a path.
 
@@ -125,7 +258,20 @@ authorization, currentness, and the selected binding.
 
 ## Credential materialization
 
-`materialize(purpose, request, options?)` returns a point-in-time credential snapshot in only the requested and declared form:
+`materialize(purpose, request, options?)` returns a point-in-time credential snapshot in the requested form:
+
+This raw-material service is available in admitted daemon contexts. Account-placed
+Actions do not receive `context.services.connectedAccounts`. For Account HTTP,
+the development request contract uses `context.services.http.request` with
+`credentialBinding: { kind: 'connectedAccountPurpose', purpose: 'upstream',
+origin: 'https://api.example.com', method: 'GET', headerNames: ['authorization'] }`.
+The binding's required `method` is the issued HTTP method, independent of the
+request's actual method. Finite and streaming requests use the same binding.
+This requires a host with Account-purpose HTTP composition; the SDK declaration
+alone does not establish runtime availability. The host retains the selected
+binding and credential bytes, checks the issued origin and method before
+injection, and redacts provider echoes. Declare the purpose and network access
+on the Action; this request does not select an Account or grant access.
 
 - HTTP headers for one origin and bounded header names
 - environment variables for bounded keys
@@ -158,13 +304,15 @@ returned by the current listing and returns the same point-in-time credential
 forms. The host re-verifies that the account is still authorized for the
 declared purpose before and after materialization: it must still be the direct
 target or a current enabled member of the bound group. An account from the same
-service but outside that scope is rejected. For an `httpHeaders` request, the
-origin must also still be admitted — either a declared fixed origin or one
-member of that account's current `connectedAccountOrigins`. Pass only a value
-the listing returned; display text, configuration bytes, and credential contents
-can neither choose nor widen the origin.
+service but outside that scope is rejected. For an `httpHeaders` request, an
+account with configured origins requires the requested origin to remain among
+its current `connectedAccountOrigins`. The selected service's materialization
+adapter owns the credential's recipient contract, including when no configured
+origins exist. Manifest network targets do not supply a separate origin grant.
+Display text, configuration bytes and credential contents cannot widen that
+recipient contract.
 
-`materializeListedAccount()` needs the same `materializationKinds` authority as
+`materializeListedAccount()` uses the same purpose and credential-owner admission as
 `materialize()`. It is not a selector: it neither reads nor changes the selected
 binding, and an account that has left the authorized set fails closed.
 
@@ -177,7 +325,7 @@ In 0.3 development, a Connected Service may declare
 that qualified service as `nativeService` in the ordinary `materialize()`
 options. The host uses it only for an unbound purpose; an explicit account
 selection, even if invalid or unavailable, never falls back to the native login.
-The service and materialization scope must be declared by the consumer.
+The service must be among the consumer purpose's compatible services.
 
 GitHub's adapter obtains authorization from the executing machine's GitHub CLI,
 including the admitted Enterprise host. The returned credential is ephemeral;
@@ -225,12 +373,14 @@ which producer versions and terminal signatures the host admits) are owned by
 the shared protocol vocabulary, and provider-specific retry classification
 stays in each Agent plugin's own provider-limit classifier.
 
-Import the generic listing contracts and request-auth source builder from
-`@happier-dev/plugin-sdk/connected-accounts`. Happier's built-in OAuth profiles,
-Claude materialization/setup-token policy, and provider-limit classifier live on
-the explicit `@happier-dev/plugin-sdk/first-party/connected-accounts` subpath.
-Third-party plugins should not infer provider policy or supported identities
-from those first-party facts.
+Import the generic listing contracts, request-auth source builder, and
+provider-limit classifier from `@happier-dev/plugin-sdk/connected-accounts`.
+In the 0.3 development API, built-in Agent facts come from exported Protocol
+leaves: Claude, Codex, and Antigravity OAuth profiles use
+`@happier-dev/protocol/agents/<agentId>/oauth-profile`,
+and Claude materialization/setup-token policy uses
+`@happier-dev/protocol/agents/claude/connected-account-materialization`.
+Do not infer supported Provider identities or policy from another Agent's facts.
 
 ## Produce a connected account service
 
@@ -370,6 +520,24 @@ that target and mode, its revision, non-secret `values`, and bounded
 `getSecret(fieldId)`. Descriptors and UI projection contain the field schema
 and whether each field is secret, never secret values.
 
+The optional `getPublicOAuthClient({ signal })` reads the Home operator's public
+client for this exact service and mode. It returns `{ clientId, scopes }` or
+`null`; older hosts may omit the method. Treat either absence as unavailable,
+and retain the selected client with the existing attempt before consent:
+
+```ts
+const client = await context.configuration.getPublicOAuthClient?.({ signal: context.signal });
+if (!client) return { status: 'unavailable', diagnostic: {
+  code: 'public_client_unavailable', message: 'Configure your own OAuth client or use a token.',
+} };
+await context.attemptCredentials.set('oauthClientId', client.clientId, { signal: context.signal });
+await context.attemptCredentials.set('oauthScopes', JSON.stringify(client.scopes), { signal: context.signal });
+```
+
+Exchange, refresh and revocation use the retained selection, even after the Home
+default changes. This public metadata proves neither granted scopes nor API
+permission; the runtime still verifies the provider's token response and identity.
+
 For a first connect, required account-scoped values may need to exist before
 the producer returns a canonical account ID. That authentication call receives
 an operation-local `attempt` configuration target containing only the attempt,
@@ -377,6 +545,48 @@ service, and mode identities. It never receives a fake or provisional account
 ID. Successful connection promotes the staged configuration to the producer's
 returned exact account; reconnect and established operations use the canonical
 account target.
+
+### Manual authentication provenance
+
+In 0.3 development source, a manual mode may declare
+`credentialOrigin: 'authentication'` only when its runtime completion actually
+verifies provider authentication. Use `credentialOrigin: 'native_import'` when
+importing an existing native login instead. Omission means unknown: importing
+or saving credentials does not establish when the person originally signed in.
+An Account-direct key-save receipt never establishes a provider sign-in fact,
+even when the same mode's Machine-backed verifier declares `authentication`.
+
+### Account-direct manual credentials
+
+The 0.3 development line supports `accountDirectSave: true` on a manual
+authentication mode whose field ids and string values are already the canonical
+credential payload. When only the stored key differs, declare
+`accountDirectSave: { fieldKeys: { token: 'apiKey' } }` instead. This is a simple
+source-field-to-credential-key projection: values are unchanged, source fields
+must be declared, and effective credential keys must be valid and unique.
+The Account save validates the declared fields and uses the
+Account's current encryption mode; it does not contact a Machine, run the plugin,
+or verify the key with the provider. Do not declare this for a mode that needs
+value transformation, runtime validation, or configuration. Configuration-bearing
+modes cannot opt in. This declaration is independent of `directExport`, which
+governs Team export rather than field transformation or Account save admission.
+
+The optional Account Action `connectedServices.accounts.credentials.save` accepts
+an exact `account` reference, `modeId`, and live-only `fields`. Its successful
+receipt is `{ applied: true, account }`, not an authentication-attempt result or
+proof of provider sign-in. A lost or unreadable acknowledgement is an unknown
+outcome: inspect that exact Account before retrying, and retain its creation id
+for any explicit retry rather than creating another Account. Ordinary
+authentication modes retain their existing Machine-backed flow.
+For example, Gemini's API key needs only the declared `token` → `apiKey`
+projection; its service-account JSON mode still needs runtime processing.
+Modal and Crabbox token modes require account configuration and remain
+Machine-backed.
+
+The setup form's optional personal name is stored through the existing Account
+label Action after the credential acknowledgement, not as provider identity.
+If that optional name update fails, the saved account still opens; its Account
+page owns an explicit name retry without creating another credential.
 
 ### Quota recovery credits
 

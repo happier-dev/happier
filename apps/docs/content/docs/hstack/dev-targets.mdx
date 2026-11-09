@@ -198,6 +198,12 @@ NodeSource Node.js 24, npm, Go (used by CLI test setup), ripgrep,
 and `build-essential` plus `pkg-config` for native Rust/Iroh builds. Preparation verifies
 the C/C++ compilers, make, archiver, and package discovery alongside the other tools,
 then prepares the package-pinned Rust compiler under the selected SSH account.
+It also installs the existing Happier user resource slices under that final account's home
+and reloads its user manager when available. This gives Linux workers the same configured
+CPU/I/O scheduling policy as managed Lima guests. Existing processes keep their current
+priority and placement; newly launched background payloads use the shared executor policy.
+Source-local execution retains that policy when `--local` is required. CPU/I/O weights require the\ncorresponding Linux controllers to be delegated to the user manager.
+
 It checks the installed toolchain first. Use an Ubuntu host supported by that profile rather than
 assuming every Linux distribution has the same package setup. After source synchronization,
 dependency bootstrap installs the exact, integrity-checked pnpm version from the root
@@ -455,13 +461,14 @@ Dedicated payload transport also applies to managed Lima/WSL targets. Existing
 host-key and connection setup policies remain authoritative. Admitted payloads
 disable the SSH silence timer; a temporary stall does not expire a build. A real
 connection loss still cancels the owned worker and fails preparation before readiness.
-Synchronization and forwards retain their own keepalive policies. Refresh
+Synchronization and short probes retain their own keepalive policies. Refresh
 an older enrolled target with its existing `add --host` command, or refresh the
 shared config with the normal synchronization-service setup.
 
 Stack service forwards and browser SOCKS/CDP forwards keep dedicated connections:
 their foreground owner must remove its listeners on stop without terminating
-another session's shared master. This leaves one connection per forward owner,
+another session's shared master. Persistent forwards disable SSH silence expiry;
+actual transport loss or their owner's stop still closes them. This leaves one connection per forward owner,
 rather than one new authenticated connection for every readiness probe.
 
 The convenience command is a thin wrapper over the existing exact-target executor:
@@ -854,7 +861,7 @@ has separate CLI state and a writable session workspace outside the one-way sour
 Observe the selected and remotely loaded snapshot identities before claiming remote QA success.
 
 Run `dev-targets qa setup <target> --stack=<qa>` for idempotent QA tools, scratch, power and retention
-preparation. Run `dev-targets browser start <lane-session> --stack=<qa> --url=<qa-ui-url>` in a retained foreground
+preparation. In 0.3 development, run `dev-targets browser start <lane-session> --stack=<qa>` in a retained foreground
 handle to start Chromium on the QA pool host with the most actually available memory after live
 reservations, without initializing or changing daemon placement. It uses
 `HAPPIER_STACK_QA_BROWSER_TARGETS` when nonempty, otherwise `HAPPIER_STACK_QA_DAEMON_TARGETS`,
@@ -867,7 +874,9 @@ Playwright accepts `cdpUrl` or `cdpHttpUrl`. Open the returned browser-facing `u
 Memory ranking is a launch-time observation: running browsers stay on their selected host as
 their memory use changes. Use `HAPPIER_STACK_QA_BROWSER_TARGETS` to separate browser work from a
 database host when that workload needs isolation; scheduling priority alone does not provide it.
-Dedicated QA-host Chromium uses `--no-sandbox` under the approved policy for Happier's own QA app.
+Browser start reads the current UI endpoint from Stack info, including the current Home port when
+borrowing Expo. Read the returned URL on each launch rather than copying ports across restarts.
+An explicit `--url=<qa-ui-url>` overrides this selection for diagnostics and is preserved as supplied.
 
 Keep the browser-start handle running for the whole QA journey; readiness output does not hand
 the browser to a separate keeper. Stop only your own handle when finished. In current 0.3
@@ -887,11 +896,14 @@ It leaves authentication and persistence to the app, and prints only a JSON succ
 the Account id prefix, or a typed failure reason. It never saves credentials or browser state
 outside the browser's normal storage. Keep the browser owner handle alive and close it after QA.
 
+If Stack info has no current UI endpoint, start fails with an error; check the stack's UI readiness
+or supply an explicit diagnostic URL.
+Dedicated QA-host Chromium uses `--no-sandbox` under the approved policy for Happier's own QA app.
 In current 0.3 development, request a headed GPU browser on a specific configured POSIX target
 with an active graphical login/display and hardware GPU:
 
 ```bash
-node ./apps/stack/scripts/repo_local.mjs dev-targets browser start design-gpu --stack=agent-qa-example --url=<qa-ui-url> --target=mac-host --gpu
+node ./apps/stack/scripts/repo_local.mjs dev-targets browser start design-gpu --stack=agent-qa-example --target=mac-host --gpu
 ```
 
 `--target` selects only that host for the browser lifetime, without changing the Machine pin or
@@ -970,6 +982,21 @@ reserved for commands that genuinely require that machine. Capacity presets
 do not impose a fixed job-count limit: normal load and health observations
 continue to choose among local and remote executors.
 
+In the 0.3 development checkout, command preparation automatically refreshes
+changed install inputs with an in-place `pnpm install --frozen-lockfile`, then
+repairs mandatory UI postinstall outputs. Worker installs also prepare Prisma
+clients for every role; local preparation follows the consuming component's
+prerequisites. Starting commands wait for
+an install already running on that host. Running jobs do not block refresh; if
+an import fails during installation, rerun once the install finishes. An install
+failure reports the pnpm cause and leaves the readiness marker unchanged. Frozen
+lockfile validation failures preserve the tree; a later linking or lifecycle
+failure may already have changed files. Correct the cause, then rerun. Successful refresh
+reports running Stacks that need a restart, and development Expo restarts through
+its own reload owner after a successful install or output repair, including when
+install identity is unchanged. Failed attempts do not trigger that restart.
+Explicit refresh-disable flags still apply.
+
 In 0.3 development, concurrent commands for the same target can share a successful
 Mutagen flush only when it started after their synchronization requests. A command
 requested during a flush waits for a later cycle, preserving source files written
@@ -984,6 +1011,13 @@ options. The sibling uses command-only mirrors on `nl3` and
 initial synchronization, and each dispatch crosses the selected target's normal
 flush barrier. Dependencies and mandatory UI postinstall outputs are prepared
 from that checkout's own lockfile and source.
+
+In current 0.3 development, command-only sibling mirrors participate in the worker's
+existing 24-hour retention policy. Dispatch refreshes their last use; reclamation
+requires every descendant to be old and the existing ownership and live-process
+checks to succeed. Primary mirrors, explicitly placed runtime repositories and
+unmarked directories stay protected. A later command recreates a retired mirror
+and resets only its named synchronization session before reseeding it.
 
 Set a different subset from 0.3 through the existing placement command:
 
@@ -1033,6 +1067,23 @@ establish its command connection, the launcher temporarily excludes it and tries
 target before applying `fallback=local|error`. Once a command starts, its result is authoritative
 and is never replayed elsewhere. `includeLocal` controls whether local load normally competes; it is
 independent from allowing local fallback.
+
+In current 0.3 development, placement also resolves known payloads inside nested
+`hstack-exec -- ...`, `hstack-exec --script=...`, package scripts (including lifecycle hooks),
+and supported sequential `sh -c` chains. Their required tools reach the same selector.
+Shell syntax that changes directories, uses expansion or pipelines remains opaque.
+For an opaque Node wrapper, declare its hidden executable requirements on the existing admission
+wrapper while retaining its workload class:
+
+```bash
+./apps/stack/bin/hstack-exec -- ./apps/stack/bin/hstack-exec \
+  --heavyweight-admission --class=validation --required-tools=docker -- node lane/run.mjs
+```
+
+`--required-tools` accepts executable names separated by commas. The selector checks those tools
+before placement, and admission checks them before the payload starts. Invalid declarations fail
+with `HSTACK_COMMAND_REQUIREMENTS_INVALID`; missing executables fail with
+`HSTACK_COMMAND_REQUIREMENTS_MISSING`. Wrapper source is not inspected to guess requirements.
 
 In current 0.3 development source, dependency and workspace preparation finish before the payload
 reserves its heavyweight admission envelope. This lets a dependency or build lock holder obtain
@@ -1145,10 +1196,6 @@ readiness probes use the existing five-second observation budget. Containing rea
 deadlines still own the operation; probes consume their remaining time instead of adding private
 sub-second cutoffs. This does not shorten cold Metro compilation or migration deadlines.
 
-When a Linux target has a ready systemd user manager and a loaded `happier-jobs.slice`, an admitted
-job runs in a transient user scope in that slice at nice level 10. The launcher does not create or
-configure the slice; targets without that prepared boundary run the same admitted command directly.
-
 In current 0.3 development, Linux remote worker payloads, including ordinary commands and QA
 browsers, share the same scheduling owner as admitted validation jobs. When the systemd user manager
 is available and `happier-jobs.slice` is loaded, each payload enters that slice in a transient user
@@ -1169,9 +1216,12 @@ admission, transaction deadlines, and retry policy are unchanged; niceness alone
 CPU group priority. macOS and Windows retain their existing execution paths.
 
 In current 0.3 development, Linux worker admission checks available bytes on the command's known
-write filesystems and refuses an already-exhausted filesystem. Cleanup tries stale
-staging across stacks, pnpm entries absent from protected lockfiles, then lane scratch older than
-24 hours. Unknown UID or same-UID holder visibility preserves data; processes whose status identifies
+write filesystems and refuses an already-exhausted filesystem. Validation also excludes the free-space
+boundary already observed to fail with `ENOSPC`, through the same policy at AUTO selection (including
+cached samples) and actual admission. This covers targeted, full, and native source validation;
+other classes retain exhaustion-only checks until their write demand is established. Cleanup tries old runtime
+staging across stacks, owned command-only sibling mirrors, then lane scratch through the existing
+24-hour retention policy. Unknown UID or same-UID holder visibility preserves data; processes whose status identifies
 only foreign UIDs do not block this user's reclamation. AUTO selects another worker for that command
 class if space is still insufficient; an explicit target reports the failure. `dev-targets status`
 shows available bytes and the admission reason. Routed POSIX commands default `TMPDIR` to `tmp`

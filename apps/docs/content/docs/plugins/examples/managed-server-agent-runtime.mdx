@@ -9,7 +9,7 @@ Use `context.services.managedServices` when an Agent needs a local HTTP or proto
 2. For managed spawn, declare the consumed managed dependency, executable access, and required host access in the cold manifest; attach mode declares only its applicable endpoint and host-access policy.
 3. Call `context.services.managedServices.supervise(spec, { signal })`.
 4. Wait for `handle.waitUntilHealthy(...)` before creating the Agent client.
-5. Use `handle.request(...)` for authenticated REST or streaming traffic bound to that exact service instance.
+5. Use `handle.request(...)` for authenticated REST or streaming traffic bound to that exact service instance. In the unreleased 0.3 SDK, set `interactive: true` for an open-ended event subscription.
 6. Dispose the handle with the owning Agent runtime or Session.
 
 Use loopback binding, redacted durable logs, and fail-closed health validation.
@@ -26,8 +26,11 @@ spawn may use `hostBasic`, while `hostBearer` is reserved for managed-Provider
 spawn. Attach accepts only `none`, and plugin code receives neither the raw
 generated `hostBasic` password nor its encoded `Authorization` header. A
 request timeout covers establishment through validated response headers only;
-it does not limit the streaming body after headers. The caller signal, exact
-scope/currentness, hard retirement, and explicit disposal own that body.
+it does not limit the streaming body after headers. In 0.3 development source,
+an admitted finite request completes across credential or scope revocation,
+and the next request is refused. Caller cancellation and explicit Stop or
+disposal still end that work. An `interactive: true` event subscription also
+closes when its scope retires.
 Cancelling through your own signal fails the request with
 `plugin_operation_aborted`; `plugin_managed_service_unavailable` is reserved for
 the service, handle, scope, credentials, or transport being gone, so retry and

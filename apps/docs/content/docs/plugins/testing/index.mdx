@@ -79,6 +79,50 @@ Pass explicit `services` or `presentation` fixtures only for real host
 boundaries the handler uses. The defaults fail closed instead of silently
 faking those boundaries.
 
+### Client artifact activation (0.3 development)
+
+Use `createPluginClientTestkit` for a declared client activation export. Select
+the artifact, export and platform from the Action or client contribution you
+are testing; the testkit derives its registration rights from that manifest.
+
+```ts
+import { createPluginClientTestkit } from '@happier-dev/plugin-sdk/testing';
+import { manifest } from '../src/index.js';
+import { activate } from '../ui/clientActions.js';
+
+const client = await createPluginClientTestkit({
+  manifest,
+  target: { artifactId: 'client-actions', exportName: 'activate', platform: 'web' },
+  activate,
+});
+try {
+  const handler = client.registration('actions', 'open-details');
+  expect(handler).toBeDefined();
+} finally {
+  await client.dispose();
+}
+```
+
+`registrations()` returns contribution ids and families; `registration(family,
+id)` returns the corresponding typed client runtime. Invoke a retrieved handler
+with the explicit client context your test already supplies, using the semantic
+UI fixture below for real host-API boundaries. Disposal clears registrations and
+runs activation cleanup. This in-process helper does not load an installed UI
+artifact or establish production admission, currentness or platform availability.
+
+### Read observation and unavailable transport (0.3 development)
+
+For a read-only daemon or Account Action, `plugin.observeAction(id, input,
+invalidate, options)` uses the captured observer and canonical input admission
+without running the Action handler. Supply an invalidation function with its
+`retire()` method, and dispose the returned subscription; disposing the testkit
+also retires its subscriptions.
+
+At a mocked host Action transport, throw
+`createPluginActionHandlerUnavailableFixture()` to model a handler that could
+not start. The zero-argument fixture supplies the canonical missing-handler
+error and not-started advisory; it does not model an ambiguous completed effect.
+
 ## Semantic UI fixture
 
 `createPluginUiTestkit` from `@happier-dev/plugin-sdk/testing` drives the same

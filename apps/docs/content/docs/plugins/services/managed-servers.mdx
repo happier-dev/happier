@@ -44,6 +44,39 @@ These are development-source contracts, not a claim that sessionless Project
 Services or every native tool is available. Native supervision requires the
 current admitted lifecycle role; an unavailable role refuses before launch.
 
+## Retained workload observation (0.3 development)
+
+Inside a host-admitted native workload invocation, attach to an existing service:
+
+```ts
+const result = await context.services.managedServices.observeWorkload({ serviceId });
+if (result.kind === 'ready') {
+  const workload = result.workload;
+  const observation = workload.observe(row => render(row));
+  const current = workload.snapshot(); // health, endpoint and projected ports
+  const logs = await workload.readLogs();
+  await workload.control('restart'); // requires admitted mutation authority
+  observation.dispose();
+  await workload.dispose(); // detach; leave the native workload serving
+}
+```
+
+The host admits the Machine and resource once. A service identifier alone does
+not grant access; ordinary invocations return typed unavailable. Daemon deployment
+roles receive their admitted Environment binding. Observe/link roles can read
+without acquiring native mutation authority. Native controls and logs retain the
+existing adapter's supported operations and unavailable results. No additional
+Windows or macOS native adapter is introduced by this API.
+
+After daemon restart, a new invocation joins the existing Environment recovery
+and attaches to the recovered generation. The handle is process-local; do not
+persist it or create another native scan or supervisor. Invocation cleanup and
+handle disposal detach observations and log watches. Explicit Stop remains a
+separate admitted effect. These are development-source contracts, not a claim
+of loaded-runtime certification.
+
+## Exact-handle HTTP requests
+
 The following HTTP example requires an endpoint-producing specification.
 
 ```ts
@@ -55,16 +88,19 @@ await service.waitUntilHealthy({ signal: context.signal });
 
 const response = await service.request({
   pathAndQuery: '/v1/events',
+  interactive: true,
   signal: context.signal
 });
 ```
 
 `request(...)` resolves only against this exact handle's validated loopback
-endpoint. Its optional 1–300,000 ms timeout (default 300,000 ms) bounds request
-establishment through validated response headers only; it is not a
-whole-response or streaming-body deadline. After headers arrive, the caller
-signal, exact handle scope and currentness, hard retirement, and explicit
-disposal own the streaming body lifetime. The host rejects redirects, absolute
+endpoint. In the unreleased 0.3 SDK, an optional `timeoutMs` bounds request
+establishment through validated response headers; omission adds no request
+deadline. The timeout does not cover the response body. An admitted finite
+request completes across credential or scope revocation; the next request is
+refused. Caller cancellation and explicit Stop or disposal still end that work.
+Set `interactive: true` for open-ended event subscriptions, as above, so scope
+retirement also closes the stream. The host rejects redirects, absolute
 URLs, caller authorization headers, path ambiguity, stale handles, and retired
 invocation scopes before exposing a response.
 

@@ -3,7 +3,8 @@ title: Actions, tools, and commands
 description: Declare executable operations, their invocation surfaces, and their execution target.
 ---
 
-Actions are the canonical executable operation model. Tools and commands are convenience surfaces over the same idea.
+Declare an operation once as an Action. Its optional `tool` and `cli` fields give
+that same operation a named tool and a friendly CLI path.
 
 ## Actions
 
@@ -36,6 +37,167 @@ throw new PluginError({
   retryable: false,
 });
 ```
+
+### Scheduled and Event-driven Actions (0.3 development source)
+
+The existing Automation API accepts a contributed Action as its execution
+recipe. Use this recipe in `POST /v3/automations`, alongside the existing Machine
+assignments and schedule or plugin Event triggers:
+
+```ts
+const executionRecipe = {
+  v: 1, templateVersion: 1, triggerEvidence: null,
+  target: {
+    kind: 'contributedAction',
+    action: { pluginId: 'com.example.jobs', localId: 'refresh' },
+  },
+  template: {
+    t: 'plain',
+    v: {
+      v: 1, prompt: '',
+      actionInput: { kind: 'literal', value: { project: 'demo' } },
+    },
+  },
+};
+```
+
+For plugin Event triggers, `actionInput: { kind: 'eventPayload' }` passes the
+admitted occurrence's payload. Webhook delivery reaches the same path through
+the plugin's existing Event admission. Literal inputs also work for Events.
+E2EE Accounts encrypt the template with the existing Account-scoped
+`automation_template_payload` envelope; the plaintext example is for plain
+Accounts only.
+
+The server schedules and freezes each occurrence; an assigned Machine invokes
+the ordinary Action executor with Automation Run provenance. The Action retains
+its declared placement, schema and approval policy. A client-only or missing
+executor produces a visible typed failure. An Action that defers to present-user
+approval reports `approval_required`, rather than reporting an unexecuted effect
+as successful. Reclaim preserves the frozen recipe;
+it does not promise exactly-once external effects. Cancellation aborts the local
+Action signal; a running effect may retain an uncertain outcome. Workflow
+recipes continue through their existing coordinator. This is an unreleased
+0.3 development API; the Workflow editor remains a Workflow authoring surface.
+
+### Work Item transitions (0.3 development source)
+
+When a `workItems` contribution names a `transitionAction`, declare that Action
+with the public SDK's canonical input schema:
+
+```ts
+import { PluginWorkItemTransitionInputV1Schema } from '@happier-dev/plugin-sdk';
+
+const inputSchema = PluginWorkItemTransitionInputV1Schema;
+// Use inputSchema on the named Action. Its handler receives exactly:
+// { serverId: string, itemId: string, transitionId: string }
+```
+
+The schema is composable and rejects extra operands before the handler runs.
+The Action keeps its ordinary execution target and approval policy. This is an
+unreleased development contract; check the generated SDK API for your toolchain.
+Live Work Item `resolve` and `findLinked` callbacks receive the portable Account
+Action context. `watch(request, onChange, context)` receives that same context
+as its third argument; use `context.signal` to retire pending observations.
+
+### Input hints (0.3 development source)
+
+Declare the exact `inputSchema` once. In current development source, the Action
+catalog derives hints for uncovered top-level fields, including readable titles,
+required fields, primitive controls and string-enum choices. Structured values,
+unions and opaque fields use a JSON editor. Root-object union fields are required
+only when every arm requires them. The schema still validates the complete input.
+
+Use `inputHints` to add meaningful labels, localized copy, semantic choices,
+conditional fields and consequence descriptions. Authored fields keep their
+order and take precedence; a nested authored field also suppresses a generated
+editor for its parent object while uncovered siblings receive their own hints.
+Confidential paths still require an explicit
+`secret` widget; field names never establish confidentiality. Literal dotted
+property names and non-object roots do not fit the existing field-path grammar.
+These hints support discovery and form consumers; they do not make an Action
+automatically request MCP elicitation or change its approval policy.
+
+If your Action opens its own editor, declare exactly `inputHints: { fields: [] }`
+to omit the host input form. Hints containing only a form title, description or
+submit label still derive fields. The input schema continues validating operands
+supplied by programmatic callers.
+
+### Exact deployment Artifact reads (0.3 development source)
+
+Deployment Environment and receipt reads return headers, not their private
+content. In unreleased development source, open the referenced Artifact through
+the ordinary host Action and validate its exact id, header/body revisions and
+kind before selecting a deployment-owned field:
+
+```ts
+import {
+  DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1,
+  ProtocolArtifactGetOutputV1Schema,
+  ProtocolDeploymentPreviewProvenanceV1Schema,
+  readDeploymentArtifactJsonBodyV1,
+} from '@happier-dev/plugin-sdk/protocol';
+
+const opened = ProtocolArtifactGetOutputV1Schema.parse(
+  await context.services.actions.execute(
+    'artifact.get', { artifactId: environment.contentArtifactId },
+    { signal: context.signal },
+  ),
+);
+const content = readDeploymentArtifactJsonBodyV1(
+  environment, opened.artifact, DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1,
+);
+if (!content.ok) return;
+const body = content.body;
+if (typeof body !== 'object' || body === null || !('previewProvenance' in body)) return;
+const provenance = ProtocolDeploymentPreviewProvenanceV1Schema.safeParse(body.previewProvenance);
+if (!provenance.success) return;
+```
+
+These values project the same canonical deployment parsers; they do not grant
+access, validate the whole Environment document, or establish current Source,
+receipt, policy or URL authority. The caller must still admit those facts through
+their owning host Actions. For receipt `sourceIntent`, use
+`DEPLOYMENT_RECEIPT_ARTIFACT_KIND_V1` and
+`ProtocolDeploymentSourceIntentV1Schema` after the same exact-reference check.
+An unavailable or changed Artifact is not permission to use retained content.
+Check the generated SDK API for the target toolchain; these source exports are
+not a published release or a claim of loaded-runtime verification.
+
+### Pinned fresh clones (0.3 development source)
+
+When creating a new repository checkout with `scm.repository.clone`, matching
+0.3 development host and SDK sources accept an exact initial `main` or detached pin:
+
+```ts
+import type { ScmRepositoryCloneInput } from '@happier-dev/plugin-sdk/scm';
+
+// Reuse the reviewed provider, repository, destination and confirmation input.
+const request = {
+  ...reviewedCloneInput,
+  initialCheckout: { branch: 'main', commit: reviewedCommit },
+} satisfies ScmRepositoryCloneInput;
+```
+
+`reviewedCommit` must be a full Git commit id. The Git clone owner sets `main`
+before publishing the new directory; an existing destination is refused.
+Set `initialCheckout.branch` to `null` to check out that commit with a detached
+HEAD instead. SCM callbacks implementing this input must return the observed
+`branch.headOid` and `branch.detached` in the normal snapshot, together with the
+branch name for an attached checkout. The observed commit and attached or
+detached state must match the request. An ignored pin returns `SCM_SOURCE_CHANGED`;
+missing head evidence returns `COMMAND_OUTCOME_UNKNOWN`. The failure retains
+`destinationPath` when a checkout was created: inspect that checkout before
+retrying. Omitting `initialCheckout` keeps ordinary clone behavior. This is an
+unreleased source contract; check the generated API for your target toolchain.
+
+For `projects.open` with clone materialization, a full commit `ref` selects this
+detached checkout when no explicit `initialCheckout` is supplied. If checking out
+a branch ref after cloning returns a known terminal failure, Open returns
+`kind: 'refused'` with the SCM failure in `code` (for example, `COMMAND_FAILED`)
+and an optional canonical `failureCause` whose `phase` is
+`project_open.checkout_ref`. Its nested `errorCode` can be `null`; read the outer
+`code` for the SCM result. An uncertain Account acknowledgement or worktree
+effect still returns `kind: 'outcomeUnknown'`.
 
 ### Session targets (0.3 development source)
 
@@ -81,6 +243,32 @@ Prefer stable error codes over parsing text. See
 [Diagnostics](/plugins/testing/diagnostics) for the public guard and the
 diagnostic workflow.
 
+In **unreleased 0.3 development source**, host Action discovery includes optional
+`permissionChanging: true` metadata for effects that change permission policy.
+Use this value for disclosure when presenting an Allowed preference; do not infer
+it from the Action id, title, danger level or confidential fields. Missing means
+false. Mixed Settings Actions are classified by their canonical declaration: a
+whole-Action preference covers permission-changing settings, while an admitted
+ordinary setting does not. The host resolves input-dependent metadata; discovery
+never carries its executable resolver.
+
+For example, a plugin that presents discovered host Actions can read the public
+SDK result without maintaining its own sensitive-Action list:
+
+```ts
+import type { DiscoveryActionResultById } from '@happier-dev/plugin-sdk/actions';
+
+function changesPermissions(result: DiscoveryActionResultById['action.spec.get']) {
+  return result.actionSpec.permissionChanging === true;
+}
+```
+
+This flag does not grant authority, make approval nonwaivable, or replace the
+host's effective approval decision. A scope preference changes confirmation only;
+the host admits the actual Machine or Environment scope. Restoring Ask first must
+target that same Action, audience and scope, leaving neighbouring preferences
+unchanged. Older hosts may omit this development metadata.
+
 In **unreleased 0.3 development source**, an Action's single host confirmation
 can include reviewed input operands alongside its static consequence:
 
@@ -105,6 +293,15 @@ template is needed. The public `ActionConfirmationInputField` type is available
 from `@happier-dev/plugin-sdk/actions`. Check the generated API for the target
 SDK/host before using this declaration; older strict declarations reject it.
 
+For a person's button that prepares current input, use
+[`Action.Control`](/plugins/ui/react-native#host-rendered-action-controls-03-development-source).
+Its host gesture invokes the Action with person authority; raw plugin calls and
+`Action.Execute` retain plugin automation authority. The same reviewed operands
+and explicit Ask policy still apply. Return `null` from preparation to cancel,
+honor its signal, and preserve the settlement envelope: pending approval or an
+accepted operation is not completion, and unknown acceptance must not trigger
+an automatic replay. This host-control API is unpublished 0.3 development work.
+
 For a mounted UI that writes Account KV or Collections directly, current 0.3
 development source provides `hostApi.admitAction(action, input, { signal })`.
 Await it before calling your existing domain writer. It returns `false` when
@@ -118,11 +315,6 @@ require validated input; it never treats unvalidated JSON as a confirmation
 waiver. Check the host's advertised methods before offering the operation on
 older hosts: a missing `admitAction` rejects with `unsupported_method`. Ordinary
 `confirm` is presentation, not a substitute for this Action admission.
-
-If your Action opens its own editor, declare exactly `inputHints: { fields: [] }`
-to omit the host input form. Hints containing only a form title, description or
-submit label still derive fields. The input schema continues validating operands
-supplied by programmatic callers.
 
 Secret-bearing Action inputs must declare each confidential path in
 `inputHints.fields` with `widget: 'secret'` and a readable `title`, including
@@ -165,9 +357,104 @@ when retained configuration follows the current admitted plugin on one Home
 and machine. `getPluginMachineExecutionRouting` projects a host-stamped origin
 and `arePluginMachineExecutionRoutingsEqual` compares routes through the shared
 owner. A mismatch returns `plugin_action_execution_origin_mismatch` before
-handler effects. Invocation currentness still applies, and the existing
-`expectedExecutionOrigin` option keeps its full exact-custody meaning for
-operations that require it, including approval continuation.
+handler effects. The returned `executionOrigin` is the origin admitted before
+the handler ran: if the target is replaced while it runs, you still receive the
+handler's result, and a later call that expects the replaced origin is refused
+before effects. The existing `expectedExecutionOrigin` option keeps its full
+exact-custody meaning for operations that require it, including approval
+continuation.
+
+### Prepare a catalog app (0.3 development source)
+
+Implementation is incomplete: the typed SDK projection has not been published,
+and signed Project-defaults reads and the mounted UI entry still have open
+validation gates. The example below describes the intended caller contract,
+not an available SDK API.
+
+Pass the exact pinned app reference from the catalog reader, together with the
+selected Project Source revision and Machine installation, through the host
+Action service:
+
+```ts
+import type { ActionsService, DeploymentsActionInputById } from '@happier-dev/plugin-sdk/actions';
+
+function prepareCatalogApp(
+  actions: ActionsService,
+  input: DeploymentsActionInputById['deployments.publish.prepare'],
+) {
+  return actions.execute('deployments.publish.prepare', input);
+}
+```
+
+This unreleased read returns an inert draft: the catalog's native variable,
+domain and first-run declarations, plus creation defaults and their provenance.
+It neither applies the template nor creates resources, secrets or deployment
+records. Team Projects do not inherit personal Account defaults. A changed pin
+or unavailable selection remains a refusal, not an invitation to substitute the
+latest version. Check the host's advertised Actions before offering the entry;
+the later Publish operation retains its independent review and approval.
+
+### Stop a deployment rollout (0.3 development source)
+
+Use the existing host Action service with the exact receipt revision you read:
+
+```ts
+import type { ActionsService, DeploymentsActionInputById } from '@happier-dev/plugin-sdk/actions';
+
+function stopRollout(
+  actions: ActionsService,
+  receipt: DeploymentsActionInputById['deployments.cancel'],
+) {
+  return actions.execute('deployments.cancel', receipt);
+}
+```
+
+This unreleased Action needs current Source deployment permission and follows
+the host's Environment-scoped approval policy. Handle approval deferral before
+reading the domain result, just as for other host Actions. It can record the
+cancellation while the controller is offline: the receipt becomes
+`outcome_unknown` without rewriting its recorded member evidence or undoing
+native effects. A successful response is not proof that a process stopped.
+Stale receipt revisions refuse; read current state before deciding what to do
+next. See the generated [host Action reference](/plugins/api/host-actions) for
+the target toolchain's inputs and results.
+
+### Deployment handoffs and native reads (0.3 development source)
+
+The generated deployment family includes typed Publish and repository-Prepare
+handoffs. Submit the reviewed input through the same host Action service:
+
+```ts
+import type { ActionsService, DeploymentsActionInputById } from '@happier-dev/plugin-sdk/actions';
+
+function prepareRepository(
+  actions: ActionsService,
+  input: DeploymentsActionInputById['deployments.prepare'],
+) {
+  return actions.execute('deployments.prepare', input);
+}
+```
+
+This is an **unreleased registration contract**, not a complete deployment
+workflow. Hosts without the corresponding composer, workspace handoff or admitted
+native reader return an unavailable or unsupported result. Keep that result
+visible; do not substitute another Machine or repeatedly resubmit the Action.
+The generated [host Action reference](/plugins/api/host-actions) owns the exact
+input and result shapes for the target toolchain.
+
+Publish and Prepare retain default Agent approval and the host's current
+configurable policy. Prepare returns Session/child-operation references when
+handoff succeeds; that is not proof that source changes were completed, merged
+or deployed, and does not approve later Session or SCM writes. Publish's reviewed
+parent host is separate from the Environment controller, builder and runtime.
+
+The health, drift and log read Actions are safe reads, with no approval by default
+and configurable Environment-scoped policy. Use the exact receipt, target,
+Machine installation and stable service identity supplied by their owners.
+Native reader authorization and redaction must be available before disclosure;
+missing observations remain unknown, and unavailable log redaction remains
+unavailable. Registration does not supply those runtime producers or authorize
+a probe, scan or repair.
 
 ## Choose where a plugin runs
 
@@ -306,9 +593,19 @@ The maintained source example is
 
 ## Invocation surface and execution target
 
-An Action is declared and implemented once. Its `surfaces` say who may invoke
-it; its execution target says where its one handler runs. Those are
-independent decisions.
+An Action is declared and implemented once. Actions are discoverable to Agents
+and MCP clients by default, subject to the canonical per-Action exposure policy.
+Optional `tool` and `cli` metadata customizes named entry points; neither is a
+prerequisite for generic Action discovery. Invocation exposure and the execution
+target, which says where the one handler runs, are independent decisions.
+
+The canonical default for Agent/MCP exposure is `discoverable_only`: callers
+can find an eligible Action with `action.spec.search` and `action.spec.get`,
+then invoke it through `action_execute`. To request a direct tool, set
+top-level `toolExposure: { agent: 'direct', mcp: 'direct' }` on the Action.
+This per-surface override also accepts `discoverable_only` for `agent`, `mcp`,
+and `cli`. The person's per-Action settings and current availability still
+apply, and exposure does not waive approval or grant authority.
 
 The **External API & SDK** surface is host-owned rather than author-declared.
 Every installed daemon Action participates in API discovery and dynamic
@@ -322,18 +619,20 @@ Adding another invocation surface does not create another handler. Every
 admitted surface resolves the same current declaration and its one registered
 target handler through the canonical dispatcher.
 
-- A root `run` handler makes a daemon Action: `definePlugin` emits
+- A root `run` handler without explicit execution makes a daemon Action: `definePlugin` emits
   `execution: { target: 'daemon' }` for it, so you do not write that field.
   The Action runs through the daemon Action executor.
 - `execution: { target: 'client', ... }` names one exact client artifact,
   module, export, and supported platform list. A client Action has no `run`.
+- In 0.3 development source, `execution: { target: 'account', account:
+  { artifactId, exportName } }` names one portable Account handler. Its root
+  `run` binds through `activateAccount`; the same handler can run from a UI or
+  an authenticated headless host without acquiring Machine services.
 - Omitted `scopes` default to `['global']` and omitted `dangerLevel` defaults
   to `'safe'`; declare them only when an Action differs.
 - `host` is not a public plugin target; canonical host ActionSpecs keep their
   existing host executor.
 - `surfaces` may include `ui`, `plugin`, `voice`, `agent`, `mcp`, or `cli`.
-  Adding `voice` to an Action does not add Voice to the separate Tool surface
-  grammar.
 
 A daemon target's `run` handler is bound by the root module's generated
 `activate(api)`. A client target has no root `run`: its exact client artifact
@@ -346,6 +645,18 @@ A client target is client-local: it is intended to execute in the exact web,
 iOS, or Android process that invoked it. Missing or retired local activation
 must fail unavailable; it must not fall back to a daemon, move to another
 client, or enter a cross-client queue.
+
+Account handlers receive `PluginAccountActionContext`: Account storage,
+settings, targeted contributions and the ordinary Action service. The host may
+also supply authenticated `accountScope` and admitted `sessionTargetsV1`.
+In unreleased 0.3 CLI execution, optional `services.http` and `services.secrets`
+project the existing admitted HTTP and declared-secret owners. Narrow both
+members before using them; portable UI execution omits them. The projection
+does not provide Exec or filesystem access. See [secret custody and HTTP
+placeholders](/plugins/services/secrets#use-a-shared-reference-in-an-http-body).
+These are invocation facts, never input-based authorization or an implicit
+execution Machine. If a required fact is absent, refuse that operation rather
+than borrowing the active Account or selecting another Session.
 
 An admitted controller invocation in unreleased 0.3 CLI source can also supply
 optional `services.machineConnectorSecrets`. After obtaining a connector token
@@ -360,7 +671,29 @@ in `finally`; do not retain the sink or retry a write whose outcome is uncertain
 Portable UI execution and invocations without that admitted controller omit it.
 See the maintained [Account author fixture](https://github.com/happier-dev/happier/tree/dev/packages/plugin-sdk/fixtures/account-actions).
 
-> **Development status:** The explicit `daemon | client` declaration is part
+For a selected Session, use `session.status.get` with its exact host-admitted
+`sessionAddress`. Current development hosts may return `agentTarget` derived
+from readable owner metadata; `includeAcceptedWorkspace: true` requests the
+existing checkout proof. Older hosts may omit either proof. Do not infer an
+Agent or checkout from presentation metadata.
+
+For dynamic host Action data, `parsePluginHostActionInvocation(action, input)`
+validates the identifier and input through the canonical plugin-surface schemas
+before calling ordinary `services.actions.execute`. It grants no approval or
+target admission. Separate `isPluginActionApprovalRequestCreated(result)` before
+reading a domain result; an approval deferral is not a successful Session read.
+Headless status reads return the public status contract, not a partial UI
+`SessionStateV1`.
+
+An Account handler's optional `ui` capability is present only for a finite UI
+invocation, never a read observation. Use it for the ordinary compose/draft flow; headless execution must handle
+its absence explicitly. Sending still uses the ordinary Session Actions and
+their approval, cancellation and uncertain-result recovery. A portable handler
+does not create a second launcher or waive Action policy. The maintained
+development-source example is `accountActionAuthoring` in the public-authoring
+SDK companion.
+
+> **Development status:** The explicit `daemon | client | account` declaration is part
 > of the current Developer Preview contract, whose implementation remains in
 > progress, as is loaded web/iOS/Android certification. This capability has not
 > shipped in a public Happier release.
@@ -438,6 +771,24 @@ the declared `outputSchema`.
 
 ## Calling host Actions
 
+### Share plugin documents with a Team (0.3 development source)
+
+Use `context.services.actions.execute('artifact.create', { header, body })` to
+create an ordinary document, then `artifact.access.grants.set` with
+`{ artifactId, principal: { kind: 'team', teamId }, accessLevel: 'edit' }`.
+The [maintained Team Artifact example](https://github.com/happier-dev/happier/blob/dev/packages/plugin-sdk/examples/public-authoring/README.md#team-documents-through-artifacts-03-development-source)
+includes author code and a composed source test for Plain and E2EE Accounts.
+
+Check `isPluginActionApprovalRequestCreated` after each Action before starting
+dependent work. Keep the document id if sharing defers for approval; do not
+recreate the document. The recipient uses their own invocation's `artifact.get`
+and `artifact.update`, preserving the read revision as `expectedRevision`.
+The host owns encryption and recipient key delivery. Missing E2EE material
+returns typed unavailable; a grant alone does not prove the recipient can open
+the content. If the grant reports pending preparation, reopen as a key holder
+to recover key delivery before claiming success. Private indexed state remains
+in Account Collections; document access does not confer execution authority.
+
 Bundled and externally installed plugins use this same service and dispatcher.
 External plugins are not placed on a smaller Action allowlist: once the user
 trusts the plugin, eligible host Actions are available according to the
@@ -490,6 +841,51 @@ Run admission. The separate `execution.run.send` host Action is only for a
 detached Run with `sessionId: null`; it must not be used as a shortcut around
 Session permissions, encryption, or target recovery.
 
+### Prepare and confirm a deployment restore (0.3 development source)
+
+In unreleased 0.3 development source, a backup restore uses the ordinary host
+Action service. Prepare the restore with the reviewed capture receipt and
+current target. Preparation returns the exact backup and destination evidence,
+including any required safety snapshot, for review:
+
+```ts
+const selection = {
+  serverId: 'home',
+  environmentId: 'production',
+  machineId: 'runtime',
+  installationId: 'installed-runtime',
+  targetLinkId: 'current-target',
+  deploymentId: 'backup-capture-receipt',
+  restoreBackupId: 'backup',
+  expectedRevision: 3,
+};
+const prepared = await context.services.actions.execute(
+  'deployments.backups.restore',
+  { ...selection, mode: 'prepare' },
+  { signal: context.signal },
+);
+if (prepared.kind !== 'prepared') return prepared;
+```
+
+After the person reviews `prepared.evidence`, offer a separate Confirm
+invocation using the same selection and the returned operation id:
+
+```ts
+const outcome = await context.services.actions.execute(
+  'deployments.backups.restore',
+  { ...selection, mode: 'confirm', prepareOperationId: prepared.operationId },
+  { signal: context.signal },
+);
+```
+
+Both calls keep normal scoped Action approval. An `approval_request_created`
+result belongs to the host approval flow; the plugin cannot approve itself.
+Keep the prepared operation id for the later invocation. Do not send receipt
+evidence back as input: the host reads it from the retained preparation.
+See the generated [restore contract](/plugins/api/host-actions#deploymentsbackupsrestore)
+for input guidance. This example requires matching development host and SDK
+sources and does not describe a public release.
+
 ### Host Actions that run in a connected app
 
 > **Development status:** Connected-app delivery for host Actions is part of
@@ -511,7 +907,9 @@ An older app that does not advertise the method is unavailable in the same way.
 If a response is lost after dispatch, `outcome_uncertain` means the operation may
 have run; the host does not automatically retry it.
 
-Standalone CLI commands remain unavailable for these client-placed host Actions.
+CLI availability follows each Action's declared surfaces. An Action that enables
+CLI still needs an eligible connected app to reach its mounted or device-local
+owner.
 Plugin-declared `execution: { target: 'client', ... }` Actions keep the separate
 artifact and plugin-lifecycle contract described above. The generated
 [host Action reference](/plugins/api/host-actions) identifies each Action's
@@ -556,11 +954,16 @@ for your artifact's public projection and support evidence.
 
 ### Authority comes from the invocation, not from Session content
 
-[Public-profile publication](/accounts/public-profiles) is not yet a complete
-host Action workflow. A private widget Action, draft edit or generated snippet
-does not supply publication approval. Consult the generated host Action
-reference for operations actually exposed by your host; do not infer support
-from a proposed Action id or private Usage capability.
+[Public-profile publication](/accounts/public-profiles) has a consumed workflow
+in unreleased 0.3 development source: preview, Publish, Update and facts-only
+Refresh use the shared preparation and disclosure owners. First Publish reviews
+the prepared public edition; later Apply and Undo use ordinary Action policy.
+Publishing includes daily refresh, while explicit Ask or Off still suppresses
+unattended execution. A private widget edit or generated snippet supplies no
+publication approval. Consult the generated host Action reference for your
+host's exposed operations. A feature-missing server cannot serve the workflow;
+the public-eligible query must never fall back to private Usage. Supported skew
+and native blocking Ask-result delivery remain integration checks.
 
 Your plugin's authority is the principal the host admitted for this invocation.
 It does not change with the conversation. If two collaborators take turns sending
@@ -611,7 +1014,10 @@ options or directory-approval evidence.
 
 ## Tools
 
-Tools expose plugin actions to tool-capable surfaces. The manifest owns tool metadata and references the action that supplies executable behavior; tools do not have a second runtime registration path.
+Actions already participate in generic Agent/MCP discovery. To expose an
+additional named direct tool, put its presentation on the
+Action's `tool` field; its handler, input and result schemas, input hints, safety,
+availability, and approval policy remain owned by that Action.
 
 Use tools when the operation is meant to be called by agents or MCP-compatible tool clients.
 
@@ -621,36 +1027,13 @@ Use tools when the operation is meant to be called by agents or MCP-compatible t
 
 ### Worked tool example
 
-Declare the tool under `contributes.tools[]`. The `surfaces` list makes it available to agent/tool surfaces, and the handler target points at the runtime registration id.
-
-```json
-{
-  "contributes": {
-    "tools": [
-      {
-        "id": "notes-add",
-        "name": "session_notes_add",
-        "title": "Add session note",
-        "description": "Store a note for the current plugin.",
-        "surfaces": ["agent", "mcp"],
-        "inputSchema": {
-          "type": "object",
-          "additionalProperties": false,
-          "properties": {
-            "note": { "type": "string" }
-          },
-          "required": ["note"]
-        },
-        "action": "notes-add"
-      }
-    ]
-  }
-}
-```
-
-Define the referenced action in the same `definePlugin(...)` declaration. Action
-handlers receive JSON-safe input and a `PluginInvocationContext` with
-plugin-scoped services.
+For a named direct tool, declare `tool.name` and include `agent` and/or `mcp` in
+the Action's `surfaces`, with `toolExposure` requesting `direct` for those
+surfaces.
+The tool can override its title and description and add examples,
+`promptSnippet`, or `promptGuidelines`. Omitted presentation uses the Action's
+title and description. The following declaration also gives the same operation
+a CLI path:
 
 ```ts
 import { definePlugin } from '@happier-dev/plugin-sdk';
@@ -662,7 +1045,23 @@ export const { manifest, activate } = definePlugin({
   actions: {
     'notes-add': {
       title: 'Add session note',
+      description: 'Store a note for the current plugin.',
+      surfaces: ['agent', 'mcp', 'cli'],
+      tool: { name: 'session_notes_add' },
+      toolExposure: { agent: 'direct', mcp: 'direct' },
+      cli: { path: ['notes', 'add'] },
       execution: { target: 'daemon' },
+      dangerLevel: 'writesLocal',
+      confirmation: {
+        title: 'Add session note?',
+        body: 'Store this note in the plugin\'s daemon storage.',
+      },
+      inputSchema: {
+        type: 'object',
+        additionalProperties: false,
+        properties: { note: { type: 'string' } },
+        required: ['note'],
+      },
       run: async (input, context) => {
         const note = String((input as { note?: unknown }).note ?? '');
         const existing = await context.services.storage.daemon.get<string[]>('notes');
@@ -678,7 +1077,12 @@ export const { manifest, activate } = definePlugin({
 
 ## Commands
 
-Commands expose CLI-facing entries. Command declarations specify their path, visibility, availability, and canonical action reference; they do not register a parallel command handler.
+For a friendly CLI command, include `cli` in the Action's `surfaces` and put its
+path on `cli.path`, as in the example above. Optional `cli.aliases` supplies
+additional paths, `cli.visibility` chooses `default` or `advanced`, and
+`cli.tmux` chooses `inherit`, `required`, or `forbidden`. The CLI uses the same
+Action input and result schemas, input hints, availability, and approval policy.
+There is no separate command handler or command contribution declaration.
 
 > **Development status:** Command declarations and canonical host-catalog
 > wiring are available in the current source contract. The capability matrix

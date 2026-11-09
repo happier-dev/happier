@@ -82,9 +82,7 @@ If Profiles is turned off, the app falls back to the machine environment without
 3. Give the profile a clear name
 4. Choose which Agents it should be compatible with
 5. Add the environment variables Happier should inject when the session starts
-6. Mark any required values as:
-   - **Secret** when Happier should satisfy them from a saved secret, machine env, or prompt flow
-   - **Config** when the variable must already exist on the target machine
+6. On each variable's card, turn on **Required** to block session creation when the variable is missing. Turn on **Use secret vault** for credentials you want to resolve through saved secrets; this also makes the variable required.
 7. Save the profile
 
 Recommended pattern:
@@ -115,6 +113,18 @@ After the session starts, the chosen profile is shown in **Session Info → AI P
 Configured ACP Agents participate in this flow the same way built-in Agents do.
 If a profile is intended for one specific Agent, Happier preserves that
 relationship directly.
+
+In **unreleased 0.3 development source**, a composer opened from a configured
+action offers **Save as this action’s default**. It saves your current action
+name, instructions, Profile, computer/folder, checkout and launch mode for that
+action. The action copies the selected instructions and Profile, leaving the
+originals unchanged. Later saves update the action’s copies. If you reuse one of
+those copies elsewhere, its later edits apply there too. A choice that cannot
+be reused, such as a computer still being
+acquired, shows an explanation. Choose a reusable computer/folder and a
+compatible checkout before saving again.
+If saving fails, check the action’s copies before retrying: its instructions or
+Profile may have been saved even when its name and launch mode were not.
 
 ## Use profiles in the CLI
 
@@ -152,6 +162,14 @@ happier codex --profile openai
 happier codex --profile "Work Codex"
 happier gemini --profile gemini-vertex
 ```
+
+In **unreleased 0.3 development source**, bare `happier --profile <profile>`
+uses the profile's preferred Agent, including configured ACP and installed
+plugin Agents. Custom profiles are resolved after sign-in when needed.
+`happier session create --launch-profile <profile>` without `--backend` uses
+the same preference; scripted creation requires an existing login.
+An explicit Agent command or `--backend` takes precedence. Use
+`--refresh-settings` to select and apply the profile from refreshed settings.
 
 Profile lookup rules:
 
@@ -215,6 +233,24 @@ fields and surfaces, and [Roles](/agents/roles) for role sharing.
 
 ## Saved secrets and bindings
 
+### Bind a saved secret on iOS
+
+In **unreleased 0.3 development source**, **Add Variable** uses the same full editor as an existing variable, so you can configure its saved secret before adding it to the profile draft.
+
+1. Save the credential in **Settings → Secrets**, or create it from the picker below.
+2. Open **Settings → Profiles** and add or edit a profile.
+3. Under **Environment Variables**, tap **Add Variable** and enter the variable name (for example, `OPENAI_API_KEY`).
+4. Turn on **Use secret vault**. This also turns on **Required** and replaces the value input with a **Default secret** picker.
+5. Tap **Default secret** and select or create a saved secret. The card shows the secret's name rather than its value.
+6. Tap **Save** to add the configured variable, then save the profile. When editing a built-in profile, save it as a custom copy with a distinct name.
+7. Start a new session, select the daemon machine and this profile, and review the secret selection before starting.
+
+Canceling **Add Variable** discards its variable configuration and binding. A secret created in the picker remains saved in **Settings → Secrets**.
+
+These controls are also used by the Android and web profile editors. **Hide value in UI** only masks a value; use **Use secret vault** to bind a saved secret without storing its value in the profile. Changing a binding affects future starts, not sessions that are already running.
+
+On builds where **Add Variable** only shows **Name** and **Value**, enter the name, leave the value empty, and save the variable first. Then configure **Use secret vault** and **Default secret** on its card before saving the profile. If those controls are still missing, include your app version and release channel when reporting it. Do not paste the credential into the profile value, an issue, or a session message.
+
 Profiles work best with saved secrets:
 
 - save a secret once in the app
@@ -233,6 +269,27 @@ See also:
 - [Connected services](/accounts/connected-services)
 - [Provider integrations](/agents/provider-integrations)
 
+### Link a personal secret to 1Password (development)
+
+In **unreleased 0.3 development source**, a personal Saved Secret can point to
+a 1Password field instead of keeping a copied value in Happier. The 1Password
+source must be installed and available on the Machine that will use it. The
+editor offers sources from the Account's available plugin declarations.
+
+In **Settings → Secrets**, add a personal secret, choose **1Password** under
+**Stored in**, and enter its **Account** and **Field reference**
+(`op://Vault/Item/field`). The Machine executing the Action reads that field
+through its local 1Password CLI setup. Opening the secret list or creating the
+link does not read the value. A later operation reads it again, so a rotated
+value is used on the next acquisition.
+
+Linked secrets are personal-only and cannot be shared with a Team. A read on a
+shared Machine requires **Manage** access. For unattended use, link an inline
+Saved Secret containing the service-account token to the 1Password plugin's
+**Service account token** setting. The token must be stored in Happier rather
+than linked back to a vault. If a read needs an unlock or sign-in, repair the
+1Password setup on the executing Machine and retry the request.
+
 ### Credentials requested by Actions (development)
 
 An agent can ask to create a Saved Secret using its name and kind. Enter the
@@ -240,6 +297,27 @@ value in the masked approval input, then approve. The agent receives the Saved
 Secret's id so it can use the credential in settings that accept
 Saved Secrets. Keep the value out of the Session message. This is available in
 **unreleased 0.3 development source**.
+
+An Action with a missing required secret input can ask you for it in the
+Session/Inbox request detail in **unreleased 0.3 development source**. This also
+works for plugin Actions that declare secret inputs. Review what will run, then
+make a choice for each requested field:
+
+- **Once:** type a masked value for this request only.
+- **Use a Saved Secret:** select an authorized saved credential instead.
+- **Save for next time:** turn this on for a typed value and give it a name.
+  It starts off and saves only after the Action succeeds.
+
+Choose **Approve** to continue, **Dismiss** to close the request without
+answering it, or **Deny** to refuse it. Enter the credential in this request,
+not in chat or the Agent's tool arguments. The private continuation supplies it
+to the consuming Action; the requesting Agent receives the result, not the value.
+
+Running the Action and saving the value have separate outcomes. If saving fails
+after success, do not run the Action again just to save it. If saving cannot be
+confirmed, inspect Saved Secrets first. If execution cannot be confirmed, check
+what the Action changes before making a new request; Happier does not replay it
+automatically.
 
 ### Confidential browser entry (development)
 
@@ -253,8 +331,8 @@ On a shared Machine, this development continuation cannot yet use a Saved Secret
 from an Account other than the Machine custodian's. One-time entry also refuses
 when the deciding Account and custodian have different encryption modes.
 
-“Remember as a Saved Secret” starts off. Turn it on and provide a name only if you
-want the existing Saved Secrets writer to retain the one-time value. Entry and
+“Save for next time” starts off. Turn it on to retain the one-time value as a
+Saved Secret; its name is filled from the site and can be edited. Entry and
 saving have separate outcomes: entry alone does not mean saved, and a save failure
 must not repeat entry. If saving cannot be confirmed, inspect Saved Secrets before
 trying to save again.
@@ -342,24 +420,3 @@ Open the profile in **Settings → Profiles** to review its requirements.
 
 - [Custom ACP Agents](/agents/acp-backends)
 - [Provider authentication](/agents/provider-authentication)
-
-### Link a personal secret to 1Password (development)
-
-In **unreleased 0.3 development source**, a personal Saved Secret can point to
-a 1Password field instead of keeping a copied value in Happier. The 1Password
-source must be installed and available on the Machine that will use it. The
-editor offers sources from the Account's available plugin declarations.
-
-In **Settings → Secrets**, add a personal secret, choose **1Password** under
-**Stored in**, and enter its **Account** and **Field reference**
-(`op://Vault/Item/field`). The Machine executing the Action reads that field
-through its local 1Password CLI setup. Opening the secret list or creating the
-link does not read the value. A later operation reads it again, so a rotated
-value is used on the next acquisition.
-
-Linked secrets are personal-only and cannot be shared with a Team. A read on a
-shared Machine requires **Manage** access. For unattended use, link an inline
-Saved Secret containing the service-account token to the 1Password plugin's
-**Service account token** setting. The token must be stored in Happier rather
-than linked back to a vault. If a read needs an unlock or sign-in, repair the
-1Password setup on the executing Machine and retry the request.

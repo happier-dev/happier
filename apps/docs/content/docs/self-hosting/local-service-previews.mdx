@@ -16,14 +16,23 @@ internet — which is disabled by default and remains a development feature.
 
 | Capability | Status | Default |
 | --- | --- | --- |
-| Detecting local services and listing them in the launchpad | Shipped | On |
+| Detecting local services and listing them in the launchpad | Current 0.3 development source | On |
 | Opening a private preview from the app | Current 0.3 development source, with a usable signer and relay tunnel | Feature on; relay tunnel needs configuration; arbitrary ports also need an allowlist |
-| Public exposure through a shareable secret link | Development only | Off |
+| Sharing a running service with specific people, or through a secret link | Development only | Off |
 
 Private previews are the normal path and the rest of this page is mostly about them.
 The table describes the current checkout; it does not certify stable or preview
 release availability.
 
+Automatic discovery recognizes development servers rather than every listening
+process. Generic runtimes, SSH, agent CLIs and browser debug ports stay out of the
+Services list. An unrecognized server can be declared as a Project Service. Open
+checks the selected server's HTTP or HTTPS endpoint and reports a failure if it
+cannot resolve one; appearing in the list does not certify HTTP readiness.
+
+In the Project right rail, **More → Browser** opens the Browser launcher. See
+[managed browser controls](/sessions/session-settings#use-a-managed-browser) for
+page input, downloads and sign-in import in development builds.
 
 **Local service scan needs attention** describes a discovery problem. Its detail
 identifies an unreadable or missing Project folder, unavailable open-project
@@ -104,8 +113,8 @@ navigation identity when following links, even when several panes open the same
 service. Preview admission remains separate from that identity, and the page's
 original Content Security Policy still applies.
 
-In 0.3 development, private and public preview cookies use `SameSite=None; Secure;
-HttpOnly; Partitioned` within the preview's own host and path. This lets a preview embedded
+In 0.3 development, embedded private and public previews use `SameSite=None; Secure;
+HttpOnly; Partitioned` cookies within the preview's own host and path. This lets a preview embedded
 under another site retain its admission. Browsers that support
 [partitioned cookies](https://privacysandbox.google.com/cookies/chips) keep that admission
 scoped to the top-level viewer site; opening under another site needs a fresh admission.
@@ -118,21 +127,35 @@ Home's scheme and port. Other names, including `.local` and raw loopback IP addr
 require HTTPS. Set the preview domain even for a local Home; previews still need
 their own hostnames and never share the Home's API origin.
 
-The cookie attributes above remain required on loopback HTTP. Chromium accepts them
-on localhost names, including subdomains. WebKit support depends on the operating
-system's cookie storage, so Safari and Tauri's WebKit clients need a check on the
-actual target system. If exchange fails there, use HTTPS or a supported native direct
+For HTTP localhost previews, a request identified by the browser as a document
+navigation uses a host-only `HttpOnly; SameSite=Lax` cookie after the same admission
+exchange. This lets native WebKit viewers retain that admission on subsequent page
+and WebSocket requests. HTTPS, embedded previews and requests without that document
+context keep the secure, partitioned attributes above.
+
+Chromium accepts those secure attributes on localhost names, including subdomains.
+WebKit support for that cookie form depends on the operating system's cookie storage;
+if an embedded preview's exchange fails, use HTTPS or a supported native direct
 preview. See [WebKit's loopback-cookie support change](https://github.com/WebKit/WebKit/commit/aa297f89b9a6)
-for its platform restrictions. This exception concerns local-service previews; it
-does not change the stored-content public-link requirements below.
+for its platform restrictions. These exceptions concern local-service previews;
+stored-content public links retain their existing requirements below.
 
 In 0.3 development, disabling the Home preview feature refuses new admissions and subsequent
 requests from existing viewers. Registrations remain available if the feature is enabled again.
 If a Home configuration read fails during a WebSocket upgrade, that socket closes and the server
 continues serving other requests.
 
-Final effective access loss closes the affected viewer's streams. Losing the starter's
-serving admission retires the service's exposures immediately, even if native Stop is
+Each new registration, access-URL request or publication admits the viewer and
+starter once. Forwarding checks the admitted registration and installation;
+it does not repeat the full Machine permission decision at each step. A later
+request must be admitted again.
+
+Final effective access loss removes the affected viewer's URL credentials and
+native registrations and closes their open streams. The same sweep cancels
+in-flight credential and public-link creation, so a delayed admission reply
+cannot mint access after it was withdrawn. A new request can succeed after access
+is restored. Losing the starter's serving admission retires the service's exposures
+immediately, even if native Stop is
 unsupported or its outcome is still uncertain. Another valid overlapping grant preserves
 access. A shared actor without a genuine requester credential channel gets
 `requester_credentials_unavailable`; the daemon cannot borrow its custodian's credential.
@@ -140,6 +163,32 @@ access. A shared actor without a genuine requester credential channel gets
 These are development-source contracts, not certification of a loaded Project journey,
 native-device support or released availability. The private relay configuration below
 continues to apply.
+
+### Preview recovery in 0.3 development
+
+**This preview has ended** names the Service when known and retains the last
+page title, falling back to its displayed address. If the matching Service is
+stopped and can be started, **Start ‹Service›** uses the same Start review and
+approval as Services, including from a Project without a Services pane. Once
+it is running, **Open again** requests fresh preview access. **Close tab**
+closes the viewer.
+
+**Can't reach** names the Machine when known and offers **Retry**. It means
+the preview is not answering; the Machine itself may still be reachable. A
+temporary listener outage in the same live process does not end its preview.
+Restore the service's listener, then retry. Process exit or replacement ends
+that occurrence and requires opening its replacement.
+
+**Open in your browser** stays disabled for an ended preview or stopped or
+failed Service and explains why beside the menu item. When available, it
+acquires fresh access rather than reusing an expired native viewer address.
+It does not start a stopped Service.
+
+The declaration-observation warning concerns watching Project service
+definitions, not necessarily scanning native listeners. In current development
+source, a missing workspace root is watched for creation without blocking other
+roots. Actual watch failures retain a warning until declaration refresh succeeds;
+the banner may still use a generic scan-attention sentence.
 
 ### Process ownership and restart in development
 
@@ -258,6 +307,11 @@ The complete index of every variable in this family is on
 
 ## When it goes wrong
 
+In unreleased 0.3 source, TCP tunnels have no default concurrent-tunnel or
+substream-count cap. Operators may configure those counts explicitly. Frame,
+payload and credit-window bounds still apply; removing the default count caps
+does not remove transport bounds or public-exposure policy.
+
 The app names the specific unmet prerequisite on the service row itself, so start there
 rather than in the logs. Each sentence maps to exactly one thing:
 
@@ -299,8 +353,8 @@ Two more that look alike and are not:
 
 ## Public exposure, and why it is off
 
-Public exposure takes a private preview and gives it a URL anyone on the internet can open,
-with no sign-in, for a limited time. It is gated behind
+Public exposure takes a private preview and gives it a URL on its own origin for a limited time:
+for specific signed-in people, or for anyone holding a secret link. It is gated behind
 `HAPPIER_FEATURE_LOCAL_SERVICES_PUBLIC_PREVIEW__ENABLED`, which defaults to off.
 
 The default private-only deployment leaves it off. Enabling public exposure makes a port on
@@ -308,11 +362,21 @@ someone's Machine reachable without sign-in; only use a development deployment w
 operator intends that exposure. Current development admission is controlled by the real
 server policy, not a separate review-completion condition.
 
-In current 0.3 development, browser sharing offers secret links and public access
-when allowed by the relay policy. The **Signed-in people** mode is hidden from
-that sheet until browser sign-in is supported for public sharing. Authenticated
-API and agent requests can still use that mode; an ordinary browser cannot open
-its URL using the Happier app's sign-in.
+`HAPPIER_FEATURE_LOCAL_SERVICES_PUBLIC_PREVIEW__ALLOWED_MODES` lists the modes people may choose,
+comma-separated, and the app, API and agents all receive the same list:
+
+- `people` shares one running service with specific people, Teams or Groups on this Home, without
+  sharing the Machine. The link opens a page in the Happier app. A viewer who is signed in and in
+  the share's audience is admitted once, gets a cookie for that preview, and opens it; nobody else
+  can, and a signed-out viewer is asked to sign in first. The person sharing must still have the
+  service running. Who can be named follows the usual sharing rule (friends, Team co-members, and
+  your Teams and Groups). Sharing with a Team does not include that Team's guests; sharing with
+  a Group does.
+- `secret_link` gives a link that anyone holding it can open, for people outside Happier.
+- `public` opens the preview to anyone.
+
+Revoking or expiry ends a people share at the viewer's next request. To change who can open
+it, revoke it and share again.
 
 If you enable it, the relay still refuses to mint links until six further prerequisites
 are all satisfied, and the app names whichever ones are missing on the service row:
@@ -370,15 +434,30 @@ the row shows **Fixed by your deployment**. Admins can read it, but only owners
 can change it. Restart after changing restart-applied isolated-host or limiter
 configuration. An isolated domain stays preferred when configured.
 
+For example, a development Home already served over HTTPS by
+[Tailscale Serve](https://tailscale.com/docs/features/tailscale-serve) can set
+`HAPPIER_PUBLIC_SERVER_URL=https://your-machine.your-tailnet.ts.net:8443` to its
+actual Serve address, configure the fixed-window checker above, then enable
+**Allow public links on this hostname**. An example policy allows 120 requests per
+60,000 ms window; choose values for your deployment rather than treating these
+as defaults. Serve remains reachable only within its permitted tailnet audience;
+a Happier public link does not make the endpoint internet-accessible.
+
 Links on the Home's own hostname use the same restricted HTML sandbox. PDFs are
 download-only there; isolated share hosts retain inline PDF preview. Turning the
 option off blocks links on the main hostname without deleting their stored
 shares. Turning it back on restores those links, subject to expiry, revocation,
 use limits and the configured limiter.
 
-This option does not supply a fallback for local-service public exposure,
-private local-service web previews, or private HTML Artifact previews. Those
-still need isolated origins. A single-hostname HTTPS endpoint, including
+The initial shared-content page is a generic viewer shell. Loading it does not
+read the publication or spend a content-view allowance. The following content
+request checks access, consent, expiry, revocation, use limits and rate limits;
+a successfully loaded shell is not proof that the shared content is available.
+
+This option does not supply a fallback for local-service public exposure
+or private local-service web previews: those still need isolated origins.
+Private HTML Artifacts use the app's opaque sandbox and need no isolated preview
+host. A single-hostname HTTPS endpoint, including
 Tailscale Serve, does not change who can reach that endpoint.
 
 Without an admitted viewer origin or limiter, creation returns HTTP 503

@@ -48,6 +48,8 @@ Two things then tell you the session is armed:
 - the composer's send button changes from **Send** to **Continue with Codex**, carrying the target
   Agent's icon
 
+You can press **Continue with** with an empty composer to send a short "Continue" prompt in your interface language. The same applies to an armed model or source change. Typed text, attachments and review comments take precedence over this default.
+
 The armed choice is part of the session draft, not transient screen state. Navigate away, come back,
 or reload the page and both your draft text and the armed Agent are still there. Selecting the
 running Agent's own row clears the arm and the button returns to **Send**.
@@ -87,6 +89,10 @@ The session's identity and history carry over: id, title, transcript, sharing, p
 state, archive and pin state, project and working directory, past turns and usage. Your permission
 mode carries too — it is a Happier safety intent for the session, not an Agent setting, so switching
 Agents never quietly loosens it.
+
+In current development source, **Session title updates: At session start** applies once to the
+Happier session. Switching Agents preserves an existing title instead of asking the new Agent to
+generate another one. Explicit renames and ongoing title updates remain available.
 
 What the old Agent owned does not carry. Its slash commands, tools, capabilities, mode and config
 catalogs, model selection, work state, activity and thinking state are cleared, and the new Agent

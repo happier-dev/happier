@@ -110,6 +110,14 @@ Practical advice:
 - create multiple custom backends if you want multiple variants of the same CLI
 - use environment bindings for tokens or machine-specific values when needed
 
+In unreleased 0.3 development, a command-based definition keeps its configured
+executable, arguments and environment values, including a specific executable
+path. Install that command and its prerequisites on the machine that will run
+it. A missing command prevents launch with prerequisite guidance; Happier does
+not substitute a managed package runner or retry an execution error through
+another tool. Registry-backed managed package definitions keep their own install
+flow.
+
 ### Configure with an Agent in development
 
 In current 0.3 development source, Agent-assisted configuration opens an
@@ -162,6 +170,12 @@ In unreleased 0.3 development builds, a configured Agent needs
 detached Workflow inputs. Map Happier's permission intent to a native mode whose
 behavior you have verified for that CLI. A default mode or a capability hint
 does not establish that permission policy.
+
+When a CLI version renames a mode, use an ordered list such as
+`{ 'safe-yolo': ['auto', 'code'], 'read-only': ['ask'] }`. Happier chooses the first
+candidate the opened Session advertises. If none match, or the CLI provides no
+mode list, the input is refused before prompting. Candidate lists require a
+matching 0.3 development host.
 
 An absent or null mapping refuses the input before prompting the Agent. Happier
 does not silently start a fresh conversation or retain a broader native policy.

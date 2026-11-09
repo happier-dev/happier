@@ -1,11 +1,11 @@
 ---
 title: Email channel
-description: Connect an authenticated mailbox, route each thread to an Agent session, and send replies or scheduled HTML messages.
+description: Connect an authenticated mailbox to a Session, Discussion or Workflow, or route each thread to its own Session.
 ---
 
 Connect a mailbox to Happier so approved people can forward work or ask questions
-by email. A router chooses a saved recipe for the first message; replies continue
-in that thread's Session.
+by email. Bind the mailbox to an existing Session, Discussion or Workflow, or
+use a router to choose a saved recipe and create one Session per thread.
 
 <Callout type="warn">
   This guide describes the current 0.3 development source, not stable-release
@@ -51,8 +51,14 @@ mailbox address. Choose the trust strategy below and test the connection.
 Mailbox passwords and application secrets remain in Connected Accounts.
 
 Only the configured inbox is polled. IMAP IDLE wakes the receiver for new mail;
-the saved checkpoint combines UIDVALIDITY and the last UID. A changed UIDVALIDITY
-reports a history gap instead of claiming that no messages were missed.
+the saved checkpoint combines UIDVALIDITY and the last UID. Under the approved,
+unreleased history-recovery contract, a changed UIDVALIDITY or regressed UIDNEXT
+invalidates that cursor. Happier automatically establishes a baseline at the
+current mailbox position, skips existing mail, and keeps a visible history
+notice. New mail continues without a reset decision; dismissing the notice
+preserves the current cursor. The notice says earlier items may have been missed
+and offers dismissal only. It does not claim
+that the missing interval was recovered.
 Submission checks Sent for the deterministic Message-ID and appends a copy
 when the server has not saved one. SMTP acceptance determines the delivery
 result. Saving the Sent copy is best effort: a failed lookup or append is
@@ -73,8 +79,10 @@ current development source it follows the admitted Email provider on the same
 Home and machine, including a same-identity reinstall or development-source
 replacement. An update alone needs no transfer, setup rerun or history reset.
 Changing placement, transport, credentials or provider configuration still uses
-the connection transfer flow. A genuine history gap or ambiguous SMTP outcome
-keeps its existing recovery requirement; updating does not settle it.
+the connection transfer flow. Updating does not dismiss a history notice or
+settle an ambiguous SMTP outcome. History notices do not pause new mail;
+uncertain submissions still require the existing delivery resolution and
+never resend automatically.
 
 ### Microsoft 365 app-only setup
 
@@ -173,7 +181,21 @@ not become Agent input: hidden content, scripts, styles and tracking pixels are
 removed during shaping. A forwarded `.eml` contributes its discussion inline
 and exposes its files; calendar invites are attachments.
 
+In unreleased 0.3 source, polling identifies known threads from the binding
+snapshot admitted for that poll, then shapes each message once. Removing quoted
+history does not require a second host Action read. A failed poll keeps its
+previous checkpoint; retryable failures use Channels' shared backoff, while a
+typed permanent refusal remains visible for repair.
+
 ## Route threads to saved recipes
+
+In unreleased 0.3 development source, a mailbox binding can send every admitted
+thread to the same Session, Discussion or Workflow. An exact thread binding
+takes precedence; otherwise mail uses the mailbox binding. Replies return to
+the thread of the message being answered, even after other threads arrive.
+Only a `threadRouter` creates a separate Session for each thread. See the
+[binding support matrix](/extending/channels#binding-support-in-development-source)
+for target and integration limits.
 
 Link the mailbox-level destination to a `threadRouter`. Its `principalGroups`
 hold verified addresses; their union is the router's sender allowlist. Ordered
@@ -211,6 +233,14 @@ Across machines, inline text remains available, but the file outcome is
 Use the connection's machine for Sessions that need image or binary files.
 Cross-machine byte transfer remains a follow-up; outbound attachments are outside
 this development feature.
+
+In unreleased 0.3 development source, a Discussion target accepts mixed text and
+files or files alone through its normal attachment path and encryption mode. Each email
+thread appears under its first Discussion message, with later mail as replies.
+Reply to the imported message you mean to answer to send mail back to that
+message's thread. Earlier independently posted messages are not regrouped.
+A Workflow target accepts text only and refuses any message containing files
+with sender feedback; it does not run with the files omitted.
 
 ## Start a new conversation
 
@@ -258,6 +288,9 @@ Use `EmailTransportsContributionProtocolV1` from
 `fetchRaw` returns `{ kind: 'raw', mimeBase64, receivedAtMs }`, where
 `receivedAtMs` is the transport's immutable receipt time (IMAP INTERNALDATE for
 the bundled transport), reused on replay rather than the current fetch time.
+In current development source, new-occurrence freshness uses this receipt time;
+unfinished accepted input is not expired by age. A valid message `Date` header remains the authored
+`message.providerTimestamp` and falls back to receipt time when absent.
 `submitRaw` receives MIME,
 the core-selected envelope and Message-ID. `listSince` returns refs and an opaque
 checkpoint or a history gap. Without `findSent`, an uncertain submission uses

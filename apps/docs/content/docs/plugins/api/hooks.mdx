@@ -7,7 +7,10 @@ Hooks are host-invoked extension points. They let plugins observe or influence s
 
 ## Hook declaration
 
-Declare hook contributions in the manifest. Include the hook id, scope, filters, priority, and execution kind when the hook family supports them.
+Declare the hook id in `on`, plus any `filters`, `priority`, or `hostAccess`
+options your handler needs. The host derives category, scope, and execution kind
+from the canonical hook catalog; authors do not repeat those facts or choose a
+hook API version.
 
 ## Code-defined hook binding
 
@@ -26,10 +29,6 @@ export const { manifest, activate } = definePlugin({
     'session-spawned': {
       declaration: {
         on: 'session.spawned',
-        hookApiVersion: 1,
-        category: 'lifecycle',
-        scope: 'session',
-        executionKind: 'observe',
         priority: 50,
       },
       handler: async (_payload, context) => {
@@ -52,7 +51,8 @@ Always follow the hook family's result contract. Do not return ad-hoc objects.
 
 ## Scope and filters
 
-Use manifest scope and filters to keep hooks narrow. A hook that only applies to one `agentId`, one action, or one session flow should declare that restriction.
+The catalog determines scope. Use filters to keep hooks narrow when a handler
+only applies to one `agentId` or one session flow.
 
 ## Turn interception hooks
 

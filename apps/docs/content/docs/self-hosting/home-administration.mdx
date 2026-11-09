@@ -107,17 +107,26 @@ it.
 
 ### Public-profile moderation in development
 
-[Public profiles](/accounts/public-profiles) have a separate, incomplete 0.3
-integration. The approved operator flow restricts or restores publication with a
-reason through Home authority and Activity; ordinary Account writes cannot lift
-that restriction. Restricting content must not disable the Account or release
-its username. Explicit handle reclaim is a separate privileged identity action
-with a reason and owner notice, not automatic inactive-name harvesting.
+[Public profiles](/accounts/public-profiles) are unreleased 0.3 development
+behavior. First configure [public ingress and operator contact](/self-hosting/env#public-profiles).
+In Home administration, open the Account's People detail and use its
+public-profile controls to restrict or restore publication with a reason.
+The operation uses Home authority and records Activity; ordinary Account writes
+cannot lift a restriction. Restricting publication leaves the Account and
+username intact. Restoring a restriction does not recreate an edition the owner
+has unpublished.
 
-Current source has publication lifecycle, operator restriction/restore and
-report-contact configuration, while the complete owner/operator UI journey is
-still integration work. The existing People actions alone do not establish
-public-profile support.
+Explicit handle reclaim is a separate privileged operation: review the exact
+Account and current handle, give a reason and an owner notice, then confirm the
+identity Action. It withdraws the profile and releases the handle for immediate
+reuse; it does not impose a 30-day hold or harvest inactive names automatically.
+After reclaim, check that the Account detail has no username and that the owner
+has the notice in People Activity. A handle changed since review is refused
+rather than reclaiming a different name. Restore after an owner has
+unpublished leaves the page unpublished; it does not restore erased facts.
+Supported older-server combinations still need integration validation. Report
+opens the configured contact; it does not send a report automatically or include
+private diagnostics.
 
 ## Policies
 

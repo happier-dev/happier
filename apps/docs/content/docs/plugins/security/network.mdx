@@ -1,11 +1,82 @@
 ---
 title: Network access
-description: Use host-mediated HTTP and narrowly scoped network access.
+description: Use host-mediated HTTP with credential scoping and cancellation.
 ---
 
-Use `context.services.http.request(...)` for host-mediated HTTP requests. Declare external origins, methods, and any connected-account binding as narrowly as the manifest schema permits.
+Use `context.services.http.request(...)` for host-mediated HTTP requests and the
+host's credential handling, redaction and cancellation.
 
-The service bounds request and response sizes, redirect behavior, timeout, cancellation, and credential binding. It does not make arbitrary trusted daemon code a network sandbox.
+The service owns response-body bounds, redirects, explicit caller timeouts,
+cancellation, and credential binding. It does not make arbitrary trusted daemon
+code a network sandbox.
+
+In 0.3 development source, `privateNetwork` is an installation disclosure.
+Trusted native plugins can open sockets directly; host-mediated HTTP and
+WebSockets use ordinary platform DNS without a separate private-address filter
+or address pinning. Provider endpoint safety checks have their own policy.
+
+In 0.3 development source, manifest network declarations and `network.client`
+capabilities do not restrict a trusted plugin's chosen HTTP or WebSocket target.
+Host-managed credentials keep their credential owner's endpoint admission.
+Same-origin redirects may retain credentials. Cross-origin hops drop
+Authorization, cookies and host-bound credential headers. A cross-origin `307`
+or `308` redirect that would resend a body
+containing an invocation-registered secret returns `credential_request_redirect_refused`;
+native transports inspect each hop before following it. Browser Fetch hides the
+destination of an opaque manual redirect, so that response is refused with the
+same code. `redirect: 'manual'` returns an observable redirect response without
+following it, and `redirect: 'error'` refuses it. Finite requests, including a
+finite streamed response, admit authority once: withdrawal affects the next
+request, while admitted work may finish. Explicit cancellation still aborts that
+work. Open-ended access, including WebSockets, closes when access is withdrawn.
+
+## Incremental reads in development
+
+The unreleased 0.3 shared HTTP owner provides `http.requestStream` for bodyless `GET` and
+`HEAD` reads. It uses the same request interceptors and redirect handling as
+`request`. It does
+not accept a byte body or a Voice credential binding.
+Account hosts expose it through their admitted invocation's HTTP service; the
+method alone does not grant credential materialization.
+
+Consume the bytes inside the owning read and dispose the response in `finally`:
+
+```ts
+import type { HttpService } from '@happier-dev/plugin-sdk/http';
+
+async function readText(
+  http: HttpService,
+  url: string,
+  signal: AbortSignal,
+  append: (text: string) => void,
+) {
+  const response = await http.requestStream({ url, redirect: 'error' }, { signal });
+  const decoder = new TextDecoder();
+  try {
+    for await (const bytes of response.chunks) {
+      append(decoder.decode(bytes, { stream: true }));
+    }
+    append(decoder.decode());
+  } finally {
+    await response.dispose();
+  }
+}
+```
+
+Chunks arrive before the complete body. The stream reads on demand and keeps
+the caller's explicit timeout and cancellation active through body completion.
+The Account-purpose HTTP credential bridge is still
+pending in development; the streaming method alone does not provide that
+credential materialization. Closing the view must cancel its read;
+EOF, cancellation, retirement and `dispose()` release the body. Disposal is
+safe before iteration and safe to repeat. The buffered response-body ceiling
+does not truncate a stream; the containing operation owns its requested window
+and read lifetime.
+
+Keep the iterable inside the handler and publish normalized rows through the
+containing operation's existing log channel. An Action result remains JSON.
+Streaming alone supplies no history cursor or resume guarantee: a reopened
+provider stream may have a gap, which its adapter must report explicitly.
 
 ## Rules
 

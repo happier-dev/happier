@@ -27,21 +27,24 @@ happier install provider opencode
 opencode --version
 ```
 
-Or install manually:
+In current 0.3 development source, managed installs use `@opencode/cli` and approve
+OpenCode's own postinstall to select its native binary. This installer correction
+has not yet been verified in a published Happier release.
+
+For a manual OpenCode V2 install, follow the [official V2 guide](https://dev.opencode.ai/v2/docs/):
 
 ```bash
-curl -fsSL https://opencode.ai/install | bash
+npm install -g @opencode/cli
 opencode --version
 ```
 
-On Windows, OpenCode also supports native installs such as:
+With pnpm, use `pnpm add -g --allow-build=@opencode/cli @opencode/cli`.
+With Bun, use `bun add -g --trust @opencode/cli`.
 
-```bash
-npm install -g opencode-ai
-opencode --version
-```
-
-If Happier offers to run OpenCode’s vendor install recipe for you, it requires explicit confirmation before executing vendor install commands.
+Happier keeps package-manager-owned installations under that package manager's
+control and offers the matching manual update command. Existing `opencode-ai`
+installations retain their package identity; Happier-managed updates use the
+current managed package. Vendor install recipes require explicit confirmation.
 
 ## Local authentication in Happier
 
@@ -73,6 +76,14 @@ For most users, the important part is:
 - attaching later should use `happier attach <session-id>`, not a raw vendor attach command.
 
 By default, Happier uses a **managed local OpenCode server** on the machine and reuses it across sessions. Advanced users can set an explicit OpenCode server URL in settings; when you do that, Happier will keep using that explicit server for the session.
+
+## Provider model readback
+
+In unreleased 0.3 development, OpenCode reports its actually observed model on
+Provider connections as well as native routes. Choosing a model or accepting
+configuration does not establish that it ran: the model remains unknown until
+OpenCode supplies native assistant evidence. Resumed sessions can recover that
+evidence from their native history.
 
 ## Permission modes
 

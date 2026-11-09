@@ -41,10 +41,22 @@ list/get/retry, Run deletion, and saved-definition list/get/create/update/delete
 
 `workflow.run.get` and `workflow.run.wait` expose the selected final value once
 under `result`; callers do not unwrap a second Workflow result envelope. Run
-`origin` is discriminated as `direct` or `automation`. The returned
+`origin` is discriminated as `direct` or `automation`; a direct origin can carry
+its qualified Discussion and exact addressing message. The returned
 `acceptedContext` contains only the frozen source, inputs, machine, workspace,
 and direct-origin provenance needed to prepare an explicit new Run; it never
 returns the admitted authorization binding.
+
+Collaboration patterns use this same start Action with input-bound participants
+and qualified Discussion references. `workflow.definition.capture` prepares a
+reviewable draft from explicitly selected, authorized messages; it does not save
+or start it. Save through the ordinary definition Actions. Plugins declare
+definitions through `definePlugin({ workflows })`, use typed
+`ActionsService.execute`, and render the shared `WorkflowRunFoldHeader` from
+`@happier-dev/plugin-ui/components`. Data reads, lifecycle decisions, control
+eligibility and navigation remain with the host or caller. The existing typed
+Form/input-field components render the same fields; there is no separate pattern
+form or executor. See the [collaboration journey](/extras/automations#run-a-collaboration-pattern-development-source).
 
 List cursors are opaque strings and must be returned unchanged with the same
 filters. Revisions and exact counters retain their generated wire types; never

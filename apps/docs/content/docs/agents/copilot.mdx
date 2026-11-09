@@ -49,6 +49,10 @@ For the shared user guide, see [Agent authentication](/agents/provider-authentic
 
 ## Notes
 
+In 0.3 development, a Copilot Session can use a [Provider connection](/agents/provider-integrations) with an OpenAI Chat Completions or Anthropic endpoint. The model must support streaming and tool calling. Local endpoints can omit authentication; remote endpoints use a matching API key or bearer token. Happier applies the endpoint, model and credentials to the Session process without writing them to your shared Copilot configuration. Changing the Provider binding requires a new Session process.
+
+This requires a Copilot CLI version with the [documented BYOK environment controls](https://docs.github.com/en/copilot/how-tos/copilot-cli/customize-copilot/use-byok-models). Custom public headers and Azure-specific deployment configuration are not supported by this integration. Real-provider authentication and model execution remain release checks for this development feature.
+
 - Copilot auth in Happier is machine-local. If you log in on one machine, another machine still needs its own local login.
 - If you prefer token-based auth, Happier can detect that and show it as an environment-backed method.
 

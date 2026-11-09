@@ -26,7 +26,7 @@ Happier supports multiple relay-access providers (availability depends on your s
 - `tailscaleServe` — Tailscale Serve HTTPS URL (private, simplest for multi-device)
 - `tailscaleFunnel` — Tailscale Funnel public URL (**only** when Funnel is enabled for that Serve target)
 - `lan` — a LAN URL you provide (works only on the same network)
-- `cloudflareNamed` — a named Cloudflare Tunnel hostname (requires a Cloudflare token + hostname)
+- `cloudflareNamed` — a named Cloudflare Tunnel hostname (see the development credential and verification limits below)
 
 ### Provider notes
 
@@ -37,10 +37,15 @@ Happier supports multiple relay-access providers (availability depends on your s
   - Only usable if Funnel is enabled; otherwise Happier will not infer a public URL.
   - Produces a public URL (internet-reachable).
 - `cloudflareNamed`
-  - You provide:
-    - `--hostname <your.tunnel.hostname>`
-    - `--token <cloudflare token>`
-  - Use this when you already operate a Cloudflare Tunnel for the host.
+  - In **unreleased 0.3 development source**, provide the hostname and select a
+    Cloudflare Connected Account for tunnel management. Configuration carries
+    that account reference, never a raw Cloudflare token; the old `--token`
+    flag is not accepted by this development CLI.
+  - Saving a hostname and account reference does not verify a running connector,
+    DNS or a public route. The current configuration leaf reports unknown until
+    the admitted controller verifies it; it does not claim a ready tunnel.
+  - Connector changes and teardown require that admitted controller. This
+    configuration leaf does not start or remove the connector itself.
 
 ## CLI usage
 
@@ -68,7 +73,16 @@ Configure a provider (example: Tailscale Serve from a loopback upstream):
 happier relay access configure --provider tailscaleServe --upstream-url http://127.0.0.1:53288
 ```
 
-When a local provider returns a share URL, Happier reconciles that route through the canonical descriptor owner and retains the local upstream for connections from this computer. The route does not replace the Home's stable identity or independently choose its authentication audience. Disabling the provider removes that optional ingress route. Configuring access with `--ssh` changes the remote host only; it does not switch the Home profile on the computer running the command.
+In **unreleased 0.3 development source**, `--provider` selects a declared Home
+access method. Nonsecret fields accept `--config <json>` or individual string
+flags such as `--hostname`; `--credential-refs <json>` carries purpose-bound
+Saved Secret or Connected Account references. Configuration is the selected
+method, its configuration and those references, not an embedded credential.
+Machine-only Tailscale membership and Caddy are not Home relay methods.
+Published share URLs omit userinfo, query and fragment while keeping port and
+path; private execution configuration is not rewritten.
+
+When a local provider returns a share URL, Happier reconciles that route through the canonical descriptor owner and retains the local upstream for connections from this computer. The route does not replace the Home's stable identity or independently choose its authentication audience. Disabling access uses the selected method's teardown; Cloudflare requires its admitted controller and does not remove a connector through this configuration leaf. Configuring access with `--ssh` changes the remote host only; it does not switch the Home profile on the computer running the command.
 
 Disable relay access (remove the persisted configuration):
 
@@ -106,6 +120,25 @@ happier relay access status --ssh user@host --known-hosts-path /tmp/happier_know
 The Setup wizard can guide relay-access configuration for an operator-managed server when optional HTTPS/public ingress is wanted. This is not a prerequisite for an Iroh-reachable Personal Home.
 
 User guide: [Setup wizard](/apps/setup-wizard).
+
+## Troubleshooting
+
+### Serve change refused
+
+If a Serve change fails with `401 … must be root, or be an operator`, check
+the host account's authorization. On Linux with Tailscale 1.104.2, an empty
+account display name (GECOS) can also cause this refusal for a configured
+operator: [upstream issue #21204](https://github.com/tailscale/tailscale/issues/21204).
+The bug uses the display name instead of the login name when checking a
+configuration containing file-path or Unix-socket handlers; an existing handler
+can therefore make a proxy-only change fail. [Fix PR #21257](https://github.com/tailscale/tailscale/pull/21257)
+remains open as of 29 October 2026.
+
+On an affected Linux host, set the display name to the account's login name
+with `sudo usermod --comment <login-name> <login-name>`, then retry. Alternatively,
+run the exact refused `tailscale` command with `sudo`. If the account is not an
+operator, the host owner can run `tailscale set --operator=<login-name>` (with
+`sudo` when required); see [Tailscale's operator permissions guide](https://tailscale.com/docs/reference/troubleshooting/linux/linux-operator-permission).
 
 ## Related guides
 

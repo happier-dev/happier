@@ -3,6 +3,14 @@ import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { SessionSpawnNewInputV2Schema } from '../../../packages/protocol/src/sessions/creation/sessionSpawnNewInputV2.ts';
 import { AutomationScheduleTriggerInputSchema } from '../../../packages/protocol/src/automations/automationTriggerDefinition.ts';
+import { getActionSpec } from '../../../packages/protocol/src/actions/actionSpecs.ts';
+import { ExternalActionRequestEnvelopeV1Schema } from '../../../packages/protocol/src/actions/externalActionApi.ts';
+import { ApiTokenGrantV1Schema } from '../../../packages/protocol/src/auth/apiTokenGrant.ts';
+import { McpServerCatalogEntryV1Schema } from '../../../packages/protocol/src/mcp/servers/settingsV1.ts';
+import { WorkflowDefinitionSchema } from '../../../packages/protocol/src/workflows/workflowV1.ts';
+import { validateWorkflowDefinition } from '../../../packages/protocol/src/workflows/workflowValidationV1.ts';
+import { ConversationStartInputV1Schema, ConversationOutboundTextLimitV1Schema } from '@happier-dev/channels-protocol/v1';
+import { SessionDirectoryIntentV1Schema } from '../../../packages/protocol/src/sessions/creation/sessionDirectoryIntentV1.ts';
 
 const root = resolve(import.meta.dirname, '../../..');
 const read = (path) => readFileSync(resolve(root, path), 'utf8');
@@ -21,10 +29,7 @@ describe('Email integration documentation examples through canonical schemas', (
     AutomationScheduleTriggerInputSchema.parse(schedule);
   });
 
-  it('admits the published HTTP spawn, send, history and run-now envelopes and restricted grant', async () => {
-    const { getActionSpec } = await import('../../../packages/protocol/src/actions/actionSpecs.ts');
-    const { ExternalActionRequestEnvelopeV1Schema } = await import('../../../packages/protocol/src/actions/externalActionApi.ts');
-    const { ApiTokenGrantV1Schema } = await import('../../../packages/protocol/src/auth/apiTokenGrant.ts');
+  it('admits the published HTTP spawn, send, history and run-now envelopes and restricted grant', () => {
     const source = read('apps/docs/content/docs/extending/sdk.mdx');
     const section = source.slice(source.indexOf('### Backend HTTP quickstart'), source.indexOf('The v1 protocol has one relative path'));
     const values = examples(section);
@@ -47,7 +52,6 @@ describe('Email integration documentation examples through canonical schemas', (
         return 'recipe';
       })(),
       (async () => {
-        const { McpServerCatalogEntryV1Schema } = await import('../../../packages/protocol/src/mcp/servers/settingsV1.ts');
         McpServerCatalogEntryV1Schema.parse({ id: 'wilson-intake-entry-id', name: 'wilson-intake', transport: 'http',
           remote, env: {}, createdAt: 0, updatedAt: 0 });
         return 'MCP';
@@ -57,14 +61,11 @@ describe('Email integration documentation examples through canonical schemas', (
         return 'schedule';
       })(),
       (async () => {
-        const { WorkflowDefinitionSchema } = await import('../../../packages/protocol/src/workflows/workflowV1.ts');
         const definition = WorkflowDefinitionSchema.parse(workflow);
-        const { validateWorkflowDefinition } = await import('../../../packages/protocol/src/workflows/workflowValidationV1.ts');
         expect(validateWorkflowDefinition(definition)).toMatchObject({ valid: true });
         return 'workflow';
       })(),
       (async () => {
-        const { ConversationStartInputV1Schema, ConversationOutboundTextLimitV1Schema } = await import('@happier-dev/channels-protocol/v1');
         const content = { text: 'Brief', html: `<html>${'x'.repeat(120 * 1024)}</html>` };
         for (const block of object(workflow).blocks) {
           if (block.kind !== 'action') continue;
@@ -82,8 +83,7 @@ describe('Email integration documentation examples through canonical schemas', (
       `Canonical example validation failed: ${failures.map(result => String(result.reason)).join('; ')}`);
   });
 
-  it('parses every directory object in the corrected SDK examples through the directory owner', async () => {
-    const { SessionDirectoryIntentV1Schema } = await import('../../../packages/protocol/src/sessions/creation/sessionDirectoryIntentV1.ts');
+  it('parses every directory object in the corrected SDK examples through the directory owner', () => {
     for (const path of ['packages/sdk/README.md', 'apps/docs/content/docs/extending/sdk.mdx']) {
       const declarations = [...read(path).matchAll(/directory:\s*(\{[^\n}]+\})/g)];
       expect(declarations.length).toBeGreaterThan(0);

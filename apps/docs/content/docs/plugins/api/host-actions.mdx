@@ -2926,6 +2926,52 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `viewId` (text, required): View Id
 - `kind` (text, required): Kind
 - `url` (url, required): Url
+- `navigationIntent` (select): Navigation Intent
+
+## `browser.profile.create`
+
+**Create browser profile** — Create browser profile
+
+- Safety: `danger`; side effect: `danger`.
+- Approval: `required` result; `blocking` flow.
+- Request admission: `account_automation` — subject to surface, access, grant and approval policy.
+- Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
+- Also surfaced on: `ui`, `agent`, `mcp`, `cli`, `rpc`, `api`.
+
+### Input guidance
+
+- `machineId` (text, required): Machine Id
+- `profileId` (text, required): Profile Id
+- `displayName` (text): Display Name
+
+## `browser.profile.delete`
+
+**Delete browser profile** — Delete browser profile
+
+- Safety: `danger`; side effect: `danger`.
+- Approval: `required` result; `blocking` flow.
+- Request admission: `account_automation` — subject to surface, access, grant and approval policy.
+- Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
+- Also surfaced on: `ui`, `agent`, `mcp`, `cli`, `rpc`, `api`.
+
+### Input guidance
+
+- `machineId` (text, required): Machine Id
+- `profileId` (text, required): Profile Id
+
+## `browser.profile.list`
+
+**List browser profiles** — List browser profiles
+
+- Safety: `safe`; side effect: `read`.
+- Approval: `required` result; `blocking` flow.
+- Request admission: `account_automation` — subject to surface, access, grant and approval policy.
+- Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
+- Also surfaced on: `ui`, `agent`, `mcp`, `cli`, `rpc`, `api`.
+
+### Input guidance
+
+- `machineId` (text, required): Machine Id
 
 ## `browser.profile.logins.import`
 
@@ -2948,6 +2994,32 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `source` (json): Source
 - `sites` (json): Sites
 - `refs` (json): Refs
+
+## `browser.profile.select`
+
+**Select browser profile** — Select browser profile
+
+- Safety: `danger`; side effect: `danger`.
+- Approval: `required` result; `blocking` flow.
+- Request admission: `account_automation` — subject to surface, access, grant and approval policy.
+- Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
+- Also surfaced on: `ui`, `agent`, `mcp`, `cli`, `rpc`, `api`.
+
+### Input guidance
+
+- `commandId` (text, required): Command Id
+- `browserSessionId` (text, required): Browser Session Id
+- `viewId` (text, required): View Id
+- `kind` (text, required): Kind
+- `target` (json, required): Target
+- `platform` (select, required): Platform
+- `engineOverride` (select): Engine Override
+- `currentUrl` (url): Current Url
+- `currentUrlExpiresAt` (integer): Current Url Expires At
+- `focus` (boolean): Focus
+- `profileId` (text, required): Profile Id
+- `openerViewId` (text): Opener View Id
+- `machineId` (text, required): Machine Id
 
 ## `browser.recording.attachToComposer`
 
@@ -3150,6 +3222,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `viewId` (text, required): View Id
 - `kind` (text, required): Kind
 - `target` (json, required): Target
+- `engineOverride` (select): Engine Override
 - `currentUrl` (url): Current Url
 
 ## `browser.view.close`
@@ -3219,6 +3292,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `kind` (text, required): Kind
 - `target` (json, required): Target
 - `platform` (select, required): Platform
+- `engineOverride` (select): Engine Override
 - `currentUrl` (url): Current Url
 - `currentUrlExpiresAt` (integer): Current Url Expires At
 - `focus` (boolean): Focus
@@ -3290,6 +3364,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `scopeId` (text, required): Scope Id
 - `commandId` (text, required): Command Id
 - `target` (json, required): Target
+- `engineOverride` (select): Engine Override
 - `clientId` (text): Client Id
 
 ## `bugreport.collectDiagnostics`
@@ -4553,37 +4628,6 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `secretValues` (json, required): Secret replacements
 - `selectedSecrets` (json): Selected Secrets
 
-## `connectedServices.disclosure.reset`
-
-**Reset Connected disclosure** — Restore the default disclosure for one connected account or pool member on this device only.
-
-- Safety: `safe`; side effect: `write`.
-- Approval: `required` result; `blocking` flow.
-- Request admission: `account_automation` — subject to surface, access, grant and approval policy.
-- Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
-- Also surfaced on: `ui`, `agent`, `api`.
-
-### Input guidance
-
-- `subject` (json, required): Qualified disclosure subject
-- `clientId` (text): Client Id
-
-## `connectedServices.disclosure.set`
-
-**Set Connected disclosure** — Expand or collapse an exact connected account or pool member on this device only.
-
-- Safety: `safe`; side effect: `write`.
-- Approval: `required` result; `blocking` flow.
-- Request admission: `account_automation` — subject to surface, access, grant and approval policy.
-- Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
-- Also surfaced on: `ui`, `agent`, `api`.
-
-### Input guidance
-
-- `subject` (json, required): Qualified disclosure subject
-- `collapsed` (boolean, required): Collapsed
-- `clientId` (text): Client Id
-
 ## `connectedServices.identityPrivacy.set`
 
 **Hide connected-account identities** — Change identity masking on this app device. It never writes Account settings or changes another device.
@@ -5604,6 +5648,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `patch.backup` (json): Backup
 - `patch.backupRetention` (json): Backup Retention
 - `patch.ownServer` (json): Own Server
+- `patch.definition` (json): Definition
 - `patch.retainPreviousDeployments` (integer): Retain Previous Deployments
 - `patch.previewTemplate` (json): Preview Template
 - `patch.deployerMode` (select): Deployer Mode
@@ -5965,6 +6010,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `replace` (json): Explicit key replacements
 - `domainBindings` (json): Domain bindings
 - `deploy` (json): Deploy after committing the definition and bindings
+- `intent` (text): Intent
 - `managedRetention` (select): Managed Retention
 
 ## `desktop.displays.list`
@@ -6926,7 +6972,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ## `doc.edit.propose`
 
-**Propose a document edit** — Use this action when asked to suggest an edit or rewrite of a document passage: it creates a reviewable Doc suggestion, while a conversational reply draft does not. Rewrite the complete paragraph(s) in the context suggestEdit.before, including words that remain unchanged. Supply that full replacement as after, discussionRef from suggestEdit.discussionRef (or doc.threadRef.discussion), and localId, with an optional reason. documentPassage.quote is the person’s highlight; it may start or end mid-sentence. A paragraph includes the full sentences around the highlight and avoids splitting at soft wraps or abbreviations. The tool replaces the whole containing paragraph(s), never just that fragment. If suggestEdit.before is absent or the Doc changed, use doc.read with doc.docRef as ref and rewrite the complete current paragraph(s) containing the passage. The thread supplies the exact full-paragraph target and revision before approval. Explicit target/baseRevision/before inputs retain their authored exact span; when composing a rewrite from a selection, supply the whole containing paragraph(s). after is used verbatim. A pending approval is not yet a submitted suggestion. A proposal never changes document text.
+**Propose a document edit** — Use this action when asked to suggest an edit or rewrite of a document passage: it creates a reviewable Doc suggestion, while a conversational reply draft does not. Supply the complete paragraph(s) in the context suggestEdit.before as after, editing the selected span and keeping all text outside it verbatim unless the request asks otherwise. suggestEdit.beforeWithSelection marks the highlight with &lt;selected_passage&gt; tags; omit those annotation tags from after. Supply discussionRef from suggestEdit.discussionRef (or doc.threadRef.discussion), and localId, with an optional reason. documentPassage.quote is the person’s highlight; it may start or end mid-sentence. A paragraph includes the full sentences around the highlight and avoids splitting at soft wraps or abbreviations. The tool replaces the whole containing paragraph(s), never just that fragment. If suggestEdit.before is absent or the Doc changed, use doc.read with doc.docRef as ref and apply the same selection-only edit to the complete current paragraph(s) containing the passage. The thread supplies the exact full-paragraph target and revision before approval. Explicit target/baseRevision/before inputs retain their authored exact span; when composing a rewrite from a selection, supply the whole containing paragraph(s). after is used verbatim. A pending approval is not yet a submitted suggestion. A proposal never changes document text.
 
 - Safety: `danger`; side effect: `danger`.
 - Approval: `optional` result; `deferred` flow.
@@ -7328,7 +7374,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ## `files.save`
 
-**Save a text file** — Save supplied text or a complete masked deployment step log on the answering client. Deployment log references reuse deployments.logs.read; clientId selects the answering app. Refuses without a client file handoff.
+**Save a file** — Save supplied text, a complete masked deployment step log, or a completed Browser download on the answering client. Browser references use the mounted viewer and preserve binary bytes. Deployment log references reuse deployments.logs.read; clientId selects the answering app. Refuses without a client file handoff.
 
 - Safety: `safe`; side effect: `write`.
 - Approval: `required` result; `blocking` flow.
@@ -8594,7 +8640,9 @@ No field hints are published. Use the typed input accepted by `execute`.
 ### Input guidance
 
 - `id` (text, required): Id
-- `expectedRevision` (integer, required): Expected Revision
+- `expectedRevision` (json, required): Expected Revision
+- `placement` (json): Placement
+- `checkout` (select): Checkout
 - `newProfileId` (text, required): New Profile Id
 - `name` (text, required): Name
 - `now` (number, required): Now
@@ -9096,6 +9144,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `workspaceId` (text): Workspace Id
 - `previewId` (text): Preview Id
 - `targetId` (text): Target Id
+- `serviceTarget` (json): Service Target
 
 ## `localServices.preview.revoke`
 
@@ -9114,6 +9163,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `workspaceId` (text): Workspace Id
 - `previewId` (text): Preview Id
 - `targetId` (text): Target Id
+- `serviceTarget` (json): Service Target
 
 ## `localServices.preview.status`
 
@@ -9145,15 +9195,11 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
-- `machineId` (text): Machine Id
+- `machineId` (text, required): Machine Id
 - `sessionId` (text): Session Id
-- `workspaceId` (text): Workspace Id
-- `previewId` (text): Preview Id
-- `targetId` (text): Target Id
-- `exposureId` (text): Exposure Id
-- `mode` (select): Mode
-- `audience` (json): Audience
-- `ttlMs` (integer): Ttl Ms
+- `serviceTarget` (json): Service Target
+- `previewId` (text, required): Preview Id
+- `exposureId` (text, required): Exposure Id
 - `clientId` (text): Client Id
 
 ## `localServices.publicPreview.create`
@@ -9168,15 +9214,15 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
-- `machineId` (text): Machine Id
+- `machineId` (text, required): Machine Id
 - `sessionId` (text): Session Id
-- `workspaceId` (text): Workspace Id
-- `previewId` (text): Preview Id
-- `targetId` (text): Target Id
-- `exposureId` (text): Exposure Id
-- `mode` (select): Mode
+- `serviceTarget` (json): Service Target
+- `previewId` (text, required): Preview Id
+- `mode` (select, required): Mode
 - `audience` (json): Audience
-- `ttlMs` (integer): Ttl Ms
+- `ttlMs` (integer, required): Ttl Ms
+- `rateLimitProfileId` (text): Rate Limit Profile Id
+- `confirmation` (json): Confirmation
 
 ## `localServices.publicPreview.revoke`
 
@@ -9190,15 +9236,11 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
-- `machineId` (text): Machine Id
+- `machineId` (text, required): Machine Id
 - `sessionId` (text): Session Id
-- `workspaceId` (text): Workspace Id
-- `previewId` (text): Preview Id
-- `targetId` (text): Target Id
-- `exposureId` (text): Exposure Id
-- `mode` (select): Mode
-- `audience` (json): Audience
-- `ttlMs` (integer): Ttl Ms
+- `serviceTarget` (json): Service Target
+- `previewId` (text, required): Preview Id
+- `exposureId` (text, required): Exposure Id
 
 ## `localServices.publicPreview.status`
 
@@ -9212,15 +9254,11 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
-- `machineId` (text): Machine Id
+- `machineId` (text, required): Machine Id
 - `sessionId` (text): Session Id
-- `workspaceId` (text): Workspace Id
+- `serviceTarget` (json): Service Target
 - `previewId` (text): Preview Id
-- `targetId` (text): Target Id
 - `exposureId` (text): Exposure Id
-- `mode` (select): Mode
-- `audience` (json): Audience
-- `ttlMs` (integer): Ttl Ms
 
 ## `machines.access.grant.remove`
 
@@ -10236,7 +10274,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - Approval: `required` result; `blocking` flow.
 - Request admission: `account_automation` — subject to surface, access, grant and approval policy.
 - Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
-- Also surfaced on: `ui`, `agent`, `mcp`, `cli`, `api`.
+- Also surfaced on: `ui`, `cli`, `api`.
 
 ### Input guidance
 
@@ -10747,7 +10785,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ## `machines.resources.policy.set`
 
-**Change resource settings** — Changes a machine’s alerts, guard and cleanup settings. If they changed meanwhile, you see the current ones first.
+**Change resource settings** — Changes a machine’s alerts, guard, monitoring and cleanup settings. Monitoring’s read interval applies only while someone watches Live or Overview; otherwise the machine reads once a minute. If they changed meanwhile, you see the current ones first.
 
 - Safety: `safe`; side effect: `write`.
 - Approval: `required` result; `blocking` flow.
@@ -10885,6 +10923,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `serverId` (text, required): Home ID
 - `machineId` (text, required): Machine ID
 - `environmentId` (text): Environment Id
+- `composeService` (text): Compose Service
 
 ## `machines.services.logs.read`
 
@@ -13887,6 +13926,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `desiredPlacement` (json, required): Desired Placement
 - `destination` (json, required): Destination
 - `selectedTarget` (json, required): Selected Target
+- `setupReview` (json): Setup Review
 
 ## `projects.sources.create`
 
@@ -13923,7 +13963,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - `serverId` (text, required): Home id
 - `sourceId` (text, required): Source id
-- `expectedRevision` (text, required): Current revision
+- `expectedRevision` (integer, required): Expected Revision
 
 ## `projects.sources.list`
 
@@ -13941,7 +13981,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `query` (text): Search
 - `audience` (json): Audience
 - `cursor` (text): Page cursor
-- `limit` (text): Page size
+- `limit` (integer): Limit
 
 ## `projects.sources.moveToTeam`
 
@@ -13991,8 +14031,8 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - `serverId` (text, required): Home id
 - `sourceId` (text, required): Source id
-- `expectedRevision` (text, required): Current revision
 - `patch` (json, required): Metadata or attachment intent
+- `expectedRevision` (integer, required): Expected Revision
 
 ## `projects.trust.list`
 
@@ -18487,6 +18527,22 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `notificationChannelMutation` (json): Notification Channel Mutation
 - `connectedAccountCredentialMutation` (json): Connected Account Credential Mutation
 
+## `secrets.shared.repair`
+
+**Finish sharing Saved Secret** — Prepare owed key envelopes for the already-approved audience at the exact Saved Secret revision.
+
+- Safety: `danger`; side effect: `write`.
+- Approval: `required` result; `deferred` flow.
+- Request admission: `human_approval` — host Agent, MCP and plugin callers default to Ask, which the user can waive; API-token callers receive `present_user_required`.
+- Decision/effect authority: `present_user` — API tokens never run or approve it; host automation defaults to Ask, which the user can waive.
+- Also surfaced on: `ui`, `agent`, `mcp`.
+
+### Input guidance
+
+- `resourceId` (text, required): Resource Id
+- `expectedRevision` (integer, required): Expected Revision
+- `clientId` (text): Client Id
+
 ## `secrets.shared.update`
 
 **Update Saved Secret** — Rename or rotate a Saved Secret through its canonical resource owner.
@@ -19148,7 +19204,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ## `session.delete`
 
-**Delete session** — Permanently delete a session. Its daemon removes managed folders through the durable deletion lifecycle.
+**Delete session** — Permanently delete a session or stopped detached conversation history. Session deletion removes managed folders through the durable lifecycle; detached deletion removes Happier history and leaves provider history untouched.
 
 - Safety: `danger`; side effect: `danger`.
 - Approval: `none` result; `deferred` flow.
@@ -19158,7 +19214,9 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
-- `sessionId` (text, required): Session id
+- `sessionId` (text): Session id
+- `machineId` (text): Machine id
+- `runId` (text): Detached conversation id
 
 ## `session.delivery.mute.list`
 
@@ -20625,7 +20683,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `directory` (json, required): Directory intent
 - `machineSetupPlanInput` (json): Machine software setup — Install the selected software on this Machine before starting the Agent. This spawn approval includes setup.
 - `organizationPlacement` (json): Organization placement
-- `agentTarget` (json, required): Agent target — Backend options carry target keys. For agent:&lt;pluginId&gt;/&lt;localId&gt;, use &#123;kind:"agent",identity:&#123;pluginId,localId&#125;&#125;; retain definitionId for a configured Agent.
+- `agentTarget` (json, required): Agent target — Copy the selected catalog row's complete agentTarget. A configured Agent uses &#123;kind:"agent",identity:&#123;pluginId,localId&#125;,definitionId&#125;; definitionId belongs beside identity.
 - `modelSelection` (json): Model selection — Native model options carry a model id in option.value. Use &#123;v:1,ref:&#123;agentTargetKey,providerConnectionId:null,modelId:option.value&#125;,updatedAt:&lt;milliseconds&gt;&#125;, with the selected Agent target key. Provider catalog choices retain their structured ref. A Connected Account profile is not a providerConnectionId.
 - `title` (text): Title
 - `permissionMode` (text): Permission mode — Canonical intent: default, read-only, safe-yolo, yolo, plan. Use "read-only" for read-only access.
@@ -20699,7 +20757,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ## `session.stop`
 
-**Stop session** — Stop the specified session. Explicit Stop holds automatic wake until a person Resumes or Sends; lifecycle control only frees the runner.
+**Stop session** — Stop the specified session. Explicit Stop holds automatic wake until Resume or a new message send; lifecycle control only frees the runner.
 
 - Safety: `safe`; side effect: `write`.
 - Approval: `none` result; `deferred` flow.
@@ -21792,7 +21850,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
-- `pageId` (text): Settings page — Optional exact page id from settings discovery, not a display name. Omit to list all settings and discover their page ids, displayed titles, anchors and allowed values. Built-in page ids: session, settings, keyboard, sourceControl, appearance, desktop, coordination, deployments, connectedServices, machines, externalSessions, account, permissions, providers, agents, transcript, actions, usage, homeAdministration, teams, accountSecurity, apiTokens, embeds, machinesAdd, machinesThisComputer, remoteHosts, pets, features, language, subAgent, profiles, mcp, skills, plugins, memory, search, prompts, handoff, toolRendering, servers, serversAdd, systemStatus, notifications, notificationsPush, diagnosis, attachments, connectedServicesAgentSignIn, voiceDictation, voiceConversations, voicePrivacy, voiceAdvanced
+- `pageId` (text): Settings page — Optional exact page id from settings discovery, not a display name. Omit to list all settings and discover their page ids, displayed titles, anchors and allowed values. Built-in page ids: appearance, session, settings, keyboard, sourceControl, desktop, coordination, deployments, connectedServices, machines, externalSessions, account, permissions, providers, agents, transcript, actions, usage, homeAdministration, teams, accountSecurity, apiTokens, embeds, machinesAdd, machinesThisComputer, remoteHosts, pets, features, language, subAgent, profiles, mcp, skills, plugins, memory, search, prompts, handoff, toolRendering, servers, serversAdd, systemStatus, notifications, notificationsPush, diagnosis, attachments, connectedServicesAgentSignIn, voiceDictation, voiceConversations, voicePrivacy, voiceAdvanced
 
 ## `settings.reset`
 
@@ -26650,7 +26708,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ## `workflow.run.review.draft.set`
 
-**Prepare open Workflow review value** — Set the displayed human review buffer of the exact open hold at expectedContentRevision. Retains Keep my edits / Use newer semantics. Does not publish or accept the result.
+**Prepare open Workflow review value** — Prepare the exact open hold at expectedContentRevision: set value, clear edits while keeping the reading, or show_newer to read the latest publication and clear edits. Does not publish or accept the result.
 
 - Safety: `safe`; side effect: `external`.
 - Approval: `required` result; `blocking` flow.
@@ -26664,8 +26722,9 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `draftId` (text, required): Mounted draft id
 - `runId` (text, required): Open Run id
 - `expectedContentRevision` (text, required): Observed hold content revision
-- `value` (json, required): Proposed review value
-- `clientId` (text): Client Id
+- `value` (json): Proposed review value (omit for an operation)
+- `operation` (select): Buffer operation (omit when setting value)
+- `clientId` (json): Client Id
 
 ## `workflow.run.start`
 

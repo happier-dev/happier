@@ -80,11 +80,11 @@ Grouped by feature family.
 | `HAPPIER_FEATURE_AUTH_UI__AUTO_REDIRECT_PROVIDER_ID` (alias `AUTH_UI_AUTO_REDIRECT_PROVIDER_ID`) | Setting | string | (empty) | Live | Home settings or env | Provider the sign-in screen redirects to when auto-redirect is on. |
 | `HAPPIER_FEATURE_AUTH_UI__RECOVERY_KEY_REMINDER_ENABLED` (alias `AUTH_UI_RECOVERY_KEY_REMINDER_ENABLED`) | Setting | boolean | `true` | Live | Home settings or env | Recovery key reminder UI behavior. |
 
-### Automations
+### Bots
 
 | Variable | Kind | Type | Default | Applies | Set from | Description |
 | --- | --- | --- | --- | --- | --- | --- |
-| `HAPPIER_FEATURE_AUTOMATIONS__ENABLED` | Switch | boolean | `true` | Live | Home settings or env | Automations feature surfaces and scheduling runtime. |
+| `HAPPIER_FEATURE_BOTS__ENABLED` | Switch | boolean | `true` | Live | Home settings or env | Bot creation and template authoring, releases, and instantiation. |
 
 ### Browser
 
@@ -118,6 +118,12 @@ Grouped by feature family.
 | `HAPPIER_FEATURE_CONNECTED_SERVICES_ACCOUNT_FALLBACK__ENABLED` | Switch | boolean | `true` | Live | Home settings or env | Connected service account group fallback and automatic active account switching APIs. |
 | `HAPPIER_FEATURE_CONNECTED_SERVICES_ACCOUNT_GROUPS__ENABLED` | Switch | boolean | `true` | Live | Home settings or env | Connected service account groups and member management APIs. |
 | `HAPPIER_FEATURE_CONNECTED_SERVICES_QUOTAS__ENABLED` | Switch | boolean | `true` | Live | Home settings or env | Connected services quota snapshots (informational usage meters) surfaces and runtime. |
+
+### Deployments
+
+| Variable | Kind | Type | Default | Applies | Set from | Description |
+| --- | --- | --- | --- | --- | --- | --- |
+| `HAPPIER_FEATURE_DEPLOYMENTS__ENABLED` | Switch | boolean | `true` | Live | Home settings or env | Deployment preparation, publishing, and new deployment work. |
 
 ### Devices
 
@@ -194,9 +200,9 @@ Grouped by feature family.
 | `HAPPIER_FEATURE_MACHINES_TUNNEL_ALLOWED_PORTS` | Setting | list | — | Restart | Home settings or env | Ports tunnels may reach (comma or space separated); unset allows none beyond the defaults. |
 | `HAPPIER_FEATURE_MACHINES_TUNNEL_DIRECT_PEER__ENABLED` | Switch | boolean | `true` | Restart | Home settings or env | Direct peer machine TCP tunnel capability. |
 | `HAPPIER_FEATURE_MACHINES_TUNNEL_SERVER_ROUTED__ENABLED` | Switch | boolean | `false` | Restart | Home settings or env | Server-routed machine TCP tunnel fallback capability. |
-| `HAPPIER_FEATURE_MACHINES_TUNNEL_SERVER_ROUTED__MAX_ACTIVE_TUNNELS_PER_SOCKET` | Setting | int 1–128 | `8` | Restart | Home settings or env | Most server-routed tunnels one socket may hold open. |
+| `HAPPIER_FEATURE_MACHINES_TUNNEL_SERVER_ROUTED__MAX_ACTIVE_TUNNELS_PER_SOCKET` | Setting | int ≥ 1 | — | Restart | Home settings or env | Most server-routed tunnels one socket may hold open. |
 | `HAPPIER_FEATURE_MACHINES_TUNNEL_SERVER_ROUTED__MAX_BINARY_HEADER_BYTES` | Setting | int 1–8388608 | `16384` | Restart | Home settings or env | Largest binary frame header, in bytes. |
-| `HAPPIER_FEATURE_MACHINES_TUNNEL_SERVER_ROUTED__MAX_CONCURRENT_SUBSTREAMS` | Setting | int 1–128 | `32` | Restart | Home settings or env | Most substreams one tunnel runs at once. |
+| `HAPPIER_FEATURE_MACHINES_TUNNEL_SERVER_ROUTED__MAX_CONCURRENT_SUBSTREAMS` | Setting | int ≥ 1 | — | Restart | Home settings or env | Most substreams one tunnel runs at once. |
 | `HAPPIER_FEATURE_MACHINES_TUNNEL_SERVER_ROUTED__MAX_FRAME_BYTES` | Setting | int 1–8388608 | `65536` | Restart | Home settings or env | Largest server-routed tunnel frame, in bytes. |
 | `HAPPIER_FEATURE_MACHINES_TUNNEL_SERVER_ROUTED__MAX_FRAMED_MESSAGE_BYTES` | Setting | int 1–8388608 | `524288` | Restart | Home settings or env | Largest framed message, in bytes. |
 | `HAPPIER_FEATURE_MACHINES_TUNNEL_SERVER_ROUTED__MAX_RAW_PAYLOAD_BYTES` | Setting | int 1–8388608 | `262144` | Restart | Home settings or env | Largest raw payload in one frame, in bytes. |
@@ -270,7 +276,6 @@ Grouped by feature family.
 | `HAPPIER_FEATURE_SESSIONS_DRAFTS__ENABLED` | Switch | boolean | `true` | Live | Home settings or env | Cross-device composer and new-session draft synchronization. |
 | `HAPPIER_FEATURE_SESSIONS_EPHEMERAL_RUNNER__ENABLED` | Switch | boolean | `true` | Live | Home settings or env | Creator-authorized temporary-computer Session activation. |
 | `HAPPIER_FEATURE_SESSIONS_FILTERED_LISTING__ENABLED` | Switch | boolean | `true` | Live | Home settings or env | Structurally filtered Session listing before Home-local pagination. |
-| `HAPPIER_FEATURE_SESSIONS_FOLDERS__ENABLED` | Switch | boolean | `true` | Live | Home settings or env | Organize synced sessions into user-defined folders. |
 | `HAPPIER_FEATURE_SESSIONS_FOLLOWING__ENABLED` | Switch | boolean | `true` | Live | Home settings or env | Durable per-Account Follow of an accessible Session, its notification/Voice preferences, and the four auto-follow defaults. |
 | `HAPPIER_FEATURE_SESSIONS_HANDOFF__ENABLED` | Switch | boolean | `true` | Live | Home settings or env | Session handoff between machines. |
 | `HAPPIER_FEATURE_SESSIONS_USAGE_LIMIT_RECOVERY__ENABLED` | Switch | boolean | `true` | Live | Home settings or env | Session usage-limit recovery, wait/resume intents, and usage-limit retry controls. |
@@ -315,4 +320,4 @@ Grouped by feature family.
 
 | Variable | Kind | Type | Default | Applies | Set from | Description |
 | --- | --- | --- | --- | --- | --- | --- |
-| `HAPPIER_FEATURE_WORKFLOWS__ENABLED` | Switch | boolean | `true` | Live | Home settings or env | Structured Workflow authoring, execution, inspection, and Action surfaces. |
+| `HAPPIER_FEATURE_WORKFLOWS__ENABLED` (alias `HAPPIER_FEATURE_AUTOMATIONS__ENABLED`) | Switch | boolean | `true` | Live | Home settings or env | Structured Workflow authoring, execution, inspection, and Action surfaces. |

@@ -16,6 +16,12 @@ endpoint and Saved Secret bindings, and manual model entries without selecting
 a machine. These changes belong to your Account; saving them does not test an
 endpoint or authorize a particular machine to use it.
 
+The Providers root stays on its connection home instead of opening the first
+connection automatically. Open an existing connection for its details, or use
+Add to start setup; the column's All entry returns to the home. Account choices
+remain available without a selected machine. Local discovery, starting a local
+service and testing still use the machine you explicitly select.
+
 An Agent's Models settings can show compatible static and manual Provider models
 from the available declarations. With no machine selected, these models remain
 unverified: health is unchecked, load state is unknown, and no live model list
@@ -29,6 +35,9 @@ does not replace those checks. See [Account-only model browsing](/agents/model-a
 
 ## Connect a third-party model API
 
+For the unreleased 0.3 Gateway integration and its current availability, see
+[Vercel AI Gateway](/agents/vercel-ai-gateway).
+
 If the service is a built-in Provider:
 
 1. Open **Settings → Providers**.
@@ -40,6 +49,78 @@ If the service is a built-in Provider:
 For an unlisted service, choose **Add custom provider** and select the compatibility contract the service actually implements. Enter its base URL, add an API key if required, and fetch or manually add its model ids.
 
 The model appears only for Agents whose protocol and required capabilities are compatible. An unverified pairing may be shown as **Experimental** and require explicit confirmation; an incompatible pairing is not selectable.
+
+For unreleased [Team credential pairings](/accounts/team-credentials#experimental-model-pairings),
+**Experimental** is informational: neither the source owner nor the recipient
+needs to confirm the pairing. Incompatible pairings still refuse. Cloud-provider delivery is
+still being integrated and does not inherit personal-connection readiness merely
+because the same model is listed.
+
+## Credits and account usage in 0.3 development
+
+The unreleased connection detail includes a **Usage** section when the Provider
+supports account observations. Vercel AI Gateway reports remaining USD credits
+and lifetime spend. OpenRouter reports spending for **This key**; account credits
+require its separate management key, selected through Saved Secrets. Missing that
+key leaves account credits unconfigured and does not change the inference key.
+
+DeepSeek reports each balance in the currency returned by its
+[balance API](https://api-docs.deepseek.com/api/get-user-balance/), CNY or USD.
+Currencies are displayed separately without conversion. Unknown caps stay
+unknown, and a reported negative balance is preserved. Account balances are
+observations across the vendor account, not money reserved for one Session.
+
+Opening a supported connection's Usage section requests a reading from the
+selected machine through the existing approval policy. Overlapping visible
+readers share a request. Hidden surfaces do not refresh; a completed turn
+refreshes only its exact connection while a relevant surface is open. There is
+no background polling. Check the displayed observation date and use Refresh
+when you want a new reading. Ordinary refresh failures retain dated figures;
+changing credentials or account authority clears them. These
+observations are separate from the Session usage page's reported and estimated
+request costs. Real tenant and visual acceptance remain release validation.
+
+Reported per-request charges in 0.3 development are available only for OpenRouter
+Chat Completions traffic through the external Team credential broker. Happier records the vendor's terminal
+[`usage.cost`](https://openrouter.ai/docs/cookbook/administration/usage-accounting)
+as reported USD cost. It uses the existing Team request attribution and does
+not add the upstream inference charge or an estimate to that same charge.
+Vercel AI Gateway requests and native Claude Code, Codex and OpenCode requests do
+not supply reported per-request charges through this integration. Missing or
+aborted terminal usage remains unknown.
+
+## Additional Agents in 0.3 development
+
+The unreleased development integration extends per-session Provider bindings to
+[Gemini CLI](/agents/gemini), [Kilo](/agents/kilo),
+[Droid](/agents/droid) and [Copilot CLI](/agents/copilot). Each Agent
+still requires its native API protocol: Gemini CLI needs a Gemini-compatible
+endpoint, for example, while Copilot accepts OpenAI Chat Completions or
+Anthropic Messages. Selecting a router does not translate between protocols.
+
+[DeepSec review Runs](/agents/deepsec) also support a development-only binding
+for credentialed OpenAI Responses through the Codex harness. They are review
+Runs, not general coding sessions. The endpoint must end in `/v1` with no query
+or fragment; no-auth connections and additional public headers are unsupported.
+
+Gemini endpoints currently require an advanced integration: a Provider plugin
+must declare Gemini support, or an Action caller must supply a manual Gemini
+connection template. The standard **Add custom provider** form still offers
+OpenAI and Anthropic presets; selecting one does not make it Gemini-compatible.
+
+Happier gives the selected Agent process its endpoint, model and credentials
+without changing shared native Agent configuration. Private configuration files
+contain credential references rather than key values. Changing a binding uses
+the Agent's restart path. Agent-specific native configuration limits are
+described on the linked pages; authenticated CLI acceptance remains release
+validation.
+
+Native custom-model settings in another Agent do not automatically enable a
+Happier binding. Qwen, Pi, Oh My Pi, Kimi, Grok and FX still require their native
+configuration in the current integration, as does CodeBuddy where managed
+configuration can override routing. Cursor's editor API-key support does
+not apply to its CLI. Custom ACP definitions use the authentication and model
+configuration of the executable they declare.
 
 ## Manual reasoning effort in 0.3 development
 
@@ -58,6 +139,13 @@ the Action or CLI. Effort controls appear only when the selected Agent can apply
 the selected model's declared tiers. Anthropic API compatibility alone does not
 enable Claude Code's Ultracode control. Declaring tiers does not verify the
 endpoint or make an incompatible Agent pairing available.
+
+In the same 0.3 development flow, starting a Session or Run with an explicit
+effort outside that model's declared tiers is refused before the runner starts
+(`provider_model_config_option_unsupported`). Choose a declared tier or clear
+the option. Retained and default effort follows the Agent's normalization;
+for example, Codex omits unsupported inherited effort at startup. Changing the
+model alone does not make its retained effort an explicit request.
 
 For an Anthropic-compatible endpoint, its `/v1/models` response can report effort
 support directly on each model, for example:

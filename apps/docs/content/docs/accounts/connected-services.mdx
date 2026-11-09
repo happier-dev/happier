@@ -42,6 +42,12 @@ configured with the source, not by creating a Connected Account; an explicitly
 selected Connected Account still takes precedence. See
 [PRs & Issues](/code/prs-and-issues#use-a-machines-github-cli-login).
 
+The 0.3 development Credentials surface also offers machine-local npm registry
+profiles. They can reuse the selected machine's npm login, sign in through npm
+in a browser, or use a pasted token. They stay with that machine's npm profile
+owner rather than becoming an Account-wide Connected Account. See
+[npm registry sign-in](/plugins/packaging/install-trust#private-registries).
+
 ## Where you manage them
 
 In the app:
@@ -63,12 +69,21 @@ In 0.3 development, service cards still expand sign-in in place. **Add account**
 opens the same flow in the account detail, retaining its machine choice and
 recovery steps rather than starting a different authentication flow.
 
+In 0.3 development, a failed read of the services offered by your machines shows
+a reason and **Retry** on the page and in its **+** menu, including the sidebar
+menu. Saved accounts remain listed and selectable. Retry refreshes the service
+catalog; it does not create an account or repeat a sign-in.
+
 In the CLI:
 
 - `happier connect status`
 - `happier connect codex ...`
 - `happier connect claude ...`
 - `happier connect gemini`
+
+In 0.3 development, CLI Connect asks for required approval in the terminal.
+Confirm once to continue to configuration and sign-in fields, or pass `--yes`
+when starting the connection. Declining or closing input ends the request.
 
 The 0.3 development storage contract keeps personal labels and dismissal choices
 with your signed-in Account, while account and pool-member expansion choices
@@ -110,6 +125,13 @@ where you signed in to `gh`. Continue through the normal approval flow.
 The credential goes through the existing connected-account storage and your
 Account's encryption mode. If the machine has no available GitHub CLI login,
 install `gh`, sign in there with `gh auth login`, then retry the import.
+
+Import confirms your GitHub identity once. Importing the same GitHub user on the
+same host again reuses its connected account. Older imported accounts gain their
+identity at their next successful health check. Overlapping Triage sources for
+that same user and host select a source automatically; different or unknown
+identities still ask you to choose. Existing duplicate accounts stay available
+until you remove them deliberately.
 
 ## Gateways in 0.3 development
 
@@ -180,9 +202,10 @@ enabled. Checks from an active session, the CLI and MCP use the same recovery
 attempt; changing how you check does not start a separate recovery loop.
 
 Happier manages the wait even when the Agent has no separate quota-check command.
-A reported reset time determines when it can try to continue; without a reliable
-reset time, Happier tries again using its recovery backoff. Temporary check
-failures keep the wait active.
+A reported reset or retry-after determines when it can try to continue. Without
+reliable timing, the wait stays active until recovery is reported or you choose
+**Check now**. Temporary check failures keep the wait active without starting a
+periodic check loop.
 
 Happier sends the configured continuation prompt, not a replay of your original
 request. Once the continuation is accepted into Pending, its normal queue and
@@ -205,13 +228,12 @@ session's relay; if that read is unavailable, retry after connectivity returns.
 
 In development builds, a terminal model-capacity failure such as Codex
 `server_overloaded` keeps the same session and selected model. Happier waits before
-retrying, with longer delays for consecutive capacity failures: the initial delay
-is about five seconds and the exponential schedule levels off at about five
-minutes. Each delay varies by up to 20% to spread retries across sessions. A
-provider-supplied retry time can extend the wait.
+retrying through its shared recovery scheduler. A provider-supplied Retry-After or
+reset time sets the earliest retry; when both are present, Happier honors both.
 
 Capacity retries have no attempt limit. A continuation being accepted or queued
-does not reset the delay; a successfully completed model turn does. Authentication
+still awaits the model's outcome; a successfully completed model turn settles the
+recovery. Authentication
 failures and exhausted subscription quota follow their separate recovery paths.
 Stopping retries or stopping the session takes precedence over automatic recovery.
 
@@ -238,6 +260,18 @@ a success notification, and replaying the same receipt does not send another one
 
 ## Choosing accounts on a swap
 
+In 0.3 development, a confirmed reauthentication failure on a pool's active
+account triggers its existing automatic-switch policy. When automatic switching
+and auth-expiry switching are enabled, Happier moves to a healthy eligible
+account. Manual pools and explicit opt-outs keep their chosen account. An account
+that needs reauthentication stays ineligible until its health recovers.
+
+Opening a pool or Team model catalog reads the committed selection; it does not
+choose a backup itself. If no healthy eligible account remains, Happier keeps the
+reconnect reason. A normal pool rotation preserves the Team resource and model
+selection, so another model choice is not required solely because the account
+changed. This behavior is unreleased and still being validated.
+
 In development builds, **Expiring first** is the default selection strategy for
 new pools. When a swap is needed, Happier prefers an eligible account with enough
 fresh quota whose long usage allowance resets sooner or whose subscription ends
@@ -245,12 +279,30 @@ sooner with renewal off. A renewing billing period is not a subscription expiry.
 
 The pool's existing early-switch threshold defines enough quota. If no account
 has that much left, selection falls back to the account with the most usable quota.
+The threshold is the percentage **remaining** on the pool's most constrained
+tracked allowance. If the five-hour window has 40% left and the weekly allowance
+has 8% left, the pool counts 8% remaining. Set the threshold to 10 to switch with
+about a tenth left, not 90.
+
+In 0.3 development, Codex and Claude subscription pools can apply a switch during
+a turn. The request already in flight finishes on the previous account; the next
+request uses the new account. Claude uses the pool's shared credential home, so
+switching does not require a session restart. Restart-only Agents keep their
+existing switching behavior.
+
 Stale, missing, or passed dates add no preference. Equal deadlines are resolved by
 remaining quota, then member order. A healthy active account stays active; this
 strategy does not schedule switches or restart sessions.
 
 Existing explicit **Least limited**, **In order**, and **Manual** choices are
 preserved. Change the selection strategy in the pool's Behavior section to opt in.
+
+In 0.3 development builds, Claude subscription and Anthropic API-key pools let
+Happier manage usage-limit recovery by default. In the pool's Behavior section,
+turn on **Let Claude wait for usage limits** to let Claude wait and continue after
+its native limit resets. The preference applies to newly launched Claude
+processes. Individual connected accounts and native login keep their normal
+behavior.
 
 ## Choosing which limits drive a pool
 
@@ -585,6 +637,90 @@ The Usage entry requires **Usage reporting**, which is enabled by default;
 allowance surfaces also require the quota support described above. Source
 discovery and capture need a connected, available machine with a supported
 accounting reader.
+
+### Views, widget inputs and copies
+
+Use the view switcher to choose a built-in view or create your own. The view's
+menu supports renaming, reordering and deleting your copies; Reset restores a
+preset, with Undo when the saved layout still permits it. An intentionally empty
+view stays empty. Selecting a tab changes the selection before its data finishes
+loading. If the read fails, still-authorized cards can remain with a failure
+notice; use Retry to read the selected view.
+
+Page filters supply the scope and cost basis to following widgets. In a widget
+or group's Inputs, keep a field following the page or choose its own value to
+pin it. Each field can follow or pin independently; metric and grouping belong
+to the widget where offered. A copy preserves relative period intent rather
+than freezing the time it was copied. Use **Add to** to place an independent copy
+on Home, a Project or a Session where that destination is available. Editing the
+copy does not edit its source. Style, Metric and Colour by choices depend on the
+selected widget; not every body offers every control.
+
+In current development source, chart marks and figures with hidden precision
+reveal their values on hover, keyboard focus or press. Fully displayed values and
+source-status text remain readable inline. These interactions use the same
+widget bodies on Usage, Home, Boards and Projects; loaded acceptance across the
+remaining widgets and platforms is still in progress.
+
+Cost calculations preserve decimal minor units through multiplication and
+aggregation before converting the result for display. Read the selected cost
+basis with the amount: reported cost, an API-equivalent estimate and a private
+tariff do not establish what a subscription billed.
+
+### Work evidence
+
+Open **Work** to inspect the project ledger, Session value and recorded outcomes.
+Follow a row's evidence into its Session, checkpoint, commit or pull request.
+Happier attributes work only where recorded evidence connects those steps;
+matching a repository name or time is not proof that an Agent caused a merge.
+Several Sessions can contribute to one pull request. Evidence linking one turn
+to several outcomes is ambiguous and stays unallocated, as does unlinked or
+conflicting evidence; amounts are not spread across known outcomes. Read
+coverage and cost kinds alongside the total: an unavailable amount is not zero
+or a bill.
+
+### Coach suggestions and Undo
+
+Open **Coach** and inspect a finding's **Why** evidence before changing anything.
+Findings depend on the selected query and the evidence actually available;
+insufficient evidence does not establish that a problem exists. Use Apply only
+when the finding offers a supported remedy. It uses the ordinary Action approval
+policy; a suggestion alone changes nothing. Where Undo is offered, it reverses
+that exact applied change and refuses to overwrite an intervening edit. Dismiss,
+snooze or restore a finding through its controls.
+
+A digest suggestion is opt-in: review its schedule and execution target to
+create an [Automation](/extras/automations). Reading Coach does not schedule it.
+A repository remedy that offers a new Session uses the existing Session-start
+flow and its approval policy rather than writing files from the finding itself.
+
+### Private recap images
+
+Choose Share on a recap widget to open the image composer. Select the period,
+whole usage or Happier-only usage, the fields to include, a style and an output
+format, then inspect the preview. Names and dollar amounts start off. Copy,
+Save and Share are separate device operations; composing a preview sends nothing
+to a public profile. A cancelled or unavailable delivery is not a successful
+export. Public-profile link, badge and card outputs appear only when the service
+supports [Public profiles](/accounts/public-profiles); they use the applied
+public edition and its consent rather than the private image's selections.
+
+For accounting data rather than an image, use the recap's summary, JSON or CSV
+export actions. They use the shown query and cost basis, keep unpriced amounts
+unavailable, and require a separate device Copy, Save or Share operation.
+
+### Older servers and reset-bound starts
+
+If a detail operation needs a route absent from a 0.2 server, Usage shows a typed
+**needs a newer server** state for that operation. Readable accounting and other
+parts stay available; retrying cannot add the missing route. A same-query
+temporary failure can retain authorized values and offer Retry.
+
+A start held for an allowance reset keeps its original message. If your device
+misses that reset while asleep or offline, it sends at the next fresh comparable
+window once observed. Stale readings or a changed allowance, denominator or
+window keep it waiting. Cancel the held start through the existing Pending
+controls if you no longer want it; it does not become an immediate send.
 
 ### Capture usage from outside Happier
 

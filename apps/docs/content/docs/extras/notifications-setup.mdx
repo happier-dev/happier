@@ -35,7 +35,7 @@ Happier can notify you when a session needs attention, including:
 On the mobile app, permission and action-request notifications can also expose **action buttons**:
 
 - **Permission requests**: `Allow` / `Deny`
-- **User-action requests**: `Answer`
+- **User-action requests**: `Answer`; development builds can also offer numbered choices or `Reply` for a supported simple question
 
 Current behavior is intentionally conservative:
 
@@ -54,9 +54,13 @@ For the exact routing behavior, see [Notification routing](/extras/notifications
 
 Remote request previews are on by default. Disable **Request previews** in notification settings to omit this content from push notifications. Each webhook destination has its own request-preview switch, and the shared attention privacy policy can also restrict previews. Device-local request previews have a separate preference and follow the local attention policy.
 
-These details may appear on the lock screen or be received by your webhook endpoint. Disable request previews to omit command and question content from the notification and webhook request details. See [Attention surfaces](/organize/attention-surfaces) for the shared privacy controls.
+For inline push replies, the push payload also contains the question key and exact option values needed to submit a choice. Disable request previews to omit that answer mapping.
 
-Long push previews are shortened with an ellipsis to fit the outbound payload budget while preserving session and request routing. Open the session for the complete content. Expo also enforces its own [notification payload limits](https://docs.expo.dev/push-notifications/sending-notifications/).
+Request details may appear on the lock screen or be received by your webhook endpoint. Disable request previews to omit command and question content from the notification and webhook request details. See [Attention surfaces](/organize/attention-surfaces) for the shared privacy controls.
+
+In development builds, one question with up to three choices can offer numbered answer buttons, and one short text question can offer a native `Reply` field. Request previews must be enabled. Multiple questions, multiple selections and longer forms keep the full session flow. Home-owned closed-app session alerts retain their existing open-session behavior.
+
+Long push previews are shortened with an ellipsis to fit the outbound payload budget while preserving session and request routing. If the complete inline question cannot fit, the notification uses `Answer` instead. Open the session for the complete content. Expo also enforces its own [notification payload limits](https://docs.expo.dev/push-notifications/sending-notifications/).
 
 Older senders cannot honor the new preference and continue using their existing detail hints.
 
@@ -84,6 +88,14 @@ The device's OS notification permission, Focus/Do Not Disturb and local device o
 separate last-mile controls.
 
 When you are already looking at a given session, Happier suppresses notifications for that same session to avoid duplicate noise while you are actively reading it.
+
+**Development builds:** expand a webhook channel in notification settings and choose **Send test**.
+After confirmation, a connected machine sends a fixed diagnostic message using the channel's saved
+address and signing secret. The result shows whether the receiver accepted or refused it, or whether
+delivery was unreachable. Resolve the reported problem and choose **Retry** to send again.
+The test changes no preferences and includes no Session content. Acceptance confirms the diagnostic
+request reached the receiver; it does not confirm that automatic notification policy will allow a
+future alert.
 
 ### Closed-app session alerts
 
@@ -136,6 +148,10 @@ If a user runs their **own server + CLI**, they must:
 
 - Point both app and CLI at the same server URL.
 - Ensure the server stores push tokens (routes above).
+
+### Test remote delivery in development builds
+
+Use **Send a remote test** in notification troubleshooting to send a fixed test message to this device’s registered push token through the selected Home. This requires an updated Home with the diagnostic endpoint; it does not require a connected CLI. The result reports whether the push service accepted the message. Check the phone separately to confirm display: acceptance does not prove delivery, sound, lock-screen presentation or background actions. If acceptance is unconfirmed, check for the notification before trying again. The test does not exercise your mute, quiet-hours or enrollment policy.
 
 ## Self-hosting checklists
 

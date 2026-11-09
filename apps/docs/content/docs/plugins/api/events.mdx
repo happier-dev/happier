@@ -30,9 +30,25 @@ transport the source supports, and each trigger on that source selects one of
 them: a GitHub-style source can declare both checkpointed pull and durable
 push, with one trigger per transport.
 
-For durable provider feeds, prefer `checkpointedPull`: poll the upstream
-source, call `admitCheckpointedPluginEventObservationV1(...)`, and advance the
-provider cursor only after it returns `checkpointSafe`.
+For durable provider feeds, prefer `checkpointedPull`. In unreleased 0.3
+development source, use `runCheckpointedPluginEventObserverV1` from the
+daemon-only `@happier-dev/plugin-sdk/background-services` entrypoint for its
+lifecycle, assignment checks and checkpoint safety. Your adapter keeps its
+finite provider client and cursor codec. See
+[checkpointed observers](/plugins/guides/background-services#observe-a-checkpointed-event-source).
+The lower-level `admitCheckpointedPluginEventObservationV1(...)` remains the
+occurrence-admission bridge, not another scheduling lifecycle.
+
+In that development runner, catalog reconciliation reports `current` or
+`reconciling`, with the actual scan start and adapter-supplied next retry.
+Elapsed scan time does not create a separate late state or change a source's
+configured period.
+
+Its existing `PluginEventDispositionV1` keeps checkpoint safety separate from
+actual admission. Optional `admissions` metadata retains the exact server
+result, observation identity, definition selector and scope. Safe skips do not
+authorize admitted-only work; require a matching `admitted` or `rejoined`
+result, never infer it from `kind: 'checkpointSafe'` or absent metadata.
 
 A provider that observes through a long-lived connection — a Discord Gateway
 session, for example — declares the `socket` transport instead and admits each
@@ -56,7 +72,7 @@ transport for an already-declared Event, never the declaration path.
 
 The maintained
 [`automation-event-source`](https://github.com/happier-dev/happier/tree/v0.3/packages/plugin-sdk/examples/automation-event-source)
-example shows the checkpointed-pull lifecycle. The maintained
+example shows the Event declaration and finite adapter consumed by that shared runner. The maintained
 [`operation-only-channel-provider`](https://github.com/happier-dev/happier/tree/v0.3/packages/plugin-sdk/examples/operation-only-channel-provider)
 example shows how Channels providers bind provider Actions to a feature-owned
 protocol without declaring their own target.

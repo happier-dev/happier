@@ -62,6 +62,73 @@ its calls; a hidden tool returning requires the later launch named by the UI.
 Plugin-declared MCP servers use the same reach owner and appear with their
 supplying plugin, while configuration and removal remain declaration-owned.
 
+## Built-in Happier tools
+
+The Session-authenticated local bridge described below is an in-progress 0.3
+development integration. Marked Agent CLI tools and friendly Action commands
+on POSIX now use the Session MCP endpoint instead of stored Account credentials. Native
+extension bridge launches forward the host's opaque environment, and generated
+shell commands no longer inject custodian Home context. Native launch, Session
+recovery and physical cleanup still require composed runtime validation. Do not
+treat this as complete Agent credential isolation. Windows retains its existing
+non-isolated transport and command path; Agent isolation is unavailable there.
+
+In 0.3 development, declare the Agent's `capabilities.tools.delivery` as
+`native_mcp`, `native_extension`, or `shell_bridge`. These delivery declarations
+share the host's Session tools and Action approval policy.
+
+For native MCP, pass the host-provided `mcpServers` launch records to the Agent
+unchanged. A native extension can ask the bound Session service for its tool
+descriptors and executable launch:
+
+```ts
+const bridge = await context.session.services.happierTools?.resolveNativeBridge(
+  { systemPrompt: request.startupInstructions?.instructions },
+  { signal: context.signal },
+);
+```
+
+When the service is available, register `bridge.tools` and invoke its
+`launch.executablePath` with `launch.argsPrefix`, forwarding `launch.env` to that
+child. Keep the Action tool name, tool-call id, JSON arguments and working
+directory when invoking it. Treat the launch environment as opaque private
+context: do not parse it, print it, put it in a prompt or command arguments, or
+reuse it after the Session runtime retires. Resolve a new bridge when opening a
+replacement runtime. The host owns authentication and cleanup.
+
+The host-private transport uses a non-secret reference to one private transient
+context file. The host owns its contents and lifetime. Bridge children must
+inherit that reference without plugins reading or copying authentication into
+the Agent's ambient environment. Selected native-home files are replaced
+atomically in the retained Agent-owned home. Exit cleanup removes transient
+context and file-environment material while preserving provider-created resume
+state. Native launch integration and containment are not yet complete.
+
+For `shell_bridge`, use the host-generated `happier tools ... --agent-bridge`
+commands. On POSIX the marked Agent CLI requires the live Session bridge and does not
+fall back to stored Account credentials. On this path, generated commands do not inject
+`HAPPIER_HOME_DIR` or Account server context; they inherit the owning launch's
+private context-file reference. Ordinary person-invoked `happier tools` keeps its
+separate CLI authentication.
+
+Windows retains its existing non-isolated bridge and opt-in `home`/`full` shell
+context mode. This compatibility path does not provide Agent isolation.
+
+Session-owned Execution Runs use the owning Session's
+tool bridge. Pi's genuine detached Run currently receives only its supplied MCP
+servers and has no owning Session Happier bridge. That detached branch remains
+unchanged; Session bridge delivery applies only to Runs with an owning Session.
+A plugin must not invent a
+Session identity or copy another Session's tools into a detached Run.
+
+The built-in bridge uses local IPC and Session authentication. Processes sharing
+the same OS user can still inspect material accessible to that user; this does
+not isolate mutually untrusted requesters on a shared Machine. Per-requester
+Linux users and private homes are being integrated separately in 0.3; an enabled
+preference or the aggregate shared-user status does not prove that separation.
+The Machine owner can inspect material delivered to the Machine. See
+[Machine sharing and its current limits](/accounts/session-sharing).
+
 ## Agent rule
 
 In 0.3 development, remote MCP OAuth sign-in is host-owned. Agent plugins

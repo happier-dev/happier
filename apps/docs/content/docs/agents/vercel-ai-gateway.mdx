@@ -1,0 +1,88 @@
+---
+title: Vercel AI Gateway
+description: Route compatible coding Agents through one Vercel AI Gateway connection.
+---
+
+Use Vercel AI Gateway as a model source for Claude Code, Codex and OpenCode, with
+your Gateway API key held in Happier's Saved Secrets.
+
+<Callout>
+  This integration is unreleased 0.3 development source and awaits integration
+  validation. Real Vercel tenant validation has not yet been
+  completed; compatible pairings retain Happier's experimental confirmation.
+</Callout>
+
+## What you need
+
+You need a Vercel AI Gateway API key, a development build that includes the
+Provider plugin, and an online machine with your chosen Agent installed.
+Create your key in the [Vercel AI Gateway dashboard](https://vercel.com/d?to=%2F%5Bteam%5D%2F%7E%2Fai-gateway).
+
+## Connect the Gateway
+
+1. Open **Settings → Providers**, select **Vercel AI Gateway** and add a connection.
+2. Bind your Gateway API key through Saved Secrets.
+3. Select the machine that will run your Agent and test the connection to fetch models.
+4. Enable **Show in model picker** for this connection. Aggregators are hidden by default.
+5. Start a Claude Code, Codex or OpenCode session, choose a Gateway model and confirm the experimental pairing when prompted.
+
+The catalog includes language models only. Models with documented reasoning
+effort choices expose the tiers Happier can represent; a reasoning tag alone
+does not create an effort selector. The control also requires an Agent that can
+apply those tiers. Gateway models controlled only by a thinking budget or an
+on/off switch do not gain an effort selector.
+
+## Endpoints and limits
+
+Claude Code uses Vercel's [Claude Code compatibility endpoint](https://vercel.com/docs/ai-gateway/coding-agents/claude-code).
+Codex and OpenCode share the Responses endpoint described in Vercel's
+[Codex guide](https://vercel.com/docs/ai-gateway/coding-agents/openai-codex).
+The shared endpoint supplies Codex's startup model metadata; Vercel documents
+ordinary Responses handlers for other paths. Chat-compatible requests use the
+generic [coding-agent endpoint](https://vercel.com/docs/ai-gateway/coding-agents).
+
+Requests identify Happier through Vercel's optional
+[app-attribution headers](https://vercel.com/docs/ai-gateway/ecosystem/app-attribution).
+Vercel owns Gateway billing, budgets, routing and upstream availability.
+This integration uses API keys. OIDC refresh and Sign in with Vercel are not
+included. In 0.3 development, the connection detail's **Usage** section shows
+remaining USD credits and lifetime spend, with the observation date and a
+Refresh control. An unknown spending cap stays unknown; the balance is not a
+per-session allowance. Tenant-backed validation remains outstanding.
+These account observations do not establish an actual charge for each Agent
+request. This integration does not record reported per-request charges for
+Vercel AI Gateway or native Claude Code, Codex and OpenCode requests. The separate
+OpenRouter request-cost support is limited to Chat Completions traffic through
+the external Team credential broker. Native and estimated costs are not relabelled
+as charged Gateway spend.
+Native Claude subscription routing is a separate
+authentication flow and is not configured by this API-key connection.
+
+## Team cloud-provider delivery in development
+
+The separate [Team credential delivery contract](/accounts/team-credentials#cloud-provider-delivery)
+is being integrated for company-managed Vercel sandboxes. The custodian explicitly
+allows vendor disclosure and confirms experimental Agent/model/endpoint pairings
+on the shared credential; members select the model without another confirmation
+or delivery chooser. An installed rule substitutes a placeholder outside the
+guest. This is not released availability or a completed real-tenant journey.
+
+It differs from the personal connection steps above. The vendor receives the
+Gateway key, requests bypass Happier's broker policy and limits, and existing
+rules may work while the controller is offline. Upstream key rotation/revocation
+is the hard stop; controller-offline policy removal is not guaranteed. See the
+Team guide for shared-user placeholder exposure and installation/removal states.
+
+## If setup fails
+
+If testing is unavailable, check that the selected machine is online and allowed
+to use the connection. For an authentication failure, verify or replace the
+Saved Secret with a current Gateway API key. If a model is absent, refresh the
+catalog and check its availability in Vercel. If the connection is healthy but
+models are hidden, enable **Show in model picker** and use a compatible Agent.
+
+## Related
+
+- [Provider integrations](/agents/provider-integrations)
+- [Models and engines](/agents/model-and-engine-selection)
+- [Vercel model catalog reference](https://vercel.com/docs/ai-gateway/sdks-and-apis/rest-api#list-models)

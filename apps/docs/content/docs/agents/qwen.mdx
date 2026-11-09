@@ -51,6 +51,19 @@ For the shared user guide, see [Agent authentication](/agents/provider-authentic
 happier qwen
 ```
 
+## Custom model sources
+
+Qwen's native [model provider configuration](https://qwenlm.github.io/qwen-code-docs/en/users/configuration/model-providers/)
+supports OpenAI Chat Completions, OpenAI Responses, Anthropic Messages, and Gemini
+API endpoints. Configure these through Qwen's own settings and authentication flow.
+
+Happier's 0.3 development integration does not yet expose a managed
+[Provider connection](/agents/provider-integrations) binding for Qwen. Native
+catalog entries can override endpoint and key choices passed at launch. Replacing
+Qwen's system-settings file to force a binding would also discard the machine's
+security, sandbox, and tool policies. A safe Session-only binding must preserve
+those policies and keep its selected endpoint authoritative.
+
 ## Notes
 
 - Resume availability is session-specific in Happier and depends on valid resume metadata plus the current backend/settings.

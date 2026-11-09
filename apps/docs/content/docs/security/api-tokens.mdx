@@ -54,6 +54,24 @@ Keep the complete compound credential in your secret manager: it grants access
 to Account-encrypted content, and revocation cannot make already opened keys or
 data unknown again.
 
+## Deploy from CI
+
+In the development preview, a deployment token can be limited to one Environment,
+with only `deployments.deploy` and `action.operations.get`. Keep approval access
+off and leave Session, computer and creation grants empty. The token can deploy
+an exact commit and read its own operation; it does not grant general computer
+access.
+
+Choose **Automatic** when authoring the token to save consent for those deploys.
+The corresponding grant field is `deployApproval: 'automatic'`. Saving that
+choice requires the signed-in person or the person deciding the token request;
+an automation credential cannot grant it to itself. **Ask** uses your ordinary
+Action approval settings.
+
+Environment edits, including changing protection to Production, preserve a saved
+Automatic choice. An explicit **Ask first** setting still requires approval.
+Revoke or edit the token when its saved access should change.
+
 ## Use a token from the CLI
 
 Pass a token for one command with the global, prefix-only `--api-token` flag:
@@ -155,7 +173,7 @@ an already allowed selection.
 ## CLI and daemon approvals
 
 In 0.3 development, an Agent or MCP call can ask you to create, edit or revoke an
-API token (including an embed configuration), or change CLI/daemon approval policy.
+API token (including an embed configuration).
 These calls always create an Ask-first request; they never apply automatically.
 Approving any present-user change requires your signed-in present-user authority.
 An Approve-scoped token can reject the request, but cannot approve its own or another
@@ -179,23 +197,18 @@ in `tokenId` and a `label`; add the exact `grant` and `expiresAt` you want revie
 For interactive creation that prepares encryption access, use
 `hdev auth api-tokens create --label <label> --encryption`.
 
-CLI and daemon approvals and account changes are allowed by default for a
-stored interactive login. Read or change the Account choice with:
+To renew unattended Team access in this development flow, a signed-in person
+can invoke `account.apiTokens.update` with `tokenId` and
+`authorizeUnattendedTeamAccess: true`. Happier verifies that person's current
+sign-in evidence and renews only the selected credential, preserving its bearer
+and grant. Existing children need their own renewal; renewing a parent does not
+authorize them. A child's renewal cannot change its label, grant or appearance.
+Unavailable or no-longer-valid sign-in evidence refuses the renewal.
 
-```bash
-hdev auth cli-approvals get --json
-hdev auth cli-approvals set disallowed --yes --json
-```
-
-Changing the policy briefly reconnects the Account's CLI/daemon sockets. Set
-`HAPPIER_CLI_PRESENT_USER=disallowed` on a computer to opt out independently;
-an Account `allowed` value cannot override that machine choice. With the
-policy disallowed, restore it from the signed-in app, which retains
-present-user authority.
-
-The environment accepts only `allowed` or `disallowed`; leaving it unset uses
-the Account choice. An invalid value refuses CLI/daemon startup rather than
-silently restoring approval authority.
+A stored interactive CLI login is your own tool: commands you run can approve
+requests and change account settings, like the signed-in app. Requests that
+agents, MCP clients or plugins make through the CLI or daemon are marked as
+theirs and follow your per-Action approval settings in **Settings → Actions**.
 
 During this development migration, the CLI may ask you to sign in again when
 its stored bearer is an app Account credential rather than a terminal
@@ -203,9 +216,9 @@ credential. It clears only that Home's bearer, preserving local Account
 material and your other Home profiles.
 
 This prevents supported automation paths from raising their own authority.
-A process running as your OS user can still read local credentials; when
-CLI/daemon approvals are allowed, a local process able to run the CLI or reach
-the daemon control route can approve.
+It does not isolate processes running as your OS user: such a process can read
+local credentials, and a local process able to run the CLI or reach the daemon
+control route can approve.
 
 ## Revoke access
 

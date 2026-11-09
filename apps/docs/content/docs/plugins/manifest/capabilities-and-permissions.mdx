@@ -1,6 +1,6 @@
 ---
 title: Capabilities and host access
-description: Distinguish contribution support facts from runtime authority requests.
+description: Distinguish contribution support facts, access disclosures and host authorization.
 ---
 
 Manifest V2 derives runtime families from `contributes`; it has no top-level `uses` or `declares` lists. Adding an action, hook, Agent, MCP descriptor, or other contribution is sufficient to declare that family.
@@ -45,7 +45,7 @@ reviews and displays each declaration's exact origins and methods before the can
 host policy chain registers it.
 `network.intercept` is not a public HostAccess capability; no public `hostAccess`
 request is required for a request interceptor. The canonical host policy chain can
-deny a matching request or continue it with an in-scope URL, method, or
+deny a matching request or continue it with a URL, method, or
 non-protected-header rewrite; it does not rewrite bodies, inject provider
 authentication, or add a second fetch or interception chain.
 
@@ -79,17 +79,22 @@ owner and lifecycle. The publication pipeline records each family's current disp
 package rather than treating an internal Protocol declaration as author
 availability.
 
-These declarations do not all mean the same thing:
+In unreleased 0.3 development source, these declarations describe intended
+access for installation consent, rather than per-plugin runtime fences:
 
 - filesystem, process, environment, and ordinary network rows disclose trusted
-  executable behavior and configure cooperative host facilities; they do not
-  sandbox equivalent direct Node or native access;
+  executable behavior; they do not constrain host-mediated operations or
+  equivalent direct native access;
 - connected accounts, sessions, Account storage, and MCP resources can be real
   host-owned selectable resources;
 - the Agent-session terminal is a user-visible effect and may require present
   intent or an OS authorization at the operation boundary.
 
-Contribution declarations reference a host-access request by its id when the operation needs that authority. For example, an action can declare `"hostAccess": ["service-api"]`.
+Contribution declarations reference a host-access request by its id to describe
+their intended use. For example, an action can declare
+`"hostAccess": ["service-api"]`. Connected Account references also identify the
+purpose's compatible services; the host retains the actual selected binding
+and Account or Team authorization.
 
 ## Contribution capabilities
 
@@ -97,16 +102,15 @@ Contribution-local capability objects describe what that contribution supports. 
 
 ## Fail-closed behavior
 
-Missing, malformed, or unauthorized access to a mediated facility or host-owned
-resource is unavailable. Plugins must not infer authority from the presence of
-a contribution, an Agent support flag, or a Provider capability. A denied
-cooperative facility is not a claim that trusted code cannot perform an
-equivalent direct local operation.
+Missing host bindings return typed unavailable services. Malformed requests and
+unauthorized access to host-owned resources remain refused by their owners.
+Plugins must not infer authority from a contribution, an Agent support flag or
+a Provider capability. Manifest scopes do not add a second authorization owner.
 
 ## Good authoring pattern
 
 - Put static identity and support facts under the owning `contributes` family.
-- Request only host capabilities with an implemented runtime checkpoint.
+- Declare the host capabilities the plugin actually uses.
 - Use `required` only when the plugin cannot work without the capability.
 - Keep scopes narrow and reasons concrete.
 - Reference host-access ids from contributions that exercise them.

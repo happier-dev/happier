@@ -124,6 +124,15 @@ The Agent login terminal is not a one-off modal. It reuses the same terminal fou
 
 That keeps Agent login flows consistent with the rest of the app instead of introducing a second terminal UI.
 
+## Team credential availability in development
+
+The unreleased [Team cloud-provider delivery contract](/accounts/team-credentials#cloud-provider-delivery)
+uses an admitted shared binding and placeholder rather than the member's native
+Agent login. Missing or withdrawn Team bindings must retain their Team/Provider
+recovery reason; signing into Codex does not repair that binding. A native login
+check is still relevant when the Session actually uses native authentication.
+The full vendor-native journey remains under integration validation.
+
 ## Common use cases
 
 ### “I installed an Agent CLI and want to finish setup in the app”

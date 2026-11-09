@@ -70,6 +70,37 @@ If you are self-hosting and need to override OAuth client settings, see:
 
 ## Model selection
 
+### Provider connections in development
+
+The 0.3 development integration can bind a Gemini Session to a compatible
+[Provider connection](/agents/provider-integrations). The connection supplies the endpoint,
+API key, and selected model for that Session. Gemini CLI uses the Gemini API
+protocol, so an endpoint offering only OpenAI Chat Completions or Responses is
+incompatible. See the [Gemini CLI configuration reference](https://geminicli.com/docs/reference/configuration/)
+for its native endpoint and authentication options.
+
+The standard **Add custom provider** presets do not yet offer the Gemini
+protocol. Use an installed Provider contribution that declares Gemini, or the
+`providers.connections.create_custom` Action with a Gemini endpoint template,
+an `x-goog-api-key` raw header credential transport, and a manual model entry.
+Selecting an OpenAI preset does not convert the endpoint's protocol.
+
+Changing a Provider binding requires restarting the Session. Happier passes the
+API key in the child process environment and does not write it to shared Gemini
+configuration. Native Google Connected Account authentication is suppressed for
+the bound Session. This adapter currently requires an API key.
+
+The Session uses a private copy of Gemini's User settings with API-key auth
+selected. Native System policy is not replaced: conflicting or unreadable auth
+policy is refused before launch. A bound no-tools Session is also refused when
+its native System settings cannot be preserved by Gemini's launch mechanism.
+Native System settings path overrides must be fully qualified (a drive or UNC
+path on Windows). Native experimental
+dynamic model configuration and nonempty `modelConfigs` are not supported with
+a Provider binding. Gemini's reserved aliases (`auto`, `pro`, `flash`,
+`flash-lite`, `auto-gemini-2.5`, `auto-gemini-3`, `none`) and known rollout-remapped
+model IDs are refused instead of silently changing the Provider's model.
+
 Model selection is capability-driven and can be set from:
 
 - CLI start options

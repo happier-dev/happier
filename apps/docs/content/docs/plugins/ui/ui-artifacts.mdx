@@ -18,35 +18,22 @@ functions, content digest, and compatible Host UI API range. It does not contain
 platform-specific entries, framework patch versions, Module Federation module
 paths, or author-selected bundler configuration.
 
-The same-realm host map supplies only these exact specifiers:
-
-```text
-react
-react/jsx-runtime
-react/jsx-dev-runtime
-react-native
-react-native-web
-@react-navigation/native
-@react-navigation/native-stack
-react-native-reanimated
-@happier-dev/plugin-ui
-@happier-dev/plugin-ui/components
-@happier-dev/plugin-ui/hostApi
-@happier-dev/plugin-ui/data
-@happier-dev/plugin-ui/declarative
-@happier-dev/plugin-ui/environment
-@happier-dev/plugin-ui/advanced
-@happier-dev/plugin-ui/ansi
-@happier-dev/plugin-sdk/machine-provisioners
-@happier-dev/plugin-sdk/ui/client
-```
+The same-realm host map supplies an exact set of framework and public Plugin UI
+modules. In unreleased 0.3 development source, it also shares the public portable
+Plugin SDK owners used by executable surfaces, including the root, `actions`,
+`protocol`, `sessions`, and `ui`, plus `zod`, `zod/mini`, `zod/v4/core`, and
+`zod/v4/locales/en.js`. The compiler takes the complete set from the
+[canonical host-module list](https://github.com/happier-dev/happier/blob/v0.3/packages/protocol/src/plugins/ui/hostRuntimeExternals.ts).
+Use the SDK's public domain imports for shared schemas; executable bundles reuse
+the host's schema and Zod identities instead of embedding their own copies.
+The added SDK namespaces load when a bundle requires them.
 
 The build rejects imports from the host-internal `presentation` implementation
 and its subpaths. Use the author exports from `components` or the package root.
 
-The loader does not use prefix matching. `zod`, Happier Protocol, AJV,
-semver, the Plugin SDK root, and every other plugin dependency are bundled into
-the artifact; they are not host-provided modules. Import `react-native`, not
+The loader does not use prefix matching. Unlisted imports, including the
+Happier Protocol root, AJV, and semver, remain bundled dependencies. Hosted-web
+artifacts keep their separate browser build and dependency graph. Import `react-native`, not
 `react-native-web`, from executable plugin source. This fixed map preserves
 identity-sensitive singletons; it is a loading contract, not a sandbox.
 
@@ -94,6 +81,11 @@ bytes only: it does not select a release, grant trust, or identify a daemon
 occurrence. Account release intent selects portable installed UI, while the
 selected daemon projection supplies bundled first-party and trusted
 development/drop-in UI.
+
+In unreleased 0.3 development source, integrity checks happen when external
+bytes are acquired or written, not whenever admitted local bytes are loaded.
+App-bundled and persistent artifacts keep their metadata, path, presence and
+size checks without repeating content hashes on leases or native serving.
 
 Artifact paths must be relative, non-traversing, and portable. Authors never
 write final digests or select a client-side loader.

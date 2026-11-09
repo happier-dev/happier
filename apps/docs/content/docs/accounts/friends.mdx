@@ -11,6 +11,12 @@ Friends is a social layer on top of Happier sessions:
 
 The server advertises Friends and GitHub OAuth availability via `GET /v1/features`. The UI uses that endpoint to decide whether to show Friends at all, and whether to offer GitHub connect.
 
+In **0.3 development**, Friends needs no Experiments opt-in or Account feature
+toggle. Stored Friends toggle choices remain readable but no longer affect
+availability. The server must explicitly advertise Friends as enabled; missing
+or malformed support keeps it unavailable. The server's username or identity
+provider requirements still apply.
+
 Username availability checks, explicit release and the stored manual-choice
 protection described below are **0.3 development** behavior. They are not a
 claim of availability on stable or preview servers. Friends still follows the
@@ -59,11 +65,11 @@ when a name is taken. An alternative is a suggestion, not a reservation: another
 person can claim it before you save. Existing holders can retain their names
 even when a newer reserved-name or claim policy would refuse a new claim.
 
-Explicit release removes your username from your Account and holds that name
-for 30 days. During the hold, nobody can claim it, including you. Repeating the
-release does not restart the 30 days. Changing to a different name does not
-create this hold. Release affects the same identity used by Friends; it does
-not delete your Account, usage history or provider connection.
+Explicit release removes your username from your Account and makes it available
+immediately, including to you. Changing to a different name also frees the old
+name immediately and keeps an existing public profile published at the new
+handle. Release withdraws the public profile and affects the same identity used
+by Friends; it does not delete your Account, usage history or provider connection.
 
 The check and release Actions require a server that implements them. An older
 server returns an unsupported-operation result; ordinary username editing keeps

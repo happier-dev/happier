@@ -59,6 +59,20 @@ policy in place. See [Session modes](/sessions/session-modes).
 CodeBuddy does not advertise ACP session listing, so Happier resumes sessions it
 started but cannot browse sessions created directly in the CodeBuddy terminal.
 
+## Other model Providers
+
+CodeBuddy's [native environment configuration](https://www.codebuddy.ai/docs/cli/env-vars)
+can connect to Anthropic-compatible endpoints. Its
+[custom model configuration](https://www.codebuddy.ai/docs/cli/models) also
+supports OpenAI Chat Completions and Responses.
+
+Happier does not yet bind its Provider connections to CodeBuddy Sessions.
+CodeBuddy's saved model configuration can override process endpoint and key
+values; managed product configuration can also combine routing and security
+policy. Happier preserves that policy rather than clearing it to force another
+route. Configure custom models through CodeBuddy itself and select the model
+its ACP server advertises.
+
 ## When it goes wrong
 
 - Run `codebuddy --version` in the same environment as the Happier daemon.

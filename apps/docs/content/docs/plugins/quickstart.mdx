@@ -115,6 +115,10 @@ my-plugin/
     skills/
       happier-plugin-authoring/
         SKILL.md
+  assets/
+    i18n/
+      en.json
+      fr.json
   src/
     ui/
       surfaces.ts
@@ -170,23 +174,13 @@ export const { manifest, activate } = definePlugin({
       },
     },
   },
+  resources: {
+    'i18n-en': { kind: 'asset', path: 'assets/i18n/en.json', contentType: 'application/json' },
+    'i18n-fr': { kind: 'asset', path: 'assets/i18n/fr.json', contentType: 'application/json' },
+  },
   ui: {
     surfaces: [mainSurface],
-    translations: [{
-      locale: 'en',
-      messages: {
-        'scaffold.main.title': "My plugin",
-        'scaffold.main.greeting': "Hello from My plugin",
-        'scaffold.action.saveNote': 'Save note',
-      },
-    }, {
-      locale: 'fr',
-      messages: {
-        'scaffold.main.title': "My plugin",
-        'scaffold.main.greeting': "Bonjour de My plugin",
-        'scaffold.action.saveNote': 'Enregistrer la note',
-      },
-    }],
+    translations: [{ locale: 'en', resourceId: 'i18n-en' }, { locale: 'fr', resourceId: 'i18n-fr' }],
   },
 });
 ```

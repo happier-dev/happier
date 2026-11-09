@@ -10,9 +10,9 @@ description: Public terms used by the Happier Plugin SDK.
 | Catalog | A host projection of admitted cold-manifest facts, used to discover contributions without loading daemon code. A catalog does not prove that executable code is active. |
 | Contribution | A manifest-declared capability such as an action, hook, Agent, setting, or UI surface. |
 | Surface | The user or host integration where a declared contribution is exposed, such as CLI, MCP, an Agent/tool client, or a supported client UI. A surface is not a second handler or lifecycle owner. |
-| Action | The canonical executable operation. Its handler is the only implementation; tools and commands declare presentation and routing over that Action rather than separate handlers. |
-| Tool | A manifest descriptor that exposes an Action to a tool-capable Agent or MCP surface. |
-| Command | A manifest descriptor that exposes an Action in a CLI-facing command surface. |
+| Action | The canonical executable operation. Its handler, schemas, safety, availability and approval policy are shared by its invocation surfaces. |
+| Tool | An Action's optional `tool` metadata that exposes it by name to an Agent or MCP surface. |
+| Command | An Action's optional `cli` metadata that exposes it at a friendly CLI path. |
 | Hook | A host-invoked extension point for one named workflow. It observes or applies the hook contract; it does not take ownership of the host workflow. |
 | Service | A bounded host capability on `PluginInvocationContext`, available only while a handler is invoked and only when its declared resource is available. Services are not exposed during activation. |
 | Admission | The daemon-owned decision to validate, review when required, and adopt a candidate's declared/executable behavior. It is distinct from a package being visible in a cold catalog. |

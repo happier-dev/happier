@@ -114,6 +114,14 @@ current process-local occurrence; it does not claim that a client mounted and
 rendered a surface. `retained_incumbent` means the newest candidate failed or
 became stale while the prior in-process occurrence remains usable.
 
+In unreleased 0.3 development source, reload follows the same startup activation
+rules as cold start. Demand-only Agents stay dormant, and their runtimes are
+constructed on first use. A candidate that builds and validates can therefore
+become active before its Agent constructor runs. If that constructor fails,
+Happier shows the new version's error on that request and keeps the new version
+selected. Pre-adoption build, evaluation or registration failures still retain
+the prior occurrence as described above.
+
 In 0.3 development, the daemon log records elapsed seconds for dependency
 preparation, UI builds, evaluation and adoption when those operations run,
 including failed phases. Use `hdev daemon logs` to find the current daemon log.

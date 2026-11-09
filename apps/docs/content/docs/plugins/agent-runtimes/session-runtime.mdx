@@ -21,6 +21,23 @@ bounded `AgentSessionRuntimeContext`. The host supplies authorized launch
 environment, timestamped scalar configuration, connected-account references,
 MCP launch data, and supported session services when applicable.
 
+In the current Developer Preview source, the host sets
+`context.session.executionRunId` when a Session-owned Execution Run opens a
+native conversation, including retained conversations and resumes. Interactive
+Sessions omit it. The Session keeps `context.session.id` and its Session event
+identity; the Run id grants no additional host authority. This field requires
+matching development host and plugin source.
+
+An Agent adapter can use that fact to select its native Run retry policy:
+
+```ts
+import type { AgentSessionRuntimeContext } from '@happier-dev/plugin-sdk/agents/runtime';
+
+function isExecutionRun(context: AgentSessionRuntimeContext): boolean {
+  return context.session.executionRunId !== undefined;
+}
+```
+
 `send` receives the canonical host delivery request. Publish strict canonical
 events through `watch`; keep raw provider payloads inside the Agent adapter.
 Unsupported optional operations return the documented typed unsupported or
@@ -28,46 +45,6 @@ unavailable result rather than silently dropping behavior.
 
 `dispose` is idempotent and releases only Agent-owned session resources. It
 does not delete host session state, queued input, or transcript state.
-
-## Selected-session terminal preparation
-
-In the current Developer Preview source, `prepareTerminalPresentation` replaces
-`prepareProviderCliAttach`. Migrate the factory and Session consumers together;
-the host does not fall back to a bare terminal surface when this operation is
-missing. Independent terminal surface authoring is unchanged.
-
-The opened Session owns native identity, hooks, and runtime selection. Return
-`provider_attach` with the exact native attach metadata for an optional client,
-`terminal_launch` with the exact Session's prepared launch plan, or
-`managed_terminal` with the handle returned by the existing Session terminal
-owner. A managed conversation terminal is not an optional detachable client.
-
-The factory's asynchronous `resolveTerminalPresentation` selects placement and
-captures the runtime descriptor before Session creation. The opener consumes
-that captured choice rather than reselecting from changed account settings.
-Resuming an existing Session retains its accepted choice; capture never bypasses
-current feature admission.
-
-The host automatically derives finite Execution Runs from this Session
-contract. The host-owned adapter maps Session events and cancellation into the
-Run lifecycle, so the plugin must not register a second execution-run path.
-
-For a custom Session Agent, this runtime is created from a distinct named
-runner leaf identified by `sessionRunnerFactory`. The `agents.<id>.factory`
-author field generates the binding for the same factory object, while the
-runner imports only the leaf and never calls `activate`. Do not rely on
-process-global singleton state across those realms.
-
-After the generic scaffold, the minimal executable
-[`session-agent`](https://github.com/happier-dev/happier/tree/v0.3/packages/plugin-sdk/examples/session-agent)
-reference shows this boundary with a public host confirmation and cancellation.
-It exercises create and exact-provider-id resume, reasoning and assistant
-messages, a tool call/result, one settled terminal event, cancellation during an
-interaction, and a truthful unsupported native-fork capability. Its README
-contains the maintained install/reload/restart/update/disable/revoke/uninstall
-journey and the shared UI selectors.
-Use `advanced-package-root` only when the Agent also needs one of its composite
-capabilities, such as External Sessions or a managed Provider.
 
 ## Idle compaction (0.3 development)
 
@@ -113,3 +90,77 @@ Completed events may include measured `tokenCountBefore` and
 `tokenCountAfter` with `tokenCountSource: 'providerReported'`. Idle maintenance
 starts no foreground turn or ready
 notification. New ordinary input keeps its existing lifecycle.
+
+## Native lifecycle observations
+
+In the current Developer Preview source, an Agent that receives lifecycle hooks
+through its owned native stream can pass them directly to the Session hook
+service. This method requires matching development host and SDK source.
+
+```ts
+import type {
+  AgentSessionHookProviderPayload,
+  AgentSessionRuntimeContext,
+} from '@happier-dev/plugin-sdk/agents/runtime';
+
+async function observeNativeHook(
+  context: AgentSessionRuntimeContext,
+  providerSessionId: string,
+  payload: AgentSessionHookProviderPayload,
+): Promise<void> {
+  await context.session.services.sessionHooks.observeSessionHook({
+    providerSessionId,
+    payload,
+  });
+}
+```
+
+Preserve the native payload's lifecycle event and transcript path, and await this
+call before consuming that observation in the adapter. The host binds it to the
+opened Session and applies the same transcript-path grant rule as its authenticated
+command-hook service. The call does not publish transcript rows or approve tools;
+use the existing transcript and permission services for those operations.
+
+Claude's SDK adapter uses this path for native stream callbacks. Its confined
+permission hooks and unified terminal command hooks retain their existing
+transport and permission handlers.
+
+## Selected-session terminal preparation
+
+In the current Developer Preview source, `prepareTerminalPresentation` replaces
+`prepareProviderCliAttach`. Migrate the factory and Session consumers together;
+the host does not fall back to a bare terminal surface when this operation is
+missing. Independent terminal surface authoring is unchanged.
+
+The opened Session owns native identity, hooks, and runtime selection. Return
+`provider_attach` with the exact native attach metadata for an optional client,
+`terminal_launch` with the exact Session's prepared launch plan, or
+`managed_terminal` with the handle returned by the existing Session terminal
+owner. A managed conversation terminal is not an optional detachable client.
+
+The factory's asynchronous `resolveTerminalPresentation` selects placement and
+captures the runtime descriptor before Session creation. The opener consumes
+that captured choice rather than reselecting from changed account settings.
+Resuming an existing Session retains its accepted choice; capture never bypasses
+current feature admission.
+
+The host automatically derives finite Execution Runs from this Session
+contract. The host-owned adapter maps Session events and cancellation into the
+Run lifecycle, so the plugin must not register a second execution-run path.
+
+For a custom Session Agent, this runtime is created from a distinct named
+runner leaf identified by `sessionRunnerFactory`. The `agents.<id>.factory`
+author field generates the binding for the same factory object, while the
+runner imports only the leaf and never calls `activate`. Do not rely on
+process-global singleton state across those realms.
+
+After the generic scaffold, the minimal executable
+[`session-agent`](https://github.com/happier-dev/happier/tree/v0.3/packages/plugin-sdk/examples/session-agent)
+reference shows this boundary with a public host confirmation and cancellation.
+It exercises create and exact-provider-id resume, reasoning and assistant
+messages, a tool call/result, one settled terminal event, cancellation during an
+interaction, and a truthful unsupported native-fork capability. Its README
+contains the maintained install/reload/restart/update/disable/revoke/uninstall
+journey and the shared UI selectors.
+Use `advanced-package-root` only when the Agent also needs one of its composite
+capabilities, such as External Sessions or a managed Provider.

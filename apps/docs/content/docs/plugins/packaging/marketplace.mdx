@@ -39,6 +39,39 @@ the chosen machine. Three source paths feed that discovery:
   Each entry points at an npm artifact. Sources can be enabled or disabled for
   the Account; built-in sources cannot be removed.
 
+In 0.3 development source, Browse uses published summary facts and reads the
+full listing when you select it. New listing links keep the source, native item
+identity and reviewed version together. For npm, the native identity is the
+package name. An older npm link containing only a plugin ID offers Browse in
+that source so you can find the listing; Happier does not guess a package name
+or silently choose a newer version.
+
+Plugin-owned catalog views can use the generated Action result types to show
+these facts without loading every full listing:
+
+```ts
+import type { RegistriesActionResultById } from '@happier-dev/plugin-sdk/actions';
+
+type Summary = RegistriesActionResultById['registries.items.list']['pages'][number]['items'][number];
+
+function pluginPreview(summary: Summary) {
+  return {
+    title: summary.title,
+    publisher: summary.pluginListing?.publisher.displayName ?? summary.publisher?.name,
+    pointer: summary.version ? {
+      sourceId: summary.sourceId,
+      itemId: summary.itemId,
+      version: summary.version,
+    } : null,
+  };
+}
+```
+
+Use the selected row's pointer with `registries.items.read { kind: 'plugin',
+...pointer }` when its details are needed. Missing optional summary facts stay
+unknown until that read; neither the preview nor its review label grants
+installation permission. Installation still goes through Install & Trust.
+
 ## Curated catalog availability
 
 Development builds now produce a strict static snapshot for

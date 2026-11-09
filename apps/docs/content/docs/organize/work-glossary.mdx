@@ -21,7 +21,7 @@ defines extension-author terms.
 | **Session** | A coding conversation with an Agent on a machine. You can return to its transcript and steer it when your access and its runtime permit. A session can contain several turns and start other work. |
 | **Turn** | One response cycle inside a session. Finishing a turn does not mean the session is archived or the task is complete. |
 | **Background run** | An Agent execution started alongside a session, such as Review, Plan, Delegate or an agent conversation. Its ability to accept follow-up depends on its retained runtime and current permissions. |
-| **Workflow** | A reusable definition of steps, inputs and targets. A saved or plugin-provided workflow is the recipe, not an execution in progress. |
+| **Workflow** | A reusable definition of steps, inputs and targets. This is the UI name replacing Automation. A saved or plugin-provided workflow is the recipe, not an execution in progress. |
 | **Workflow run** | One accepted execution of a workflow with its inputs and launch context. It can start step sessions and background runs. Sharing its definition is distinct from sharing execution visibility. |
 | **Run** | An execution instance. Read the surrounding kind: a workflow run coordinates steps; a background run executes Agent work. It is not another name for the reusable workflow or the containing session. |
 | **Role** | Instructions, Agent/model selection and attributes used for work. A personal or session override changes that selection in its scope; editing a shared original can affect other users. A Role does not grant access. |
@@ -32,13 +32,13 @@ defines extension-author terms.
 | **Bot** | An ordinary session marked as a bot. It keeps the session's conversation, Work view and triggers; the marker is not a Role or a separate runtime. |
 | **Script** | A named command in a Project, executed on its selected machine and workspace. It is distinct from an Agent conversation or workflow. |
 | **Session Board / Companion** | The widget surface for one session. It is distinct from the top-level Boards destination. |
-| **Trigger** | A saved rule that starts its configured work when an event or schedule matches. Turning it off prevents future firing; cancelling an observation is a different operation from stopping its work. |
+| **Trigger** | A Workflow setting that starts its configured work when an event or schedule matches. Turning it off prevents future firing; cancelling an observation is a different operation from stopping its work. |
 | **Waiting for your review** | Work has reached a human review point. Inspect the run's offered review/continuation action; an Agent cannot approve on your behalf merely because it can read the request. |
 
 See [Work](/sessions/work), [Roles](/agents/roles),
 [Orchestrator sessions](/sessions/orchestrator),
 [Work Boards](/organize/work-boards), [Sharing](/accounts/session-sharing),
-[sub-agents](/extending/subagents) and [automations](/extras/automations) for the
+[sub-agents](/extending/subagents) and [Workflows](/extras/automations) for the
 corresponding workflows and limits.
 
 ## Status buckets and state words

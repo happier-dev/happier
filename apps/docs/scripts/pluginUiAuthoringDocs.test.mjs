@@ -137,7 +137,6 @@ test('keeps final UI author contracts scoped to the one public owner', () => {
   const glossary = normalizedSource(glossaryDocPath);
 
   for (const requiredSource of [
-    'Host API 1.0.0',
     '`search` and `selection` props',
     'do not create, filter, or paginate a Data query',
   ]) {

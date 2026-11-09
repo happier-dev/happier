@@ -20,6 +20,13 @@ colour and the phone recomposition match without any local styling.
 
 ## A complete page
 
+In 0.3 development source, `Item.onSecondaryAction` and a Collection row's
+equivalent callback receive the action id plus optional selection context.
+`selection?.anchorRef` refers to the menu's trigger, so host integrations can
+anchor a follow-on panel to that control. Treat the reference as opaque; it is
+not serialized or persisted. Existing callbacks that accept only the id keep
+working. The same optional context is available to `Menu.onSelect`.
+
 ```tsx
 import * as React from 'react';
 import { defineUiSurface } from '@happier-dev/plugin-ui';
@@ -207,9 +214,11 @@ request can be refused. Keep filters, selection, scroll and Find above the
 pane/page presentation so moving the same detail does not fetch it again.
 
 The host generates qualified Project URLs, preserves Home/checkout context and
-owns Back, reload and ephemeral launch input. Customize tabs uses one
-device-local Project layout shared by desktop and phone; pin, reorder, overflow,
-hide and reset do not change page authority. Hidden tabs remain addressable.
+owns Back, reload and ephemeral launch input. In 0.3 development, Customize tabs
+stores separate device-local Project layouts for desktop and phone. An absent
+phone layout is seeded once from the existing Project layout; later desktop edits
+do not change it. Pin, reorder, overflow, hide and reset do not change page
+authority. Hidden tabs remain addressable.
 Only the selected presented page loads its body. The maintained
 [public authoring example](/plugins/quickstart) demonstrates the source workflow;
 check generated API/capability reports before targeting a published host.
@@ -254,7 +263,8 @@ title and optional `description` sit above one hairline sheet, an optional
 inside are divided by full-width hairlines. Explain the section in its
 `description`; there are no footers under sections. `surface="none"` lays a
 section's content on the page with the same insets and no sheet. An
-`ItemGroup` without a title keeps its plain semantic role and draws nothing.
+`ItemGroup` without a title, description, action or explicit surface keeps its
+plain semantic role without drawing section chrome.
 
 When the explanation names a command, flag or identifier, pass the sentence as
 rich `description` content and set the code in `InlineCode`, the same chip
@@ -345,6 +355,41 @@ keyboard; an emptied number returns to the saved value unless `allowEmpty` is
 set. Return a string from `onCommit` to show a corrected value (a clamped
 number), and pass `error` to show a refusal beneath the field.
 
+In 0.3 development source, `leading` draws a fixed mark inside the field before
+the value, which the value continues: a shortcut field shows `/` and the person
+types `release-notes`. `trailing` draws a mark at the field's end, such as a key
+hint. Both are decoration: assistive technology reads the field's `label`, so
+put anything a person must hear there.
+
+```tsx
+<TextField presentation="field" label="Shortcut" value={shortcut}
+  onChange={setShortcut} leading={<HappierText>/</HappierText>} />
+```
+
+In 0.3 development source, these fields follow saved-value updates while
+pristine and preserve an edited draft when a remote update arrives. Escape
+discards the draft and restores the latest saved value. Submit followed by blur
+completes one edit, even while its acknowledgement is pending.
+
+Required fields carry no asterisk. In a `Form` whose fields mix required and
+optional ones, each optional field's label ends with a quiet "optional"; a form
+whose fields are all required (or all optional) marks none. `required` and
+`requiredWhen` still decide validation and are announced to assistive
+technology. A field outside a `Form` is never marked: if being optional matters
+there, say so in its hint.
+
+```tsx
+<Form
+  hints={{ fields: [
+    { path: 'name', title: 'Name', widget: 'text', required: true }, // no mark
+    { path: 'branch', title: 'Branch', widget: 'text' },             // "Branch  optional"
+  ] }}
+  value={draft}
+  onChange={setDraft}
+  onSubmit={save}
+/>
+```
+
 In the 0.3 development source contract, `SettingRow` is the same row Happier
 draws for its own settings registries: a `title`, a `hint` under it, one
 `control`, and a `layout` of `"inline"` (a switch or short value at the end),
@@ -432,7 +477,10 @@ invitation to add the first item.
 `ErrorState` takes `onRetry` for the one recovery: a Retry button under the
 copy (a link in a `line`), with the host's own "Retry" label unless you pass
 `retryLabel`. A returned promise keeps it pending until the retry settles. Keep
-diagnostic codes in `details`, behind a collapsed Details disclosure.
+diagnostic codes in `details`, behind a collapsed Details disclosure. In 0.3
+development source that disclosure is the same quiet toggle Happier's own state
+cards use: the host's disclosure caret beside a small "Details" label, which
+opens the code in place. You do not draw the toggle or its caret yourself.
 
 In the 0.3 development source contract, `SurfaceState` is the full state
 composition Happier's own panes use, and `LoadingState` and `ErrorState` are it
@@ -569,14 +617,21 @@ things (extensions, servers, skills) can draw them with the same capability kit
 Happier's Skills, MCP servers and Agents pages use. Import it from
 `@happier-dev/plugin-ui/components`:
 
-- `capabilityCollectionAnatomy` gives a `Collection` list its rows: the name, where
-  it is on at the end of the title line, the description, then one facts line. A
-  status that needs attention takes the facts line's place.
+- `capabilityCollectionAnatomy` gives a `Collection` its `catalogRow` anatomy:
+  the name, optional `count` and where it is on share the title line. A speaking
+  status leads line 2 as a plain word, followed by the description; facts remain
+  available to cards and details. Narrow columns use the same role. A peer
+  missing its description keeps the catalog floor; title-only navigation and
+  ordinary preference rows retain their own roles.
+  Its status fix uses the independent action slot, so activating it never opens
+  or checks the row. A separate supplied action stays available beside that fix.
 - `CapabilityFacts` draws source, trust and cost on one quiet line ("You · Runs
   scripts · 12 tools"). "Runs scripts" is the one fact drawn with more weight.
 - `CapabilityStatusChip` shows a status only when it says something. A healthy
   status draws nothing. A stop or a blocked run keeps its pill short and gives
-  the reason on its own line. `showFix` adds the status's one fix beside it.
+  the reason on its own line in its header/standalone treatment. The shared
+  anatomy uses its `catalog` placement for plain row words. `showFix` adds the
+  status's one fix beside it; the same table owns tone, fix and blocking rank.
 - `CapabilityDetailHeader` is the detail page header: mark, name, purpose, the
   facts on the meta line, and the status when it speaks.
 - `CapabilityBlockingBanner` leads a page only for a status that blocks (amber
@@ -592,9 +647,107 @@ Happier's Skills, MCP servers and Agents pages use. Import it from
   with Try again.
 - `CapabilityAddBody` is the body of an Add flow, for your own page or sheet: the
   ways to add as tabs, a searchable catalog list with each item's details beside
-  it (pushed on a phone), the pinned footer with your install action, and an
+  it (pushed on a phone), your install action, and an
   optional registry selector. The page or sheet around it and its header stay
   yours; `onLevelChange` tells you when to show a way back.
+- `CapabilityListingSections` closes a listing with Versions, then Source and
+  licence. Pass already-held `facts`: optional `version`, `versionNote`,
+  `sourceTitle`, `license`, and `links: { repository?, website? }`. Missing facts
+  omit their rows or section. A version note says what the version belongs to;
+  otherwise the row says it is current in the named source. The first valid
+  HTTP(S) repository or website link opens through the host's external-link
+  method, with the licence beside it; a licence without a link remains readable.
+  This component acquires no listing data and performs no installation.
+
+The same `/components` entrypoint exports `CapabilityListingFacts` for your
+held metadata and `CapabilityListingSectionsProps` for the component's `facts`
+and required `testID`. For a host adapter, `/presentation` exports
+`HappierCapabilityListingSections` and `HappierCapabilityListingSectionsProps`.
+Supply `HappierCapabilityListingSectionsHost` (`Group` and `Row`, whose props are
+`HappierCapabilityListingRowProps`), translated
+`HappierCapabilityListingSectionsLabels`, and `onOpenExternal` alongside the
+`HappierCapabilityListingFacts`. Both bindings use the same section and link
+policy. These additions belong to the **unreleased 0.3 development** contract.
+
+In 0.3 development source, `CapabilityAddBody` selects the first displayed item
+when a wide split can show it, including when your loader resolves later. Phones
+start at the list until the person opens a row. Supply `initialItemKey` for an
+intentional initial identity; loading and mutations remain yours.
+`catalog.loadMore` optionally supplies `{ label, loading, onPress }` for an
+explicit next-page operation; return its promise so the shared button keeps its
+pending state. The body never drains pages automatically.
+Use `catalog.empty: ({ selectMode }) => ...` when an empty-state action should
+open one of your input modes. Call `selectMode('your-mode-key')` from that action;
+the body keeps the mode state and reports the change through `onModeChange`.
+Use `onCatalogDemandChange` for catalog acquisition: it reports `false` while
+an input mode or the source-management level is presented. Keep the callback
+stable so equal presentation does not repeatedly publish demand.
+
+For a frame with header actions, pass `renderLayout={({ modes, level, body }) =>
+...}` and place `modes` in that existing slot and `body` below it. The body omits
+its internal mode band, so render the supplied control once. Use `level.back` on
+detail or registry levels; the body still owns the selected mode. Input modes
+can use `ctx.renderFound` with a batch `footer` and omit `detailFooter` when
+previewing one result must not create a separate install operation.
+
+In the unreleased 0.3 contract, the selected item's primary action sits directly
+below its identity and purpose. Supply the operation's descriptor through `detailFooter`
+and render `CapabilityAddDetailAction` once at that position in `renderDetail`.
+The shared slot presents the pending/error feedback, consequence and post-add
+steps for that operation. Input batch footers keep their separate scope.
+
+```tsx
+import {
+  CapabilityAddBody, CapabilityAddDetailAction, CapabilityDetailHeader,
+  CapabilityListingSections,
+  type CapabilityAddConfig,
+} from '@happier-dev/plugin-ui/components';
+
+// catalog, install and close belong to your plugin.
+type Extension = { id: string; name: string; purpose: string };
+const config: CapabilityAddConfig<Extension> = {
+  title: 'Add an extension',
+  modes: [{ key: 'browse', label: 'Browse', icon: 'search', kind: 'catalog' }],
+  catalog,
+  renderDetail: (item) => <>
+    <CapabilityDetailHeader title={item.name} purpose={item.purpose}
+      facts={{ source: { kind: 'you' }, trust: 'text_only' }}
+      testID={`extension-add.header.${item.id}`} />
+    <CapabilityAddDetailAction />
+    <CapabilityListingSections testID={`extension-add.listing.${item.id}`}
+      facts={{ version: '1.4.0', sourceTitle: 'Extension registry', license: 'MIT',
+        links: { repository: 'https://github.com/acme/extensions' } }} />
+  </>,
+  detailFooter: (item) => ({
+    primary: {
+      label: 'Install',
+      onPress: async () => {
+        await install(item.id);
+        return { itemId: item.id, then: 'stay' };
+      },
+    },
+    afterAdd: {},
+  }),
+  testID: 'extension-add',
+};
+
+<CapabilityAddBody config={config} onClose={close} />;
+```
+
+For an individual listing outside the Add body, the `/presentation`
+entrypoint exports `HappierCapabilityListingDetail` and
+`HappierCapabilityListingDetailProps`. It reuses the same detail and operation
+feedback as Add. Supply `item`, `itemKey`, `renderDetail`, optional
+`detailFooter`, `onClose`, optional `onAdded`, `phone`, `pushed`, `labels`,
+`host`, `hairlineColor` and `testID`. The `host` binds the same primitives as
+`HappierCapabilityAddHost`, without `ModeTabs`; `labels` uses
+`HappierCapabilityAddLabels`. Key the component by the selected item so changing
+items starts fresh operation feedback. This lower-level binding is for adapters
+supplying host primitives; ordinary plugin pages use `CapabilityAddBody` and
+`CapabilityListingSections`. Use `CapabilityAddDetailAction` inside
+`renderDetail` and the same `CapabilityListingSections` for its closing sections.
+These are **unreleased 0.3 development** exports; the containing page, pane,
+navigation, data and Action controllers stay yours.
 
 You supply the data and the fix handlers; the words come from Happier's
 defaults or your translation bundle (`happier.plugin-ui.capability.*`).

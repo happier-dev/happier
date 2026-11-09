@@ -43,8 +43,8 @@ Use the services and `context.ui` on `PluginInvocationContext` from invoked hand
 
 If it declares an identity, put it in the `definePlugin(...)` source. If it
 binds executable behavior, use the matching code-defined family rather than a
-handwritten activation module. Tools and commands reference actions
-declaratively. Invoked handlers use their bounded invocation services; Agent
+handwritten activation module. An Action's optional `tool` and `cli` metadata
+declares its named tool and friendly command. Invoked handlers use their bounded invocation services; Agent
 runtime factories use their factory context.
 
 A feature-owned cross-plugin contribution protocol is the exception to a

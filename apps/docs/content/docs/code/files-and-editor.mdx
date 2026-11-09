@@ -35,6 +35,24 @@ connection and a compatible model before enabling **Suggest code**. Enabling
 it sends context from the open file to that provider. It does not add other
 files, clipboard content or repository history.
 
+A model without a declared output allowance needs an explicit allowance before
+it can be selected in that picker. The bundled DeepSeek FIM model uses the
+[documented 4096-token ceiling](https://api-docs.deepseek.com/guides/fim_completion/)
+without a manual setting; the Ollama base model has no guessed allowance.
+In 0.3 development, open **Settings → Providers**, choose the connection, then
+**Models**. Open the model's menu, choose **Generation settings**, enter a positive
+**Output allowance** within its context and provider output limits, and Save.
+The AI-suggestion picker's missing-allowance row links to this same editor.
+Clear removes the explicit output override, preserving other preferences and
+restoring a declared catalog allowance if one exists. There is no automatic
+allowance for a model that does not declare one.
+
+Agents can make the same revision-checked edit with the existing
+[`providers.connections.update` Action](/plugins/api/host-actions), using a
+`modelSettings` patch keyed by the exact model id and setting `maxTokens`.
+A `null` model patch removes all its overrides; `maxTokens: null` clears just
+the output override.
+
 Choose **While typing** or **On request**; on request uses Alt+\\. The delay
 presets change how long the editor waits after typing, rather than setting a
 model timeout. Excluded-file patterns and disabled language ids apply before
@@ -50,6 +68,26 @@ requests or the selected model is unavailable. No source is substituted
 automatically. This work remains under integration and is not part of the
 current stable release.
 
+Next-edit previews are also under integration for 0.3 and have a separate
+preference that defaults off. They use recent changes in the open file to predict
+a related edit, including a call site far from the caret. They require a model
+that explicitly supports this operation. The whole file must fit that model's
+context budget; Happier does not silently reduce this to a nearby suggestion.
+Predictions remain reviewable editor changes and never save a file automatically.
+Turn them on with **Next-edit suggestions** in the same section and pick the model in
+**Next-edit model**, on the same provider as ghost text. The picker offers only models that
+predict next edits; when the provider has none, the row says so instead of falling back to the
+ghost-text model.
+
+A predicted edit first appears as a quiet mark where it would land, with a
+**Tab · Next edit · line N** hint beside your caret. The first Tab moves there and
+opens the preview: the old text struck through and the new text beside it, as in
+Replace. The second Tab applies it as one undo step, and Escape dismisses it. On a
+phone the key row offers **Go to next edit**, **Apply next edit** and **Dismiss**
+instead of the key hints. Screen readers hear the line when an edit is offered and
+the resulting line when its preview opens. The real-model desktop/phone journey
+still needs integrated validation before this workflow can be treated as available.
+
 ## Replace in files and blame (0.3 development)
 
 The unreleased Files & Editor work brings replacement review into **Text in
@@ -58,8 +96,10 @@ integration and are not part of the current stable release.
 
 Replacement reviews a proposed change per file and per match before writing.
 Files already holding unsaved editor drafts are excluded from replacement. If a selected file
-changes on disk or acquires an editor draft after preview, replacement refuses
-the whole selection before writing. Refresh the preview before trying again.
+changes on disk after preview, replacement skips that file and reports it as
+changed while applying the other valid files. Refresh the preview to replace
+the changed file. If a selected file acquires an editor draft after preview,
+replacement refuses the whole selection before writing.
 Undo restores replaced
 regions only while the file still matches the successful replacement. Literal
 replacement keeps dollar signs literal; regex replacement uses JavaScript
@@ -365,8 +405,8 @@ Happier now treats image previews as a first-class workflow:
 
 <Callout type="info">
   The shared Media stage, PDF/audio bodies and Markdown image rendering described
-  below are under integration for unreleased 0.3. They are not yet mounted in the
-  current file views; this describes the intended development behavior.
+  below are wired into unreleased 0.3 development source. Integrated desktop and
+  phone validation is still in progress; this is not released availability.
 </Callout>
 
 The shared Media stage keeps the gallery from the surface you opened, supports zoom and pan,
@@ -428,6 +468,10 @@ returns to reading. The header shows whether you are editing, have unsaved
 changes, are saving, or have just saved. Saving your own edit uses the ordinary
 file write and does not ask for a second confirmation by default. An explicit
 approval preference can instead leave the save waiting for approval.
+
+In 0.3 development source, **Saved** means the Machine acknowledged the write.
+You can edit and save again while change markers refresh; a slow display refresh
+does not keep Save waiting. File writes still run one at a time.
 
 In the desktop app, use <kbd>⌘</kbd>+<kbd>S</kbd> on macOS or
 <kbd>Ctrl</kbd>+<kbd>S</kbd> on Windows and Linux. In a web browser, use
@@ -743,19 +787,30 @@ You can also use `@`-style file search in the composer where supported. The goal
 
 ## Open workspace file links from the transcript
 
-When an assistant response includes a markdown link to a file in the current workspace, Happier can turn that link into in-app file navigation instead of sending you to a broken browser URL.
+In unreleased 0.3 development source, Markdown file links in an assistant response
+open the file on the Session's Machine, including readable files outside the
+Session workspace. For example, a Session in `/work/repo` can open
+`/work/repo-task/.scratch/report.md` or `/work/artifacts/report.md`.
 
 Supported link shapes include:
 
 - workspace-relative links such as `src/index.ts`
 - links with line and column suffixes such as `src/index.ts:12` or `src/index.ts:12:4`
-- absolute local paths inside the workspace
-- `file://` URLs inside the workspace
+- parent-relative links such as `../artifacts/report.md`
+- absolute local paths, including files outside the workspace
+- `file://` URLs
 - loopback-expanded links from the web app, such as `http://localhost:18829/Users/alice/project/src/index.ts:12`
 - Windows drive paths such as `C:\Users\Alice\project\src\index.ts`
-- Windows `file:///C:/...` links and UNC-style file URLs inside the workspace
+- Windows `file:///C:/...` links and UNC-style file URLs
 
-Happier only opens links that resolve inside the current workspace. Links outside the workspace, traversal paths, and arbitrary non-loopback `http`/`https` URLs stay external or are ignored for workspace navigation.
+Normal Machine filesystem access still applies. Missing or denied files show a
+read error. File links open in View; available editing, review and download
+actions use that file's retained base and the usual Action permissions. Binary
+files can be downloaded even when an inline preview is unavailable.
+
+Arbitrary non-loopback `http`/`https` URLs remain external links.
+Public or shared transcripts without Machine file access cannot open local files.
+Links inside a rendered Markdown file remain confined to its workspace.
 
 On desktop, opening a workspace file link opens the right sidebar/details pane. On phone-sized layouts, it opens the file in the **Tabs** surface with the session header still visible.
 

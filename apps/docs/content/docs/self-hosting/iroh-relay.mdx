@@ -34,6 +34,21 @@ address discovery (QAD) enabled. A forwarding-disabled QAD-only run remains a
 planned development diagnostic; it has not been run as release evidence and is
 not a supported production deployment or managed-product profile.
 
+In unreleased 0.3 development source, single-instance Home servers enable Iroh by
+default in both full and light flavors, including ordinary self-hosted and QA
+Homes. Set `HAPPIER_HOME_IROH_MODE=disabled` to opt out. The existing authorized
+Home reachability control can also turn it off when a public HTTPS address
+remains available; a value fixed by deployment cannot be changed there.
+Worker-only processes serve no Home API and start no Iroh acceptor.
+
+Native clients can still connect directly when the Home has no relay. During initial
+Home enrollment, an unreachable or timed-out native dial can use the Home's independently
+declared application address. A carrier whose EndpointId has already been proven stays
+selected during recovery; identity, authentication, protocol and configuration failures
+do not switch to another carrier. Fresh enrollment helpers configure their endpoint with
+the Home's advertised relay URLs before dialing. A relay must be reachable from both
+the Home and the guest; advertising one does not by itself prove connectivity.
+
 ## What you need first
 
 - An immutable `happierdev/iroh-relay` or
@@ -131,9 +146,73 @@ These variables configure the Happier side, not the relay image above. The serve
 additionally requires a stable `HAPPIER_CANONICAL_SERVER_URL` — see
 [Environment variables](/self-hosting/env).
 
-The local relay used by development transport tests is a test fixture. An ordinary Home or
-development stack does not start it automatically. Default grant signing does not provision an
-Iroh relay or enable a native carrier that is unavailable on the running computer.
+Keep the Home's canonical URL stable: it is the sign-in audience, even when it
+uses `*.localhost` or a different port from the API listener. Iroh always forwards
+to that server process's fixed loopback API destination. A loopback-only Home
+without remote ingress must have `AUTH_ANONYMOUS_SIGNUP_ENABLED=0` before Iroh
+starts. Personal Home creation already closes signup after creating its first
+local Account. Servers with existing remote ingress keep their own signup policy.
+
+Persist the server data directory that holds its Iroh endpoint key across
+restarts, including with the full flavor. Losing the key makes Iroh unavailable
+until explicit descriptor recovery; HTTPS keeps running. This composition is
+for one serving API instance. In current 0.3 development source, a single Home
+API process using the Redis Streams socket adapter can explicitly hold Iroh:
+
+```bash
+HAPPIER_SOCKET_ADAPTER=redis-streams
+HAPPIER_HOME_IROH_HOLDER=1
+```
+
+Set the holder marker only in that process's deployment environment, then restart
+it. **Exactly one process may hold Iroh for a Home.** Never put the marker in an
+environment shared by API replicas or use the same live endpoint key in two
+processes. The marker cannot be changed through Home settings. The startup
+diagnostic `iroh_holder_declared` records the declaration; it does not prove
+that no other holder exists. Existing key-loss and EndpointId-drift checks remain.
+`HAPPIER_HOME_IROH_MODE=disabled` and the authorized Home reachability opt-out
+still disable the holder's endpoint.
+
+Without the holder marker, Redis Streams (including its legacy boolean alias)
+keeps Home Iroh unavailable with `iroh_multi_instance_unsupported`; HTTPS remains
+available. Single-instance deployments with the default in-memory adapter keep
+Iroh enabled by default. Other API processes stay HTTPS-only and cannot publish
+the holder's full Iroh descriptor. The marker supports the single-API-process
+case, not Iroh discovery behind multiple interchangeable API replicas.
+
+Multi-replica followers reading a holder's full committed descriptor remain
+planned. Their persistence extension is deferred to the first 0.3 cloud/alpha
+deployment and is not shipped.
+
+`HAPPIER_SERVER_LIGHT_DATA_DIR` selects the persistent key directory for full
+servers too; without it, the full-server layout uses `~/.happier/self-host/data`
+(the corresponding user-profile path on Windows). Give distinct Homes distinct
+data directories.
+
+Someone who received an EndpointId can remember it after their device or access
+is removed. Happier authentication and access revocation still protect the Home;
+those actions do not rotate its transport key. Removing a device listing alone
+does not revoke its credentials. In this development source, tunneled requests
+are classified as remote/public from their accepting listener, even though the
+socket itself uses loopback. They receive no private-network privilege and cannot
+assert a forwarded mTLS certificate identity. Existing public-IP provisioning
+rules also apply when changed while Iroh is running. Ordinary HTTPS and trusted
+certificate-proxy behavior on the public listener are unchanged.
+
+Verified Account identity still supplies authenticated rate-limit keys where
+supported. Unauthenticated and IP-only limits share an `iroh` source bucket;
+the server cannot attribute those requests to a peer IP. An Iroh startup failure,
+including native loading failure, leaves the ordinary HTTP/HTTPS listener running.
+
+The local relay used by development transport tests remains a test fixture. Separately,
+current unreleased 0.3 development stacks ensure one persistent native relay per host through
+`hstack start` or `hstack dev`, exposed only inside the tailnet over HTTPS 8443 with QAD on
+UDP 7842. Stack stop leaves that host relay running; an explicit opt-out or
+`hstack tools iroh-relay stop` stops it. This is not a production relay deployment. See
+[development remote access](/hstack/remote-access#development-iroh-relay) for prerequisites,
+opt-out, certificate renewal, and cloud-guest limits. An ordinary Home outside hstack still
+needs an operator-selected relay. Default grant signing does not provision a relay or enable
+a native carrier that is unavailable on the running computer.
 
 Browser Home connections use the Home's published Iroh endpoint. Browser finite Machine transfers
 use the target Machine's published endpoint and its configured relay URLs; setting relay URLs only

@@ -16,13 +16,26 @@ and development preparation; authors do not maintain a second manifest source.
 The cold host/install envelope and the public author boundary are related but
 not identical: the host validates the retained Protocol schema, while
 `definePlugin(...)`, the public `PluginManifest` type, and public manifest
-parsing apply the current author-availability fences before projection. Unknown
-behavior keys reject with a path-specific diagnostic; only an explicitly
-documented metadata extension point may accept unknown JSON.
+parsing apply the current author-availability fences before projection.
+
+In 0.3 development source, authoring remains strict: `definePlugin`, pack and
+doctor reject unknown behavior keys with a path-specific diagnostic. Host load
+skips an invalid contribution or unknown contribution family and reports it in
+plugin diagnostics, while admitting healthy siblings. An unknown field anywhere
+inside a contribution skips that whole contribution; ignoring a newer restriction
+could widen authority. Invalid known values are never coerced. Dependencies
+on a skipped declaration are also invalidated. A skipped declaration cannot be
+registered during activation.
+
+Unknown or invalid manifest envelope fields, plugin identities, source integrity, runtime ABI,
+and incompatible declared `engines.happier` ranges still refuse the plugin.
+The host-range check applies to every source kind, including local and bundled
+plugins. Use a range that excludes older hosts when ignoring a new field would
+change required behavior. See [versioning and compatibility](/plugins/packaging/versioning-compat).
 
 Manifest admission has no generic public byte, node, depth, string, array, or
-record quota matrix. Happier decodes UTF-8 JSON once, normalizes it once for the
-admitted source custody and process-local occurrence, and validates the strict
+record quota matrix. Happier decodes UTF-8 JSON once and uses one canonical
+normalization path for the admitted source custody and process-local occurrence, validating the strict
 schemas, references, identity, and ownership rules. Field-specific limits still
 apply where a real owner or external contract declares one; they are not a
 universal manifest-size ceiling.
@@ -37,6 +50,35 @@ which families are currently available. Deployment of the schema route remains
 a preview release gate. Until it is live, host tooling may use a
 Protocol-generated local schema artifact from the same owner; the scaffold
 does not create a second hand-maintained schema or manifest source.
+
+## Localized labels (0.3 development source)
+
+A label can be a literal string or a keyed `{ key, fallback }` descriptor. In
+unreleased 0.3 source, keyed labels also accept optional `params` containing
+strings or numbers for the fallback's `{name}` placeholders. Translation text
+keeps the same placeholders; the host selects the locale before substituting
+the values as plain text.
+
+```ts
+import { resolvePluginLocalizedStringV2Text } from '@happier-dev/plugin-sdk/manifest';
+
+const label = {
+  key: 'review.continue',
+  fallback: 'Continue {count} more · {pullRequest}',
+  params: { count: 7, pullRequest: 'example/repository#1' },
+};
+
+// An immutable display uses the authored fallback.
+resolvePluginLocalizedStringV2Text(label);
+// A live presenter supplies text selected by its existing translation owner.
+resolvePluginLocalizedStringV2Text(label, '{pullRequest} : encore {count}');
+```
+
+Literal strings stay literal. Missing or malformed parameters retain the
+authored fallback, and a translation that drops a supplied placeholder falls
+back to the complete authored wording. Older strict hosts reject `params`;
+require a supporting host through `engines.happier` when targeting a released
+artifact. This development-source example establishes no released version floor.
 
 ## Minimal shape
 

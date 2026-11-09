@@ -33,6 +33,14 @@ only the lead-intake capabilities, questions only the intended read capabilities
 and brief the required reads plus `save_brief`. The model must not choose outbound
 recipients or use an independent mail tool.
 
+Test each MCP entry on the execution machine before starting an unattended
+recipe. The test records the tools and their annotations. For a read-only
+Session, MCP policy must be `allow_read_only` and the tool must advertise
+`readOnlyHint: true`; the recipe's allowlist does not override that policy.
+An untested tool or a tool without that annotation cannot be assumed available.
+Verify the actual intake and `save_brief` tools against this restriction; do not
+label a mutating tool read-only to make the recipe run.
+
 ## Restrict the recipes
 
 This is an intake recipe value for a Channels route, parsed by the Session spawn
@@ -266,6 +274,34 @@ over the exact raw request body and the configured webhook secret before parsing
 or acting on it. The header value is `sha256=<hex digest>`; use a constant-time
 comparison. Use a public HTTPS webhook URL for this backend; the notification
 owner applies its existing destination policy.
+
+For a Node backend, keep the body as a `Buffer` until verification finishes.
+Pass the configured secret and the single signature header to this consumer;
+an unsigned request or a changed body returns `null` before JSON parsing:
+
+```js
+import { createHmac, timingSafeEqual } from 'node:crypto';
+
+export function readWorkflowAlert(rawBody, signature, secret) {
+  if (!Buffer.isBuffer(rawBody) || typeof secret !== 'string' || secret.length === 0
+    || typeof signature !== 'string' || !/^sha256=[a-f0-9]{64}$/i.test(signature)) return null;
+  const received = Buffer.from(signature.slice('sha256='.length), 'hex');
+  const expected = createHmac('sha256', secret).update(rawBody).digest();
+  if (!timingSafeEqual(received, expected)) return null;
+
+  let payload;
+  try { payload = JSON.parse(rawBody.toString('utf8')); } catch { return null; }
+  if (payload?.topic !== 'workflow_run_update') return null;
+  const run = payload.workflowRun;
+  const alertKinds = ['failed', 'completed_with_failures', 'outcome_uncertain', 'interrupted', 'review_required'];
+  if (typeof run?.runId !== 'string' || !alertKinds.includes(run.updateKind)) return null;
+  return { runId: run.runId, updateKind: run.updateKind,
+    ...(typeof run.reason?.code === 'string' ? { reason: { code: run.reason.code } } : {}) };
+}
+```
+
+Use the returned `runId` to update your existing Run record. Verification
+authenticates the body; it does not make repeated delivery a new Run.
 
 Filter by `workflowRun.runId` and `workflowRun.updateKind`; relevant values include
 `failed`, `completed_with_failures`, `outcome_uncertain`, `interrupted` and

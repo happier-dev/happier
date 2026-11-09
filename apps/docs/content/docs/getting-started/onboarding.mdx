@@ -21,6 +21,15 @@ The Home hosts the Account and synchronized session state. Coding Agents still
 run on the computer that owns each session; choosing Happier Cloud for sign-in
 or discovery does not move that execution into the cloud.
 
+In this development checkout, machine reachability, administrator access and
+Agent isolation are separate facts. Registering a machine or starting its
+service does not prove isolated Agent execution. Linux isolation and per-member
+execution are still being integrated; macOS and Windows report isolation as
+unavailable. Personal/adopted computers retain isolation off by default, and an
+existing computer needs explicit review before workspace ownership changes.
+Happier plugins are trusted code; Agent isolation does not sandbox them. Review
+[shared-machine limits](/accounts/session-sharing) before inviting another person.
+
 User guide: [Relay access](/apps/relay-access).
 
 ## Choose your setup

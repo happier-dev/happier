@@ -1,16 +1,16 @@
 ---
 title: Conversation channels
-description: Connect external conversations to Happier sessions or automations, including one Session per authenticated email thread.
+description: Connect external conversations to Sessions, Discussions or Workflows, or route each thread to its own Session.
 ---
 
 A channel connects a conversation somewhere else — a Discord channel, a
-Telegram chat, a GitHub issue or pull request — to a session or an automation
+Telegram chat, a GitHub issue or pull request — to a Session, Discussion or Workflow
 on your machine. Messages arrive as input, replies go back out, and the people
 on the other end never install anything.
 
 <Callout type="warn">
-  Conversation channels are part of the current 0.3 Developer Preview. The
-  source and bundled providers are present, but loaded-platform and authenticated
+  This guide describes unreleased 0.3 development source. The bundled
+  integrations are present, but loaded-platform and authenticated
   provider journeys are still release gates rather than stable-release claims.
 </Callout>
 
@@ -77,22 +77,79 @@ same identity does not require recreating or transferring the connection.
 Admitting a different source under that same plugin identity also resumes its
 retained configuration. Changing the machine, transport, credential or provider
 configuration still uses the transfer flow and its recovery checks.
+A reload during conversation or sender selection, connection setup or retest
+also follows the current provider. Selected identities, machine placement and
+credential checks still apply.
 Durable webhook endpoints retain their own exact installation target; this
 continuity does not automatically repair an endpoint after reinstall.
 
 **A binding is one linked conversation**: one chat, channel, thread, issue or
-pull request, pointed at one target — a session, an automation, or a thread router
-that selects recipes for child threads. It carries
+pull request, pointed at one target — a Session, Discussion, Workflow, or thread
+router that selects recipes for child threads. It carries
 who may talk in that conversation, which messages count, what is sent back,
 and whether people there may answer the agent's permission requests. A
 binding's target can be **rotated** without touching the bot underneath. That
 is the move when a session ends and you want the same Discord channel driving
 the next one.
 
+In unreleased 0.3 development source, an exact thread binding takes precedence,
+even when paused; its messages do not fall through to the parent binding.
+Otherwise, messages in Email, Discord, Slack and Telegram threads use the
+mailbox or channel binding. Session, Discussion and Workflow targets receive
+those messages in the same target, with replies sent to the original thread.
+A thread router creates a separate Session and child binding for each thread.
+It ignores top-level channel messages that have no child-thread identity.
+
+In the same unreleased source, a Discussion groups each external thread under
+its first message. Later messages appear as replies, including messages with
+files. Discussion attachments use the Discussion's normal encryption and file
+reader. Workflow input currently accepts text only: a message containing files
+is refused in full, with feedback to the sender, instead of running without
+its files.
+
+In development source, changing a label, sender feedback, batching delay or
+link previews preserves received input that is still waiting to be delivered.
+Revoking access, changing the target or recipients, or changing permission policy
+still prevents that input from using its previous authority.
+
+### Binding support in development source
+
+This matrix describes the current unreleased 0.3 implementation, not completed
+live-provider validation. Every target requires an enabled binding, an admitted
+sender and the configured addressing policy. File support also depends on the
+connection's machine and the integration's ability to fetch the files.
+
+| Integration | Existing destination | Session input | Discussion input | Workflow input | Thread router | Start through router |
+| --- | --- | --- | --- | --- | --- | --- |
+| Email | Mailbox; existing thread links are retained | Text and files | Text and files | Text only | One Session per email thread | New email thread |
+| Discord | Channel or native thread | Text and files | Text and files | Text only | One Session per child thread | Public thread in a shared channel |
+| Slack | Channel or native thread | Text only | Text only | Text only | One Session per child thread | Unsupported |
+| Telegram | Private chat, group, supergroup or topic | Text and files | Text and files | Text only | One Session per native topic | Topic in a forum supergroup |
+| GitHub | Issue or pull request | Text | Text | Text | Unsupported | Unsupported |
+
+Slack currently refuses messages containing files or attachment blocks. Telegram
+ordinary replies outside a topic stay in the chat; they do not create a router
+Session. Email setup selects the mailbox, rather than offering individual mail
+threads. Starting through a router uses a named existing Session; it does not
+create a Discussion or Workflow. Slack availability depends on an installed,
+working integration, as described [below](#an-assistant-with-its-own-instructions-and-memory).
+
+Session targets support `/new` when configured, `/answer`, `/stop`, and approval
+commands when enabled. Router children use that Session policy. Discussion and
+Workflow targets do not support Session answers, stops or approval commands;
+`/new` is ordinary input there. Replies from a Discussion must reply to an
+imported message or one of its replies so Happier can identify the external
+thread. Workflow bindings return a final result or no result, according to their
+supported result-delivery setting. Files cannot be sent back through Channels.
+
+Online binding controls can retarget an existing link to a Session, Discussion
+or Workflow, or unlink it. Routers expose route editing rather than that target
+picker; account-local editing offers Session target controls only.
+
 ### Where you manage them
 
 - **Channels**, in the sidebar, lists every linked conversation grouped by
-  provider. Open one to see the session or automation it talks to, change its
+  provider. Open one to see the session or workflow it talks to, change its
   settings (you review a change before it is saved), test its bot, **pause** it
   or **unlink** it. Pausing stops messages in both directions and deletes
   nothing. Unlinking removes the binding and keeps the bot connected. If you
@@ -108,6 +165,12 @@ the next one.
 Messages from a linked conversation appear in the session's transcript, and the
 agent's replies go back to the conversation. Channels does not keep a separate
 copy of the conversation to read.
+
+In unreleased development source, your click to save a binding change confirms
+that change in place; the default policy does not ask you to approve it again.
+Agent/MCP and automated UI binding changes keep the ordinary Ask policy,
+whether they widen or narrow access. Trusted plugin calls follow the host's
+plugin policy. An explicit Ask preference still applies.
 
 ## Getting connected
 
@@ -178,8 +241,14 @@ the integration cannot resolve the sender's immutable identity directly. You
 choose the destination and target, then an original human message carrying the
 challenge token proves the sender's platform identity. Forwarded, via-bot, bot,
 integration-self and anonymous messages cannot provide that proof. You then
-finalize or cancel the proposal. A paired conversation is saved **paused**:
-review who can talk to it and what it sends back, then turn it on.
+finalize or cancel the proposal. In current 0.3 development source, a private
+destination proved in a private message is enabled when you finalize it.
+Shared destinations or shared proof locations stay **paused**: review who can
+talk to the conversation and what it sends back, then turn it on.
+
+In 0.3 development source, changing a display label or message-freshness setting,
+or recording a history notice, preserves an unfinished pairing proof. Changing
+the connection's credentials, principal or route still invalidates that proof.
 
 ### Shared proof (unreleased development contract)
 
@@ -226,10 +295,11 @@ provider states that block polling:
   a short restart overlap using its local backoff policy, but it does not
   present that local delay as a retry instruction from Telegram.
 
-Telegram retains pending updates for no longer than 24 hours. If Happier can no
-longer prove continuity from its committed checkpoint, it pauses for an
-authenticated history-baseline reset instead of treating the missing interval
-as complete.
+Telegram retains pending updates for no longer than 24 hours. Under the
+unreleased 0.3 history-recovery contract, checkpoint age or clock skew alone
+does not discard a valid saved offset: polling continues from that offset with
+a notice. An invalid offset or a new update sequence starts from the current
+point, skips existing updates, and shows a notice instead of pausing polling.
 
 ### GitHub repositories
 
@@ -261,6 +331,14 @@ input is retried. Ordinary issue-conversation bindings retain their configured
 command policy. This source change does not make the planned PR watch modes
 available in an installed release.
 
+In unreleased development source, linking a PR from another machine can reuse
+its existing repository connection without transferring it first. The link uses
+the new request's authenticated credential and machine to resolve the PR and
+sender; it preserves the connection's saved credential and polling placement.
+PR link/watch belongs to Session targets, while scoped Workflow PR triggers
+use no result delivery. Discussion and router targets do not gain PR link/watch
+controls from receiving ordinary channel messages.
+
 ### The history baseline
 
 In **unreleased 0.3 development source**, Channels has no common message-age
@@ -273,13 +351,33 @@ capabilities determine which messages remain available.
 The current development source has no fixed connection/binding count, generic
 message-text or chunk-count ceiling, five-attempt delivery budget, or five-second
 debounce cap. Storage and transport envelopes and each provider's native limits
-still apply. Known-no-effect delivery failures remain visible while retrying
+still apply. GitHub's accumulated checkpoint can grow beyond the former 48 KiB
+policy cap. If it exceeds the actual storage envelope, the poll shows the
+storage failure and keeps its last committed checkpoint, preserving native
+revision identities for recovery. Known-no-effect delivery failures remain visible while retrying
 with increasing backoff (positive provider Retry-After first; a zero wait uses
 the growing fallback). Newly scheduled local retries grow from one second to
 at most one minute, the same window as a healthy poll's maximum receive wait.
 This shared fallback covers polling, ingress admission, outward delivery and
-Automation result handoff. A longer provider Retry-After remains authoritative;
+Workflow result handoff. Transient errors thrown before a poll can return,
+including an unavailable Account read, use that same growing backoff. A longer provider Retry-After remains authoritative;
 accepted, partial, and unknown effects never resend automatically.
+
+For a Discussion target in unreleased 0.3 source, a pending approval holds the
+same delivery while the person decides. **Approve** resumes one publication;
+**Reject** or cancellation ends that input with visible target attention and no
+automatic retry. Consent goes back to the Machine that requested it. A plugin
+update can rejoin a matching text publication's existing approval; publications
+with local files ask again with the successor's fresh file sources. Changing
+the input or explicitly withdrawing it does not inherit the old consent.
+
+Retained polls blocked by an older, unclassified Action failure also re-enter
+the shared backoff. Typed permanent refusals remain visible for repair rather
+than being treated as transient transport failures.
+
+In current development source, GitHub's normal poll cadence follows its provider
+wait hints and remaining REST request budget until reset. It does not use the
+transport-error retry cadence as a fixed comments polling interval.
 
 In the development source, an empty poll that leaves its checkpoint unchanged
 performs no Collection mutation. A permanent storage or admission failure parks
@@ -295,11 +393,35 @@ If a send was already attempted and its outcome cannot be established, it stays
 unknown and does not resend automatically. In the development source, this also
 applies when the reconciliation handler is unavailable before its lookup starts:
 that failure does not establish whether the earlier send reached the recipient.
+Recovery does not treat a send as finished because of its age. In current
+development source, a reload that interrupts an attempted send leaves a visible
+**Outcome unknown** unless the provider's reconciliation lookup proves delivery.
+Happier never resends an unknown delivery automatically or relies
+on a late completion from the retired runtime to settle it. Inspect the external
+conversation before recording your resolution; that resolution remains final.
 
-When a connection starts, Happier does not swallow everything said in that
-conversation before you arrived. It offers a **history baseline** for you to
-accept, and ingestion starts from there. This is the setting people wish they
-had thought about after connecting a busy channel, so it is asked up front.
+In development source, stopping a Discord connection waits for its Gateway worker
+to finish. Cancelling that wait leaves stop pending until teardown is confirmed.
+
+New connections establish a **history baseline** at the current point, so
+connecting a busy conversation does not automatically import its backlog.
+
+Under the unreleased 0.3 history-recovery contract, a recorded history gap
+stays visible as a connection notice while reconciliation, new messages and
+polling continue. Happier retains the first evidence of the gap rather than
+claiming the missing interval was recovered. If a saved provider cursor is
+invalid — for example, an email mailbox changes its UIDVALIDITY or regresses
+UIDNEXT, Telegram starts a new update sequence, or GitHub loses its saved
+ordering boundary — Happier automatically starts from the current point and
+skips existing items. The notice can be dismissed without changing the saved
+cursor; dismissal is not required for new work to continue. The notice says
+earlier items may have been missed and offers dismissal only.
+If the provider cannot yet establish that new baseline, polling retries with
+increasing backoff; dismissing the notice is not a prerequisite for recovery.
+
+Routine Slack Socket Mode refreshes do not count as gaps. GitHub comments
+sharing a timestamp or spanning pages continue through the saved timestamp
+and immutable comment IDs; a tied page alone is not lost continuity.
 
 ## When something is blocked
 
@@ -315,7 +437,10 @@ For a credential failure, reconnect the saved Connected Account, then verify
 the connection. For missing provider permissions, follow the provider's setup
 guidance and verify again. Blocked ingress and polling use their existing
 retry Actions; an automatic backoff remains scheduled rather than becoming a
-second manual send. A history gap requires an explicit baseline decision.
+second manual send. Under the unreleased history-recovery contract, a history
+notice can be dismissed through the existing baseline Action. That optional
+Action preserves the current cursor and does not unlock new-message admission
+or polling.
 
 In unreleased development source, Email also retries through that backoff when
 the host explicitly confirms that its SMTP submission handler never started.
@@ -347,6 +472,18 @@ model are about failure rather than success:
   guessed: you record it as accepted or discard it. Happier never resends an
   ambiguous delivery on its own.
 
+In unreleased 0.3 development source, a delayed inbound message uses the
+conversation's current sender and routing policy when it dispatches. Outbound
+delivery checks the current connection and conversation policy when it claims
+the send. An admitted reply can finish its native message chunks; disabling the
+connection or conversation applies to the next send. Editing a display label or
+link-preview preference does not cancel a queued reply.
+A durably queued message waiting for its debounce deadline does not hold up the
+provider checkpoint. A local cancellation before any provider I/O keeps the reply
+ready rather than silently dropping it. If the host retires the sending worker,
+its outstanding claim instead enters visible outcome-unknown recovery and is
+never automatically resent.
+
 In **unreleased 0.3 development source**, Channels is not a message archive.
 It keeps inbound content only while a destination still needs
 delivery, then drops it at the native Session or Discussion acceptance handoff.
@@ -355,16 +492,17 @@ native-message and sender dedupe metadata, reply relations and per-conversation
 lifecycle records remain where recovery or replies need them. Once the original
 body is gone, a replay of that processed message creates neither another input
 nor a new content conflict.
-An outbound delivery that reaches a terminal state is kept for a
-thirty-day recovery window so a failure can be resolved; an ambiguous partial
-delivery keeps only a fingerprint of its content but stays visible until you
-resolve it, and delivered content is deleted when its window elapses.
+Settled outbound delivery evidence is kept for the existing thirty-day recovery
+window. An unresolved ambiguous or partial delivery keeps compact outcome
+evidence and stays visible until you resolve it, without restoring content or
+resending. A retired worker's late completion does not replace that unknown
+outcome. Settled evidence is forgotten when its window elapses.
 
 Two collections sync with your account: the channel state itself, and the
 delivery records. Between them they are what lets a retry know what already went
 out.
 
-## Channels and automations
+## Channels and workflows
 
 ### An assistant with its own instructions and memory
 
@@ -487,9 +625,17 @@ The Session must have no single-sender attested identity. After delivery,
 the child binding allows the audience and sends replies to that Session.
 An `accepted` result means delivery custody was created, not that mail arrived.
 
-Email supports starts and HTML alternatives. Telegram, Discord and GitHub
-currently return typed unsupported for starts and ignore HTML. They deliver the
-text alternative under their native limits. A provider's optional
+In unreleased 0.3 development, Email supports starts and HTML alternatives.
+Telegram creates a topic under the router's forum supergroup; Discord creates a
+public thread under its text-channel parent. Both send the text alternative and
+ignore HTML. The bot needs Telegram's `can_manage_topics` administrator right,
+or Discord's `CREATE_PUBLIC_THREADS` and `SEND_MESSAGES_IN_THREADS` permissions
+alongside access to the parent. The topic or thread keeps the parent's shared
+visibility; the audience group limits whose replies Happier admits.
+Native topic names use up to 128 characters on Telegram or 100 on Discord;
+longer subjects are shortened for that name, while the message text is preserved.
+GitHub currently returns typed unsupported for starts and ignores HTML. Each
+integration delivers the text alternative under its native limits. A provider's optional
 `outboundTextLimit` declares its actual ceiling; omission means no native
 per-message text ceiling. GitHub's declared limit is 65,536 Unicode code points
 per comment, with the core splitting described above. Happier does not add a
@@ -509,17 +655,23 @@ an `action` step; Agent requests follow ordinary approval.
 Pairing still requires the external person's proof where that integration uses
 it. See [Actions and tools](/extending/happier-tools) for discovery.
 
-### Target an automation
+In unreleased development source, a native CLI call through an Account Action
+to a machine refuses a required live-only confirmation it cannot present. It
+returns `plugin_action_current_intent_unavailable` instead of waiting for an
+approval the caller cannot see. Start a fresh operation in the app and confirm
+it there; ordinary deferred approvals keep their existing flow.
 
-A binding can target an automation rather than a session. When a message is
+### Target a workflow
+
+A binding can target a workflow rather than a session. When a message is
 admitted through that binding, Happier invokes a Conversation-origin Run for
-the selected automation; the automation's own definition remains independent
+the selected workflow; the workflow's own definition remains independent
 of the conversation binding. Together that is: someone comments on the connected
 GitHub issue or posts in a Discord channel, a Run starts on your machine, and
 the result is delivered back into the conversation.
 
-For a verified automation that starts or continues a Session, the binding can
-deliver the final result or deliver no result. Execution-run automations support
+For a verified workflow that starts or continues a Session, the binding can
+deliver the final result or deliver no result. Execution-run workflows support
 no result delivery through a channel. Happier rejects an unsupported pairing or
 binding before saving it.
 
@@ -565,7 +717,7 @@ The **morning digest** example instead sends a Happier notification through
 `notifications.notify_me`; it does not select an external channel. The
 **memory upkeep** example maintains the selected Session's memory under its
 normal tool availability and approval policy. Neither adds another scheduler.
-See [Automations](/extras/automations) for example selection and trigger setup.
+See [Workflows](/extras/automations) for example selection and trigger setup.
 
 ### A scheduled brief that starts an email thread
 
@@ -574,9 +726,10 @@ For a new email thread with replies returning to its Session, use the
 It includes a text/HTML result, a `conversation/start-v1` step, the configured
 `brief` audience, and a failure notice through the same delivery custody.
 Review the audience and the reply Session before enabling it; the model never
-supplies recipient addresses. Telegram and Discord's current unsupported
-new-thread start is not replaced by an independent send tool: use an existing
-conversation binding for their scheduled summaries.
+supplies recipient addresses. In current 0.3 development, the same start Action
+can create a Telegram forum topic or a Discord public thread using the text
+alternative and the router's parent destination. For summaries in an existing
+conversation, use the mirroring setup above.
 
 ## Approvals and questions
 
@@ -584,7 +737,7 @@ An allowlisted person can send `/stop` as an original message to cancel the
 bound Session's active turn immediately, without the input debounce or stopping
 the Session itself. It never becomes Agent input, and replaying the same message
 does not cancel another turn. Forwarded, via-bot, and permitted bot messages are
-ordinary text instead; Automation bindings refuse this command. If cancellation
+ordinary text instead; Workflow bindings refuse this command. If cancellation
 cannot be confirmed, send a new `/stop` only if a turn is still active.
 
 For a Session binding, the owner can allow people in the connected conversation
@@ -611,7 +764,7 @@ currentness before accepting an answer.
 
 - [Email channel](/extending/email-channel) — mailbox setup, sender trust and attachments.
 - [Email agent recipes](/extending/email-agent-recipes) — restricted recipes and scheduled HTML briefs.
-- [Automations](/extras/automations) — including automation bindings.
+- [Workflows](/extras/automations) — including workflow bindings.
 - [Connected Services](/accounts/connected-services) — where the bot credentials live.
 - [What ships in the box](/plugins/bundled) — bundled channel integrations.
 - [Participant routing](/accounts/participant-routing) — who a message reaches inside Happier.

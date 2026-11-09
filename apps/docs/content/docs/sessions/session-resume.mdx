@@ -59,8 +59,13 @@ Under **Settings → Session → Message sending**, **Automatic resume after sen
 Modern unattended activation requires Pending Input V2 on the server and activation capability from the exact target machine. Older or mixed components keep the existing direct-wake fallback. Only the owning daemon performs unattended starts, and external or Direct sessions keep their existing takeover safeguards.
 
 In unreleased 0.3 development source, **Stop session** from session Info and CLI
-Stop hold the session until you explicitly resume it. Sending another message
-does not clear that hold. Stops from machine resource controls—Processes,
+Stop keep the session from starting again on its own. Sending it a message
+resumes it and delivers the message, whoever sends it: you, the CLI, another
+agent, an automation or a workflow. An agent or automation that keeps sending can
+therefore resume a session you stopped. Daemon restarts, machine reconnects and
+other automatic recovery never restart it.
+If that resume fails, your message stays queued, you see the reason, and
+**Resume** or your next message tries again. Stops from machine resource controls—Processes,
 widgets, Guard, Storage holder cleanup and the machine's Runs section—leave the
 session eligible to wake under your automatic-resume setting, unless it was
 already held. This distinction still awaits integrated live verification.

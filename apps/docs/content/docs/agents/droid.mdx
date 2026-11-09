@@ -23,7 +23,7 @@ On Windows, use Factory's PowerShell installer instead:
 Invoke-RestMethod https://app.factory.ai/cli/windows | Invoke-Expression
 ```
 
-Complete the browser login from the interactive CLI, or provide
+For Factory-managed models, complete the browser login from the interactive CLI, or provide
 `FACTORY_API_KEY` in the environment that launches Happier. The terminal login
 action opens Droid and submits `/login`; account and key management remain in
 Factory.
@@ -39,6 +39,29 @@ version and your organization policy.
 Droid receives selected Happier tools as per-session ACP MCP descriptors.
 Existing Droid user and project MCP configuration remains under Droid's normal
 configuration rules.
+
+## Model Providers in development
+
+The 0.3 development source adds Provider-bound Droid sessions and execution
+runs. This is experimental development support, not a stable-release claim.
+It requires Happier's Providers feature and a Droid version supporting the
+documented [process-only settings override](https://docs.factory.com/droid-cli/cli-reference).
+
+For a selected Provider, Happier supplies a session-private `--settings` file
+containing the custom model and endpoint. The API key stays in the child
+process environment; the file contains an environment reference. It does not
+write credentials to Droid's shared user or project settings. Factory
+documents [keyless HTTP custom models](https://docs.factory.com/model-independence/byok)
+as well as API-key authentication.
+
+Happier selects the custom model advertised by the running Droid ACP session.
+A missing or ambiguous custom model refuses the binding. Changing the bound
+Provider or model requires restarting the Session. Factory login continues to serve
+native Factory sessions; it does not replace the selected Provider credential.
+
+Real Droid calls still need release validation for the selected endpoint,
+settings merge behavior, and each supported operating system. A configured
+Provider alone does not prove that its model works with Droid.
 
 ## Interactive terminal
 

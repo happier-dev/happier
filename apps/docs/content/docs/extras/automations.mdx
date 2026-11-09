@@ -1,21 +1,31 @@
 ---
-title: Automations
+title: Workflows
 description: Run one reusable recipe from automatic triggers, a connected conversation, or an explicit Run now action.
 ---
 
 Some work is worth doing on a timer rather than when you remember it: a nightly
 dependency check, a Monday-morning triage pass, a recurring prompt against a
-repository you watch. Automations run that work on your machines without you
+repository you watch. Workflows run that work on your machines without you
 opening the app.
 
 <Callout type="warn">
   The Workflow instructions below describe current 0.3 development source,
   not certified stable or preview availability. Use matching development
-  components. In that source, **Automations** has graduated: its preference
+  components. In that source, the **Workflows** preference has graduated: it
   defaults on and does not require **Experiments**. The server still needs the
-  `automations` and dependent `workflows` feature gates; a missing or disabled
-  server gate keeps execution unavailable.
+  single `workflows` feature gate; a missing or disabled canonical server bit
+  keeps execution unavailable. Released `automations` configuration names are
+  compatibility aliases, not a second switch.
 </Callout>
+
+A current client hides Workflows when connected to a 0.2 Home: that Home's
+released `automations` bit does not advertise the `/v3` API required by the 0.3
+Workflow surfaces. Use a matching 0.3 development Home for this guide.
+
+**Workflow** is the UI name for reusable work, replacing **Automation**. A
+trigger is a setting on a Workflow that chooses when it starts, rather than a
+separate kind of work. Existing API and configuration names can still contain
+`automation` for compatibility.
 
 Open **Workflows** from the app's navigation. This is the one destination for
 definitions, their triggers, built-ins, and Runs. Choose **New workflow**, write
@@ -26,25 +36,59 @@ in this destination controls capacity and retention.
 Before **Start**, the Run composer identifies the selected shared Machine and
 who owns it. Check that disclosure before sending your work and sign-in there.
 
-Existing schedule automations created by released 0.2 clients remain readable.
-Current 0.3 development source converts them to Workflows through the canonical
+In unreleased 0.3 development, you can also choose a Machine shared with you
+with **Can use** access for a Workflow or schedule. The review explains that
+your full Happier sign-in is stored on that Machine: for a direct Run, while it
+runs; for a schedule, while its trigger exists. Disabling or deleting the trigger
+retires the sign-in after admitted Runs finish. People with terminal or Agent
+access there may use it to access your Account; read the
+[Machine-sharing disclosure](/accounts/session-sharing) before continuing.
+
+Choose your own Connected Account credentials for the Agent. The Machine owner's
+profile and native login are refused with a typed message; select a profile in
+your own Account and update the Workflow's Connected Account selection. Machine
+access does not give its owner server access to your private Runs or give you
+access to theirs. Revocation refuses the next Run or scheduled occurrence while
+admitted Runs can finish. If the Machine loses your saved sign-in context, the
+typed refusal asks you to re-save the schedule on that Machine, or start a direct
+Run again.
+
+In current development source, saving an unchanged workflow writes nothing and
+keeps its saved revision. **Discard changes** on a saved workflow restores its
+saved version immediately, with **Undo** available; it does not ask for another
+confirmation. Discarding a new, unsaved workflow still asks before losing it.
+Your own in-flow confirmation supplies the approval for that operation; an
+explicit **Ask first** preference still applies.
+
+In unreleased 0.3 development source, the editor's **Settings** opens on desktop
+and phone. Remembering your personal project target is best effort: if that
+memory is unavailable or cannot be written, it does not block Save or its
+trigger changes.
+
+In unreleased 0.3 source, a step's Agent/model control opens the shared model
+picker. Its heading is **Model**, without a separate **Effective** row. For
+Agents that expose Thinking, larger or long-labelled choice sets use a select;
+short sets can use segments. The choices come from the selected Agent and model.
+
+Existing scheduled recipes created by released 0.2 clients remain readable.
+Current 0.3 development source converts them to saved-step Workflows through the canonical
 trigger reader, with the retained encrypted case requiring your review below.
 Current clients use the V3 Automation transport; this data compatibility does
 not require a V2 route.
 
-In current 0.3 development source, an older encrypted Automation attached to an
+In current 0.3 development source, an older encrypted Workflow attached to an
 encrypted Session on a now-plain Account pauses as **Needs your review** in
 Workflows. Open its trigger to review it on a device that still has the old
 encryption key. Opening does not save or run it. **Save** stores the reviewed
 workflow without end-to-end encryption and resumes its enabled triggers; the
 Session itself stays end-to-end encrypted. If the key is unavailable or review
-fails, the Automation stays paused.
+fails, the Workflow stays paused.
 
 In current 0.3 development source, an Agent can also request this conversion
 through the existing Workflow trigger Action, including from MCP or the CLI.
 The request presents the reviewed Workflow and project for your approval.
 Conversion runs only after you approve that exact request; **Always allow**
-cannot bypass this confirmation. A denied request leaves the Automation
+cannot bypass this confirmation. A denied request leaves the Workflow
 unchanged. If the reviewed revision has changed, review it again before
 requesting conversion. Automatic recovery does not confirm conversion for you.
 
@@ -99,6 +143,51 @@ the default ("If it fails", "Either way"). A failure handler
 does not erase the failed step. Cancellation, an uncertain outcome, or a step
 waiting for your input is not a definitive failure and does not start a handler.
 
+## Run a collaboration pattern (development source)
+
+In current 0.3 development source, **Run…** in a Session or Discussion composer
+opens the same Workflow picker and typed inputs. Choose Fresh opinions,
+Answer + review, Debate, Plan with a panel, Review & converge, or an accessible
+saved or plugin Workflow. Review the question, participants, roles and target
+before starting. Browsing choices does not create a participant Session.
+
+A participant can be an existing Session or a model choice. Existing Sessions
+keep their selected Agent and model; model choices use the ordinary Session
+startup path and may require an invitation approval. Discussion references
+remain scoped to their Home and Discussion, and access is checked before their
+content is read or a result is posted. A supplied context boundary does not
+erase an existing native Agent conversation's earlier history.
+
+The inline Run band opens the exact Run. Available Pause, Resume and Stop
+controls use its normal control Actions; a requested stop is not yet a settled
+stop. Accepted answers appear independently, with their source attribution.
+Answer + review attaches the review to the exact answer. Failed or stopped
+work remains distinguishable from an answer or an explicit pass.
+
+After Fresh opinions, Debate or Panel ends, **Another round** starts a new Run
+with the same participants and authorized previous-round context. It leaves
+the earlier results intact. If a start response is lost, the client reconciles
+that same Run rather than starting another one.
+
+### Save an exchange as a pattern
+
+Use **Save as pattern** on a finished exchange or select the messages to capture
+from its Discussion. Review each selected message's role, dependency,
+instruction and per-run inputs. Unlinked or ambiguous messages need an explicit
+choice before opening the editor; unrelated messages are not copied.
+
+**Open editor** creates an editable, unsaved ordinary Workflow. Review and Save
+it, then choose it from either composer with a new question or participant
+choices. Capture alone does not save, share or start work. Cancel and failed
+capture retain the review state so you can repair it. Existing Session
+**Make this repeatable** remains an editable, unsent authoring request.
+
+Plugin authors contribute these definitions through the existing Workflow
+contribution and use the same typed Actions for start, controls, capture and
+save. The [SDK and Action API](/extending/sdk#workflow-actions-development-source)
+describes that public boundary. These are development-source contracts;
+loaded-runtime and whole-page validation are separate from source availability.
+
 ## Roles for this run
 
 In 0.3 development, a workflow whose steps select roles offers **Roles for
@@ -118,6 +207,12 @@ repeat behavior and effort-picker limits. Other workflow tasks use
 approval requirements and surfaces. A successful start is admission of a
 run; observe that run before claiming its work completed.
 
+Cancel a queued or started Run through its normal cancel control. UI, CLI,
+MCP and Agent callers all use `workflow.run.cancel`. Cancelling keeps the Run's
+record, and you can start another Run from the recipe. It asks for approval
+only when the Action policy says **Ask first**; there is no additional destructive
+confirmation. A started Run may show cancellation requested while its work stops.
+
 ## One recipe, several ways to start it
 
 A saved Workflow holds a reusable definition. Attaching triggers makes it
@@ -128,20 +223,24 @@ changes what future claims execute. An admitted Run keeps its frozen definition.
 It can start a new Session, continue an existing Session, or run detached work,
 depending on the authored target.
 
-For Workflow-backed Automations in current 0.3 development source,
+For Workflows backed by saved definitions in current 0.3 development source,
 **Runs in: existing session** writes into
 that conversation rather than starting another Agent. These writes do not use
-machine start capacity, whether the Automation belongs to the Account or is
+machine start capacity, whether the Workflow belongs to the Account or is
 attached to a Session. Session-attached triggers keep their Session scope.
 Run queries can select the destination Session separately from the Session that
-started the Run; both kinds of Automation use that same destination relation.
+started the Run; both kinds of Workflow use that same destination relation.
 
 ### See scheduled work in a Session
 
-In current 0.3 development source, the Session's **Work** tab shows its habits
-under **Triggers**: the schedule, next occurrence, last known Run status,
+In unreleased 0.3 development source, open the Session's **Info** page and its
+**Habits** section for the schedule, next occurrence, last known Run status,
 **History**, **Run now**, and the on/off switch. History uses the same Run rows
 as Workflows. Run now is separate from resuming the automatic schedule.
+
+In current development source, **Last run** means the latest Run that actually
+started, whatever its outcome. A Run cancelled or skipped before starting does
+not replace it. Those unstarted Runs remain visible in history.
 
 **Writes here** lists active Runs by their accepted destination, even when
 another Session started them, alongside enabled schedules targeting this
@@ -172,21 +271,21 @@ earlier Agent step's whole text result; other authored conditions are kept. It
 cannot be turned on for a literal message, a JSON result, or a result that is not
 reachable from that Action.
 
-The same Automation can own no automatic triggers, one trigger, or several.
+The same Workflow can own no automatic triggers, one trigger, or several.
 Every enabled trigger is independent: if any one of them fires, the recipe
 runs. There is no ordering or requirement that several triggers fire together.
 An admitted Run keeps the recipe and assignments resolved for it; later edits
 do not rewrite that Run.
 
-An enabled Automation must keep at least one enabled machine assignment — a
+An enabled Workflow must keep at least one enabled machine assignment — a
 Run freezes the assignments it was admitted with, so a Run with no machine
 could never start. You can save a paused draft with no assignments and assign
 machines before enabling it; removing or disabling the last enabled assignment
-of a running Automation is refused until you pause it first.
+of a running Workflow is refused until you pause it first.
 
 ## What can trigger one
 
-A timer is only one of three automatic sources that can start an Automation.
+A timer is only one of three automatic sources that can start a Workflow.
 
 | Trigger | What starts the run |
 | --- | --- |
@@ -194,7 +293,7 @@ A timer is only one of three automatic sources that can start an Automation.
 | **Plugin event** | Something a plugin observed — a new issue, a push, a review request. |
 | **Session turn finished** | Completion of the exact active parent turn selected while authoring. |
 
-**Run now is an operation, not a trigger.** An Automation with no automatic
+**Run now is an operation, not a trigger.** A Workflow with no automatic
 triggers can still run when you choose **Run now**, invoke it from the CLI, or
 admit an authorized bound conversation.
 
@@ -202,19 +301,19 @@ admit an authorized bound conversation.
 
 A schedule is either an interval — every *n* minutes — or a cron expression,
 with presets for the common cases (**Every hour**, **Daily midnight**). Cron
-schedules run against a timezone you set, so a "daily at midnight" automation
+schedules run against a timezone you set, so a "daily at midnight" workflow
 means midnight where you are rather than wherever the machine thinks it is.
 
 ### Plugin events
 
-This is the one that makes automations more than a scheduler. A plugin declares
-events it can observe, and an automation binds to one — so a GitHub repository
+This is the one that makes workflows more than a scheduler. A plugin declares
+events it can observe, and a workflow binds to one — so a GitHub repository
 event can start a session on your machine without you or a timer involved.
 
 The GitHub plugin exposes semantic events for a repository push, an issue being
 opened, a pull request being opened, and a pull request being merged. Polling
 and webhook delivery normalize into those same event identities, so changing
-the observation transport does not change what the Automation means.
+the observation transport does not change what the Workflow means.
 
 In current 0.3 development source, choose **Plugin event** under a trigger's
 **When**, then **Set up event**. Search by the event's name or exact event ID;
@@ -267,7 +366,7 @@ mistyped secret looks like silence rather than an error.
 Happier does not create the webhook for you and does not need a GitHub App: a
 plain repository or organization webhook is the whole setup. If you lose the
 secret, rotate the endpoint credential from its webhook settings rather than
-creating a second automation — a new secret means editing the same GitHub
+creating a second workflow — a new secret means editing the same GitHub
 webhook again.
 
 Two limits matter before you rely on webhook delivery. Happier holds a
@@ -295,10 +394,10 @@ one or more of those events, then choose how long the trigger remains active:
 - **Current turn only** binds to the exact active parent turn and can run once.
 - **First matching event** waits for the first selected event in that Session.
 - **Next matches** runs for the number of matching occurrences you choose.
-- **Every matching event** keeps running while the trigger and Automation are
+- **Every matching event** keeps running while the trigger and Workflow are
   enabled.
 
-From a Session, open **Triggers** in its Work tab to attach a scoped trigger.
+From a Session, open **Habits** on its Info page to attach a scoped trigger.
 The **When this turn finishes…** shortcut preselects the active turn. If that
 turn changes before you save a current-turn trigger, the editor asks you to
 use the new current turn instead.
@@ -321,7 +420,7 @@ offline does not move matching into a client-side watcher.
   as skipped. Review Workflows can opt into skipping an unchanged worktree, but
   only when the previous successful Run's final review panel certified the same
   fingerprint. Missing certification always runs the review. Deleting the
-  Session retires its scoped Automations without removing retained Run history.
+  Session retires its scoped Workflows without removing retained Run history.
 
   Session-start attachment is not yet complete.
   Keep going attachment is refused when the opened Agent already owns native
@@ -330,7 +429,7 @@ offline does not move matching into a client-side watcher.
   is not established by the current source.
 </Callout>
 
-In current development source, the Session's Triggers section offers PR comments
+In current development source, the Session's Habits section offers PR comments
 and CI failures. Choose a pull request from the Session repository; a single
 existing link is preselected. Attaching either kind records that Session↔PR link.
 Opening or reusing a pull request through Happier also records the link when the
@@ -338,7 +437,7 @@ operation has an origin Session. Removing a trigger retains the link but stops
 that trigger's conversation ingress.
 
 If the Session's pull request links cannot be read, ordinary scoped triggers
-remain available. The Triggers section shows a separate link-read warning with
+remain available. The Habits section shows a separate link-read warning with
 a retry action; a failed read is not treated as an empty list of links.
 
 PR comments admit only repository writers. CI observations require the selected
@@ -351,30 +450,30 @@ For plugin authors using 0.3 development builds, the separate
 `@happier/runtime/turn-start`, `@happier/runtime/turn-complete`,
 `@happier/runtime/turn-failed`, and `@happier/runtime/turn-cancelled` Host Event
 hooks are daemon-local, in-memory, best-effort notifications. They are not
-replayed and do not create Automation Runs. Durable lifecycle triggers are
+replayed and do not create Workflow Runs. Durable lifecycle triggers are
 admitted from persisted Session settlement and minimal pending-request
 identity instead.
 
 ### Conversation bindings
 
-A channel can bind a conversation to an existing automation. A message admitted
+A channel can bind a conversation to an existing workflow. A message admitted
 through that binding starts a Run with an immutable conversation cause. The
 binding is an invocation path, not another automatic trigger row.
 
 ### Active and paused
 
-Each Automation is **Active** or **Paused**, and each automatic trigger can also
-be enabled independently. Pausing the Automation keeps its recipe and every
+Each Workflow is **Active** or **Paused**, and each automatic trigger can also
+be enabled independently. Pausing the Workflow keeps its recipe and every
 trigger but prevents all automatic admission. Disabling one trigger leaves its
 siblings active.
 
 ## Running one now
 
 For a Workflow, **Run now** starts the reviewed definition directly, without
-waiting for a trigger. Retained 0.2 Automations also support an explicit manual
+waiting for a trigger. Retained 0.2 Workflows also support an explicit manual
 Run through the CLI below.
 
-It does not create a durable Manual trigger and does not require the Automation
+It does not create a durable Manual trigger and does not require the Workflow
 to have any automatic trigger rows.
 
 It queues rather than executing synchronously: the assigned daemon picks it up
@@ -388,10 +487,10 @@ happier automation list [--cursor <opaque>] [--json]
 happier automation run <automation-id> [--idempotency-key <key>] [--json]
 ```
 
-Use `automation list` to find the stable Automation ID accepted by `run`.
+Use `automation list` to find the retained workflow's stable `automationId` accepted by `run`.
 Human output includes each ID, name, and active or paused state. `--json`
 returns the structured definition-list page, including its continuation cursor
-when more Automations are available. To continue, pass that cursor back without
+when more Workflows are available. To continue, pass that cursor back without
 changing it:
 
 ```bash
@@ -399,13 +498,13 @@ happier automation list --cursor <opaque>
 ```
 
 Pass `--idempotency-key` when the caller might retry — a repeated key will not
-run the automation twice.
+run the workflow twice.
 
 ## Structured workflows (development source)
 
 A Workflow is a JSON-compatible program that can be started directly, referenced
 by a trigger, or authored inline in a trigger. A direct Run has its own Account-scoped identity and does
-not create a hidden Session or Automation. An Automation Run also keeps its
+not create a hidden Session or saved Workflow. A triggered Run also keeps its
 immutable trigger cause. Editing or deleting a saved definition does not rewrite
 an admitted Run. A managed Run is executable from its frozen snapshot; observed
 Agent activity is read-only history and cannot be run, edited, or saved without
@@ -474,7 +573,7 @@ Session reads the latest committed Run state and result as worker context, not
 as a new user message. A finished Run does not stay unfinished while waiting for
 the Session to consume its result.
 
-A scoped Automation also uses its bound Session as the Workflow origin. In
+A scoped Workflow also uses its bound Session as the Workflow origin. In
 development source, returning results to that Session is opt-in on the trigger;
 keeping an origin for steps or context does not enable result return by itself.
 
@@ -512,11 +611,19 @@ The development CLI projects the canonical Actions directly:
 
 ```bash
 hdev workflow validate --definition-json @workflow.json --json
-hdev workflow run start --run-id <uuid> --source-json '{"kind":"inline","definition":{...}}' --machine-id <machine-id> --json
+hdev workflow run start --run-id <uuid> --source-json '{"kind":"inline","definition":{...}}' --machine-id <machine-id> --project-directory /path/to/project --json
 hdev workflow run get --run-id <uuid> --json
 hdev workflow run wait --run-id <uuid> --timeout-seconds 60 --json
 hdev workflow run invocations list --run-id <uuid> --cursor <opaque> --json
 ```
+
+Workflow commands use the same target routing as `hdev actions invoke`: select
+an exact Home with `--server-id`, the machine with `--machine-id`, and its project
+with `--project-directory`.
+Add `--workspace-ref-id` when binding an exact workspace reference; it requires
+both selectors. These options route the Action and are separate from its input.
+For `workflow run list` and `workflow events list`, use `--action-machine-id`
+to filter the returned rows independently of the execution machine.
 
 Keep the caller-generated `runId` when admission is uncertain. Repeating it with
 the same normalized request rejoins the Run; changing the definition, inputs,
@@ -536,6 +643,12 @@ stopped. Recovery may reattach an owner-supported execution or require an
 explicit same-conversation or fresh-agent continuation; ambiguous effects are
 never silently replayed.
 
+In unreleased 0.3 development source, an interrupted invocation's offered
+fresh-agent retry can use its frozen original input. It does not rebuild that
+input from later Workflow edits or conversation history. On daemon startup,
+recovery also finishes a cancelled Run's remaining cleanup once child work and
+required result publication have settled, without restarting completed work.
+
 Saved definitions use Account Artifacts and whole-document revision checks. JSON
 import/export preserves portable authored content only. Local file handles, raw
 credentials, checkpoints, and provider resume state are not portable definition
@@ -550,6 +663,17 @@ value; **Generate result and continue** asks the existing Agent conversation for
 a new result and continues automatically when it is valid. A failed generation
 keeps the previous reviewable value available. A Wait-for-you step accepts a
 human response and cannot generate one.
+
+If an Agent publishes a newer result while you are editing, **Keep my edits**
+acknowledges that publication while preserving your draft. In unreleased 0.3
+development source, **Use this result** then accepts your draft as a human
+answer. Another publication warns you again before acceptance; **Use newer**
+replaces your draft with the newer result instead.
+
+In unreleased 0.3 source, a human-accepted answer shows **Answered by** using
+the authorized People profile for that Home. Your own answer reads **Answered by you**;
+an unavailable profile stays anonymous. An Agent result is not attributed to
+the person who started the Run.
 
 Independent work can continue while a step awaits review. When only human holds
 remain, the Run reads **Waiting for your review** and releases its worker slot;
@@ -566,7 +690,8 @@ its holds.
 ### Team visibility
 
 Share a Workflow definition through its access controls. Recipients keep their
-own triggers and run on their own machines. A personal definition share lets
+own triggers and choose Machines they own or, in unreleased 0.3 development,
+have **Can use** access to. A personal definition share lets
 the recipient use the Workflow but does not expose the owner's Runs.
 
 A Run from a Team-shared Workflow freezes its visible Team when admitted. When
@@ -578,6 +703,10 @@ People with **Can edit** or higher access can pause, resume, stop, and answer
 review holds; view-only recipients cannot. Human answers record who answered.
 E2EE content still requires the recipient's key envelope: a visible row with
 unavailable keys stays locked.
+
+In unreleased 0.3 development source, teammates can open a Team-visible
+trigger's **History** from its schedule row. It includes only Runs visible to
+that Team; the owner's private Runs stay excluded.
 
 ## Built-in workflows (development source)
 
@@ -597,6 +726,10 @@ Agent supports native goal continuation, the control uses that; otherwise it
 attaches Keep going. A new Keep going attachment is refused when the Agent
 already owns native goal continuation; an existing conflict is shown rather
 than presenting a second continuation control.
+
+In unreleased 0.3 source, Claude's native Goal updates publish into the same
+Session Goal state through its native owner. They do not need a Keep going
+attachment.
 
 After a matching turn ends, a read-only Judge checks the goal and the latest
 turn. It continues the Session, then checks again, until the goal is done, the
@@ -619,7 +752,7 @@ step; an already running turn is not interrupted.
 
 ### Review & converge
 
-Choose a Session, open its Triggers section, and attach this recipe to a matching
+Choose a Session, open **Habits** on its **Info** page, and attach this recipe to a matching
 turn-end event. Select the review engines. A panel reviews the changes in
 parallel, then a read-only convergence check reads the persisted review comments
 and each engine's outcome. Missing or failed coverage cannot count as convergence.
@@ -716,25 +849,32 @@ Resolve those issues before saving, exporting, or running it. YAML is not suppor
 
 ## Concurrency and run history
 
-Each machine runs up to four automation Runs at once by default. Change that
+Each machine runs up to four workflow Runs at once by default. Change that
 Account setting in Workflows' **Run settings** when the machine should take
 more or less work concurrently.
 
 Completed Run history is retained for 30 days by default. Turn on **Keep run
 history forever** in the same settings screen to retain it indefinitely, unless
-the self-hosted server operator has configured a shorter Automation retention
-policy. This setting controls the server-owned history lifecycle; it is not a
-second client-side cache.
+the self-hosted server operator has configured a shorter Workflow retention
+policy. Removing an Automation also deletes its past Runs when retention cleanup
+runs, including Runs set to keep forever. The removal confirmation warns about
+this before you confirm. This setting controls the server-owned history lifecycle;
+it is not a second client-side cache.
 
-Retained Automation detail screens also offer **Clear run history** in their
+Retained Workflow detail screens also offer **Clear run history** in their
 header menu. It removes only server-eligible terminal history for that
-Automation, not active work.
+Workflow, not active work.
 
 Every automatic Run records the stable trigger identity and revision plus an
 immutable bounded cause. Editing or removing the current trigger therefore does
 not rewrite what historical Runs say happened.
 
-Deleting or disabling an Automation stops future admission; a Run admitted
+In unreleased 0.3 development source, **History** in an Account schedule popover
+or a saved Workflow's trigger row opens History filtered to that trigger.
+Each occurrence's **Edited by** byline comes from the version accepted for that
+Run, so later edits do not change its attribution.
+
+Deleting or disabling a Workflow stops future admission; a Run admitted
 before that change keeps its frozen recipe and assignments and continues
 through the normal Run lifecycle.
 
@@ -742,6 +882,6 @@ through the normal Run lifecycle.
 
 - [Starting a session](/sessions/new-session-shortcuts) — where scheduled sessions are created.
 - [Agent autonomy](/extending/agent-autonomy) — agents creating sessions themselves.
-- [Feature flags](/extras/feature-flags) — the `automations` gate and its dependent `workflows` gate.
-- [Webhook ingress](/plugins/guides/webhooks) — declaring the events an automation can bind to.
+- [Feature flags](/extras/feature-flags) — the `workflows` gate and its released compatibility alias.
+- [Webhook ingress](/plugins/guides/webhooks) — declaring the events a workflow can bind to.
 - [CLI](/apps/cli)

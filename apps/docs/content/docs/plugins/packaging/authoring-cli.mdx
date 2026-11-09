@@ -122,6 +122,50 @@ code-trust action.
 [Install and trust](/plugins/packaging/install-trust) owns the detailed trust,
 update, rollback, enable/disable, inspection, and uninstall contracts.
 
+## Publish a plugin
+
+The generic publisher in **Settings → Plugins → Development** prepares and
+publishes the selected plugin project on its selected machine. This is a **0.3
+development-only** workflow; it does not establish availability in a released
+client or CLI.
+
+Start with a plugin project containing its package metadata and author source,
+and a machine you can manage. Open **Publish**, review the package name,
+version, listing, README, and changelog, then use **Sign in to npm** to open
+Connect and select or sign in to an npm registry profile. See
+[npm registry sign-in](/plugins/packaging/install-trust#private-registries) for
+machine-login, browser, and token choices. Credentials stay on the selected
+machine through its existing npm profile owner. Do not paste a
+token or one-time code into an Action input or Agent conversation. Connecting
+preserves the open form's edits. On a shared machine, read the disclosure before
+entrusting credentials: the machine's owner can inspect material delivered to
+it. Use access alone does not authorize publishing with its npm profiles.
+
+Use **Check and prepare** and inspect its report and file inventory before
+publishing.
+The report lists the actual archive's size, packed files, test status, and
+available diagnostics; a missing test command is reported as unconfigured. Listing and
+version edits apply to this operation's staged copy. The package metadata, cold
+manifest, runtime manifest, and discovery projection use the same effective
+metadata; your author source is left intact. Editing the form invalidates its
+prepared candidate. If the archive changes before upload, review the replacement
+report before publishing.
+
+**Publish** is the public effect and follows the normal Action approval policy;
+Agent publication asks by default. Preparation adds no separate publication
+approval. The same workflow is available through the development publication
+Actions in the [host Action reference](/plugins/api/host-actions), including
+`plugins.dev.publication.inspect`, `plugins.dev.publication.prepare`,
+`plugins.dev.publish`, and `plugins.dev.publication.status`. Public inputs select a
+profile by identity and never carry its credentials. Publication currently
+selects public npm access; using a private registry connection does not select
+private package visibility.
+
+When publishing a project through Actions, use preparation's `result.projectRoot` as the
+publication's `projectRoot`. Inspection can begin from a file locator;
+preparation returns the canonical project directory used for npm configuration
+and the selected SCM effects.
+
 ### Publish a Bot template
 
 For an authored plugin package, declare a keyed `botTemplates` record in
@@ -132,6 +176,70 @@ one package and needs no runtime registration. Follow the
 and its public example, then use the ordinary check, pack and publication
 workflow on this page. Each JSON file is a portable `BotTemplateReleaseV1`,
 not a private draft or a reference to its author's Session.
+
+In the template editor, choose **Publish** to save the private draft and open the
+same publisher. Review one version and changelog for both the template release
+and its plugin package. Opening the form or preparing its files does not release
+the template. Publishing creates or reuses the reviewed template release before
+uploading the package; if npm fails, the release remains available for a retry.
+
+The generated package carries the reviewed portable template, without the
+private draft or source Session identifiers. It needs no local source folder.
+Action callers supply the saved draft revision and release projection through
+the publication input's optional `botTemplate` field; `projectRoot` is optional
+for that input. GitHub source operations require a real source folder, while a
+GitHub release can target a selected existing repository without one.
+
+### Direct publication and npm approval
+
+Choose the publication mode supported by your registry credentials. Direct
+publication reports **Published on npm** only after npm confirms the upload. A
+staged upload returns `awaiting_maintainer`, shown as **Awaiting npm approval**, with
+the stage identity and review link. Open the npm review, approve the stage there,
+then explicitly use **Check publication**. Happier does not poll for promotion
+or upload another copy while waiting.
+
+For npmjs.com, a maintainer promotes staged versions with 2FA. Staging a new
+package name creates a public `0.0.0-stage` placeholder; the submitted version's
+contents remain unavailable until promotion. See npm's
+[staged publishing guide](https://docs.npmjs.com/staged-publishing/).
+Signing in alone does not guarantee direct-publish permission: npm distinguishes
+[stage-only and direct-publish tokens](https://docs.npmjs.com/about-access-tokens/#about-stage-only-tokens).
+
+### History and recovery
+
+History reads the selected package's versions from the selected registry.
+Loading history does not search every package owned by your npm account.
+Registry search indexing can lag publication; use the confirmed package link
+or refresh discovery explicitly.
+
+If the upload reply is lost, the result is `outcome_unknown`. Cancellation after
+an upload begins can have the same result: the package may already exist. Use
+**Check publication** to read that exact name and version and compare its
+integrity with the attempted archive. Matching bytes confirm publication;
+different bytes report a version conflict; a missing version remains a distinct
+result. Neither a lost reply nor a missing version automatically replays the
+upload. Resolve the result before deliberately submitting another publication.
+
+For authentication or a registry challenge, return to the private credential
+flow. For a version conflict, review the published version and deliberately
+choose another version; Happier does not reserve a name or bump it for you.
+
+### Optional GitHub publication
+
+Select GitHub separately when you want repository creation, a source commit or
+push, or a release alongside npm. Review the repository, branch, selected commit
+paths, tag, and notes. Source publication uses the existing SCM workflow and
+ordinary push; unrelated working files stay outside the selected commit.
+GitHub effects start after npm publication is confirmed, including after staged
+promotion has been checked. If a staged upload becomes published, use
+**Continue with GitHub** to run the selected GitHub effects explicitly.
+
+The result keeps npm and GitHub outcomes separate. A GitHub failure preserves
+the npm success and any source ref already pushed. **Retry GitHub** is a new,
+deliberate Action: it checks the selected npm version and retries only the
+chosen GitHub effects, without uploading to npm again. Review an uncertain
+GitHub outcome before retrying it.
 
 ## Reload a development source
 
@@ -235,3 +343,9 @@ rather than repurposing them to prepare a source candidate.
 | Private registries | `hdev plugins registry add`, `login`, `test`, `logout`, `remove`, and `list` |
 | Marketplace sources | `hdev plugins marketplace sources list`, `add`, `enable`, `disable`, and `remove` |
 | Marketplace listings | `hdev plugins marketplace list`, `show`, and `install` |
+
+## Related
+
+- [Pack plugins](/plugins/packaging/pack)
+- [Plugin marketplace](/plugins/packaging/marketplace)
+- [Install and trust](/plugins/packaging/install-trust)

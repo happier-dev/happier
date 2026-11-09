@@ -23,6 +23,7 @@ Happier should project these from manifest/protocol data:
 - UI surface descriptors
 - MCP server and discovery descriptors
 - data-only `registrySources` declarations (0.3 development)
+- `backupDestinations` configuration schemas, credential roles, restic transport/locality facts and qualified Action refs (0.3 development)
 - declared UI inputs and the host-generated artifact graph
 
 ## Why this matters
@@ -38,6 +39,13 @@ No-execute projection lets Happier:
 
 ## Handler binding happens later
 
+In unreleased 0.3 source, app `registrySources` can point to a contained
+`packageContent.path` instead of HTTPS. The registry host reads inert data
+from the admitted supplier's current version and occurrence; it never imports
+the plugin to list or select a template. The same strict selected descriptor
+and content pin apply to remote and packaged sources. See
+[Registry sources in development](/plugins/manifest/contributions#registry-sources-in-development).
+
 Executable handlers are bound through the Action's declared daemon or exact
 client activation target. For a daemon target, an ordinary
 `definePlugin({ actions: { ... } })` declaration projects the Action and its
@@ -51,6 +59,15 @@ Cross-plugin contribution authoring follows the same rule: a feature protocol's
 role bindings as cold data. The host-normalized catalog owns later admission,
 currentness, and execution. A target does not scan contributor Actions, and a
 contributor does not create a callback registry or another dispatcher.
+
+Backup destination discovery follows this same boundary. The descriptor carries
+nonsecret configuration and qualified `test` / `open` references; discovery does
+not contact storage, resolve credentials or run a probe. Ordinary Actions own
+execution when a native transport is available. The maintained
+`examples/public-authoring` companion returns an explicit example-owned
+unavailable result from both Actions: it demonstrates declaration and binding,
+without claiming configure, backup or restore support. See
+[backup destination declarations](/plugins/manifest/contributions#backup-destination-declarations-03-development-source).
 
 ## Avoid split-brain declarations
 

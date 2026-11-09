@@ -45,7 +45,7 @@ When the app is already open, one committed event produces one visible alert on 
 
 ## What happens when you tap a notification
 
-If the notification contains a session route, Happier opens that session.
+If the notification contains a session route, Happier opens that session. In development builds, a notification that names an Account also requires that Account’s saved sign-in details. Signing in to a different Account on the same Home cannot inherit the destination, including after adding a Home. Older notifications without an Account keep their existing review navigation.
 
 If the notification belongs to a different saved server than the one currently active:
 
@@ -61,7 +61,7 @@ The mobile background permission actions below are an unreleased development cap
 On the mobile app, current interactive notification actions are:
 
 - **Permission requests**: `Allow`, `Deny`
-- **User-action requests**: `Answer`
+- **User-action requests**: `Answer`, or numbered choices and `Reply` for supported simple questions in development builds
 
 Their behavior is intentionally different:
 
@@ -75,13 +75,15 @@ User-action requests include cases such as:
 - **AskUserQuestion**
 - **Exit Plan Mode**
 
-Happier does **not** currently try to send freeform or multiple-choice answers directly from the notification itself. The action button is a fast path back into the correct session.
+**Development builds:** request-preview and device-local notifications can offer numbered buttons for one question with up to three choices, or a native `Reply` field for one short text answer. The notification includes each numbered option and its description. Inline replies require request previews and an exact saved Account and request turn. Multiple questions, multiple selections, longer forms, and previews that exceed the push payload budget retain `Answer` and the full session flow. The separate Home-owned closed-app alert path continues to open the session for review.
+
+A confirmed canonical completion can also remove the matching ordinary permission or question notification. Cleanup checks the original Home, Account, session, request and turn; it preserves unknown or newer requests and runs even when sending local notifications is disabled.
 
 ## Desktop Guard warnings (development)
 
 The development Tauri client has a native transport for **Keep running** and
-**Stop now** on an idle-stop warning. Native builds and desktop validation are
-pending; this is not a claim of released availability. Both buttons use the
+**Stop now** on an idle-stop warning. Desktop validation is pending;
+this is not a claim of released availability. Both buttons use the
 same Guard Actions and approval preferences as the app. A replaced or cancelled
 warning cannot act on a later warning, and a reachable current Guard observation
 withdraws the resolved warning.
@@ -89,11 +91,16 @@ withdraws the resolved warning.
 Linux needs a desktop notification service with action support. macOS needs a
 real app bundle and notification permission; an unbundled development binary
 cannot use its Terminal identity for these actions. Windows needs an installed
-app with its notification identity registered. Keep Happier running, including
-in the background, to receive actions and withdraw warnings. Fully quitting it
-ends those process-owned callbacks; cold-start actions and Windows Action Center
-delivery remain unverified. Open the session to inspect its current countdown
-and use its in-app control.
+app with its notification identity and app links registered. macOS and Windows
+notification payloads retain the original Home, Account and warning so a launch
+response can be checked against current state. An action from a previous Account
+cannot run after signing in to another Account on that Home.
+
+Keep Happier running on Linux, including in the background, to receive native
+actions. Fully quitting ends its notification connection; reopen the session to
+use its current in-app warning. Retained Windows Action Center activation still
+needs an installer identity change, and native cold-start behavior remains
+unverified. Open the session to inspect its countdown and use its in-app control.
 
 ## Server-aware safety rules
 
@@ -131,7 +138,7 @@ Instead it:
 - prefills the incoming server URL
 - shows a hint that this server is not saved yet
 
-After you choose **Add & Use**, Happier continues to the original session automatically.
+After you choose **Add & Use**, Happier continues to the original session when its target Account is available. If the notification names an Account whose sign-in details are missing, sign in to that Account and tap the notification again.
 
 ## Why this flow is strict
 
@@ -145,7 +152,7 @@ A live mobile action requires a saved Home and saved sign-in details for an acco
 
 The CLI checks that the request is still the one shown in the notification. An alert from an earlier turn cannot answer a newer request. Only an accepted response is confirmed; rejection or an uncertain result is not reported as approval success.
 
-If a response is rejected or cannot be confirmed, Happier saves a generic recovery notice for when the app is active. It does not open the app from the background or automatically resend the decision. Open the relevant Home and session to inspect the current request before responding again. A saved cold-start response is navigation intent for review, never fresh authority to approve or deny. Only the generic notice is persisted; it contains no permission decision or session content.
+If a response is rejected or cannot be confirmed, Happier saves a recovery notice for when the app is active. **Review pending requests** opens the Inbox under the original saved Home and Account when those sign-in details are still available. A different Account cannot inherit that destination; sign in to the original Account before reviewing it. Older notices without a saved target open the aggregate Inbox. Happier does not open the app from the background or automatically resend an answer. A saved cold-start response is navigation intent for review, never fresh authority to respond. Only the presentation target is persisted; it contains no request, answer, permission decision or session content.
 
 Background action delivery depends on the installed native build and OS lifecycle rules, including Android battery restrictions and force-stop state. iOS can expire background execution before a response is confirmed; Happier records a review notice rather than replaying the decision. Saved iOS credentials retain their existing access restriction while the device is locked. End-to-end notification-action lifecycle and physical-device validation are not yet complete. Ordinary notification taps and `Answer` keep their existing foreground paths.
 

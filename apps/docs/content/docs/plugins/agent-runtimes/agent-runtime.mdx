@@ -155,6 +155,17 @@ adapt Agent-specific decisions while preserving host ownership:
 These fields generate the one activation registration. Do not reproduce the
 host ABI registrations in an ordinary author module.
 
+In 0.3 development source, `preflightSessionControls` also accepts
+`resolveMaxInputUnicodeCharacters(input)`. Return the runtime transport's known
+turn-input limit in Unicode scalar values, or `null` when unknown or inapplicable.
+The callback receives Account settings and runtime-selection facts independently
+of model-catalog probes. The host subtracts its actual prepared text reservation
+before exposing a Run's effective budget; provider refusal remains the backstop.
+For a plugin-author example, Codex's contribution in
+`packages/plugins/codex/src/agent/lifecycle/preflight/sessionControls.ts` supplies
+the app-server limit for native, Provider-bound and Team routes, and returns
+`null` for ACP. Model-derived evidence remains separate from this runtime fact.
+
 ## Design rule
 
 The runtime is an agent leaf. It should adapt agent-specific behavior into Happier contracts. It should not own host session lifecycle, durable transcript writes, execution-run public state, or UI status rules.

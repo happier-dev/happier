@@ -31,6 +31,8 @@
     "custom-acp",
     "acp-backends",
     "provider-integrations",
+    "vercel-ai-gateway",
+    "cloudflare-ai-gateway",
     "feature-matrix"
   ]
 }

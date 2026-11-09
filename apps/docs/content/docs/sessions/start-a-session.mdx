@@ -21,6 +21,53 @@ The important product rule is simple:
 
 The new-session composer follows the same input rules as the normal session composer. If **Enter to Send** is enabled in [Session settings](/sessions/session-settings), Enter starts the session when the first message is ready to send. Shift+Enter still inserts a new line on web and on iOS/iPadOS with a physical keyboard.
 
+## Send and start another
+
+Hold the send button (or press `Mod+Shift+Enter`) and choose **Send and start another** to start several sessions in a row. The session keeps starting in the background, a fresh draft opens, and the composer stays ready for the next prompt. A line in the composer tells you when the session has started, with **Open** to go to it.
+
+To make this the default, choose **Stay and start another** under **After sending** in [Session settings](/sessions/session-settings). The same menu and shortcut then offer **Send and open session** for one message.
+
+If a background start fails, the composer says why and offers **Continue editing**; your prompt stays in its draft. A session that needs a temporary computer stays on its own draft instead, so you can follow and stop the machine setup.
+
+## Keep writing after you send
+
+On phones and tablets, the pin in the composer's status row keeps the keyboard open after you send. **Keep composer focused after sending** in [Session settings](/sessions/session-settings) is the same choice; with a hardware keyboard it is on by default. Tapping the transcript still closes the keyboard.
+
+On iOS and Android, flick up or down over an empty composer to step through your previous messages, as the arrow keys do on a hardware keyboard; a small counter shows where you are. Keep flicking to go further. A slow drag scrolls a long recalled message instead. Tap into the message or start typing to stop browsing; once the composer is empty again, flicking works again. A new-session composer recalls your recent prompts from any session.
+
+## Docked composer in development
+
+The 0.3 development UI adds a **Docked** presentation on web, desktop, iOS, and Android. It keeps
+one New composer open while you use other pages. Opening New again focuses the
+current draft; **Start another** creates a fresh draft. Navigating underneath
+preserves the chosen machine, folder, prompt, and source context. Tapping outside
+keeps the composer open and dismisses its keyboard on phones. Android Back closes
+the dock while its input has focus; otherwise Back belongs to the page.
+
+On a desktop, the card sits at the bottom center of the page, between the
+sidebar and any open side panel, at the same width and height as a session's
+composer, so the draft is already where the session continues after you send it.
+Its status row carries Start another, Delete draft, Collapse, and Close as icons.
+Collapse folds the card into a **New session** pill at the bottom center, with a
+dot while the draft has text; the pill or New again unfolds it with the draft and
+focus kept. Drag either side edge to narrow or widen the card around its center,
+up to the width of the page; the width is kept on that device, shrinks to fit
+when a side panel opens or the window narrows, and a double-click on an edge
+returns it to the session composer's width. On phones the card stays full width above the
+tab bar.
+
+Sending from Docked leaves you on the current page, renews the draft, and offers
+**Open** for the created session. Docked is the default presentation for
+accounts that have not chosen one; an explicit Auto, Screen, or Modal choice
+is kept and retains its existing behavior.
+
+The separate New backdrop preference offers Subtle, Soft, Medium, and Rich, with
+Soft as the default. It changes New's backdrop, independently
+of the Home picture treatment. Phone Modals use the same short backdrop band as
+Docked. iOS uses masked blur; Android uses dimming, and Reduce Transparency
+removes blur and the soft picture. These additions are development-source behavior,
+not a released-client availability claim.
+
 ## What the new-session flow controls
 
 Think of session start as three layers:
@@ -265,6 +312,49 @@ The project **+** action can seed the flow from the newest session in that proje
 Those shortcuts keep draft prompt content, then replace launch selections such as machine, folder, backend, model, permissions, mode, MCP, connected services, and provider options with the shortcut source.
 
 For the full guide, see [New session shortcuts](/sessions/new-session-shortcuts).
+
+### Make your own Bot from a template
+
+**Availability:** This flow is in the unreleased 0.3 development checkout and
+requires matching development app, Home and daemon components. Setup and update
+integration is still being validated; this is not a stable-release feature.
+
+Open a released Bot template to review its instructions, memory rules and skills.
+You can download carried skill files before choosing **Make my own**. Choose the
+machine, backend, folder and permissions in the ordinary new-session controls,
+then review the template's needs. Found software shows its observed version;
+other software needs offer **Install** and, when optional, **Skip**. An unknown
+software state means Happier has no current result for the chosen machine.
+Use **Connect** for your accounts and supply the requested MCP inputs or saved
+keys. Required connections and inputs must be complete before **Create Bot**.
+Optional skips show what will be unavailable.
+
+Its copied content belongs to your new Bot; credentials and the author's private
+conversation are not copied. A failed copy or setup can leave the Bot and some
+resources created. Read the operation result before retrying; a created Bot alone
+does not prove that setup or its first start succeeded.
+
+The Bot's first greeting introduces it and offers the template's first task when
+one is included. That greeting uses read-only permissions. It does not start the
+task automatically or change the permissions you chose for the Session.
+
+Later, use **Review updates** from the Bot's template information to compare your
+accepted version with the author's release. Review the instruction result, skill
+files and any new setup needs before **Update Bot**. Conflicting text keeps your
+edits by default; **Both** keeps your text followed by the author's alternative.
+You can edit the resulting instructions. Learned memory stays unchanged, and
+the accepted version changes only after the selected update succeeds. If some
+changes fail, the result lists what was applied, kept and remains to review.
+
+**Skip this version** hides that offer while allowing later versions.
+**Stop following** keeps the Bot, copied content and source information. Direct
+shared copies can report their last accepted version to the template owner;
+this does not share the Bot's name, conversation or contents. Store copies do
+not send these reports.
+
+A Plain Account cannot copy or follow updates through a signed-in link to an
+encrypted template. Ask the author to publish the template to the Store; Store
+templates work with either Account mode.
 
 ### Composer action chips
 

@@ -18,20 +18,22 @@ clear answer about whether a feature is available, it treats it as unavailable.
 That is why a feature can seem to vanish when a server is unreachable, and why
 a misconfigured self-hosted server hides features rather than half-enabling them.
 
-There are 143 features in the catalog. 22 of them have a switch you can
-reach; the other 121 are decided before you get there.
+There are 147 features in the catalog. 29 of them have a switch you can
+reach; the other 118 are decided before you get there.
 
 ## Features you can turn on yourself
 
-These appear in **Settings → Features**. 7 of the 22 are marked experimental.
+These appear in **Settings → Features**. 4 of the 29 are marked experimental.
 
 | Feature | Id | Kind | Default |
 | --- | --- | --- | --- |
 | **Home Screen Widgets** | `app.ui.homeScreenWidgets` | Experimental | Off |
 | **Live Activities** | `app.ui.liveActivities` | Experimental | Off |
-| **Attachment uploads** | `attachments.uploads` | Experimental | Off |
-| **Automations** | `automations` | Standard | On |
-| **Subagents** | `execution.runs` | Experimental | Off |
+| **Bots** | `bots` | Standard | On |
+| `browser` | `browser` | Standard | On |
+| **Deployments** | `deployments` | Standard | On |
+| `devices` | `devices` | Standard | On |
+| **Subagents** | `execution.runs` | Standard | On |
 | **Diff syntax highlighting** | `files.diffSyntaxHighlighting` | Standard | On |
 | **Embedded file editor** | `files.editor` | Standard | On |
 | **Rich markdown editor** | `files.markdownRichEditor` | Standard | On |
@@ -39,15 +41,20 @@ These appear in **Settings → Features**. 7 of the 22 are marked experimental.
 | **Advanced syntax highlighting** | `files.syntaxHighlighting.advanced` | Standard | On |
 | **Memory search** | `memory.search` | Standard | On |
 | **Pets** | `pets.companion` | Experimental | Off |
+| **Local provider discovery** | `providers.localDiscovery` | Standard | On |
 | **Source control operations** | `scm.writeOperations` | Standard | On |
+| `search` | `search` | Standard | On |
+| **Board** | `sessions.board` | Standard | On |
+| **Discussions** | `sessions.conversations` | Standard | On |
 | **External Sessions** | `sessions.direct` | Standard | On |
-| **Session folders** | `sessions.folders` | Standard | On |
-| **Friends** | `social.friends` | Experimental | Off |
+| **Following** | `sessions.following` | Standard | On |
+| **Teams** | `teams` | Standard | On |
 | **Embedded terminal** | `terminal.embeddedPty` | Standard | On |
 | **Usage reporting** | `usage.reporting` | Standard | On |
 | `voice` | `voice` | Standard | On |
 | **Voice agent** | `voice.agent` | Standard | On |
 | **Machine speech** | `voice.daemonInference` | Standard | On |
+| **Workflows** | `workflows` | Standard | On |
 | **Zen** | `zen.navigation` | Experimental | On |
 
 Experimental toggles are hidden until you turn on the experiments switch at the
@@ -56,6 +63,12 @@ find the row, that switch is almost always why.
 
 A toggle only offers what the server already allows. Turning something on
 locally cannot enable a feature the server has not advertised.
+
+In 0.3 development, Account toggles control presentation and new work. Turning
+one off does not cancel work already started or delete saved data. Deployments
+and Bots default on; their new-work Actions follow the same decision. Existing
+Bots remain readable and deletable, and deployment receipts, cancellation,
+unlinking and teardown remain available for recovery.
 
 ## Features the server decides
 
@@ -83,13 +96,15 @@ behaviour but still needs the server to advertise the capability.
 | `app.ui.releaseNotes` | Curated release-notes story-deck modal (Notelet-style cards). | client | — | — |
 | `app.ui.sessionGettingStartedGuidance` | Session getting-started guidance UI (includes CLI install instructions). | client | — | — |
 | `app.ui.storeReviewPrompts` | In-app store review prompts (native App Store / Play Store review sheet). | client | — | — |
+| `artifacts.queryHints` | Exact Artifact kind queries, derived coverage, and authorized hint batches. | server | — | — |
+| `attachments.uploads` | Client attachment uploads (files/images) sent to session runners for LLM access. | server | — | `HAPPIER_FEATURE_ATTACHMENTS_UPLOADS__ENABLED` |
 | `auth.login.keyChallenge` | Key-challenge login route availability (POST /v1/auth). | server | — | — |
 | `auth.mtls` | mTLS client certificate authentication support. | server | — | `HAPPIER_FEATURE_AUTH_MTLS__ENABLED` |
 | `auth.pairing.boundQrV2` | Direction- and Home-bound QR pairing v2 wire semantics. | server | `auth.pairing.desktopQrMobileScan` | — |
 | `auth.pairing.desktopQrMobileScan` | Pairing session support for desktop/web QR → logged-out mobile scan sign-in. | server | — | — |
 | `auth.recovery.providerReset` | Auth provider reset support during recovery flows. | server | — | — |
 | `auth.ui.recoveryKeyReminder` | Recovery key reminder UI behavior. | server | — | — |
-| `browser` | Browser view vocabulary, target dispatch, and browser-adjacent UI surfaces. | server | — | `HAPPIER_FEATURE_BROWSER__ENABLED` |
+| `automations` | Released compatibility alias of workflows; not a separate switch. | server | — | — |
 | `browser.automation` | Host-owned browser automation control and action timeline surfaces. | server | `browser.internal` | `HAPPIER_FEATURE_BROWSER_AUTOMATION__ENABLED` |
 | `browser.automation.eval` | Policy-bound browser automation eval capability layered on diagnostics. | client | `browser.automation`, `browser.diagnostics` | — |
 | `browser.automation.injectedPage` | Centralized injected-page browser automation runtime when adapter policy allows it. | client | `browser.automation` | — |
@@ -108,7 +123,6 @@ behaviour but still needs the server to advertise the capability.
 | `connectedServices.poolQuotaLimitSelection` | Pool-specific selection of provider-reported quota allowance families. | server | `connectedServices.accountFallback`, `connectedServices.quotas` | — |
 | `connectedServices.quotas` | Connected services quota snapshots (informational usage meters) surfaces and runtime. | server | — | `HAPPIER_FEATURE_CONNECTED_SERVICES_QUOTAS__ENABLED` |
 | `connectedServices.subscription` | Connected service subscription status snapshots and details. | server | — | — |
-| `devices` | Device and simulator preview/control surfaces. | client | — | `HAPPIER_FEATURE_DEVICES__ENABLED` |
 | `devices.simulatorPreview` | Simulator and emulator preview panes over the live-stream substrate. | server | `devices`, `machines.liveStream`, `browser.viewTargets` | `HAPPIER_FEATURE_DEVICES_SIMULATOR_PREVIEW__ENABLED` |
 | `e2ee.keylessAccounts` | Keyless account support (accounts may omit E2EE signing keys). | server | — | — |
 | `encryption.accountOptOut` | Per-account encryption opt-out toggle support. | server | `encryption.plaintextStorage` | — |
@@ -145,20 +159,16 @@ behaviour but still needs the server to advertise the capability.
 | `plugins.webhooks` | Durable public webhook ingress for plugin-contributed Actions. | server | `plugins` | `HAPPIER_FEATURE_PLUGINS_WEBHOOKS__ENABLED` |
 | `prompts.library` | Prompt library (docs + skills bundles) stored as artifacts. | client | — | — |
 | `providers` | First-class model-provider connections, catalogs, and agent bindings. | server | — | `HAPPIER_FEATURE_PROVIDERS__ENABLED` |
-| `providers.localDiscovery` | Machine-local provider discovery through the local-services listener inventory. | server | `providers`, `localServices.inventory` | `HAPPIER_FEATURE_PROVIDERS_LOCAL_DISCOVERY__ENABLED` |
 | `providers.localModelManagement` | Explicit, bounded local model-management actions for trusted provider contributions. | server | `providers` | `HAPPIER_FEATURE_PROVIDERS_LOCAL_MODEL_MANAGEMENT__ENABLED` |
 | `remoteHosts.management` | Remote SSH host profile persistence and management surfaces. | server | — | — |
 | `remoteHosts.secretMaterial` | Remote host secret material persistence (passwords/private keys) for saved SSH profiles. | server | `remoteHosts.management` | — |
-| `search` | Personal Home plaintext transcript search indexing and authenticated query route. | server | — | `HAPPIER_FEATURE_SEARCH__ENABLED` |
 | `sessions` | Session-level product surfaces and control-plane capabilities. | client | — | — |
 | `sessions.agentSwitching` | Continue one Session in place with another coding Agent, and create configurable Sessions from a typed source-context recipe. | server | `sessions` | `HAPPIER_FEATURE_SESSIONS_AGENT_SWITCHING__ENABLED` |
 | `sessions.autonomousExchange` | Exact accepted-start custody and Account check-in controls for autonomous Session exchanges. | server | `sessions` | — |
-| `sessions.board` | Shared Session Board: durable Session surface items, their organization into Board views, and the Board Actions that author them. | server | `sessions` | `HAPPIER_FEATURE_SESSIONS_BOARD__ENABLED` |
-| `sessions.conversations` | Human conversations inside a shared Session: discussions, authored messages, mentions and private read cursors. | server | `sessions`, `sharing.session` | `HAPPIER_FEATURE_SESSIONS_CONVERSATIONS__ENABLED` |
 | `sessions.drafts` | Cross-device composer and new-session draft synchronization. | server | `sessions` | `HAPPIER_FEATURE_SESSIONS_DRAFTS__ENABLED` |
 | `sessions.ephemeralRunner` | Creator-authorized temporary-computer Session activation. | server | `sessions`, `machines`, `sessions.drafts` | `HAPPIER_FEATURE_SESSIONS_EPHEMERAL_RUNNER__ENABLED` |
 | `sessions.filteredListing` | Structurally filtered Session listing before Home-local pagination. | server | `sessions` | `HAPPIER_FEATURE_SESSIONS_FILTERED_LISTING__ENABLED` |
-| `sessions.following` | Durable per-Account Follow of an accessible Session, its notification/Voice preferences, and the four auto-follow defaults. | server | `sessions` | `HAPPIER_FEATURE_SESSIONS_FOLLOWING__ENABLED` |
+| `sessions.folders` | Organize synced sessions into user-defined folders. | server | `sessions` | — |
 | `sessions.handoff` | Session handoff between machines. | server | `sessions` | `HAPPIER_FEATURE_SESSIONS_HANDOFF__ENABLED` |
 | `sessions.usageLimitRecovery` | Session usage-limit recovery, wait/resume intents, and usage-limit retry controls. | server | `sessions` | `HAPPIER_FEATURE_SESSIONS_USAGE_LIMIT_RECOVERY__ENABLED` |
 | `setup.machine.allowLocalMachineSetup` | Build-time policy gate: whether local machine setup surfaces are allowed. | client | — | — |
@@ -177,7 +187,7 @@ behaviour but still needs the server to advertise the capability.
 | `sharing.pendingQueueV2` | Pending queue v2 sharing/bridging surfaces and runtime. | server | — | — |
 | `sharing.public` | Public sharing link support for session content. | server | — | — |
 | `sharing.session` | Session sharing with Accounts, Teams and Groups: access grants, responsibility and atomic initial access. | server | — | — |
-| `teams` | Team membership, governance, and administration surfaces. | server | — | `HAPPIER_FEATURE_TEAMS__ENABLED` |
+| `social.friends` | Friends and related social feature availability. | server | — | `HAPPIER_FEATURE_SOCIAL_FRIENDS__ENABLED` |
 | `teams.credentialResources` | Team shared credential resource administration and use. | server | `teams` | `HAPPIER_FEATURE_TEAMS_CREDENTIAL_RESOURCES__ENABLED` |
 | `teams.credentialResources.externalApi` | External API access to Team credential resources. | server | `teams.credentialResources` | `HAPPIER_FEATURE_TEAMS_CREDENTIAL_RESOURCES_EXTERNAL_API__ENABLED` |
 | `terminal.renderer.androidTermux` | Optional Android Termux-based native terminal renderer. | client | `terminal.renderer.native` | — |
@@ -185,8 +195,8 @@ behaviour but still needs the server to advertise the capability.
 | `terminal.renderer.native` | Optional native terminal renderers gated behind the byte-stream terminal foundation. | client | `terminal.transport.byteStream` | — |
 | `terminal.transport.byteStream` | Byte-stream terminal transport using bounded base64 frames over machine RPC. | server | `terminal.embeddedPty` | `HAPPIER_FEATURE_TERMINAL_TRANSPORT_BYTE_STREAM__ENABLED` |
 | `updates.ota` | Expo over-the-air update checks and apply flows. | server | — | `HAPPIER_FEATURE_UPDATES_OTA__ENABLED` |
+| `usage.compactBatch` | Compact Usage batch delivery and grouped client-side pricing operands. | server | — | — |
 | `voice.happierVoice` | Happier-hosted voice backend availability (server-configured voice). | server | `voice` | — |
-| `workflows` | Structured Workflow authoring, execution, inspection, and Action surfaces. | server | `automations` | `HAPPIER_FEATURE_WORKFLOWS__ENABLED` |
 
 Where a feature depends on another, both must be enabled — enabling the
 dependant alone does nothing.

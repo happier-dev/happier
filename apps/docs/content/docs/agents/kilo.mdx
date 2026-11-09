@@ -41,6 +41,23 @@ Auth-status detection for Kilo is currently conservative. Happier can open the l
 
 For the shared user guide, see [Agent authentication](/agents/provider-authentication).
 
+## Provider models (0.3 development)
+
+Development source can run Kilo with a model selected from a compatible Happier
+[Provider connection](/agents/provider-integrations). Chat Completions and Responses use a
+bearer API key; Anthropic Messages uses an `x-api-key` key. Credential-free local
+Providers are supported over Chat Completions only. Other protocol or credential
+combinations are refused before launch.
+
+The selected endpoint and model apply to that Session through Kilo's process-only
+configuration. Keys are supplied separately through the child environment, using
+Kilo's documented [environment references](https://kilo.ai/docs/code-with-ai/platforms/cli#environment-variables).
+Happier does not write the Provider key to Kilo's shared configuration or login
+store. Changing the Provider requires restarting the Session.
+
+This is development-only support. Authenticated turns against real Providers and
+platform-specific CLI confirmation remain release checks.
+
 ## Enable Kilo in Happier (experimental)
 
 Kilo is behind Happier’s experimental Agent rollout.

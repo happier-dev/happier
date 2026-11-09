@@ -21,6 +21,8 @@ The same terminal foundation is also reused for **provider login flows** from pr
 <Callout type="info">
   This section describes the current development build (unreleased). Released builds use a
   single terminal and a location setting (bottom panel, sidebar or details panel).
+  Interactive machine terminals require a person: Agent automation cannot discover,
+  read or control your shell. Package-script launches use the finite Project command path.
 </Callout>
 
 On web, desktop and tablets the session's terminals live in the **bottom panel**, under the
@@ -112,6 +114,8 @@ When the bottom panel is shown as an overlay:
 ## Session continuity
 
 The embedded terminal is meant to feel like one session-owned terminal, even if you move it around.
+
+In the development build (unreleased), terminals pause output reads while their panel or tab is hidden and resume when shown again. If connecting stalls, choose **Retry** to make a fresh connection attempt to the same terminal while keeping its process running.
 
 What to expect:
 

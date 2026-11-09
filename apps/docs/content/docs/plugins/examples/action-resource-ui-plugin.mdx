@@ -121,6 +121,141 @@ export const renderSurface = defineUiSurface(StatusPanel);
 `Action.Execute` names the same local id the manifest declared; the host binds
 it. Do not add a local click handler that calls your daemon another way.
 
+## Add a Machine page in development
+
+In **0.3 development source**, use the same surface declaration for a page in
+the selected Machine. Change the placement target and give the surface its own
+id; the public build derives its renderer/artifact identity as before:
+
+```ts
+import { defineUiSurfaceDefinition } from '@happier-dev/plugin-sdk';
+
+const machinePanel = defineUiSurfaceDefinition({
+  id: 'machine-status',
+  placement: 'appPage',
+  target: { kind: 'machine' },
+  title: 'Build status',
+  renderer: {
+    kind: 'reactNative',
+    requiredHostMethods: ['context', 'executeAction', 'readResource'],
+  },
+});
+// Add machinePanel to definePlugin({ ui: { surfaces: [...] } }).
+// Export its component at ./happier-plugin-ui/machine-status-renderer.
+```
+
+Read the selected Machine from the public surface context. For example, a
+visible page can request the universal service inventory through its canonical
+safe read Action when that Action is available on the target host:
+
+```ts
+import type { PluginUiHostApi } from '@happier-dev/plugin-sdk/ui';
+
+async function readMachineServices(host: PluginUiHostApi, signal?: AbortSignal) {
+  const { target } = await host.context({ signal });
+  if (target.kind !== 'machine') {
+    throw new Error('Open this page from a Machine.');
+  }
+  return host.executeAction('machines.services.list', {
+    serverId: target.serverId,
+    machineId: target.machineId,
+  }, { signal });
+}
+```
+
+In React Native, `useSurfaceContext()` from `@happier-dev/plugin-ui` exposes the
+same target. Keep reads tied to visible demand and pass the mounted cancellation
+signal. Use the existing service Actions and their admitted ids for controls,
+detail and bounded logs. Resource continuations use that same loader and owner
+scope; do not replace them with a native inventory, transport, poller or local
+approval decision. A host that does not provide a service capability remains
+unavailable.
+
+The development target also includes `homeId` and `installationId` when the host
+has verified them. A controller-addressed provisioner read uses those facts
+explicitly; a contributed plugin Action still runs at its selected execution
+origin:
+
+```ts
+async function checkMachineProvisioner(
+  host: PluginUiHostApi,
+  contribution: { pluginId: string; localId: string },
+  signal?: AbortSignal,
+) {
+  const { target } = await host.context({ signal });
+  if (target.kind !== 'machine' || !target.homeId || !target.installationId) {
+    throw new Error('The addressed Machine has no current controller identity.');
+  }
+  return host.executeAction('machines.provisioners.check', {
+    homeId: target.homeId,
+    controller: { machineId: target.machineId, installationId: target.installationId },
+    contribution,
+  }, { signal });
+}
+```
+
+`target: { kind: 'services' }` remains a Services-panel target; it is refused as
+an `appPage` target. The host withholds retired, conflicting and mismatched
+destinations before mounting. The maintained `public-authoring` SDK companion
+demonstrates the declaration with a declarative text renderer and exports
+`machinePageAuthoring.readMachinePageTarget(host, signal)`. That helper reads
+only the mounted public context; its conformance test checks the exact routing,
+Home and installation identities, Services-panel rejection and retirement through the public UI
+testkit. The text renderer demonstrates authoring, while the Machine shell and
+integration-specific page supply the product experience. This example
+describes development source, not released availability or a completed
+loaded-platform check.
+
+For a page's create gesture, the same companion exports
+`machinePageAuthoring.openMachineConfiguration`. It uses the public host method
+to open the existing managed-Machine draft/review:
+
+```ts
+async function openMachineConfiguration(
+  host: PluginUiHostApi,
+  provisioner: { pluginId: string; localId: string },
+  signal?: AbortSignal,
+) {
+  await host.openManagedMachineConfiguration({ provisioner }, { signal });
+}
+```
+
+Use a qualified provisioner declared by the installed plugin. The host supplies
+Home/controller from the current Machine mount and validates the provisioner;
+the request contains no route or caller-selected controller. This navigation
+performs no acquisition. A host without the method reports `unsupported_method`;
+declare it in `requiredHostMethods` when the page cannot function without it.
+
+### Observe managed Machines in development
+
+Matching 0.3 development hosts expose their canonical active managed-Machine
+inventory through the existing Resource API. A Machine page can observe it
+without keeping its own list loader:
+
+```tsx
+import { useLivePluginResource } from '@happier-dev/plugin-ui/hostApi';
+
+const inventory = useLivePluginResource(
+  { hostRead: 'machines.managed.list', input: { homeId: target.homeId ?? '' } },
+  { enabled: Boolean(target.homeId && target.installationId) },
+);
+```
+
+The JSON value has the `machines.managed.list` result shape. The host admits
+the exact read against the mounted Account and Action policy, shares the
+existing active inventory, and invalidates it when another entry changes rows.
+Only `{ homeId }` is supported by this observation; archived or other query
+selectors are refused. Filter the admitted rows for the mounted controller and
+your provisioner. Preserve `resource.value` while stale, show its error and
+offer `inventory.refresh()` for Retry. There is no polling fallback. Older
+hosts refuse the unknown reference; use a matching development host.
+
+For allocation labels, use the shared
+[managed allocation classifier](/plugins/api/sdk-entrypoints#managed-allocation-presentation-in-development).
+An unconfirmed create without a correlated running receipt must not be shown
+as active creation. The maintained public author fixture demonstrates the
+same read/watch reference and classifier.
+
 ## Add host-rendered Session Inbox controls
 
 In **0.3 development source / Developer Preview**, a dynamic JSON Resource can
@@ -170,6 +305,28 @@ const page = { kind: 'ready', rows: [row], nextCursor: null };
 // Return JSON.stringify(page) from the declared index Resource's read callback.
 ```
 
+For a linked pull request, an optional `landing` supplies the retained observation:
+
+```ts
+const prRow = {
+  ...row,
+  landing: {
+    number: 42,
+    url: 'https://forge.example/acme/app/pull/42',
+    state: 'open',
+    observedAt: 1_000,
+  },
+} satisfies PluginSessionInboxRowV1;
+```
+
+On a matching development host, `state: 'open'` uses the existing Landing row,
+opens this URL and offers Settle through Happier's attention and read-state Actions.
+Publish the state your PR owner observed (`open`, `merged`, `closed`, or `unknown`);
+omit `landing` when no open PR is selected. A Session's explicit settled standing
+hides its Landing until that standing changes. The row is presentation data:
+automatic settlement belongs to the PR observation owner and must work while the
+Inbox is closed. Triage consumes Channels' retained observations for this flow.
+
 Control ids are nonempty strings unique within the row; labels can be literals
 or `{ key, fallback }`. This is the same button/effect binding used by
 [native notification buttons](/plugins/services/notifications#add-native-notification-buttons).
@@ -190,6 +347,54 @@ never runs an Action or grants person authority to plugin JavaScript.
 
 The host owns the control-row presentation; this declaration does not add a
 plugin renderer, Inbox producer registry or permission workflow.
+
+## Native Machine logs are not a plugin grant
+
+Unreleased 0.3 development types also describe a host-owned Machine log
+reference:
+
+```json
+{
+  "hostRead": "machines.services.logs",
+  "input": { "serverId": "home", "machineId": "machine", "serviceId": "worker" },
+  "expectedGeneration": "observed-service-generation",
+  "sourceRevision": "observed-native-log-source"
+}
+```
+
+This is a native host integration seam, not an additional Resource your plugin
+can read. The logs Action has no plugin-caller policy, so a mounted plugin is
+refused even if it knows this reference. The receiving host still owns Account,
+service-generation and approval checks; an arbitrary reference cannot grant log
+access. Generic Machine Resource RPC without original Action provenance is also
+refused. Native UI approval continuation and presentation remain integration work,
+not functionality supplied by this example. Use your own declared Resource for
+the plugin flow above.
+
+## Read a Session Recap in development
+
+Matching 0.3 development hosts expose the Session's existing Recap through the
+ordinary typed Actions service. This chooses the memory synopsis when memory is
+enabled and one exists, otherwise the latest delivered worker update. It does
+not ask a model to write a new digest.
+
+```ts
+const result = await context.services.actions.execute('session.activity.get', {
+  sessionId,
+  view: 'recap',
+});
+if ('view' in result && result.view === 'recap' && result.status === 'ready') {
+  const text = result.recap.text;
+  const body = result.recap.source === 'worker_update' ? result.recap.body : undefined;
+}
+```
+
+The same Action approval and Session content access apply. Preserve `loading`,
+`empty` and `unavailable` as distinct states; none carries summary text. If an older
+reader silently ignores the selector, the current executor refuses that result
+with `recap_view_unsupported`.
+Installed-plugin publication and loaded-host validation are separate from the
+development source contract.
 
 ## What to add next
 

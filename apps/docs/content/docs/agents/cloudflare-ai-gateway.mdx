@@ -1,0 +1,136 @@
+---
+title: Cloudflare AI Gateway
+description: Configure a Cloudflare model source with explicit endpoint, credential and request policy.
+---
+
+Route a compatible coding Agent through your Cloudflare gateway while Happier
+keeps its credentials in Saved Secrets.
+
+<Callout>
+  This integration is unreleased 0.3 development work. Use a development build
+  that includes the Provider plugin and matching host changes. Real Cloudflare
+  tenant acceptance remains outstanding; a locally ready connection does not
+  establish authenticated vendor access. Pairings remain experimental unless
+  their exact Agent, endpoint and model have verified evidence.
+</Callout>
+
+## What you need
+
+You need your Cloudflare account and gateway ids, an online machine with a
+compatible Agent installed, and credentials for the endpoint you intend to use.
+For Claude Code, supply both your own Anthropic API key and a Cloudflare token
+with AI Gateway Run permission. Cloudflare documents that Run tokens have
+[account-wide authority](https://developers.cloudflare.com/ai-gateway/configuration/authentication/):
+they can use every gateway in the account, including stored provider keys.
+Choosing one gateway in Happier does not narrow the token's vendor authority.
+
+Cloudflare receives the content routed through it as an external processor.
+Review its retention and billing settings before sending private code.
+
+## Connect Claude Code
+
+1. Open **Settings → Providers**, choose **Cloudflare AI Gateway** and add a connection.
+2. Set its Anthropic endpoint to `https://gateway.ai.cloudflare.com/v1/ACCOUNT_ID/GATEWAY_ID/anthropic`, replacing both ids with your own.
+3. Bind the Cloudflare gateway token and your real Anthropic API key as separate Saved Secrets.
+4. Inspect the effective request policy and readiness on the machine that will run Claude Code.
+5. Add the exact unprefixed Anthropic model id manually, enable **Show in model picker**, and confirm the experimental pairing when prompted.
+6. Start an ordinary test turn that uses a tool, then check its streamed result and continuation.
+
+Claude uses pass-through: `x-api-key` carries your Anthropic key and
+`cf-aig-authorization` carries the gateway token. These are separate destinations
+in Cloudflare's [Anthropic contract](https://developers.cloudflare.com/ai-gateway/usage/providers/anthropic/).
+Do not enter either credential in public headers or the endpoint URL.
+Gateway-only, placeholder-key, stored-key and Unified Billing Claude modes are
+not offered until the required real-tenant check confirms that contract.
+
+## Connect Codex
+
+1. Add the same Cloudflare Provider connection, or open an existing one.
+2. Set its Responses endpoint to `https://gateway.ai.cloudflare.com/v1/ACCOUNT_ID/GATEWAY_ID/openai`.
+3. Bind the Cloudflare AI Gateway Run token as its API key. Codex does not use the separate Anthropic key.
+4. Add the exact native OpenAI model id manually, without an `openai/` prefix, and confirm the experimental pairing.
+5. Run a streaming test turn with a tool and inspect the continuation.
+
+The existing Codex adapter sends the gateway token in `cf-aig-authorization`,
+with no OpenAI Authorization header or fabricated OpenAI key. Cloudflare's
+[native OpenAI endpoint](https://developers.cloudflare.com/ai-gateway/usage/providers/openai/)
+defines that contract. An isolated Codex 0.162.1/Linux check exercised native
+model listing, streaming, a tool result and reasoning effort. Cloudflare tenant
+acceptance and model quality remain unverified. Supported effort choices come
+from the model metadata you declare, rather than guessed catalog facts.
+
+## Connect OpenCode with account Chat
+
+1. Set the Chat endpoint to `https://api.cloudflare.com/client/v4/accounts/ACCOUNT_ID/ai/v1`.
+2. Set the public `cf-aig-gateway-id` header to your gateway id. Missing routing information leaves this endpoint unready.
+3. Bind a Cloudflare API token with Workers AI Read permission as the connection's API key. A token used for both native endpoints and account Chat needs both endpoint permissions.
+4. Enter the exact prefixed wire model id, such as `openai/gpt-4.1`, and confirm the experimental pairing.
+5. Run a streaming test turn with a tool and inspect its continuation.
+
+An isolated OpenCode 1.19.0/Linux check completed a real Read and streamed
+tool-result continuation with that model id, the account bearer token and all
+request policies. It also preserved them on OpenCode's title-generation request.
+This establishes native feasibility, not Cloudflare entitlement, model quality,
+or Workers AI model tool support. Other Agent/model combinations are unmeasured.
+Keep the `@cf/author/model` prefix when deliberately adding a Workers AI model;
+its individual streaming/tool capabilities still need verification.
+
+Cloudflare's [REST API](https://developers.cloudflare.com/ai-gateway/usage/rest-api/)
+requires Workers AI Read for account Chat and bills third-party models through
+Unified Billing. Account Chat does not inherit the native endpoints' stored-BYOK
+contract. The default prepaid-billing restriction stays on until you explicitly
+review a different policy; a vendor refusal never triggers a billing fallback.
+
+## Request policy and other protocols
+
+Addresses stay within their selected endpoint family. Changing an address cannot
+switch its authentication method or model spelling. Development source declares
+Messages for Claude Code, Responses for Codex and account Chat characterized
+with OpenCode. All retain manual model entry and experimental capability
+consent. OpenCode's Responses driver
+cannot preserve gateway-only authentication and is incompatible with that
+endpoint. Copilot cannot preserve the required custom request policy; its
+Responses candidate is not offered. FX and Gemini are not direct pairings for
+these endpoint contracts.
+
+The default request policy disables Cloudflare stored logs, bypasses response
+caching and requires third-party provider credentials through
+`cf-aig-collect-log:false`, `cf-aig-skip-cache:true` and
+`cf-aig-no-wholesale:true`. Cloudflare documents these controls in
+[logging](https://developers.cloudflare.com/ai-gateway/observability/logging/),
+[caching](https://developers.cloudflare.com/ai-gateway/features/caching/) and
+[billing fallback](https://developers.cloudflare.com/ai-gateway/features/unified-billing/).
+They do not disable upstream prompt caching, exports or upstream retention.
+Workers AI has a separate gateway billing setting. Deliberately changing a
+public billing control may permit prepaid use; it does not grant permission to
+relax a gateway-level restriction.
+
+Public policy inherits template → Account → Machine. Resetting a header restores
+the lower layer; resetting an address preserves header overrides. Review the
+effective result before confirming a change. Missing required routing or
+credential facts make that endpoint unready without affecting an unused family.
+
+## If setup fails
+
+The initial catalog is manual: Test and Refresh do not perform a remote model
+or authentication probe. Use local binding readiness and an ordinary test turn;
+an unavailable probe is not a failed login or proof of a working token. An empty
+model list needs manual model entry, not a guessed catalog URL.
+
+For an unready endpoint, check its exact family address, required routing header,
+Saved Secret bindings and machine authority. For a vendor authentication or
+permission refusal, replace the appropriate credential; a deployment token is
+not an inference credential. A rejected model id needs the spelling accepted by
+that endpoint, not automatic prefix insertion or model substitution.
+
+This integration supplies no Cloudflare credit balance or actual-charge meter.
+Session token counts and estimates keep their existing meaning. Team sharing
+uses the existing Provider connection resource and broker; withdrawal refuses
+subsequent admitted requests instead of using a personal credential.
+
+## Related
+
+- [Provider integrations](/agents/provider-integrations)
+- [Models and engines](/agents/model-and-engine-selection)
+- [Provider authentication](/agents/provider-authentication)
+- [Cloudflare authentication](https://developers.cloudflare.com/ai-gateway/configuration/authentication/)

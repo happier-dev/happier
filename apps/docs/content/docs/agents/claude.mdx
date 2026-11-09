@@ -171,6 +171,42 @@ Practical guidance:
 - Use OAuth when the user does not already have Claude Code installed / logged in.
 - In the new-session auth picker, Claude-compatible backends will show only the Claude-related connected-service options they actually support.
 
+## Local session retention (development source)
+
+In the unreleased 0.3 development source, open **Settings → Agents → Claude**
+and choose a local session retention period. You can keep existing settings,
+restore Claude's default, choose 365 days or 36,500 days (100 years), or enter a
+positive whole number of days. The app asks for confirmation before a change
+that could shorten retention.
+
+This account preference applies to the user-level Claude settings on connected
+machines, including native Claude and Connected Services profiles. Online
+daemons apply changes when they receive them; newly paired or offline machines
+apply the current preference when they connect. Profile creation and credential
+refresh preserve the selected period. Existing Claude processes may pick up a
+settings change later; the status confirms the configured file value, not a
+completed cleanup or an effective policy inside every running process.
+
+**Keep existing settings** stops Happier managing retention and leaves previous
+edits in place. **Claude default** removes the user-level retention override.
+According to [Claude's settings reference](https://code.claude.com/docs/en/settings-reference#cleanupperioddays),
+the default is 30 days. Changing retention cannot restore deleted history.
+The 100-year option is finite.
+
+Expand a machine's status to see native and profile results. Offline results are
+last confirmed values; a pending preference is not shown as applied. Older
+daemons must be updated to apply and report this setting. File errors are shown
+without replacing malformed settings.
+
+Explicit launch settings, project settings and organization policy can override
+these user-level settings.
+Happier warns when it detects a local managed retention declaration, but it does
+not evaluate Claude's remote or MDM policy precedence. For the effective source,
+check `/status` inside Claude Code. The setting also affects standalone Claude
+that uses the same configuration directory. It does not change retention of
+Happier's stored transcript.
+
+
 ## Session handoff
 
 Claude supports Happier session handoff between machines.
@@ -203,6 +239,8 @@ In the app:
 
 Most settings below affect **Claude remote mode only**.
 **Discover models dynamically** affects the model picker for both Connected Services and the native Claude Code login. **Experimental: local permission bridge** affects **local mode**.
+
+In 0.3 development, native discovery also supports an `apiKeyHelper` in your enabled user Claude settings and the gateway configured by `ANTHROPIC_BASE_URL`. Happier executes that helper as a shell command on the machine running Claude, in the selected workspace directory. If it fails, the picker shows the built-in catalog and a failed refresh without substituting another account's credentials. Project and managed settings helpers do not run during model discovery. The saved native Claude login is used only with the default Anthropic endpoint. Invalid JSON, a non-object user settings root, or a non-string helper setting is skipped, matching Claude's noninteractive behavior.
 
 ## Settings reference (Claude remote)
 

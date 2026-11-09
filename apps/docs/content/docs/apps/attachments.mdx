@@ -27,6 +27,15 @@ Attachment sending stays on Happier’s shared transfer path. The end result is 
 - the session receives stable file paths
 - the agent reads those files from disk
 
+## Availability (0.3 development)
+
+In unreleased 0.3 development, uploads are on by default in the app and embedded
+Sessions. No Experiments switch is needed. Your Home must still advertise upload
+support; unavailable or malformed capability information does not enable uploads.
+Self-hosters can disable uploads with
+`HAPPIER_FEATURE_ATTACHMENTS_UPLOADS__ENABLED=false`. An embed's configured surface
+and granted Session permissions can further restrict access.
+
 ## How to add attachments
 
 Happier supports several attachment flows depending on platform:
@@ -170,6 +179,9 @@ This makes transcripts easier to scan when you shared:
 - exported charts
 
 ### Tool-result images in 0.3 development
+
+Expand an individual tool call to load and view its image previews. Collapsed
+tool calls keep the images hidden and do not fetch preview bytes.
 
 In unreleased 0.3 development, Claude tool results containing inline image data,
 including image reads, can display images in the transcript. The Session machine

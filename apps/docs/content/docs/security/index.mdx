@@ -124,13 +124,12 @@ permission modes and browser websites. Your backend can issue an expiring child
 credential for a browser, with access no wider than its parent. Revoking or
 changing the parent's grant revokes its children and disconnects their sockets.
 
-CLI and daemon credentials can approve and change Account controls by default.
-The Account policy and `HAPPIER_CLI_PRESENT_USER=disallowed` machine override
-can restrict that authority, with the most restrictive choice winning. This
-guarantees that supported automation paths cannot raise their own authority;
-it does not isolate processes running as the same OS user. Such a process can
-read local credentials, and, when approvals are allowed, can approve through
-the CLI or daemon control route.
+A CLI login is the person's own tool: it can approve and change Account
+controls like the signed-in app. Agent, MCP and plugin calls made through the
+CLI or daemon keep automation authority and follow your approval settings, so
+supported automation paths cannot raise their own authority. This does not
+isolate processes running as the same OS user: such a process can read local
+credentials and approve through the CLI or daemon control route.
 
 The Developer Preview Action API is a separate transport boundary. A configured
 server can read a request and response when it mediates that traffic, even when

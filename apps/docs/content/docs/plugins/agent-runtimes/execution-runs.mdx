@@ -139,6 +139,40 @@ is the public helper that owns event ordering, replay, cancellation settlement,
 terminalization, and disposal; supply its `execute` callback and keep
 provider-native details inside the Agent adapter.
 
+In 0.3 development source, `createExecutionRunHostBackendFromConversationRuntime`
+adapts an existing provider conversation through that same Run lifecycle. Its
+optional `observeUsage` callback receives the original active-turn
+`usage-observed` and `skill-usage` events. Usage from another turn, before an
+active turn, or after settlement is ignored. The callback observes usage without
+publishing a second Run event, and a callback failure cannot change the Run's
+outcome. A generic event parameter preserves native event metadata:
+
+```ts
+import {
+  createExecutionRunHostBackendFromConversationRuntime,
+  type AgentExecutionRunConversationAdapterOptionsV1,
+  type AgentExecutionRunConversationEventV1,
+  type AgentExecutionRunConversationRuntimeV1,
+  type AgentExecutionRunOpenRequest,
+} from '@happier-dev/plugin-sdk/agents/runtime';
+
+export function openConversationRun<Event extends AgentExecutionRunConversationEventV1>(
+  request: Extract<AgentExecutionRunOpenRequest, { kind: 'create' | 'resume' }>,
+  conversation: AgentExecutionRunConversationRuntimeV1<Event>,
+  observeUsage?: AgentExecutionRunConversationAdapterOptionsV1<Event>['observeUsage'],
+) {
+  return createExecutionRunHostBackendFromConversationRuntime({
+    request,
+    openConversation: () => conversation,
+    ...(observeUsage ? { observeUsage } : {}),
+  });
+}
+```
+
+The adapter forwards the initial input's `localInputId`, `resultContract`, and
+`causalPermissionAuthority` to the conversation's `send` options, just as it does
+for subsequent sends.
+
 For a Session-capable Agent, register only `sessions`. The host automatically
 derives a finite Run projection from the same Session factory and owns sequence
 assignment, replay, terminalization, cancellation, and cleanup. The plugin owns
