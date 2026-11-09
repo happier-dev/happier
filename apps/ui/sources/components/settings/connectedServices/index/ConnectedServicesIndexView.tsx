@@ -177,8 +177,8 @@ export const ConnectedServicesIndexView = React.memo(function ConnectedServicesI
             legacyServiceId: sheet.legacyServiceId,
             pluginId: sheet.service.pluginId,
             accountId: account.accountId,
-            // The default menu sits with the account's other quiet actions, on cards and list rows alike.
-            star: target ? props.renderStar(target, `${testID}:star`) : null,
+            // The default menu lives on cards and on the account; a list row keeps one trailing thing (R138).
+            star: grid && target ? props.renderStar(target, `${testID}:star`) : null,
             onOpen: () => props.onOpenAccount(sheet, account.accountId),
         };
     };

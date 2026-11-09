@@ -29,9 +29,9 @@ describe('account usage amounts', () => {
     });
 });
 
-describe('account list row actions', () => {
+describe('account list row', () => {
     for (const compact of [false, true]) {
-        it(`offers the card's usage refresh on a quota-backed list row${compact ? ' on a phone' : ''} without opening the account`, async () => {
+        it(`keeps a quota-backed list row${compact ? ' on a phone' : ''} free of per-row actions and opens the account from the row`, async () => {
             const refresh = vi.fn();
             const open = vi.fn();
             const facts: ConnectedAccountIndexFacts = {
@@ -43,9 +43,11 @@ describe('account list row actions', () => {
                 legacyServiceId={null} accountId="work" star={null} onOpen={open}
                 facts={facts} now={2_000} compact={compact}
             />);
-            await screen.pressByTestIdAsync('account:refresh');
-            expect(refresh).toHaveBeenCalledOnce();
-            expect(open).not.toHaveBeenCalled();
+            // Refresh lives in the header's "Refresh all", the cards and the account page (R138).
+            expect(screen.findByTestId('account:refresh')).toBeFalsy();
+            await screen.pressByTestIdAsync('account');
+            expect(open).toHaveBeenCalledOnce();
+            expect(refresh).not.toHaveBeenCalled();
         });
     }
 });
