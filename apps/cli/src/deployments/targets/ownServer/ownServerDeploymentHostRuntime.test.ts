@@ -682,7 +682,8 @@ describe('own-server installed host acquisition', () => {
         expect(machineHttp).toHaveBeenCalled();
     });
     it.for(['deployment', 'restoration'] as const)('acquires the exact stored snapshot for %s without Source checkout or SCM reads', async (kind, context) => {
-        const mounted = await createAdmittedPluginRuntimeFixture({ runtimeOptions: { pluginIds: [] } });
+        const mounted = await createAdmittedPluginRuntimeFixture({ happyHomeDir: configuration.happyHomeDir,
+            controller: pluginReloadController, runtimeOptions: { pluginIds: [], contributes: createResolvedContributionRegistry({}) } });
         const keys = nacl.sign.keyPair();
         vi.spyOn(installationStore, 'readInstallationIdentityIfExistsSync').mockReturnValue({ version: 1,
             installationId: 'installation', createdAt: 1, publicKey: Buffer.from(keys.publicKey).toString('base64url'),

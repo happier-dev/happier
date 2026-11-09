@@ -256,7 +256,7 @@ describe('own-server target at the Action host boundary', () => {
             privileged: true, restart: 'on-failure', deploy: { replicas: 2, resources: { limits: { cpus: '1.0', memory: '128M' } } },
             ...(startFirst ? { healthcheck: { test: ['CMD', 'true'] }, stop_grace_period: '17s' } : scenario === 'routing_review' ? {} : {
                 volumes: [{ type: 'volume', source: 'shared', target: '/data' }],
-                ports: [{ target: 3000, published: '3000', host_ip: scenario === 'private_publication_refused' || scenario === 'private_publication_failed_attempt' || scenario === 'private_publication_matching_restore' || scenario === 'runtime_stage' ? '100.81.1.12' : '0.0.0.0' }],
+                ports: [{ target: 3000, published: '3000', protocol: 'tcp', host_ip: scenario === 'private_publication_refused' || scenario === 'private_publication_failed_attempt' || scenario === 'private_publication_matching_restore' || scenario === 'runtime_stage' ? '100.81.1.12' : '0.0.0.0' }],
             }), environment: { PRIVATE_INPUT: 'sensitive-host-value',
                 DEPLOY_PASSWORD: '${DEPLOY_PASSWORD:?required}' } } },
             ...(scenario === 'routing_review' ? {} : { volumes: { shared: { name: 'target-review-shared' } } }) }));
@@ -498,7 +498,8 @@ describe('own-server target at the Action host boundary', () => {
         const previousHome = configuration.happyHomeDir;
         const previousSettingsFile = configuration.settingsFile;
         const mounted = await createAdmittedPluginRuntimeFixture({ happyHomeDir: root,
-            controller: pluginReloadController, runtimeOptions: { pluginIds: [...(storedPrivatePublication ? [] : ['happier.scm.backend.git']),
+            controller: pluginReloadController, runtimeOptions: {
+                pluginIds: [...(storedPrivatePublication ? [] : ['happier.scm.backend.git']),
                 ...(migrationBackup ? ['happier.backup.destinations'] : [])] } });
         // Each scenario is a different installed daemon lifetime. Reusing its
         // Home would collide with the preceding committed immutable release.
@@ -544,6 +545,7 @@ describe('own-server target at the Action host boundary', () => {
                             networkIdentity: scenario === 'runtime_stage' ? 'application' : 'shop-net', displayName: null,
                             dnsName: null, magicDnsEnabled: false, addresses: ['100.81.1.12'], state: 'ready',
                             interfaceName: 'tailscale0', sourceRanges: ['100.64.0.0/10'] }] });
+                    await writeFile(join(root, 'private-firewall-bindings.json'), JSON.stringify(bindings));
                     retainedPrivateExports = bindings.bindings.map(entry => entry.exposure.requirementId);
                     if (scenario === 'private_publication_matching_restore' && retainedPrivateExports.length)
                         throw Object.assign(new Error('Native reply lost after permit application'), { code: 'outcome_unknown' });
@@ -1351,9 +1353,11 @@ describe('own-server target at the Action host boundary', () => {
                 expect(approvalRequests).toBe(1);
                 const requiredUiPreparation = await executor.execute('deployments.backups.restore', restoreInput,
                     { ...actionContext, actionsSettings: requiredUiSettings, actionRequestId: 'import-prepare-ui-ask' });
+                // The canonical UI-review owner (02102e614e) cannot create an agent
+                // approval Artifact when this headless fixture has no mounted presenter.
                 expect(requiredUiPreparation, JSON.stringify(requiredUiPreparation))
-                    .toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
-                expect(approvalRequests).toBe(2);
+                    .toMatchObject({ ok: false, errorCode: 'action_interactive_review_required' });
+                expect(approvalRequests).toBe(1);
                 expect(await readFile(boundary.eventsFile, 'utf8')).toBe(beforePrepare);
                 expect(await docker.readInvocations()).toHaveLength(before.length);
                 const missingConfirmation = await executor.execute('deployments.backups.restore', { ...restoreInput,
@@ -1377,7 +1381,7 @@ describe('own-server target at the Action host boundary', () => {
                 phase('standalone-prepared');
                 expect(preparedResult.steps).toEqual([{ id: 'safety', status: 'completed' }]);
                 expect(preparedResult.evidence).toMatchObject({ native: { prepared: { source: capture.source,
-                    repository: capture.repository, destination: { databaseExists: true, hasMeaningfulData: true },
+                    repository: capture.repository, destination: { databaseExists: true, hasMeaningfulData: true, writerServices: [] },
                     safetyBackup: { kind: 'verified', manifests: [expect.any(Object)] } }, configuration: capture.configuration } });
                 const preparedEvents = await readFile(boundary.eventsFile, 'utf8');
                 const safetyEvents = preparedEvents.slice(beforeApprovedPrepare.length).trim().split('\n')
@@ -1399,18 +1403,20 @@ describe('own-server target at the Action host boundary', () => {
                 expect(await executor.execute('deployments.backups.restore', confirmInput,
                     { ...agentContext, actionRequestId: 'import-confirm-ask' }))
                     .toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
-                expect(approvalRequests).toBe(3);
+                expect(approvalRequests).toBe(2);
                 expect(await executor.execute('deployments.backups.restore', confirmInput,
                     { ...actionContext, actionsSettings: requiredUiSettings, actionRequestId: 'import-confirm-ui-ask' }))
-                    .toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
-                expect(approvalRequests).toBe(4);
+                    .toMatchObject({ ok: false, errorCode: 'action_interactive_review_required' });
+                expect(approvalRequests).toBe(2);
                 expect(await readFile(boundary.eventsFile, 'utf8')).toBe(beforeConfirmation);
                 phase('standalone-confirm');
                 const result = await executor.execute('deployments.backups.restore', confirmInput,
                     { ...waivedAgentContext, actionRequestId: 'standalone-confirm' });
+                // This fixture has only PostgreSQL. The destination observer excludes
+                // the database itself from writers; there is no application to stop/restart.
                 expect(result).toMatchObject({ ok: true, result: { kind: 'restored', verified: true, steps: [
                     { id: 'safety', status: 'completed' }, { id: 'restore', status: 'completed' },
-                    { id: 'stop', status: 'completed' }, { id: 'start', status: 'completed' }, { id: 'health', status: 'completed' },
+                    { id: 'stop', status: 'skipped' }, { id: 'start', status: 'skipped' }, { id: 'health', status: 'completed' },
                 ] } });
                 phase('standalone-confirmed');
                 const completedEvents = await readFile(boundary.eventsFile, 'utf8');
