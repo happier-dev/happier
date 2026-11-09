@@ -2,7 +2,7 @@ import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/
 import { MACHINE_CAPABILITIES_DETECT_ACTION_ID, MACHINE_RUN_MARKERS_LIST_ACTION_ID } from '@happier-dev/protocol/actions/specs/machineConnectionActionIdsV1';
 import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 import { readRpcRequestDisposition } from '@happier-dev/sync-client';
-import { startPairingForHome } from '@/auth/pairing/startPairingForHome';
+import { startPairingForHome, type StartPairingForHomeResult } from '@/auth/pairing/startPairingForHome';
 import { buildMachineAddCommand, resolveWebDesktopSetupHandoffTarget } from '@/components/machines/add/machineAddCommand';
 import { createDefaultSshCredentialsDraft } from '@/components/ssh/sshCredentialsDraft';
 import { areServerProfileIdentifiersEquivalent, buildHomeConnectionDescriptorForProfile, getServerProfileById, getActiveServerSnapshot } from '@/sync/domains/server/serverProfiles';
@@ -36,7 +36,14 @@ import { readMachineActionRpcResult } from '@happier-dev/protocol/actions/execut
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
 
-export function createMachineConnectionActionDeps(options: Readonly<{ runner?: SystemTaskRunner; account?: LazyActionAccountContext }> = {}): Pick<ActionExecutorDeps, 'homeConnect' | 'homeReconnect' | 'localDaemonServiceAction' | 'machineAddCommand' | 'machinePairingCreate' | 'machineTerminalAction' | 'machineAddSshTaskAction' | 'machineAddLocalStart' | 'machineAddLocalCancel' | 'machinePageAction' | 'machineManagedInstallationRespond'> {
+/** Mounted presentation and lifecycle custody, never Action operands or results. */
+export type UiHomePairingDelivery = Pick<Parameters<typeof startPairingForHome>[0],
+    'isCurrent' | 'onStatus' | 'onCompleting' | 'onRetrying'> & Readonly<{
+    onResult: (result: StartPairingForHomeResult) => void;
+}>;
+
+export function createMachineConnectionActionDeps(options: Readonly<{ runner?: SystemTaskRunner; account?: LazyActionAccountContext;
+    homePairingDelivery?: UiHomePairingDelivery }> = {}): Pick<ActionExecutorDeps, 'homeConnect' | 'homeReconnect' | 'localDaemonServiceAction' | 'machineAddCommand' | 'machinePairingCreate' | 'machineTerminalAction' | 'machineAddSshTaskAction' | 'machineAddLocalStart' | 'machineAddLocalCancel' | 'machinePageAction' | 'machineManagedInstallationRespond'> {
     return {
         machinePageAction: async ({ actionId, input, context }) => {
             const serverId = input.serverId ?? context.serverId ?? getActiveServerId();
@@ -173,8 +180,11 @@ export function createMachineConnectionActionDeps(options: Readonly<{ runner?: S
             const account = await captureLazyActionAccountContext(input.serverId, context.signal);
             let lifecycleOwnsAccount = false;
             try {
+                const delivery = options.homePairingDelivery;
                 const started = await startPairingForHome({ targetProfileId: account.serverId,
-                    signal: context.signal ?? new AbortController().signal, isCurrent: account.accountLifetime.isCurrent });
+                    signal: context.signal ?? new AbortController().signal,
+                    isCurrent: () => account.accountLifetime.isCurrent() && (delivery?.isCurrent?.() ?? true),
+                    onStatus: delivery?.onStatus, onCompleting: delivery?.onCompleting, onRetrying: delivery?.onRetrying });
                 if (started.kind === 'started' && !account.accountLifetime.isCurrent()) await started.cancel();
                 account.assertCurrent();
                 if (started.kind === 'started') {
@@ -182,8 +192,10 @@ export function createMachineConnectionActionDeps(options: Readonly<{ runner?: S
                     lifecycleOwnsAccount = true;
                     const release = () => { retirement.dispose(); account.dispose(); };
                     void started.completion.then(release, release);
+                    delivery?.onResult(started);
                     return { pairId: started.invite.pairId, link: started.link, expiresAtMs: started.invite.expiresAtMs };
                 }
+                delivery?.onResult(started);
                 const errorCode = started.kind === 'failed' ? started.cause : started.kind;
                 return { ok: false, errorCode, error: errorCode };
             } finally { if (!lifecycleOwnsAccount) account.dispose(); }

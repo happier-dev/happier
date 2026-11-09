@@ -3,13 +3,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
     computeHomeQrBindingProofV2,
     deriveHomeQrRendezvousVerifierV2,
-    FeaturesResponseSchema,
-    HomeConnectionDescriptorV1Schema,
-    tryWriteServerEnabledBitInPlace,
-    type FeaturesResponse,
-    type HomeConnectionDescriptorV1,
     type HomeQrInviteV2,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/crypto/qrProvisioningV2';
+import {
+    FeaturesResponseSchema,
+    type FeaturesResponse} from '@happier-dev/protocol/features/payload/featuresResponseSchema';
+import {
+    HomeConnectionDescriptorV1Schema,
+    type HomeConnectionDescriptorV1} from '@happier-dev/protocol/auth/accountDirectory';
+import {
+    tryWriteServerEnabledBitInPlace} from '@happier-dev/protocol/features/serverEnabledBit';
 
 import { installTokenStorageWebPlatformMocks } from '@/auth/storage/tokenStorage.testHelpers';
 import { installLocalStorageMock } from '@/auth/storage/tokenStorage.web.testHelpers';
@@ -21,16 +24,11 @@ import { restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccount
 import { waitForNetworkResponseForTests } from '@/dev/testkit/mocks/runtimeFetch';
 import { decodeBase64, encodeBase64 } from '@/encryption/base64';
 
-const appState = vi.hoisted(() => ({ currentState: 'active' }));
-installTokenStorageWebPlatformMocks({
-    reactNative: async () => {
-        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-        return createReactNativeWebMock({ AppState: { get currentState() { return appState.currentState; } } });
-    },
-});
+installTokenStorageWebPlatformMocks();
 
 // Load the real auth/profile/Sync graph once, with only platform ports replaced.
 const { createDeferred, flushHookEffects, renderHook, standardCleanup } = await import('@/dev/testkit');
+const { reactNativeWebAppState } = await import('@/dev/testkit/mocks/reactNative');
 await initializeRealAppRuntimeForTests();
 const { createAccountTokenForTests, createHomeGovernanceHarness, waitForHomeGovernance } = await import('@/dev/testkit/harness/homeGovernanceHarness');
 const profiles = await import('@/sync/domains/server/serverProfiles');
@@ -125,7 +123,7 @@ beforeEach(async () => {
     await homes.reset();
     servedHomes.clear();
     requests.length = 0;
-    appState.currentState = 'active';
+    reactNativeWebAppState.emit('active');
     resetServerFeaturesClientForTests();
     http.start.mockReset().mockImplementation(async () => {
         expiresAt = new Date(Date.now() + 60_000).toISOString();
@@ -197,6 +195,7 @@ async function addHome(options: Readonly<{
         if (endpoint.kind === 'https') servedHomes.set(new URL(endpoint.url).origin, home);
     }
     setRuntimeFetch(request);
+    await homes.setActionPolicy(profileId, 'machines.pairing.create', 'ui', 'allowed');
     return home;
 }
 
@@ -258,6 +257,17 @@ async function requestedPair(hook: PairingHook, override: Record<string, unknown
 }
 
 describe('usePairingSession through real Home enrollment owners', () => {
+    it('admits initial QR issuance through the pairing Action policy before contacting enrollment', async () => {
+        const home = await addHome();
+        const hook = await mountPairing(home);
+        await homes.setActionPolicy(home.profileId, 'machines.pairing.create', 'ui', 'off');
+        let result: unknown;
+        await act(async () => { result = await hook.getCurrent().startPairing(); });
+        expect(result).toMatchObject({ ok: false });
+        expect(requestsFor('/v1/auth/pairing/start')).toHaveLength(0);
+        expect(hook.getCurrent().deepLink).toBeNull();
+    });
+
     it('issues the direct QR from the freshly authenticated exact descriptor instead of the retained profile descriptor', async () => {
         const retained = HomeConnectionDescriptorV1Schema.parse({
             v: 1, homeServerIdentityId: 'srv_home_a', canonicalServerUrl: 'https://home-a.test', revision: 1,
@@ -523,14 +533,14 @@ describe('usePairingSession through real Home enrollment owners', () => {
         const home = await addHome();
         vi.useFakeTimers();
         vi.spyOn(Math, 'random').mockReturnValue(0);
-        appState.currentState = 'background';
+        reactNativeWebAppState.emit('background');
         const hook = await mountPairing(home);
         await start(hook);
         await act(async () => { await vi.advanceTimersByTimeAsync(1_100); });
         expect(http.status).not.toHaveBeenCalled();
         expect(http.consume).not.toHaveBeenCalled();
         expect(hook.getCurrent().completionState).toBe('pending');
-        appState.currentState = 'active';
+        reactNativeWebAppState.emit('active');
         await act(async () => { await vi.advanceTimersByTimeAsync(2_100); });
         expect(http.status).toHaveBeenCalled();
     });

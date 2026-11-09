@@ -799,6 +799,8 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
   filesystemActionDelivery?: import('./filesystemActionDeps').UiFilesystemActionDelivery;
   /** Mounted target and credential delivery remain private to the native host. */
   npmRegistryProfileDelivery?: import('./npmRegistryProfileActionDeps').UiNpmRegistryProfileDelivery;
+  /** Mounted QR lifecycle remains private while issuance uses ordinary Action admission. */
+  homePairingDelivery?: import('./machineConnectionActionDeps').UiHomePairingDelivery;
   /** Original mounted Account administration intent retained by the incumbent approval waiter. */
   pluginAccountAdministrationIsCurrent?: () => boolean;
   /** Trusted raw projection already owned by the mounted administration surface. */
@@ -3418,7 +3420,8 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
       accountContext?.assertCurrent();
       return result;
     },
-    ...createMachineConnectionActionDeps({ ...(accountContext ? { account: accountContext } : {}), runner: opts?.homeRuntimeRunner }),
+    ...createMachineConnectionActionDeps({ ...(accountContext ? { account: accountContext } : {}), runner: opts?.homeRuntimeRunner,
+      homePairingDelivery: opts?.homePairingDelivery }),
     serversList: async ({ limit }) => await listServersForVoiceTool({ limit }),
     readAccountAcpCatalog,
     updateAccountAcpCatalogSettings: async (input) => {

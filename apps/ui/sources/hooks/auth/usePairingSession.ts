@@ -1,6 +1,8 @@
 import * as React from 'react';
-import { startPairingForHome, type StartedHomePairing, type HomePairingFailureCause } from '@/auth/pairing/startPairingForHome';
+import type { StartPairingForHomeResult, StartedHomePairing, HomePairingFailureCause } from '@/auth/pairing/startPairingForHome';
 import type { PairingCallTarget, PairingStatus } from '@/sync/api/account/apiPairingAuth';
+import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
+import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 
 type StartPairingResult = { ok: true } | { ok: false; status: number; reason?: 'invalid_invite' | 'update_required' };
 type CancelPairingResult = { ok: true } | { ok: false; status: number };
@@ -102,18 +104,27 @@ export function usePairingSession(params: Readonly<{
         };
         try {
             let completing = false;
-            const started = await startPairingForHome({
-                targetProfileId,
-                signal: startingAbort.signal,
-                isCurrent,
+            const delivered: { current: StartPairingForHomeResult | null } = { current: null };
+            const serverId = targetProfileId ?? getActiveServerSnapshot().serverId;
+            const execute = createFrontDoorActionExecute(undefined, { homePairingDelivery: {
+                isCurrent, onResult: (result) => { delivered.current = result; },
                 onStatus: (status) => { if (isCurrent()) setStatus(status); },
                 onCompleting: (requestedDeviceLabel) => {
                     completing = true;
                     if (isCurrent()) { setDeepLink(null); setRequestedDeviceLabel(requestedDeviceLabel); setCompletionState('adding'); }
                 },
                 onRetrying: () => { if (isCurrent()) setCompletionState('retrying'); },
+            } });
+            const execution = await execute('machines.pairing.create', { serverId }, {
+                surface: 'ui', serverId, signal: startingAbort.signal,
             });
-            if (!isCurrent()) { if (started.kind === 'started') await started.cancel(); return { ok: false, status: 409 }; }
+            const started = delivered.current;
+            if (!isCurrent()) { if (started?.kind === 'started') await started.cancel(); return { ok: false, status: 409 }; }
+            if (!execution.ok && started?.kind === 'started') {
+                await started.cancel();
+                return fail('home_refused', 403);
+            }
+            if (!started) return fail('home_refused', 403);
             if (started.kind === 'update_required') { setCompletionState('update_required'); return { ok: false, status: 426, reason: 'update_required' }; }
             if (started.kind === 'failed') {
                 fail(started.cause, started.status);
@@ -139,8 +150,9 @@ export function usePairingSession(params: Readonly<{
                 else if (outcome.kind === 'failed') { resetPresentation(false); setFailureCause('home_refused'); setCompletionState('completion_failed'); }
             });
             return { ok: true };
-        } catch {
+        } catch (error) {
             if (!isCurrent()) return { ok: false, status: 409 };
+            if (error instanceof Error && 'code' in error && error.code === 'action_home_signed_out') return fail('signed_out');
             return fail('unexpected', 500);
         }
         finally {

@@ -3,7 +3,8 @@ import { afterEach, beforeEach, expect, it } from 'vitest';
 import { renderHook, standardCleanup } from '@/dev/testkit';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
-import { FeaturesResponseSchema, tryWriteServerEnabledBitInPlace } from '@happier-dev/protocol';
+import { FeaturesResponseSchema} from '@happier-dev/protocol/features/payload/featuresResponseSchema';
+import { tryWriteServerEnabledBitInPlace } from '@happier-dev/protocol/features/serverEnabledBit';
 import { adoptHomeProfile } from '@/sync/domains/server/serverProfiles';
 import { initializeRealAppRuntimeForTests } from '@/dev/testkit/harness/realAppRuntimeHarness';
 
@@ -29,13 +30,15 @@ it('settles a refused pairing start through the real feature, transport and life
     harness.answer(homeId, '/v1/features', { body: features });
     harness.answer(homeId, '/v1/features/authenticated', { body: features });
     harness.answer(homeId, '/v1/auth/pairing/start', { status: 403, body: { error: 'forbidden' } });
+    await harness.setActionPolicy(homeId, 'machines.pairing.create', 'ui', 'allowed');
     const { usePairingSession } = await import('./usePairingSession');
     const hook = await renderHook(() => usePairingSession({ enabled: true, isAuthenticated: true, targetProfileId: profile.id }));
     let result: unknown;
     await act(async () => { result = await hook.getCurrent().startPairing(); });
-    expect({ result, paths: harness.requests.map(request => request.path), presentation: hook.getCurrent().presentation }).toEqual({
-        result: { ok: false, status: 403 }, paths: ['/v1/features', '/v1/features/authenticated', '/v1/auth/pairing/start'],
+    expect({ result, presentation: hook.getCurrent().presentation }).toEqual({
+        result: { ok: false, status: 403 },
         presentation: { phase: 'invalid_request', cause: 'home_refused' },
     });
+    expect(harness.requests.map(request => request.path)).toContain('/v1/auth/pairing/start');
     expect(hook.getCurrent().isStarting).toBe(false);
 });

@@ -3,9 +3,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
     computeHomeQrBindingProofV2,
     deriveHomeQrBindingKeyV2,
-    deriveHomeQrRendezvousSecretV2,
+    deriveHomeQrRendezvousSecretV2} from '@happier-dev/protocol/crypto/qrProvisioningV2';
+import {
     tryWriteServerEnabledBitInPlace,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/features/serverEnabledBit';
 
 import { installTokenStorageWebPlatformMocks } from '@/auth/storage/tokenStorage.testHelpers';
 import { installLocalStorageMock } from '@/auth/storage/tokenStorage.web.testHelpers';
@@ -75,7 +76,7 @@ describe('trusted-Home-displayed QR two-client composition', () => {
             endpoints: [{ kind: 'https' as const, url: 'https://forward-home.test' }],
         };
         const trustedToken = createAccountTokenForTests('trusted-account', { currentAccount: true });
-        await homes.addHome({ name: 'Trusted Home', serverUrl: descriptor.canonicalServerUrl,
+        const trustedHomeId = await homes.addHome({ name: 'Trusted Home', serverUrl: descriptor.canonicalServerUrl,
             serverIdentityId: descriptor.homeServerIdentityId, accountId: 'trusted-account',
             credentials: { token: trustedToken }, currentAccount: true, active: false });
         await profiles.adoptHomeProfile({
@@ -106,6 +107,7 @@ describe('trusted-Home-displayed QR two-client composition', () => {
         connection = await restoreServerAccountForTest({ serverUrl: descriptor.canonicalServerUrl,
             serverIdentityId: descriptor.homeServerIdentityId, accountId: 'trusted-account',
             credentials: { token: trustedToken }, request });
+        await homes.setActionPolicy(trustedHomeId, 'machines.pairing.create', 'ui', 'allowed');
         // Restore the real runtime and persist the Home before freezing its polling clock.
         vi.useFakeTimers({ now: new Date('2026-09-06T13:00:00.000Z') });
 
