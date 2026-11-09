@@ -961,6 +961,7 @@ describe('OpenAI Codex Connected Account', () => {
 
     expect(connected).toEqual({
       status: 'connected',
+      credentialKind: 'oauth',
       displayName: 'ChatGPT',
       scopes: ['openid', 'profile', 'email', 'offline_access'],
     });
