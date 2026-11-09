@@ -356,7 +356,7 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
                     onIncumbentServicesChanged: input.onIncumbentServicesChanged };
                 const createInput: OwnServerNativeRestoreInputFactory = async capture => {
                     const identities = new Set(capture.configuration.credentialBindings.map(environmentSecretBindingIdentityV1));
-                    const credentials = createDeploymentBackupEnvironmentForHost({ repository: capture.repository.repository,
+                    const credentials = createDeploymentBackupEnvironmentForHost({ ...capture.repository,
                         signal: context.operation.signal!, isCurrent: () => currentActivation.isCurrent(), preparation: {
                             ...recovery.runtime.secrets, environmentId: capture.destination.environmentId,
                             machineId: host.machineId, installationId: input.installationId,

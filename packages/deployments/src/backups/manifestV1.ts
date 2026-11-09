@@ -40,6 +40,15 @@ export function readResticRepositoryConfigV1(stdout: string, exitCode: number, s
     return { repositoryVersion: 2, repositoryId: nativeValue(() => DeploymentBackupManifestV1Schema.shape.repositoryId.parse(config.id)) };
 }
 
+/** restic 0.19.1 init --json returns the created repository ID directly. */
+export function readResticRepositoryInitializationV1(stdout: string, exitCode: number, stdoutTruncated = false): Readonly<{ repositoryId: string }> {
+    if (exitCode !== 0) return resticEvidenceFailureV1('backup_failed');
+    if (stdoutTruncated) return resticEvidenceFailureV1('outcome_unknown');
+    const initialized = readResticNativeRecordV1(readResticNativeJsonV1(stdout));
+    if (initialized.message_type !== 'initialized') return resticEvidenceFailureV1('outcome_unknown');
+    return { repositoryId: nativeValue(() => DeploymentBackupManifestV1Schema.shape.repositoryId.parse(initialized.id)) };
+}
+
 export function readResticNativeSnapshotV1(value: unknown): ResticSnapshotV1 {
     const snapshot = readResticNativeRecordV1(value);
     return nativeValue(() => DeploymentBackupSnapshotV1Schema.parse({ snapshotId: snapshot.id, treeId: snapshot.tree,

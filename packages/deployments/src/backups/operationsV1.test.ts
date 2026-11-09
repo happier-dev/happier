@@ -21,7 +21,7 @@ const manifest: DeploymentBackupManifestV1 = { schemaVersion: 1, environmentId, 
 const rawSnapshot = (id = snapshotId) => ({ id, tree: treeId, hostname: snapshot.hostname, time: snapshot.time,
     paths: snapshot.paths, tags: snapshot.tags, summary: { total_bytes_processed: 123, total_files_processed: 1 } });
 function boundary(options: Readonly<{ inventory?: unknown[]; repository?: string; readBackChecksum?: string;
-    candidates?: unknown[]; fail?: string; unknown?: string; truncated?: string }> = {}) {
+    candidates?: unknown[]; fail?: string; unknown?: string; truncated?: string; repositoryExitCode?: number }> = {}) {
     const requests: ResticRequestV1[] = [];
     // Substitute only the native process boundary; all request and evidence owners remain real.
     const execute: DeploymentBackupRunInputV1['execute'] = async request => {
@@ -36,7 +36,7 @@ function boundary(options: Readonly<{ inventory?: unknown[]; repository?: string
             : command === 'forget' && request.argv.includes('--dry-run')
                 ? [{ remove: options.candidates ?? [rawSnapshot(), rawSnapshot(otherId), rawSnapshot(protectedId)] }]
             : null;
-        return { kind: 'completed', exitCode: options.fail === command ? 7 : 0,
+        return { kind: 'completed', exitCode: options.fail === command ? 7 : command === 'config' ? options.repositoryExitCode ?? 0 : 0,
             stdout: value === null ? '' : JSON.stringify(value), stdoutTruncated: options.truncated === command,
             ...(command === 'dump' ? { stdoutChecksumSha256: options.readBackChecksum ?? checksum, stdoutBytes: 123 } : {}) };
     };
@@ -52,6 +52,18 @@ const input = (native: ReturnType<typeof boundary>) => ({ environmentId, configu
 const verification = { kind: 'verified' as const, level: 'manifestReadBack' as const, manifest };
 
 describe('selected repository backup operations', () => {
+    it('never initializes an absent repository from inventory, verification or pruning', async () => {
+        for (const name of ['inventoryDeploymentBackupsV1', 'verifyDeploymentBackupV1', 'pruneDeploymentBackupsV1']) {
+            const native = boundary({ repositoryExitCode: 10 });
+            await expect(operation(name)({ ...input(native), configRevision: manifest.configRevision,
+                manifest, level: 'manifestReadBack', verification, protectedSnapshotIds: [] }))
+                .rejects.toMatchObject({ code: 'backup_failed', step: 'repository' });
+            expect(native.requests.map(request => request.argv)).toEqual([
+                ['--repo', access.repository, '--json', 'cat', 'config'],
+            ]);
+        }
+    });
+
     it('keeps an existing snapshot verifiable after a retention-only policy change', async () => {
         const prepared = operation('prepareDeploymentBackupRetentionV1')({ currentBackup: configuration,
             configRevision: configuration.configRevision, retention: { kind: 'keep', last: 5 } });

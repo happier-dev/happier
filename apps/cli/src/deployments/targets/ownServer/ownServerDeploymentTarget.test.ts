@@ -1242,11 +1242,13 @@ describe('own-server target at the Action host boundary', () => {
                         tags: ['happier', `env:${environment.environment.id}`, 'kind:dump', 'src:database'] } },
                     sourceFormat: 'postgresCustom' as const, target: { service: 'app', adapter: 'postgres-v1' as const, database },
                     configuration: { configRevision: 1, destinationRef: { pluginId: 'example.storage', localId: 's3' },
-                        occurrenceId: 'storage', config: { bucket: 'backup' },
+                        occurrenceId: 'storage', config: { endpoint: 'https://fixture.invalid', bucket: 'backup',
+                            region: 'us-east-1', addressing: 'path' },
                         credentialBindings: roles.map(role => ({ purpose: 'backupDestination' as const, configKey: 'destination' as const, role })),
                         sources: [{ kind: 'dump' as const, sourceId: 'database', service: 'app', consistency: 'logical' as const }],
                         ownership: { environmentId: environment.environment.id, prefix: environment.environment.id }, retention: { kind: 'keepEverything' as const } },
-                    repository: { repository: 's3:https://fixture.invalid/backup' } };
+                    repository: { repository: 's3:https://fixture.invalid/backup',
+                        s3: { region: 'us-east-1', addressing: 'path' as const } } };
                 const originalRequest = request;
                 if (scenario === 'public_restore') for (const mode of ['unknown', 'otherEnvironment', 'foreignSnapshot', 'noBackup', 'recorded'] as const) {
                     recoveryCapture = structuredClone(serving);
@@ -1361,8 +1363,13 @@ describe('own-server target at the Action host boundary', () => {
                     safetyBackup: { kind: 'verified', manifests: [expect.any(Object)] } }, configuration: capture.configuration } });
                 const preparedEvents = await readFile(boundary.eventsFile, 'utf8');
                 const safetyEvents = preparedEvents.slice(beforeApprovedPrepare.length).trim().split('\n')
-                    .filter(Boolean).map(line => JSON.parse(line) as { kind: string });
+                    .filter(Boolean).map(line => JSON.parse(line) as { kind: string; argv?: string[] });
                 expect(safetyEvents.filter(event => event.kind === 'safetyBytes')).toHaveLength(1);
+                const preparedRestic = safetyEvents.filter(event => event.kind === 'restic');
+                expect(preparedRestic.length).toBeGreaterThan(0);
+                for (const event of preparedRestic) expect(event.argv).toEqual(expect.arrayContaining([
+                    's3.region=us-east-1', 's3.bucket-lookup=path',
+                ]));
                 // Confirmation owns the retained capture, even if its source receipt changes later.
                 delete recoveryCapture!.content.ownServer!.preMigrationBackup;
                 const confirmInput = { ...restoreInput, mode: 'confirm' as const, prepareOperationId: preparedResult.operationId };
@@ -1397,7 +1404,9 @@ describe('own-server target at the Action host boundary', () => {
                 expect(confirmationEvents.filter(event => event.kind === 'safetyBytes')).toHaveLength(0);
                 const restoredSources = confirmationEvents.filter(event => event.kind === 'restic' && event.argv?.includes('dump'));
                 expect(restoredSources.length).toBeGreaterThan(0);
-                for (const event of restoredSources) expect(event.argv).toContain(capture.source.snapshot.snapshotId);
+                for (const event of restoredSources) expect(event.argv).toEqual(expect.arrayContaining([
+                    capture.source.snapshot.snapshotId, 's3.region=us-east-1', 's3.bucket-lookup=path',
+                ]));
                 expect(await executor.execute('deployments.backups.restore', confirmInput,
                     { ...actionContext, actionRequestId: 'standalone-confirm-retry' })).toEqual(result);
                 expect(await readFile(boundary.eventsFile, 'utf8')).toBe(completedEvents);

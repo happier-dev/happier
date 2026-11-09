@@ -4,7 +4,7 @@ import { DeploymentBackupSnapshotV1Schema,
 
 import { buildResticRequestV1, type ResticAccessV1, type ResticCommandV1, type ResticRequestV1 } from '../backups/resticExecutor.js';
 import { readResticBackupManifestV1, readResticBackupSummaryV1,
-    readResticRepositoryConfigV1, readResticSnapshotsV1, type BackupManifestV1 } from '../backups/manifestV1.js';
+    readResticRepositoryConfigV1, readResticRepositoryInitializationV1, readResticSnapshotsV1, type BackupManifestV1 } from '../backups/manifestV1.js';
 import { backupOperationStepV1, readBackDeploymentBackupManifestV1 } from '../backups/verificationV1.js';
 
 /** Facts supplied by the canonical native execution adapter; dump bytes never cross this result. */
@@ -79,8 +79,15 @@ export async function runDeploymentBackupV1(input: DeploymentBackupRunInputV1): 
             return { source, filename: deploymentBackupDumpFilenameV1(adapter, source.service) };
         });
         const configResult = await execute({ kind: 'config' });
-        const { repositoryId } = await backupOperationStepV1('repository', () =>
-            readResticRepositoryConfigV1(configResult.stdout, configResult.exitCode, configResult.stdoutTruncated));
+        // The pinned restic's exit 10 positively classifies an absent repository
+        // (S3 NoSuchKey). Authentication, transport and all other failures stay failures.
+        // Only this writing lifecycle initializes; read-only maintenance never does.
+        const initialized = configResult.exitCode === 10 ? await execute({ kind: 'init' }) : undefined;
+        const { repositoryId } = initialized
+            ? await backupOperationStepV1('init', () => readResticRepositoryInitializationV1(
+                initialized.stdout, initialized.exitCode, initialized.stdoutTruncated))
+            : await backupOperationStepV1('repository', () =>
+                readResticRepositoryConfigV1(configResult.stdout, configResult.exitCode, configResult.stdoutTruncated));
         for (const { source, filename } of recipes) {
             const backup = await execute({ kind: 'backupStdin', sourceId: source.sourceId, filename }, source);
             if (!backup.producer || backup.producer.exitCode !== 0) return refuse('backup_failed', 'producer');

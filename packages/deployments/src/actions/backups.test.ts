@@ -16,19 +16,31 @@ const configuration = { configRevision: 1, destinationRef: { pluginId: 'example.
   ownership: { environmentId, prefix: 'environment-a' }, retention: { kind: 'keepEverything' } };
 const access = { repository: 's3:https://storage.invalid/recovery/environment-a', passwordFilePath: '/run/secrets/repository-password',
   credentialFiles: [{ hostPath: '/private/operation-password', containerPath: '/run/secrets/repository-password', readOnly: true }],
-  environmentVariableNames: ['AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY'] };
+  environmentVariableNames: ['AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY'],
+  s3: { region: 'us-east-1', addressing: 'path' as const } };
 const snapshot = { id: snapshotId, tree: treeId, hostname: `happier-env-${environmentId}`, time: '2026-10-30T19:00:00Z',
   paths: ['/db.dump'], tags: ['happier', `env:${environmentId}`, 'kind:dump', 'src:main'] };
 
 function nativeBoundary(options: Readonly<{ readBackChecksum?: string; producerExitCode?: number; unknownBackup?: boolean;
-  truncatedBackup?: boolean; snapshotsExitCode?: number; missingProducer?: boolean; missingProducerChecksum?: boolean }> = {}) {
+  truncatedBackup?: boolean; snapshotsExitCode?: number; missingProducer?: boolean; missingProducerChecksum?: boolean;
+  repositoryExitCode?: number; repositoryOutput?: string; unknownRepository?: boolean; initExitCode?: number; unknownInit?: boolean;
+  initOutput?: string; truncatedInit?: boolean }> = {}) {
   const requests: ResticRequestV1[] = [];
+  let initialized = false;
   // Only native process IO is substituted. The parent, request builder and
   // restic evidence interpretation are real. This is not native P30 qualification.
   const execute = async (request: ResticRequestV1) => {
     requests.push(request);
     const result = (stdout: string) => ({ kind: 'completed' as const, exitCode: 0, stdout, stdoutTruncated: false });
-    if (request.argv.includes('config')) return result(JSON.stringify({ id: repositoryId, version: 2 }));
+    if (request.argv.includes('config')) return options.unknownRepository ? { kind: 'outcome_unknown' as const }
+      : { ...result(options.repositoryOutput ?? JSON.stringify({ id: repositoryId, version: 2 })),
+        exitCode: initialized ? 0 : options.repositoryExitCode ?? 0 };
+    if (request.argv.includes('init')) {
+      if (options.unknownInit) return { kind: 'outcome_unknown' as const };
+      initialized = (options.initExitCode ?? 0) === 0;
+      return { ...result(options.initOutput ?? JSON.stringify({ message_type: 'initialized', id: repositoryId,
+        repository: access.repository })), exitCode: options.initExitCode ?? 0, stdoutTruncated: options.truncatedInit ?? false };
+    }
     if (request.argv.includes('backup')) return options.unknownBackup ? { kind: 'outcome_unknown' as const }
       : { ...result([JSON.stringify({ message_type: 'status', percent_done: 0.5 }), JSON.stringify({ message_type: 'summary', snapshot_id: snapshotId,
         total_bytes_processed: 123, total_files_processed: 1 })].join('\n')), stdoutTruncated: options.truncatedBackup ?? false,
@@ -54,6 +66,50 @@ async function run(native: ReturnType<typeof nativeBoundary>, signal = new Abort
 }
 
 describe('backup Action parent', () => {
+  it('creates the first verified snapshot only after restic positively reports an absent S3 repository', async () => {
+    // restic 0.19.1 cat config: S3 NoSuchKey -> ErrNoRepository -> exit 10.
+    // The native process boundary supplies its exit contract, never English stderr matching.
+    const native = nativeBoundary({ repositoryExitCode: 10 });
+    expect(await run(native)).toMatchObject({ kind: 'verified', manifests: [{ repositoryId, snapshot: { snapshotId } }] });
+    expect(native.requests[0]?.argv).toContain('config');
+    expect(native.requests[1]?.argv).toEqual(expect.arrayContaining(['init', '--repository-version', '2']));
+    expect(native.requests.at(-1)?.argv).toContain('dump');
+    expect(native.requests.every(request => request.argv.includes('s3.bucket-lookup=path')
+      && request.argv.includes('s3.region=us-east-1'))).toBe(true);
+    await expect(run(native)).resolves.toMatchObject({ kind: 'verified' });
+    expect(native.requests.filter(request => request.argv.includes('init'))).toHaveLength(1);
+  });
+
+  it.each([1, 11, 12, 130, 99])('never initializes on restic refusal exit %s', async repositoryExitCode => {
+    const native = nativeBoundary({ repositoryExitCode });
+    await expect(run(native)).rejects.toMatchObject({ code: 'backup_failed', step: 'repository' });
+    expect(native.requests).toHaveLength(1);
+  });
+
+  it('never initializes on an unknown repository outcome or an invalid successful config', async () => {
+    const unknown = nativeBoundary({ unknownRepository: true });
+    await expect(run(unknown)).rejects.toMatchObject({ code: 'outcome_unknown' });
+    expect(unknown.requests).toHaveLength(1);
+    const malformed = nativeBoundary({ repositoryOutput: '{}' });
+    await expect(run(malformed)).rejects.toMatchObject({ code: 'backup_failed' });
+    expect(malformed.requests).toHaveLength(1);
+    const existing = nativeBoundary();
+    await expect(run(existing)).resolves.toMatchObject({ kind: 'verified' });
+    expect(existing.requests.some(request => request.argv.includes('init'))).toBe(false);
+  });
+
+  it.each([
+    { initExitCode: 1, code: 'backup_failed' },
+    { unknownInit: true, code: 'outcome_unknown' },
+    { truncatedInit: true, code: 'outcome_unknown' },
+    { initOutput: '{"message_type":"initialized","id":"invalid"}', code: 'outcome_unknown' },
+    { initOutput: '{"id":"' + repositoryId + '"}', code: 'outcome_unknown' },
+  ])('does not dump or snapshot after failed or uncertain initialization: %j', async ({ code, ...options }) => {
+    const native = nativeBoundary({ repositoryExitCode: 10, ...options });
+    await expect(run(native)).rejects.toMatchObject({ code });
+    expect(native.requests.map(request => request.argv).some(argv => argv.includes('backup'))).toBe(false);
+  });
+
   it('returns the exact manifest only after selected-repository snapshot, tree and payload read-back', async () => {
     const native = nativeBoundary();
     expect(await run(native)).toMatchObject({ kind: 'verified', manifests: [{ environmentId, sourceId: 'main', configRevision: 1,

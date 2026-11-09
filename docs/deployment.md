@@ -334,6 +334,18 @@ migration obtains repository and database operands from the installed destinatio
 Action and P42 binding owner, then backs up the captured serving generation before
 running the migration. An unavailable destination or serving generation refuses
 the required backup. Security review does not gate development QA.
+
+In 0.3 development, the backup-writing lifecycle initializes a new repository
+only when the pinned restic 0.19.1 `cat config` returns exit 10. Restic classifies
+S3 `NoSuchKey` as absence; wrong passwords, access denial, connection failures
+and unknown outcomes never trigger initialization. The lifecycle consumes the
+repository ID from `init --json`, then requires the same snapshot, tree and
+payload read-back as an existing repository. Test, inventory, verification,
+pruning and restore-source reads do not initialize repositories. Restore
+preparation retains the recorded repository's S3 region and addressing options.
+This follows restic's [exit-code contract](https://restic.readthedocs.io/en/stable/075_scripting.html#exit-codes)
+and pinned [S3 absence classifier](https://github.com/restic/restic/blob/v0.19.1/internal/backend/s3/s3.go).
+
 No incomplete path may substitute recreate for a reviewed startFirst. Connection
 overrides use P42's protected runtime carrier, not host environment variables.
 
@@ -2658,6 +2670,12 @@ It never selects detach or starts another delete/unlink Action. Plain teardown
 without that flag may retain the Environment; its successful receipt remains
 usable by the existing explicit disposition Actions.
 Deleted Environments remain readable as retained tombstones with `deletedAtMs`.
+In 0.3 development, confirmed Environment deletion or teardown with
+`environmentRemoved: true` also retires its open deployment approvals through
+the Action executor's existing deleted-subject approval settlement. The executor
+opens approval bodies on the client and matches both Home and Environment;
+stop-only, deferred or failed removal leaves them open. Artifact failures use the
+existing retirement warning and do not change a confirmed removal result.
 Imported native projects and multi-member native targets still return
 `unsupported_action` until their native custody/removal owner is available.
 Preparation spends receipt-history reads and the Home-issued receipt candidate
@@ -2743,6 +2761,14 @@ execution reports no more specific fact, the Domain recovery projector names
 `nativeExecutionResult` and asks the caller to inspect native state before
 retrying; this does not assert an unreported native step. Unavailable network
 exposure similarly names `networkExposure`.
+The shared recovery projection describes a native-execution `deployment_conflict`
+as ambiguous running service generation and directs the person to Machine
+services. Review-admission conflicts retain their fresh-review recovery.
+Own-server retained-service recovery accepts a single native Compose project
+whose services come from different retained source folders, as when Compose
+reuses an unchanged app container while adding a database. The existing source
+custody reader proves each folder against its receipt before observation;
+competing native projects remain a conflict.
 
 Unreleased 0.3 Domain readiness also consumes the signed DNS health result from
 the existing finite DNS health owner during native add or verification. Home
