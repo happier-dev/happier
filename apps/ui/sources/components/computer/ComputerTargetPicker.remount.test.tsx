@@ -27,6 +27,8 @@ const { SessionViewerDestinationScope, useSessionViewerDestinationScope } = awai
 const { useComputerTargetPicker } = await import('./useComputerTargetPicker');
 const { ComputerTargetPicker } = await import('./ComputerTargetPicker');
 const { computerTargetKeyV1 } = await import('@happier-dev/protocol/computer/v1');
+const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');
+const { TokenStorage } = await import('@/auth/storage/tokenStorage');
 
 describe('Computer target picker across Session shell replacement', () => {
     beforeEach(async () => { await harness.reset(); boundary.rpc.mockReset(); });
@@ -77,9 +79,15 @@ describe('Computer target picker across Session shell replacement', () => {
         }
         const { createFrontDoorActionExecute } = await import('@/sync/ops/actions/frontDoorRuntimeActionExecutor');
         const frontDoor = createFrontDoorActionExecute();
-        const tree = (shell: string) => <SessionViewerDestinationScope sessionId="resize-session" serverId={serverId}>
-            <Shell key={shell} /><Picker />
-        </SessionViewerDestinationScope>;
+        const credentials = await TokenStorage.getCredentials();
+        if (!credentials) throw new Error('Expected the harness Account credentials');
+        // FX-16's real destination now owns Board recovery too; match the Auth
+        // ancestor supplied by the application shell instead of stubbing Board.
+        const tree = (shell: string) => <InjectedAuthProvider credentials={credentials}>
+            <SessionViewerDestinationScope sessionId="resize-session" serverId={serverId}>
+                <Shell key={shell} /><Picker />
+            </SessionViewerDestinationScope>
+        </InjectedAuthProvider>;
         const screen = await renderScreen(tree('wide'));
         try {
             await waitForHomeGovernance(() => expect(screen.findHostByTestId('computer-target-picker-ready')).not.toBeNull());

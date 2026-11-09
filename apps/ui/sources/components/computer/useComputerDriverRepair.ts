@@ -4,12 +4,12 @@ import { MachineCapabilityInstallOutputSchema } from '@happier-dev/protocol/acti
 
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
 import { Modal } from '@/modal';
-import type { ComputerSessionScope } from '@/sync/domains/computer/computerControlClient';
+import type { ComputerScope } from '@/sync/domains/computer/computerControlClient';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { t } from '@/text';
 
 /** Explicit repair uses the existing admitted installer and then re-reads native facts. */
-export function useComputerDriverRepair(scope: ComputerSessionScope, accountLifetime: ServerAccountScopeLifetime | null | undefined, refresh: () => void) {
+export function useComputerDriverRepair(scope: ComputerScope, accountLifetime: ServerAccountScopeLifetime | null | undefined, refresh: () => void) {
     const { execute, isCurrent } = useMountedActionExecution(accountLifetime?.scope ?? null);
     const installation = React.useMemo(() => ({ execute, isCurrent, accountLifetime, machineId: scope.machineId, serverId: scope.serverId }),
         [accountLifetime, execute, isCurrent, scope.machineId, scope.serverId]);

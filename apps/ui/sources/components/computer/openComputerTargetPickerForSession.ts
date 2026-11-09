@@ -1,4 +1,4 @@
-import type { ComputerAccessV1, ComputerSelectedTargetResponseV1 } from '@happier-dev/protocol';
+import type { ComputerAccessV1, ComputerSelectedTargetResponseV1 } from '@happier-dev/protocol/computer/v1';
 
 import { getAgentCore, type AgentId } from '@/agents/catalog/catalog';
 import { readSessionPresentationAgentId } from '@/sync/domains/session/presentation/readSessionPresentationAgentId';
@@ -30,7 +30,6 @@ type ComputerTargetPickerForSessionParams = Readonly<{
     currentTargetKey?: string | null;
     access?: ComputerAccessV1;
     onSelected: (selection: ComputerSelectedTargetResponseV1) => void;
-    onStoppedSharing?: () => void;
     /** Approval of an agent's `computer.target.select`: its suggestion, and where the pick goes. */
     requestedTarget?: string | null;
     onChosen?: (entry: ComputerTargetEntry, access: ComputerAccessV1) => void;
@@ -79,16 +78,16 @@ export function resolveComputerTargetPickerForSession(params: ComputerTargetPick
         purpose,
         scope: { sessionId: params.sessionId, machineId: params.machineId, serverId },
         agentName: core ? t(core.displayNameKey) : t('browserPresence.agentFallbackName'),
+        agentless: core === null,
         machineName: params.machineName ?? t('computerUse.presentation.tabFallback'),
         currentTargetKey: params.currentTargetKey ?? null,
         access: params.access,
         ...(refusalCode ? { refusalCode } : {}),
-        ...(params.onStoppedSharing ? { onStoppedSharing: params.onStoppedSharing } : {}),
         ...(params.requestedTarget ? { requestedTarget: params.requestedTarget } : {}),
         ...(params.onChosen ? { onChosen: params.onChosen } : {}),
         onSelected: (selection) => {
             // The session-wide line now knows where to ask who is using the window.
-            noteSessionComputerMachine({ sessionId: params.sessionId, machineId: params.machineId,
+            noteSessionComputerMachine({ sessionId: params.sessionId, serverId, accountLifetime, machineId: params.machineId,
                 machineName: selection.approvalDisplay.machineDisplayName });
             params.onSelected(selection);
         },

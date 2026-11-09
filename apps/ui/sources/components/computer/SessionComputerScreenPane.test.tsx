@@ -18,6 +18,7 @@ import { loadVitestModuleForNodeRequire } from '@/dev/vitestRnShim';
 import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
 import type { SessionViewerController } from '@/components/sessions/viewer/SessionViewerController';
 import { sealMachineLiveStreamEnvelopeV1 } from '@happier-dev/protocol/machines/peer/mediation/stream/payloadV1';
+import { observeMachinePresenceForTest } from '@/dev/testkit/harness/machinePresence';
 
 const viewport = vi.hoisted(() => ({ width: 1440, height: 900, scale: 1, fontScale: 1 }));
 
@@ -61,6 +62,7 @@ describe('SessionComputerScreenPane retained source', () => {
         // Only HTTP/Socket.IO and device credentials are replaced; the actual pane,
         // model, control projection, Action executor and stream ingestion remain real.
         const { DestinationInstanceHost } = await import('@/components/appShell/workspace/DestinationInstanceHost');
+        const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');
         const { createRetainedPresentationSlotsStore, RetainedPresentationSlotsProvider } = await import('@/components/ui/presentation/retainedPresentationSlots');
         const { SessionViewerSourceAccountScopeProvider } = await import('@/components/sessions/viewer/SessionViewerSourceAccountScope');
         const { SessionViewerControllerProvider } = await import('@/components/sessions/viewer/SessionViewerControllerProvider');
@@ -208,6 +210,8 @@ describe('SessionComputerScreenPane retained source', () => {
         try { await socketReady.promise; } finally { stopStatus(); stopError(); }
         const accountLifetime = captureActiveServerAccountScopeLifetime();
         expect(accountLifetime?.isCurrent()).toBe(true);
+        // A retained row and socket reconnect are not a fresh Machine-presence observation.
+        observeMachinePresenceForTest({ serverId: home.id, accountId: home.accountId }, [machineId]);
         phase = 'validating the real Action selection';
         // Establish the real parsed selection outcome before presentation work.
         // A refusal from this front door is fixture setup, never retention RED.
@@ -319,7 +323,7 @@ describe('SessionComputerScreenPane retained source', () => {
             // the destination's open viewer state, not an absent controller.
             const presentation = details ? <DetailsAccount>{viewerPresentation}</DetailsAccount> : viewerPresentation;
             // Match production: retention and destination authority outlive responsive shells.
-            return <React.Profiler id="computer-route-continuity" onRender={recordCommit}><RetainedPresentationSlotsProvider store={store}>
+            return <InjectedAuthProvider credentials={{ token: home.token }}><React.Profiler id="computer-route-continuity" onRender={recordCommit}><RetainedPresentationSlotsProvider store={store}>
                 <DestinationInstanceHost tabId={routed ? destination.id : destinationId}
                     ref={routed ? destination.target : standaloneDestination}
                     pathname={routed ? hrefForDestinationRef([], destination.target)!.split('?')[0] : `/session/${sessionId}`} focused visible navigation={navigation}>
@@ -327,7 +331,7 @@ describe('SessionComputerScreenPane retained source', () => {
                     {presentation}
                 </SourceAccount>
                 </DestinationInstanceHost>
-            </RetainedPresentationSlotsProvider></React.Profiler>;
+            </RetainedPresentationSlotsProvider></React.Profiler></InjectedAuthProvider>;
         }
         // Window measurement is the native boundary; real phone/wide binders own placement.
         let placeholderSize = { width: 358, height: 224 };
@@ -335,6 +339,9 @@ describe('SessionComputerScreenPane retained source', () => {
         const screen = await renderScreen(<Harness shell="pane" />, {
             createNodeMock: () => ({ measureInWindow: (callback: (x: number, y: number, width: number, height: number) => void) => callback(16, 120, placeholderSize.width, placeholderSize.height) }),
         });
+        const measurePicture = async () => { await act(async () => {
+            invokeTestInstanceHandler(screen.findByTestId(`browser-keepalive-placeholder-${slotId}`)!, 'onLayout', {});
+        }); };
         async function waitForMountedStream(): Promise<string> {
             let mountedStreamId = '';
             await vi.waitFor(async () => {
@@ -367,13 +374,12 @@ describe('SessionComputerScreenPane retained source', () => {
         };
         try {
             phase = 'waiting for share selection without asserting that consent ended';
+            // The real portal parks demand until its native/browser placeholder is measured.
+            await measurePicture();
+            await vi.waitFor(() => expect(screen.root.findByType(ComputerScreenViewer).props.machineOnline).toBe(true));
             expect(screen.root.findByType(ComputerScreenViewer).props.selectionPending).toBe(true);
-            expect(screen.root.findByType(ComputerScreenViewer).props.machineOnline).toBe(true);
             expect(screen.findByTestId('computer-screen-viewer-not-shared')).toBeNull();
             expect(screen.findByTestId('computer-screen-viewer-connecting')).not.toBeNull();
-            await act(async () => {
-                invokeTestInstanceHandler(screen.findByTestId(`browser-keepalive-placeholder-${slotId}`)!, 'onLayout', {});
-            });
             await act(async () => { selectionRead!.resolve(); });
             // Physical status completion follows the initial get/list phases;
             // microtask count alone is not an owner readiness predicate.
@@ -523,6 +529,7 @@ describe('SessionComputerScreenPane retained source', () => {
             await flushHookEffects();
             expect(network.requests).toHaveLength(parkedReads);
             await reflow('pane');
+            await measurePicture();
             await waitForMountedStream();
             console.info('Computer retained reflow measurement', JSON.stringify(reflowSamples));
             expect(parkedPicture).toEqual(lastPicture);
@@ -542,9 +549,6 @@ describe('SessionComputerScreenPane retained source', () => {
             await reflow('phone');
             expect(screen.findByTestId('session-viewer-sticky')).not.toBeNull();
             expect(picture()).toEqual(lastPicture);
-            const measurePicture = async () => { await act(async () => {
-                invokeTestInstanceHandler(screen.findByTestId(`browser-keepalive-placeholder-${slotId}`)!, 'onLayout', {});
-            }); };
             await measurePicture();
             const placedPicture = () => {
                 const entry = store.getPortalSnapshot().find(entry => entry.slotId === slotId);
@@ -651,6 +655,8 @@ describe('SessionComputerScreenPane retained source', () => {
             // entire app root (retired authority correctly cannot send a late network Stop).
             await act(async () => { store.removePortalEntry(slotId); });
             await screen.update(<Harness shell="floating" />);
+            // This is a genuinely new portal, so its predecessor's geometry is not retained.
+            await measurePicture();
             await act(async () => { delayStart!.resolve(); });
             await flushHookEffects();
             const mountedStreamId = await waitForMountedStream();

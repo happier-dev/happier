@@ -1,5 +1,5 @@
 import * as React from 'react';
-import type { ComputerGrantStatusV1, ComputerSelectedTargetResponseV1, ComputerTargetV1 } from '@happier-dev/protocol';
+import type { ComputerGrantStatusV1, ComputerSelectedTargetResponseV1, ComputerTargetV1 } from '@happier-dev/protocol/computer/v1';
 import type { HappierPresenceTakeControlResult } from '@happier-dev/plugin-ui/presentation';
 
 import type { BrowserCopresence } from '@/sync/domains/browser/automation/copresence';
@@ -8,7 +8,7 @@ import {
     createComputerControlClient,
     type ComputerActionExecute,
     type ComputerControlClient,
-    type ComputerSessionScope,
+    type ComputerScope,
 } from '@/sync/domains/computer/computerControlClient';
 import { projectComputerCopresence } from '@/sync/domains/computer/presence';
 import { resolveComputerRecovery } from '@/sync/domains/computer/targets';
@@ -20,6 +20,7 @@ import { resolveServerScopedMachine } from '@/sync/domains/machines/resolveServe
 import { readMachineName } from '@/utils/sessions/machineDisplayNames';
 import { useSessionViewerSourceAccountLifetime } from '@/components/sessions/viewer/SessionViewerSourceAccountScope';
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
+import type { ComputerClipboardOperationV1, ComputerClipboardResultV1 } from '@happier-dev/protocol/computer/v1';
 
 let frontDoorExecute: ComputerActionExecute | null = null;
 const EMPTY_SNAPSHOT = { selection: null, status: null, grants: null, failure: null };
@@ -64,6 +65,7 @@ export type ComputerSessionControl = Readonly<{
     refresh: () => void;
     /** The picker's answer, applied without another read. */
     applySelection: (selection: ComputerSelectedTargetResponseV1) => void;
+    clipboard: (operation: ComputerClipboardOperationV1) => Promise<ComputerClipboardResultV1>;
 }>;
 const EMPTY_LOCAL_PRESENTATION: Readonly<{ stopRequested: boolean; busy: ComputerSessionControl['busy']; failure: string | null; stopFailed: boolean; openSettings: ComputerSessionControl['openSettings'] }> = {
     stopRequested: false, busy: null, failure: null, stopFailed: false, openSettings: 'idle',
@@ -76,7 +78,7 @@ const EMPTY_LOCAL_PRESENTATION: Readonly<{ stopRequested: boolean; busy: Compute
  * domain's Session projection and refresh on Actions and actual lifecycle changes, never on frames.
  */
 export function useComputerSessionControl(input: Readonly<{
-    scope: ComputerSessionScope | null;
+    scope: ComputerScope | null;
     execute?: ComputerActionExecute;
     refreshKey?: unknown;
     /** A parked viewer retains its owner but withdraws ordinary presentation demand. */
@@ -94,6 +96,11 @@ export function useComputerSessionControl(input: Readonly<{
     const serverId = scope?.serverId ?? accountLifetime?.scope.serverId ?? null;
     const sessionId = scope?.sessionId ?? null;
     const machineId = scope?.machineId ?? null;
+    const personId = scope && 'source' in scope ? scope.source.personId : null;
+    const controlScope = React.useMemo<ComputerScope | null>(() => !machineId ? null
+        : sessionId ? { sessionId, machineId, serverId }
+        : personId ? { source: { kind: 'machine-person', personId }, machineId, serverId } : null,
+    [machineId, personId, serverId, sessionId]);
     const enabled = input.enabled ?? true;
     const store = getStorage();
     // Machine identity survives an unavailable Computer owner, but the cached
@@ -108,12 +115,14 @@ export function useComputerSessionControl(input: Readonly<{
         return readMachineName(resolveServerScopedMachine(state, serverId, machineId));
     }, [accountLifetime, machineId, serverId, store]);
     const subscribeCachedMachineName = React.useCallback((listener: () => void) =>
-        enabled && accountLifetime && machineId ? store.subscribe(listener) : () => {},
+        enabled && accountLifetime && machineId ? store.subscribe(listener, {
+            machines: true, machineListByServerId: true, machineListStatusByServerId: true, profileScope: true,
+        }) : () => {},
     [accountLifetime, enabled, machineId, store]);
     const cachedMachineName = React.useSyncExternalStore(subscribeCachedMachineName, readCachedMachineName, readCachedMachineName);
     const projection = React.useMemo(
-        () => (sessionId && machineId && accountLifetime !== null ? getComputerSessionProjection({ serverId, sessionId, machineId }, execute, accountLifetime) : null),
-        [accountLifetime, execute, machineId, serverId, sessionId],
+        () => (controlScope && accountLifetime !== null ? getComputerSessionProjection(controlScope, execute, accountLifetime) : null),
+        [accountLifetime, controlScope, execute],
     );
     const mountedEffects = useMountedActionExecution(input.execute ? null : accountLifetime?.scope ?? null);
     const mountedExecute: ComputerActionExecute = React.useCallback((actionId, actionInput, context) => mountedEffects.execute(actionId, actionInput, {
@@ -124,8 +133,8 @@ export function useComputerSessionControl(input: Readonly<{
     // effect borrows the same Account but awaits the existing approval owner.
     const client: ComputerControlClient | null = React.useMemo(() => input.execute
         ? projection?.client ?? null
-        : sessionId && machineId && accountLifetime ? createComputerControlClient({ serverId, sessionId, machineId }, mountedExecute, accountLifetime) : null,
-    [accountLifetime, input.execute, machineId, mountedExecute, projection, serverId, sessionId]);
+        : controlScope && accountLifetime ? createComputerControlClient(controlScope, mountedExecute, accountLifetime) : null,
+    [accountLifetime, controlScope, input.execute, mountedExecute, projection]);
     const subscribe = React.useCallback((listener: () => void) => projection?.subscribe(listener, enabled) ?? (() => {}), [enabled, projection]);
     const getSnapshot = React.useCallback(() => projection?.getSnapshot() ?? EMPTY_SNAPSHOT, [projection]);
     const { selection, status, grants, failure: ownerFailure } = React.useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
@@ -170,6 +179,14 @@ export function useComputerSessionControl(input: Readonly<{
             ? result.code === 'machine_unreachable' || result.code === 'invalid_action_output' ? 'unknown' : 'failed'
             : result.value.status === 'interrupted' || result.value.status === 'dispatched' ? 'accepted' : 'failed' };
     }, [client, refreshStatus, updateLocalPresentation]);
+
+    const clipboard = React.useCallback(async (operation: ComputerClipboardOperationV1): Promise<ComputerClipboardResultV1> => {
+        const owner = client;
+        if (!owner?.isCurrent()) return { ok: false, code: 'action_account_scope_changed' };
+        const result = await owner.clipboard(operation);
+        if (operation.kind === 'read' && (clientRef.current !== owner || !owner.isCurrent())) return { ok: false, code: 'action_account_scope_changed' };
+        return result.ok ? result.value : { ok: false, code: result.code };
+    }, [client]);
 
     const handBack = React.useCallback(() => {
         const owner = client;
@@ -240,6 +257,10 @@ export function useComputerSessionControl(input: Readonly<{
             // The answer ends the press: Retry is offered at once, not after the follow-up read settles.
             if (!result.ok) updateLocalPresentation({ failure: result.code, stopFailed: true, busy: null });
             else if (result.value.status !== 'dispatched') updateLocalPresentation({ failure: result.value.status === 'failed' ? result.value.code : 'control_not_drained', stopFailed: true, busy: null });
+            else {
+                updateLocalPresentation({ failure: null, stopFailed: false, busy: null });
+                return;
+            }
             await refreshStatus();
             if (clientRef.current !== owner || !owner.isCurrent()) return;
             updateLocalPresentation({ busy: null });
@@ -283,6 +304,6 @@ export function useComputerSessionControl(input: Readonly<{
     return React.useMemo(() => ({
         selection, presence, agentActing, targetTitle, appName, machineName, busy, failure: currentFailure, stopFailed: stopFailedNow, canRead, canInput, inputDenied,
         grants, openSettings, requestSettings,
-        takeControl, handBack, checkAgain, stopSharing, refresh, applySelection,
-    }), [agentActing, appName, applySelection, busy, canInput, canRead, inputDenied, checkAgain, currentFailure, grants, handBack, machineName, openSettings, presence, refresh, requestSettings, selection, stopFailedNow, stopSharing, takeControl, targetTitle]);
+        takeControl, handBack, checkAgain, stopSharing, refresh, applySelection, clipboard,
+    }), [agentActing, appName, applySelection, busy, canInput, canRead, inputDenied, checkAgain, clipboard, currentFailure, grants, handBack, machineName, openSettings, presence, refresh, requestSettings, selection, stopFailedNow, stopSharing, takeControl, targetTitle]);
 }

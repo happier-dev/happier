@@ -148,8 +148,9 @@ describe('useComputerSessionControl', () => {
         let shared = true;
         const machine: ComputerMachineRpc = async ({ actionId }) => {
             if (actionId === 'computer.target.close') {
-                if (++closes === 2) shared = false;
-                return { ...identity, status: 'dispatched' };
+                if (++closes === 1) return { ...identity, targetLabel: 'Sign in to Lumen', status: 'interrupted', completion: 'unknown' };
+                shared = false;
+                return { ...identity, targetLabel: 'Sign in to Lumen', status: 'dispatched' };
             }
             if (actionId === 'computer.target.get') return shared ? selection : {
                 consentGranted: false, approvalDisplay: { machineDisplayName: 'Studio laptop', requiresTargetSelection: true },
@@ -174,16 +175,29 @@ describe('useComputerSessionControl', () => {
         } finally { await hook.unmount(); }
     });
 
-    it('does not report release success when the canonical confirmation read is unavailable', async () => {
-        let closed = false;
-        const executor = executorWith(async ({ actionId }) => {
-            if (actionId === 'computer.target.close') { closed = true; return { ...identity, status: 'dispatched' }; }
-            if (actionId === 'computer.target.get') return closed
-                ? { ok: false, errorCode: 'MACHINE_RPC_TIMEOUT', error: 'MACHINE_RPC_TIMEOUT' } : selection;
+    it('retires the mounted source from the close answer with no follow-up target read', async () => {
+        let shared = true;
+        const calls: string[] = [];
+        const hook = await renderControl(async ({ actionId }) => {
+            calls.push(actionId);
+            if (actionId === 'computer.target.close') {
+                shared = false;
+                return { ...identity, targetLabel: 'Sign in to Lumen', status: 'dispatched' };
+            }
+            if (actionId === 'computer.target.get') return shared ? selection : {
+                consentGranted: false, approvalDisplay: { machineDisplayName: 'Studio laptop', requiresTargetSelection: true },
+            };
+            if (actionId === 'computer.control.status') return status('human');
             throw new Error(`Unexpected Computer RPC: ${actionId}`);
         });
-        const client = createComputerControlClient({ sessionId: 'release-confirmation', machineId: 'machine_1' }, executor.execute);
-        expect(await client.stopSharing()).toEqual({ ok: false, code: 'MACHINE_RPC_TIMEOUT' });
+        try {
+            calls.length = 0;
+            await act(async () => hook.getCurrent().stopSharing());
+            expect(calls).toEqual(['computer.target.close']);
+            expect(hook.getCurrent().selection).toMatchObject({ consentGranted: false, approvalDisplay: { requiresTargetSelection: true } });
+            expect(hook.getCurrent().failure).toBeNull();
+            expect(hook.getCurrent().busy).toBeNull();
+        } finally { await hook.unmount(); }
     });
 
     it('does not request picker thumbnails while refreshing control and waits for current grants before admitting the picture', async () => {

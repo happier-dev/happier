@@ -1,6 +1,6 @@
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ApprovalRequestSchema } from '@happier-dev/protocol';
+import { ApprovalRequestSchema } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { createUnavailableRuntimeActionExecutor } from '@happier-dev/protocol/actions/executor/dispatch';
 import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';

@@ -15,6 +15,7 @@ import { SegmentedChoiceItem } from '@/components/ui/lists/SegmentedChoiceItem';
 import { SelectionTiles } from '@/components/ui/forms/SelectionTiles';
 import { SafeExpoImage } from '@/components/ui/media/SafeExpoImage';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
+import { SurfaceStateSizeProvider } from '@/components/ui/surfaces/surfaceStateSize';
 import { Eyebrow } from '@/components/ui/text/Eyebrow';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
@@ -41,6 +42,12 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     state: {
         paddingVertical: theme.space.s24,
+    },
+    // The dialog keeps the height of its largest single-card answer (the driver recovery card) from "Looking for
+    // windows" on, so the answer arrives without the dialog growing under the person's eyes.
+    stateReserve: {
+        minHeight: 391,
+        justifyContent: 'center',
     },
     notice: {
         flexDirection: 'row',
@@ -260,6 +267,7 @@ function TargetTiles(props: Readonly<{
 function WholeDisplayConsent(props: Readonly<{
     displayLabel: string;
     agentName: string;
+    agentless?: boolean;
     initialUse: boolean;
     /** The machine's OS denies input: mouse and keyboard cannot be granted from here. */
     inputDenied: boolean;
@@ -289,7 +297,7 @@ function WholeDisplayConsent(props: Readonly<{
                     title={t('computerUse.picker.allowUse')}
                     subtitle={props.inputDenied
                         ? `${t('computerUse.permission.input')}: ${t('computerUse.permission.denied')}`
-                        : t('computerUse.picker.allowUseHint', { agent: props.agentName })}
+                        : props.agentless ? t('computerUse.picker.allowUseHintMachine') : t('computerUse.picker.allowUseHint', { agent: props.agentName })}
                     rightElement={<Switch value={see && use} onValueChange={setUse} disabled={!see || props.inputDenied} testID={`${props.testID}-use`} />}
                     showChevron={false}
                 />
@@ -346,6 +354,8 @@ export function ComputerTargetPicker(props: Readonly<{
     openSettings: ComputerOpenSettingsState;
     /** The agent's name, for what it may do and the ask-first line. */
     agentName: string;
+    /** No agent resolves: the sentences speak of agents instead of putting a fallback name mid-sentence. */
+    agentless?: boolean;
     /**
      * The person's own Ask-first preferences for the agent's screenshots and its clicks/keys (the
      * existing Actions approval owner), said as one line with Change.
@@ -374,12 +384,14 @@ export function ComputerTargetPicker(props: Readonly<{
     const { state, machineName } = props;
     const recovery = resolveComputerRecovery(state, props.access);
     const switcher = props.density === 'switcher';
+    // A switcher is anchored to the viewer's source switch and sizes to its row; the dialog form reserves its answer.
+    const reserve = switcher ? null : stylesheet.stateReserve;
     // The display waiting for its consent step.
     const [consentKey, setConsentKey] = React.useState<string | null>(null);
 
     if (state.kind === 'loading') {
         return (
-            <View style={stylesheet.state} testID={`${testID}-loading`}>
+            <View style={[stylesheet.state, reserve]} testID={`${testID}-loading`}>
                 <SurfaceStateCard kind="loading" title={t('computerUse.picker.loadingTitle', { machine: machineName })} />
             </View>
         );
@@ -390,7 +402,7 @@ export function ComputerTargetPicker(props: Readonly<{
         // identity there could not be confirmed yet; never the owner's screen as a fallback.
         const identity = state.code === 'agent_isolation_unavailable';
         return (
-            <View style={stylesheet.state} testID={`${testID}-own-desktop-unavailable`}>
+            <View style={[stylesheet.state, reserve]} testID={`${testID}-own-desktop-unavailable`}>
                 <SurfaceStateCard
                     kind="unavailable"
                     iconName="desktop"
@@ -421,7 +433,7 @@ export function ComputerTargetPicker(props: Readonly<{
             );
         }
         return (
-            <View style={stylesheet.state} testID={`${testID}-failed`}>
+            <View style={[stylesheet.state, reserve]} testID={`${testID}-failed`}>
                 <SurfaceStateCard
                     testID={repairDriver ? `${testID}-recovery` : undefined}
                     kind={noScreen || unsupported ? 'unavailable' : 'error'}
@@ -429,11 +441,11 @@ export function ComputerTargetPicker(props: Readonly<{
                     title={repairDriver
                         ? t(recovery?.cause === 'driver_missing' ? 'computerUse.presentation.driverMissing' : 'computerUse.presentation.driverInvalid')
                         : noScreen
-                        ? t('computerUse.picker.noScreenTitle', { machine: machineName })
+                        ? t('computerUse.picker.noScreenSessionTitle')
                         : unsupported
                             ? t('computerUse.picker.unsupportedTitle', { machine: machineName })
                             : t('computerUse.picker.failedTitle', { machine: machineName })}
-                    reason={repairDriver ? t('computerUse.presentation.driverRepairBody') : noScreen
+                    reason={repairDriver ? t('computerUse.presentation.driverRepairBody', { machine: keepHyphenatedNameTogether(machineName) }) : noScreen
                         ? t('computerUse.picker.noScreenBody')
                         : unsupported ? t('computerUse.picker.unsupportedBody') : t('computerUse.picker.failedBody')}
                     diagnosticCode={state.code}
@@ -446,12 +458,12 @@ export function ComputerTargetPicker(props: Readonly<{
     }
     const accessChoice = <ItemGroup>
         <SegmentedChoiceItem
-            title={t('computerUse.picker.access', { agent: props.agentName })}
+            title={props.agentless ? t('computerUse.picker.accessMachine') : t('computerUse.picker.access', { agent: props.agentName })}
             value={props.access}
             onChange={props.onAccessChange}
             options={[
-                { id: 'see', label: t('computerUse.picker.accessSee'), description: t('computerUse.picker.accessSeeHint', { agent: props.agentName }) },
-                { id: 'use', label: t('computerUse.picker.accessValue'), description: t('computerUse.picker.accessUseHint', { agent: props.agentName }),
+                { id: 'see', label: t('computerUse.picker.accessSee'), description: props.agentless ? t('computerUse.picker.accessSeeHintMachine') : t('computerUse.picker.accessSeeHint', { agent: props.agentName }) },
+                { id: 'use', label: t('computerUse.picker.accessValue'), description: props.agentless ? t('computerUse.picker.accessUseHintMachine') : t('computerUse.picker.accessUseHint', { agent: props.agentName }),
                     ...(state.grants.input === 'denied' ? { unavailableReason: `${t('computerUse.permission.input')}: ${t('computerUse.permission.denied')}` } : {}) },
             ]}
             disabled={props.sharing}
@@ -474,13 +486,16 @@ export function ComputerTargetPicker(props: Readonly<{
         return (
             <View style={stylesheet.state} testID={`${testID}-permission`}>
                 {state.grants.capture === 'granted' ? accessChoice : null}
-                <ComputerPermissionCard
-                    machineName={machineName}
-                    grants={state.grants}
-                    openSettings={props.openSettings}
-                    onOpenSettings={props.onOpenSettings}
-                    onCheckAgain={props.onRetry}
-                />
+                {/* The phone sheet takes the phone step: the card sits in the sheet's flow with its actions stacked full width. */}
+                <SurfaceStateSizeProvider size={props.compact ? 'phone' : undefined}>
+                    <ComputerPermissionCard
+                        machineName={machineName}
+                        grants={state.grants}
+                        openSettings={props.openSettings}
+                        onOpenSettings={props.onOpenSettings}
+                        onCheckAgain={props.onRetry}
+                    />
+                </SurfaceStateSizeProvider>
             </View>
         );
     }
@@ -524,6 +539,7 @@ export function ComputerTargetPicker(props: Readonly<{
                 <WholeDisplayConsent
                     displayLabel={consentDisplay.label}
                     agentName={props.agentName}
+                    agentless={props.agentless}
                     initialUse={!switcher && props.access === 'use'}
                     inputDenied={state.grants.input === 'denied'}
                     sharing={props.sharing}
@@ -551,7 +567,7 @@ export function ComputerTargetPicker(props: Readonly<{
         mark: switcher ? 'check' : 'radio',
         currentKey: props.currentKey,
         suggestedKey: props.suggestedKey,
-        suggestedLabel: t('computerUse.picker.suggests', { agent: props.agentName }),
+        suggestedLabel: props.agentless ? t('computerUse.picker.suggestsMachine') : t('computerUse.picker.suggests', { agent: props.agentName }),
         testID: `${testID}-target`,
     } as const;
     const refresh = (
@@ -598,7 +614,13 @@ export function ComputerTargetPicker(props: Readonly<{
             <View style={stylesheet.policy}>
                 <Icon name="shield-check" size={ICON_SIZE.sm} color={theme.colors.text.secondary} />
                 <Text style={stylesheet.policyText} testID={`${testID}-policy`}>
-                    {t(props.policy.asksBeforeScreenshots && props.policy.asksBeforeInput
+                    {props.agentless ? t(props.policy.asksBeforeScreenshots && props.policy.asksBeforeInput
+        ? 'computerUse.picker.policyBothMachine'
+        : props.policy.asksBeforeInput
+            ? 'computerUse.picker.policyInputMachine'
+            : props.policy.asksBeforeScreenshots
+                ? 'computerUse.picker.policyCaptureMachine'
+                : 'computerUse.picker.policyNoneMachine') : t(props.policy.asksBeforeScreenshots && props.policy.asksBeforeInput
         ? 'computerUse.picker.policyBoth'
         : props.policy.asksBeforeInput
             ? 'computerUse.picker.policyInput'

@@ -54,6 +54,17 @@ describe('resolveComputerTargetPickerForSession', () => {
     if (!claude) throw new Error('The Claude agent is missing from the catalog');
     expect(request?.agentName).toBe(t(claude.displayNameKey));
     expect(request?.agentName).not.toBe(t('browserPresence.agentFallbackName'));
+    expect(request?.agentless).toBe(false);
+  });
+
+  it('asks for the agentless sentences when no agent resolves, instead of a fallback name mid-sentence', () => {
+    const request = resolveComputerTargetPickerForSession({
+      sessionId: 'picker-agentless-session',
+      machineId: 'machine-1',
+      machineName: 'devbox',
+      onSelected: () => {},
+    });
+    expect(request?.agentless).toBe(true);
   });
 
   it('never puts the raw machine id in picker copy while the Machine has no readable name', () => {

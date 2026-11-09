@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { StyleSheet } from 'react-native';
 import { describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
@@ -31,10 +32,37 @@ describe('Computer driver recovery', () => {
         const onRepairDriver = vi.fn();
         const onRetry = vi.fn();
         const screen = await renderPicker({ state: { kind: 'failed', code }, onRepairDriver, onRetry }).screen;
+        // The repair is on the Machine the window lives on, which the sentence names.
+        expect(screen.getTextContent()).toContain('driverRepairBody:{"machine":"Studio laptop"}');
         await screen.pressByTestIdAsync('p-recovery-action');
         expect(onRepairDriver).toHaveBeenCalledTimes(1);
         expect(onRetry).not.toHaveBeenCalled();
         expect(screen.findByTestId('p-target:window')).toBeNull();
+    });
+});
+
+describe('Computer picker without a resolved agent', () => {
+    it('says what agents can do, never a fallback name inside a sentence', async () => {
+        const screen = await renderPicker({ agentless: true }).screen;
+        const text = screen.getTextContent();
+        expect(text).toContain('computerUse.picker.accessMachine');
+        expect(text).toContain('computerUse.picker.policyCaptureMachine');
+        expect(text).not.toContain('"agent":');
+    });
+});
+
+describe('Computer picker stability', () => {
+    const reservedHeight = async (state: ComputerTargetPickerState, testID: string, density?: 'switcher') => {
+        const screen = await renderPicker({ state, ...(density ? { density } : {}) }).screen;
+        return StyleSheet.flatten(screen.findByTestId(testID)!.props.style)?.minHeight;
+    };
+    it('holds the height of its largest single-card answer from the first look, so the answer does not grow the dialog', async () => {
+        const loading = await reservedHeight({ kind: 'loading' }, 'p-loading');
+        expect(loading).toBeGreaterThan(0);
+        expect(await reservedHeight({ kind: 'failed', code: 'driver_unavailable' }, 'p-failed')).toBe(loading);
+    });
+    it('lets the anchored switcher size to its own rows', async () => {
+        expect(await reservedHeight({ kind: 'loading' }, 'p-loading', 'switcher')).toBeUndefined();
     });
 });
 
@@ -112,7 +140,7 @@ describe('ComputerTargetPicker', () => {
         const screen = await pending;
         expect(screen.findByTestId('p-permission')).toBeTruthy();
         // Both permissions are listed with their state on the machine, not named in prose.
-        expect(screen.findByTestId('computer-permission-grant-capture-denied')).not.toBeNull();
+        expect(screen.findByTestId('computer-permission-grant-capture-missing')).not.toBeNull();
         expect(screen.findByTestId('computer-permission-grant-input-granted')).not.toBeNull();
         await screen.pressByTestIdAsync('computer-permission-open-settings');
         expect(props.onOpenSettings).toHaveBeenCalledWith('capture');
@@ -204,7 +232,9 @@ describe('ComputerTargetPicker', () => {
 
     it('says plainly when the machine has no screen, and why a share did not land', async () => {
         const headless = await renderPicker({ state: { kind: 'failed', code: 'computer_display_unavailable' } }).screen;
-        expect(headless.getTextContent()).toContain('computerUse.picker.noScreenTitle');
+        // The dialog's header chip already names the Machine: the card says what is missing, once.
+        expect(headless.getTextContent()).toContain('computerUse.picker.noScreenSessionTitle');
+        expect(headless.getTextContent()).not.toContain('"machine"');
         const inUse = await renderPicker({ selectedKey: computerTargetKey(lumen.target), noticeCode: 'computer_target_in_use' }).screen;
         expect(inUse.getTextContent()).toContain('computerUse.picker.inUse');
         // Computer use targets the Session's own machine: another machine is a typed refusal, no list.

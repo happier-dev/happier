@@ -1,12 +1,12 @@
 import * as React from 'react';
-import { View } from 'react-native';
+import { View, type LayoutChangeEvent } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
 import { BrowserPresenceCapsule } from '@/components/browser/copresence/BrowserPresenceCapsule';
 import { useBrowserSessionAgentIdentity } from '@/components/browser/copresence/BrowserShellPresence';
 import { COMPOSER_CONTENT_HORIZONTAL_INSET } from '@/components/sessions/agentInput/composerContentInset';
 import { layout } from '@/components/ui/layout/layout';
-import { useSessionMachineTarget } from '@/components/sessions/model/useSessionMachineTarget';
+import { useSessionViewerMachineId } from '@/components/sessions/viewer/useSessionViewerMachine';
 import { useSessionComputerMachine } from '@/sync/domains/computer/sessionComputerMachines';
 import { t } from '@/text';
 import { useDeviceType } from '@/utils/platform/responsive';
@@ -33,17 +33,24 @@ function MountedSessionComputerPresenceLine(props: Readonly<{
     const open = useOpenSessionComputerScreen({ sessionId: props.sessionId, serverId: props.serverId, machineId: props.machineId });
     const agent = React.useMemo(() => ({ agentId: identity.agentId, name: identity.name }), [identity.agentId, identity.name]);
     const compact = useDeviceType() === 'phone';
+    // The strip's own width: where the column would squeeze the sentence, its buttons move beneath it.
+    const [width, setWidth] = React.useState<number | undefined>(undefined);
+    const onLayout = React.useCallback((event: LayoutChangeEvent) => {
+        const next = event.nativeEvent.layout.width;
+        setWidth((current) => (current === next ? current : next));
+    }, []);
     if (!control.selection?.sourceId) return null;
     const target = control.appName ?? control.targetTitle ?? t('computerUse.presentation.tabFallback');
     const machine = control.machineName;
     return (
         <View style={styles.frame}>
             {/* The content width is read at render: the layout owner reads the person's width setting. */}
-            <View style={[styles.column, { maxWidth: layout.maxWidth }]}>
+            <View style={[styles.column, { maxWidth: layout.maxWidth }]} onLayout={onLayout}>
                 <BrowserPresenceCapsule
                     testID={props.testID}
                     placement="strip"
                     compact={compact}
+                    availableWidth={width}
                     presence={control.presence}
                     agent={agent}
                     agentTitle={control.agentActing
@@ -94,11 +101,11 @@ export function SessionComputerPresenceLine(props: Readonly<{
 }>): React.ReactElement | null {
     const accountLifetime = useSessionViewerSourceAccountLifetime();
     const serverId = props.serverId ?? accountLifetime?.scope.serverId ?? null;
-    const seenComputerUse = useSessionComputerMachine(props.sessionId);
+    const seenComputerUse = useSessionComputerMachine(props.sessionId, accountLifetime, serverId);
     // While the viewer presents the window, its own footer says who is acting: one fact, one line.
     const viewerPresenting = isSessionViewerPresenting(useOptionalSessionViewerController(), 'computer');
     // The share lives on the Session's own machine (computer use never targets another one).
-    const sessionMachineId = useSessionMachineTarget(seenComputerUse && accountLifetime ? props.sessionId : null, serverId)?.machineId ?? null;
+    const sessionMachineId = useSessionViewerMachineId(seenComputerUse && accountLifetime ? props.sessionId : '', serverId);
     if (viewerPresenting || !seenComputerUse || !sessionMachineId || seenComputerUse.machineId !== sessionMachineId) return null;
     return (
         <MountedSessionComputerPresenceLine
