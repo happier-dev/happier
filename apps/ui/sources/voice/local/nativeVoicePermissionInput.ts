@@ -76,7 +76,7 @@ export function createNativeVoicePermissionInput(params: Readonly<{
     const summary = summarizeAgentRequestForVoiceHuman(request.kind, request.id, request.tool, request.arguments, prefs,
       resolveVoiceSessionLabel(selected.address, prefs, { fallbackLabel: t('voice.readiness.requestingSession') }));
     await readPrompt(selected, `${summary} ${prefs.voiceCanApproveRequests ? question() : t('voice.readiness.permissionTapRequired')}`,
-      prefs.voiceCanApproveRequests);
+      true);
   };
   const observe = (): void => {
     if (disposed || params.signal.aborted) return;
@@ -142,7 +142,7 @@ export function createNativeVoicePermissionInput(params: Readonly<{
       if (!prompt?.needsReadout) return false;
       const prefs = getVoiceContextFormatterPrefs({ settings: storage.getState().settings, sessionAddress: prompt.address,
         sessionId: prompt.address.sessionId, isCurrentAttemptTarget: true });
-      if (!prefs.voiceSharePermissionRequests || !prefs.voiceCanApproveRequests) return false;
+      if (!prefs.voiceSharePermissionRequests) return false;
       // A genuine playback interruption can still leave the request unheard.
       // Re-present it at the turn's existing settlement.
       await presentPrompt(prompt);
@@ -158,8 +158,11 @@ export function createNativeVoicePermissionInput(params: Readonly<{
           if (disposed || params.signal.aborted || prompt !== selected) return;
           if (text.trim()) await params.commitTranscript(text, randomUUID());
           if (disposed || params.signal.aborted || prompt !== selected) return;
-          if (!decision) {
-            await readPrompt(selected, question(), true);
+          const prefs = getVoiceContextFormatterPrefs({ settings: storage.getState().settings,
+            sessionAddress: selected.address, sessionId: selected.address.sessionId, isCurrentAttemptTarget: true });
+          if (!prefs.voiceCanApproveRequests || !decision) {
+            await readPrompt(selected,
+              prefs.voiceCanApproveRequests ? question() : t('voice.readiness.permissionTapRequired'), true);
             return;
           }
           params.onResponding();
