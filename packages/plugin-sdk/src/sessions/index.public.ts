@@ -49,6 +49,7 @@ export { SessionMessageProvenanceV1Schema } from '../services/sessions.js';
 export type { SessionMessageRole } from '../services/sessions.js';
 export type { SessionPage } from '../services/sessions.js';
 export type { SessionPermissionDecision } from '../services/sessions.js';
+export type { NativePermissionChoicesV1, NativePermissionChoiceAnswerV1 } from '../services/sessions.js';
 export type { SessionPermissionDecisionRequest } from '../services/sessions.js';
 export type { SessionPermissionDecisionResult } from '../services/sessions.js';
 export type { SessionPermissionFollowUpPromptDelivery } from '../services/sessions.js';
@@ -115,7 +116,7 @@ export { resolveTranscriptBodySessionMessageRole } from '../services/sessions.js
 export { readTranscriptPeerSenderV1 } from '../services/sessions.js';
 export { sanitizeHappierStructuredInputV1 } from '../services/sessions.js';
 
-export type { AgentRequestQuestionSummary, StructuredQuestionAnswersV1 } from '../services/sessions.js';
-export { summarizeAgentRequestQuestions, StructuredQuestionAnswersV1Schema } from '../services/sessions.js';
+export type { AgentRequestQuestionSummary, StructuredQuestionAnswerDetailsV1, StructuredQuestionAnswersV1 } from '../services/sessions.js';
+export { summarizeAgentRequestQuestions, StructuredQuestionAnswerDetailsV1Schema, StructuredQuestionAnswersV1Schema } from '../services/sessions.js';
 export { SessionInputForgeEvidenceV1Schema, renderSessionInputContextPromptV1, readSessionInputForgeEvidenceV1 } from './forgeEvidence.js';
 export type { SessionInputForgeEvidenceV1 } from './forgeEvidence.js';

@@ -5,6 +5,7 @@ import type { JsonValue } from '../identity.js';
 import type { Disposable, PluginCancellationOptions } from '../lifecycle.js';
 import type { ProjectKeyV1, SessionSpawnNewInputV2, SessionServerStartSpawnDraftV1 } from '../sessions/authoring.js';
 export type { ProjectKeyV1, SessionSpawnNewInputV2, SessionServerStartSpawnDraftV1 } from '../sessions/authoring.js';
+export type { NativePermissionChoicesV1, NativePermissionChoiceAnswerV1 } from '@happier-dev/agents';
 import type {
     SessionMcpElicitDecisionV1,
     SessionMcpElicitRequestV1,
@@ -50,7 +51,7 @@ import { ProjectKeyV1Schema as protocolProjectKeyV1Schema } from '@happier-dev/p
 import { readSessionModesMetadata as protocolReadSessionModesMetadata } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import { NATIVE_TOOL_APPROVAL_REQUEST_SOURCE as protocolNativeToolApprovalRequestSource, NATIVE_TOOL_APPROVAL_ONCE_REQUEST_SOURCE as protocolNativeToolApprovalOnceRequestSource } from '@happier-dev/protocol/sessions/permissions/v1';
 import { buildAgentRequestSemanticSummary as protocolBuildAgentRequestSemanticSummary } from '@happier-dev/protocol/activity/agentRequestSummary';
-import { StructuredQuestionAnswersV1Schema as protocolStructuredQuestionAnswersV1Schema } from '@happier-dev/protocol/tools/structuredQuestionAnswersV1';
+import { StructuredQuestionAnswerDetailsV1Schema as protocolStructuredQuestionAnswerDetailsV1Schema, StructuredQuestionAnswersV1Schema as protocolStructuredQuestionAnswersV1Schema } from '@happier-dev/protocol/tools/structuredQuestionAnswersV1';
 
 /** Accepted native mode facts; parsing and retained V1 normalization stay Protocol-owned. */
 export type SessionModeCatalog = Readonly<{
@@ -79,6 +80,8 @@ export interface SessionSchema<T> {
 
 /** Lossless answers keyed by the live requester's canonical question identity. */
 export type StructuredQuestionAnswersV1 = Readonly<Record<string, readonly string[]>>;
+export type StructuredQuestionAnswerDetailsV1 = Readonly<Record<string, Readonly<{ freeText?: string; note?: string }>>>;
+export const StructuredQuestionAnswerDetailsV1Schema: SessionSchema<StructuredQuestionAnswerDetailsV1> = protocolStructuredQuestionAnswerDetailsV1Schema;
 
 /** The canonical validator retains answer arrays and their immutable, null-prototype carrier. */
 export const StructuredQuestionAnswersV1Schema: SessionSchema<StructuredQuestionAnswersV1> = protocolStructuredQuestionAnswersV1Schema;
@@ -91,6 +94,9 @@ export type AgentRequestQuestionSummary = Readonly<{
     selection: 'text' | 'single' | 'multiple';
     required: boolean;
     allowCustom: boolean;
+    minSelections?: number;
+    maxSelections?: number;
+    allowNote?: boolean;
     choices: readonly Readonly<{ label: string; value: string; description?: string | null }>[];
     freeformDescription?: string;
     freeformPlaceholder?: string;

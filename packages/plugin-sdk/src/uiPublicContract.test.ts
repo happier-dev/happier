@@ -24,6 +24,9 @@ import type {
     PluginUiPageHeaderActionV1,
     PluginUiSemanticCommandV1,
     PluginUiSessionServerStartDraftV1,
+    PluginUiSessionPendingPermissionV1,
+    PluginUiSessionPermissionAnswerV1,
+    PluginUiSessionPermissionResponseRequestV1,
     PluginUiViewV2Input,
 } from './ui/publicContract.js';
 import type { SessionServerStartSpawnDraftV1 } from './services/sessions.js';
@@ -35,7 +38,12 @@ import type {
     PluginUiToneV1 as CanonicalPluginUiToneV1,
 } from '@happier-dev/protocol/plugins/contributions/ui/tokens';
 import type { PluginUiChannelV1 as CanonicalPluginUiChannelV1 } from '@happier-dev/protocol/plugins/ui';
-import type { PluginUiHostMethodV1 as CanonicalPluginUiHostMethodV1 } from '@happier-dev/protocol/plugins/ui/client';
+import type {
+    PluginUiHostMethodV1 as CanonicalPluginUiHostMethodV1,
+    PluginUiSessionPendingPermissionV1 as CanonicalPluginUiSessionPendingPermissionV1,
+    PluginUiSessionPermissionAnswerV1 as CanonicalPluginUiSessionPermissionAnswerV1,
+    PluginUiSessionPermissionResponseRequestV1 as CanonicalPluginUiSessionPermissionResponseRequestV1,
+} from '@happier-dev/protocol/plugins/ui/client';
 import type {
     PluginUiViewDestinationBindingInputV2 as CanonicalPluginUiViewDestinationBindingInputV2,
     PluginUiViewInlineBindingInputV2 as CanonicalPluginUiViewInlineBindingInputV2,
@@ -228,6 +236,12 @@ void (undefined as unknown as typeof defineHostedWebBridgeMessage);
 void (undefined as unknown as typeof NormalCreatePluginRegistrationScope);
 
 describe('UI/testing public type contract', () => {
+    it('derives native permission choices and answers from the Protocol owner', () => {
+        expectTypeOf<PluginUiSessionPendingPermissionV1>().toEqualTypeOf<CanonicalPluginUiSessionPendingPermissionV1>();
+        expectTypeOf<PluginUiSessionPermissionAnswerV1>().toEqualTypeOf<CanonicalPluginUiSessionPermissionAnswerV1>();
+        expectTypeOf<PluginUiSessionPermissionResponseRequestV1>().toEqualTypeOf<CanonicalPluginUiSessionPermissionResponseRequestV1>();
+    });
+
     it('keeps the concise author host and resource vocabulary identical to the canonical UI types', () => {
         expectTypeOf<UiHost>().toEqualTypeOf<PluginUiHostApi>();
         expectTypeOf<UiResource>().toEqualTypeOf<ResourceContent>();

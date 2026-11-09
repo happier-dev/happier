@@ -175,6 +175,11 @@ type RawRuntimeDescriptorReader = never; /* @sdk-negative-type-case-end */
 }
 
 describe('General Sessions package-local projections', () => {
+    it('exports native permission choices through the public Sessions seam without another grammar', () => {
+        expectTypeOf<publicSessions.NativePermissionChoicesV1>().toEqualTypeOf<agents.NativePermissionChoicesV1>();
+        expectTypeOf<publicSessions.NativePermissionChoiceAnswerV1>().toEqualTypeOf<agents.NativePermissionChoiceAnswerV1>();
+    });
+
     it('re-exports canonical runtime values by identity', () => {
         expect(sessions.SessionMessageProvenanceV1Schema)
             .toBe(protocol.SessionMessageProvenanceV1Schema);
