@@ -31,7 +31,7 @@ describe('resolvePendingActivationBanner', () => {
             { ...session, activeAt: 200 },
             { ...session, pendingActivationAuthorization: { ...failed, requestId: 'another-input' } },
         ]) expect(resolveSessionDeliveryFailure([row], otherSession, false)).toEqual({
-            message: t('session.pendingMessages.deliveryBlockedReasons.runtimeConfigBlocked'), recovery: 'choose_account' });
+            message: t('session.pendingMessages.deliveryBlockedReasons.runtimeConfigBlocked'), recovery: null });
         expect(resolveSessionDeliveryFailure([{ ...row, pendingDeliveryBlockedReason: 'session_input_target_unavailable' }],
             session, false)).toBeNull();
     });
@@ -48,7 +48,7 @@ describe('resolvePendingActivationBanner', () => {
             pendingMessages: rows, authorization: waiting, autoResumeAdmission: 'held_by_person' as const };
         expect(resolvePendingActivationBanner(input)).toMatchObject({ kind: 'held', row: rows[0], primaryAction: 'resume' });
         expect(resolvePendingActivationBanner({ ...input, machineReachable: false }))
-            .toMatchObject({ kind: 'held', primaryAction: null });
+            .toMatchObject({ kind: 'held_offline', primaryAction: null });
         expect(resolvePendingActivationBanner({ ...input, canWrite: false })).toBeNull();
         expect(resolvePendingActivationBanner({ ...input, active: true })).toBeNull();
         expect(resolvePendingActivationBanner({ ...input, resumingAt: 300 })).toBeNull();

@@ -24,6 +24,7 @@ import { withTempDir } from '@/testkit/fs/tempDir';
 import { createRepositoryCheckpointPromptLifecycle } from './checkpoints/repositoryCheckpointPromptLifecycle';
 import { logger } from '@/ui/logger';
 import { createNativeAgentSessionEffectBoundaryError } from '@/agent/runtime/registry/engineRegistry/nativeAgentSessionBoundaryError';
+import { classifyPrimarySessionRuntimeIssue } from '@/agent/runtime/session/errors/classifyPrimarySessionRuntimeIssue';
 
 const { loggerDebugMock } = vi.hoisted(() => ({
   loggerDebugMock: vi.fn(),
@@ -480,6 +481,30 @@ function createRealWakeFollowContext() {
 describe('runPermissionModePromptLoop hook dispatch', () => {
   beforeEach(() => {
     loggerDebugMock.mockClear();
+  });
+
+  it('settles a native configuration refusal with the same sanitized cause as the runtime issue', async () => {
+    const runtime = createRuntime();
+    const onPromptFailure = vi.fn((error: unknown, context: { beforeProviderDispatch: boolean }) =>
+      classifyPrimarySessionRuntimeIssue({ cause: 'session_error', error, ...context }));
+    const diagnostic = { code: 'opencode_configuration_rejected', severity: 'error' as const,
+      message: 'Model is not selectable; Bearer synthetic-private-token' };
+    const error = Object.assign(new Error('role_policy_unenforceable'), {
+      code: 'role_policy_unenforceable', diagnostic,
+    });
+    const result = await runSingleSpecialCommand({
+      text: 'continue', localId: 'native-configuration-refusal', runtime, onPromptFailure,
+      resolveFreshSessionSystemPrompt: async () => { throw error; },
+    });
+    expect(runtime.sendTurnPrompt).not.toHaveBeenCalled();
+    expect(result.observeProviderInputSettlement).toHaveBeenCalledWith(expect.objectContaining({
+      kind: 'rejected_before_effect', reason: 'provider_rejected_before_acceptance',
+      diagnostic: expect.objectContaining({ code: onPromptFailure.mock.results[0]?.value.code,
+        message: onPromptFailure.mock.results[0]?.value.sanitizedPreview }),
+    }));
+    expect(onPromptFailure.mock.results[0]?.value).toMatchObject({ code: diagnostic.code, source: 'agent_session_error' });
+    expect(JSON.stringify(result.observeProviderInputSettlement.mock.calls)).not.toContain('synthetic-private-token');
+    expect(onPromptFailure).toHaveBeenCalledWith(error, { beforeProviderDispatch: true });
   });
 
   it.each(['structured input', 'daemon refusal', 'bridge refusal', 'native send'] as const)('logs only class, code and phase for a %s failure', async (boundary) => {

@@ -345,13 +345,13 @@ describe('getPendingMessageVisualState', () => {
         });
     });
 
-    it('gives a runtime-config block one Session-level message with the account recovery, not a row reason', () => {
+    it('gives an untyped runtime-config block one Session-level message without inventing account recovery', () => {
         const blocked = pendingMessage({ pendingDeliveryStatus: 'blocked', pendingDeliveryBlockedReason: 'runtime_config_blocked' });
         // The row defers: its reason belongs to the Session's account, said once with its next action.
         expect(getPendingMessageVisualState(blocked).deliveryBlockedPresentation?.recovery).toBe('choose_account');
         expect(resolvePendingMessageHeightBearingChrome(getPendingMessageVisualState(blocked))).toBe('none');
         const failure = resolveSessionDeliveryFailure([pendingMessage({ id: 'q', localId: 'q' }), blocked], null, false);
-        expect(failure?.recovery).toBe('choose_account');
+        expect(failure?.recovery).toBeNull();
         expect(failure?.message).toBe(t('session.pendingMessages.deliveryBlockedReasons.runtimeConfigBlocked'));
         // Removed machine access has no account to choose; other blockers stay on their row.
         expect(resolveSessionDeliveryFailure([blocked], null, true)).toBeNull();

@@ -223,12 +223,17 @@ export async function attemptNativeForkOpen(params: Readonly<{
                 errorMessage: 'Native fork outcome is unknown. Check the existing child session before retrying.',
             };
         }
-        if (openAttestation.status === 'runner_exited') {
-            if (openAttestation.code) {
-                throw new PluginError({ code: openAttestation.code,
-                    message: readSessionStartupFailurePreview(openAttestation.code,
+        if (openAttestation.status === 'runner_exited' || openAttestation.status === 'construction_failed') {
+            if (openAttestation.status === 'construction_failed') expectedTrackedRunner = openAttestation.expectedTrackedRunner;
+            const failure = openAttestation.status === 'construction_failed' ? openAttestation.failure : openAttestation;
+            if (failure.code) {
+                throw new PluginError({ code: failure.code,
+                    ...(failure.failureCause ? { details: { failureCause: failure.failureCause } } : {}),
+                    message: readSessionStartupFailurePreview(failure.code,
                         resolveAgentDisplayTitle(params.forkBackendResolution.agentHintAgentId))
-                        ?? 'Child runner exited before native fork open attestation' });
+                        ?? (openAttestation.status === 'construction_failed'
+                            ? 'Child native Session construction failed'
+                            : 'Child runner exited before native fork open attestation') });
             }
             throw new Error('Child runner exited before native fork open attestation');
         }

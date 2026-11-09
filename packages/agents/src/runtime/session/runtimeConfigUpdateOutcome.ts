@@ -2,6 +2,7 @@ import type {
   RuntimeConfigOutcomeStatusV1,
   RuntimeConfigOutcomeTimingV1,
 } from '@happier-dev/protocol';
+import type { AgentRuntimeDiagnosticDataV1 } from '@happier-dev/protocol/runtime/agentSessionV1';
 
 /**
  * Typed outcome returned by `updateSessionRuntimeConfig`.
@@ -19,6 +20,8 @@ export type RuntimeConfigUpdateOutcomeV1 = Readonly<{
   status: RuntimeConfigOutcomeStatusV1;
   timing?: RuntimeConfigOutcomeTimingV1;
   reason?: string;
+  /** Native refusal facts for host preparation and runtime-issue projection. */
+  diagnostic?: AgentRuntimeDiagnosticDataV1;
 }>;
 
 /** Accepted future configuration is not evidence of a currently executing model. */

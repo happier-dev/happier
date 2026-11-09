@@ -1,4 +1,5 @@
 import { z } from 'zod/mini';
+import { SessionSpawnLaunchErrorV1Schema } from '@happier-dev/protocol/spawnSession';
 import { AgentSessionConnectedAccountIdentityObservedEventV1Schema } from '@happier-dev/protocol/runtime/agentSessionV1';
 import { SessionAgentSpawnPolicyV1StrictSchema } from '@happier-dev/protocol/account/settings/sessionAgentSpawnPolicyV1';
 import { SessionAgentStartAllowListsV1StrictSchema } from '@happier-dev/protocol/account/settings/sessionAgentStartAllowListsV1';
@@ -23,7 +24,7 @@ import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/action
 import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { TeamCredentialRouteV1Schema } from '@happier-dev/protocol/teams/credentials/resourceV1';
 import { SessionIdSchema } from '@happier-dev/protocol/sessions/idsV1';
-import { RunnerDaemonPluginServicesPreparationCauseV1Schema, SessionRuntimeTeamCredentialDenialDetailsV1Schema } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
+import { RunnerDaemonPluginServicesPreparationCauseV1Schema, SessionRuntimeTeamCredentialDenialDetailsV1Schema, SessionRuntimeFailureCauseV1Schema } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { asHostProtocolZod } from '@/plugins/runtime/protocolComposableZodAdapter';
 import { WorkflowProjectTargetV1Schema } from '@happier-dev/protocol/workflows/workflowWorkspaceV1';
 import { McpRequestAuthOpenV1Schema, McpRequestAuthCloseV1Schema, McpRequestAuthResultV1Schema, McpRequestAuthClosedV1Schema } from '@/mcp/runtime/mcpRequestAuth';
@@ -140,11 +141,19 @@ const ManagedServiceEndpointProjectionV1Schema =
     (value) => parseManagedServiceEndpointProjectionV1(value) !== null,
   );
 
+// Construction can fail while its controller remains available for recovery.
+const SessionOpenConstructionFailureV1Schema = z.strictObject({
+  phase: z.literal('agent_runtime_open'),
+  code: asHostProtocolZod(SessionSpawnLaunchErrorV1Schema.shape.code),
+  failureCause: z.optional(asHostProtocolZod(SessionRuntimeFailureCauseV1Schema)),
+});
+
 export const AgentRuntimeDaemonServiceSessionOpenAttestationV1Schema =
   z.strictObject({
     request: AgentRuntimeDaemonSessionOpenAttestationRequestV1Schema,
     providerSessionId: z.nullable(OpaqueIdSchema),
     refusal: z.optional(z.strictObject({ code: z.literal('native_agent_session_mode_unavailable') })),
+    failure: z.optional(SessionOpenConstructionFailureV1Schema),
   });
 
 export type AgentRuntimeDaemonServiceSessionOpenAttestationV1 =
@@ -193,6 +202,7 @@ export const AgentRuntimeDaemonServiceRequestV1Schema = z.strictObject({
       kind: z.literal('session.open.attest'),
       requestId: OpaqueIdSchema,
       phase: z._default(z.enum(['prepare', 'commit', 'refused']), 'commit'),
+      failure: z.optional(SessionOpenConstructionFailureV1Schema),
       request: AgentRuntimeDaemonSessionOpenRequestV1Schema,
       providerSessionId: z.nullable(OpaqueIdSchema),
     }),

@@ -11,6 +11,7 @@ import {
 } from '@happier-dev/protocol';
 
 import type { Metadata } from '@/api/types';
+import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 import { configuration, reloadConfiguration } from '@/configuration';
 import { MessageQueue2 } from '@/agent/runtime/modeMessageQueue';
 import type {
@@ -402,12 +403,13 @@ describe('runPermissionModePromptLoop Session reference dispatch', () => {
       kind: 'rejected_before_effect',
       localId: 'local-structured-input',
       userMessageSeq: 42,
-      reason: 'provider_rejected_before_acceptance',
+      reason: 'runtime_config_blocked',
       diagnostic: expect.objectContaining({
         code: 'mention_reference_unresolved',
         severity: 'error',
       }),
       retryable: false,
+      retireLocalCustodyAfterDurableBlock: true,
     });
   });
 
@@ -470,12 +472,13 @@ describe('runPermissionModePromptLoop Session reference dispatch', () => {
       kind: 'rejected_before_effect',
       localId: 'local-structured-input',
       userMessageSeq: 42,
-      reason: 'provider_rejected_before_acceptance',
+      reason: 'runtime_config_blocked',
       diagnostic: expect.objectContaining({
         code: 'mention_resolved_context_too_large',
         severity: 'error',
       }),
       retryable: false,
+      retireLocalCustodyAfterDurableBlock: true,
     });
   });
 
@@ -502,12 +505,13 @@ describe('runPermissionModePromptLoop Session reference dispatch', () => {
       kind: 'rejected_before_effect',
       localId: 'local-structured-input',
       userMessageSeq: 42,
-      reason: 'provider_unavailable_before_acceptance',
+      reason: 'runtime_config_blocked',
       diagnostic: expect.objectContaining({
         code: 'composer_reference_unavailable',
         severity: 'error',
       }),
       retryable: true,
+      retireLocalCustodyAfterDurableBlock: true,
     });
   });
 
@@ -531,14 +535,36 @@ describe('runPermissionModePromptLoop Session reference dispatch', () => {
       kind: 'rejected_before_effect',
       localId: 'local-structured-input',
       userMessageSeq: 42,
-      reason: 'provider_unavailable_before_acceptance',
+      reason: 'runtime_config_blocked',
       diagnostic: {
         code: 'runtime_configuration_unavailable',
         severity: 'error',
         message: 'Runtime configuration is temporarily unavailable.',
       },
       retryable: true,
+      retireLocalCustodyAfterDurableBlock: true,
     });
+  });
+
+  it('preserves a typed Provider refusal before native dispatch as a Provider Pending block', async () => {
+    const runtime = createRuntime() as StructuredInputRuntime;
+    runtime.updateSessionRuntimeConfig.mockRejectedValueOnce(
+      createProviderErrorV1('provider_endpoint_rate_limited'),
+    );
+
+    const result = await runOneStructuredInputPrompt({
+      text: 'dispatch after runtime configuration',
+      runtime,
+      structuredInput: { v: 1 },
+    });
+
+    expect(result.runtime.sendTurnPrompt).not.toHaveBeenCalled();
+    expect(result.observeProviderInputSettlement).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+      kind: 'rejected_before_effect',
+      reason: 'provider_unavailable_before_acceptance',
+      diagnostic: expect.objectContaining({ code: 'provider_endpoint_rate_limited' }),
+      retryable: true,
+    }));
   });
 
   it.each([{}, { status: 'preparation_pending', retryable: false }])('settles a permanent pre-turn failure as a terminal Pending rejection (%j)', async failureFacts => {
@@ -559,13 +585,14 @@ describe('runPermissionModePromptLoop Session reference dispatch', () => {
       kind: 'rejected_before_effect',
       localId: 'local-structured-input',
       userMessageSeq: 42,
-      reason: 'provider_rejected_before_acceptance',
+      reason: 'runtime_config_blocked',
       diagnostic: {
         code: 'provider_pre_turn_failed',
         severity: 'error',
         message: 'Runtime configuration rejected the requested mode.',
       },
       retryable: false,
+      retireLocalCustodyAfterDurableBlock: true,
     });
   });
 

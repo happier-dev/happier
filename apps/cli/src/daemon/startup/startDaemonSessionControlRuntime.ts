@@ -1487,6 +1487,7 @@ export async function startDaemonSessionControlRuntime(
     controlToken: string;
     daemonWorkSignal: AbortSignal;
     stopControlServer: () => Promise<void>;
+    activateRuntimeAuthRecoveryAfterStatePublication: () => void;
     connectedServiceAuthGroupPreTurnSwitchCoordinator: Readonly<{
       credentialHealthSwitchLeases: InMemoryConnectedServiceAuthGroupSwitchLeaseRegistry<QualifiedConnectedAccountServiceRef>;
       switchBeforeTurn: (
@@ -9371,14 +9372,14 @@ export async function startDaemonSessionControlRuntime(
           serverApiUrl: params.serverBaseUrl,
           readCredentials: async () =>
             await readStoredCredentialsForServerId(params.serverId),
-          ...(apiMachineForSessions ? { runActionOperation: request => apiMachineForSessions.runActionOperation({
-            ...request,
-            context: { ...request.context,
+          ...(apiMachineForSessions ? { runActionOperation: request => {
+            const context: import('@/rpc/handlers/_actionDispatchAdapter').RpcActionExecutorContext = { ...request.context,
               machineAdmission: ingress.machineAdmission,
               verifyMachineAdmissionCurrent: ingress.verifyMachineAdmissionCurrent,
               ...(ingress.requesterSessionBootstrap ? { requesterSessionBootstrap: ingress.requesterSessionBootstrap } : {}),
-            },
-          }) } : {}),
+            };
+            return apiMachineForSessions.runActionOperation({ ...request, context });
+          } } : {}),
           machineActionDirectTargetTransport: {
             machineId: params.machineId,
             workspaceSyncPreflightTarget: (request, context) => {
@@ -12888,7 +12889,7 @@ export async function startDaemonSessionControlRuntime(
                     happyHomeDir: configuration.happyHomeDir,
                     serverId: params.requesterSessionCustodyServerId ?? params.serverId,
                     serverHttpBaseUrl: params.serverBaseUrl, sessionId, machineId: params.machineId,
-                    hostHomeServerIdentityId: origin?.serverIdentityId,
+                    hostHomeServerIdentityId: origin?.serverIdentityId ?? null,
                     sessionCustodianAccountId: params.externalActionAccountId,
                     credentials: params.credentials, attribution, signal,
                     isCurrent: () => context.isCurrent(),
@@ -13058,6 +13059,7 @@ export async function startDaemonSessionControlRuntime(
                 retainedAgent,
                 runner,
                 phase: request.operation.phase,
+                ...(request.operation.failure ? { failure: request.operation.failure } : {}),
                 request: request.operation.request,
                 providerSessionId: request.operation.providerSessionId,
               });
@@ -13679,7 +13681,7 @@ export async function startDaemonSessionControlRuntime(
                             happyHomeDir: configuration.happyHomeDir,
                             serverId: params.requesterSessionCustodyServerId ?? params.serverId,
                             serverHttpBaseUrl: params.serverBaseUrl, sessionId, machineId: params.machineId,
-                            hostHomeServerIdentityId: origin?.serverIdentityId,
+                            hostHomeServerIdentityId: origin?.serverIdentityId ?? null,
                             sessionCustodianAccountId: params.externalActionAccountId, credentials: params.credentials,
                             attribution: trackedSession?.requesterWorkAttributionV1 ?? trackedSession?.spawnOptions?.requesterWorkAttributionV1,
                             isCurrent: () => context.isCurrent(), signal: context.signal,
@@ -15796,8 +15798,7 @@ export async function startDaemonSessionControlRuntime(
           const credentials = requesterAction?.credentials ?? requester?.bootstrap.credentials ?? params.credentials;
           const serverHttpBaseUrl = requesterAction?.serverHttpBaseUrl ?? requester?.bootstrap.serverHttpBaseUrl ?? params.serverBaseUrl;
           const verifyCurrent = async () => {
-            if (execution.signal?.aborted || execution.verifyCurrent && !await execution.verifyCurrent()
-              || requesterAction && !await requesterAction.isCurrent()) return false;
+            if (execution.signal?.aborted || requesterAction && !await requesterAction.isCurrent()) return false;
             await assertSessionAccountCurrent(sessionId, requester);
             return true;
           };

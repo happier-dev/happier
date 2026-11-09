@@ -24,6 +24,12 @@ transcript projector preserve provider messages and typed usage limits for
 Session, UI, Voice and finite Run consumers. Nonterminal provider retry activity
 does not establish turn completion.
 
+Native configuration refusals retain their typed diagnostic through Role policy
+preparation. The host's runtime-issue classifier supplies the same sanitized
+cause to the Session issue and Pending input settlement. Preparing input before
+dispatch does not turn an identified native configuration refusal into a
+document or Home dependency failure.
+
 ## Idle compaction (unreleased 0.3)
 
 Idle compaction belongs to the Session host. One compaction descriptor, authored
@@ -2830,6 +2836,16 @@ The same closed startup-diagnostic owner preserves
 Session issue and public status. Its fixed preview directs the reader to check
 the Gateway and its Machine connection before retrying; private authority or
 lease details never become the public error message.
+
+In 0.3 development source, a rejected native Session construction before its
+factory returns records its classified failure code, construction phase and optional existing
+`failureCause` through the runner-open attestation. The original startup operation
+settles as failed even while its controller stays available for recovery. Generic
+construction errors remain `agent_session_error`; this evidence does not establish
+a quota or authentication cause. Native error bodies are excluded. Generation
+cancellation, an unknown effect outcome and a failed diagnostic acknowledgement
+retain their existing uncertain/recovery behavior. A successful native factory return is
+not replaced by a later generic host setup or commit-acknowledgement failure.
 
 In 0.3 development source, the runner diagnostic and primary Session issue also
 retain the host's closed MCP preparation, runner-generation, daemon-authority,

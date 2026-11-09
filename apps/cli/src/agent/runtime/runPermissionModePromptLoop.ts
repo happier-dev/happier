@@ -1853,7 +1853,8 @@ export async function runPermissionModePromptLoop(opts: {
           message: message.message,
           error: issue?.source === 'dependency_failure'
             ? { ...preTurnFailure, reason: 'runtime_config_blocked' }
-            : preTurnFailure,
+            : issue ? { ...preTurnFailure, code: issue.code, message: issue.sanitizedPreview }
+              : preTurnFailure,
         });
       }
       if (

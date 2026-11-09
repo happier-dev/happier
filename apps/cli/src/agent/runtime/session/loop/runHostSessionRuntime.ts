@@ -2274,7 +2274,10 @@ export async function runHostSessionRuntime(
     const workspaceWrites = sessionRoleContext.readWorkspaceWrites();
     if (runtimeForInFlightSteer) {
       const prepared = await prepareWorkspaceWritesPolicy(workspaceWrites);
-      if (!prepared.ok) throw Object.assign(new Error(prepared.errorCode), { code: prepared.errorCode });
+      if (!prepared.ok) throw Object.assign(new Error(prepared.errorCode), {
+        code: prepared.errorCode,
+        diagnostic: prepared.diagnostic,
+      });
     }
   };
   let resolveFreshSessionSystemPrompt: SessionPromptPlanResolver | null = null;
@@ -2710,7 +2713,7 @@ export async function runHostSessionRuntime(
       const serverHttpBaseUrl = sessionOpenContext.home.serverUrl;
       await runWithServerHttpBaseUrl(serverHttpBaseUrl, async () => {
         const operationContext = readSessionOpenAccountOperation();
-        if (!operationContext) return null;
+        if (!operationContext) return;
         await refreshSavedSecretCatalogForOperation({ expectedScopeKey: mcpAccountScopeKey,
           secretReferenceOverlay: input.secretReferenceOverlay, references: input.savedSecretReferences,
           operationContext, signal: input.signal });

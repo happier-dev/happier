@@ -561,6 +561,7 @@ export async function attestCurrentRunnerAgentSessionOpen(
     authority: AgentRuntimeDaemonServiceAuthorityExpectedInput;
     requestId: string;
     phase?: SessionOpenAttestationOperation['phase'];
+    failure?: SessionOpenAttestationOperation['failure'];
     request: SessionOpenAttestationOperation['request'];
     providerSessionId: string | null;
     timeoutMs?: number | null;
@@ -581,6 +582,7 @@ export async function attestCurrentRunnerAgentSessionOpen(
           kind: 'session.open.attest',
           requestId: input.requestId,
           phase,
+          ...(input.failure ? { failure: input.failure } : {}),
           request: input.request,
           providerSessionId: input.providerSessionId,
         },

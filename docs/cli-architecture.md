@@ -2573,6 +2573,12 @@ interrupted for input reattachment. A host-proven unavailable native mode record
 refusal through the existing runner-open attestation and fails that same startup
 operation while the runner can still serve late-input refusals. The Workflow
 does not offer an original input or start another Session for that failed leaf.
+A rejected native Session construction before its factory returns uses the same
+attestation to settle its original startup as failed, retaining its typed code
+and safe failure cause while the controller remains available. Native fork cleanup
+uses that same observed runner witness to preserve a replacement generation. No original input
+is offered for that failed startup. Missing diagnostic acknowledgement and
+unknown effect outcomes continue to retain uncertain custody.
 Existing authored collection policies and
 recovery of already-admitted inputs keep their own semantics. Operation discovery,
 Get, Wait and Cancel on the executing daemon use its installed exact-Machine
@@ -8605,10 +8611,9 @@ Overview watch is parked, macOS runs `vm_stat` with each two-second memory read
 and parses its composition against that read's used bytes (`total − available`).
 It retains no VM-stat output between reads and spawns no `vm_stat` for idle,
 summary, Processes or Guard demand. macOS `pmset` and `ioreg`, and optional
-`nvidia-smi` on supported platforms, keep their existing 15-second Overview
-extras cadence. Summary RPCs
-keep that detail with its totals. Neither the sampler's extras cache nor a
-sibling UI view supplies composition for a newer memory observation. Linux
+`nvidia-smi` on supported platforms, run on the selected Overview tick without
+a separate extras schedule or cache. Summary RPCs keep composition with its
+totals; a sibling UI view never supplies composition for a newer memory observation. Linux
 cgroup working sets omit the host-wide decomposition because it describes a
 different memory scope; the Overview already leaves absent composition out.
 

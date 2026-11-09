@@ -1361,10 +1361,10 @@ function toHostConfigurationOutcome(
     result: Awaited<ReturnType<NonNullable<AgentSessionRuntime['updateConfiguration']>>>,
 ): RuntimeConfigUpdateOutcomeV1 {
     if ('diagnostic' in result && result.diagnostic.code === 'role_policy_restart_required') {
-        return { status: 'requires_restart', reason: result.diagnostic.code };
+        return { status: 'requires_restart', reason: result.diagnostic.code, diagnostic: result.diagnostic };
     }
     if ('diagnostic' in result && result.diagnostic.code === 'role_policy_unenforceable') {
-        return { status: 'failed', reason: result.diagnostic.code };
+        return { status: 'failed', reason: result.diagnostic.code, diagnostic: result.diagnostic };
     }
     if (result.status === 'applied') {
         return { status: 'applied', timing: 'current_window' };
@@ -1374,6 +1374,7 @@ function toHostConfigurationOutcome(
     }
     return {
         status: result.status === 'unsupported' ? 'unsupported' : 'failed',
+        ...('diagnostic' in result ? { diagnostic: result.diagnostic } : {}),
         reason: diagnosticMessage('diagnostic' in result ? result.diagnostic : {
             code: 'agent_session_configuration_failed',
         }),
@@ -4387,12 +4388,7 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
         options: NativeAgentNewTurnAdmissionOptions,
     ) => Promise<Readonly<{ status: 'admitted' }>>;
     retireRuntimeSource?: () => Promise<void>;
-    attestSessionOpen?: (params: Readonly<{
-        phase: 'prepare' | 'commit' | 'refused';
-        request: AgentSessionOpenRequest;
-        providerSessionId: string | null;
-        signal: AbortSignal;
-    }>) => Promise<void>;
+    attestSessionOpen?: import('./types').RunnerAgentSessionRuntimeSource['attestSessionOpen'];
     transformAgentRequest?: (params: Readonly<{
         sessionId: string;
         payload: Readonly<Record<string, unknown>>;
@@ -4475,6 +4471,9 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
             const recordOpenPhase = openPhases.record;
             recordOpenPhase('entered');
             const cwd = hostRuntimeParams.directory;
+            let originalConstructionFailure: unknown;
+            let nativeOpenCompleted = false;
+            try {
             if (!sessionId || !cwd) {
                 throw new Error(`Agent runtime '${identity.agentId}' requires a session id and working directory`);
             }
@@ -5674,6 +5673,7 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
                     providerSessionId: openRequest.kind === 'resume' ? openRequest.providerSessionId : null, signal });
             };
             const sanitizeOpenFailure = async (error: unknown) => {
+                originalConstructionFailure ??= error;
                 try {
                     if (error instanceof SessionStartupInputRefusalError) await attestOpenOutcome('refused');
                 } catch (attestationError) {
@@ -5851,10 +5851,12 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
                     // The startup-instructions fallback is a distinct open attempt.
                     startupModeRefusal = null;
                     try {
-                        return await openNativeAgentSessionUntilAbort(() => {
+                        const opened = await openNativeAgentSessionUntilAbort(() => {
                             if (canApplyNativeStartup) hostRuntimeParams.resolveFreshSessionSystemPrompt?.assertPreparedPlanCurrent?.();
                             return sessionFactory.open(request, context);
                         }, signal);
+                        nativeOpenCompleted = true;
+                        return opened;
                     } catch (error) {
                         if (startupModeRefusal && isPluginError(error)
                             && error.code === 'native_agent_session_mode_unavailable') throw startupModeRefusal;
@@ -6237,6 +6239,40 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
                 await params.retireRuntimeSource?.()
                     .catch(() => undefined);
                 cleanupLateProviderBindingMaterialization();
+                throw error;
+            }
+            } catch (error) {
+                const failure = originalConstructionFailure ?? error;
+                const issue = classifyPrimarySessionRuntimeIssue({ cause: 'session_error', error: failure });
+                // Lack of an effect acknowledgement is not proof of failed construction.
+                // Generation cancellation and native-mode refusal retain their existing owners.
+                if (!nativeOpenCompleted && sessionId && cwd && !params.generationSignal?.aborted
+                    && issue.code !== 'action_outcome_unknown'
+                    && !(failure instanceof SessionStartupInputRefusalError)
+                    && classifyNativeAgentSessionEffectBoundaryError(failure) !== 'outcome_unknown_after_dispatch') {
+                    const source = openIntent.kind === 'fork' ? parseNativeAgentForkSource(openIntent.source) : null;
+                    const request: AgentSessionOpenRequest | null = openIntent.kind === 'create'
+                        ? { kind: 'create', sessionId, cwd }
+                        : openIntent.kind === 'resume'
+                            ? { kind: 'resume', sessionId, cwd, providerSessionId: openIntent.providerSessionId }
+                            : source ? { kind: 'fork', sessionId, cwd, source } : null;
+                    if (request) {
+                        // Carry typed diagnostics only; native error bodies remain in their owning process.
+                        const failureCause = issue.failureCause
+                            ? (({ providerErrorMessage: _privateMessage, ...safe }) => safe)(issue.failureCause)
+                            : undefined;
+                        try {
+                            await params.attestSessionOpen?.({ phase: 'refused', request,
+                                providerSessionId: request.kind === 'resume' ? request.providerSessionId : null,
+                                failure: { phase: 'agent_runtime_open', code: issue.code,
+                                    ...(failureCause ? { failureCause } : {}) },
+                                signal: params.generationSignal ?? new AbortController().signal });
+                        } catch {
+                            // Failed delivery leaves the observer uncertain; never claim a marker was recorded.
+                            logger.infoFile('[NativeAgentSession] Construction failure attestation unavailable', { sessionId });
+                        }
+                    }
+                }
                 throw error;
             }
         },

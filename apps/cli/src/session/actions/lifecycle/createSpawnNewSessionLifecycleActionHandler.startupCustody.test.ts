@@ -26,6 +26,67 @@ import { PluginError } from '@happier-dev/plugin-sdk';
 import { classifyPrimarySessionRuntimeIssue } from '@/agent/runtime/session/errors/classifyPrimarySessionRuntimeIssue';
 
 describe('Session startup operation custody', () => {
+  it.each(['agent_session_error', 'agent_startup_failed'] as const)(
+    'settles rejected construction while the input receiver remains alive (%s)', async code => {
+    const sessionId = 'construction-failed-child';
+    // Only process liveness and marker persistence are substituted boundaries.
+    // The recorder, observer, spawn handler and durable settlement remain real.
+    const child = new ChildProcess();
+    const runner = { pid: 4321, processStartTimeMs: 1000, processCommandHash: 'a'.repeat(64) };
+    const binding = createAgentSessionRunnerFactoryBinding({ v: 1, pluginId: 'acme.plugin', pluginVersion: '1.0.0',
+      agentId: 'acme-agent', localAgentId: 'acme-agent', sourceCustody: { kind: 'managed',
+        immutableGenerationId: `sha256:${'1'.repeat(64)}`, installSource: 'localPath' },
+      locator: { module: './runtime.mjs', export: 'createRuntime', runtimeApiVersion: 1 },
+      normalizedModulePath: '/immutable/acme/runtime.mjs', loadMode: 'immutable-js' });
+    const tracked: TrackedSession = { ...runner, startedBy: 'daemon', happySessionId: sessionId, childProcess: child,
+      runnerAgentSourceCustodyV1: binding.sourceCustody,
+      agentRuntimeDaemonServiceAuthorityFilePath: '/fixture/construction-authority' };
+    const failureCause = code === 'agent_startup_failed'
+      ? { code, phase: 'client_start', failureReason: 'unclassified_provider_error' } as const : undefined;
+    const issue = classifyPrimarySessionRuntimeIssue({ cause: 'session_error', occurredAt: 1001,
+      error: new PluginError({ code, message: 'PRIVATE_CONSTRUCTION_BODY',
+        ...(failureCause ? { details: { failureCause } } : {}) }) });
+    const handler = createMachineSessionSpawnRpcHandler({ handlers: {
+      spawnSession: async () => {
+        const request = AgentRuntimeDaemonServiceRequestV1Schema.parse({ v: 1,
+          context: { token: 'a'.repeat(43), sessionId }, operation: { kind: 'session.open.attest',
+            requestId: 'construction-failed-open', phase: 'refused',
+            request: { kind: 'create', sessionId, cwd: '/project' }, providerSessionId: null,
+            failure: { phase: 'agent_runtime_open', code: issue.code,
+              ...(issue.failureCause ? { failureCause: issue.failureCause } : {}) } } });
+        if (request.operation.kind !== 'session.open.attest') throw new Error('Wrong attestation operation');
+        await recordTrackedRunnerAgentSessionOpenAttestation({ tracked, retainedAgent: binding,
+          runner: { ...runner, snapshotIdentity: 'construction-failed-runner' }, ...request.operation,
+          updateMarker: async ({ attestation }) => {
+            expect(AgentRuntimeDaemonServiceSessionOpenAttestationV1Schema.parse(JSON.parse(JSON.stringify(attestation))))
+              .toEqual(attestation);
+            return true;
+          } });
+        return { type: 'success', sessionId };
+      },
+      stopSession: async () => { throw new Error('A failed construction receiver retains input custody'); },
+    }, awaitAgentSessionOpen: input => awaitTrackedRunnerAgentSessionOpen({ ...input,
+      getTrackedSessions: () => [tracked], timeoutMs: 0 }) });
+    const operations = createHostActionOperationRuntime({ machineId: 'machine', resolveAccountId: async () => 'account',
+      generateOperationId: () => 'construction-failed' });
+    const response = await operations.observeExecution({ actionId: 'session.spawn_new', input: { creationKey: 'construction-failed' },
+      execute: async operation => {
+        const result = await handler({ directory: '/project',
+          agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
+        }, { signal: operation.signal, localActionContext: operation });
+        if (result.type !== 'error') throw new Error('Expected conclusive construction failure');
+        return { ok: true, result: projectSessionSpawnFailure(result) };
+      } });
+    expect(response).toMatchObject({ ok: true, result: { type: 'error', code: 'spawn_failed',
+      launchError: { code, ...(failureCause ? { failureCause } : {}) } } });
+    expect(await operations.handlers.getV2({ operationId: 'construction-failed', waitForTerminal: true }))
+      .toMatchObject({ kind: 'found', operation: { state: 'failed', result: { type: 'error', code: 'spawn_failed',
+        launchError: { code, ...(failureCause ? { failureCause } : {}) } } } });
+    expect(child.exitCode).toBeNull();
+    expect(tracked.stopRequestedAtMs).toBeUndefined();
+    expect(JSON.stringify(response)).not.toContain('PRIVATE_');
+  });
+
   it.each(['project_environment_binding_unavailable', 'agent_isolation_unavailable'] as const)(
     'retains the %s preparation cause in the terminal startup operation', async code => {
     // Only the OS exit and retained diagnostic read are substituted boundaries.
@@ -219,10 +280,15 @@ describe('Session startup operation custody', () => {
         error: { errorCode: 'native_agent_session_mode_unavailable' } }));
     } finally { releaseStop(); operations.runner.cancel(scope, 'refused-startup'); }
   });
-  it.each([null, 'machine-child'].flatMap(machineId =>
-    ['current', 'replacement', 'changed-birth', 'stop-throws', 'stop-incomplete'].map(scenario => ({ machineId, scenario })),
-  ))('keeps native-fork refusal cleanup bound to its observed runner ($scenario, Machine $machineId)', async ({ machineId, scenario }) => {
+  it.each([
+    ...[null, 'machine-child'].flatMap(machineId =>
+      ['current', 'replacement', 'changed-birth', 'stop-throws', 'stop-incomplete']
+        .map(scenario => ({ machineId, scenario, failureKind: 'native-mode' }))),
+    { machineId: null, scenario: 'replacement', failureKind: 'construction' },
+  ])('keeps native-fork refusal cleanup bound to its observed runner ($scenario, Machine $machineId, $failureKind)', async ({ machineId, scenario, failureKind }) => {
       const sessionId = 'refused-fork-child';
+      const failureMessage = failureKind === 'construction'
+        ? expect.any(String) : 'native_agent_session_mode_unavailable';
       const scope = { machineId: 'machine', accountId: 'account' };
       const operations = createHostActionOperationRuntime({ ...scope, resolveAccountId: async () => scope.accountId,
         generateOperationId: () => 'refused-fork-startup', supportsCoreCancellation: () => true });
@@ -284,7 +350,8 @@ describe('Session startup operation custody', () => {
                   const request = AgentRuntimeDaemonServiceRequestV1Schema.parse({ v: 1,
                     context: { token: 'a'.repeat(43), sessionId }, operation: { kind: 'session.open.attest',
                       requestId: 'refused-fork-open', phase: 'refused', request: { kind: 'fork', sessionId,
-                        cwd: '/project', source: options.nativeForkSource }, providerSessionId: null } });
+                        cwd: '/project', source: options.nativeForkSource }, providerSessionId: null,
+                      ...(failureKind === 'construction' ? { failure: { phase: 'agent_runtime_open', code: 'agent_session_error' } } : {}) } });
                   if (request.operation.kind !== 'session.open.attest') throw new Error('Wrong operation');
                   expect(await recordTrackedRunnerAgentSessionOpenAttestation({ tracked: refused, retainedAgent: binding,
                     runner: { ...runner, snapshotIdentity: 'refused-fork-runner' }, ...request.operation,
@@ -308,14 +375,14 @@ describe('Session startup operation custody', () => {
                   } }),
                 }),
               });
-              expect(result, scenario).toMatchObject({ ok: false, errorMessage: 'native_agent_session_mode_unavailable' });
+              expect(result, scenario).toMatchObject({ ok: false, errorMessage: failureMessage });
               if (!result || result.ok) throw new Error('Expected native fork refusal');
               return { ok: false, errorCode: result.errorCode, error: result.errorMessage };
             } });
           expect(response).toMatchObject({ ok: false, errorCode: SPAWN_SESSION_ERROR_CODES.UNEXPECTED,
-            error: 'native_agent_session_mode_unavailable' });
+            error: failureMessage });
           expect(operations.store.get(scope, 'refused-fork-startup')).toMatchObject({ state: 'failed',
-            error: { errorCode: SPAWN_SESSION_ERROR_CODES.UNEXPECTED, error: 'native_agent_session_mode_unavailable' } });
+            error: { errorCode: SPAWN_SESSION_ERROR_CODES.UNEXPECTED, error: failureMessage } });
           expect(retired, scenario).toEqual(scenario === 'current' ? [refused.pid] : []);
           expect(selected, scenario).toEqual(scenario === 'replacement' || scenario === 'changed-birth' ? [] : [[refused.pid]]);
           expect(exitOperationStates, scenario).toEqual(scenario === 'replacement' || scenario === 'changed-birth' ? [] : ['running']);

@@ -11,11 +11,16 @@ export function createWorkspaceWritesPolicyPreparation(params: Readonly<{
     const result = await params.update(workspaceWrites ?? 'allow');
     if (result?.status === 'applied') return { ok: true as const };
     if (result?.status === 'failed' && result.reason === 'native_agent_runtime_ended') {
-      return { ok: false as const, errorCode: 'native_agent_runtime_ended' as const };
+      return { ok: false as const, errorCode: 'native_agent_runtime_ended' as const,
+        diagnostic: result.diagnostic ?? { code: 'native_agent_runtime_ended', severity: 'error' as const },
+      };
     }
     if (workspaceWrites === undefined && result?.status === 'unsupported'
       && result.reason === 'native_agent_configuration_unsupported') return { ok: true as const };
-    return { ok: false as const, errorCode: result?.reason?.includes('role_policy_restart_required')
-      ? 'role_policy_restart_required' : 'role_policy_unenforceable' };
+    const errorCode = result?.reason?.includes('role_policy_restart_required')
+      ? 'role_policy_restart_required' : 'role_policy_unenforceable';
+    return { ok: false as const, errorCode,
+      diagnostic: result?.diagnostic ?? { code: errorCode, severity: 'error' as const },
+    };
   };
 }

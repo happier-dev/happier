@@ -146,6 +146,8 @@ export type RunnerAgentSessionRuntimeSource = Readonly<{
     retire?(): Promise<void>;
     attestSessionOpen?(params: Readonly<{
         phase: 'prepare' | 'commit' | 'refused';
+        failure?: import('@/agent/runtime/session/process/agentRuntimeDaemonServiceProtocol')
+            .AgentRuntimeDaemonServiceSessionOpenAttestationV1['failure'];
         request: AgentSessionOpenRequest;
         providerSessionId: string | null;
         signal: AbortSignal;

@@ -20,7 +20,8 @@ import { AccountProfileSchema } from '@happier-dev/protocol/account/profile';
 import { getBundledAgentDeclaration } from '@/agents/catalog/catalog';
 import { qualifyPluginContributionReferenceV1 } from '@happier-dev/protocol/plugins/contribution-identity';
 import { applyProjectedCredentialKindRestrictions, buildQualifiedConnectedAccountProfileOptionsByServiceId,
-    buildQualifiedConnectedAccountGroupOptionsByServiceId } from '@/sync/domains/connectedServices/qualifiedConnectedAccountServiceOptions';
+    buildQualifiedConnectedAccountGroupOptionsByServiceId,
+    resolveProjectedConnectedAccountServiceKeys } from '@/sync/domains/connectedServices/qualifiedConnectedAccountServiceOptions';
 
 function firstStaticSection(model: NewSessionConnectedServicesSelectionListModel) {
     const section = model.rootStep.sections[0];
@@ -58,8 +59,12 @@ function buildModel(overrides: Partial<Parameters<typeof buildNewSessionConnecte
 }
 
 describe('buildNewSessionConnectedServicesSelectionListModel', () => {
-    it('selects recorded null-kind Codex accounts and their pool without reconnecting', () => {
-        const service = { pluginId: 'happier.agent.codex', localId: 'openai-codex' };
+    it.each([
+        { agentId: 'codex', pluginId: 'happier.agent.codex', localId: 'openai-codex' },
+        { agentId: 'opencode', pluginId: 'happier.agent.codex', localId: 'openai-codex' },
+        { agentId: 'opencode', pluginId: 'happier.agent.claude', localId: 'claude-subscription' },
+    ] as const)('selects recorded null-kind $localId accounts and their pool for $agentId without reconnecting', ({ agentId, pluginId, localId }) => {
+        const service = { pluginId, localId };
         const serviceKey = `${service.pluginId}/${service.localId}`;
         const profile = AccountProfileSchema.parse({ id: 'recorded-null-kind-owner', connectedAccountsV4: [{
             ref: { service, accountId: 'primary' }, status: 'connected', kind: null, authenticationModeId: 'oauth',
@@ -70,19 +75,22 @@ describe('buildNewSessionConnectedServicesSelectionListModel', () => {
             activeConnectedAccountId: 'primary', state: {}, createdAt: 0, updatedAt: 0,
             members: [{ v: 1, connectedAccountId: 'primary', priority: 0, enabled: true, state: {}, createdAt: 0, updatedAt: 0 }],
         }] });
-        const declaration = getBundledAgentDeclaration('codex');
-        if (!declaration) throw new Error('Missing bundled Codex declaration');
+        const declaration = getBundledAgentDeclaration(agentId);
+        if (!declaration) throw new Error(`Missing bundled ${agentId} declaration`);
+        const connectedAccounts = (declaration.connectedAccounts ?? []).map(purpose => ({ ...purpose,
+            service: qualifyPluginContributionReferenceV1(purpose.service, declaration.identity.pluginId) }));
+        const supportedServiceIds = resolveProjectedConnectedAccountServiceKeys(connectedAccounts)
+            .filter(key => key === serviceKey);
         const profileOptionsByServiceId = applyProjectedCredentialKindRestrictions({
             optionsByServiceId: buildQualifiedConnectedAccountProfileOptionsByServiceId({ accounts: profile.connectedAccountsV4,
-                supportedServiceIds: [serviceKey], labelsByKey: {} }),
-            connectedAccounts: (declaration.connectedAccounts ?? []).map(purpose => ({ ...purpose,
-                service: qualifyPluginContributionReferenceV1(purpose.service, declaration.identity.pluginId) })),
+                supportedServiceIds, labelsByKey: {} }),
+            connectedAccounts,
         });
         const setBindingForService = vi.fn();
         const onOpenSettings = vi.fn();
-        const model = buildModel({ supportedServiceIds: [serviceKey], profileOptionsByServiceId,
+        const model = buildModel({ supportedServiceIds, profileOptionsByServiceId,
             groupOptionsByServiceId: buildQualifiedConnectedAccountGroupOptionsByServiceId({
-                groups: profile.connectedAccountGroupsV4, supportedServiceIds: [serviceKey] }),
+                groups: profile.connectedAccountGroupsV4, supportedServiceIds }),
             bindingsByServiceId: {}, setBindingForService, onOpenSettings });
         const rows = firstStaticSection(model).options;
         const account = rows.find(row => row.id === createConnectedServiceOptionId(serviceKey, 'primary'));

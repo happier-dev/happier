@@ -231,6 +231,11 @@ export async function createRunnerAgentSessionRuntimeBootstrap(input: Readonly<{
     const requireClaimed = () => requireClaimedRunnerSource(claimed);
     const daemonTurnContributionsBridge:
         DaemonAgentRuntimeTurnContributionsBridge = Object.freeze({
+            async observeConnectedAccountIdentity(observation, options) {
+                const bridge = requireClaimed().daemonTurnContributionsBridge;
+                if (!bridge?.observeConnectedAccountIdentity) throw new Error('connected_account_identity_observation_unavailable');
+                await bridge.observeConnectedAccountIdentity(observation, options);
+            },
             async readTeamCredentialDenial(params) {
                 const bridge = requireClaimed().daemonTurnContributionsBridge;
                 return await bridge?.readTeamCredentialDenial?.(params) ?? null;
@@ -1145,6 +1150,23 @@ export async function createRunnerAgentSessionRuntimeSource(input: Readonly<{
     const daemonTurnContributionsBridge:
         DaemonAgentRuntimeTurnContributionsBridge =
             Object.freeze({
+                async observeConnectedAccountIdentity(observation, options) {
+                    if (observation.sessionId !== expectedAuthority.sessionId) {
+                        throw new Error('connected_account_identity_observation_session_mismatch');
+                    }
+                    const response = await dispatchCurrentAgentRuntimeDaemonServiceRequest({
+                        authority: expectedAuthority,
+                        createRequest: token => ({ v: 1,
+                            context: { token, sessionId: expectedAuthority.sessionId,
+                                ...(input.executionRunSnapshot ? { executionRunSnapshotId: input.executionRunSnapshot.snapshotId } : {}) },
+                            operation: { kind: 'connected_account.identity.observe', observation } }),
+                        signal: options?.signal ? AbortSignal.any([lifetime.signal, options.signal]) : lifetime.signal,
+                    });
+                    if (!response.ok) throw new Error(response.error.code);
+                    if (response.result.kind !== 'connected_account.identity.observed') {
+                        throw new Error('connected_account_identity_observation_unavailable');
+                    }
+                },
                 pluginMcp: pluginMcp.port,
                 mcpRequestAuth,
                 async readTeamCredentialDenial(params) {
@@ -1543,6 +1565,7 @@ export async function createRunnerAgentSessionRuntimeSource(input: Readonly<{
                         runnerManagedServiceOwner.bindManagedServices({
                             seed,
                             agent: {
+                                authorizePreparedLaunch: bindingInput.authorizePreparedLaunch,
                                 connectedAccounts:
                                     bindingInput.connectedAccounts,
                                 exec: bindingInput.exec,
@@ -1784,6 +1807,7 @@ export async function createRunnerAgentSessionRuntimeSource(input: Readonly<{
                     runnerManagedServiceOwner.bindManagedServices({
                         seed,
                         agent: {
+                            authorizePreparedLaunch: bindingInput.authorizePreparedLaunch,
                             connectedAccounts:
                                 bindingInput.connectedAccounts,
                             exec: bindingInput.exec,
@@ -1846,6 +1870,7 @@ export async function createRunnerAgentSessionRuntimeSource(input: Readonly<{
                 authority: expectedAuthority,
                 requestId: randomUUID(),
                 phase: params.phase,
+                ...(params.failure ? { failure: params.failure } : {}),
                 request:
                     AgentRuntimeDaemonSessionOpenRequestV1Schema
                         .parse(params.request),

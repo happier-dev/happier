@@ -70,6 +70,7 @@ export async function recordTrackedRunnerAgentSessionOpenAttestation(
     retainedAgent: AgentSessionRunnerBindingV1;
     runner: AgentRuntimeDaemonServiceAuthorityRunnerIdentity;
     phase?: SessionOpenAttestationPhase;
+    failure?: AgentRuntimeDaemonServiceSessionOpenAttestationV1['failure'];
     request: AgentSessionOpenRequest;
     providerSessionId: string | null;
     updateMarker?:
@@ -115,7 +116,9 @@ export async function recordTrackedRunnerAgentSessionOpenAttestation(
       .parse({
         request,
         providerSessionId,
-        ...(input.phase === 'refused' ? { refusal: { code: 'native_agent_session_mode_unavailable' } } : {}),
+        ...(input.phase === 'refused'
+          ? input.failure ? { failure: input.failure } : { refusal: { code: 'native_agent_session_mode_unavailable' } }
+          : {}),
       });
   if (input.phase === 'prepare') return attestation;
   const markerUpdated = await (
@@ -157,6 +160,9 @@ export async function awaitTrackedRunnerAgentSessionOpen(
       code: 'native_agent_session_mode_unavailable';
       expectedTrackedRunner: ExactTrackedRunnerStopWitness;
     }>
+  | Readonly<{ status: 'construction_failed';
+      expectedTrackedRunner: ExactTrackedRunnerStopWitness;
+      failure: NonNullable<AgentRuntimeDaemonServiceSessionOpenAttestationV1['failure']> }>
   | Readonly<{ status: 'timeout' }>
 > {
   const sessionId = input.sessionId.trim();
@@ -223,17 +229,19 @@ export async function awaitTrackedRunnerAgentSessionOpen(
           tracked.agentRuntimeDaemonServiceAuthorityFilePath,
         )
       ) {
+        // Keep the observed generation, including copied birth identity. The
+        // tracked object can be replaced or rebound before Stop selects it.
+        const expectedTrackedRunner = Object.freeze({
+          tracked,
+          sessionRunnerPid: tracked.sessionRunnerPid,
+          processStartTimeMs: tracked.processStartTimeMs,
+          processCommandHash: tracked.processCommandHash,
+        });
+        if (attestation.failure) return Object.freeze({
+          status: 'construction_failed' as const, failure: attestation.failure, expectedTrackedRunner,
+        });
         if (attestation.refusal) return Object.freeze({
-          status: 'refused' as const,
-          code: attestation.refusal.code,
-          // Keep the observed generation, including copied birth identity. The
-          // tracked object can be replaced or rebound before Stop selects it.
-          expectedTrackedRunner: Object.freeze({
-            tracked,
-            sessionRunnerPid: tracked.sessionRunnerPid,
-            processStartTimeMs: tracked.processStartTimeMs,
-            processCommandHash: tracked.processCommandHash,
-          }),
+          status: 'refused' as const, code: attestation.refusal.code, expectedTrackedRunner,
         });
         return Object.freeze({
           status: 'opened' as const,

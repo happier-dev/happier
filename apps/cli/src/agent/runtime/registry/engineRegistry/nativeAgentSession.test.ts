@@ -6867,12 +6867,18 @@ describe('native Agent session host adapter', () => {
             return { send, updateConfiguration, watch: () => ({ dispose() {} }), dispose };
         };
         const attestations: string[] = [];
+        let nativeModeRefused = false;
+        let constructionFailed = false;
         const agentId = 'acme-native-mode-admission';
         const contributions = createExternalContributionFixtures(agentId);
         const plan = await createNativeAgentRuntimeSessionPlan({
             runtime: { sessions: { open } }, lease: createLease(agentId),
-            attestSessionOpen: async ({ phase }) => {
+            attestSessionOpen: async ({ phase, failure }) => {
                 attestations.push(phase);
+                if (phase === 'refused') {
+                    nativeModeRefused = failure === undefined;
+                    constructionFailed = failure !== undefined;
+                }
                 if (attestationUnavailable && phase === 'refused') throw new PluginError({ code: 'agent_session_authority_unavailable', retryable: false });
             },
             backend: contributions.backend, agent: contributions.agent,
@@ -6898,7 +6904,8 @@ describe('native Agent session host adapter', () => {
             else await expect(admission).rejects.toBeInstanceOf(SessionStartupInputRefusalError);
             expect(attestations).toContain('prepare');
             expect(attestations).not.toContain('commit');
-            expect(attestations.includes('refused')).toBe(!missingInventory && !genericFailure);
+            expect(nativeModeRefused).toBe(!missingInventory && !genericFailure);
+            expect(constructionFailed).toBe(Boolean(missingInventory || genericFailure));
             expect(send).not.toHaveBeenCalled();
             if (refusesDuringOpen) expect(dispose).not.toHaveBeenCalled();
             else expect(dispose).toHaveBeenCalledOnce();
@@ -6923,6 +6930,55 @@ describe('native Agent session host adapter', () => {
             }
         } finally { await created.operations.resetOrDisposeRuntime(); }
         expect(subscribers.size).toBe(0);
+    });
+
+    it.each(['before-open', 'factory-open', 'outcome-unknown', 'action-outcome-unknown', 'after-commit', 'commit-ack-lost', 'typed-startup', 'attestation-unavailable'] as const)(
+        'preserves native startup outcome for %s without exposing the native error body', async phase => {
+        const agentId = 'acme-failed-construction';
+        const contributions = createExternalContributionFixtures(agentId);
+        const attestations: unknown[] = [];
+        const plan = await createNativeAgentRuntimeSessionPlan({
+            runtime: { sessions: { open: async () => {
+                if (phase === 'after-commit' || phase === 'commit-ack-lost') return { send: async () => ({ status: 'admitted' as const }),
+                    watch: () => ({ dispose: () => undefined }), dispose: async () => undefined };
+                if (phase === 'outcome-unknown') throw createNativeAgentSessionEffectBoundaryError('outcome_unknown_after_dispatch');
+                if (phase === 'action-outcome-unknown') throw new PluginError({ code: 'action_outcome_unknown', message: 'PRIVATE_ACTION_BODY' });
+                if (phase === 'typed-startup') throw new PluginError({ code: 'agent_startup_failed',
+                    message: 'PRIVATE_NATIVE_CONSTRUCTION', details: { failureCause: { code: 'agent_startup_failed',
+                        phase: 'client_start', failureReason: 'unclassified_provider_error',
+                        providerErrorMessage: 'PRIVATE_NATIVE_PROVIDER' } } });
+                throw new Error('PRIVATE_NATIVE_CONSTRUCTION');
+            } } },
+            lease: createLease(agentId), backend: contributions.backend, agent: contributions.agent,
+            sessionCapabilities: { open: phase === 'before-open' ? [] : ['create'], delivery: ['newTurn'], cancel: phase === 'after-commit' },
+            createSessionHostServiceOwners: () => createSessionHostServiceOwners(),
+            attestSessionOpen: async input => {
+                if (phase === 'attestation-unavailable' && input.phase === 'refused') throw new Error('lost diagnostic acknowledgement');
+                attestations.push(input);
+                if (phase === 'commit-ack-lost' && input.phase === 'commit') {
+                    throw createNativeAgentSessionEffectBoundaryError('authority_unavailable_before_effect');
+                }
+            },
+            sessionInput: buildPluginSessionBindingInput({ credentials, directory: '/repo',
+                backendTarget: { kind: 'backend', backendId: agentId } }),
+        });
+        if (!plan.config.createSessionRuntime) throw new Error('Expected native Session factory');
+        await expect(plan.config.createSessionRuntime({ directory: '/repo', metadata: {}, machineId: 'machine-1',
+            session: createNativeSessionClientTestPort('failed-construction'), transcriptSession: {}, messageBuffer: {},
+            mcpServers: {}, permissionHandler: {}, getPermissionMode: () => 'default', setThinking: () => undefined,
+            memoryRecallGuidanceEnabled: false,
+        } as never)).rejects.toBeDefined();
+        if (phase === 'outcome-unknown' || phase === 'action-outcome-unknown' || phase === 'after-commit' || phase === 'commit-ack-lost' || phase === 'attestation-unavailable') {
+            expect(attestations).not.toContainEqual(expect.objectContaining({ phase: 'refused' }));
+            if (phase === 'after-commit' || phase === 'commit-ack-lost') expect(attestations).toContainEqual(expect.objectContaining({ phase: 'commit' }));
+        } else {
+            expect(attestations).toContainEqual(expect.objectContaining({ phase: 'refused',
+                request: { kind: 'create', sessionId: 'failed-construction', cwd: '/repo' }, providerSessionId: null,
+                failure: { phase: 'agent_runtime_open', code: phase === 'typed-startup' ? 'agent_startup_failed' : 'agent_session_error',
+                    ...(phase === 'typed-startup' ? { failureCause: { code: 'agent_startup_failed',
+                        phase: 'client_start', failureReason: 'unclassified_provider_error' } } : {}) } }));
+        }
+        expect(JSON.stringify(attestations)).not.toContain('PRIVATE_');
     });
 
     it('delegates the host compact command once to the native session with stripped instructions', async () => {
@@ -7130,7 +7186,7 @@ describe('native Agent session host adapter', () => {
             update: workspaceWrites => runtime.updateSessionRuntimeConfig({ workspaceWrites }),
         });
         await runtime.resetOrDisposeRuntime('runtime_recovery');
-        await expect(prepare(workspaceWrites)).resolves.toEqual({ ok: false, errorCode: 'native_agent_runtime_ended' });
+        await expect(prepare(workspaceWrites)).resolves.toMatchObject({ ok: false, errorCode: 'native_agent_runtime_ended' });
     });
 
     it('records the native refusal code for workspace policy preparation without logging private configuration details', async () => {
@@ -7153,7 +7209,10 @@ describe('native Agent session host adapter', () => {
                 permissionIntent: { value: 'default', updatedAtMs: 0 }, options: {},
             });
             try {
-                await expect(runtime.updateSessionRuntimeConfig({ workspaceWrites: 'allow' })).resolves.toMatchObject({ status: 'failed' });
+                await expect(runtime.updateSessionRuntimeConfig({ workspaceWrites: 'allow' })).resolves.toMatchObject({
+                    status: 'failed', diagnostic: { code: 'permission_mode_update_failed', severity: 'error',
+                        message: 'fixture-private-credential-path' },
+                });
                 processLogger.flushSync();
                 const log = await readFile(logPath, 'utf8').catch((error: unknown) => {
                     if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return '';
