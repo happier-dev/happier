@@ -92,8 +92,8 @@ describe.each(['plain', 'e2ee'] as const)('structured Machine routing binding (%
     const raw = { machineId: 'machine', qualifiedActionId: 'acme.composer/submit', executionSurface: 'cli',
       expectedContributorOccurrenceId: 'current', input: {} };
     const admitted = { actorAccountId: 'requester', custodianAccountId: 'custodian', machineId: 'machine',
-      installationId: 'installed', role: 'use', encryptionMode: mode,
-      structuredMessageRouting: { v: 1, machineId: 'machine', sessionIds: ['own-session'] } };
+      installationId: 'installed', role: 'manage', encryptionMode: mode,
+      structuredMessageRouting: { v: 1, machineId: 'machine', invocationKind: 'clientPluginAction', sessionIds: ['own-session'] } };
     const method = `machine:${rpcMethod}`;
     const callId = '28'.repeat(16);
     const run = async (input: unknown, admission: unknown = admitted) => {
@@ -112,6 +112,11 @@ describe.each(['plain', 'e2ee'] as const)('structured Machine routing binding (%
       expect(await run(changed)).toMatchObject({ errorCode: RPC_ERROR_CODES.FORBIDDEN });
     }
     expect(await run(bound, { ...admitted, structuredMessageRouting: undefined })).toMatchObject({ errorCode: RPC_ERROR_CODES.FORBIDDEN });
+    // A custom client cannot label a claimed binding as a host-presented Session
+    // invocation to obtain Use admission, then open a different kind at the daemon.
+    expect(await run(bound, { ...admitted, role: 'use', structuredMessageRouting: {
+      ...admitted.structuredMessageRouting, invocationKind: 'hostPresentedComposer',
+    } })).toMatchObject({ errorCode: RPC_ERROR_CODES.FORBIDDEN });
     expect(effects).toBe(1);
   });
 });

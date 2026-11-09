@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from 'node:util';
 import { cancelRpcTarget } from './cancelRpcTarget';
+import { projectRpcFailureDiagnostic } from './rpcFailureDiagnostic';
 import { createProtectedRawSessionTargetGuard } from './protectedRawSessionTargetGuard';
 import { forwardManagedInstallationResponse } from './forwardManagedInstallationResponse';
 import { createLiveApprovalOriginTargetGuard, isOrdinaryLiveApprovalOriginSocket, isPresentUserLiveApprovalOriginCaller } from './liveApprovalOrigin';
@@ -1069,7 +1070,7 @@ export function registerSocketRpcHandlers(params: Readonly<{
         }
     });
 
-    params.socket.on(SOCKET_RPC_EVENTS.CALL, async (data: unknown, callback?: (response: unknown) => void) => {
+    params.socket.on(SOCKET_RPC_EVENTS.CALL, async (data: unknown, acknowledge?: (response: unknown) => void) => {
         const startedAt = Date.now();
         const parsedRequestId = readOptionalSocketRpcRequestId(data);
         // Diagnostics cannot opt a caller into cancellation. Keep requestId's
@@ -1092,6 +1093,14 @@ export function registerSocketRpcHandlers(params: Readonly<{
         let receivingMachineAdmission: SocketRpcMachineAdmissionContextV1 | undefined;
         let forwardStartedAt: number | undefined;
         let forwardCompletedAt: number | undefined;
+        const completionDiagnostic: { failure: ReturnType<typeof projectRpcFailureDiagnostic> } = { failure: null };
+        const callback = (response: unknown) => {
+            const receivedMethod: unknown = method ?? (data && typeof data === 'object' ? Reflect.get(data, 'method') : null);
+            completionDiagnostic.failure = projectRpcFailureDiagnostic(typeof receivedMethod === 'string' ? receivedMethod : null, response,
+                forwardStartedAt === undefined ? 'rpc.admission' : 'rpc.relay',
+                forwardStartedAt === undefined ? false : null);
+            acknowledge?.(response);
+        };
         const logDeploymentChildRefusal = (phase: 'execution_shape' | 'original_action_shape'
             | 'external_action_execution' | 'original_action_envelope' | 'machine_admission') => {
             if (method?.slice(method.indexOf(':') + 1) === RPC_METHODS.DAEMON_DEPLOYMENT_CHILD) {
@@ -2053,6 +2062,10 @@ export function registerSocketRpcHandlers(params: Readonly<{
                     // Reviewed composite effects use their already verified root;
                     // raw method policy must not reinterpret that proof as a new grant.
                     const requiredRole = isHandoffCurrent || moveChildExecution && !deploymentArchiveChild ? 'use' as const : undefined;
+                    // Client-supplied plugin bindings are raw Machine Action claims.
+                    // Reuse the Action ingress policy in this same admission decision.
+                    const actionPolicy = structuredMessageRouting?.invocationKind === 'mountedPluginSurface'
+                        || structuredMessageRouting?.invocationKind === 'clientPluginAction' ? 'action.invoke' : undefined;
                     // Passive worker status does not wake a Machine. Admit authority
                     // independently of presence so the existing forwarder classifies
                     // a disconnected target for every client using this transport.
@@ -2068,7 +2081,7 @@ export function registerSocketRpcHandlers(params: Readonly<{
                     const admitted = isHandoffCurrent ? scopedAdmission : scopedAdmission ?? await resolveMachineAdmissionFromFactsInTx(db, machine, { actorAccountId,
                         machineId: machinePrefix,
                         operationRpcMethod: rpcMethod, ...requester,
-                        ...(requiredRole ? { requiredRole } : { rpcMethod }),
+                        ...(requiredRole ? { requiredRole } : actionPolicy ? { actionId: actionPolicy } : { rpcMethod }),
                         requireOnline: finiteWake?.kind === 'ready' ? false : requireOnline });
                     if (!admitted || admitted.kind !== 'admitted') {
                         logDeploymentChildRefusal('machine_admission');
@@ -2391,10 +2404,10 @@ export function registerSocketRpcHandlers(params: Readonly<{
                 failureCause: forwardedCause.success ? forwardedCause.data : projectActionFailureCauseV1(error, 'rpc.relay'),
             });
         } finally {
-            if (callerTraceId) {
+            if (callerTraceId || completionDiagnostic.failure) {
                 const machineCall = method && (machineAdmission || parseMachineScopedRpcMethod(method));
                 log({ module: "websocket-rpc", event: machineCall ? "machine-rpc-relay-completed" : "rpc-call-completed",
-                    method, requestId: callerTraceId, targetRequestId: targetTraceId ?? cancellation?.targetRequestId,
+                    method, ...completionDiagnostic.failure, requestId: callerTraceId ?? randomUUID(), targetRequestId: targetTraceId ?? cancellation?.targetRequestId,
                     callerSocketId: params.socket.id, callerConnected: params.socket.connected === true,
                     targetSocketId: cancellation?.targetSocketId,
                     durationMs: Date.now() - startedAt,

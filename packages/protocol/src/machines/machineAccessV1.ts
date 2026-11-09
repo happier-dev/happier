@@ -8,6 +8,7 @@ import { PrincipalRefV1Schema } from '../teams/principal.js';
 import { ContentPublicKeyFingerprintSchema } from './identity/contentPublicKeyFingerprint.js';
 import { MachineInstallationPublicIdentityV1Schema } from './identity/installationKeySchemas.js';
 import { SESSION_DATA_KEY_ENVELOPE_PAGE_MAX_ENTRIES_V1, SessionDataKeyEnvelopeBytesV1Schema, SessionDataKeyRecipientContentKeyV1Schema, SessionDataKeyEnvelopePageQueryV1Schema } from '../sessions/encryption/sessionDataKeyEnvelopes.js';
+import { DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_INVOCATION_KINDS_V1 } from '../plugins/actions/daemonInvocationKindsV1.js';
 
 /** Machine access wire epoch V1: every authority/mutation object is closed. */
 export const MachineAccessRoleV1Schema = lazyZodSchema(() => z.enum(['use', 'manage']));
@@ -158,6 +159,7 @@ export type MachineAccessRecipientCensusResponseV1 = z.infer<typeof MachineAcces
 export const StructuredMessageActionRoutingV1Schema = lazyZodSchema(() => z.strictObject({
   v: z.literal(1),
   machineId: z.string().check(z.minLength(1)),
+  invocationKind: z.enum(Object.values(DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_INVOCATION_KINDS_V1)),
   sessionIds: z.array(z.string().check(z.minLength(1))).check(z.refine(ids =>
     ids.every((id, index) => index === 0 || ids[index - 1]! < id), 'Session ids must be distinct and sorted')),
 }));

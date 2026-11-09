@@ -6188,8 +6188,13 @@ fields and array entries survive composition, while later scalar values win.
   at the existing Home Machine admission owner, not again for each native step.
 - In 0.3 development, structured-message daemon ingress accepts bound plugin
   invocations and host-presented Composer/Message Actions. The shared socket
-  transport projects only the target Machine and distinct referenced Session IDs
-  into `structuredMessageRouting`, outside encrypted content. Home admits each
+  transport projects the target Machine, invocation kind and distinct referenced
+  Session IDs into `structuredMessageRouting`, outside encrypted content. Home
+  uses the existing `action.invoke` Manage policy for `mountedPluginSurface` and
+  `clientPluginAction` claims; matching a live registry declaration does not prove
+  that a client mounted it. Host-presented Composer/Message kinds retain Use and
+  their Session admission. Consequently, Use grantees cannot execute Actions from
+  session-less mounted plugin views. Home admits the required Machine role and each
   Session once, stamps that projection in `machineAdmission`, and the daemon
   binds it to the decrypted request before dispatch. For E2EE Accounts, Action
   inputs, message IDs and Composer contents remain encrypted. Resource watch open

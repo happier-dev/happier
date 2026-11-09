@@ -15,6 +15,7 @@ import { asProtocolZod } from './internalProtocolZodAdapter.js';
 import { PluginSourceCustodyV1Schema } from '../runtime/sourceCustody.js';
 import { RPC_METHODS } from '../../rpc/methods.js';
 import type { StructuredMessageActionRoutingV1 } from '../../machines/machineAccessV1.js';
+import { DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_INVOCATION_KINDS_V1 as invocationKinds } from './daemonInvocationKindsV1.js';
 
 const PluginContributionLocalIdSchema = asProtocolZod(CanonicalPluginContributionLocalIdSchema);
 const PluginIdWireSchema = asProtocolZod(PluginIdSchema);
@@ -47,11 +48,11 @@ export type DaemonPluginHostPresentedComposerCurrentIntentV1 = z.infer<
 >;
 
 const MountedPluginSurfaceInvocationSchema = lazyZodSchema(() => z.strictObject({
-  kind: z.literal('mountedPluginSurface'),
+  kind: z.literal(invocationKinds.mountedPluginSurface),
   mountedBinding: DaemonPluginStructuredMessageActionMountedBindingSchema,
 }));
 const ClientPluginActionInvocationSchema = lazyZodSchema(() => z.strictObject({
-  kind: z.literal('clientPluginAction'),
+  kind: z.literal(invocationKinds.clientPluginAction),
   clientActionBinding: DaemonPluginStructuredMessageActionMountedBindingSchema,
 }));
 
@@ -65,11 +66,11 @@ export type DaemonPluginMountedInvocationV1 = z.infer<typeof DaemonPluginMounted
 /** Closed provenance carrier; the daemon derives any caller after revalidation. */
 export const DaemonPluginStructuredMessageActionInvocationV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.strictObject({
-    kind: z.literal('hostPresentedComposer'),
+    kind: z.literal(invocationKinds.hostPresentedComposer),
     currentComposerIntent: DaemonPluginHostPresentedComposerCurrentIntentV1Schema,
   }),
   z.strictObject({
-    kind: z.literal('hostPresentedMessage'),
+    kind: z.literal(invocationKinds.hostPresentedMessage),
     currentMessageIntent: MessageActionReferenceV1Schema,
   }),
   MountedPluginSurfaceInvocationSchema,
@@ -273,6 +274,6 @@ export function readStructuredMessageActionRoutingV1(method: string, raw: unknow
   const ids = [request.data.sessionId, request.data.messageActionReference?.sessionId,
     invocation.kind === 'hostPresentedMessage' ? invocation.currentMessageIntent.sessionId
       : composer && 'sessionId' in composer ? composer.sessionId : undefined];
-  return { v: 1, machineId: request.data.machineId,
+  return { v: 1, machineId: request.data.machineId, invocationKind: invocation.kind,
     sessionIds: [...new Set(ids.filter((id): id is string => typeof id === 'string'))].sort() };
 }

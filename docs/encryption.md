@@ -3846,13 +3846,16 @@ Responses encrypt `{ v: 2, k: 'res', c: '<same call id>', r: result }`;
 callers verify the direction and their call id before accepting the result.
 The call id is independent of the relay-owned transport request id.
 
-Structured plugin Action requests additionally project the target Machine and
-distinct referenced Session IDs into content-free `structuredMessageRouting`.
-This includes an Action-read nested in Resource watch open. Home authorizes those
-Session selectors once and copies them into its existing `machineAdmission`;
+Structured plugin Action requests additionally project the target Machine,
+invocation kind and distinct referenced Session IDs into content-free
+`structuredMessageRouting`. This includes an Action-read nested in Resource watch
+open. Home selects the existing `action.invoke` Manage policy for mounted/client
+binding claims and retains Use for host-presented Composer/Message kinds. It
+authorizes the Machine role and Session selectors once and copies the projection
+into its existing `machineAdmission`;
 after decrypting, the daemon compares the admitted projection with the actual
-request before dispatch. Changing or omitting a selector cannot authorize a
-different Session. Action input, message IDs and Composer contents stay inside
+request before dispatch. Changing or omitting a selector or invocation kind cannot
+authorize a different Session or a lower Machine role. Action input, message IDs and Composer contents stay inside
 the encrypted payload. Ordinary Resource watches keep their existing behavior.
 Direct peer ingress separately admits only the verified Machine custodian with
 Manage and Home verification; it does not admit shared Machine callers.

@@ -15,7 +15,7 @@ import { validateMachineReplacement } from './validateMachineReplacement';
 import { ACTION_OPERATION_RPC_METHODS_V1, ACTION_OPERATION_RPC_METHODS_V2 } from '@happier-dev/protocol/actions/operations/v1';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
-import { DaemonPluginStructuredMessageActionExecuteRequestSchema } from '@happier-dev/protocol/plugins/actions/daemonInvocationV1';
+import { DaemonPluginStructuredMessageActionExecuteRequestSchema, readStructuredMessageActionRoutingV1 } from '@happier-dev/protocol/plugins/actions/daemonInvocationV1';
 import { SOCKET_RPC_EVENTS, SessionActionRpcOriginV1Schema, SocketRpcMachineAdmissionContextV1Schema } from '@happier-dev/protocol/socketRpc';
 import { rpcHandler } from '@/app/api/socket/rpcHandler';
 import { createAuthenticatedFakeSocket, createSocketRoomDiscoveryHarness, getSocketHandler } from '@/app/api/testkit/socketHarness';
@@ -179,9 +179,35 @@ describe('Machine current access (real SQLite)', () => {
             await getSocketHandler(socket, SOCKET_RPC_EVENTS.CALL)({ method: `${f.machine.id}:${method}`, params, ...(routing === undefined ? {} : { structuredMessageRouting: routing }) }, reply);
             return reply;
         };
+        const callProjected = async (method: string, params: unknown) => {
+            if (mode === 'plain') return call(method, params);
+            const nonce = tweetnacl.randomBytes(tweetnacl.secretbox.nonceLength);
+            const ciphertext = encodeBase64(tweetnacl.secretbox(new TextEncoder().encode(JSON.stringify(params)), nonce, f.key));
+            return call(method, ciphertext, readStructuredMessageActionRoutingV1(method, params) ?? undefined);
+        };
         const raw = { machineId: f.machine.id, qualifiedActionId: 'happier.machine.crabbox/install',
             expectedContributorOccurrenceId: 'crabbox-current', executionSurface: 'ui', input: {}, presentUserIntent: 'confirmed' };
         expect(await call(RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE, raw))
+            .toHaveBeenCalledWith(expect.objectContaining({ ok: false, errorCode: RPC_ERROR_CODES.FORBIDDEN }));
+        expect(emitWithAck).not.toHaveBeenCalled();
+        const claimedBinding = { pluginId: 'happier.channels', contributionLocalId: 'connections', occurrenceId: 'channels-current' };
+        const boundRequests = [
+            { ...raw, invocation: { kind: 'mountedPluginSurface', mountedBinding: claimedBinding } },
+            { ...raw, invocation: { kind: 'clientPluginAction', clientActionBinding: claimedBinding } },
+        ].map(request => DaemonPluginStructuredMessageActionExecuteRequestSchema.parse(request));
+        for (const request of boundRequests) {
+            expect(await callProjected(RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE, request), request.invocation?.kind)
+                .toHaveBeenCalledWith(expect.objectContaining({ ok: false, errorCode: RPC_ERROR_CODES.FORBIDDEN }));
+            expect(emitWithAck).not.toHaveBeenCalled();
+        }
+        expect(await call(RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE, boundRequests[0],
+            { v: 1, machineId: f.machine.id, invocationKind: 'hostPresentedComposer', sessionIds: [] }))
+            .toHaveBeenCalledWith(expect.objectContaining({ ok: false, errorCode: RPC_ERROR_CODES.FORBIDDEN }));
+        expect(emitWithAck).not.toHaveBeenCalled();
+        const boundWatch = { machineId: f.machine.id, callerPluginId: 'happier.channels', expectedCallerOccurrenceId: 'channels-current',
+            subscriptionId: 'bound-action-read', resource: { actionRead: { ...boundRequests[1],
+                qualifiedActionId: 'happier.channels/read', expectedContributorOccurrenceId: 'channels-current', requiredReadOnly: true } } };
+        expect(await callProjected(RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_WATCH_OPEN, boundWatch))
             .toHaveBeenCalledWith(expect.objectContaining({ ok: false, errorCode: RPC_ERROR_CODES.FORBIDDEN }));
         expect(emitWithAck).not.toHaveBeenCalled();
         const ownersSession = await db.session.create({ data: { accountId: f.owner.id, tag: crypto.randomUUID(),
@@ -197,15 +223,9 @@ describe('Machine current access (real SQLite)', () => {
             invocation: { kind: 'clientPluginAction', clientActionBinding: {
                 pluginId: 'acme.composer', contributionLocalId: 'submit', occurrenceId: 'composer-current',
             } } });
-        expect(await call(RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE, privateMessageRequest))
-            .toHaveBeenCalledWith(expect.objectContaining({ ok: false, errorCode: RPC_ERROR_CODES.FORBIDDEN }));
-        expect(emitWithAck).not.toHaveBeenCalled();
         const watch = { machineId: f.machine.id, callerPluginId: 'acme.composer', expectedCallerOccurrenceId: 'composer-current',
             subscriptionId: 'action-read', resource: { actionRead: { ...privateMessageRequest,
                 qualifiedActionId: 'acme.composer/submit', expectedContributorOccurrenceId: 'composer-current', requiredReadOnly: true } } };
-        expect(await call(RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_WATCH_OPEN, watch))
-            .toHaveBeenCalledWith(expect.objectContaining({ ok: false, errorCode: RPC_ERROR_CODES.FORBIDDEN }));
-        expect(emitWithAck).not.toHaveBeenCalled();
         expect(await call(RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_WATCH_OPEN,
             { ...watch, resource: { pluginId: 'acme.composer', localId: 'ordinary-resource' } }))
             .toHaveBeenCalledWith(expect.objectContaining({ ok: true }));
@@ -219,6 +239,14 @@ describe('Machine current access (real SQLite)', () => {
             actorAccountId: requester.id, custodianAccountId: f.owner.id, role: 'use',
         } });
         emitWithAck.mockClear();
+        const ownMessageReference = { v: 1, sessionId: session.id, messageId: 'requester-message', observedRevision: '1' };
+        expect(await callProjected(RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE,
+            DaemonPluginStructuredMessageActionExecuteRequestSchema.parse({ ...raw,
+                qualifiedActionId: 'acme.composer/message', messageActionReference: ownMessageReference,
+                invocation: { kind: 'hostPresentedMessage', currentMessageIntent: ownMessageReference } })))
+            .toHaveBeenCalledWith(expect.objectContaining({ ok: true }));
+        expect(emitWithAck.mock.calls.at(-1)?.[1]).toMatchObject({ machineAdmission: { actorAccountId: requester.id, role: 'use' } });
+        emitWithAck.mockClear();
         // Home sees only the routing projection; the complete Action stays ciphertext.
         const composerRequest = { ...raw, qualifiedActionId: 'acme.composer/submit', sessionId: session.id,
             invocation: { kind: 'hostPresentedComposer', currentComposerIntent: {
@@ -228,17 +256,18 @@ describe('Machine current access (real SQLite)', () => {
         expect(await call(RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE, ciphertext))
             .toHaveBeenCalledWith(expect.objectContaining({ ok: false, errorCode: RPC_ERROR_CODES.FORBIDDEN }));
         expect(await call(RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE, ciphertext,
-            { v: 1, machineId: f.machine.id, sessionIds: [ownersSession.id] }))
+            { v: 1, machineId: f.machine.id, invocationKind: 'hostPresentedComposer', sessionIds: [ownersSession.id] }))
             .toHaveBeenCalledWith(expect.objectContaining({ ok: false, errorCode: RPC_ERROR_CODES.FORBIDDEN }));
         expect(await call(RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE, composerRequest,
-            { v: 1, machineId: f.machine.id, sessionIds: [] }))
+            { v: 1, machineId: f.machine.id, invocationKind: 'hostPresentedComposer', sessionIds: [] }))
             .toHaveBeenCalledWith(expect.objectContaining({ ok: false, errorCode: RPC_ERROR_CODES.FORBIDDEN }));
         expect(emitWithAck).not.toHaveBeenCalled();
         expect(await call(RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE, ciphertext,
-            { v: 1, machineId: f.machine.id, sessionIds: [session.id] }))
+            { v: 1, machineId: f.machine.id, invocationKind: 'hostPresentedComposer', sessionIds: [session.id] }))
             .toHaveBeenCalledWith(expect.objectContaining({ ok: true }));
         expect(emitWithAck.mock.calls.at(-1)?.[1]).toMatchObject({ params: ciphertext, machineAdmission: {
-            actorAccountId: requester.id, role: 'use', structuredMessageRouting: { v: 1, machineId: f.machine.id, sessionIds: [session.id] },
+            actorAccountId: requester.id, role: 'use', structuredMessageRouting: {
+                v: 1, machineId: f.machine.id, invocationKind: 'hostPresentedComposer', sessionIds: [session.id] },
         } });
         const forwarded = emitWithAck.mock.calls.at(-1)?.[1];
         const context = SocketRpcMachineAdmissionContextV1Schema.parse(
@@ -254,6 +283,32 @@ describe('Machine current access (real SQLite)', () => {
         expect(verified.reply.send).toHaveBeenCalledWith({ v: 1, ok: true });
         emitWithAck.mockClear();
         await grant(f.owner.id, f.machine.id, requester.id, 'admin');
+        // Manage on the Machine cannot borrow the custodian's private Session,
+        // whether the caller omits or supplies its own top-level Session.
+        for (const sessionId of [undefined, session.id]) {
+            const privateRequest = DaemonPluginStructuredMessageActionExecuteRequestSchema.parse({
+                ...privateMessageRequest, sessionId,
+                // The client-resolution shortcut requires matching selectors;
+                // ordinary Action dispatch can carry both explicit references.
+                ...(sessionId ? { resolveClientMessageContext: undefined } : {}),
+            });
+            expect(await callProjected(RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE,
+                privateRequest))
+                .toHaveBeenCalledWith(expect.objectContaining({ ok: false, errorCode: RPC_ERROR_CODES.FORBIDDEN }));
+            expect(await callProjected(RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_WATCH_OPEN,
+                { ...watch, resource: { actionRead: { ...privateRequest,
+                    qualifiedActionId: 'acme.composer/submit', expectedContributorOccurrenceId: 'composer-current', requiredReadOnly: true } } }))
+                .toHaveBeenCalledWith(expect.objectContaining({ ok: false, errorCode: RPC_ERROR_CODES.FORBIDDEN }));
+            expect(emitWithAck).not.toHaveBeenCalled();
+        }
+        for (const request of boundRequests) {
+            expect(await callProjected(RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE, request), request.invocation?.kind)
+                .toHaveBeenCalledWith(expect.objectContaining({ ok: true }));
+            expect(emitWithAck.mock.calls.at(-1)?.[1]).toMatchObject({ machineAdmission: { actorAccountId: requester.id, role: 'manage' } });
+        }
+        expect(await callProjected(RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_WATCH_OPEN, boundWatch))
+            .toHaveBeenCalledWith(expect.objectContaining({ ok: true }));
+        expect(emitWithAck.mock.calls.at(-1)?.[1]).toMatchObject({ machineAdmission: { actorAccountId: requester.id, role: 'manage' } });
         expect(await call('action.invoke', { action: { pluginId: 'happier.machine.crabbox', localId: 'install' }, input: {} }))
             .toHaveBeenCalledWith(expect.objectContaining({ ok: true }));
         expect(emitWithAck.mock.calls.at(-1)?.[1]).toMatchObject({ machineAdmission: {

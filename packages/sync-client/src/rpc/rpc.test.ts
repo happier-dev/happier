@@ -901,13 +901,13 @@ it.each(['plain', 'e2ee'] as const)('projects content-free structured invocation
       messageActionReference: { v: 1, sessionId: 'reference-session', messageId: 'private-message', observedRevision: '1' },
       invocation: { kind: 'clientPluginAction', clientActionBinding: {
         pluginId: 'acme.composer', contributionLocalId: 'submit', occurrenceId: 'current' } } }, content });
-  expect(packets[1]?.structuredMessageRouting).toEqual({ v: 1, machineId: 'machine', sessionIds: ['explicit-session', 'reference-session'] });
+  expect(packets[1]?.structuredMessageRouting).toEqual({ v: 1, machineId: 'machine', invocationKind: 'clientPluginAction', sessionIds: ['explicit-session', 'reference-session'] });
   await callSocketRpc({ socket, target: { kind: 'machine', id: 'machine' },
     method: RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_WATCH_OPEN, content,
     params: { machineId: 'machine', resource: { actionRead: { ...raw,
       sessionId: 'own-session', executionSurface: 'ui', invocation: { kind: 'hostPresentedComposer', currentComposerIntent: {
         composer: { kind: 'session', sessionId: 'own-session' }, revision: 1 } } } } } });
-  expect(packets[2]?.structuredMessageRouting).toEqual({ v: 1, machineId: 'machine', sessionIds: ['own-session'] });
+  expect(packets[2]?.structuredMessageRouting).toEqual({ v: 1, machineId: 'machine', invocationKind: 'hostPresentedComposer', sessionIds: ['own-session'] });
   if (mode === 'e2ee') {
     expect(typeof packets[1]?.params).toBe('string');
     expect(JSON.stringify(packets[1])).not.toContain('private-input');

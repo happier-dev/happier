@@ -4181,8 +4181,10 @@ and reserved server-origin methods keep their existing contracts. See
 
 The current development structured plugin Action ingress also requires
 content-free `structuredMessageRouting` for encrypted requests, automatically
-projected by `callSocketRpc`. Home stamps its admitted Machine and Session
-selectors in `machineAdmission`; the daemon binds them to the opened payload.
+projected by `callSocketRpc`. Its required invocation kind makes mounted/client
+binding claims consume `action.invoke` Manage at Home; host-presented Session kinds
+retain Use. Home stamps its admitted Machine, invocation kind and Session selectors
+in `machineAdmission`; the daemon binds them to the opened payload.
 Action-read Resource watch opens use the same contract. Matching client, Home
 and daemon development versions must be reloaded together: these fields carry
 admission meaning and cannot be safely ignored. This extends the existing 0.3
