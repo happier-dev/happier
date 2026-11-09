@@ -99,8 +99,8 @@ export function startSlackSocketWorker(input: SlackSocketWorkerInput): SlackSock
           admissionPending = false;
         }
         signal.throwIfAborted();
-        // Slack retries an unacknowledged envelope; native event_id equality is
-        // handled by core's census, including a lost ACK after durable custody.
+        // Slack retries an unacknowledged envelope; normalized occurrence
+        // equality is handled by core's census, including a lost ACK after custody.
         await socket.send({ kind: 'text', text: JSON.stringify({ envelope_id: frame.envelope_id }) }, { signal });
       }
       return { kind: 'stopped', ...(connected ? { unprovenContinuity: true } : {}) };

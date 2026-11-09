@@ -11,8 +11,10 @@ This source implementation is not a stable-release availability claim.
 Create an app in the workspace that will own the connection. This manifest uses
 message events for joined channels, private channels, direct messages and group
 direct messages. It deliberately does not also subscribe to `app_mention`:
-mentions are recognizable in the message text, and subscribing to both streams
-can produce two events for one message. App manifest and subscription contracts:
+mentions are recognizable in the message text. Existing apps may subscribe to
+either stream or both: the provider maps a post's workspace, channel and exact
+native timestamp to one occurrence, so Channels deduplicates twin events even
+when Slack gives them different event IDs. App manifest and subscription contracts:
 [Slack Socket Mode](https://docs.slack.dev/apis/events-api/using-socket-mode/),
 [message events](https://docs.slack.dev/reference/events/message/), and
 [app manifests](https://docs.slack.dev/reference/app-manifest/), retrieved
@@ -74,7 +76,12 @@ must correspond to the bot's app. `auth.test` supplies the workspace/bot IDs,
 tests and observer startup. Account health verifies that both tokens are
 accepted; the shared socket handshake owns app correspondence. Event acknowledgements
 follow successful core admission; reconnects cannot promise replay of missed
-events. Native `event_id` supplies occurrence identity to the core census.
+events. Original posts use workspace/channel/message-timestamp occurrence
+identity in the core census; edits retain their separate native `event_id`.
+Slack documents message timestamps as unique within a channel:
+[message events](https://docs.slack.dev/reference/events/message/), and
+[app mentions](https://docs.slack.dev/reference/events/app_mention/), retrieved
+2026-11-09.
 Sources: [auth.test](https://docs.slack.dev/reference/methods/auth.test/),
 [bots.info](https://docs.slack.dev/reference/methods/bots.info/),
 [apps.connections.open](https://docs.slack.dev/reference/methods/apps.connections.open/),

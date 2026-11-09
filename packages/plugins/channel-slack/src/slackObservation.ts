@@ -1,6 +1,6 @@
 import { ConversationNormalizedIngressV1Schema, type ConversationNormalizedIngressV1 } from '@happier-dev/channels-protocol/v1';
 import type { SlackChannel, SlackIdentity } from './slackApi.js';
-import { createSlackEndpointIdentity, createSlackPrincipalId } from './slackPluginConstants.js';
+import { createSlackChannelEndpointId, createSlackEndpointIdentity, createSlackPrincipalId } from './slackPluginConstants.js';
 
 function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -36,7 +36,10 @@ export function mapSlackEventToIngress(input: Readonly<{ payload: unknown; ident
   if (edited && revision === undefined) return null;
   const shell = {
     v: 1,
-    occurrenceId: `slack:${identity.teamId}:event:${payload.event_id}`,
+    // message and app_mention can describe the same native post with different
+    // event IDs. Edits remain separate, bodyless revision occurrences.
+    occurrenceId: edited ? `slack:${identity.teamId}:event:${payload.event_id}`
+      : `${createSlackChannelEndpointId(identity.teamId, channel.id)}:message:${message.ts}`,
     occurredAt: providerTimestamp,
     transport: { kind: 'socket' },
     endpoint: createSlackEndpointIdentity(identity, channel, threadTs),

@@ -14,7 +14,7 @@ describe('Slack authenticated message normalization', () => {
   it('preserves workspace-qualified occurrence, principal and thread identities through the core schema', () => {
     const result = mapSlackEventToIngress({ payload: payload({ thread_ts: '1699999999.000001' }), identity, channel });
     expect(result).toMatchObject({ kind: 'fullText', observation: {
-      occurrenceId: 'slack:T1:event:Ev1', occurredAt: 1700000000123, transport: { kind: 'socket' },
+      occurrenceId: 'slack:T1:channel:C1:message:1700000000.123456', occurredAt: 1700000000123, transport: { kind: 'socket' },
       endpoint: { id: 'slack:T1:channel:C1:thread:1699999999.000001', parentId: 'slack:T1:channel:C1', kind: 'thread', audience: 'shared' },
       actor: { principalId: 'slack:T1:user:U2', kind: 'human', isIntegrationSelf: false },
       message: { id: '1700000000.123456', text: '<@U1> hello', addressingEvidence: 'directIntegrationMention' },
@@ -47,6 +47,22 @@ describe('Slack authenticated message normalization', () => {
     expect(JSON.stringify(result)).not.toContain('untrusted edited body');
     expect(ConversationNormalizedIngressV1Schema.safeParse(result).success).toBe(true);
     expect(mapSlackEventToIngress({ payload: payload({ subtype: 'message_deleted', deleted_ts: '1700000000.123456' }), identity, channel })).toBeNull();
+  });
+
+  it('keeps posts with the same timestamp in other channels separate from the original post and its edits', () => {
+    const original = mapSlackEventToIngress({ payload: payload(), identity, channel });
+    const otherChannel = mapSlackEventToIngress({ payload: { ...payload({ channel: 'C2' }), event_id: 'EvOther' }, identity, channel: { ...channel, id: 'C2' } });
+    const edit = mapSlackEventToIngress({ payload: { ...payload({ subtype: 'message_changed', message: {
+      user: 'U2', ts: '1700000000.123456', text: 'edited', edited: { ts: '1700000001.123456' },
+    } }), event_id: 'EvEdit' }, identity, channel });
+    expect(original?.kind).toBe('fullText');
+    expect(otherChannel?.kind).toBe('fullText');
+    expect(edit?.kind).toBe('routableNonAdmission');
+    if (original?.kind !== 'fullText' || otherChannel?.kind !== 'fullText' || edit?.kind !== 'routableNonAdmission') {
+      throw new Error('Expected normalized Slack post and edit evidence');
+    }
+    expect(otherChannel.observation.occurrenceId).not.toBe(original.observation.occurrenceId);
+    expect(edit.shell.occurrenceId).not.toBe(original.observation.occurrenceId);
   });
 
   it('keeps unsupported file content bodyless and never trusts mismatched channel metadata', () => {

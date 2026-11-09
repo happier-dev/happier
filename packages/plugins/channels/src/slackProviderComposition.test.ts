@@ -178,13 +178,37 @@ async function slackJourney(options: Readonly<{ rateLimited?: boolean; disableAf
 }
 
 describe('Slack through registered Channels ingress and Session projection', () => {
+  it.each(['message', 'app_mention'])('admits one native post when %s arrives before its twin, while preserving replay dedupe and distinct posts', async firstType => {
+    const journey = await slackJourney();
+    const postSecond = Math.floor(Date.now() / 1000);
+    const post = { ts: `${postSecond}.000010` };
+    const twinType = firstType === 'message' ? 'app_mention' : 'message';
+    try {
+      await journey.ingestSlack('EvOriginal', { ...post, type: firstType });
+      await journey.ingestSlack('EvTwin', { ...post, type: twinType });
+      await journey.ingestSlack('EvOriginal', { ...post, type: firstType });
+      await journey.ingestSlack('EvTwin', { ...post, type: twinType });
+      expect(journey.admissions).toHaveLength(1);
+      expect(journey.admissions[0]).toMatchObject({ text: '<@UBOT> inspect this deployment' });
+
+      const nextPost = { type: 'app_mention', ts: `${postSecond}.000011`, text: '<@UBOT> inspect another deployment' };
+      await journey.ingestSlack('EvNext', nextPost);
+      await journey.ingestSlack('EvNext', nextPost);
+      expect(journey.admissions).toHaveLength(2);
+      expect(journey.admissions[1]).toMatchObject({ text: '<@UBOT> inspect another deployment' });
+      expect(journey.admissions[1]?.idempotencyKey).not.toBe(journey.admissions[0]?.idempotencyKey);
+      journey.validateWrites();
+    } finally { await journey.dispose(); }
+  });
+
   it('dedupes a native event, filters unapproved senders, and sends split Session answers into the original Slack thread once', async () => {
     const journey = await slackJourney();
     try {
       await journey.ingestSlack();
       await journey.ingestSlack();
-      await journey.ingestSlack('EvOther', { user: 'U2' });
-      await journey.ingestSlack('EvBot', { user: 'U1', bot_id: 'OTHERBOT', subtype: 'bot_message' });
+      const postSecond = Math.floor(Date.now() / 1000);
+      await journey.ingestSlack('EvOther', { user: 'U2', ts: `${postSecond}.000003` });
+      await journey.ingestSlack('EvBot', { user: 'U1', bot_id: 'OTHERBOT', subtype: 'bot_message', ts: `${postSecond}.000004` });
       expect(journey.admissions).toHaveLength(1);
       expect(journey.admissions[0]).toMatchObject({ kind: 'userText', text: '<@UBOT> inspect this deployment',
         source: { sourceRef: 'channels:binding:binding-1', externalActor: { kind: 'human' } } });
