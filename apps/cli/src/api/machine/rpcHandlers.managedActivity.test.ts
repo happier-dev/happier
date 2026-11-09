@@ -8,6 +8,9 @@ import { signMachineInstallationProof, verifyMachineInstallationProof } from '@h
 import nacl from 'tweetnacl';
 import type { ManagedActivityRpcOwner } from './rpcHandlers.managedActivity';
 import { ManagedCommittedIdleEvidenceV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
+import { authorizeMachineRpcRequest } from './machineRpcAuthorization';
+import { createActionOperationStore } from '@/daemon/actionOperations/actionOperationStore';
 
 const target = { homeId: 'home', managedId: 'managed', expectedRevision: 3,
     controller: { machineId: 'controller', installationId: 'controller-installation' } };
@@ -15,6 +18,7 @@ function setup(commitIdleEvidence?: ManagedActivityRpcOwner['commitIdleEvidence'
     let items: readonly LiveWorkItemV1[] = [];
     let targetCurrent = true;
     let accessCurrent = true;
+    let admissionReads = 0;
     let duringRead: (() => void) | undefined;
     const drain = createDaemonAdmissionDrain();
     const inventory = createManagedActivityInventory({ producers: [{
@@ -27,14 +31,22 @@ function setup(commitIdleEvidence?: ManagedActivityRpcOwner['commitIdleEvidence'
             // Raw RPC delivery; the real handler owns request-schema validation.
             handlers.set(method, (raw, context) => handler(raw as TRequest, context));
         },
-    }, activity: inventory, admissionDrain: drain,
-    validateCurrentTarget: async () => targetCurrent, ...(commitIdleEvidence ? { commitIdleEvidence } : {}) });
+    }, activity: inventory, admissionDrain: drain, ...(commitIdleEvidence ? { commitIdleEvidence } : {}) });
     const context: RpcHandlerContext = { signal: new AbortController().signal,
         machineAdmission: { actorAccountId: 'owner', custodianAccountId: 'owner', machineId: 'guest',
             installationId: 'guest-installation', role: 'manage', encryptionMode: 'plain' },
-        verifyMachineAdmissionCurrent: async () => accessCurrent };
+        // The actual Home target admission is the network boundary. Resume
+        // releases only its captured drain, even after the target policy changes.
+        verifyMachineAdmissionCurrent: async () => { admissionReads++; return accessCurrent && targetCurrent; } };
     return { drain, inventory, context,
-        call: (method: string, input: unknown, ctx: RpcHandlerContext | undefined = context) => handlers.get(method)!(input, ctx),
+        reads: () => admissionReads,
+        call: (method: string, input: unknown, ctx: RpcHandlerContext | undefined = context) => {
+            const resuming = method === MANAGED_ADMISSION_DRAIN_CONFIRM_RPC_METHOD
+                && input !== null && typeof input === 'object' && 'action' in input && input.action === 'resume';
+            const ingress = resuming && ctx === context ? { ...context,
+                verifyMachineAdmissionCurrent: async () => { admissionReads++; return accessCurrent; } } : ctx;
+            return handlers.get(method)!(input, ingress);
+        },
         setItems: (next: typeof items) => { items = next; },
         setAccess: (next: boolean) => { accessCurrent = next; },
         setTarget: (next: boolean) => { targetCurrent = next; },
@@ -43,6 +55,38 @@ function setup(commitIdleEvidence?: ManagedActivityRpcOwner['commitIdleEvidence'
 }
 
 describe('managed guest activity bridge', () => {
+    it('releases controller-free read probes, busy confirmations and only the exact retained drain through authenticated RPC', async () => {
+        const operations = createActionOperationStore();
+        const activity = createManagedActivityInventory({ producers: [{ read: operations.readLiveWork, subscribe: operations.subscribe }] });
+        const drain = createDaemonAdmissionDrain();
+        const guestTarget = { homeId: target.homeId, managedId: target.managedId, expectedRevision: target.expectedRevision };
+        const machineAdmission = { actorAccountId: 'owner', custodianAccountId: 'owner', machineId: 'guest',
+            installationId: 'guest-installation', role: 'manage' as const, encryptionMode: 'plain' as const };
+        const rpc = new RpcHandlerManager({ scopePrefix: 'guest', encryptionMode: 'plain', logger: () => {},
+            authorizeRequest: (request, source) => authorizeMachineRpcRequest(request, {
+                machineId: 'guest', resolveCustodianAccountId: async () => 'owner', resolveInstallationId: () => 'guest-installation',
+                // Home is the network boundary. RPC admission, material inventory and drain stay real.
+                verifyMachineAdmission: async input => input.context.actorAccountId === 'owner',
+            }, source) });
+        registerManagedActivityRpcHandlers({ rpcHandlerManager: rpc, activity, admissionDrain: drain });
+        const call = (method: string, params: unknown) => rpc.handleRequest({ method: `guest:${method}`, params, machineAdmission },
+            undefined, 'authenticated_home_socket');
+        try {
+            expect(await call(MANAGED_ACTIVITY_READ_RPC_METHOD, guestTarget)).toMatchObject({ kind: 'idle' });
+            expect(drain.isQuiescing()).toBe(false);
+            operations.create({ operationId: 'work', actionId: 'projects.compute.exec', title: 'Work',
+                scope: { accountId: 'owner', machineId: 'guest' }, cancellation: 'supported', inputIdentity: '{}' });
+            expect(await call(MANAGED_ADMISSION_DRAIN_CONFIRM_RPC_METHOD, { ...guestTarget, action: 'begin' })).toMatchObject({ kind: 'busy' });
+            expect(drain.isQuiescing()).toBe(false);
+            operations.succeed('work', {});
+            expect(await call(MANAGED_ADMISSION_DRAIN_CONFIRM_RPC_METHOD, { ...guestTarget, action: 'begin' })).toMatchObject({ kind: 'idle' });
+            expect(drain.isQuiescing()).toBe(true);
+            await call(MANAGED_ADMISSION_DRAIN_CONFIRM_RPC_METHOD, { ...target, action: 'resume' });
+            expect(drain.isQuiescing()).toBe(true);
+            await call(MANAGED_ADMISSION_DRAIN_CONFIRM_RPC_METHOD, { ...guestTarget, action: 'resume' });
+            expect(drain.isQuiescing()).toBe(false);
+        } finally { activity.dispose(); }
+    });
     it('commits signed guest-clock evidence only for fresh idle under the actual closed drain', async () => {
         const key = nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(7));
         const owner = setup((managedTarget, idle, context) => {
@@ -77,7 +121,7 @@ describe('managed guest activity bridge', () => {
         owner.inventory.dispose();
     });
 
-    it('rejects unauthenticated, revoked and changed policy/controller currentness without retaining drain', async () => {
+    it('admits the exact activity request once and observes withdrawal at the next request', async () => {
         const owner = setup();
         expect(await owner.call(MANAGED_ACTIVITY_READ_RPC_METHOD, target, { signal: new AbortController().signal }))
             .toMatchObject({ kind: 'refused' });
@@ -91,8 +135,16 @@ describe('managed guest activity bridge', () => {
         expect(owner.drain.isQuiescing()).toBe(false);
         owner.setTarget(true);
         owner.duringRead(() => owner.setTarget(false));
+        const before = owner.reads();
+        const admitted = await owner.call(MANAGED_ADMISSION_DRAIN_CONFIRM_RPC_METHOD, { ...target, action: 'begin' });
+        const after = owner.reads();
+        console.info('managed activity admission shape', { admission: after - before });
+        expect(admitted).toMatchObject({ kind: 'idle' });
+        expect(owner.reads()).toBe(before + 1);
+        expect(owner.drain.isQuiescing()).toBe(true);
         expect(await owner.call(MANAGED_ADMISSION_DRAIN_CONFIRM_RPC_METHOD, { ...target, action: 'begin' }))
             .toMatchObject({ kind: 'refused' });
+        await owner.call(MANAGED_ADMISSION_DRAIN_CONFIRM_RPC_METHOD, { ...target, action: 'resume' });
         expect(owner.drain.isQuiescing()).toBe(false);
         owner.inventory.dispose();
     });

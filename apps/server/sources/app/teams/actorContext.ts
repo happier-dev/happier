@@ -132,6 +132,34 @@ export async function resolveTeamActorContextInTx(
     return resolveTeamActorContextForTeamInTx(tx, { team, actorAccountId: input.actorAccountId });
 }
 
+/** Current structural membership witnesses for resource custodians, without per-row context reads.
+ * The requesting actor's capabilities and credential qualification remain with their context owner. */
+export async function readActiveTeamMembershipsInTx(
+    tx: Tx,
+    input: Readonly<{ memberships: readonly Readonly<{ teamId: string; accountId: string }>[] }>,
+): Promise<ReadonlyMap<string, ReadonlySet<string>>> {
+    const requested = new Map<string, Set<string>>();
+    for (const { teamId, accountId } of input.memberships) {
+        const accounts = requested.get(teamId) ?? new Set<string>();
+        accounts.add(accountId);
+        requested.set(teamId, accounts);
+    }
+    const pairs = [...requested].flatMap(([teamId, accounts]) => [...accounts].map(accountId => ({ teamId, accountId })));
+    const active = new Map<string, Set<string>>();
+    for (const memberships of portableQueryChunks({ values: pairs, bindingsPerValue: 2, fixedBindings: 2 })) {
+        const rows = await tx.teamMembership.findMany({
+            where: { OR: [...memberships], status: TeamMembershipStatus.active, account: { status: AccountStatus.active } },
+            select: { teamId: true, accountId: true },
+        });
+        for (const { teamId, accountId } of rows) {
+            const accounts = active.get(teamId) ?? new Set<string>();
+            accounts.add(accountId);
+            active.set(teamId, accounts);
+        }
+    }
+    return active;
+}
+
 /** Serialize Team lifecycle and owner-set decisions before their authority reads
  * and Session effects. Account admission must precede this resource lock. */
 export async function acquireTeamMutationLockInTx(tx: Tx, teamId: string): Promise<void> {

@@ -1,5 +1,3 @@
-import { readManagedAdmissionState } from '@/app/machines/managed/managedRows';
-import { registerManagedMachineRoutes } from './managedRoutes';
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import tweetnacl from 'tweetnacl';
@@ -20,13 +18,17 @@ import { createExternalActionDaemonDispatcher } from '@/app/api/socket/externalA
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import { MANAGED_ACTIVITY_READ_RPC_METHOD, MANAGED_ADMISSION_DRAIN_CONFIRM_RPC_METHOD } from '@happier-dev/protocol/machines/managed/managedIntentV1';
 import { auth } from '@/app/auth/auth';
-import { verifyExternalActionMachineRpcExecution } from '@/app/auth/externalActionExecutionAuthorization';
+import { verifyExternalActionMachineRpcExecution, readCurrentManagedGuestActivityInTx } from '@/app/auth/externalActionExecutionAuthorization';
+import { readManagedAdmissionState } from './managedRows';
+import { registerManagedMachineRoutes } from './managedRoutes';
 import { db } from '@/storage/db';
 import { inTx } from '@/storage/inTx';
-import { setMachineAccessGrantInTx, readMachineRecipientCensusInTx, commitMachineRecipientKeyEnvelopesInTx } from '@/app/machines/machineAccess';
+import { readMachineRecipientCensusInTx, commitMachineRecipientKeyEnvelopesInTx } from '@/app/machines/machineAccess';
+import { setEligibleMachineAccessGrantInTx as setMachineAccessGrantInTx } from '@/testkit/machineAccessGrant.testkit';
 import { createSignedAccountContentBinding } from '@/testkit/accountEncryption';
 import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lightSqliteHarness';
-import { createAuthenticatedFakeSocket, createSocketRoomDiscoveryHarness, triggerSocketHandler } from '@/app/api/testkit/socketHarness';
+import { createAuthenticatedFakeSocket, createSocketRoomDiscoveryHarness, triggerSocketHandler, getSocketHandler } from '@/app/api/testkit/socketHarness';
+import { registerMachineDaemonStateHandler } from '@/app/api/socket/machineDaemonStateHandler';
 import { registerSocketRpcHandlers } from '@/app/api/socket/rpc/registerSocketRpcHandlers';
 import { enableAuthentication } from '@/app/api/utils/enableAuthentication';
 import { machinesRoutes } from '@/app/api/routes/machines/machinesRoutes';
@@ -282,6 +284,111 @@ describe('external after-idle retained guest authority (real SQLite)', () => {
         expect(result).toBe('credential_scope_denied');
     });
 
+    it.each(['plain', 'e2ee'] as const)('routes only exact content-free retention to a requester-owned %s guest', async mode => {
+        const test = await setup('account', 'machines.managed.power.set', mode, false, true);
+        await db.managedMachine.update({ where: { id: test.row.id }, data: { desired: 'start', desiredWhen: 'now',
+            admittedInput: { enrollmentAccountId: test.requester.id }, retention: { kind: 'unused', afterMs: 17, effect: 'stop' } } });
+        const effect = vi.fn(async (_event: string, payload: { machineAdmission: unknown }) => {
+            expect(payload.machineAdmission).toMatchObject({ actorAccountId: test.owner.id, custodianAccountId: test.requester.id,
+                machineId: test.guest.id, installationId: test.guest.installationId, role: 'manage' });
+            return { kind: 'idle', since: 100 };
+        });
+        const target = { id: randomUUID(), data: { clientType: 'machine-scoped', userId: test.requester.id,
+            machineId: test.guest.id, verifiedMachineInstallationId: test.guest.installationId }, timeout: () => ({ emitWithAck: effect }) };
+        qualifyCurrentAccountStoredContentSocket(target);
+        const io = createSocketRoomDiscoveryHarness(async room => room === target.id || room.startsWith(`rpc:${test.requester.id}:${test.guest.id}:`) ? [target] : []);
+        const token = await auth.createToken(test.owner.id, undefined, { kind: 'terminal', authority: 'account_automation' });
+        const caller = Object.assign(createAuthenticatedFakeSocket({ data: { clientType: 'user-scoped', authTokenKind: 'terminal' } }),
+            { handshake: { auth: { token } } });
+        qualifyCurrentAccountStoredContentSocket(caller);
+        registerSocketRpcHandlers({ userId: test.owner.id, socket: caller as unknown as Socket, io });
+        const call = async (rpcMethod: string, params: unknown = test.managedTarget) => {
+            const callback = vi.fn();
+            await triggerSocketHandler(caller, SOCKET_RPC_EVENTS.CALL, { method: `${test.guest.id}:${rpcMethod}`, requestId: randomUUID(), params }, callback);
+            return callback.mock.calls[0]?.[0];
+        };
+        expect(await call(MANAGED_ACTIVITY_READ_RPC_METHOD)).toMatchObject({ ok: true, result: { kind: 'idle' } });
+        expect(await call(MANAGED_ADMISSION_DRAIN_CONFIRM_RPC_METHOD, { ...test.managedTarget, action: 'begin' })).toMatchObject({ ok: true });
+        effect.mockClear();
+        for (const params of [{ ...test.managedTarget, expectedRevision: 0 }, { ...test.managedTarget, managedId: randomUUID() },
+            { ...test.managedTarget, controller: { ...test.managedTarget.controller, installationId: randomUUID() } }]) {
+            expect(await call(MANAGED_ACTIVITY_READ_RPC_METHOD, params)).toMatchObject({ ok: false });
+        }
+        expect(await call('machines.managed.get')).toMatchObject({ ok: false });
+        expect(effect).not.toHaveBeenCalled();
+        await db.managedMachine.update({ where: { id: test.row.id }, data: { intentRevision: 2, retention: { kind: 'until-delete' } } });
+        expect(await call(MANAGED_ADMISSION_DRAIN_CONFIRM_RPC_METHOD, { ...test.managedTarget, action: 'begin' })).toMatchObject({ ok: false });
+        expect(await call(MANAGED_ADMISSION_DRAIN_CONFIRM_RPC_METHOD, { ...test.managedTarget, action: 'resume' })).toMatchObject({ ok: true });
+    });
+
+    it.each(['plain', 'e2ee'] as const)('keeps cross-Account after-idle roots content-free on the exact %s guest', async mode => {
+        const test = await setup('account', 'machines.managed.power.set', mode, false, true);
+        const stored = await db.managedMachine.findUniqueOrThrow({ where: { id: test.row.id } });
+        await db.managedMachine.update({ where: { id: stored.id }, data: { admittedInput: {
+            ...readManagedAdmissionState(stored.admittedInput), enrollmentAccountId: test.requester.id,
+        } } });
+        const request = test.rpc(MANAGED_ACTIVITY_READ_RPC_METHOD);
+        const verified = await verifyExternalActionMachineRpcExecution(request.execution, {
+            method: request.method, requestId: request.requestId, params: request.params, event: SOCKET_RPC_EVENTS.CALL,
+        });
+        expect(verified).toMatchObject({ managedGuestActivity: { machineId: test.guest.id,
+            installationId: test.guest.installationId, encryptionMode: mode } });
+        expect(await inTx(tx => readCurrentManagedGuestActivityInTx(tx, test.authorization.binding, test.guest.id))).toBeNull();
+    });
+
+    it('wakes native retention only on changed requester guest activity, never equal, stale or ordinary state', async () => {
+        const test = await setup('account', 'machines.managed.power.set', 'plain', false, true);
+        await db.managedMachine.update({ where: { id: test.row.id }, data: { admittedInput: { enrollmentAccountId: test.requester.id } } });
+        const token = await auth.createToken(test.requester.id, undefined, { kind: 'account', authority: 'present_user' });
+        const publisher = Object.assign(createAuthenticatedFakeSocket({ data: { clientType: 'machine-scoped',
+            machineId: test.guest.id, verifiedMachineInstallationId: test.guest.installationId } }), {
+            handshake: { auth: { token } }, disconnect: vi.fn(),
+        });
+        qualifyCurrentAccountStoredContentSocket(publisher);
+        registerMachineDaemonStateHandler(test.requester.id, publisher as unknown as Socket);
+        const publish = async (state: unknown, expectedVersion: number, hint = false) => {
+            const reply = vi.fn();
+            await getSocketHandler(publisher, 'machine-update-state')({ machineId: test.guest.id,
+                daemonState: encodePlainMachineStoredContent(state), expectedVersion,
+                expectedDataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER, ...(hint ? { managedActivityChanged: true } : {}) }, reply);
+            return reply.mock.calls[0]?.[0];
+        };
+        const count = () => db.accountChange.count({ where: { accountId: test.owner.id, entityId: test.row.id } });
+        expect(await publish({ status: 'running' }, 0)).toMatchObject({ result: 'success', version: 1 });
+        expect(await count()).toBe(0);
+        const idle = { status: 'running', managedActivity: { kind: 'idle', since: 123 } };
+        expect(await publish(idle, 1, true)).toMatchObject({ result: 'success', version: 2 });
+        expect(await count()).toBe(1);
+        const before = (await db.account.findUniqueOrThrow({ where: { id: test.owner.id } })).seq;
+        expect(await publish(idle, 2, true)).toMatchObject({ result: 'success', version: 2 });
+        expect(await publish({ status: 'running', pid: 1 }, 1, true)).toMatchObject({ result: 'version-mismatch' });
+        expect(await publish({ ...idle, pid: 2 }, 2)).toMatchObject({ result: 'success', version: 3 });
+        expect((await db.account.findUniqueOrThrow({ where: { id: test.owner.id } })).seq).toBe(before);
+    });
+
+    it('pushes new requester guest handler readiness through the existing managed resource feed once', async () => {
+        const test = await setup('account', 'machines.managed.power.set', 'plain', false, true);
+        const retained = await db.managedMachine.findUniqueOrThrow({ where: { id: test.row.id } });
+        await db.managedMachine.update({ where: { id: test.row.id }, data: { admittedInput: {
+            ...readManagedAdmissionState(retained.admittedInput), enrollmentAccountId: test.requester.id,
+        } } });
+        let registered = false;
+        const target = { id: randomUUID(), data: { clientType: 'machine-scoped', userId: test.requester.id,
+            machineId: test.guest.id, verifiedMachineInstallationId: test.guest.installationId } };
+        const io = createSocketRoomDiscoveryHarness(async () => registered ? [target] : []);
+        const publisher = Object.assign(createAuthenticatedFakeSocket({ data: target.data }), {
+            join: async () => { registered = true; }, leave: async () => {},
+        });
+        qualifyCurrentAccountStoredContentSocket(publisher);
+        registerSocketRpcHandlers({ userId: test.requester.id, socket: publisher as unknown as Socket, io });
+        const method = `${test.guest.id}:${MANAGED_ADMISSION_DRAIN_CONFIRM_RPC_METHOD}`;
+        await triggerSocketHandler(publisher, SOCKET_RPC_EVENTS.REGISTER, { method });
+        expect(await db.accountChange.count({ where: { accountId: test.owner.id, entityId: test.row.id } })).toBe(1);
+        const before = (await db.account.findUniqueOrThrow({ where: { id: test.owner.id } })).seq;
+        await triggerSocketHandler(publisher, SOCKET_RPC_EVENTS.REGISTER, { method });
+        expect((await db.account.findUniqueOrThrow({ where: { id: test.owner.id } })).seq).toBe(before);
+    });
+
     it.each(['plain', 'e2ee'] as const)('observes and drains a retained %s guest with controller Manage alone', async mode => {
         const test = await setup('account', 'machines.managed.power.set', mode, false);
         const app = Fastify({ logger: false }).withTypeProvider<ZodTypeProvider>() as unknown as ServerFastify;
@@ -455,7 +562,7 @@ describe('external after-idle retained guest authority (real SQLite)', () => {
         expect(effect).not.toHaveBeenCalled();
     });
 
-    it('forwards busy then idle and reversible drain from the signed controller, retiring before guest IO on access loss', async () => {
+    it('forwards busy then idle and reversible drain from the signed controller, observing access loss at the next admission', async () => {
         const test = await setup('account', 'machines.managed.power.set');
         let idle = false;
         const effect = vi.fn(async (_event: string, payload: { machineAdmission: unknown; params: { action?: string } }) => {
@@ -488,6 +595,10 @@ describe('external after-idle retained guest authority (real SQLite)', () => {
         expect(await call(MANAGED_ADMISSION_DRAIN_CONFIRM_RPC_METHOD, 'begin')).toMatchObject({ ok: true });
         expect(await call(MANAGED_ADMISSION_DRAIN_CONFIRM_RPC_METHOD, 'resume')).toMatchObject({ ok: true });
         effect.mockClear(); retire = true;
+        // Withdrawal after admission does not cancel this finite read/drain.
+        expect(await call(MANAGED_ADMISSION_DRAIN_CONFIRM_RPC_METHOD, 'begin')).toMatchObject({ ok: true });
+        expect(effect).toHaveBeenCalledTimes(1);
+        effect.mockClear();
         expect(await call(MANAGED_ADMISSION_DRAIN_CONFIRM_RPC_METHOD, 'begin')).toMatchObject({ ok: false });
         expect(effect).not.toHaveBeenCalled();
     });

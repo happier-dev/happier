@@ -21,6 +21,7 @@ import { cancelManagedCreation, getManagedMachine, listManagedMachines, readMana
 import fastify, { type FastifyRequest } from 'fastify';
 import { serializerCompiler, validatorCompiler, type ZodTypeProvider } from 'fastify-type-provider-zod';
 import { registerManagedMachineRoutes } from './managedRoutes';
+import { resolveManagedGuestActivityAdmissionInTx } from './managedGuestActivity';
 import { readManagedWakeTargets } from './managedWake';
 import { createPresentUserSessionAccessAuthentication } from '@/app/session/access/sessionAccessAuthentication.testkit';
 import { eventRouter } from '@/app/events/eventRouter';
@@ -766,20 +767,6 @@ describe("managed acquisition durable authority", () => {
             installationId: guest.installationId!, role: 'manage' as const, encryptionMode: 'e2ee' as const };
         const managedTarget = { homeId, managedId: row.id, expectedRevision: 0, controller };
         const method = `${guest.id}:managed.admission.drain.confirm`;
-        const app = fastify().withTypeProvider<ZodTypeProvider>();
-        app.setValidatorCompiler(validatorCompiler); app.setSerializerCompiler(serializerCompiler);
-        // The guest's ordinary bearer is the HTTP boundary; all proof/row checks remain real.
-        app.decorate('authenticate', async (request: FastifyRequest) => { request.userId = requester.id; });
-        registerManagedMachineRoutes(app);
-        try {
-            const current = await app.inject({ method: 'POST', url: '/v1/machines/managed/guest/current', payload: {
-                v: 1, context, method, managedTarget, proof: signMachineInstallationProof({ payload: { version: 1,
-                    machineId: guest.id, installationId: guest.installationId!, accountId: requester.id,
-                    rpcAdmission: { context, method, managedTarget } }, privateKey: keys.secretKey }),
-            } });
-            expect(current.statusCode, current.body).toBe(200);
-            expect(current.json()).toEqual({ current: true });
-        } finally { await app.close(); }
         const decision = { kind: 'idle' as const, since: 100, confirmedAt: 118 };
         const evidence: ManagedCommittedIdleEvidenceV1 = { context, method, managedTarget, decision,
             proof: signMachineInstallationProof({ payload: { version: 1, machineId: guest.id,
@@ -864,20 +851,10 @@ describe("managed acquisition durable authority", () => {
         expect(enrolled.statusCode, enrolled.body).toBe(200);
         expect(await db.machine.findUniqueOrThrow({ where: { id: machineId } })).toMatchObject({ accountId: requester.id });
         expect(await register()).toMatchObject({ statusCode: 200 });
-        const context = { actorAccountId: requester.id, custodianAccountId: requester.id, machineId,
-            installationId, role: 'manage' as const, encryptionMode: 'e2ee' as const };
-        const method = `${machineId}:managed.activity.read`;
-        const managedTarget = { homeId, managedId: created.machine.id, expectedRevision: 0, controller };
-        const current = await app.inject({ method: 'POST', url: '/v1/machines/managed/guest/current', payload: {
-            v: 1, context, method, managedTarget, proof: signMachineInstallationProof({ payload: {
-                version: 1, machineId, installationId, accountId: requester.id,
-                rpcAdmission: { context, method, managedTarget },
-            }, privateKey: keys.secretKey }),
-        } });
-        expect(current.statusCode, current.body).toBe(200);
-        // Owning the guest does not grant native activity authority for an
-        // until-delete resource; requester enrollment does not change custody.
-        expect(current.json()).toEqual({ current: false });
+        // Guest ownership does not grant native activity authority for until-delete resources.
+        expect(await inTx(tx => resolveManagedGuestActivityAdmissionInTx(tx, { actorAccountId: requester.id,
+            machineId, rpcMethod: 'managed.activity.read',
+            target: { homeId, managedId: created.machine.id, expectedRevision: 0, controller } }))).toBeNull();
         const retained = await db.managedMachine.findUniqueOrThrow({ where: { id: created.machine.id } });
         expect(retained).toMatchObject({ custodianAccountId: custodian.id, enrolledMachineId: machineId,
             admittedInput: { enrollmentAccountId: requester.id } });
@@ -2034,7 +2011,7 @@ describe("managed acquisition durable authority", () => {
         expect(await db.managedMachine.findUniqueOrThrow({ where: { id: row.id } })).toMatchObject({ cleanup: null, admittedActionRequestId: row.admittedActionRequestId });
     });
 
-    it('refuses guest currentness for a retained resource after manual retirement', async () => {
+    it('refuses guest activity for a retained resource after manual retirement', async () => {
         const homeId = `srv_${'a'.repeat(32)}`;
         const account = await db.account.create({ data: { publicKey: 'managed-retired-guest-currentness' } });
         const controller = { machineId: 'managed-retired-controller', installationId: 'retired-controller-installation' };
@@ -2048,38 +2025,19 @@ describe("managed acquisition durable authority", () => {
             launch: { provider: { pluginId: 'fixture.compute', localId: 'compute' }, schemaVersion: 1, name: 'Retained', choices: {} },
             allocation: 'bound', resource: { contributionRef: { pluginId: 'fixture.compute', localId: 'compute' }, schemaVersion: 1, value: { id: 'retained-native' } },
             retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false } });
-        const context = { actorAccountId: account.id, custodianAccountId: account.id, ...guest, role: 'manage' as const,
-            encryptionMode: account.encryptionMode === 'plain' ? 'plain' as const : 'e2ee' as const };
-        const app = fastify().withTypeProvider<ZodTypeProvider>();
-        app.setValidatorCompiler(validatorCompiler);
-        app.setSerializerCompiler(serializerCompiler);
-        // HTTP authentication is the boundary; installation proof, current
-        // MachineAdmission and retained-row lifecycle execute their real owners.
-        app.decorate('authenticate', async (request: FastifyRequest) => { request.userId = account.id; });
-        registerManagedMachineRoutes(app);
-        const current = async (expectedRevision: number, rpcMethod: 'managed.activity.read' | 'managed.admission.drain.confirm') => {
-            const managedTarget = { homeId, managedId: row.id, expectedRevision, controller };
-            const method = `${guest.machineId}:${rpcMethod}`;
-            const response = await app.inject({ method: 'POST', url: '/v1/machines/managed/guest/current', payload: {
-                v: 1, context, method, managedTarget, proof: signMachineInstallationProof({ payload: {
-                    version: 1, machineId: guest.machineId, installationId: guest.installationId,
-                    accountId: account.id, rpcAdmission: { context, method, managedTarget },
-                }, privateKey: keys.secretKey }),
-            } });
-            expect(response.statusCode).toBe(200);
-            return response.json();
-        };
-        try {
-            expect(await current(0, 'managed.admission.drain.confirm')).toEqual({ current: true });
-            await admitManagedControl({ actorAccountId: account.id, custodianAccountId: account.id, input: {
-                action: 'machines.managed.retire', requestId: 'retired-guest-manual-responsibility',
-                input: { homeId, managedId: row.id, expectedIntentRevision: 0, manualResponsibility: true },
-            } });
-            expect(await db.managedMachine.findUniqueOrThrow({ where: { id: row.id } })).toMatchObject({ enrolledMachineId: guest.machineId, resource: row.resource });
-            for (const method of ['managed.activity.read', 'managed.admission.drain.confirm'] as const) {
-                expect(await current(1, method)).toEqual({ current: false });
-            }
-        } finally { await app.close(); }
+        const current = (expectedRevision: number, rpcMethod: 'managed.activity.read' | 'managed.admission.drain.confirm') =>
+            inTx(tx => resolveManagedGuestActivityAdmissionInTx(tx, { actorAccountId: account.id,
+                machineId: guest.machineId, rpcMethod, target: { homeId, managedId: row.id, expectedRevision, controller,
+                    ...(rpcMethod === 'managed.admission.drain.confirm' ? { action: 'begin' as const } : {}) } }));
+        expect(await current(0, 'managed.admission.drain.confirm')).not.toBeNull();
+        await admitManagedControl({ actorAccountId: account.id, custodianAccountId: account.id, input: {
+            action: 'machines.managed.retire', requestId: 'retired-guest-manual-responsibility',
+            input: { homeId, managedId: row.id, expectedIntentRevision: 0, manualResponsibility: true },
+        } });
+        expect(await db.managedMachine.findUniqueOrThrow({ where: { id: row.id } })).toMatchObject({ enrolledMachineId: guest.machineId, resource: row.resource });
+        for (const method of ['managed.activity.read', 'managed.admission.drain.confirm'] as const) {
+            expect(await current(1, method)).toBeNull();
+        }
     });
 
     it('keeps Account currentness controller-free while preserving its admitted policy signer', async () => {

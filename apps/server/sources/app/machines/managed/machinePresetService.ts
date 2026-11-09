@@ -21,6 +21,7 @@ import { acquireAccountChangePublicationLocksInTx, assertAccountChangePublicatio
 import {
     resolveTeamActorContextInTx, qualifyTeamOperationAuthenticationInTx,
     resolveTeamActorContextsInTx, qualifyTeamOperationAuthenticationsInTx,
+    readActiveTeamMembershipsInTx,
     type TeamOperationAuthenticationContext,
 } from "@/app/teams/actorContext";
 import { listQualifiedConnectedAccountsInTx } from "@/app/api/routes/connect/qualifiedConnectedAccounts/credentialRepository";
@@ -219,19 +220,6 @@ async function acquirePresetMutationAccountsInTx(tx: Tx, input: Readonly<{
     beforeAccountChangePublication(tx, accountIds, async () => assertAccountChangePublicationAudienceInTx(tx, await read()));
 }
 
-/** Account publication orders collective authority and controller/credential withdrawal. */
-function recheckPresetMutationAdmissionBeforePublication(tx: Tx, context: PresetContext,
-    owner: ManagedMachinePresetV1['owner'], launch?: PresetCreation,
-    delegatedControllerMachineId?: string): void {
-    beforeAccountChangePublication(tx, [context.accountId], async client => {
-        if (!await resolvePresetAccessInTx(client, context, owner, 'manage')) {
-            throw new TransactionReplayRequiredError('transaction-account-audience-changed');
-        }
-        if (launch) await validateManagedLaunchInTx(client, context, launch);
-        else if (delegatedControllerMachineId) await requireManagedLaunchManagerInTx(client, context, delegatedControllerMachineId);
-    });
-}
-
 async function requireManagedLaunchManagerInTx(tx: Tx, context: PresetContext, machineId: string): Promise<void> {
     if ((await tx.account.findUnique({ where: { id: context.accountId }, select: { status: true } }))?.status !== AccountStatus.active
         || await resolveEffectiveMachineRoleInTx(tx, { actorAccountId: context.accountId, machineId }) !== 'manage') {
@@ -339,7 +327,6 @@ export async function createMachinePreset(params: PresetContext & Readonly<{ inp
                 : { kind: "conflict", currentRevision: current.revision } as const;
         }
         if (hasManagedMachinePresetCreationV1(input)) await validateManagedLaunchInTx(tx, params, input);
-        recheckPresetMutationAdmissionBeforePublication(tx, params, input.owner, hasManagedMachinePresetCreationV1(input) ? input : undefined);
         const row = await tx.managedMachinePreset.create({ data: {
             id: input.id, homeId: input.homeId, name: input.name,
             custodianAccountId: input.owner.kind === "account" ? input.owner.accountId : null,
@@ -477,8 +464,6 @@ export async function updateMachinePreset(params: PresetContext & Readonly<{ inp
         else if (requiresDelegationManager && nextCreation?.controllerPoolId) await validateManagedLaunchInTx(tx, params, nextCreation);
         else if (delegatedControllerMachineId) await requireManagedLaunchManagerInTx(tx, params, delegatedControllerMachineId);
         if (sameManagedInput(next, current)) return { kind: "saved", preset: await projectPresetForActorInTx(tx, row, params.accountId, params.authentication) } as const;
-        recheckPresetMutationAdmissionBeforePublication(tx, params, ownerOf(row),
-            validateLaunch ? nextCreation : undefined, delegatedControllerMachineId);
         const result = await tx.managedMachinePreset.updateMany({ where: { id: row.id, revision: input.expectedRevision }, data: {
             name: next.name, launch: storePresetLaunch(next),
             controllerMachineId: next.controller?.machineId ?? null, controllerInstallationId: next.controller?.installationId ?? null,
@@ -511,7 +496,6 @@ async function setArchived(params: PresetContext & Readonly<{ input: ManagedMach
         if (row.revision !== params.input.expectedRevision) return { kind: "conflict", currentRevision: row.revision } as const;
         const effective = inheritPresetOwnerArchive(row, access.teamArchivedAt);
         if ((effective.archivedAt !== null) === archived) return { kind: "saved", preset: await projectPresetForActorInTx(tx, effective, params.accountId, params.authentication) } as const;
-        recheckPresetMutationAdmissionBeforePublication(tx, params, ownerOf(row));
         const result = await tx.managedMachinePreset.updateMany({ where: { id: row.id, revision: row.revision }, data: { archivedAt: archived ? new Date() : null, revision: { increment: 1 } } });
         const current = await tx.managedMachinePreset.findUniqueOrThrow({ where: { id: row.id } });
         if (!result.count) return { kind: "conflict", currentRevision: current.revision } as const;
@@ -522,6 +506,16 @@ async function setArchived(params: PresetContext & Readonly<{ input: ManagedMach
 
 export const archiveMachinePreset = (params: PresetContext & Readonly<{ input: ManagedMachinePresetRevisionInputV1 }>) => setArchived(params, true);
 export const restoreMachinePreset = (params: PresetContext & Readonly<{ input: ManagedMachinePresetRevisionInputV1 }>) => setArchived(params, false);
+
+/** New delegated work consumes only a current Team member's compute authority. */
+async function requirePresetDelegationInTx(tx: Tx, row: StoredPreset, custodianAccountId: string, delegated: boolean): Promise<void> {
+    if (!delegated) return;
+    if (!row.teamId || row.teamAcquireDelegated !== true
+        || (await readActiveTeamMembershipsInTx(tx, { memberships: [{ teamId: row.teamId, accountId: custodianAccountId }] }))
+            .get(row.teamId)?.has(custodianAccountId) !== true) {
+        throw new ManagedMachineError('permission_denied');
+    }
+}
 
 /** C50 calls this inside its admission transaction, before inserting the resource row. */
 export async function resolveMachinePresetForAcquireInTx(tx: Tx, params: PresetContext & Readonly<{
@@ -547,7 +541,7 @@ export async function resolveMachinePresetForAcquireInTx(tx: Tx, params: PresetC
     if (preset.controllerPoolId) {
         const pool = await readManagedPresetPoolCandidatesInTx(tx, params, preset, params.poolSelection?.presence);
         const delegated = pool.custodianAccountId !== params.accountId;
-        if (delegated && (!row.teamId || row.teamAcquireDelegated !== true)) throw new ManagedMachineError('permission_denied');
+        await requirePresetDelegationInTx(tx, row, pool.custodianAccountId, delegated);
         const selection = params.poolSelection ? selectMachinePoolCandidate({ members: pool.snapshot.members,
             availableMachineIds: new Set(pool.candidates.filter(candidate => pool.snapshot.availableMachineIds.has(candidate.controller.machineId))
                 .map(candidate => candidate.controller.machineId)), requestKey: params.poolSelection.requestKey, purpose: 'session' }) : null;
@@ -566,8 +560,8 @@ export async function resolveMachinePresetForAcquireInTx(tx: Tx, params: PresetC
         return { kind: 'ready', preset, declaration: validated.declaration, custodianAccountId: validated.custodianAccountId, delegated: false };
     }
     const delegated = await resolveEffectiveMachineRoleInTx(tx, { actorAccountId: params.accountId, machineId: preset.controller.machineId }) !== 'manage';
-    if (delegated && (!row.teamId || row.teamAcquireDelegated !== true)) throw new ManagedMachineError('permission_denied');
     const validated = await validateStoredManagedLaunchInTx(tx, preset);
+    await requirePresetDelegationInTx(tx, row, validated.custodianAccountId, delegated);
     const admitted = projectPreset(row, validated.declaration);
     if (!hasManagedMachinePresetCreationV1(admitted)) throw new ManagedMachineError('invalid_request');
     return { kind: 'ready', preset: admitted, delegated,

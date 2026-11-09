@@ -398,11 +398,20 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('m
                             patch: { name: 'Withdrawn update' } } })
                         : await archiveMachinePreset({ accountId: account.id, input: { id: presetId, homeId, expectedRevision: 0 } });
                 expect(withdrawnCursor).toBeDefined();
-                expect(result).toMatchObject({ kind: 'refused' });
-                expect(await db.managedMachinePreset.findUnique({ where: { id: createId } })).toBeNull();
-                expect(await db.managedMachinePreset.findUniqueOrThrow({ where: { id: presetId } }))
-                    .toMatchObject({ revision: 0, archivedAt: null, name: 'Contended preset' });
+                // MACH-CHALLENGE-MECH M3: withdrawal applies at the next admission;
+                // a save admitted before withdrawal completes without re-admission.
+                const created = scenario.presetWithdrawal === 'create';
+                const savedId = created ? createId : presetId;
+                const savedRevision = created ? 0 : 1;
+                expect(result).toMatchObject({ kind: 'saved', preset: { id: savedId, revision: savedRevision } });
+                expect(await db.managedMachinePreset.findUniqueOrThrow({ where: { id: savedId } }))
+                    .toMatchObject({ revision: savedRevision,
+                        name: created ? 'Withdrawn create' : scenario.presetWithdrawal === 'update' ? 'Withdrawn update' : 'Contended preset',
+                        archivedAt: scenario.presetWithdrawal === 'archive' ? expect.any(Date) : null });
                 expect(await db.account.findUniqueOrThrow({ where: { id: account.id } })).toMatchObject({ seq: withdrawnCursor });
+                expect(await updateMachinePreset({ accountId: account.id, input: { id: savedId, homeId,
+                    expectedRevision: savedRevision, patch: { name: 'After withdrawal' } } }))
+                    .toMatchObject({ kind: 'refused', code: 'preset_not_found' });
             } finally {
                 db.$transaction = transaction; vi.unstubAllEnvs();
                 await db.managedMachinePreset.deleteMany({ where: { id: { in: [presetId, createId] } } });

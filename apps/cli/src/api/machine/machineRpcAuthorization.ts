@@ -89,15 +89,6 @@ import type {
   RpcAdmissionPredicate,
 } from '@/api/rpc/types';
 import {
-  ManagedActivityReadRequestV1Schema,
-  ManagedActivityRpcRequestV1Schema,
-  ManagedAdmissionDrainConfirmRequestV1Schema,
-  MANAGED_ACTIVITY_READ_RPC_METHOD,
-  MANAGED_ADMISSION_DRAIN_CONFIRM_RPC_METHOD,
-  type ManagedActivityRpcRequestV1,
-} from '@happier-dev/protocol/machines/managed/managedIntentV1';
-import {
-  ManagedGuestCurrentOutputV1Schema,
   isMachineSetupPlanRpcChildV1,
 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { resolveExternalActionRootInvocationAuthority } from '@/api/externalActionExecutionAuthorization';
@@ -521,7 +512,6 @@ export type MachineRpcAdmissionBoundary = Readonly<{
     input: Readonly<{
       context: SocketRpcMachineAdmissionContextV1;
       method: string;
-      managedTarget?: ManagedActivityRpcRequestV1;
       custodySubjectAccountId?: string;
       workspaceSyncSourceRouting?: WorkspaceSyncSourceRoutingV1;
       workspaceSyncSourceExecution?: WorkspaceSyncSourceExecutionV1;
@@ -1097,61 +1087,6 @@ export async function readMachineRpcAdmissionCurrentOrThrow(
   }
 }
 
-/** Retention decisions require the guest and current controller to agree on the same retained row. */
-export async function verifyManagedActivityTargetCurrent(
-  input: Readonly<{
-    context: SocketRpcMachineAdmissionContextV1;
-    managedTarget: ManagedActivityRpcRequestV1;
-    method: string;
-    privateKey: string | Uint8Array;
-    daemonToken: string;
-    serverHttpBaseUrl: string;
-    signal?: AbortSignal;
-  }>,
-): Promise<boolean> {
-  try {
-    const context = SocketRpcMachineAdmissionContextV1Schema.parse(
-      input.context,
-    );
-    const managedTarget = ManagedActivityRpcRequestV1Schema.parse(
-      input.managedTarget,
-    );
-    const method = `${context.machineId}:${input.method}`;
-    const proof = signMachineInstallationProof({
-      payload: {
-        version: 1,
-        machineId: context.machineId,
-        installationId: context.installationId,
-        accountId: context.custodianAccountId,
-        rpcAdmission: { context, method, managedTarget },
-      },
-      privateKey: input.privateKey,
-    });
-    const response = await axios.post<unknown>(
-      `${input.serverHttpBaseUrl}/v1/machines/managed/guest/current`,
-      { v: 1, context, method, managedTarget, proof },
-      {
-        headers: {
-          Authorization: `Bearer ${input.daemonToken}`,
-          'Content-Type': 'application/json',
-        },
-        validateStatus: () => true,
-        ...(input.signal ? { signal: input.signal } : {}),
-      },
-    );
-    const parsed = ManagedGuestCurrentOutputV1Schema.safeParse(response.data);
-    return (
-      !input.signal?.aborted &&
-      response.status >= 200 &&
-      response.status < 300 &&
-      parsed.success &&
-      parsed.data.current
-    );
-  } catch {
-    return false;
-  }
-}
-
 function readSessionIdFromParams(
   params: unknown,
   method: string,
@@ -1699,14 +1634,6 @@ export async function authorizeMachineRpcRequest(
       // custodian-only raw spawn permission. Fresh spawns still use raw admission.
       const nativeSessionResume = privateSpawn?.success
         && privateSpawn.data.type === 'resume-session' && !!privateSpawn.data.sessionId;
-      const managedTarget =
-        rpcMethod === MANAGED_ACTIVITY_READ_RPC_METHOD
-          ? ManagedActivityReadRequestV1Schema.safeParse(request.params)
-          : rpcMethod === MANAGED_ADMISSION_DRAIN_CONFIRM_RPC_METHOD
-            ? ManagedAdmissionDrainConfirmRequestV1Schema.safeParse(
-                request.params,
-              )
-            : null;
       // Retain the result of this one admission; peer ingress must not borrow
       // a receiving role from an unverified field on its incoming request.
       const verifiedAdmission = source === 'authenticated_home_socket' ? null
@@ -1715,9 +1642,6 @@ export async function authorizeMachineRpcRequest(
         : await machine.verifyMachineAdmission({
           context,
           method: request.method,
-          ...(managedTarget?.success
-            ? { managedTarget: managedTarget.data }
-            : {}),
           ...(sourceRouting
             ? { workspaceSyncSourceRouting: sourceRouting }
             : {}),

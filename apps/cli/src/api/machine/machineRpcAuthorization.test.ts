@@ -12,7 +12,7 @@ import { RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc/meth
 import { MACHINE_ACCESS_LOSS_SERVER_ORIGIN, SOCKET_RPC_AUTHORIZATION_CONTEXT_KINDS,
   resolveSocketRpcSessionWriteAuthorizationMethod, type WorkspaceSyncSourceRoutingV1 } from '@happier-dev/protocol/socketRpc';
 
-import { authorizeMachineRpcRequest, verifyMachineRpcAdmissionCurrent, verifyManagedActivityTargetCurrent, type MachineRpcAdmissionBoundary } from './machineRpcAuthorization';
+import { authorizeMachineRpcRequest, verifyMachineRpcAdmissionCurrent, type MachineRpcAdmissionBoundary } from './machineRpcAuthorization';
 import { logger } from '@/ui/logger';
 import { PROJECT_FINITE_ACTION_RPC_METHODS_V1 } from '@happier-dev/protocol/actions/projectActionFamily';
 import { ACTION_SPECS } from '@happier-dev/protocol/actions/actionSpecs';
@@ -748,32 +748,6 @@ describe('authorizeMachineRpcRequest', () => {
       expect(await authorizeMachineRpcRequest(abortRequest, boundary)).toEqual({ ok: true });
       parentInstallation = 'replacement-parent-installation';
       expect(await authorizeMachineRpcRequest(abortRequest, boundary)).toMatchObject({ ok: false, errorCode: RPC_ERROR_CODES.FORBIDDEN });
-    } finally { network.mockRestore(); }
-  });
-  it('binds managed guest verification to the exact signed row, controller, actor and installation', async () => {
-    const context = { actorAccountId: 'bob', custodianAccountId: 'alice', machineId: 'guest',
-      installationId: 'guest-installation', role: 'manage' as const, encryptionMode: 'plain' as const };
-    const target = { homeId: 'home', managedId: 'managed', expectedRevision: 4,
-      controller: { machineId: 'controller', installationId: 'controller-installation' } };
-    const keyPair = tweetnacl.sign.keyPair();
-    const network = vi.spyOn(axios, 'post').mockResolvedValue({ status: 200, data: { current: true },
-      statusText: 'OK', headers: {}, config: { headers: new AxiosHeaders() } });
-    try {
-      expect(await verifyManagedActivityTargetCurrent({ context, managedTarget: target, method: 'managed.activity.read',
-        privateKey: keyPair.secretKey, daemonToken: 'guest-token', serverHttpBaseUrl: 'https://home.invalid' })).toBe(true);
-      const body = network.mock.calls[0]?.[1] as { method: string;
-        proof: Parameters<typeof verifyMachineInstallationProof>[0]['proof'] };
-      expect(body.method).toBe('guest:managed.activity.read');
-      const payload = { version: 1 as const, machineId: context.machineId, installationId: context.installationId,
-        accountId: context.custodianAccountId, rpcAdmission: { context, method: body.method, managedTarget: target } };
-      expect(verifyMachineInstallationProof({ payload, proof: body.proof, publicKey: keyPair.publicKey })).toBe(true);
-      expect(verifyMachineInstallationProof({ payload: { ...payload,
-        rpcAdmission: { ...payload.rpcAdmission, managedTarget: { ...target, expectedRevision: 5 } } },
-        proof: body.proof, publicKey: keyPair.publicKey })).toBe(false);
-      network.mockResolvedValueOnce({ status: 200, data: { current: false }, statusText: 'OK', headers: {},
-        config: { headers: new AxiosHeaders() } });
-      expect(await verifyManagedActivityTargetCurrent({ context, managedTarget: target, method: 'managed.activity.read',
-        privateKey: keyPair.secretKey, daemonToken: 'guest-token', serverHttpBaseUrl: 'https://home.invalid' })).toBe(false);
     } finally { network.mockRestore(); }
   });
   it('binds protected current-service admission to the current installation without substituting the custodian actor', async () => {
