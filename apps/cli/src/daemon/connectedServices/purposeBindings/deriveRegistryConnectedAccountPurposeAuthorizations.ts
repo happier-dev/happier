@@ -1,28 +1,29 @@
-import type { ResolvedContributionRegistry } from '@/plugins/projection/registry/types';
-import { parseQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
-import { readResolvedActionContribution } from '@/plugins/projection/registry/actions';
 import type {
   ConnectedAccountPurposeDeclarationV1,
-  PluginActionConnectedAccountPurposeBindingV2,
   PluginEventAutomationHistoryGapResetActionInputV1,
   PluginContributionIdentityV1,
   QualifiedConnectedAccountPurposeBindingV1,
+  QualifiedConnectedAccountPurposeBindingTargetV1,
   QualifiedConnectedAccountPurposeV1,
 } from '@happier-dev/protocol';
-import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import { parseQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { PluginEventAutomationHistoryGapResetActionInputV1Schema } from '@happier-dev/protocol/automations/event-history-gap-reset-action';
 import { PluginContributionIdentityV1Schema } from '@happier-dev/protocol/plugins/contribution-identity';
 import { QualifiedConnectedAccountPurposeV1Schema } from '@happier-dev/protocol/connect/connectedAccountPurposeIdentity';
-import { readInputOptionValue as readActionInputOptionValue } from '@happier-dev/protocol/inputs/inputFields';
 import { readInputPath as readActionInputPath } from '@happier-dev/protocol/inputs/inputPredicates';
-import { QualifiedConnectedAccountRefSchema } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
+import { sameQualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
+import { ConnectedAccountSourceReconnectRequiredError, readDeclaredConnectedAccountActionSelection } from '@happier-dev/cli-common/connectedAccounts';
+import { PluginError, isPluginError } from '@happier-dev/plugin-sdk';
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { CanonicalPluginManifest } from '@/plugins/manifest/types';
 import type { PluginAccessSelection } from '@/plugins/store/install/accessScopeRegistry';
 import {
   isPluginHostAccessRequestAuthorizedBySelection,
 } from '@/plugins/runtime/hostAccess/resourceSelection';
 import { resolveManifestHostAccessRequests } from '@/plugins/runtime/hostAccess/manifestRequests';
-import { resolvePluginActionConnectedAccountUseRequestsV2 } from '@happier-dev/protocol/plugins/manifest/v2';
+import type { PluginActionConnectedAccountUseRequestV2 } from '@happier-dev/protocol/plugins/manifest/v2';
+import { readResolvedActionContribution } from '@/plugins/projection/registry/actions';
+import type { ResolvedContributionRegistry } from '@/plugins/projection/registry/types';
 import type {
   ConnectedAccountPurposeAuthorizationScope,
   ConnectedAccountPurposeBindingOwner,
@@ -73,6 +74,8 @@ export type RegistryConnectedAccountPurposeAuthorizationProjection = Readonly<{
   activationTargets: readonly RegistryAuthorizationActivationTarget[];
 }>;
 
+export type RegistryConnectedAccountActionAuthorizationProjection = Pick<ResolvedContributionRegistry, 'actionsById'>;
+
 export type ResolveRegistryConnectedAccountOptionalAccess = (
   pluginId: string,
 ) => readonly PluginAccessSelection[];
@@ -85,7 +88,7 @@ export type RegistryConnectedAccountPurposeConsumerScope = Readonly<{
 type ActionFormConnectedAccountBindings = Pick<
   ConnectedAccountPurposeBindingOwner,
   'resolveBindingIntent'
->;
+> & Partial<Pick<ConnectedAccountPurposeBindingOwner, 'resolveBindingIntentSelection'>>;
 
 type RegistryConnectedAccountPurposeReconciliationOptions = Readonly<{
   /**
@@ -106,11 +109,13 @@ export type RegistryConnectedAccountActionFormPurposeAuthorization = Readonly<{
     action: PluginContributionIdentityV1;
     purpose: QualifiedConnectedAccountPurposeV1;
     serviceRefs: readonly PluginContributionIdentityV1[];
+    nativeServicePath?: string;
 }>;
 
 export type RegistryConnectedAccountActionPurposeBindingSnapshot = Readonly<{
   purposes: readonly QualifiedConnectedAccountPurposeV1[];
   bindings: readonly QualifiedConnectedAccountPurposeBindingV1[];
+  bindingSelections?: readonly Awaited<ReturnType<ConnectedAccountPurposeBindingOwner['resolveBindingIntentSelection']>>[];
 }>;
 
 /**
@@ -155,21 +160,13 @@ function qualifyServiceReference(
 }
 
 function resolveRegistryConnectedAccountAction(input: Readonly<{
-  registry: Pick<RegistryConnectedAccountPurposeAuthorizationProjection, 'activationTargets'>;
+  registry: RegistryConnectedAccountActionAuthorizationProjection;
   qualifiedActionId: string;
 }>) {
-  const matches = input.registry.activationTargets.flatMap((target) => (
-    target.manifest.contributes.actions.flatMap((action) => {
-      const identity = Object.freeze(PluginContributionIdentityV1Schema.parse({
-        pluginId: target.pluginId,
-        localId: action.id,
-      }));
-      return buildQualifiedPluginContributionKey(identity) === input.qualifiedActionId
-        ? [Object.freeze({ target, action, identity })]
-        : [];
-    })
-  ));
-  return matches.length === 1 ? matches[0]! : null;
+  const identity = parseQualifiedPluginContributionKey(input.qualifiedActionId);
+  if (!identity) return null;
+  const admittedTarget = readResolvedActionContribution(input.registry, identity)?.admittedTarget;
+  return admittedTarget ? { action: admittedTarget.declaration, identity, admittedTarget } : null;
 }
 
 type RegistryConnectedAccountActionMatch = NonNullable<
@@ -177,7 +174,9 @@ type RegistryConnectedAccountActionMatch = NonNullable<
 >;
 
 function resolveRegistryConnectedAccountActionPurposeRequests(match: RegistryConnectedAccountActionMatch) {
-  return resolvePluginActionConnectedAccountUseRequestsV2(match.target.manifest, match.identity.localId);
+  return match.admittedTarget.hostAccessRequests.filter((entry): entry is PluginActionConnectedAccountUseRequestV2 => (
+    entry.request.capability === 'connectedAccounts' && entry.request.scope.operations.includes('use')
+  ));
 }
 
 function resolveRegistryConnectedAccountActionPurposeAuthorizationFromMatch(input: Readonly<{
@@ -188,7 +187,6 @@ function resolveRegistryConnectedAccountActionPurposeAuthorizationFromMatch(inpu
 }>): RegistryConnectedAccountActionFormPurposeAuthorization | null {
   const { identity } = input.match;
   const requests = resolveRegistryConnectedAccountActionPurposeRequests(input.match);
-  if (!requests) return null;
   const connectedAccountRequests = requests.filter((entry) => (
     entry.request.id === input.purposeId
     && entry.request.capability === 'connectedAccounts'
@@ -218,7 +216,7 @@ function resolveRegistryConnectedAccountActionPurposeAuthorizationFromMatch(inpu
 
 /** Host-only retained-account admission from the actual role Action declaration. */
 export function resolveRegistryConnectedAccountActionPurposeAuthorization(input: Readonly<{
-  registry: Pick<RegistryConnectedAccountPurposeAuthorizationProjection, 'activationTargets'>;
+  registry: RegistryConnectedAccountActionAuthorizationProjection;
   qualifiedActionId: string;
   purposeId: string;
   resolveOptionalAccess?: ResolveRegistryConnectedAccountOptionalAccess;
@@ -234,14 +232,13 @@ export function resolveRegistryConnectedAccountActionPurposeAuthorization(input:
 
 /** Complete authorized credential-use declarations; null is not an empty scope. */
 export function resolveRegistryConnectedAccountActionPurposeAuthorizations(input: Readonly<{
-  registry: Pick<RegistryConnectedAccountPurposeAuthorizationProjection, 'activationTargets'>;
+  registry: RegistryConnectedAccountActionAuthorizationProjection;
   qualifiedActionId: string;
   resolveOptionalAccess?: ResolveRegistryConnectedAccountOptionalAccess;
 }>): readonly RegistryConnectedAccountActionFormPurposeAuthorization[] | null {
   const match = resolveRegistryConnectedAccountAction(input);
   if (!match) return null;
   const requests = resolveRegistryConnectedAccountActionPurposeRequests(match);
-  if (!requests) return null;
   const authorizations: RegistryConnectedAccountActionFormPurposeAuthorization[] = [];
   for (const entry of requests) {
     const authorization = resolveRegistryConnectedAccountActionPurposeAuthorizationFromMatch({
@@ -279,7 +276,7 @@ export function resolveRegistryConnectedAccountActionCredentialPurposeAuthorizat
 }
 
 export function resolveRegistryConnectedAccountActionFormPurposeAuthorization(input: Readonly<{
-  registry: Pick<RegistryConnectedAccountPurposeAuthorizationProjection, 'activationTargets'>;
+  registry: RegistryConnectedAccountActionAuthorizationProjection;
   qualifiedActionId: string;
   fieldPath: string;
   resolveOptionalAccess?: ResolveRegistryConnectedAccountOptionalAccess;
@@ -290,46 +287,14 @@ export function resolveRegistryConnectedAccountActionFormPurposeAuthorization(in
     field.path === input.fieldPath && field.connectedAccountOptions === true
   )) ?? [];
   if (connectedAccountFields.length !== 1) return null;
-  return resolveRegistryConnectedAccountActionCredentialPurposeAuthorization({
+  const authorization = resolveRegistryConnectedAccountActionCredentialPurposeAuthorization({
     ...input,
     requireSelect: true,
   });
-}
-
-type RegistryAutomationEventHistoryGapSourceCandidate = Readonly<{
-  eventLocalId: string;
-  purposeBindings: readonly PluginActionConnectedAccountPurposeBindingV2[];
-}>;
-
-/**
- * Canonical manifests have already passed the Protocol Event declaration
- * schema. The intersection only bridges a temporarily stale generated CLI
- * dependency declaration; it does not reinterpret plugin input here.
- */
-type HistoryGapRecoveryEventSourceDeclaration = Readonly<{
-  connectedAccountPurposeBindings?: readonly PluginActionConnectedAccountPurposeBindingV2[];
-}>;
-
-function readRegistryAutomationEventHistoryGapSourceCandidates(
-  match: RegistryConnectedAccountActionMatch,
-): readonly RegistryAutomationEventHistoryGapSourceCandidate[] {
-  return Object.freeze((match.target.manifest.contributes.events ?? []).flatMap((event) => {
-    const source = event.kind === 'event' && event.automation?.eligible === true
-      ? event.automation.source
-      : null;
-    if (
-      source === null
-      || source.historyGapResetActionRef?.pluginId !== match.identity.pluginId
-      || source.historyGapResetActionRef.localId !== match.identity.localId
-    ) return [];
-    return [Object.freeze({
-      eventLocalId: event.id,
-      purposeBindings: Object.freeze([
-        ...((source as typeof source & HistoryGapRecoveryEventSourceDeclaration)
-          .connectedAccountPurposeBindings ?? []),
-      ]),
-    })];
-  }));
+  const mapping = match.action.connectedAccountPurposeBindings?.find(binding => binding.path === input.fieldPath);
+  return authorization && mapping?.nativeServicePath
+    ? Object.freeze({ ...authorization, nativeServicePath: mapping.nativeServicePath })
+    : authorization;
 }
 
 function actionFormUnavailable(): RegistryConnectedAccountActionFormRevalidationResult {
@@ -338,6 +303,26 @@ function actionFormUnavailable(): RegistryConnectedAccountActionFormRevalidation
     code: 'plugin_action_form_connected_account_options_unavailable',
     message: 'The selected Connected Account is no longer available for this Action form',
   });
+}
+
+function preserveActionFormFailure(error: unknown): void {
+  if (error && typeof error === 'object' && 'code' in error
+    && (error.code === 'secret_use_client_required' || error.code === 'secret_save_client_required' || error.code === 'authorityChanged')) throw error;
+  if (error instanceof ConnectedAccountSourceReconnectRequiredError) {
+    throw new PluginError({ code: error.code, retryable: error.retryable,
+      message: 'The selected Connected Account requires reconnection' }, { cause: error });
+  }
+  if (isPluginError(error)) {
+    // Only an absent selection is an options refusal. The Account owner already
+    // classified other failures, including whether retrying can recover them.
+    if (error.code === 'plugin_host_access_resource_not_selected') return;
+    throw error;
+  }
+  throw new PluginError({
+    code: 'plugin_action_pre_dispatch_unavailable',
+    message: 'The Connected Account could not be resolved for this Action',
+    failureCause: projectActionFailureCauseV1(error),
+  }, { cause: error });
 }
 
 function historyGapSourceUnavailable(): RegistryConnectedAccountActionFormRevalidationResult {
@@ -361,9 +346,11 @@ function actionGenerationRetired(): RegistryConnectedAccountActionFormRevalidati
  * resolved here, while Account truth remains with the purpose-binding owner.
  */
 export async function revalidateRegistryConnectedAccountActionFormInput(input: Readonly<{
-  registry: Pick<RegistryConnectedAccountPurposeAuthorizationProjection, 'activationTargets'>;
+  registry: RegistryConnectedAccountActionAuthorizationProjection;
   qualifiedActionId: string;
   value: unknown;
+  /** Present only after the deployment owner opened and admitted the stored principal. */
+  admittedPurposeTarget?: QualifiedConnectedAccountPurposeBindingTargetV1;
   resolveOptionalAccess?: ResolveRegistryConnectedAccountOptionalAccess;
   actionFormConnectedAccounts?: ActionFormConnectedAccountBindings;
   signal: AbortSignal;
@@ -378,11 +365,10 @@ export async function revalidateRegistryConnectedAccountActionFormInput(input: R
   )) ?? [];
   for (const field of fields) {
     const rawValue = readActionInputPath(input.value, field.path);
+    const mapping = match.action.connectedAccountPurposeBindings?.find(binding => binding.path === field.path);
     // The canonical Action input schema has already admitted this object. An
     // omitted optional dynamic field has no Account capability to revalidate.
-    if (rawValue === undefined) continue;
-    const selected = QualifiedConnectedAccountRefSchema.safeParse(readActionInputOptionValue(rawValue));
-    if (!selected.success) return actionFormUnavailable();
+    if (rawValue === undefined && !mapping?.nativeServicePath) continue;
     const authorization = resolveRegistryConnectedAccountActionFormPurposeAuthorization({
       registry: input.registry,
       qualifiedActionId: input.qualifiedActionId,
@@ -392,18 +378,33 @@ export async function revalidateRegistryConnectedAccountActionFormInput(input: R
         : {}),
     });
     if (!authorization || !input.actionFormConnectedAccounts) return actionFormUnavailable();
+    if (!mapping) return actionFormUnavailable();
+    const selected = readDeclaredConnectedAccountActionSelection(input.value, mapping, authorization.serviceRefs);
+    if (selected.kind === 'invalid') return actionFormUnavailable();
+    if (selected.kind === 'inherit') return actionFormUnavailable();
+    if (selected.kind === 'native') continue;
     try {
+      if (mapping.path === 'credentialRef' && input.admittedPurposeTarget?.kind === 'group') {
+        const resolve = input.actionFormConnectedAccounts.resolveBindingIntentSelection;
+        if (!resolve) return actionFormUnavailable();
+        const selection = await resolve({ purpose: authorization.purpose, target: input.admittedPurposeTarget,
+          serviceRefs: authorization.serviceRefs, signal: input.signal });
+        if (!sameQualifiedConnectedAccountRef(selection.resolved.account, selected.account)
+          || !await selection.isCurrent(input.signal)) return actionFormUnavailable();
+        continue;
+      }
       await input.actionFormConnectedAccounts.resolveBindingIntent({
         purpose: authorization.purpose,
         target: Object.freeze({
           kind: 'account' as const,
-          account: selected.data,
+          account: selected.account,
         }),
         serviceRefs: authorization.serviceRefs,
         signal: input.signal,
       });
     } catch (error) {
       if (input.signal.aborted) throw error;
+      preserveActionFormFailure(error);
       return input.isCurrent() ? actionFormUnavailable() : actionGenerationRetired();
     }
     input.signal.throwIfAborted();
@@ -419,9 +420,11 @@ export async function revalidateRegistryConnectedAccountActionFormInput(input: R
  * selection cannot silently regain authority.
  */
 export async function resolveRegistryConnectedAccountActionPurposeBindingSnapshot(input: Readonly<{
-  registry: Pick<RegistryConnectedAccountPurposeAuthorizationProjection, 'activationTargets'>;
+  registry: RegistryConnectedAccountActionAuthorizationProjection;
   qualifiedActionId: string;
   value: unknown;
+  /** Host-local validated target, never read from authored input. */
+  admittedPurposeTarget?: QualifiedConnectedAccountPurposeBindingTargetV1;
   resolveOptionalAccess?: ResolveRegistryConnectedAccountOptionalAccess;
   actionFormConnectedAccounts?: ActionFormConnectedAccountBindings;
   resolveAutomationEventHistoryGapSource?: ResolveRegistryCurrentAutomationEventHistoryGapSource;
@@ -436,7 +439,7 @@ export async function resolveRegistryConnectedAccountActionPurposeBindingSnapsho
   const match = resolveRegistryConnectedAccountAction(input);
   if (!match) return Object.freeze({ purposes: [], bindings: [] });
   const mappings = match.action.connectedAccountPurposeBindings ?? [];
-  const historyGapSourceCandidates = readRegistryAutomationEventHistoryGapSourceCandidates(match);
+  const historyGapSourceCandidates = match.admittedTarget.historyGapSources;
   const requiresHistoryGapSourceBinding = historyGapSourceCandidates.some((candidate) => (
     candidate.purposeBindings.length > 0
   ));
@@ -455,6 +458,7 @@ export async function resolveRegistryConnectedAccountActionPurposeBindingSnapsho
 
   const purposes: QualifiedConnectedAccountPurposeV1[] = [];
   const bindings: QualifiedConnectedAccountPurposeBindingV1[] = [];
+  const bindingSelections: Awaited<ReturnType<ConnectedAccountPurposeBindingOwner['resolveBindingIntentSelection']>>[] = [];
   const purposeKeys = new Set<string>();
   for (const mapping of mappings) {
     const authorization = resolveRegistryConnectedAccountActionCredentialPurposeAuthorization({
@@ -467,6 +471,12 @@ export async function resolveRegistryConnectedAccountActionPurposeBindingSnapsho
         : {}),
     });
     if (!authorization) return actionFormUnavailable();
+    const selected = readDeclaredConnectedAccountActionSelection(input.value, mapping, authorization.serviceRefs);
+    if (selected.kind === 'invalid') return actionFormUnavailable();
+    // Optional Account operands inherit the incumbent purpose unless the
+    // caller explicitly chose a native service. An empty operation lease
+    // would hide a valid Session/global binding instead.
+    if (selected.kind === 'inherit') continue;
     const purposeKey = JSON.stringify([
       authorization.purpose.consumer.pluginId,
       authorization.purpose.consumer.localId,
@@ -476,21 +486,31 @@ export async function resolveRegistryConnectedAccountActionPurposeBindingSnapsho
     purposeKeys.add(purposeKey);
     purposes.push(authorization.purpose);
 
-    const selected = readDeclaredCredentialSelection(input.value, mapping, authorization.serviceRefs);
-    if (!selected.success) return actionFormUnavailable();
-    if (selected.data === null) continue;
+    if (selected.kind === 'native') continue;
     try {
+      if (mapping.path === 'credentialRef' && input.admittedPurposeTarget?.kind === 'group') {
+        const resolve = actionFormConnectedAccounts.resolveBindingIntentSelection;
+        if (!resolve) return actionFormUnavailable();
+        const selection = await resolve({ purpose: authorization.purpose, target: input.admittedPurposeTarget,
+          serviceRefs: authorization.serviceRefs, signal: input.signal });
+        if (!sameQualifiedConnectedAccountRef(selection.resolved.account, selected.account)
+          || !await selection.isCurrent(input.signal)) return actionFormUnavailable();
+        bindings.push(selection.binding);
+        bindingSelections.push(selection);
+        continue;
+      }
       bindings.push(await actionFormConnectedAccounts.resolveBindingIntent({
         purpose: authorization.purpose,
         target: Object.freeze({
           kind: 'account' as const,
-          account: selected.data,
+          account: selected.account,
         }),
         serviceRefs: authorization.serviceRefs,
         signal: input.signal,
       }));
     } catch (error) {
       if (input.signal.aborted) throw error;
+      preserveActionFormFailure(error);
       return input.isCurrent() ? actionFormUnavailable() : actionGenerationRetired();
     }
     input.signal.throwIfAborted();
@@ -513,6 +533,7 @@ export async function resolveRegistryConnectedAccountActionPurposeBindingSnapsho
       });
     } catch (error) {
       if (input.signal.aborted) throw error;
+      preserveActionFormFailure(error);
       return input.isCurrent() ? historyGapSourceUnavailable() : actionGenerationRetired();
     }
     input.signal.throwIfAborted();
@@ -542,21 +563,22 @@ export async function resolveRegistryConnectedAccountActionPurposeBindingSnapsho
       purposeKeys.add(purposeKey);
       purposes.push(authorization.purpose);
 
-      const selected = readDeclaredCredentialSelection(currentSource.sourceConfig, mapping, authorization.serviceRefs);
-      if (!selected.success) return historyGapSourceUnavailable();
-      if (selected.data === null) continue;
+      const selected = readDeclaredConnectedAccountActionSelection(currentSource.sourceConfig, mapping, authorization.serviceRefs);
+      if (selected.kind === 'invalid') return historyGapSourceUnavailable();
+      if (selected.kind !== 'account') continue;
       try {
         bindings.push(await actionFormConnectedAccounts.resolveBindingIntent({
           purpose: authorization.purpose,
           target: Object.freeze({
             kind: 'account' as const,
-            account: selected.data,
+            account: selected.account,
           }),
           serviceRefs: authorization.serviceRefs,
           signal: input.signal,
         }));
       } catch (error) {
         if (input.signal.aborted) throw error;
+        preserveActionFormFailure(error);
         return input.isCurrent() ? historyGapSourceUnavailable() : actionGenerationRetired();
       }
       input.signal.throwIfAborted();
@@ -566,31 +588,8 @@ export async function resolveRegistryConnectedAccountActionPurposeBindingSnapsho
   return Object.freeze({
     purposes: Object.freeze(purposes),
     bindings: Object.freeze(bindings),
+    ...(bindingSelections.length ? { bindingSelections: Object.freeze(bindingSelections) } : {}),
   });
-}
-
-/** Both direct Action input and Event recovery consume the same declared selection paths. */
-function readDeclaredCredentialSelection(
-  value: unknown,
-  mapping: PluginActionConnectedAccountPurposeBindingV2,
-  serviceRefs: readonly PluginContributionIdentityV1[],
-) {
-  const rawAccount = readActionInputPath(value, mapping.path);
-  const hasAccount = rawAccount !== undefined && rawAccount !== null;
-  if (mapping.nativeServicePath) {
-    const rawNative = readActionInputPath(value, mapping.nativeServicePath);
-    const hasNative = rawNative !== undefined && rawNative !== null;
-    if (hasAccount === hasNative) return { success: false as const };
-    if (hasNative) {
-      const native = PluginContributionIdentityV1Schema.safeParse(readActionInputOptionValue(rawNative));
-      return native.success && serviceRefs.some((ref) => identityKey(ref) === identityKey(native.data))
-        ? { success: true as const, data: null }
-        : { success: false as const };
-    }
-  }
-  return hasAccount
-    ? QualifiedConnectedAccountRefSchema.safeParse(readActionInputOptionValue(rawAccount))
-    : { success: true as const, data: null };
 }
 
 /**
@@ -834,5 +833,3 @@ export function deriveRegistryConnectedAccountPurposeReconciliationScopes(
       identityKey(left.consumer).localeCompare(identityKey(right.consumer))),
   );
 }
-
-export type RegistryConnectedAccountActionAuthorizationProjection = Pick<RegistryConnectedAccountPurposeAuthorizationProjection, 'activationTargets'>;

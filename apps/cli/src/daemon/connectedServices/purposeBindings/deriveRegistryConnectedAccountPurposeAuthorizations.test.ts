@@ -1,13 +1,18 @@
 import { describe, expect, it, vi } from 'vitest';
+import { PluginError } from '@happier-dev/plugin-sdk';
 import {
   PluginEventAutomationHistoryGapResetActionInputV1JsonSchema,
   PluginEventAutomationHistoryGapResetActionResultV1JsonSchema,
 } from '@happier-dev/protocol';
+import { createPluginEventAutomationSetupResultV1JsonSchema } from '@happier-dev/protocol/automations/event-setup-result';
 
 import { readCanonicalPluginManifest } from '@/plugins/manifest/normalize';
 import { createDefaultPluginAccessScopeRegistry } from '@/plugins/store/install/accessScopeRegistry';
 import { createPluginManifestV2Fixture } from '@/plugins/testkit/manifestV2Fixture';
-import type { ResolvedProviderContribution } from '@/plugins/projection/registry/types';
+import type { ResolvedActionContribution, ResolvedProviderContribution } from '@/plugins/projection/registry/types';
+import type { LoadedPlugin } from '@/plugins/discovery/load/installed';
+import { buildPluginContributionRegistry } from '@/plugins/projection/registry/normalize/package';
+import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 
 import { createConnectedAccountPurposeBindingOwner, type ConnectedAccountPurposeBindingOwner } from './ConnectedAccountPurposeBindingOwner';
 
@@ -21,6 +26,7 @@ import {
   resolveRegistryConnectedAccountActionPurposeAuthorization,
   resolveRegistryConnectedAccountActionPurposeAuthorizations,
   type RegistryConnectedAccountPurposeAuthorizationProjection,
+  type RegistryConnectedAccountActionAuthorizationProjection,
 } from './deriveRegistryConnectedAccountPurposeAuthorizations';
 
 function actionAndHookManifest(options: Readonly<{ omitConnectedAccountOptionsField?: boolean }> = {}) {
@@ -176,12 +182,24 @@ it('admits a declared native service only within the Action purpose scope and re
     projectTargetAccounts: async () => { throw new Error('no listing during invocation admission'); },
     assertTargetAccountMaterializable: async () => { throw new Error('no credential disclosure during invocation admission'); },
   });
+  const dynamicRegistry = projection({ activationTargets: [{ pluginId: manifest.id, manifest: {
+    ...manifest, contributes: { ...manifest.contributes, actions: manifest.contributes.actions.map(action => action.id === 'run'
+      ? { ...action, inputHints: { fields: [{ path: 'credentialRef', title: 'Account', widget: 'select' as const, connectedAccountOptions: true as const }] } }
+      : action) },
+  } }] });
+  const revalidate = (value: unknown) => revalidateRegistryConnectedAccountActionFormInput({
+    registry: dynamicRegistry, qualifiedActionId: `${manifest.id}/run`, value, actionFormConnectedAccounts: owner,
+    signal: new AbortController().signal, isCurrent: () => true,
+  });
   const admit = (value: unknown) => resolveRegistryConnectedAccountActionPurposeBindingSnapshot({
     registry: projection({ activationTargets: [{ pluginId: manifest.id, manifest }] }),
     qualifiedActionId: `${manifest.id}/run`, value, actionFormConnectedAccounts: owner,
     signal: new AbortController().signal, isCurrent: () => true,
   });
   const service = { pluginId: manifest.id, localId: 'account' };
+  await expect(revalidate({ nativeService: service })).resolves.toBeNull();
+  await expect(revalidate({ nativeService: { ...service, localId: 'undeclared' } })).resolves.toMatchObject({ status: 'unavailable' });
+  await expect(revalidate({})).resolves.toMatchObject({ status: 'unavailable' });
   await expect(admit({ nativeService: service })).resolves.toEqual({
     purposes: [{ consumer: { pluginId: manifest.id, localId: 'run' }, purpose: 'action-account' }], bindings: [],
   });
@@ -399,7 +417,13 @@ function historyGapSourceManifest() {
     },
     required: ['service', 'accountId'],
     additionalProperties: false,
-  } as const;
+  } satisfies Parameters<typeof createPluginEventAutomationSetupResultV1JsonSchema>[1];
+  const sourceConfigSchema = {
+    type: 'object',
+    properties: { credentialRef: sourceCredentialRefSchema },
+    required: ['credentialRef'],
+    additionalProperties: false,
+  } satisfies Parameters<typeof createPluginEventAutomationSetupResultV1JsonSchema>[1];
   const parsed = readCanonicalPluginManifest(createPluginManifestV2Fixture({
     id,
     version: '1.2.3',
@@ -431,6 +455,15 @@ function historyGapSourceManifest() {
         },
       }],
       actions: [{
+        id: 'setup-source',
+        title: 'Set up source',
+        scopes: ['global'],
+        surfaces: ['plugin'],
+        dangerLevel: 'safe',
+        execution: { target: 'daemon' },
+        inputSchema: { type: 'object', additionalProperties: false },
+        resultSchema: createPluginEventAutomationSetupResultV1JsonSchema(1, sourceConfigSchema),
+      }, {
         id: 'reset-history',
         title: 'Reset history',
         scopes: ['global'],
@@ -453,12 +486,7 @@ function historyGapSourceManifest() {
             sourceContractVersion: 1,
             supportedObservationTransports: ['checkpointedPull'],
             setupActionRef: { pluginId: id, localId: 'setup-source' },
-            sourceConfigSchema: {
-              type: 'object',
-              properties: { credentialRef: sourceCredentialRefSchema },
-              required: ['credentialRef'],
-              additionalProperties: false,
-            },
+            sourceConfigSchema,
             historyGapResetActionRef: { pluginId: id, localId: 'reset-history' },
             connectedAccountPurposeBindings: [{
               path: 'credentialRef',
@@ -475,16 +503,49 @@ function historyGapSourceManifest() {
 
 function projection(
   overrides: Partial<RegistryConnectedAccountPurposeAuthorizationProjection> = {},
-): RegistryConnectedAccountPurposeAuthorizationProjection {
+): RegistryConnectedAccountPurposeAuthorizationProjection & RegistryConnectedAccountActionAuthorizationProjection {
+  const normalized = buildPluginContributionRegistry({
+    loadedPlugins: (overrides.activationTargets ?? []).map((target): LoadedPlugin => ({
+      pluginId: target.pluginId,
+      pluginRootPath: `/plugins/${target.pluginId}`,
+      manifestPath: `/plugins/${target.pluginId}/plugin.json`,
+      daemonEntryPath: `/plugins/${target.pluginId}/daemon.js`,
+      devDaemonEntryPath: null,
+      sourceSpec: { kind: 'path', locator: `/plugins/${target.pluginId}`, trustPolicy: 'local_trusted', installPolicy: 'link' },
+      manifest: target.manifest,
+    })),
+  });
+  const admitted = createResolvedContributionRegistry({
+    actions: normalized.actions.map((action): ResolvedActionContribution => ({ ...action, provenance: 'external', source: { kind: 'path' } })),
+  });
   return {
     agents: [],
     providers: [],
     activationTargets: [],
     ...overrides,
+    actionsById: admitted.actionsById,
   };
 }
 
 describe('registry Connected Accounts purpose authorization projection', () => {
+  it.each([undefined, null])('leaves an unselected optional Account operand on the incumbent purpose path: %s', async credentialRef => {
+    const base = actionAndHookManifest({ omitConnectedAccountOptionsField: true });
+    const manifest = readCanonicalPluginManifest({ ...base, contributes: { ...base.contributes,
+      actions: base.contributes.actions.map(action => action.id !== 'run' ? action : { ...action,
+        inputSchema: { type: 'object', additionalProperties: false, properties: {
+          credentialRef: { anyOf: [qualifiedConnectedAccountRefSchema, { type: 'null' }] },
+        } },
+      }),
+    } });
+    if (!manifest) throw new Error('Invalid optional Account fixture');
+    const registry = projection({ activationTargets: [{ pluginId: manifest.id, manifest }] });
+    const resolveBindingIntent = vi.fn(async () => { throw new Error('No explicit Account selection'); });
+    expect(await resolveRegistryConnectedAccountActionPurposeBindingSnapshot({ registry,
+      qualifiedActionId: `${manifest.id}/run`, value: { credentialRef },
+      actionFormConnectedAccounts: { resolveBindingIntent }, signal: new AbortController().signal, isCurrent: () => true,
+    })).toEqual({ purposes: [], bindings: [] });
+    expect(resolveBindingIntent).not.toHaveBeenCalled();
+  });
   it('derives exactly one authorized target Action Connected Account purpose from the declared field', () => {
     const manifest = actionAndHookManifest();
     const registry = projection({
@@ -703,8 +764,8 @@ describe('registry Connected Accounts purpose authorization projection', () => {
   it('converts a stale canonical Account binding into typed unavailable without exposing the binding error', async () => {
     const manifest = actionAndHookManifest();
     const resolveBindingIntent = vi.fn<ConnectedAccountPurposeBindingOwner['resolveBindingIntent']>(async () => {
-      throw Object.assign(new Error('account-1 was deleted'), {
-        name: 'PluginError',
+      throw new PluginError({
+        message: 'account-1 was deleted',
         code: 'plugin_host_access_resource_not_selected',
       });
     });
