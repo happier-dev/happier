@@ -535,7 +535,9 @@ export async function publishLocalVoiceTranscriptMessage(input: Readonly<{
     if (!speechAccount) throw new Error('Expected admitted Voice Account transcript transport');
     const remoteKey = JSON.stringify([speechAccount.credentials.token, input.sessionId]);
     const messages = localVoiceRemoteMessages.get(remoteKey) ?? [];
-    const seq = (messages.at(-1)?.seq ?? 0) + 1;
+    const { storage } = await import('@/sync/domains/state/storage');
+    const sessionSeq = storage.getState().sessions[input.sessionId]?.seq ?? 0;
+    const seq = Math.max(messages.at(-1)?.seq ?? 0, sessionSeq) + 1;
     const createdAt = Date.now();
     const update = UpdateContainerSchema.parse({
         id: `update-${input.id}`, seq, createdAt,

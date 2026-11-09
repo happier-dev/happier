@@ -4,6 +4,7 @@ import { afterAll, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod/mini';
 import { readStoredSessionMessages } from '@happier-dev/session-core/messages';
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { ExecutionRunEnsureOrStartRequestSchema } from '@happier-dev/protocol/execution/runs/index';
 import { VoiceAgentTurnV1Schema } from '@happier-dev/protocol/messages/structured/voiceAgentTurnV1';
 import { ExecutionRunTurnStreamStartV2RequestSchema } from '@happier-dev/protocol/execution/runs/streaming';
 import { StrictSessionStoredMessageContentEnvelopeSchema } from '@happier-dev/protocol/sessions/messages/sessionStoredMessageContent';
@@ -23,6 +24,7 @@ import {
     registerLocalVoiceEngineHarnessHooks,
     sessionRpcWithServerScope,
     setLocalVoiceHttpResponder,
+    waitForLocalVoiceBoundaryEvent,
     warmLocalVoiceEngineHarnessGraph,
 } from '@/voice/local/localVoiceEngine.testHarness';
 
@@ -108,8 +110,21 @@ describe('first success through Local daemon speech and retained transcript', ()
         const screen = await renderScreen(<InjectedAuthProvider credentials={credentials}><Scene /></InjectedAuthProvider>);
         const lifecycle = getVoiceSessionLifecycleController();
         if (!lifecycle) throw new Error('Expected mounted lifecycle');
+        const acquisitions = () => sessionRpcWithServerScope.mock.calls.map(([request]) => request).filter(request =>
+            request.method === SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE_OR_START
+            || request.method === SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE_OR_START_PROVIDER_SAFE_V1);
+        const modelTurns = () => sessionRpcWithServerScope.mock.calls.map(([request]) => request).filter(request =>
+            request.method === SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_START
+            || request.method === SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_START_V2
+            || request.method === SESSION_RPC_METHODS.EXECUTION_RUN_ACTION);
         try {
+            expect(acquisitions()).toHaveLength(0);
+            expect(modelTurns()).toHaveLength(0);
             await act(async () => { await lifecycle.toggle({ serverId: localVoiceHomeId, sessionId: 's1' }); });
+            await waitForLocalVoiceBoundaryEvent('agent-start');
+            expect(acquisitions()).toHaveLength(1);
+            expect(ExecutionRunEnsureOrStartRequestSchema.parse(acquisitions()[0]?.payload).start?.bootstrapMode).toBe('none');
+            expect(modelTurns()).toHaveLength(0);
             expect(getVoiceSessionFirstSuccessAttemptId()).toBeNull();
             const attemptId = getVoiceSessionPresentedAttemptId();
             expect(attemptId).not.toBeNull();
@@ -117,6 +132,7 @@ describe('first success through Local daemon speech and retained transcript', ()
             await act(async () => { await engine.toggleLocalVoiceTurn('s1'); });
             expect(localVoiceSpeechTranscription).toHaveBeenCalledWith(expect.objectContaining({ uploadId: 'local-engine-test-upload' }));
             expect(conversationId).not.toBeNull();
+            expect(acquisitions()).toHaveLength(1);
             const messages = readStoredSessionMessages(storage.getState(), conversationId!);
             const input = messages.find(message => message.kind === 'user-text');
             const reply = messages.find(message => message.kind === 'agent-text' && message.localId === 'stream-1:assistant');
