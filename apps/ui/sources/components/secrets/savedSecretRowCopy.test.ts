@@ -6,6 +6,11 @@ import { connectedServiceProfileKey, qualifiedConnectedAccountPreferenceServiceK
 import { savedSecretUsedByCopy } from './savedSecretRowCopy';
 
 describe('Saved Secret Used by presentation', () => {
+    it('presents Environment usage without disclosing an Environment identity or routing path', () => {
+        expect(savedSecretUsedByCopy({ owner: 'deploymentEnvironment', path: 'deploymentEnvironments.bindings' }))
+            .toEqual({ title: 'Environment', subtitle: '' });
+    });
+
     it('presents the resource identity supplied by the reference owner', () => {
         const copy = savedSecretUsedByCopy({
             owner: 'provider',

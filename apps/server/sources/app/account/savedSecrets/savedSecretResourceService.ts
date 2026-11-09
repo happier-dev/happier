@@ -8,6 +8,7 @@ import { canShareSavedSecretResourceContentV1, describeSavedSecretResourceConten
 import { type AccountSettingsStoredContentEnvelope } from '@happier-dev/protocol/account/settings/accountSettingsStoredContentEnvelope';
 import { acceptsManagedResourceDispositions, readManagedResourceDependenciesInTx } from '@/app/machines/managed/managedRead';
 import { deleteObsoleteSavedSecretInstallationGrantsInTx } from '@/app/deployments/environmentSecretGrantRepository';
+import { readDeploymentBindingSavedSecretRevisionsV1 } from '@happier-dev/protocol/deployments/deploymentBindingPatchV1';
 import { SavedSecretReferenceCensusV1Schema, SavedSecretPromoteReferenceCensusV1Schema, SavedSecretCatalogMutationsV1Schema, SavedSecretPersonalPromotionsV1Schema,
     type SavedSecretReferenceCensusV1, type SavedSecretPromoteReferenceCensusV1, type SavedSecretCatalogMutationsV1,
     type SavedSecretCatalogRevisionsV1, type SavedSecretPersonalPromotionsV1 } from '@happier-dev/protocol/account/settings/savedSecretResourceActionsV1';
@@ -472,55 +473,62 @@ async function isSavedSecretAudienceEligibleInTx(
         }).offerOwnCredential);
 }
 
-async function listAuthorizedAccountIdsForResourceInTx(
+async function listAuthorizedAccountIdsForResourcesInTx(
     tx: Tx,
-    resourceId: string,
+    resourceIds: readonly string[],
 ): Promise<readonly string[]> {
-    const row = await tx.savedSecretResource.findUnique({
-        where: { id: resourceId },
-        select: {
-            ownerAccountId: true,
-            accountGrants: { select: { accountId: true } },
-            teamGrants: {
-                where: ACTIVE_SAVED_SECRET_TEAM_GRANT_WHERE,
-                select: {
-                    team: {
-                        select: {
-                            memberships: {
-                                where: ACTIVE_SAVED_SECRET_PRINCIPAL_MEMBERSHIP_WHERE,
-                                select: { accountId: true, role: true },
+    const accountIds = new Set<string>();
+    for (const ids of portableQueryChunks({ values: [...new Set(resourceIds)], bindingsPerValue: 1 })) {
+        const rows = await tx.savedSecretResource.findMany({
+            where: { id: { in: [...ids] } },
+            select: {
+                ownerAccountId: true,
+                accountGrants: { select: { accountId: true } },
+                teamGrants: {
+                    where: ACTIVE_SAVED_SECRET_TEAM_GRANT_WHERE,
+                    select: {
+                        team: {
+                            select: {
+                                memberships: {
+                                    where: ACTIVE_SAVED_SECRET_PRINCIPAL_MEMBERSHIP_WHERE,
+                                    select: { accountId: true, role: true },
+                                },
+                            },
+                        },
+                    },
+                },
+                groupGrants: {
+                    where: ACTIVE_SAVED_SECRET_GROUP_GRANT_WHERE,
+                    select: {
+                        teamGroup: {
+                            select: {
+                                memberships: {
+                                    where: { teamMembership: ACTIVE_SAVED_SECRET_MEMBERSHIP_WHERE },
+                                    select: { teamMembership: { select: { accountId: true } } },
+                                },
                             },
                         },
                     },
                 },
             },
-            groupGrants: {
-                where: ACTIVE_SAVED_SECRET_GROUP_GRANT_WHERE,
-                select: {
-                    teamGroup: {
-                        select: {
-                            memberships: {
-                                where: { teamMembership: ACTIVE_SAVED_SECRET_MEMBERSHIP_WHERE },
-                                select: { teamMembership: { select: { accountId: true } } },
-                            },
-                        },
-                    },
-                },
-            },
-        },
-    });
-    if (!row) return [];
-    return [...new Set([
-        row.ownerAccountId,
-        ...row.accountGrants.map((grant) => grant.accountId),
-        ...row.teamGrants.flatMap((grant) => grant.team.memberships
-            .filter((member) => {
-                const role = TeamRoleV1Schema.safeParse(member.role);
-                return role.success && isTeamPrincipalRoleV1(role.data);
-            })
-            .map((member) => member.accountId)),
-        ...row.groupGrants.flatMap((grant) => grant.teamGroup.memberships.map((member) => member.teamMembership.accountId)),
-    ])];
+        });
+        for (const row of rows) for (const accountId of [
+            row.ownerAccountId,
+            ...row.accountGrants.map((grant) => grant.accountId),
+            ...row.teamGrants.flatMap((grant) => grant.team.memberships
+                .filter((member) => {
+                    const role = TeamRoleV1Schema.safeParse(member.role);
+                    return role.success && isTeamPrincipalRoleV1(role.data);
+                })
+                .map((member) => member.accountId)),
+            ...row.groupGrants.flatMap((grant) => grant.teamGroup.memberships.map((member) => member.teamMembership.accountId)),
+        ]) accountIds.add(accountId);
+    }
+    return [...accountIds];
+}
+
+async function listAuthorizedAccountIdsForResourceInTx(tx: Tx, resourceId: string): Promise<readonly string[]> {
+    return listAuthorizedAccountIdsForResourcesInTx(tx, [resourceId]);
 }
 
 async function resolveSavedSecretAudienceAccountIdsInTx(
@@ -580,6 +588,20 @@ async function acquireSavedSecretPublicationAccountsInTx(tx: Tx, accountId: stri
     return recheck;
 }
 
+/** Binding delivery and rotation share Account-before-Secret publication admission.
+ * Hold every publisher through capture validation and grant insertion so a
+ * rotation cannot retire a seal before this writer inserts it afterwards. */
+export async function acquireSavedSecretReferencePublicationAccountsInTx(tx: Tx, input: Readonly<{
+    accountId: string;
+    resourceIds: readonly string[];
+    publicationAccountIds: readonly string[];
+}>): Promise<void> {
+    await acquireSavedSecretPublicationAccountsInTx(tx, input.accountId, async () => [
+        ...input.publicationAccountIds,
+        ...await listAuthorizedAccountIdsForResourcesInTx(tx, input.resourceIds),
+    ], 'serializing');
+}
+
 type SavedSecretCreationAudience = Pick<CreateSavedSecretResourceInput, 'accountGrants' | 'teamGrants' | 'groupGrants'> & Readonly<{
     keyEnvelopes?: readonly Readonly<{ recipientAccountId: string }>[];
 }>;
@@ -634,6 +656,14 @@ async function markResourceChangedForAccounts(
         kind: "savedSecretResource",
         entityId: resourceId,
     });
+}
+
+/** Binding lifecycle changes publish only the existing resource identity to its grant audience. */
+export async function publishSavedSecretUsageChangesInTx(tx: Tx, resourceIds: readonly string[]): Promise<void> {
+    for (const resourceId of new Set(resourceIds)) {
+        await markAccountsChanged(tx, { accountIds: await listAuthorizedAccountIdsForResourceInTx(tx, resourceId),
+            kind: 'savedSecretResource', entityId: resourceId });
+    }
 }
 
 function copyBytes(bytes: Uint8Array): Uint8Array<ArrayBuffer> {
@@ -962,7 +992,8 @@ export async function listSavedSecretResourcesForAccountInTx(
     accountId: string,
     authentication?: TeamOperationAuthenticationContext,
 ): Promise<readonly SavedSecretCatalogResultV1[]> {
-    return readSavedSecretResourcesForAccountInTx(tx, accountId, authentication);
+    return (await listSavedSecretResourceMaterialsForAccountInTx(tx, accountId, authentication, undefined, true))
+        .map(resource => resource.entry);
 }
 
 /** Reference validation shares catalog authorization/material policy, but reads only named resources.
@@ -1165,29 +1196,19 @@ export async function admitSavedSecretResourceManagementInTx(tx: Tx, input: Read
 /** Returns authorized ciphertext/plain storage plus only the caller's envelope. */
 async function readDeploymentSavedSecretReferenceStatesInTx(tx: Tx, resourceIds: readonly string[]) {
     const states = new Map<string, 'referenced' | 'unreferenced' | 'unavailable'>();
-    const provider = getDbProviderFromEnv(process.env, 'postgres');
-    for (const ids of portableQueryChunks({ values: [...new Set(resourceIds)], bindingsPerValue: 1 })) {
-        const mysql = provider === 'mysql';
-        const sqlite = provider === 'sqlite';
-        const table = mysql ? '`DeploymentEnvironment`' : '"DeploymentEnvironment"';
-        const column = mysql ? 'e.`referencedSavedSecretRevisions`' : 'e."referencedSavedSecretRevisions"';
-        const deleted = mysql ? 'e.`deletedAt`' : 'e."deletedAt"';
-        const alias = mysql ? '`resourceId`' : '"resourceId"';
-        const array = sqlite ? `json_type(${column}) = 'array'` : mysql ? `JSON_TYPE(${column}) = 'ARRAY'` : `jsonb_typeof(${column}) = 'array'`;
-        const value = sqlite ? "json_extract(r.value, '$.resourceId')" : mysql ? 'r.resourceId' : "r.value ->> 'resourceId'";
-        const items = sqlite ? `json_each(${column}) r` : mysql
-            ? `JSON_TABLE(IF(${array}, ${column}, JSON_ARRAY()), '$[*]' COLUMNS(resourceId LONGTEXT PATH '$.resourceId')) r`
-            : `jsonb_array_elements(CASE WHEN ${array} THEN ${column} ELSE '[]'::jsonb END) r(value)`;
-        const placeholders = ids.map((_, index) => sqlite || mysql ? '?' : `$${index + 1}`).join(', ');
-        // Return only the requested identities, not Environment records or unrelated captures.
-        // A legacy/invalidated opaque document cannot prove absence for any resource.
-        const query = `SELECT DISTINCT ${value} AS ${alias} FROM ${table} e, ${items} WHERE ${deleted} IS NULL AND ${array} AND ${value} IN (${placeholders})
-            UNION ALL SELECT NULL AS ${alias} WHERE EXISTS (SELECT 1 FROM ${table} e WHERE ${deleted} IS NULL AND (${column} IS NULL OR NOT (${array})))`;
-        const rows = await tx.$queryRawUnsafe<Array<{ resourceId: string | null }>>(query, ...ids);
-        const unknown = rows.some(row => row.resourceId === null);
-        const referenced = new Set(rows.flatMap(row => row.resourceId === null ? [] : [row.resourceId]));
-        for (const id of ids) states.set(id, referenced.has(id) ? 'referenced' : unknown ? 'unavailable' : 'unreferenced');
+    if (resourceIds.length === 0) return states;
+    // One metadata sweep for the admitted Account catalog, independent of secret count.
+    // This existing dependency contract reveals only whether a resource is used anywhere.
+    const environments = await tx.deploymentEnvironment.findMany({ where: { deletedAt: null },
+        select: { referencedSavedSecretRevisions: true } });
+    const referenced = new Set<string>();
+    let unknown = false;
+    for (const environment of environments) {
+        const captures = readDeploymentBindingSavedSecretRevisionsV1(environment.referencedSavedSecretRevisions);
+        if (captures === null) unknown = true;
+        else for (const capture of captures) referenced.add(capture.resourceId);
     }
+    for (const id of resourceIds) states.set(id, referenced.has(id) ? 'referenced' : unknown ? 'unavailable' : 'unreferenced');
     return states;
 }
 
@@ -1461,7 +1482,7 @@ export async function setSavedSecretResourceGrantsInTx(
     const recheckAudience = await acquireSavedSecretPublicationAccountsInTx(tx, input.accountId, async () => [
         ...await listAuthorizedAccountIdsForResourceInTx(tx, input.resourceId),
         ...await resolveSavedSecretAudienceAccountIdsInTx(tx, { ownerAccountId: input.accountId, accountIds, teamIds, groupIds }),
-    ]);
+    ], 'serializing');
     if (!await isSavedSecretAudienceEligibleInTx(tx, {
         ownerAccountId: input.accountId,
         accountIds,
@@ -1567,7 +1588,7 @@ export async function repairSavedSecretResourceKeyEnvelopesInTx(
         return { ok: false, error: "invalid_resource" };
     }
     await acquireSavedSecretPublicationAccountsInTx(tx, input.accountId, async () => [input.accountId,
-        ...input.keyEnvelopes.map(envelope => envelope.recipientAccountId)]);
+        ...input.keyEnvelopes.map(envelope => envelope.recipientAccountId)], 'serializing');
     // Acquire the resource-row write lock without advancing the content/audience
     // revision. Concurrent grant/update/delete transactions serialize here, so
     // the eligibility and key checks below belong to this exact revision.
@@ -1653,6 +1674,17 @@ export async function updateSavedSecretResourceInTx(
     tx: Tx,
     input: UpdateSavedSecretResourceInput,
 ): Promise<SavedSecretResourceServiceResult<{ resourceId: string; revision: number }>> {
+    const ownership = await tx.savedSecretResource.findUnique({
+        where: { id: input.resourceId },
+        select: { ownerAccountId: true },
+    });
+    if (!ownership) return { ok: false, error: "resource_not_found" };
+    if (ownership.ownerAccountId !== input.accountId) return { ok: false, error: await refuseSavedSecretNonOwnerInTx(tx, input) };
+    // Existing-resource writers acquire their complete Account publication
+    // cohort before the resource CAS. Serialize here too: no Account lock
+    // upgrade while holding the Secret, and mode/key reads follow admission.
+    const recheckAudience = await acquireSavedSecretPublicationAccountsInTx(tx, input.accountId,
+        () => listAuthorizedAccountIdsForResourceInTx(tx, input.resourceId), 'serializing');
     const resource = await tx.savedSecretResource.findUnique({
         where: { id: input.resourceId },
         select: { ownerAccountId: true, encryptionMode: true, revision: true,
@@ -1711,8 +1743,6 @@ export async function updateSavedSecretResourceInTx(
     if (envelopes.length > 0 && !(converting && nextMode === "e2ee")) {
         return { ok: false, error: "invalid_resource" };
     }
-    const recheckAudience = await acquireSavedSecretPublicationAccountsInTx(tx, input.accountId,
-        () => listAuthorizedAccountIdsForResourceInTx(tx, input.resourceId));
     const authorizedAccountIds = await listAuthorizedAccountIdsForResourceInTx(tx, input.resourceId);
     if (converting && nextMode === "e2ee") {
         if (accountMode !== "e2ee") return { ok: false, error: "recipient_mode_unsupported" };

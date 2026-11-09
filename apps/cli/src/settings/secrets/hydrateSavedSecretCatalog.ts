@@ -435,6 +435,7 @@ export async function captureSavedSecretSourcePreparationForOperation(input: Rea
   credentials: StoredCredentials;
   expectedScopeKey: string;
   operationContext?: SavedSecretOperationContextV1;
+  includeReferenceCensus?: boolean;
   signal?: AbortSignal;
 }>): Promise<SavedSecretSourcePreparationV1> {
   const context = input.operationContext;
@@ -483,7 +484,7 @@ export async function captureSavedSecretSourcePreparationForOperation(input: Rea
     store.assertCurrent();
     if (!await isCurrent()) throw new Error('saved_secret_account_lifetime_changed');
     const resources = await readSavedSecretCatalogForOperation({ expectedScopeKey: input.expectedScopeKey,
-      refreshCatalog: true, signal: input.signal, operationContext: context });
+      refreshCatalog: true, signal: input.signal, operationContext: context, includeReferenceCensus: input.includeReferenceCensus });
     if (!await isCurrent() || !readSnapshot()) throw new Error('saved_secret_account_lifetime_changed');
     const artifacts = [...artifactsById.values()].map(artifact => {
       if (!artifact.revision || !artifact.access) throw new Error('saved_secret_artifact_census_unavailable');

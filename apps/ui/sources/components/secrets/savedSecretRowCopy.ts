@@ -19,6 +19,7 @@ function savedSecretUsedByKindLabel(owner: AccountSettingsSavedSecretReference['
         case 'remoteHost': return t('secretsSettings.usedByKindRemoteHost');
         case 'notificationChannel': return t('secretsSettings.usedByKindNotificationChannel');
         case 'registrySource': return t('secretsSettings.usedByKindRegistrySource');
+        case 'deploymentEnvironment': return t('projects.deployments.review.environment');
         case 'unknown': return t('common.unknown');
     }
 }

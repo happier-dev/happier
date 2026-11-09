@@ -63,6 +63,9 @@ The ordinary Automation Event authoring route carries the watched `subject`
 from `setupInput.subject` into the native renderer's `initialInput.subject`;
 observer selection remains independent. Opening setup does not enroll a check
 or execute a service effect.
+Reopening a saved Event passes its existing `sourceConfig` as the same renderer's
+`initialInput`. The plugin interprets that configuration and returns setup Action
+input through the existing form owner; the host does not assume those shapes match.
 
 ## Cold Bot template declarations (unreleased 0.3)
 
@@ -143,9 +146,14 @@ the distribution for packaging, without making those contributions available.
 Enabling both scopes restores the contributions. Disablement retains plugin data
 and credentials, and already admitted work finishes at its natural boundary.
 
-A failed Account enablement read withdraws new admission with
-`plugin_account_execution_unavailable`. The existing successful Account-feed
-reconnect re-admits unavailable plugins even when no availability row changed;
+A failed Account enablement census withdraws new admission with
+`plugin_account_census_failed`, preserving the code-only failure cause, phase,
+HTTP status and available Request ID in the catalog diagnostic and file log.
+An unclassified read failure is not an authoritative Account execution refusal.
+The daemon does not reuse last-good Account enablement for new admission;
+already admitted work still finishes at its natural boundary. The next relevant
+Account availability signal or successful Account-feed reconnect re-admits all
+plugins withdrawn by that census, even when no availability row changed;
 ordinary unchanged live pages do not trigger reads. Admission compares the full
 bundled enablement result and republishes only changed plugins. Session creation
 preserves the catalog's typed refusal while Account execution is unavailable.
@@ -864,7 +872,11 @@ result field or an instruction to undo an existing redaction.
 Secret references, using the existing `secrets.list` read policy. Both hosts
 reuse their existing selected-secret Used-by callback and the Protocol
 `listAccountSettingsSavedSecretReferences` census over the caller's Settings
-and reference catalogs. It computes the census at most once and returns only
+and reference catalogs. The shared projection also includes a value-free
+Environment marker from the Saved Secret catalog's binding census; it reveals
+neither private Environment identities nor binding names. Incomplete retained
+capture metadata leaves coverage unknown unless a known capture proves usage.
+It computes the census at most once and returns only
 `{ references }`: owner/path/referrer metadata, an empty array for unused, or
 `null` when coverage is unavailable. No operand selects another Account, and
 recipient visibility never exposes the resource owner's reference inventory.
@@ -1166,9 +1178,15 @@ code are member-readable; registry state, credentials and configuration remain
 in the custodian's private Happier home. Provisioning removes the selected
 member's former plugin-ancestor ACL entries through the existing `pathTraversal`
 effect with `state: 'absent'`, preserving other ACL entries and the mask.
-Personal installations retain private plugin code and never grant home traversal
-for plugins. A separate-user member requires an external installation root to
-read that code; there is no home-ACL fallback or automatic relocation flow.
+In 0.3 development source, personal Linux separate-user setup creates a code-only
+tools directory under the Machine state root and records its location in the
+private `install-layout.json`. The next daemon start selects that location and
+re-stages reviewed current and available rollback generations through the existing
+generation store. Registry authority, settings, storage and secrets stay private;
+the CLI payload location is unchanged. There is no home-ACL fallback. A missing
+conversion offers managers the existing Machine Security setup and restart route;
+Use requesters receive guidance to ask their manager. macOS and Windows retain
+their existing unavailable behavior.
 Traversal for an explicitly admitted shared Workspace remains part of that
 Workspace's reviewed sharing effects.
 
@@ -4518,10 +4536,12 @@ by substituting the executable occurrence. The raw occurrence remains the
 registration and Action currentness authority; the digest is only sharing identity.
 
 In 0.3 development source, that same scope advertises optional
-`acquireExecutionBound` for values that must share only on the exact admitted
-execution origin. It uses the existing value owner for the Account-admitted
-plugin generation, qualified by the full host-held origin, including source
-custody or materialization. Renderer and client registration occurrences may
+`acquireExecutionBound` for values that must share only within one admitted
+execution authority. Within an Account-admitted plugin generation that authority
+is the generation itself: a mount placed through a Session's Machine projection
+and an Action resolved from the Account catalog find the same value. Without an
+admitted generation, sharing is qualified by the full host-held origin, including
+source custody or materialization. Renderer and client registration occurrences may
 differ; sibling Artifacts share executable bindings through that admitted plugin
 generation even when both their occurrence ids and byte digests differ. Without
 an admitted plugin generation, sharing stays confined to the raw occurrence. A facade
@@ -6344,6 +6364,10 @@ the native data hook does not itself append pages or advance a viewer's cursor.
 
 The unreleased Machine Services list uses the same host Resource transport with
 `{ hostRead: 'machines.services.list', input: { serverId, machineId } }`.
+The input may narrow demand with `environmentId`, or with `environmentId` and
+`composeService` for one Compose service. The daemon filters admitted handles
+before projecting rows, and the same selector scopes invalidations. The full
+Machine Services view omits both selectors.
 The original list Action—not the logs Action—admits READ and OPEN and applies
 the existing requester/Environment disclosure rules. Native observation publishes
 only semantic changes to exact Machine rows; unchanged observations do not reread
@@ -6354,7 +6378,7 @@ The invalidation-only transport forwards a digest of the changed producer fact;
 the client then performs one admitted list read for the current bytes. Resource
 reads project retained accounting, while an explicit list Action samples the
 visible services through their native accounting readers. Equal observations
-publish no change; hidden demand reads nothing. A Machine-wide invalidation can
+publish no change; hidden demand reads nothing. An unscoped Machine-wide invalidation can
 wake a reader whose current Environment access hides the changed row; the
 admitted list read still applies that reader's disclosure rules.
 A failed Environment-access read remains a failure, not a successful empty

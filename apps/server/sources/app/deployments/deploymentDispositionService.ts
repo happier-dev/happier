@@ -17,6 +17,8 @@ import { withdrawEnvironmentSecretGrantsInTx } from './environmentSecretGrantRep
 import { portableQueryChunks } from '@/storage/portableQueryChunks';
 import { readDeploymentTeardownSubjectsInTx } from './deploymentTeardownSubjects';
 import { loadDeploymentTargetRowsInTx, projectDeploymentTargetHeader } from './deploymentTargetLinkService';
+import { readDeploymentBindingSavedSecretRevisionsV1 } from '@happier-dev/protocol/deployments/deploymentBindingPatchV1';
+import { publishSavedSecretUsageChangesInTx } from '@/app/account/savedSecrets/savedSecretResourceService';
 
 type DispositionInput = Pick<DeploymentEnvironmentDeleteInputV1,
     'serverId' | 'environmentId' | 'expectedRevision' | 'requestKey' | 'detachKeepRunning'>;
@@ -204,6 +206,8 @@ export async function removeAdmittedDeploymentEnvironmentInTx(tx: Tx, input: Rea
     const changed = await tx.deploymentEnvironment.updateMany({ where: { id: environment.id, revision: environment.revision },
         data: { deletedAt: now, runtimeTargetLinkId: null, revision: { increment: 1 } } });
     if (changed.count !== 1) throw new Error('Locked deployment Environment changed during deletion');
+    await publishSavedSecretUsageChangesInTx(tx,
+        (readDeploymentBindingSavedSecretRevisionsV1(environment.referencedSavedSecretRevisions) ?? []).map(capture => capture.resourceId));
     const revision = environment.revision + 1;
     await publishDeploymentChangesInTx(tx, input, environment.id, revision, undefined, true, input.knownAccountIds);
     return revision;

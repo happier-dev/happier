@@ -21,6 +21,9 @@ import { observeNotificationChannelCatalog } from '@/sync/engine/settings/notifi
 import { observePromptLibraryCatalog } from '@/sync/engine/settings/promptLibraryCatalogEngine';
 import { observeRemoteHostCatalog } from '@/sync/engine/settings/remoteHostCatalogEngine';
 import { observeConnectedMetadataCatalog } from '@/sync/engine/settings/connectedMetadataCatalogEngine';
+import { observeSavedSecretCatalog } from '@/sync/engine/settings/savedSecretCatalogEngine';
+import { readSavedSecretCatalogEntry, subscribeSavedSecretCatalogSnapshots } from './savedSecretCatalogSnapshot';
+import { projectSavedSecretUsedByV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 
 /**
  * While a surface shows the census, each catalog's own loader keeps its input present: a cold Account
@@ -29,12 +32,13 @@ import { observeConnectedMetadataCatalog } from '@/sync/engine/settings/connecte
 export function observeSavedSecretUsedBySources(scope: ServerAccountScope): () => void {
     const releases = [observeProfileCatalog(scope), observeProviderCatalog(scope), observeMcpServerCatalog(scope), observeAcpCatalog(scope),
         observeConnectedAccountCatalog(scope, 'configurations'), observeConnectedAccountCatalog(scope, 'purposes'),
-        observeNotificationChannelCatalog(scope), observePromptLibraryCatalog(scope), observeRemoteHostCatalog(scope), observeConnectedMetadataCatalog(scope)];
+        observeNotificationChannelCatalog(scope), observePromptLibraryCatalog(scope), observeRemoteHostCatalog(scope), observeConnectedMetadataCatalog(scope),
+        observeSavedSecretCatalog(scope, { includeMaterial: false })];
     return () => { for (const release of releases) release(); };
 }
 
 /** Retained census inputs only. This read never observes/loads a catalog. */
-export function readSavedSecretUsedBySources(scope: ServerAccountScope | null) {
+export function readSavedSecretUsedBySources(scope: ServerAccountScope | null, ref?: string | null) {
     const state = getStorage().getState();
     return {
         settingsScope: state.settingsScope, settings: state.savedSecretReferenceSettings,
@@ -47,20 +51,25 @@ export function readSavedSecretUsedBySources(scope: ServerAccountScope | null) {
         notifications: getNotificationChannelCatalogValue(scope),
         registry: getPromptLibraryCatalogValue(scope, 'registry-sources'),
         remoteHosts: getRemoteHostCatalogSnapshot(scope),
+        deploymentReferenceState: ref ? readSavedSecretCatalogEntry(scope, ref)?.deploymentReferenceState : undefined,
     };
 }
+
+export type SavedSecretUsedByProjection =
+    | Readonly<{ status: 'loading' | 'unavailable'; references: null }>
+    | Readonly<{ status: 'ready'; references: readonly AccountSettingsSavedSecretReference[] }>;
 
 /** Metadata coverage belongs to each retained catalog; missing coverage never proves unused. */
 export function projectSavedSecretUsedBy(scope: ServerAccountScope | null, ref: string | null,
     source: ReturnType<typeof readSavedSecretUsedBySources>,
-): readonly AccountSettingsSavedSecretReference[] | null {
+): SavedSecretUsedByProjection {
     if (!scope || !ref || !areServerAccountScopesEqual(scope, source.settingsScope)
-        || source.profileAccountId !== scope.accountId) return null;
+        || source.profileAccountId !== scope.accountId) return { status: 'unavailable', references: null };
     const { profiles, providers, mcp, acp, configurations, purposes, notifications, registry, remoteHosts } = source;
     if (!profiles?.dataComplete || profiles.catalog.status !== 'ready'
         || providers?.catalog.status !== 'ready' || mcp.status !== 'ready' || acp?.catalog.status !== 'ready'
         || configurations.status !== 'ready' || purposes.status !== 'ready' || notifications.status !== 'ready'
-        || registry.status !== 'ready' || remoteHosts?.catalog.status !== 'ready') return null;
+        || registry.status !== 'ready' || remoteHosts?.catalog.status !== 'ready') return { status: 'loading', references: null };
     const catalogs: SavedSecretReferenceCatalogsV1 = {
         profileRecords: profiles.catalog.records.map(row => row.record),
         profileControl: profiles.catalog.control?.record ?? null, artifactsById: profiles.artifactsById,
@@ -70,18 +79,22 @@ export function projectSavedSecretUsedBy(scope: ServerAccountScope | null, ref: 
         registrySources: registry.value, remoteHostRecords: remoteHosts.data,
         connectedAccountCredentials: projectConnectedAccountCredentialReferenceSources(source.connectedAccounts, source.connectedAccountLabels),
     };
-    try { return listAccountSettingsSavedSecretReferences(source.settings, ref, catalogs); }
-    catch { return null; } // The census rejects incomplete/invalid carriers; display stays unknown.
+    try {
+        const references = projectSavedSecretUsedByV1({ ref, deploymentReferenceState: source.deploymentReferenceState,
+            references: listAccountSettingsSavedSecretReferences(source.settings, ref, catalogs) });
+        return references === null ? { status: 'unavailable', references: null } : { status: 'ready', references };
+    } catch { return { status: 'unavailable', references: null }; } // Invalid carriers settle unknown, rather than retaining an unused claim.
 }
 
 export function readSavedSecretUsedBy(scope: ServerAccountScope, ref: string): readonly AccountSettingsSavedSecretReference[] | null {
-    return projectSavedSecretUsedBy(scope, ref, readSavedSecretUsedBySources(scope));
+    return projectSavedSecretUsedBy(scope, ref, readSavedSecretUsedBySources(scope, ref)).references;
 }
 
-export function subscribeSavedSecretUsedBySources(listener: () => void): () => void {
+export function subscribeSavedSecretUsedBySources(listener: () => void, scope?: ServerAccountScope | null, ref?: string | null): () => void {
     const subscriptions = [getStorage().subscribe(listener, { savedSecretReferenceSettings: true, settingsScope: true, profile: ['id', 'connectedAccountsV4'] }), subscribeProfileCatalogSnapshots(listener),
         subscribeProviderCatalogSnapshots(listener), subscribeMcpServerCatalogSnapshots(listener), subscribeAcpCatalogSnapshots(listener),
         subscribeConnectedAccountCatalogSnapshots(listener), subscribeNotificationChannelCatalogSnapshots(listener),
-        subscribePromptLibraryCatalogSnapshots(listener), subscribeRemoteHostCatalogSnapshots(listener), subscribeConnectedMetadataCatalog(listener)];
+        subscribePromptLibraryCatalogSnapshots(listener), subscribeRemoteHostCatalogSnapshots(listener), subscribeConnectedMetadataCatalog(listener),
+        subscribeSavedSecretCatalogSnapshots(listener, scope && ref ? { scope, refs: [ref] } : undefined)];
     return () => { for (const unsubscribe of subscriptions) unsubscribe(); };
 }

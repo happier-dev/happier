@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { createPersonalSavedSecretActionExecuteV1, createSavedSecretVaultLinkDraftV1, type PersonalSavedSecretActionPortV1, type SavedSecretVaultQueryV1, type SavedSecretVaultTargetV1 } from '@happier-dev/protocol/account/settings/personalSavedSecretActionsV1';
 import { personalSavedSecretResourceMutationActionIdV1 } from '@happier-dev/protocol/account/settings/personalSavedSecretActionIdsV1';
-import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
+import { formatSharedSavedSecretRefV1, projectSavedSecretUsedByV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import { prepareSavedSecretResourceUpdateContentV1, sealSavedSecretResourceStoredContentV1, type SavedSecretExternalSourceV1 } from '@happier-dev/protocol/account/settings/savedSecretResourceContentV1';
 import { SharedSavedSecretMutationOutputV1Schema, SharedSavedSecretDeleteOutputV1Schema, SharedSavedSecretUpdateInputV1Schema, SharedSavedSecretPromoteOutputV1Schema } from '@happier-dev/protocol/account/settings/savedSecretResourceActionsV1';
 import { admitSavedSecretExternalSourceAudienceV1, admitSavedSecretResourceAudienceV1, listAccountSettingsSavedSecretReferences } from '@happier-dev/protocol/account/settings/savedSecretMutationOwner';
@@ -159,10 +159,10 @@ export function createCliPersonalSavedSecretActionExecute(params: CliOwnedSavedS
 }>): NonNullable<ActionExecutorDeps['personalSavedSecretActionExecute']> {
     return async ({ actionId, input, context }) => withOwnedSavedSecretOperation(params, context.signal, async owner => {
         const { accountId, scopeKey, assertCurrent, read, findOwned, materializer } = owner;
-        const captureReferences = async (secretId: string) => {
+        const captureReferences = async (secretId: string, includeReferenceCensus = false) => {
             const { captureSavedSecretSourcePreparationForOperation } = await import('./hydrateSavedSecretCatalog');
             const captured = await captureSavedSecretSourcePreparationForOperation({ credentials: params.credentials,
-                expectedScopeKey: scopeKey, operationContext: params.operationContext, signal: context.signal });
+                expectedScopeKey: scopeKey, operationContext: params.operationContext, signal: context.signal, includeReferenceCensus });
             const profile = await fetchAccountProfile({ token: params.credentials.token, signal: context.signal });
             if (profile.id !== accountId) refusal('saved_secret_account_lifetime_changed');
             const response = await axios.get<unknown>(`${resolveServerHttpBaseUrl()}${CONNECTED_PRESENTATION_ROWS_ROUTE_V1}`, {
@@ -243,7 +243,11 @@ export function createCliPersonalSavedSecretActionExecute(params: CliOwnedSavedS
             return { kind: 'external', contribution: target.contribution, account: result.account, reference: result.reference };
         };
         const execute = createPersonalSavedSecretActionExecuteV1({
-            usedBy: async secretId => (await captureReferences(secretId)).references,
+            usedBy: async secretId => {
+                const { captured, references } = await captureReferences(secretId, true);
+                return projectSavedSecretUsedByV1({ ref: formatSharedSavedSecretRefV1(secretId), references,
+                    deploymentReferenceState: captured.resources.savedSecretResources?.find(resource => resource.resourceId === secretId)?.deploymentReferenceState });
+            },
             sources: () => params.operationContext?.secretSources?.list() ?? [],
             list: async () => {
                 const resources = await read();

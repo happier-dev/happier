@@ -12,17 +12,19 @@ export function useSavedSecretUsedBy(scope: ServerAccountScope | null, ref: stri
     const serverId = scope?.serverId;
     const accountId = scope?.accountId;
     const captured = React.useMemo(() => serverId && accountId ? { serverId, accountId } : null, [serverId, accountId]);
-    const readShallow = useShallow(() => readSavedSecretUsedBySources(captured));
+    const readShallow = useShallow(() => readSavedSecretUsedBySources(captured, ref));
     const active = presented && Boolean(ref && captured);
     const read = React.useCallback(() => active ? readShallow(undefined) : null, [active, readShallow]);
-    const source = React.useSyncExternalStore(active ? subscribeSavedSecretUsedBySources : noSubscription, read, read);
+    const subscribe = React.useCallback((listener: () => void) => subscribeSavedSecretUsedBySources(listener, captured, ref), [captured, ref]);
+    const source = React.useSyncExternalStore(active ? subscribe : noSubscription, read, read);
     // The census scans referrer slots, once per selected secret or actual source change, never per render.
     const current = React.useMemo(() => source ? projectSavedSecretUsedBy(captured, ref, source) : null, [captured, ref, source]);
     // A catalog revalidating drops coverage for a moment; the same secret keeps its last settled census.
     const key = `${serverId}\n${accountId}\n${ref}`;
     const settled = React.useRef<Readonly<{ key: string; value: readonly AccountSettingsSavedSecretReference[] }> | null>(null);
-    if (current) settled.current = { key, value: current };
-    return current ?? (settled.current?.key === key ? settled.current.value : null);
+    if (current?.status === 'ready') settled.current = { key, value: current.references };
+    else if (current?.status === 'unavailable') settled.current = null;
+    return current?.references ?? (settled.current?.key === key ? settled.current.value : null);
 }
 const noSubscription = () => () => {};
 

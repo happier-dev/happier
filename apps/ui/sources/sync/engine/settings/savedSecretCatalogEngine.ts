@@ -9,7 +9,7 @@ import type { SavedSecretLegacyImportResult } from '@/sync/domains/settings/save
 import type { SavedSecretCatalogEntryV1 } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { sync } from '@/sync/sync';
-import { isArtifactOnlyHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
+import { homeAccountChangeAffectsSavedSecretCatalog } from '@/sync/runtime/orchestration/changesPlanner';
 import {
     applySavedSecretCatalogFailure,
     applySavedSecretCatalogPage,
@@ -90,7 +90,7 @@ const loader = createScopedSnapshotLoader<Target>({
                                 contents: new Map(),
                             }, observedAt: Date.now() };
                         }
-                        const outcome = await readSavedSecretCatalogInContext(captured);
+                        const outcome = await readSavedSecretCatalogInContext(captured, context.signal, { includeReferenceCensus: true });
                         if (!outcome.ok) return { ok: false, error: {
                             kind: outcome.failure.kind === 'conflict' || outcome.failure.kind === 'outcome_unknown'
                                 ? 'unknown' : outcome.failure.kind,
@@ -169,7 +169,7 @@ const loader = createScopedSnapshotLoader<Target>({
     // wake Profile bodies, but do not change Saved Secrets or their source.
     // Coarse secondary wakes retain revalidation when no exact domains exist.
     matchesWake: event => event.savedSecretResourcesRefreshStarted !== true
-        && !isArtifactOnlyHomeAccountChange(event) && event.profileCatalogAffects !== false,
+        && homeAccountChangeAffectsSavedSecretCatalog(event),
 });
 
 export function observeSavedSecretCatalog(scope: ServerAccountScope, options?: Readonly<{ includeMaterial?: boolean }>): () => void {

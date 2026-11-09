@@ -19,7 +19,6 @@ import { AccountProfileSchema } from '@happier-dev/protocol/account/profile';
 import { PROFILE_ROWS_ROUTE_V1, PROFILE_REFERENCE_GUARD_ROUTE_V1 } from '@happier-dev/protocol/profiles/profileRecordV1';
 import { PROFILE_TRANSFER_ROUTE_V1 } from '@happier-dev/protocol/profiles/profileTransferV1';
 import { CONNECTED_PRESENTATION_ROWS_ROUTE_V1 } from '@happier-dev/protocol/connect/connectedAccountPresentationRowsV1';
-
 import { connectedEntitySubjectKeyV1 } from '@happier-dev/protocol/connect/connectedAccountPresentationSchemasV1';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { ApprovalRequestV2Schema, type ApprovalRequest } from '@happier-dev/protocol/approvals/approvalRequestV1';
@@ -161,7 +160,7 @@ describe('personal Saved Secret key rotation', () => {
             expect(JSON.stringify({ response, result, history, observations, deliveredMessages })).not.toContain(material);
         } finally { await client.close(); await server.close(); await daemon.close(); resetActiveAccountSettingsSnapshotForTests(); }
     });
-    it('describes Connected Account referrers through the same read-only census as delete', async () => {
+    it('reads value-free Used-by through the agent Action in the caller Account only, sharing the list/delete census', async () => {
         const accountId = 'secret-owner';
         const token = `e30.${Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url')}.signature`;
         const credentials = { token, encryption: null };
@@ -174,17 +173,22 @@ describe('personal Saved Secret key rotation', () => {
             storedContent: { t: 'plain', v: { v: 1, name: 'Key', kind: 'apiKey', value: 'dummy-test-key' } },
             entry: SavedSecretCatalogEntryV1Schema.parse({ ref: formatSharedSavedSecretRefV1('one'), source: 'shared_resource',
                 relationship: 'owner', ownerAccountId: accountId, name: 'Key', kind: 'apiKey', revision: 1, materialStatus: 'ready',
+                deploymentReferenceState: 'referenced',
                 capabilities: { use: true, rename: true, rotate: true, manageAccess: true, delete: true } }) };
         vi.stubGlobal('fetch', vi.fn<typeof fetch>(async () => Response.json(FeaturesResponseSchema.parse({ features: {}, capabilities: {} }))));
-        vi.mocked(axios.get).mockImplementation(async rawUrl => {
+        const otherToken = `e30.${Buffer.from(JSON.stringify({ sub: 'other-account' })).toString('base64url')}.signature`;
+        vi.mocked(axios.get).mockImplementation(async (rawUrl, config) => {
             const path = new URL(String(rawUrl)).pathname;
+            const otherAccount = config?.headers?.Authorization === `Bearer ${otherToken}`;
             if (path === '/v1/account/profile') return { status: 200, data: AccountProfileSchema.parse({ id: accountId,
                 connectedAccountsV4: [{ ref: account, displayName: 'Provider name', status: 'connected', authenticationModeId: 'api-key',
                     revisionSemantics: 'revisioned', credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS',
-                    configurationReady: true, configurationRevision: null, savedSecretResourceIds: ['one'] }] }) };
+                    configurationReady: true, configurationRevision: null, savedSecretResourceIds: ['one'] }],
+                ...(otherAccount ? { id: 'other-account', connectedAccountsV4: [] } : {}) }) };
+            if (path === CONNECTED_PRESENTATION_ROWS_ROUTE_V1 && otherAccount) return { status: 200, data: { status: 'absent' } };
             if (path === CONNECTED_PRESENTATION_ROWS_ROUTE_V1) return { status: 200, data: { status: 'present', revision: 1,
                 content: { t: 'plain', v: { v: 1, entries: [{ v: 1, subject: { kind: 'account', account }, label: 'Work credential' }] } } } };
-            if (path === '/v1/account/saved-secrets/resources/materials') return { status: 200, data: { resources: [resource] } };
+            if (path === '/v1/account/saved-secrets/resources/materials') return { status: 200, data: { resources: otherAccount ? [] : [resource] } };
             if (path === '/v1/account/encryption') return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
             if (path === '/v1/account/encryption/currentness') return { status: 200, data: { mode: 'plain', version: 1,
                 settingsVersion: 0, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1,
@@ -200,6 +204,40 @@ describe('personal Saved Secret key rotation', () => {
         });
         const execute = createCliPersonalSavedSecretActionExecute({ credentials, operationContext,
             home: async () => { throw new Error('Describe must not mutate'); } });
+        const executor = createActionExecutor({ personalSavedSecretActionExecute: execute });
+        const ref = formatSharedSavedSecretRefV1('one');
+        const agent = { surface: 'agent', authority: 'account_automation' } as const;
+        const result = await executor.execute('secrets.usedBy', { ref }, agent);
+        expect(result).toMatchObject({ ok: true, result: { references: [{ owner: 'connectedAccountCredential',
+            referrer: { id: connectedEntitySubjectKeyV1({ kind: 'account', account }), displayName: 'Work credential' } },
+            { owner: 'deploymentEnvironment', path: 'deploymentEnvironments.bindings' }] } });
+        const censusReads = vi.mocked(axios.get).mock.calls.filter(([url, config]) =>
+            new URL(String(url)).pathname === '/v1/account/saved-secrets/resources/materials'
+            && config?.params?.includeReferenceCensus === true);
+        expect(censusReads).toHaveLength(1);
+        expect(JSON.stringify(result)).not.toContain('dummy-test-key');
+        expect(vi.mocked(axios.get).mock.calls.filter(([url]) => new URL(String(url)).pathname === '/v1/account/profile')).toHaveLength(1);
+        // An active A snapshot must never supply B's census, even for A's exact reference.
+        const activeRawSettings = { secretBindingsByProfileId: { 'private-profile-a': { API_KEY: ref } } };
+        setActiveAccountSettingsSnapshot({ ...operationContext.readSnapshot()!,
+            settings: AccountSettingsSchema.parse(activeRawSettings), rawSettings: activeRawSettings });
+        try {
+            const otherCredentials = { token: otherToken, encryption: null };
+            const otherContext = createInvocationSavedSecretOperationContextV1({ credentials: otherCredentials,
+                serverHttpBaseUrl: 'https://describe.example.test', isCurrent: async () => true,
+                snapshot: { source: 'network', settings: AccountSettingsSchema.parse({}), rawSettings: {}, settingsVersion: 0,
+                    loadedAtMs: 1, scopeKey: resolveAccountSettingsScopeKeyForToken(otherToken), settingsSecretsReadKeys: [] } });
+            const otherExecutor = createActionExecutor({ personalSavedSecretActionExecute: createCliPersonalSavedSecretActionExecute({
+                credentials: otherCredentials, operationContext: otherContext,
+                home: async () => { throw new Error('Used-by must not mutate'); } }) });
+            await expect(otherExecutor.execute('secrets.usedBy', { ref }, agent)).resolves.toEqual({ ok: true, result: { references: null } });
+            await expect(otherExecutor.execute('secrets.usedBy', { ref, accountId }, agent))
+                .resolves.toMatchObject({ ok: false, errorCode: 'invalid_parameters' });
+        } finally { resetActiveAccountSettingsSnapshotForTests(); }
+        resource.entry.deploymentReferenceState = 'unavailable';
+        await expect(executor.execute('secrets.usedBy', { ref }, agent)).resolves.toEqual({ ok: true, result: { references: null } });
+        resource.entry.deploymentReferenceState = 'unreferenced';
+        vi.mocked(axios.get).mockClear();
         await expect(execute({ actionId: 'secrets.list', input: { secretId: 'one' }, context: { surface: 'cli' } }))
             .resolves.toMatchObject({ secrets: [{ secretId: 'one', name: 'Key' }], usedBy: [{ owner: 'connectedAccountCredential',
                 referrer: { kind: 'connectedAccountCredential', id: connectedEntitySubjectKeyV1({ kind: 'account', account }), displayName: 'Work credential' } }] });

@@ -20,6 +20,9 @@ import { applyNotificationChannelCatalogSnapshot } from '@/sync/store/settings/n
 import { applyPromptLibraryCatalogSnapshot } from '@/sync/store/settings/promptLibraryCatalogSnapshot';
 import { applyRemoteHostCatalogSnapshot, getRemoteHostCatalogSnapshot, invalidateRemoteHostCatalog } from '@/sync/store/settings/remoteHostCatalogSnapshot';
 import { applyConnectedMetadataCatalogSnapshot } from '@/sync/store/settings/connectedMetadataCatalogSnapshot';
+import { applySavedSecretCatalogPage } from '@/sync/store/settings/savedSecretCatalogSnapshot';
+import { SavedSecretCatalogEntryV1Schema } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
+import { readSavedSecretUsedBy } from '@/sync/store/settings/savedSecretUsedBy';
 
 installSettingsViewCommonModuleMocks({ storage: 'real' });
 afterEach(async () => { await standardCleanup(); vi.restoreAllMocks(); resetRuntimeFetch(); });
@@ -37,6 +40,10 @@ it('opens one secret with one real census, zero fetches and no rereads on render
     const home = heldAccount();
     const scope = home.scope;
     const ref = census.formatSharedSavedSecretRefV1('selected');
+    applySavedSecretCatalogPage({ scope, observedAt: 1, materializedSecrets: [], entries: ['selected', 'other'].map(id =>
+        SavedSecretCatalogEntryV1Schema.parse({ ref: census.formatSharedSavedSecretRefV1(id), source: 'shared_resource',
+            relationship: 'owner', name: 'Key', kind: 'apiKey', revision: 1, materialStatus: 'ready',
+            deploymentReferenceState: 'unreferenced', capabilities: { use: true, rename: true, rotate: true, manageAccess: true, delete: true } })) });
     const template = buildCustomProviderTemplate({ ...createCustomProviderDraft('openai-chat'),
         name: 'Northwind', baseUrl: 'https://models.example/v1', requiresApiKey: true });
     const providers = ProviderConnectionsCatalogV1Schema.parse({ ...DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1,
@@ -87,11 +94,33 @@ it('opens one secret with one real census, zero fetches and no rereads on render
     expect(hook.getCurrent()).toEqual([]);
     expect(reads).toHaveBeenCalledTimes(2);
     expect(home.request.mock.calls).toHaveLength(requestsBefore);
+    const environmentEntry = SavedSecretCatalogEntryV1Schema.parse({ ref, source: 'shared_resource', relationship: 'owner',
+        name: 'Key', kind: 'apiKey', revision: 1, materialStatus: 'ready', deploymentReferenceState: 'referenced',
+        capabilities: { use: true, rename: true, rotate: true, manageAccess: true, delete: true } });
+    await act(async () => applySavedSecretCatalogPage({ scope, observedAt: 2, materializedSecrets: [], entries: [environmentEntry] }));
+    expect(hook.getCurrent()).toEqual([{ owner: 'deploymentEnvironment', path: 'deploymentEnvironments.bindings' }]);
+    expect(readSavedSecretUsedBy(scope, ref)).toEqual(hook.getCurrent());
+    const readsBeforeSiblingSecret = reads.mock.calls.length;
+    await act(async () => applySavedSecretCatalogPage({ scope, observedAt: 3, materializedSecrets: [], entries: [
+        environmentEntry, { ...environmentEntry, ref: census.formatSharedSavedSecretRefV1('other'), name: 'Renamed sibling' },
+    ] }));
+    expect(reads).toHaveBeenCalledTimes(readsBeforeSiblingSecret);
+    await act(async () => applySavedSecretCatalogPage({ scope, observedAt: 4, materializedSecrets: [], entries: [
+        { ...environmentEntry, deploymentReferenceState: 'unreferenced' },
+    ] }));
+    expect(hook.getCurrent()).toEqual([]);
+    await act(async () => applySavedSecretCatalogPage({ scope, observedAt: 5, materializedSecrets: [], entries: [
+        { ...environmentEntry, deploymentReferenceState: 'unavailable' },
+        { ...environmentEntry, ref: census.formatSharedSavedSecretRefV1('other'), deploymentReferenceState: 'unreferenced' },
+    ] }));
+    expect(readSavedSecretUsedBy(scope, ref)).toBeNull();
+    expect(hook.getCurrent()).toBeNull();
+    const readsBeforeOther = reads.mock.calls.length;
     const otherRef = census.formatSharedSavedSecretRefV1('other');
     await hook.rerender({ selected: otherRef });
     expect(hook.getCurrent()).toEqual([]);
-    expect(reads).toHaveBeenCalledTimes(3);
-    expect(reads.mock.calls[2]?.[1]).toBe(otherRef);
+    expect(reads).toHaveBeenCalledTimes(readsBeforeOther + 1);
+    expect(reads.mock.calls.at(-1)?.[1]).toBe(otherRef);
     const account = { service: { pluginId: 'happier.agent.claude', localId: 'anthropic' }, accountId: 'work' };
     await act(async () => {
         getStorage().setState({ profile: AccountProfileSchema.parse({ id: scope.accountId, connectedAccountsV4: [{
@@ -105,17 +134,17 @@ it('opens one secret with one real census, zero fetches and no rereads on render
     });
     expect(hook.getCurrent()).toMatchObject([{ owner: 'connectedAccountCredential',
         referrer: { id: JSON.stringify(['account', account.service.pluginId, account.service.localId, account.accountId]), displayName: 'Work credential' } }]);
-    expect(reads).toHaveBeenCalledTimes(4);
+    expect(reads).toHaveBeenCalledTimes(readsBeforeOther + 2);
     expect(home.request.mock.calls).toHaveLength(requestsBefore);
     // A catalog revalidating is not "unknown": the page keeps the last census until the next one settles.
     const settled = hook.getCurrent();
     await act(async () => invalidateRemoteHostCatalog(scope));
     expect(getRemoteHostCatalogSnapshot(scope)?.catalog.status).not.toBe('ready');
     expect(hook.getCurrent()).toBe(settled);
-    expect(reads).toHaveBeenCalledTimes(4);
+    expect(reads).toHaveBeenCalledTimes(readsBeforeOther + 2);
     await hook.rerender({ selected: '' });
     expect(hook.getCurrent()).toBeNull();
-    expect(reads).toHaveBeenCalledTimes(4);
+    expect(reads).toHaveBeenCalledTimes(readsBeforeOther + 2);
     await act(async () => applyRemoteHostCatalogSnapshot(scope, { status: 'ready', hosts: [], diagnostics: [], revision: 1 }, true));
     await hook.rerender({ selected: otherRef });
     const beforeHidden = reads.mock.calls.length;

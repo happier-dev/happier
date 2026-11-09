@@ -68,6 +68,7 @@ export async function readSavedSecretCatalogInContext(
     selection?: SavedSecretResourceMaterialSelectionV1,
 ): Promise<SavedSecretCatalogReadResult> {
     const query = new URLSearchParams();
+    if (selection?.includeReferenceCensus) query.set('includeReferenceCensus', 'true');
     if (selection?.resourceId) query.set('resourceId', selection.resourceId);
     if (selection?.expectedRevision !== undefined) query.set('expectedRevision', String(selection.expectedRevision));
     if (selection?.requireManage) query.set('requireManage', 'true');

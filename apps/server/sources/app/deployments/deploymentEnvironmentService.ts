@@ -12,8 +12,9 @@ import { prepareDeploymentBackupRetentionV1, projectEnvironmentSecretBindingRequ
     type EnvironmentSecretRequiredUsesProjectionV1 } from '@happier-dev/deployments';
 import { formatSharedSavedSecretRefV1, parseSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import { readSavedSecretResourcesForAccountInTx, validateSavedSecretResourceReferenceCapturesV1,
-    readSavedSecretResourcesForPrincipalInTx } from '@/app/account/savedSecrets/savedSecretResourceService';
-import { defaultRepeatKeyExpiresAt, fetchRepeatKey, saveRepeatKey } from '@/storage/queue/repeatKey';
+    readSavedSecretResourcesForPrincipalInTx, publishSavedSecretUsageChangesInTx,
+    acquireSavedSecretReferencePublicationAccountsInTx } from '@/app/account/savedSecrets/savedSecretResourceService';
+import { defaultRepeatKeyExpiresAt, fetchRepeatKey, lockPostgresRepeatKeyInTx, saveRepeatKey } from '@/storage/queue/repeatKey';
 import { readTransactionDatabaseTime } from '@/storage/transactionDatabaseTime';
 import { getDbProviderFromEnv } from '@/storage/prisma';
 import { portableQueryChunks } from '@/storage/portableQueryChunks';
@@ -24,7 +25,8 @@ import { resolveDeploymentEnvironmentAdmissionInTx, admitDeploymentMachineInTx, 
 import { deploymentContentReference, readPlainDeploymentEnvironmentContentInTx } from './deploymentStoredContent';
 import { publishDeploymentChangesInTx } from './deploymentPublication';
 import { syncEnvironmentSecretGrantsInTx } from './environmentSecretGrantRepository';
-import { readProjectSourceOwnerInTx, readProjectSourceCustodyInTx, createProjectSourceInTx } from '@/app/projects/sources/projectSourceService';
+import { readProjectSourceOwnerInTx, readProjectSourceCustodyInTx, createProjectSourceInTx,
+    resolveProjectSourceAudienceInTx } from '@/app/projects/sources/projectSourceService';
 import { readCurrentServerIdentityId } from '@/app/serverIdentity/serverIdentity';
 import { linkDeploymentTargetForAdmittedEnvironmentInTx } from './deploymentTargetLinkService';
 import { admitDeploymentDeployerPrincipalsInTx, replaceDeploymentDeployerPrincipalsInTx, sameDeploymentDeployerPrincipals } from './deploymentEnvironmentDeployers';
@@ -188,6 +190,7 @@ export async function readCreatedDeploymentEnvironmentIdInTx(tx: Tx, actorAccoun
 export async function createDeploymentEnvironmentInTx(tx: Tx, actorAccountId: string, input: DeploymentEnvironmentCreateStorageInputV1,
     authentication: DeploymentAuthentication = {},
 ) {
+    await lockPostgresRepeatKeyInTx(tx, environmentCreationRepeatKey(actorAccountId, input.requestKey));
     const digest = environmentCreationIntentDigest(input);
     const { newProject, projectSourceId, ...prepared } = input;
     if (!newProject) return projectSourceId ? createDeploymentEnvironmentForSourceInTx(tx, actorAccountId,
@@ -444,6 +447,14 @@ async function setDeploymentEnvironmentBindingsForAdmittedEnvironmentInTx(tx: Tx
         deployerMode?: DeploymentEnvironmentCreateStorageInputV1['deployerMode'];
         deployerPrincipals?: readonly DeploymentEnvironmentDeployerPrincipalV1[] }>,
 ) {
+    const resourceIds = [...new Set([
+        ...input.referencedSavedSecretRevisions,
+        ...(readDeploymentBindingSavedSecretRevisionsV1(loaded.row.referencedSavedSecretRevisions) ?? []),
+    ].map(capture => capture.resourceId))];
+    if (resourceIds.length > 0) {
+        await acquireSavedSecretReferencePublicationAccountsInTx(tx, { accountId: actorAccountId, resourceIds,
+            publicationAccountIds: await resolveProjectSourceAudienceInTx(tx, [loaded.admission.source]) });
+    }
     const link = loaded.row.runtimeTargetLinkId ? await tx.deploymentTargetLink.findFirst({
         where: { id: loaded.row.runtimeTargetLinkId, environmentId: loaded.row.id, deletedAt: null },
         include: { machines: { orderBy: { position: 'asc' } } },
@@ -622,6 +633,12 @@ async function setDeploymentEnvironmentBindingsForAdmittedEnvironmentInTx(tx: Tx
     if (changed.count !== 1) throw new Error('Locked deployment Environment changed during binding CAS');
     if (principalsChanged && placement?.deployerPrincipals !== undefined) {
         await replaceDeploymentDeployerPrincipalsInTx(tx, loaded.row.id, actorAccountId, loaded.row.deployers, placement.deployerPrincipals);
+    }
+    if (!isDeepStrictEqual(previousCaptures, referencedSavedSecretRevisions)) {
+        await publishSavedSecretUsageChangesInTx(tx, [
+            ...(readDeploymentBindingSavedSecretRevisionsV1(previousCaptures) ?? []).map(capture => capture.resourceId),
+            ...referencedSavedSecretRevisions.map(capture => capture.resourceId),
+        ]);
     }
     await publishDeploymentChangesInTx(tx, loaded.admission, loaded.row.id, loaded.row.revision + 1);
     return { ok: true as const, environmentId: loaded.row.id, revision: loaded.row.revision + 1 };

@@ -1,8 +1,9 @@
 import { z } from 'zod/mini';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
+import type { SavedSecretCatalogEntryV1 } from './savedSecretCatalogV1.js';
 
 const savedSecretReferenceOwner = z.enum(['profile', 'provider', 'voice', 'mcp', 'acp', 'plugin',
-  'connectedAccountConfiguration', 'connectedAccountCredential', 'remoteHost', 'notificationChannel', 'registrySource', 'unknown']);
+  'connectedAccountConfiguration', 'connectedAccountCredential', 'remoteHost', 'notificationChannel', 'registrySource', 'deploymentEnvironment', 'unknown']);
 export type AccountSettingsSavedSecretReferenceOwner = z.infer<typeof savedSecretReferenceOwner>;
 
 export const AccountSettingsSavedSecretReferenceSchema = z.strictObject({
@@ -12,6 +13,18 @@ export const AccountSettingsSavedSecretReferenceSchema = z.strictObject({
   referrer: z.optional(z.strictObject({ kind: savedSecretReferenceOwner, id: z.string(), displayName: z.optional(z.string()) })),
 });
 export type AccountSettingsSavedSecretReference = Readonly<z.infer<typeof AccountSettingsSavedSecretReferenceSchema>>;
+
+/** Environment dependencies disclose usage only, never private Environment identities or binding names. */
+export function projectSavedSecretUsedByV1(input: Readonly<{
+  ref: string;
+  references: readonly AccountSettingsSavedSecretReference[] | null;
+  deploymentReferenceState?: SavedSecretCatalogEntryV1['deploymentReferenceState'];
+}>): readonly AccountSettingsSavedSecretReference[] | null {
+  if (input.references === null || parseSavedSecretRefV1(input.ref).kind === 'personal') return input.references;
+  if (input.deploymentReferenceState === 'referenced') return [...input.references,
+    { owner: 'deploymentEnvironment', path: 'deploymentEnvironments.bindings' }];
+  return input.deploymentReferenceState === 'unreferenced' ? input.references : null;
+}
 
 export const SHARED_SAVED_SECRET_REF_V1_PREFIX = 'happier:shared-secret:v1:';
 
