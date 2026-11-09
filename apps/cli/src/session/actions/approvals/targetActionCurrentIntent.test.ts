@@ -2,20 +2,75 @@ import { describe, expect, it, vi } from 'vitest';
 import type { PluginSourceCustodyV1, TargetActionApprovalRequestV1 } from '@happier-dev/protocol';
 import { createTargetActionCurrentIntentAdapter, targetActionApprovalMatchesCurrentIntent } from './targetActionCurrentIntent';
 import { getSharedBlockingApprovalCoordinator } from '@happier-dev/protocol/actions/blockingApprovalCoordinator';
+import { admitTargetActionApprovalTransition } from '@happier-dev/protocol/approvals/targetActionApprovalRequestTransition';
+import { logger } from '@/ui/logger';
+import { runTracedExternalActionStage } from '@/daemon/externalActions/externalActionPhase';
 
 const developmentCustody = { kind: 'development', registeredRootId: 'root-7' } as const;
 
+// Storage and decision delivery are distinct boundaries. These adapter tests
+// deliver the host-private witness explicitly; the composed suite exercises
+// the real authenticated Action owner and HTTP persistence together.
+function deliverApproved(artifactId: string, request: TargetActionApprovalRequestV1) {
+  setImmediate(() => { void getSharedBlockingApprovalCoordinator().resolveBlockingDecision({ artifactId,
+    request: { ...request, status: 'approved', decision: { kind: 'approve', decidedAtMs: 2 } },
+    decision: 'approve', decisionAuthority: 'present_user' }); });
+}
+
 describe('target action current-intent adapter', () => {
-  it('claims the live approval before returning execution custody and persists its terminal receipt', async () => {
+  it.each(['1', '0'])('correlates the awaited Artifact and observed status without its body (QA tracing %s)', async tracing => {
+    vi.stubEnv('HAPPIER_WEB_LATENCY_TRACE', tracing);
+    const sink = vi.spyOn(logger, 'warnLocalFile').mockImplementation(() => {});
+    const artifactId = 'af669b29-7812-4a3b-88ac-154721e1588c';
+    const rootRequestId = '70cc64d3-0386-4914-b7d8-713b7879e99f';
+    let stored: TargetActionApprovalRequestV1 | null = null;
+    const read = vi.fn(async () => stored);
+    const adapter = createTargetActionCurrentIntentAdapter({
+      create: async (request, onReady) => {
+        stored = { ...request, status: 'rejected', decision: { kind: 'reject', decidedAtMs: 2 } };
+        onReady?.({ artifactId, request });
+        return { artifactId };
+      },
+      read,
+      update: async () => ({ ok: true }),
+    });
+    try {
+      await expect(runTracedExternalActionStage('action.invoke', `rpc_${rootRequestId}`, 'contributed.target_invoke', () => adapter({
+        action: { qualifiedId: 'acme.alpha/actions/run', pluginId: 'acme.alpha', localId: 'run', occurrenceId: '7',
+          sourceCustody: developmentCustody, dangerLevel: 'writesRemote', scopes: ['global'], surfaces: ['agent'],
+          hostAccess: [], input: { value: 'PRIVATE_APPROVAL_BODY' }, policyFingerprint: 'b'.repeat(64),
+          confirmation: { title: 'PRIVATE_APPROVAL_SUMMARY' } },
+        fingerprint: 'a'.repeat(64), surface: 'agent', approvalInputCustody: 'live_only',
+      }))).resolves.toEqual({ status: 'rejected', code: 'plugin_action_current_intent_rejected' });
+      const observations = sink.mock.calls.filter(([, record]) => record && typeof record === 'object' && 'artifactId' in record);
+      expect(observations).toEqual(tracing === '1' ? ['open', 'rejected'].map(approvalStatus => [
+        '[external-action-stage]', expect.objectContaining({ rootRequestId, artifactId, approvalStatus }),
+      ]) : []);
+      expect(JSON.stringify(sink.mock.calls)).not.toContain('PRIVATE_APPROVAL_');
+      // Trace facts reuse the waiter's existing read; diagnostics add no IO.
+      expect(read).toHaveBeenCalledTimes(1);
+    } finally { sink.mockRestore(); vi.unstubAllEnvs(); }
+  });
+
+  it.each(['executed', 'RPC_OUTCOME_UNKNOWN', 'receipt_write_failed'] as const)('claims authenticated live approval before execution and persists its typed receipt: %s', async outcome => {
     let stored: TargetActionApprovalRequestV1 | null = null;
     const adapter = createTargetActionCurrentIntentAdapter({
       create: async request => {
-        stored = { ...request, status: 'approved', updatedAtMs: 2,
+        stored = { ...request, createdAtMs: 1, status: 'approved', updatedAtMs: 2,
           decision: { kind: 'approve', decidedAtMs: 2 } };
-        return { artifactId: 'live-execution-claim' };
+        deliverApproved('live-execution-claim', stored);
+        return { artifactId: 'live-execution-claim', request: stored };
       },
       read: async () => stored,
-      update: async ({ request }) => { stored = request; return { ok: true }; },
+      update: async ({ request }) => {
+        if (outcome === 'receipt_write_failed' && request.status === 'executed') {
+          return { ok: false, errorCode: 'update_failed', error: 'fixture_receipt_write_failure' };
+        }
+        if (!stored) throw new Error('Missing admitted approval');
+        const transition = admitTargetActionApprovalTransition(stored, request);
+        if (transition.ok) stored = request;
+        return transition;
+      },
       now: () => 3,
     });
     const admitted = await adapter({
@@ -28,8 +83,16 @@ describe('target action current-intent adapter', () => {
     expect(admitted.status).toBe('approved');
     expect(stored).toMatchObject({ status: 'executing', decision: { kind: 'approve' } });
     if (admitted.status !== 'approved' || !admitted.settleExecution) throw new Error('Missing live execution custody');
-    await admitted.settleExecution({ artifactId: 'live-execution-claim', execution: { ok: true, effectAttempted: true } });
-    expect(stored).toMatchObject({ status: 'executed', execution: { ok: true, effectAttempted: true } });
+    const settling = admitted.settleExecution({ artifactId: 'live-execution-claim', execution: {
+      ok: outcome !== 'RPC_OUTCOME_UNKNOWN', effectAttempted: true,
+      ...(outcome === 'RPC_OUTCOME_UNKNOWN' ? { errorCode: outcome } : {}),
+    } });
+    if (outcome === 'receipt_write_failed') await expect(settling).rejects.toThrow('approval_execution_outcome_unknown');
+    else await settling;
+    expect(stored).toMatchObject({ status: outcome === 'executed' ? 'executed' : 'outcome_unknown', execution: {
+      ok: outcome === 'executed', effectAttempted: true,
+      ...(outcome === 'executed' ? {} : { errorCode: 'approval_execution_outcome_unknown' }),
+    } });
   });
 
   it('refuses confidential admission before creating an orphan receipt when its terminal writer is unavailable', async () => {
@@ -65,7 +128,7 @@ describe('target action current-intent adapter', () => {
   ])('keeps SecretString input exclusively with the live invocation: %j', async input => {
     let stored: TargetActionApprovalRequestV1 | undefined;
     const adapter = createTargetActionCurrentIntentAdapter({
-      create: async request => { stored = request; return { artifactId: 'secret-carrier' }; },
+      create: async request => { stored = request; deliverApproved('secret-carrier', request); return { artifactId: 'secret-carrier' }; },
       read: async () => stored ? { ...stored, status: 'approved', decision: { kind: 'approve', decidedAtMs: 2 } } : null,
       update: async () => ({ ok: true }),
     });
@@ -80,7 +143,7 @@ describe('target action current-intent adapter', () => {
     expect(JSON.stringify(stored)).not.toContain('private');
   });
 
-  it('observes a decision from another device through its artifact invalidation subscription', async () => {
+  it('keeps the Artifact observation separate from authenticated decision delivery', async () => {
     const stored: { request: TargetActionApprovalRequestV1 | null } = { request: null };
     let onChange = () => {};
     let subscribedArtifactId = '';
@@ -105,15 +168,16 @@ describe('target action current-intent adapter', () => {
     if (!stored.request) throw new Error('approval_not_created');
     stored.request = { ...stored.request, status: 'approved', updatedAtMs: 2, decision: { kind: 'approve', decidedAtMs: 2 } };
     onChange();
+    deliverApproved('approval-other-device', stored.request);
     await expect(pending).resolves.toMatchObject({ status: 'approved', fingerprint: 'a'.repeat(64), artifactId: 'approval-other-device' });
     expect(dispose).toHaveBeenCalledTimes(1);
   });
 
-  it('persists the exact subject and admits only the matching durable approval', async () => {
+  it('persists the exact subject and admits only the matching authenticated approval', async () => {
     let stored: any;
     const adapter = createTargetActionCurrentIntentAdapter({
       now: () => 1,
-      create: async (request) => { stored = request; return { artifactId: 'approval-1' }; },
+      create: async (request) => { stored = request; deliverApproved('approval-1', request); return { artifactId: 'approval-1' }; },
       read: async () => ({ ...stored, status: 'approved', updatedAtMs: 2, decision: { kind: 'approve', decidedAtMs: 2 } }),
       update: async () => ({ ok: true }),
     });
@@ -138,10 +202,7 @@ describe('target action current-intent adapter', () => {
           decision: { kind: 'approve', decidedAtMs: 2 },
         };
         stored = approved;
-        queueMicrotask(() => getSharedBlockingApprovalCoordinator().notifyApprovalUpdated({
-          artifactId: 'approval-confirmation-1',
-          request: approved,
-        }));
+        deliverApproved('approval-confirmation-1', approved);
         return { artifactId: 'approval-confirmation-1' };
       },
       read: async () => stored,
@@ -267,11 +328,13 @@ describe('target action current-intent adapter', () => {
     let stored: any;
     const adapter = createTargetActionCurrentIntentAdapter({
       now: () => 1,
-      create: async (request) => { stored = request; return { artifactId: 'approval-2' }; },
+      create: async (request) => {
+        stored = request;
+        return { artifactId: 'approval-2' };
+      },
       update: async () => ({ ok: true }),
       read: async () => ({
-        ...stored, ...change, status: 'approved', updatedAtMs: 2,
-        decision: { kind: 'approve', decidedAtMs: 2 },
+        ...stored, ...change, status: 'canceled', updatedAtMs: 2,
       }),
     });
     await expect(adapter({
@@ -295,15 +358,10 @@ describe('target action current-intent adapter', () => {
         const approved: TargetActionApprovalRequestV1 = {
           ...request,
           detail: 'A different disclosure.',
-          status: 'approved',
+          status: 'canceled',
           updatedAtMs: 2,
-          decision: { kind: 'approve', decidedAtMs: 2 },
         };
         stored = approved;
-        queueMicrotask(() => getSharedBlockingApprovalCoordinator().notifyApprovalUpdated({
-          artifactId: 'approval-detail-changed',
-          request: approved,
-        }));
         return { artifactId: 'approval-detail-changed' };
       },
       read: async () => stored,

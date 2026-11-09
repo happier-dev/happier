@@ -1,6 +1,7 @@
 import { PLUGIN_ACTION_CURRENT_INTENT_REJECTED_CODE, PLUGIN_ACTION_OUTCOME_UNKNOWN_CODE } from '@happier-dev/protocol/plugins/actions/invocation';
 import { TargetActionApprovalRequestV1Schema, StoredTargetActionApprovalRequestV1Schema } from '@happier-dev/protocol/approvals/targetActionApprovalRequestV1';
-import type { PluginLocalizedStringV2, TargetActionApprovalRequestV1 } from '@happier-dev/protocol';
+import type { TargetActionApprovalRequestV1 } from '@happier-dev/protocol';
+import { resolvePluginLocalizedStringV2Text as resolveLocalizedConfirmationText } from '@happier-dev/protocol/plugins/contributions/public-types';
 import type { TargetActionCurrentIntentRequest, TargetActionCurrentIntentResult } from '@/plugins/runtime/invocation/actionExecutor';
 import { createLiveApprovalDecision } from './liveDecision';
 import { targetActionApprovalSubjectsEqual } from '@happier-dev/protocol/approvals/targetActionApprovalRequestTransition';
@@ -8,11 +9,9 @@ import { projectTargetActionApprovalInput, resolveApprovalRequestApproveAdmissio
 import { admitApprovalRequesterDecisionV1 } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { projectTargetActionApprovalInvocationV1 } from '@happier-dev/protocol/approvals/targetActionApprovalRequestV1';
 import type { createCliApprovalsArtifactStore } from './artifactStore';
+import { persistTargetActionReceipt } from './targetActionSettlement';
 import { buildTargetActionApprovalDecisionResult } from '@happier-dev/protocol/actions/targetActionApprovalDecision';
-
-function resolveLocalizedConfirmationText(value: PluginLocalizedStringV2): string {
-  return typeof value === 'string' ? value : value.fallback;
-}
+import { traceExternalActionInnerStage } from '@/daemon/externalActions/externalActionPhase';
 
 function createTargetActionApprovalRequestCandidate(
   currentIntent: TargetActionCurrentIntentRequest,
@@ -135,9 +134,14 @@ export function createTargetActionCurrentIntentAdapter(deps: Readonly<{
       currentIntent.reportUnavailable?.('approval_factory_unavailable');
       return { status: 'unavailable', code: 'plugin_action_current_intent_unavailable' };
     }
-    const liveDecision = createLiveApprovalDecision({ read: deps.read, signal, subscribeChanges });
+    const liveDecision = createLiveApprovalDecision({ read: async artifactId => {
+      const request = await deps.read(artifactId);
+      traceExternalActionInnerStage('contributed.target_invoke.approval', { artifactId, approvalStatus: request?.status ?? null });
+      return request;
+    }, signal, subscribeChanges });
     let created: Awaited<ReturnType<typeof deps.create>>;
     try { created = await deps.create(proposedRequest, ready => {
+      traceExternalActionInnerStage('contributed.target_invoke.approval', { artifactId: ready.artifactId, approvalStatus: ready.request.status });
       if (ready.request.approvalInputCustody === 'live_only') void liveDecision.waitForDecision(ready);
     }); }
     catch (error) {
@@ -193,8 +197,9 @@ export function createTargetActionCurrentIntentAdapter(deps: Readonly<{
                   ? { errorCode: 'approval_execution_outcome_unknown' } : {}),
               },
             });
-            const updated = await update({ artifactId, request: terminal });
-            if (!updated.ok) throw new Error(updated.errorCode);
+            const settled = await persistTargetActionReceipt({ request: terminal,
+              write: async request => (await update({ artifactId, request })).ok });
+            if (!settled) throw new Error('approval_execution_outcome_unknown');
           },
           ...(request.requesterConfirmation ? { revalidateRequesterDecision: async () => {
             const invocation = projectTargetActionApprovalInvocationV1(request);

@@ -1,27 +1,31 @@
 import { logger } from '@/ui/logger';
+import { timeApprovalPhase } from './webLatencyTrace';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import type { ActionStartDiagnosticV1 } from '@happier-dev/protocol/actions/executor/actionStartDiagnostics';
 import { ExternalActionRequestIdV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { isPluginError } from '@happier-dev/plugin-sdk/errors';
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { readUnexpectedActionErrorDiagnosticV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import type { PluginHttpTraceDiagnostic } from '@happier-dev/cli-common/plugins/http';
+import type { TargetActionApprovalRequestV1 } from '@happier-dev/protocol/approvals/targetActionApprovalRequestV1';
 
 const innerStageContext = new AsyncLocalStorage<Readonly<{ actionId: string; rootRequestId: string }>>();
 
-export type ExternalActionInnerDiagnostic = Readonly<{
+export type ExternalActionInnerDiagnostic = Readonly<PluginHttpTraceDiagnostic & {
+  artifactId?: string;
+  approvalStatus?: TargetActionApprovalRequestV1['status'] | null;
   invocationId?: string;
   claimAttemptId?: string;
-  pluginId?: string;
   claimOccurrenceId?: string;
   claimProducerPid?: number;
   claimProducerKind?: 'daemon' | 'cli';
-  collectionPreparationTriggerKind?: 'declaration-publication' | 'collection-operation' | 'explicit-candidate';
   claimAbsent?: boolean;
   declarationChanged?: boolean;
   occurrenceChanged?: boolean;
   accountChanged?: boolean;
   availabilityChanged?: boolean;
-  httpStatus?: number;
+  collectionId?: string;
+  collectionPreparationTriggerKind?: 'declaration-publication' | 'collection-operation' | 'explicit-candidate';
 }>;
 
 /** Host-only phase facts; never pass plugin input, results, URLs or thrown values. */
@@ -78,7 +82,8 @@ export async function runTracedExternalActionStage<T>(actionId: string, rootRequ
   try {
     return await (process.env.HAPPIER_WEB_LATENCY_TRACE === '1' && typeof requestId === 'string'
       && isTracedRequest(actionId, requestId)
-      ? innerStageContext.run({ actionId, rootRequestId: requestId }, operation) : operation());
+      ? innerStageContext.run({ actionId, rootRequestId: requestId }, () => timeApprovalPhase(`approval.${stage}`, operation))
+      : timeApprovalPhase(`approval.${stage}`, operation));
   }
   finally { traceExternalActionStage(actionId, requestId, `${stage}.end`); }
 }
@@ -117,8 +122,8 @@ export type ExternalActionPhaseFailure = Readonly<{
 }>;
 
 /** Private diagnostics must not serialize a thrown value, even a Zod or HTTP Error. */
-export function refuseExternalActionPhase(phase: string, machineId: string, error?: unknown,
-  witness?: Readonly<{ requestId?: string; actionId?: string; refusalBranch?: string;
+export function refuseExternalActionPhase(phase: string, machineId: string | undefined, error?: unknown,
+  witness?: Readonly<{ requestId?: string; actionId?: string; refusalBranch?: string; httpStatus?: number;
     accountEncryptionMode?: 'plain' | 'e2ee'; observedAccountEncryptionMode?: 'plain' | 'e2ee'; envelopeVersion?: 1 | 2 }>): ExternalActionPhaseFailure {
   const diagnostic = error === undefined ? undefined : readUnexpectedActionErrorDiagnosticV1(error);
   const errorClass = diagnostic?.errorClass ?? 'PhaseRefused';
@@ -137,8 +142,9 @@ export function refuseExternalActionPhase(phase: string, machineId: string, erro
     ...(executionFailure ? { executionFailure } : {}) };
   // File-only: no terminal output or remote diagnostic payload. Logging cannot
   // change the existing public refusal if the filesystem is unavailable.
-  try { logger.warnLocalFile('[external-action-phase]', { machineId, phase, errorClass, message,
+  try { logger.warnLocalFile('[external-action-phase]', { ...(machineId !== undefined ? { machineId } : {}), phase, errorClass, message,
     ...diagnostic,
+    ...(witness?.httpStatus !== undefined ? { httpStatus: witness.httpStatus } : {}),
     ...(witness?.actionId ? { actionId: witness.actionId } : {}),
     ...(witness?.requestId ? { requestId: witness.requestId } : {}),
     ...(witness?.accountEncryptionMode ? { accountEncryptionMode: witness.accountEncryptionMode } : {}),
@@ -153,7 +159,7 @@ export async function runExternalActionPhase<T>(phase: string, machineId: string
   Readonly<{ ok: true; value: NonNullable<T> }> | ExternalActionPhaseFailure
 > {
   try {
-    const value = await operation();
+    const value = await timeApprovalPhase(`approval.external.${phase}`, operation);
     return value === null || value === undefined || value === false
       ? refuseExternalActionPhase(phase, machineId)
       : { ok: true, value };
