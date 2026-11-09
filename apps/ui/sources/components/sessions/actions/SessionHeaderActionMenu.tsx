@@ -33,7 +33,7 @@ import { useSettingsValues } from '@/sync/store/settingsReadHooks';
 import { storage, useProfile, useSetting, useSessionOrganizationProjection } from '@/sync/domains/state/storage';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
-import { readCurrentProjectedAgentCapabilities } from '@/agents/backendCatalog/currentAgentCapabilities';
+import { readAgentSessionCompactionAvailability, readCurrentProjectedAgentCapabilities } from '@/agents/backendCatalog/currentAgentCapabilities';
 import { useEnabledAgentIds } from '@/agents/hooks/useEnabledAgentIds';
 import { resolveAgentIdFromFlavor } from '@/agents/registry/registryCore';
 import type { Session } from '@/sync/domains/state/storageTypes';
@@ -49,6 +49,7 @@ import { fireAndForget } from '@/utils/system/fireAndForget';
 import { Modal } from '@/modal';
 import { useActionApprovalContinuation } from '@/components/approvals/useActionApprovalContinuation';
 import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
+import { requireActionSuccess } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { canForkConversation } from '@/sync/domains/sessionFork/forkUiSupport';
 import { openSessionForkStrategyFlow } from '@/components/sessions/fork/openSessionForkStrategyFlow';
 import { useSessionHandoffAction } from '@/sync/domains/sessionHandoff/useSessionHandoffAction';
@@ -600,6 +601,13 @@ function SessionHeaderActionMenuInner(props: SessionHeaderActionMenuProps) {
       })
       : null
   ), [daemonMergedProjection.inputs?.pluginProjectionV2, daemonMergedProjection.phase, declaredAgentId]);
+  const publishedRuntimeCapabilities = ownerMetadata?.agentRuntimeCapabilitiesV1;
+  const runtimeDescriptor = ownerMetadata?.runtimeDescriptorV1;
+  const compactAvailability = React.useMemo(() => readAgentSessionCompactionAvailability({
+    agentId: declaredAgentId,
+    metadata: { agentRuntimeCapabilitiesV1: publishedRuntimeCapabilities, runtimeDescriptorV1: runtimeDescriptor },
+    currentAgentCapabilities,
+  }), [declaredAgentId, publishedRuntimeCapabilities, runtimeDescriptor, currentAgentCapabilities]);
   const supportsExternalSessionBackgroundFollowForLink = React.useMemo(() => {
     if (!externalSessionLink || daemonMergedProjection.phase !== 'ready') {
       return false;
@@ -651,16 +659,22 @@ function SessionHeaderActionMenuInner(props: SessionHeaderActionMenuProps) {
         agentSwitchingEnabled,
         currentAgentCapabilities,
       }) === true)
-      .map((spec) => ({
-        id: spec.id,
-        title: spec.title,
-        subtitle: spec.id === 'session.handoff'
-          ? resolveSessionHandoffMenuSubtitle(handoffAvailability, spec.description)
-          : spec.description,
-        ...(spec.id === 'session.handoff' && handoffAvailability.available !== true
-          ? { disabled: true }
-          : {}),
-      }));
+      .map((spec) => {
+        const compactDisabledReason = spec.id === 'session.compact' && compactAvailability.status !== 'supported'
+          ? compactAvailability.status === 'unsupported' ? t('settingsAgents.notSupported') : t('common.unavailable')
+          : undefined;
+        return {
+          id: spec.id,
+          title: spec.title,
+          subtitle: compactDisabledReason ?? (spec.id === 'session.handoff'
+            ? resolveSessionHandoffMenuSubtitle(handoffAvailability, spec.description)
+            : spec.description),
+          ...(compactDisabledReason ? { disabled: true, accessibilityLabel: `${spec.title}. ${compactDisabledReason}` } : {}),
+          ...(spec.id === 'session.handoff' && handoffAvailability.available !== true
+            ? { disabled: true }
+            : {}),
+        };
+      });
 
     const iconColor = theme.colors.chrome.header.foreground;
     const out: Array<Readonly<{ group: SessionHeaderMenuGroup; item: DropdownMenuItem }>> = [];
@@ -815,6 +829,7 @@ function SessionHeaderActionMenuInner(props: SessionHeaderActionMenuProps) {
     companionHeaderIntent?.itemCount,
     agentSwitchingEnabled,
     currentAgentCapabilities,
+    compactAvailability,
     session,
     giveBotCopy,
     giveBotCopyPending,
@@ -1112,6 +1127,16 @@ function SessionHeaderActionMenuInner(props: SessionHeaderActionMenuProps) {
               navigateWithBlurOnWeb(() => router.push(route as any));
             },
           });
+          return;
+        }
+        if (actionId === 'session.compact') {
+          fireAndForget((async () => {
+            try {
+              requireActionSuccess(await executor.execute('session.compact', { sessionId: props.sessionId }, {
+                surface: 'ui', defaultSessionId: props.sessionId, serverId: sessionServerId ?? undefined,
+              }), 'session.compact');
+            } catch (error) { showSessionHeaderActionError(error); }
+          })(), { tag: 'SessionHeaderActionMenu.execute.compact' });
           return;
         }
         if (actionId === 'session.handoff') {

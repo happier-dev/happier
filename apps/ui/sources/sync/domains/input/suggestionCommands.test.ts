@@ -2,8 +2,27 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { PromptInvocationsV1Schema } from '@happier-dev/protocol/prompts/library/promptInvocationsV1';
 
 import { storage } from '../state/storage';
+import { readAgentSessionCompactionAvailability } from '@/agents/backendCatalog/currentAgentCapabilities';
 
 describe('suggestionCommands', () => {
+    it('consumes the public availability answer for compact and preserves an advertised native command', async () => {
+        storage.setState({ sessions: {} });
+        const { getAllCommands, searchCommands } = await import('./suggestionCommands');
+        for (const [metadata, status] of [
+            [{ agentRuntimeCapabilitiesV1: { sessionCapabilities: { compaction: { events: true, manual: true } } } }, 'supported'],
+            [{ agentRuntimeCapabilitiesV1: { sessionCapabilities: {} } }, 'unsupported'],
+            [{}, 'unknown'],
+        ] as const) {
+            const compactionAvailability = readAgentSessionCompactionAvailability({ agentId: 'external/agent', metadata });
+            expect(compactionAvailability.status).toBe(status);
+            expect(getAllCommands(null, { compactionAvailability }).some(row => row.command === 'compact')).toBe(status === 'supported');
+            expect((await searchCommands(null, 'compact', { compactionAvailability })).some(row => row.command === 'compact')).toBe(status === 'supported');
+        }
+        const compactionAvailability = readAgentSessionCompactionAvailability({ agentId: 'external/agent',
+            metadata: { agentRuntimeCapabilitiesV1: { sessionCapabilities: {} } } });
+        expect(await searchCommands(null, 'compact', { compactionAvailability,
+            nativeCommands: [{ command: 'compact', description: 'Native command' }] })).toEqual([{ command: 'compact', description: 'Native command' }]);
+    });
     it('offers Happier compact only for the opened runtime manual capability', async () => {
         storage.setState({ sessions: {} });
         const { getAllCommands, searchCommands } = await import('./suggestionCommands');

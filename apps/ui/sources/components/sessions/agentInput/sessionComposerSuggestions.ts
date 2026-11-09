@@ -2,7 +2,7 @@ import type {
     AutocompleteSuggestion,
     AutocompleteSuggestionUpdate,
 } from '@/components/autocomplete/autocompleteTypes';
-import type { AgentSessionCompactionCapability } from '@happier-dev/protocol/plugins/agents';
+import type { AgentSessionCompactionCapability, AgentSessionCompactionAvailabilityV1 } from '@happier-dev/protocol/plugins/agents';
 import type {
     ComposerReferenceSearchHost,
     ComposerSuggestionKindId,
@@ -34,6 +34,7 @@ export function resolveSessionComposerSuggestions(
         composerReferenceHost?: ComposerReferenceSearchHost | null;
         contributedActions?: readonly PluginContributedActionDescriptor[];
         compaction?: AgentSessionCompactionCapability | null;
+        compactionAvailability?: AgentSessionCompactionAvailabilityV1;
         /** The library/Found source for `$`; hosts without the Session capabilities owner omit it. */
         skillSource?: SkillComposerSource | null;
         onUpdate?: AutocompleteSuggestionUpdate;
@@ -50,6 +51,7 @@ export function resolveSessionComposerSuggestions(
         composerReferenceHost: options.composerReferenceHost,
         contributedActions: options.contributedActions,
         compaction: options.compaction,
+        compactionAvailability: options.compactionAvailability,
         skillSource: options.skillSource,
         onUpdate: options.onUpdate,
     });

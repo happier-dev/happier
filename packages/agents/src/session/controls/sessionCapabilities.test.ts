@@ -5,12 +5,32 @@ import { AGENTS_CORE } from '../../manifest.js';
 import {
     evaluateAgentSessionCapabilitySupport,
     evaluateAgentSessionCompactionCapability,
+    evaluateAgentSessionCompactionAvailability,
     getAgentSessionCapability,
     readRuntimeCapabilitiesForSession,
     isAgentSessionCapabilitySupported,
 } from './sessionCapabilities.js';
 
 describe('sessionCapabilities', () => {
+  it('projects manual compact availability without confusing missing evidence with native refusal', () => {
+    const query = { agentId: 'external/agent', metadata: {} };
+    expect(evaluateAgentSessionCompactionAvailability(query)).toEqual({ status: 'unknown' });
+    expect(evaluateAgentSessionCompactionAvailability({ ...query, declaredCapability: { events: true, manual: true } }))
+      .toEqual({ status: 'supported' });
+    expect(evaluateAgentSessionCompactionAvailability({ ...query, declaredCapability: null }))
+      .toMatchObject({ status: 'unsupported' });
+    expect(evaluateAgentSessionCompactionAvailability({ ...query, declaredCapability: { events: true } }))
+      .toMatchObject({ status: 'unsupported' });
+    const declaredCapability = { events: true, manual: true } as const;
+    for (const compaction of [undefined, null, { events: true }]) {
+      expect(evaluateAgentSessionCompactionAvailability({ ...query, declaredCapability,
+        metadata: { agentRuntimeCapabilitiesV1: { sessionCapabilities: { compaction } } },
+      })).toMatchObject({ status: 'unsupported' });
+    }
+    expect(evaluateAgentSessionCompactionAvailability({ ...query, declaredCapability: null,
+      metadata: { agentRuntimeCapabilitiesV1: { sessionCapabilities: { compaction: declaredCapability } } },
+    })).toEqual({ status: 'supported' });
+  });
   it('uses opened-mode compaction publication before a prelaunch declaration', () => {
     const declaredCapability = { events: true, manual: true, idle: { mode: 'host', defaultEnabled: false } } as const;
     const evaluate = (sessionCapabilities?: unknown) => evaluateAgentSessionCompactionCapability({
@@ -26,8 +46,8 @@ describe('sessionCapabilities', () => {
       .toEqual({ events: true, idle: { mode: 'native', defaultEnabled: true } });
   });
   it('exposes shared session capability support levels in the agent manifest', () => {
-    expect(AGENTS_CORE.claude.sessionCapabilities).toEqual({
-      compaction: { events: true, idle: { mode: 'native', defaultEnabled: true, defaultMinContextTokens: 200000, nativeHonorsMinimum: true } },
+    expect(AGENTS_CORE.claude.sessionCapabilities).toMatchObject({
+      compaction: { events: true, manual: true, idle: { mode: 'native', defaultEnabled: true, defaultMinContextTokens: 200000, nativeHonorsMinimum: true } },
       usageReporting: 'supported',
       sessionListing: 'supported',
       sessionFork: {
@@ -58,11 +78,11 @@ describe('sessionCapabilities', () => {
       },
     });
 
-    expect(AGENTS_CORE.opencode.sessionCapabilities).toEqual({
+    expect(AGENTS_CORE.opencode.sessionCapabilities).toMatchObject({
       compaction: { events: true, manual: true, idle: { mode: 'host', defaultEnabled: false, defaultMinContextTokens: 100000 } },
       sessionListing: 'supported',
       sessionFork: {
-        conversation: 'unsupported',
+        conversation: 'supported',
         fromMessage: 'unsupported',
       },
       sessionRollback: {
@@ -204,7 +224,7 @@ describe('sessionCapabilities', () => {
     ).toBe('unsupported');
   });
 
-  it('keeps OpenCode fork admission disabled before the live dialect exists', () => {
+  it('uses declared OpenCode conversation fork support until the opened runtime publishes its negotiated result', () => {
     expect(
       evaluateAgentSessionCapabilitySupport({
         agentId: 'opencode',
@@ -219,7 +239,18 @@ describe('sessionCapabilities', () => {
         capability: 'sessionFork.conversation',
         metadata: { opencodeBackendMode: 'acp' },
       }),
-    ).toBe('unsupported');
+    ).toBe('supported');
+
+    expect(evaluateAgentSessionCapabilitySupport({
+      agentId: 'opencode',
+      capability: 'sessionFork.conversation',
+      metadata: {
+        opencodeBackendMode: 'acp',
+        agentRuntimeCapabilitiesV1: {
+          sessionCapabilities: { sessionFork: { conversation: 'unsupported', fromMessage: 'unsupported', protocol: 'acp' } },
+        },
+      },
+    })).toBe('unsupported');
 
     expect(
       evaluateAgentSessionCapabilitySupport({
@@ -357,7 +388,7 @@ describe('sessionCapabilities', () => {
     ).toMatchObject({
       sessionStorage: { direct: false, persisted: true },
       sessionCapabilities: {
-        sessionFork: { conversation: 'unsupported', fromMessage: 'unsupported' },
+        sessionFork: { conversation: 'supported', fromMessage: 'unsupported' },
       },
       localControl: null,
       tools: { delivery: 'native_mcp', support: 'supported' },

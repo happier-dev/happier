@@ -1,5 +1,5 @@
 import { log } from '@/log';
-import type { AgentSessionCompactionCapability } from '@happier-dev/protocol/plugins/agents';
+import type { AgentSessionCompactionCapability, AgentSessionCompactionAvailabilityV1 } from '@happier-dev/protocol/plugins/agents';
 import { ensureSessionSuggestionCatalogs } from '@/sync/ops/sessionCatalogs';
 import { DEFAULT_SERVER_SCOPED_RPC_TIMEOUT_MS } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcTypes';
 import type { FileSuggestionScope } from '@/sync/domains/input/suggestionFile';
@@ -119,6 +119,7 @@ export type GetSuggestionsOptions = Readonly<{
     /** Controller-admitted external Actions for the slash kind. */
     contributedActions?: readonly PluginContributedActionDescriptor[];
     compaction?: AgentSessionCompactionCapability | null;
+    compactionAvailability?: AgentSessionCompactionAvailabilityV1;
     /** Current aggregate rows as individual kinds settle; final settlement is marked complete. */
     onUpdate?: AutocompleteSuggestionUpdate;
     /** The host's library/Found source, for the `$` skill kind only. */
@@ -317,6 +318,7 @@ type KindResolveArgs = Readonly<{
     composerReferenceHost: ComposerReferenceSearchHost | null | undefined;
     contributedActions: readonly PluginContributedActionDescriptor[] | undefined;
     compaction: AgentSessionCompactionCapability | null | undefined;
+    compactionAvailability?: AgentSessionCompactionAvailabilityV1;
     accountMentions: ComposerAccountMentionSource | null | undefined;
     skillSource: SkillComposerSource | null | undefined;
     publish?: (suggestions: readonly AutocompleteSuggestion[]) => void;
@@ -371,6 +373,7 @@ async function resolveKindCandidates(
         composerReferenceHost: args.composerReferenceHost,
         contributedActions: args.contributedActions,
         compaction: args.compaction,
+        compactionAvailability: args.compactionAvailability,
         accountMentions: args.accountMentions,
         skillSource: args.skillSource,
         ...(args.publish ? { publish: args.publish } : {}),
@@ -415,6 +418,7 @@ export async function getSuggestions(
         composerReferenceHost: options?.composerReferenceHost,
         contributedActions: options?.contributedActions,
         compaction: options?.compaction,
+        compactionAvailability: options?.compactionAvailability,
         accountMentions: options?.accountMentions,
         skillSource: options?.skillSource,
     };

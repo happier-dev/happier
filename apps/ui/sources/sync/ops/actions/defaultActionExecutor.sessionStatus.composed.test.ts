@@ -7,6 +7,7 @@ import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { SessionStatusActionResultV1Schema } from '@happier-dev/protocol/sessions/control/contract';
 import { SessionReadBatchRequestV1Schema, SessionReadBatchResponseV1Schema } from '@happier-dev/protocol/sessions/read/sessionReadBatchV1';
 import { resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
+import { UNSUPPORTED_AGENT_SESSION_CAPABILITIES } from '@happier-dev/agents';
 
 const homes = createHomeGovernanceHarness();
 const httpBoundary = { ...homes, request: createSessionReadBatchFetchBoundary(homes.request) };
@@ -18,6 +19,46 @@ const { getStorage } = await import('@/sync/domains/state/storage');
 const initial = getStorage().getState();
 beforeEach(async () => { await homes.reset(); installHomeGovernanceBoundaries(httpBoundary); });
 afterEach(() => { getStorage().setState(initial, true); standardCleanup(); });
+
+it('keeps supported, native unsupported and unknown compact evidence distinct in the public status Action', async () => {
+  const serverId = await homes.addHome({ name: 'Compact', serverUrl: 'https://compact-status.test', accountId: 'alice', currentAccount: true });
+  for (const [id, publication, expected] of [
+    ['supported', { sessionCapabilities: { ...UNSUPPORTED_AGENT_SESSION_CAPABILITIES, compaction: { events: true, manual: true } } }, 'supported'],
+    ['unsupported', { sessionCapabilities: UNSUPPORTED_AGENT_SESSION_CAPABILITIES }, 'unsupported'],
+    ['unknown', undefined, 'unknown'],
+  ] as const) {
+    const session = createSessionFixture({ id, encryptionMode: 'plain', access: createSessionAccessFixture('owner'),
+      metadata: { ...createSessionFixture().metadata, flavor: 'external/agent',
+        ...(publication ? { agentRuntimeCapabilitiesV1: publication } : {}) } });
+    homes.answer(serverId, `/v2/sessions/${id}`, { body: createPlainSessionByIdResponseFixture(session) });
+    const result = await createDefaultActionExecutor().execute('session.status.get', { sessionId: id },
+      { surface: 'ui', serverId, expectedAccountId: 'alice' });
+    expect(result).toMatchObject({ ok: true, result: { compaction: { status: expected } } });
+    if (result.ok) expect(SessionStatusActionResultV1Schema.parse(result.result)).toEqual(result.result);
+  }
+  expect(homes.requests.filter(request => request.path.startsWith('/v1/machines'))).toHaveLength(0);
+});
+
+it('exposes the pending native permission offer through the exact-Home status Action', async () => {
+  const serverId = await homes.addHome({ name: 'Pending', serverUrl: 'https://pending-status.test', accountId: 'alice', currentAccount: true });
+  const nativeChoices = { requirementId: 'requirement-1', source: 'native-agent', choices: [
+    { id: 'approve-one', label: 'Approve once', decision: 'approved' as const, scope: 'once' as const,
+      response: { approved: true as const, decision: 'approved' as const } },
+  ] };
+  const session = createSessionFixture({ id: 'pending-session', active: true, encryptionMode: 'plain',
+    access: createSessionAccessFixture('owner'),
+    agentState: { controlledByUser: false, requests: { 'request-1': { tool: 'native-tool', kind: 'permission',
+      turnId: 'turn-1', arguments: { privateArgument: 'excluded-from-status' }, createdAt: 1, nativeChoices } } } });
+  homes.answer(serverId, `/v2/sessions/${session.id}`, { body: createPlainSessionByIdResponseFixture(session) });
+  const result = await createDefaultActionExecutor().execute('session.status.get', { sessionId: session.id },
+    { surface: 'ui', serverId, expectedAccountId: 'alice' });
+  expect(result).toMatchObject({ ok: true, result: { pendingRequests: [{ requestId: 'request-1', turnId: 'turn-1',
+    kind: 'permission', tool: 'native-tool', nativeChoices }], agentState: { controlledByUser: false, pendingRequestsCount: 1 } } });
+  if (result.ok) {
+    expect(SessionStatusActionResultV1Schema.parse(result.result)).toEqual(result.result);
+    expect(result.result).not.toHaveProperty('pendingRequests.0.arguments');
+  }
+});
 
 it('WF44 reaches exact managed-subtree proof through the default Action executor and denies a detached target', async () => {
   // This scenario serves the exact batch route itself; the legacy scalar

@@ -6,8 +6,10 @@ import type {
     PluginProjectionV2,
 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { readRuntimeDescriptorV1FromMetadata } from '@happier-dev/protocol/sessions/metadata/runtime-descriptor-compat';
+import type { AgentSessionCompactionAvailabilityV1 } from '@happier-dev/protocol/plugins/agents';
 import {
     evaluateAgentSessionCapabilitySupport,
+    evaluateAgentSessionCompactionAvailability,
     type AgentSessionCapabilityKey,
 } from '@happier-dev/agents';
 
@@ -107,6 +109,7 @@ export function supportsCurrentProjectedAgentSurface(
  * question shape; {@link supportsAgentLifecycleCapability} is the one answer.
  */
 export type AgentLifecycleCapability =
+    | 'session.compact'
     | 'sessionFork.conversation'
     | 'sessionFork.fromMessage'
     | 'sessionRollback.conversation'
@@ -124,6 +127,22 @@ export type AgentLifecycleCapabilityQuery = Readonly<{
     /** Exact declaration from a ready daemon V2 projection. */
     currentAgentCapabilities?: CurrentProjectedAgentCapabilities | null;
 }>;
+
+/** The shared compaction owner resolves both declaration and opened-runtime evidence. */
+export function readAgentSessionCompactionAvailability(
+    query: Omit<AgentLifecycleCapabilityQuery, 'capability'>,
+): AgentSessionCompactionAvailabilityV1 {
+    const descriptor = readRuntimeDescriptorV1FromMetadata(query.metadata);
+    const requestedAgentId = normalizeAgentId(query.agentId);
+    const agentId = descriptor && descriptor.agentId !== requestedAgentId ? null : requestedAgentId;
+    const current = query.currentAgentCapabilities?.agentId === agentId
+        ? query.currentAgentCapabilities : null;
+    return evaluateAgentSessionCompactionAvailability({
+        agentId: agentId ?? '',
+        metadata: agentId ? query.metadata : null,
+        ...(current ? { declaredCapability: current.capabilities.sessions?.compaction ?? null } : {}),
+    });
+}
 
 function readPublishedLocalControlSupport(metadata: unknown): boolean | null {
     if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return null;
@@ -168,6 +187,8 @@ export function supportsAgentLifecycleCapability(query: AgentLifecycleCapability
         : null;
 
     switch (query.capability) {
+        case 'session.compact':
+            return readAgentSessionCompactionAvailability(query).status === 'supported';
         case 'usageReporting':
             return currentAgent?.capabilities.sessions?.usageReporting === true
                 && supportsSessionCapability(query, agentId, 'usageReporting', true);

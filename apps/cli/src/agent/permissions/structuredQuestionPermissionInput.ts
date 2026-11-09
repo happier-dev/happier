@@ -11,6 +11,7 @@ export function toStructuredQuestionPermissionInput(request: Readonly<{
             id: question.id,
             question: question.prompt,
             required: question.required,
+            ...(question.allowNote === undefined ? {} : { allowNote: question.allowNote }),
             ...(question.type === 'text'
                 ? { selection: 'text' as const,
                     ...(question.initialValue === undefined ? {} : { presentation: { initialValue: question.initialValue } }) }
@@ -20,6 +21,8 @@ export function toStructuredQuestionPermissionInput(request: Readonly<{
                         ...(choice.description ? { description: choice.description } : {}),
                     })),
                     ...(question.allowCustom ? { allowCustom: true } : {}),
+                    ...(question.minSelections === undefined ? {} : { minSelections: question.minSelections }),
+                    ...(question.maxSelections === undefined ? {} : { maxSelections: question.maxSelections }),
                 }),
         })),
     });

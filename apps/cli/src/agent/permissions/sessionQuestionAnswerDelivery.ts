@@ -1,5 +1,5 @@
 import { z } from 'zod/mini';
-import { StructuredQuestionAnswersV1Schema } from '@happier-dev/protocol/tools/structuredQuestionAnswersV1';
+import { StructuredQuestionAnswerDetailsV1Schema, StructuredQuestionAnswersV1Schema } from '@happier-dev/protocol/tools/structuredQuestionAnswersV1';
 import { SessionQuestionContextV1Schema, SessionQuestionHandlerV1Schema } from '@happier-dev/protocol/sessions/permissions/v1';
 import type { StoredCredentials } from '@/persistence';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
@@ -38,8 +38,9 @@ export function registerSessionQuestionAnswerDelivery(input: Readonly<{
         if (row.status !== 'approved' || input.signal.aborted) return false;
         const question = SessionQuestionContextV1Schema.safeParse(row.questionV1 ?? { mode: 'wait', lasting: false });
         const answers = StructuredQuestionAnswersV1Schema.safeParse(row.structuredAnswersV1 ?? row.answers);
+        const answerDetails = row.answerDetails === undefined ? undefined : StructuredQuestionAnswerDetailsV1Schema.safeParse(row.answerDetails);
         const actor = row.answeredBy === undefined ? undefined : SessionQuestionHandlerV1Schema.safeParse(row.answeredBy);
-        if (!question.success || !answers.success || (actor && !actor.success)) return false;
+        if (!question.success || !answers.success || (answerDetails && !answerDetails.success) || (actor && !actor.success)) return false;
         const credentials = await input.readCredentials();
         if (!credentials || input.signal.aborted) return false;
         const result = await runWithServerHttpBaseUrl(input.serverUrl, async () => {
@@ -51,7 +52,8 @@ export function registerSessionQuestionAnswerDelivery(input: Readonly<{
                 requestLocalId: dispatch.requestId, mode: question.data.mode, outcome: 'answer',
                 ...(actionRequestAttributionV1 ? { actionRequestAttributionV1 } : {}),
                 message: JSON.stringify({ requestId: dispatch.requestId, question: row.arguments,
-                    context: question.data, answers: answers.data }),
+                    context: question.data, answers: answers.data,
+                    ...(answerDetails?.success ? { answerDetails: answerDetails.data } : {}) }),
                 ...(actor?.success && actor.data.kind === 'session' ? {
                     senderSessionId: actor.data.sessionId,
                     answeredBy: { v: 1 as const, kind: 'happierSession' as const,

@@ -52,6 +52,7 @@ const { clearDaemonMergedProjectionCacheForTests } = await import('@/agents/back
 const { publishMachineContributionRegistryProjectionInvalidation } = await import('@/sync/ops/machineContributionRegistryProjectionRevision');
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { buildSessionListRenderableFromSession, deriveSessionListRenderableHasUnreadMessagesFromSession } from '@/sync/domains/session/listing/sessionListRenderable';
+import { UNSUPPORTED_AGENT_SESSION_CAPABILITIES } from '@happier-dev/agents';
 
 const { createBoundPluginSurfaceController } = await import('./boundPluginSurfaceController');
 
@@ -287,6 +288,32 @@ describe('mounted plugin UI linked-Session state (r0.42)', () => {
                     await vi.waitFor(() => expect(events.length).toBeGreaterThan(count));
                 } finally { watch.dispose(); }
             }
+        } finally { mounted.dispose(); }
+    });
+
+    it.each([
+        [{ sessionCapabilities: { ...UNSUPPORTED_AGENT_SESSION_CAPABILITIES, compaction: { events: true, manual: true } } }, 'supported'],
+        [{ sessionCapabilities: UNSUPPORTED_AGENT_SESSION_CAPABILITIES }, 'unsupported'],
+        [undefined, 'unknown'],
+    ] as const)('exposes manual compact evidence through the public plugin Session reader: %s', async (publication, status) => {
+        const base = waitingSession();
+        storage.getState().applySessions([{ ...base, metadata: { ...base.metadata!, flavor: 'external/agent',
+            ...(publication ? { agentRuntimeCapabilitiesV1: publication } : {}) } }]);
+        const mounted = mountSurface();
+        try {
+            const state = await mounted.api.readSession('linked-1');
+            expect(state).toMatchObject({ compaction: { status } });
+            expect(PluginUiSessionStateV1Schema.parse(state).compaction).toEqual(state?.compaction);
+        } finally { mounted.dispose(); }
+    });
+
+    it('keeps unavailable owner capability evidence unknown despite compact-capable presentation', async () => {
+        const base = waitingSession();
+        storage.getState().applySessions([{ ...base, ownerMetadataView: null,
+            metadata: { ...base.metadata!, flavor: 'codex' } }]);
+        const mounted = mountSurface();
+        try {
+            expect(await mounted.api.readSession(base.id)).toMatchObject({ compaction: { status: 'unknown' } });
         } finally { mounted.dispose(); }
     });
 
@@ -634,6 +661,29 @@ describe('mounted plugin UI linked-Session state (r0.42)', () => {
             allowedTools: ['Bash'],
         });
         mounted.dispose();
+    });
+
+    it('reads and answers an opaque offered permission through the real plugin UI bridge', async () => {
+        const nativeChoices = { requirementId: 'native-requirement', source: 'native-test', choices: [{
+            id: 'grant:opaque', label: 'Grant the workspace', decision: 'approved_for_session' as const,
+            scope: 'session' as const, response: { approved: true as const, decision: 'approved_for_session' as const },
+        }] };
+        storage.getState().applySessions([waitingSession({ agentState: { requests: {
+            'req-1': { tool: 'Bash', arguments: { command: 'pwd' }, createdAt: NOW, turnId: 'native-turn', nativeChoices },
+        } } })]);
+        const mounted = mountSurface();
+        try {
+            await expect(mounted.api.readSession('linked-1')).resolves.toMatchObject({ pendingPermissions: [{
+                requestId: 'req-1', nativeChoices, answers: [],
+            }] });
+            await expect(mounted.api.respondToSessionPermission({ sessionId: 'linked-1', requestId: 'req-1',
+                nativeChoice: { requirementId: 'native-requirement', choiceId: 'grant:opaque' },
+            })).resolves.toEqual({ status: 'answered' });
+            expect(mockSessionRpcWithPreferredSessionScope.mock.calls.at(-1)?.[0]).toMatchObject({
+                method: 'session.permission.respond', payload: { id: 'req-1', turnId: 'native-turn',
+                    nativeChoice: { requirementId: 'native-requirement', choiceId: 'grant:opaque' } },
+            });
+        } finally { mounted.dispose(); }
     });
 
     it.each(['claude', 'codex'])('keeps native once-only Bash answers shared with Companion for %s', async flavor => {

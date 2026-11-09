@@ -42,6 +42,9 @@ import { storage } from '@/sync/domains/state/storage';
 import { runWithServerRequestAuthorityForServerAccountScope } from '@/sync/runtime/orchestration/serverScopedRpc/createServerRequestWithServerScope';
 import { readSessionSnapshotForAuthority, SessionSnapshotReadError } from '@/sync/runtime/orchestration/serverScopedRpc/readSessionSnapshotForAuthority';
 import type { LazyActionAccountContext } from './actionAccountContext';
+import { readAgentSessionCompactionAvailability } from '@/agents/backendCatalog/currentAgentCapabilities';
+import { listPendingRequests, projectSessionStatusPendingRequestsV1 } from '@happier-dev/session-core/pending';
+import { readPendingRequestFactsFromSession } from '@/sync/domains/session/pending/listPendingSessionRequests';
 
 /** Status stays usable without a running Agent; detail reads are explicit and use the existing inventory. */
 export function createUiSessionStatusGet(account: LazyActionAccountContext | null | undefined,
@@ -78,7 +81,12 @@ export function createUiSessionStatusGet(account: LazyActionAccountContext | nul
         : isLegacyAuthCredentials(account.credentials) ? { type: 'legacy' } : null });
     const acceptedWorkspace = includeAcceptedWorkspace === true ? readSessionAcceptedWorkspace(session, account.accountLifetime.scope, storage.getState()) : undefined;
     const agentTarget = resolveAgentExecutionTargetFromSessionMetadata(metadata);
+    const pending = listPendingRequests(readPendingRequestFactsFromSession(session), []);
+    const pendingRequests = projectSessionStatusPendingRequestsV1(pending);
     const result = { ok: true as const, session: summary, awareness: projectUiSessionAwareness(session, Date.now()),
+      compaction: readAgentSessionCompactionAvailability({ agentId: resolveAgentIdFromSessionMetadata(metadata), metadata }),
+      pendingRequests,
+      agentState: session.agentState ? { controlledByUser: session.agentState.controlledByUser === true, pendingRequestsCount: pending.length } : null,
       ...(agentTarget ? { agentTarget } : {}),
       ...(acceptedWorkspace ? { acceptedWorkspace } : {}) };
     if (readiness !== true) return result;

@@ -729,6 +729,26 @@ describe('AskUserQuestionView', () => {
         } });
     });
 
+    it('requires the declared selected-option count independently of custom text', async () => {
+        const screen = await renderView(makeTool({ input: { questions: [{
+            id: 'components', question: 'Which components?', required: true, selection: 'multiple',
+            minSelections: 2, maxSelections: 2, allowCustom: true,
+            options: [{ id: 'api', label: 'API' }, { id: 'ui', label: 'UI' }, { id: 'cli', label: 'CLI' }],
+        }] } }));
+        await pressPressableByLabel(screen, 'API');
+        await act(async () => { changeTextTestInstance(screen.findByProps({ testID: 'ask-user-question.freeform:0' }),
+            'Custom, other', 'custom question answer'); });
+        expect(screen.findByProps({ testID: 'ask-user-question.submit' }).props.accessibilityState.disabled).toBe(true);
+        await pressPressableByLabel(screen, 'UI');
+        expect(screen.findByProps({ testID: 'ask-user-question.submit' }).props.accessibilityState.disabled).toBe(false);
+        await pressPressableByLabel(screen, 'CLI');
+        expect(screen.findByProps({ testID: 'ask-user-question.submit' }).props.accessibilityState.disabled).toBe(true);
+        await pressPressableByLabel(screen, 'CLI');
+        await pressPressableByLabel(screen, 'tools.askUserQuestion.submit');
+        expect(sessionAllowWithAnswers).toHaveBeenCalledWith({ id: 'toolu_1', answers: { components: ['api', 'ui'] },
+            answerDetails: { components: { freeText: 'Custom, other' } } });
+    });
+
     it('honors canonical text presentation and preserves whitespace and commas', async () => {
         sessionAllowWithAnswers.mockResolvedValueOnce(undefined);
 
@@ -791,7 +811,7 @@ describe('AskUserQuestionView', () => {
         } });
     });
 
-    it('submits canonical custom single-choice answers unchanged under the question id', async () => {
+    it('submits canonical custom single-choice text separately from selected ids under the question id', async () => {
         sessionAllowWithAnswers.mockResolvedValueOnce(undefined);
 
         const screen = await renderView(makeTool({
@@ -810,11 +830,11 @@ describe('AskUserQuestionView', () => {
         await fillFreeformAndSubmit(screen, 'Custom goal, with commas');
 
         expect(sessionAllowWithAnswers).toHaveBeenCalledWith({ id: 'toolu_1', answers: {
-            goal: ['Custom goal, with commas'],
-        } });
+            goal: [],
+        }, answerDetails: { goal: { freeText: 'Custom goal, with commas' } } });
     });
 
-    it('preserves selected choices and one custom value in a canonical multiple-choice answer array', async () => {
+    it('preserves selected choices and custom text separately for a canonical multiple-choice answer', async () => {
         sessionAllowWithAnswers.mockResolvedValueOnce(undefined);
 
         const screen = await renderView(makeTool({
@@ -838,8 +858,8 @@ describe('AskUserQuestionView', () => {
         await fillFreeformAndSubmit(screen, 'Custom, other');
 
         expect(sessionAllowWithAnswers).toHaveBeenCalledWith({ id: 'toolu_1', answers: {
-            components: ['api, gateway', 'ui', 'Custom, other'],
-        } });
+            components: ['api, gateway', 'ui'],
+        }, answerDetails: { components: { freeText: 'Custom, other' } } });
     });
 
     it('opens a terminal-only dialog without resolving the permission request', async () => {

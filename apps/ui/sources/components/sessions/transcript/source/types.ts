@@ -25,7 +25,7 @@ export type SessionRequestReadOutcome = 'pending' | 'settled';
 export type SessionTranscriptActions = Readonly<{
     respondToPermission(params: Omit<SessionPermissionRespondRpcParamsV1, 'answers'>): Promise<void>;
     answerUserAction(params:
-        | (Pick<SessionPermissionRespondRpcParamsV1, 'id'> & Required<Pick<SessionPermissionRespondRpcParamsV1, 'answers'>> & { decision?: never })
+        | (Pick<SessionPermissionRespondRpcParamsV1, 'id' | 'answerDetails'> & Required<Pick<SessionPermissionRespondRpcParamsV1, 'answers'>> & { decision?: never })
         | (Pick<SessionPermissionRespondRpcParamsV1, 'id'> & { decision: 'reject'; answers?: never })
     ): Promise<void>;
     abort(): Promise<void>;

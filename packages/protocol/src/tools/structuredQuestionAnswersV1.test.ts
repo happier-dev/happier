@@ -1,9 +1,33 @@
 import { describe, expect, it } from 'vitest';
 
-import { StructuredQuestionAnswersV1Schema, StructuredQuestionResponseV1Schema } from './structuredQuestionAnswersV1.js';
+import { StructuredQuestionAnswerDetailsV1Schema, StructuredQuestionAnswersV1Schema, StructuredQuestionResponseV1Schema } from './structuredQuestionAnswersV1.js';
 import { AskUserQuestionResultV2Schema } from './v2/schemas.js';
+import { buildSessionUserActionAnswerDetails, buildSessionUserActionAnswerItems, buildSessionUserActionAnswerMap, SessionUserActionAnswerRpcParamsV1Schema } from '../sessions/permissions/respondRpcParamsV1.js';
+import { SessionUserActionAnswerInputSchema } from '../actions/specs/session/interaction.js';
 
 describe('StructuredQuestionAnswersV1Schema', () => {
+  it('preserves an empty selected set and separate commentary through the public Action and RPC', () => {
+    const items = buildSessionUserActionAnswerItems({ optional: [], components: ['api', 'ui'] }, {
+      components: { freeText: 'Custom, other', note: 'Keep separate' },
+    });
+    const admitted = SessionUserActionAnswerInputSchema.parse({ requestId: 'r', answers: items });
+    const rpc = SessionUserActionAnswerRpcParamsV1Schema.parse({
+      id: 'r', approved: true,
+      answers: buildSessionUserActionAnswerMap(admitted.answers),
+      answerDetails: buildSessionUserActionAnswerDetails(admitted.answers),
+    });
+    expect(rpc.answers).toEqual({ optional: [], components: ['api', 'ui'] });
+    expect(rpc.answerDetails).toEqual({ components: { freeText: 'Custom, other', note: 'Keep separate' } });
+  });
+  it('keeps custom text and a separate note under the exact question id without changing selected answer arrays', () => {
+    const details = StructuredQuestionAnswerDetailsV1Schema.parse({
+      'components, one': { freeText: 'Custom, other', note: 'Keep this note separate' },
+    });
+    expect(details).toEqual({ 'components, one': { freeText: 'Custom, other', note: 'Keep this note separate' } });
+    expect(StructuredQuestionAnswersV1Schema.parse({ 'components, one': ['api', 'ui'] }))
+      .toEqual({ 'components, one': ['api', 'ui'] });
+    expect(StructuredQuestionAnswerDetailsV1Schema.safeParse({ q: { selected: ['api'] } }).success).toBe(false);
+  });
   it('reads the strict 0.2 lossless response wrapper without permission metadata', () => {
     // ui-web-v0.2.17 b8d1c449, sessions.ts sessionAllowWithAnswers producer.
     const response = { id: 'question-one', structuredAnswersV1: { Branch: ['Alpha, Beta', 'Gamma'] } };

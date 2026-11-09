@@ -13,7 +13,7 @@ import {
 import { sha256 } from '@noble/hashes/sha2';
 import { bytesToHex } from '@noble/hashes/utils';
 import { BUNDLED_AGENT_CONTRIBUTION_IDENTITIES, isBundledAgentId } from '@happier-dev/agents/agent-ids';
-import { resolveAgentExecutionTargetFromSessionMetadata } from '@happier-dev/agents';
+import { resolveAgentExecutionTargetFromSessionMetadata, resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
 import { isPluginError, PluginError } from '@happier-dev/plugin-sdk';
 
 import { areServerAccountScopesEqual, type ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
@@ -22,6 +22,7 @@ import { AccountEncryptionMaterialUnavailableError } from '@/auth/encryption/cre
 import { shouldRetryError } from '@/sync/runtime/connectivity/transientConnectivityErrors';
 import { HappyError } from '@/utils/errors/errors';
 import { resolveAgentCatalogProjection } from '@/agents/backendCatalog/agentCatalogProjection';
+import { readAgentSessionCompactionAvailability, readCurrentProjectedAgentCapabilities } from '@/agents/backendCatalog/currentAgentCapabilities';
 import { loadDaemonMergedProjectionCacheEntry, readCachedDaemonMergedProjectionCacheEntry } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
 import { DAEMON_AGENT_CATALOG_SECTIONS } from '@/agents/backendCatalog/agentCatalogSections';
 import type { ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
@@ -42,6 +43,7 @@ import {
     type SessionPermissionAnswerPolicy,
 } from '@/sync/ops/sessionPermissionAnswers';
 import { listSessionPendingPermissions } from '@/sync/ops/sessionPendingPermissions';
+import type { NativePermissionChoicesV1 } from '@happier-dev/protocol/sessions/permissions/respondRpcParamsV1';
 import { createAppSessionTranscriptActions } from '@/components/sessions/transcript/source/appSessionTranscriptActions';
 import { resolveWorkStatusTone } from '@/components/work/status/resolveWorkStatusTone';
 import { sessionWorkStatusFactsFromStatus } from '@/components/work/status/sessionWorkStatusFacts';
@@ -79,6 +81,8 @@ type ProjectedPendingPermission = Readonly<{
     toolName: string;
     turnId?: string;
     source?: string;
+    nativeChoices?: NativePermissionChoicesV1;
+    canApprove: boolean;
     policy: SessionPermissionAnswerPolicy;
     answers: readonly PluginUiSessionPermissionAnswerV1[];
 }>;
@@ -93,6 +97,7 @@ function projectSession(session: Session, accountScope: ServerAccountScope | nul
     const { awareness } = status;
     const agentId = readSessionPresentationAgentId(session);
     const ownerMetadata = readSessionOwnerMetadataView(session);
+    const capabilityAgentId = resolveAgentIdFromSessionMetadata(ownerMetadata);
     const agentTarget = resolveAgentExecutionTargetFromSessionMetadata(ownerMetadata ?? session.metadata, agentId,
         readExternalSessionLink(ownerMetadata ?? session.metadata));
     const acceptedWorkspace = readSessionAcceptedWorkspace(session, accountScope, storage.getState());
@@ -121,6 +126,8 @@ function projectSession(session: Session, accountScope: ServerAccountScope | nul
             toolName: pending.toolName,
             ...(pending.turnId ? { turnId: pending.turnId } : {}),
             ...(pending.source ? { source: pending.source } : {}),
+            ...(pending.nativeChoices !== undefined ? { nativeChoices: pending.nativeChoices } : {}),
+            canApprove: pending.canApprove,
             policy: pending.policy,
             answers: pending.answers,
         });
@@ -131,10 +138,17 @@ function projectSession(session: Session, accountScope: ServerAccountScope | nul
             ...(pending.command ? { command: pending.command } : {}),
             ...(pending.createdAtMs !== undefined ? { createdAtMs: pending.createdAtMs } : {}),
             answers: [...pending.answers],
+            ...(pending.nativeChoices !== undefined ? { nativeChoices: { ...pending.nativeChoices, choices: [...pending.nativeChoices.choices] } } : {}),
+            ...(pending.nativeChoiceAvailability ? { nativeChoiceAvailability: [...pending.nativeChoiceAvailability] } : {}),
+            ...(pending.permissionOwnerLabel ? { permissionOwnerLabel: pending.permissionOwnerLabel } : {}),
         });
     }
     const state = PluginUiSessionStateV1Schema.parse({
         sessionId: session.id,
+        compaction: readAgentSessionCompactionAvailability({ agentId: capabilityAgentId, metadata: ownerMetadata,
+            currentAgentCapabilities: cached?.kind === 'ready' ? readCurrentProjectedAgentCapabilities({
+                projection: inputs?.pluginProjectionV2, agentId: capabilityAgentId,
+            }) : null }),
         ...(accountScope ? { serverId: accountScope.serverId } : {}),
         ...(agentTarget ? { agentTarget } : {}),
         ...(acceptedWorkspace ? { acceptedWorkspace } : {}),
@@ -401,20 +415,27 @@ export function createPluginSurfaceSessionHandlers(input: Readonly<{
         if (!parsed.success) {
             return createPluginSurfaceHostApiError('invalid_payload', ['session_permission_payload_invalid']);
         }
-        const { sessionId, requestId, answer } = parsed.data;
+        const { sessionId, requestId } = parsed.data;
         const projected = readProjectedSession(sessionId, input.accountScope);
         if (!projected) return { status: 'refused', reason: 'sessionUnavailable' };
         const pending = projected.requests.get(requestId);
         if (!pending) return { status: 'refused', reason: 'requestNotPending' };
-        if (!pending.answers.includes(answer)) return { status: 'refused', reason: 'answerUnavailable' };
+        if (!pending.canApprove) return { status: 'refused', reason: 'answerUnavailable' };
+        const nativeChoice = parsed.data.nativeChoice;
+        const answer = parsed.data.answer;
+        if (pending.nativeChoices !== undefined ? !nativeChoice : !answer || !pending.answers.includes(answer)) {
+            return { status: 'refused', reason: 'answerUnavailable' };
+        }
         try {
             await answerSessionPermission({
                 requestId,
                 ...(pending.turnId ? { turnId: pending.turnId } : {}),
-                ...(pending.source ? { source: pending.source } : {}),
-                toolName: pending.toolName,
-                answer,
-                policy: pending.policy,
+                ...(nativeChoice ? { nativeChoice } : {
+                    ...(pending.source ? { source: pending.source } : {}),
+                    toolName: pending.toolName,
+                    answer: answer!,
+                    policy: pending.policy,
+                }),
                 respondToPermission: createAppSessionTranscriptActions(sessionId, input.accountScope?.serverId ?? null).respondToPermission,
             });
         } catch {

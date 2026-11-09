@@ -1569,7 +1569,8 @@ function WorkflowRunBody(props: Readonly<{ onCloseInvocation: () => void; embedd
                 const response = await executeUiAction('execution.run.permission.respond', {
                     runId: selectedExecutionRunId,
                     requestId: request.requestId,
-                    ...('answers' in request ? { answers: request.answers } : { approved: request.approved }),
+                    ...('answers' in request ? { answers: request.answers,
+                        ...(request.answerDetails === undefined ? {} : { answerDetails: request.answerDetails }) } : { approved: request.approved }),
                 }, {
                     surface: 'ui',
                     serverId: activeAccountScope.serverId,

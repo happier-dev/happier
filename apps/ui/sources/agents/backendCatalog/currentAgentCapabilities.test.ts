@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
     readCurrentProjectedAgentCapabilities,
+    readAgentSessionCompactionAvailability,
     supportsAgentLifecycleCapability,
     supportsCurrentProjectedAgentConversationRollback,
     supportsCurrentProjectedAgentSessionOpen,
@@ -73,6 +74,20 @@ const projection = {
 } as const;
 
 describe('readCurrentProjectedAgentCapabilities', () => {
+    it('projects compact availability from the declaration and opened runtime through the shared owner', () => {
+        const currentAgentCapabilities = {
+            agentId: 'external/agent', identity: { pluginId: 'external', localId: 'agent' }, generation: 1,
+            capabilities: { sessions: { open: ['create'] as ['create'], delivery: ['newTurn'] as ['newTurn'],
+                cancel: true, compaction: { events: true as const, manual: true as const } } },
+        };
+        const query = { agentId: 'external/agent', currentAgentCapabilities };
+        expect(readAgentSessionCompactionAvailability(query)).toEqual({ status: 'supported' });
+        expect(supportsAgentLifecycleCapability({ ...query, capability: 'session.compact' })).toBe(true);
+        const opened = { ...query, metadata: { agentRuntimeCapabilitiesV1: { sessionCapabilities: {} } } };
+        expect(readAgentSessionCompactionAvailability(opened)).toMatchObject({ status: 'unsupported' });
+        expect(supportsAgentLifecycleCapability({ ...opened, capability: 'session.compact' })).toBe(false);
+        expect(readAgentSessionCompactionAvailability({ agentId: 'external/agent' })).toEqual({ status: 'unknown' });
+    });
     it('exposes one exact normalized declaration and its Protocol-owned predicates', () => {
         const current = readCurrentProjectedAgentCapabilities({
             projection: projection as any,

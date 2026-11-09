@@ -4,7 +4,7 @@ import { readRpcRequestDisposition } from '@happier-dev/sync-client';
 import { randomUUID } from 'node:crypto';
 import { createTargetedActionRpcRequestV1 } from '@happier-dev/protocol/actions/actionRpcTransport';
 import { type SessionActionRpcOriginV1 } from '@happier-dev/protocol/socketRpc';
-import { buildSessionPermissionRespondRpcParamsV1, SessionUserActionPassUpRpcParamsV1Schema } from '@happier-dev/protocol/sessions/permissions/respondRpcParamsV1';
+import { buildSessionPermissionRespondRpcParamsV1, buildSessionUserActionAnswerMap, buildSessionUserActionAnswerDetails, SessionUserActionPassUpRpcParamsV1Schema } from '@happier-dev/protocol/sessions/permissions/respondRpcParamsV1';
 import type { ActionExecutorDeps, ActionExecutorContext } from '@happier-dev/protocol';
 import type { parsePermissionIntentAlias, PermissionIntent } from '@happier-dev/agents';
 import type { setSessionPermissionMode } from '@/session/services/setSessionPermissionMode';
@@ -299,6 +299,7 @@ export function createCliPermissionActionDeps(
       sessionId,
       context,
       decision,
+      nativeChoice,
       requestId,
       turnId,
       mode,
@@ -364,6 +365,7 @@ export function createCliPermissionActionDeps(
             } } : {}),
           request: buildSessionPermissionRespondRpcParamsV1({
             id: reqId,
+            ...(nativeChoice === undefined ? {} : { nativeChoice }),
             ...(typeof turnId === 'string' && turnId.trim().length > 0 ? { turnId: turnId.trim() } : {}),
             decision,
             ...(mode === undefined ? {} : { mode }),
@@ -495,13 +497,8 @@ export function createCliPermissionActionDeps(
       })) {
         return permissionRequestNotFoundResult(transport.sessionId);
       }
-      const normalizedAnswers = Object.create(null) as Record<string, readonly string[]>;
-      for (const entry of Array.isArray(answers) ? answers : []) {
-        const question = String(entry?.question ?? '');
-        if (question.trim().length > 0 && entry.values.length > 0) {
-          normalizedAnswers[question] = [...entry.values];
-        }
-      }
+      const normalizedAnswers = buildSessionUserActionAnswerMap(answers);
+      const answerDetails = buildSessionUserActionAnswerDetails(answers);
       if (disposition !== 'pass_up' && !decision && Object.keys(normalizedAnswers).length === 0) {
         return { ok: false, errorCode: 'invalid_parameters', errorMessage: 'invalid_parameters', sessionId: transport.sessionId };
       }
@@ -526,6 +523,7 @@ export function createCliPermissionActionDeps(
               id: reqId,
               decision: legacyDecision,
               ...(Object.keys(normalizedAnswers).length > 0 ? { answers: normalizedAnswers } : {}),
+              ...(Object.keys(answerDetails).length > 0 ? { answerDetails } : {}),
               ...(typeof reason === 'string' && reason.trim().length > 0 ? { reason: reason.trim() } : {}),
               ...(typeof updatedPermissions !== 'undefined' ? { updatedPermissions } : {}),
               ...(Array.isArray(allowedTools) ? { allowedTools } : {}),

@@ -1,6 +1,7 @@
 import { extractShellCommand, stripShellCommandPreludeForDisplay } from './shellCommand.js';
 import { isShellToolNameAlias } from '../tools/v2/aliases.js';
 import { resolveToolMutationClassification } from '../tools/toolMutationClassification.js';
+import { StructuredQuestionSelectionConstraintsV1Schema } from '../tools/structuredQuestionAnswersV1.js';
 import {
   SESSION_PERMISSION_REMOTE_SUMMARY_MAX_CHOICES_PER_QUESTION,
   SESSION_PERMISSION_REMOTE_SUMMARY_MAX_QUESTIONS,
@@ -60,6 +61,9 @@ export type AgentRequestQuestionSummary = Readonly<{
   selection: AgentRequestQuestionSelection;
   required: boolean;
   allowCustom: boolean;
+  minSelections?: number;
+  maxSelections?: number;
+  allowNote?: boolean;
   choices: readonly AgentRequestQuestionChoiceSummary[];
   freeformDescription?: string;
   freeformPlaceholder?: string;
@@ -203,6 +207,12 @@ function extractQuestionSummaries(
         ? 'multiple'
         : 'single';
     const freeform = asRecord(record?.freeform);
+    const constraints = StructuredQuestionSelectionConstraintsV1Schema.safeParse({
+      ...(record?.minSelections === undefined ? {} : { minSelections: record.minSelections }),
+      ...(record?.maxSelections === undefined ? {} : { maxSelections: record.maxSelections }),
+    });
+    if (!constraints.success) continue;
+    if (selection !== 'multiple' && (constraints.data.minSelections !== undefined || constraints.data.maxSelections !== undefined)) continue;
     const hasExplicitFreeform = freeform !== null || record?.freeform === true || record?.allowCustom === true;
     summaries.push(Object.freeze({
       answerKey: firstString(record?.id) ?? text,
@@ -212,6 +222,8 @@ function extractQuestionSummaries(
       required: record?.required !== false,
       allowCustom: selection === 'text' || choices.length === 0 || hasExplicitFreeform,
       choices: Object.freeze(choices),
+      ...constraints.data,
+      ...(record?.allowNote === true ? { allowNote: true } : {}),
       ...(firstString(freeform?.description) ? { freeformDescription: firstString(freeform?.description)! } : {}),
       ...(firstString(freeform?.placeholder) ? { freeformPlaceholder: firstString(freeform?.placeholder)! } : {}),
       ...(typeof freeform?.multiline === 'boolean' ? { freeformMultiline: freeform.multiline } : {}),

@@ -7,8 +7,28 @@ import { getSessionStatus } from './getSessionStatus';
 import * as sessionSockets from '@/api/session/sockets';
 import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { MachinesAgentsListOutputSchema } from '@happier-dev/protocol/capabilities/machineAgentInventory';
+import { UNSUPPORTED_AGENT_SESSION_CAPABILITIES } from '@happier-dev/agents';
 
 afterEach(() => { vi.restoreAllMocks(); });
+
+it.each([
+  [{ sessionCapabilities: { ...UNSUPPORTED_AGENT_SESSION_CAPABILITIES, compaction: { events: true, manual: true } } }, 'supported'],
+  [{ sessionCapabilities: UNSUPPORTED_AGENT_SESSION_CAPABILITIES }, 'unsupported'],
+  [undefined, 'unknown'],
+] as const)('projects compact evidence through the CLI status schema: %s', async (publication, status) => {
+  const sessionId = 'c123456789012345678901234';
+  const row = createSessionRecordFixture({ id: sessionId, encryptionMode: 'plain',
+    metadata: JSON.stringify({ flavor: 'external/agent', ...(publication ? { agentRuntimeCapabilitiesV1: publication } : {}) }) });
+  vi.spyOn(axios, 'get').mockImplementation(async url => {
+    const path = new URL(String(url)).pathname;
+    if (path === '/v1/account/encryption/currentness') return { status: 200, data: createAccountEncryptionCurrentnessFixture() };
+    if (path === `/v2/sessions/${sessionId}`) return { status: 200, data: { session: row } };
+    throw new Error(`Unexpected HTTP read ${path}`);
+  });
+  const result = await getSessionStatus({ credentials: { token: 'token', encryption: null }, idOrPrefix: sessionId, live: false });
+  expect(result).toMatchObject({ ok: true, compaction: { status } });
+  if (result.ok) expect(SessionStatusResultSchema.parse(result)).toEqual(result);
+});
 
 it.each([
   { signIn: { status: 'unknown', loginSupport: 'unsupported' }, state: 'ready' },

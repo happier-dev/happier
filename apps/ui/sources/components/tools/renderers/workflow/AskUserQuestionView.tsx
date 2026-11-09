@@ -11,6 +11,7 @@ import { Modal } from '@/modal';
 import { t } from '@/text';
 import { Text, TextInput } from '@/components/ui/text/Text';
 import { buildAgentRequestSemanticSummary, resolveAgentRequestKind } from '@happier-dev/protocol/activity/agentRequestSummary';
+import { isStructuredQuestionSelectionCountValid, type StructuredQuestionAnswerDetailsV1 } from '@happier-dev/protocol/tools/structuredQuestionAnswersV1';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import {
     useOpenAttachedSessionTerminal,
@@ -70,6 +71,7 @@ interface QuestionFreeform {
 }
 
 interface Question {
+    canonical: boolean;
     answerKey: string;
     question: string;
     header?: string;
@@ -77,6 +79,9 @@ interface Question {
     multiSelect: boolean;
     required: boolean;
     selection: 'text' | 'single' | 'multiple';
+    minSelections?: number;
+    maxSelections?: number;
+    allowNote?: boolean;
     freeform?: QuestionFreeform;
 }
 
@@ -276,8 +281,10 @@ function normalizeCanonicalQuestion(value: Record<string, unknown>): Question | 
     if (value.selection === 'text') {
         const presentation = isRecord(value.presentation) ? value.presentation : {};
         return {
+            canonical: true,
             answerKey: value.id,
             question: value.question,
+            ...(value.allowNote === true ? { allowNote: true } : {}),
             options: [],
             multiSelect: false,
             required: value.required === true,
@@ -296,13 +303,21 @@ function normalizeCanonicalQuestion(value: Record<string, unknown>): Question | 
         ? value.options.map((option) => normalizeQuestionOption(option, true))
         : [];
     if (options.some((option) => option === null)) return null;
+    const summary = buildAgentRequestSemanticSummary({
+        kind: 'user_action', toolName: 'AskUserQuestion', toolInput: { questions: [value] },
+    }).questions[0];
+    if (!summary || (summary.minSelections !== undefined && summary.minSelections > options.length)) return null;
     return {
+        canonical: true,
         answerKey: value.id,
         question: value.question,
         options: options as QuestionOption[],
         multiSelect: value.selection === 'multiple',
         required: value.required === true,
         selection: value.selection,
+        ...(summary.minSelections === undefined ? {} : { minSelections: summary.minSelections }),
+        ...(summary.maxSelections === undefined ? {} : { maxSelections: summary.maxSelections }),
+        ...(summary.allowNote === undefined ? {} : { allowNote: summary.allowNote }),
         ...(value.allowCustom === true
             ? {
                 freeform: {
@@ -328,6 +343,7 @@ function normalizeLegacyQuestion(value: Record<string, unknown>): Question | nul
     if (options.some((option) => option === null)) return null;
     const freeform = isRecord(value.freeform) ? value.freeform : null;
     return {
+        canonical: false,
         answerKey,
         question: value.question,
         ...(header ? { header } : {}),
@@ -866,6 +882,8 @@ export const AskUserQuestionView = React.memo<ToolViewProps>(({ tool, messageId,
     // Check if all questions have at least one selection
     const allQuestionsAnswered = questions.every((_, qIndex) => {
         const q = questions[qIndex];
+        if (q.selection === 'multiple' && !isStructuredQuestionSelectionCountValid(q, selections.get(qIndex)?.size ?? 0)) return false;
+        if (q.selection === 'multiple' && q.minSelections === 0) return true;
         if (!q.required) return true;
         const options = Array.isArray(q?.options) ? q.options : [];
         const freeform = resolveFreeformAnswer(q, qIndex, freeformAnswers);
@@ -916,6 +934,7 @@ export const AskUserQuestionView = React.memo<ToolViewProps>(({ tool, messageId,
         if ((!sessionId && executionRun === undefined) || !canInteract || !allQuestionsAnswered || isSubmitting) return;
 
         const answers: Record<string, readonly string[]> = {};
+        const answerDetails: Record<string, StructuredQuestionAnswerDetailsV1[string]> = {};
         questions.forEach((q, qIndex) => {
             const options = Array.isArray(q.options) ? q.options : [];
             const freeform = resolveFreeformAnswer(q, qIndex, freeformAnswers);
@@ -932,14 +951,16 @@ export const AskUserQuestionView = React.memo<ToolViewProps>(({ tool, messageId,
                 .filter((option): option is QuestionOption => Boolean(option))
                 .map(option => option.answerValue);
             if (q.selection === 'multiple') {
-                const exactValues = freeform.value.length > 0
+                const exactValues = freeform.value.length > 0 && !q.canonical
                     ? [...selectedAnswerValues, freeform.value]
                     : selectedAnswerValues;
-                if (exactValues.length > 0) answers[q.answerKey] = exactValues;
+                if (exactValues.length > 0 || freeform.value.length > 0 || q.minSelections === 0) answers[q.answerKey] = exactValues;
+                if (q.canonical && freeform.value.length > 0) answerDetails[q.answerKey] = { freeText: freeform.value };
                 return;
             }
             if (freeform.value.length > 0) {
-                answers[q.answerKey] = [freeform.value];
+                answers[q.answerKey] = q.canonical ? [] : [freeform.value];
+                if (q.canonical) answerDetails[q.answerKey] = { freeText: freeform.value };
             } else if (selectedAnswerValues.length > 0) {
                 answers[q.answerKey] = selectedAnswerValues;
             }
@@ -955,7 +976,8 @@ export const AskUserQuestionView = React.memo<ToolViewProps>(({ tool, messageId,
                 const respond = executionRun.respond;
                 if (respond === undefined || executionRun.pendingRequestIds.has(toolCallId)) return;
                 setIsSubmitting(true);
-                await respond({ requestId: toolCallId, answers });
+                await respond({ requestId: toolCallId, answers,
+                    ...(Object.keys(answerDetails).length > 0 ? { answerDetails } : {}) });
                 setSubmissionOutcome('answered');
                 return;
             }
@@ -993,7 +1015,8 @@ export const AskUserQuestionView = React.memo<ToolViewProps>(({ tool, messageId,
                 : null;
             setIsSubmitting(true);
 
-            await actions.answerUserAction({ id: toolCallId, answers });
+            await actions.answerUserAction({ id: toolCallId, answers,
+                ...(Object.keys(answerDetails).length > 0 ? { answerDetails } : {}) });
             markTranscriptPromptAnswered(source, toolCallId);
             // The requester has accepted this answer, so the interaction is
             // terminal here. Remembering the choice is a SEPARATE outcome: a

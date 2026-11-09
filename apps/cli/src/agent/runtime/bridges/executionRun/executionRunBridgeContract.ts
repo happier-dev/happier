@@ -29,6 +29,7 @@ import type { ExecutionRunParentSessionPermissionResponseTarget } from '@/agent/
 import type { RuntimePermissionResponseOutcome } from './executionRunHostRuntime';
 import type { ExecutionRunPermissionRequestStore } from './executionRunPermissionResponseTarget';
 import type { RequesterWorkAttributionV1 } from '@happier-dev/protocol/machines/requesterWorkAttributionV1';
+import type { StructuredQuestionAnswerDetailsV1 } from '@happier-dev/protocol/tools/structuredQuestionAnswersV1';
 
 export type ExecutionRunPermissionResponseBridgeResult =
   | Readonly<{ ok: true; delivery: RuntimePermissionResponseOutcome }>
@@ -147,7 +148,7 @@ export interface ExecutionRunHostBridgeContract {
     runId: string,
     params:
       | Readonly<{ requestId: string; approved: boolean }>
-      | Readonly<{ requestId: string; answers: StructuredQuestionAnswersV1 }>,
+      | Readonly<{ requestId: string; answers: StructuredQuestionAnswersV1; answerDetails?: StructuredQuestionAnswerDetailsV1 }>,
   ): Promise<Readonly<{ ok: true } | { ok: false; errorCode: string; error: string }>>;
   applyAction(
     runId: string,

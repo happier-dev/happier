@@ -1,4 +1,4 @@
-import type { StructuredQuestionAnswersV1 } from '@happier-dev/protocol/tools/structuredQuestionAnswersV1';
+import type { StructuredQuestionAnswerDetailsV1, StructuredQuestionAnswersV1 } from '@happier-dev/protocol/tools/structuredQuestionAnswersV1';
 
 /**
  * One answer to a pending agent request owned by an Execution Run.
@@ -10,7 +10,7 @@ import type { StructuredQuestionAnswersV1 } from '@happier-dev/protocol/tools/st
  */
 export type ExecutionRunPromptResponse =
     | Readonly<{ requestId: string; approved: boolean }>
-    | Readonly<{ requestId: string; answers: StructuredQuestionAnswersV1 }>;
+    | Readonly<{ requestId: string; answers: StructuredQuestionAnswersV1; answerDetails?: StructuredQuestionAnswerDetailsV1 }>;
 
 /**
  * The response origin a canonical prompt card uses instead of a Session.

@@ -9,6 +9,7 @@ import {
   type ExecutionRunParentSessionPermissionResponseTarget,
 } from '@/agent/executionRuns/policy/executionRunPermissionInteractionPolicy';
 import type { StructuredQuestionAnswersV1 } from '@happier-dev/protocol';
+import type { StructuredQuestionAnswerDetailsV1 } from '@happier-dev/protocol/tools/structuredQuestionAnswersV1';
 import { logger } from '@/ui/logger';
 
 export type { ExecutionRunParentSessionPermissionResponseTarget };
@@ -50,6 +51,7 @@ export type ExecutionRunPermissionRequestStore = Readonly<{
     decision?: string;
     reason?: string;
     answers?: StructuredQuestionAnswersV1;
+    answerDetails?: StructuredQuestionAnswerDetailsV1;
   }>): Promise<boolean> | boolean;
   retireCompletedRequestsForTurn?(turnId: string): Promise<void>;
   registerResponseTargetHandler(

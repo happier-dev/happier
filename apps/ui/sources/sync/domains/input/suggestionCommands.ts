@@ -4,8 +4,8 @@
  */
 
 import Fuse from 'fuse.js';
-import { evaluateAgentSessionCompactionCapability, resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
-import type { AgentSessionCompactionCapability } from '@happier-dev/protocol/plugins/agents';
+import { evaluateAgentSessionCompactionAvailability, resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
+import type { AgentSessionCompactionCapability, AgentSessionCompactionAvailabilityV1 } from '@happier-dev/protocol/plugins/agents';
 import { isPromptInvocationAvailable, PromptInvocationsV1Schema, type PromptInvocationsV1 } from '@happier-dev/protocol/prompts/library/promptInvocationsV1';
 import { listActionSpecs } from '@happier-dev/protocol/actions/actionSpecs';
 import { storage } from '../state/storage';
@@ -32,6 +32,7 @@ export interface CommandItem {
 export interface SearchOptions {
     /** Effective opened-runtime descriptor; absence suppresses only Happier's compact default. */
     compaction?: AgentSessionCompactionCapability | null;
+    compactionAvailability?: AgentSessionCompactionAvailabilityV1;
     /** Admitted Account catalog value; absence is not permission to read Settings. */
     invocations?: PromptInvocationsV1 | null;
     nativeCommands?: readonly Pick<CommandItem, 'command' | 'description'>[];
@@ -43,9 +44,9 @@ export interface SearchOptions {
 
 // Descriptions resolve when the list is built, so they follow the
 // reader's current language rather than the one loaded when this module was first imported.
-function buildDefaultCommands(compaction: AgentSessionCompactionCapability | null | undefined): CommandItem[] {
+function buildDefaultCommands(compaction: AgentSessionCompactionAvailabilityV1): CommandItem[] {
     return [
-        ...(compaction?.manual === true ? [{ command: 'compact', description: t('agentInput.commands.compact') }] : []),
+        ...(compaction.status === 'supported' ? [{ command: 'compact', description: t('agentInput.commands.compact') }] : []),
         { command: 'clear', description: t('agentInput.commands.clear') },
         { command: 'goal', description: t('session.workState.commandDescription') },
     ];
@@ -216,16 +217,17 @@ function getCommandsFromSession(
     nativeCommands: readonly Pick<CommandItem, 'command' | 'description'>[] = [],
     invocations?: PromptInvocationsV1 | null,
     compaction?: AgentSessionCompactionCapability | null,
+    compactionAvailability?: AgentSessionCompactionAvailabilityV1,
 ): CommandItem[] {
     const state = storage.getState();
     const session = sessionId ? state.sessions?.[sessionId] : undefined;
     const metadata = session ? readSessionOwnerMetadataView(session) : null;
-    // Sibling Session composers read live support at the same query boundary as
-    // native commands. An explicit descriptor (including null) stays authoritative.
-    const agentId = compaction === undefined ? resolveAgentIdFromSessionMetadata(metadata) : null;
-    const effectiveCompaction = compaction === undefined && agentId
-        ? evaluateAgentSessionCompactionCapability({ agentId, metadata, declaredCapability: null })
-        : compaction;
+    // Sibling composers use the same owner; raw descriptor callers provide only
+    // declaration evidence, refined by any opened-runtime publication.
+    const effectiveCompaction = compactionAvailability ?? evaluateAgentSessionCompactionAvailability({
+        agentId: resolveAgentIdFromSessionMetadata(metadata) ?? '', metadata,
+        ...(compaction !== undefined ? { declaredCapability: compaction } : {}),
+    });
     const commands: CommandItem[] = [
         ...buildActionSlashCommands(state),
         ...buildBuiltInPromptSlashCommands(),
@@ -265,7 +267,7 @@ export async function searchCommands(
     const { limit = 10, threshold = 0.3, contributedActions = [] } = options;
     
     // Get commands from session metadata (no caching)
-    const commands = getCommandsFromSession(sessionId, contributedActions, options.nativeCommands, options.invocations, options.compaction);
+    const commands = getCommandsFromSession(sessionId, contributedActions, options.nativeCommands, options.invocations, options.compaction, options.compactionAvailability);
     
     // If query is empty, return all commands
     if (!query || query.trim().length === 0) {
@@ -294,6 +296,6 @@ export async function searchCommands(
 }
 
 // Get all available commands for a session
-export function getAllCommands(sessionId: string | null, options: Pick<SearchOptions, 'contributedActions' | 'invocations' | 'compaction'> = {}): CommandItem[] {
-    return getCommandsFromSession(sessionId, options.contributedActions, [], options.invocations, options.compaction);
+export function getAllCommands(sessionId: string | null, options: Pick<SearchOptions, 'contributedActions' | 'invocations' | 'compaction' | 'compactionAvailability'> = {}): CommandItem[] {
+    return getCommandsFromSession(sessionId, options.contributedActions, [], options.invocations, options.compaction, options.compactionAvailability);
 }

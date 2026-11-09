@@ -36,3 +36,7 @@ export {
   type AgentSessionCompactionCapability,
   type AgentSessionCompactionIdleCapability,
 } from './contributions/agentSessionCapabilities.js';
+export {
+  AgentSessionCompactionAvailabilityV1Schema,
+  type AgentSessionCompactionAvailabilityV1,
+} from '../sessions/control/sessionCompactionAvailabilityV1.js';

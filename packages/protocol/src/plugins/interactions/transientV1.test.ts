@@ -36,6 +36,23 @@ const appScopeStamp = {
 } as const;
 
 describe('transient interaction contract', () => {
+  it('counts selected options within native bounds independently of custom text and a note', () => {
+    const normalized = normalizeInteractionTransientRequestV1({ kind: 'questions', questions: [{
+      id: 'components', prompt: 'Which components?', type: 'multipleChoice', required: true,
+      allowCustom: true, allowNote: true, minSelections: 2, maxSelections: 2,
+      choices: [{ id: 'api', label: 'API' }, { id: 'ui', label: 'UI' }, { id: 'cli', label: 'CLI' }],
+    }] }, stamp);
+    expect(normalized.ok).toBe(true);
+    if (!normalized.ok) throw new Error('Expected a supported bounded question');
+    const result = (ids: readonly string[]) => ({ requestId: stamp.requestId, kind: 'questions', status: 'answered', answers: {
+      components: { kind: 'multipleChoice', answers: [
+        ...ids.map(choiceId => ({ kind: 'choice', choiceId })), { kind: 'custom', value: 'Custom, text' },
+      ], note: 'A separate comment' },
+    } });
+    expect(validateInteractionTransientSettlementV1(normalized.value, result(['api', 'ui'])).ok).toBe(true);
+    expect(validateInteractionTransientSettlementV1(normalized.value, result(['api'])).ok).toBe(false);
+    expect(validateInteractionTransientSettlementV1(normalized.value, result(['api', 'ui', 'cli'])).ok).toBe(false);
+  });
   it('retains production Account-release custody through confirmation and refuses its retired occurrence', async () => {
     const custody = AccountReleasePluginSourceCustodyV1Schema.parse({ kind: 'account_release',
       pluginId: 'happier.triage', version: '0.0.0', archiveDigestSha256: `sha256:${'a'.repeat(64)}` });

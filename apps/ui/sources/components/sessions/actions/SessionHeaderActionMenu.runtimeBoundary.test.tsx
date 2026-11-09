@@ -31,6 +31,7 @@ import { useSessionMachineControlTarget, useSessionMachineControlTargetState } f
 import { publishMachineActivity } from '@/sync/domains/machines/machineActivity';
 import { WorkspaceNavigationProvider, type WorkspaceNavigationContextValue } from '@/components/appShell/workspace/WorkspaceNavigationContext';
 import { createWorkspaceState } from '@/components/appShell/workspace/workspaceState';
+import { UNSUPPORTED_AGENT_SESSION_CAPABILITIES } from '@happier-dev/agents';
 
 vi.hoisted(async () => {
     const { mkdirSync, realpathSync } = await import('node:fs');
@@ -160,6 +161,25 @@ describe('SessionHeaderActionMenu real runtime boundaries', () => {
         ioSpy.mockReset();
         modalShow.mockClear();
         modalAlert.mockClear();
+    });
+
+    it.each([
+        [{ sessionCapabilities: { ...UNSUPPORTED_AGENT_SESSION_CAPABILITIES, compaction: { events: true, manual: true } } }, false],
+        [{ sessionCapabilities: UNSUPPORTED_AGENT_SESSION_CAPABILITIES }, true],
+        [undefined, true],
+    ] as const)('keeps Compact in the incumbent menu with the owner availability and accessible disabled reason: %s', async (publication, disabled) => {
+        const base = storage.getState().sessions.sess_1!;
+        const session = createSessionFixture({ ...base, active: true, metadata: { ...base.metadata!, flavor: 'external/agent',
+            ...(publication ? { agentRuntimeCapabilitiesV1: publication } : {}) } });
+        storage.getState().applySessions([session]);
+        const screen = await renderScreen(<SessionHeaderActionMenu sessionId={session.id} session={session} />);
+        const item = screen.findByType(DropdownMenu).props.items.find((row: { id: string }) => row.id === 'session.compact');
+        expect(item).toBeTruthy();
+        expect(item.disabled === true).toBe(disabled);
+        if (disabled) {
+            expect(item.subtitle).toBeTruthy();
+            expect(item.accessibilityLabel).toContain(item.subtitle);
+        }
     });
 
     // F-JOURNEY-UI live (390): Share pushed ?mobileSurface=collaboration but the mounted phone cockpit stayed on chat,

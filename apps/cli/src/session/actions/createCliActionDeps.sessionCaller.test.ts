@@ -507,7 +507,8 @@ describe('daemon Account Action Session caller context', () => {
     });
     try {
       expect(await createActionExecutor(deps).execute('session.user_action.answer', { sessionId: fixture.sessionId,
-        requestId: 'question-one', answers: [{ question: 'branch', values: ['dev'] }] }, {
+        requestId: 'question-one', answers: [{ question: 'branch', values: ['dev'], freeText: 'Custom branch', note: 'Keep this selection' },
+          { question: 'optional', values: [], note: 'None apply' }] }, {
         surface: 'agent', authority: 'account_automation', defaultSessionId: callerSessionId, actionRequestId: 'recover-answer',
         actionCaller: { kind: 'session', sessionId: callerSessionId, starterDepth: 0, turnDepth: 1 },
         sessionInputSource: { sourceSessionId: callerSessionId, sourceTurnId: 'manager-turn', via: 'action' },
@@ -521,6 +522,12 @@ describe('daemon Account Action Session caller context', () => {
       const resume = observed[0] as { request: Readonly<Record<string, unknown>> };
       expect(resume.request).not.toHaveProperty('executionAuthorization');
       expect(resume.request).not.toHaveProperty('initialGoal');
+      const answer = observed[1] as { input: unknown };
+      expect(SessionUserActionAnswerRpcParamsV1Schema.parse(answer.input)).toMatchObject({
+        id: 'question-one', answers: { branch: ['dev'], optional: [] },
+        answerDetails: { branch: { freeText: 'Custom branch', note: 'Keep this selection' },
+          optional: { note: 'None apply' } },
+      });
     } finally { fixture.cleanup(); }
   });
 

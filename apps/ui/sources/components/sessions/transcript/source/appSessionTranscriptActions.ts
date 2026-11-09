@@ -9,6 +9,7 @@ import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionEx
 import { HappyError } from '@/utils/errors/errors';
 import { projectServerScopedSessionSendMessageResult } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionSendMessage';
 import { SessionMessageSendResultV1Schema } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
+import { buildSessionUserActionAnswerItems } from '@happier-dev/protocol/sessions/permissions/respondRpcParamsV1';
 import { submitSessionUserMessage } from '@/sync/domains/session/input/submitSessionUserMessage';
 import type { SessionSubmitPort, SubmitSessionUserMessageOptions, SubmitSessionUserMessageResult } from '@/sync/domains/session/input/types';
 
@@ -114,7 +115,7 @@ export function createAppSessionTranscriptActions(sessionId: string, serverId: s
             requireActionSuccess(await execute('session.user_action.answer', { sessionId, requestId: params.id,
                 ...(params.decision === 'reject'
                     ? { decision: 'reject' as const }
-                    : { answers: Object.entries(params.answers).map(([question, values]) => ({ question, values: [...values] })) }),
+                    : { answers: buildSessionUserActionAnswerItems(params.answers, params.answerDetails) }),
             }, context));
         },
         abort: async () => { requireActionSuccess(await execute('session.turn.cancel', { sessionId }, context)); },
