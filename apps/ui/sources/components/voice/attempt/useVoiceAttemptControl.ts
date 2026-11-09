@@ -468,11 +468,9 @@ export function useVoiceAttemptControl(idleTarget: VoiceAttemptIdleTarget): Voic
     /*
      * Which conversation a running attempt belongs to.
      *
-     * Both stores can change the answer on their own — a runtime `bind()` never touches storage —
-     * so both are subscribed, and the answer is derived through the same canonical reader Horizon
-     * uses (`resolveVoiceBindingBySessionId`) rather than re-implemented here. The read is cached on
-     * the two store identities plus the attempt's own identity, so an unrelated session write costs
-     * three reference comparisons instead of a walk over every persisted binding.
+     * The binding owner ingests Session changes and publishes binding changes, including runtime
+     * `bind()` calls. The same canonical reader Horizon uses (`resolveVoiceBindingBySessionId`)
+     * derives the destination; its snapshot stays cached until that owner or the attempt changes.
      */
     const snapAdapterId = snap.adapterId ?? null;
     const arrivedAttemptId = React.useSyncExternalStore(
@@ -674,15 +672,19 @@ export function useVoiceAttemptControl(idleTarget: VoiceAttemptIdleTarget): Voic
     const refusalRecoveryAction = startAdmission.refusal?.recoveryAction;
     const recoverStart = React.useCallback(() => {
         if (!refusalRecoveryAction) return;
-        const target = refusalRecoveryAction === 'open_session' ? '/new' : resolveVoiceSettingsRecoveryTarget(refusalRecoveryAction);
+        const target = refusalRecoveryAction === 'open_session' ? '/new'
+            : refusalRecoveryAction === 'open_setup' ? SETTINGS_ROUTES.voice : resolveVoiceSettingsRecoveryTarget(refusalRecoveryAction);
         if (target) navigateWithFocusReturn(() => router.push(target as never));
     }, [navigateWithFocusReturn, refusalRecoveryAction, router]);
-    const startRefusal = React.useMemo(() => refusalReasonKey && refusalRecoveryAction ? {
-        reason: translateVoiceReadiness(refusalReasonKey),
-        actionLabel: refusalRecoveryAction === 'open_session' ? t('commandPalette.commands.newSessionTitle')
-            : tLoose(`voice.readiness.actions.${refusalRecoveryAction}`),
+    const refusalReason = refusalReasonKey ? translateVoiceReadiness(refusalReasonKey) : null;
+    const refusalActionLabel = refusalRecoveryAction === 'open_session' ? t('commandPalette.commands.newSessionTitle')
+        : refusalRecoveryAction === 'open_setup' ? t('voicePresence.setUp')
+            : refusalRecoveryAction ? tLoose(`voice.readiness.actions.${refusalRecoveryAction}`) : null;
+    const startRefusal = React.useMemo(() => refusalReason && refusalActionLabel ? {
+        reason: refusalReason,
+        actionLabel: refusalActionLabel,
         onRecover: recoverStart,
-    } : null, [refusalReasonKey, refusalRecoveryAction, recoverStart]);
+    } : null, [refusalReason, refusalActionLabel, recoverStart]);
 
     const onToggle = React.useCallback(async () => {
         if (!voiceSessionManager.matchesAttempt(expectedAttempt)) return false;

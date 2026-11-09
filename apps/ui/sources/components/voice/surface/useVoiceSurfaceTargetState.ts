@@ -13,6 +13,8 @@ import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
 
 import type { VoiceSurfaceVariant } from './voiceSurfaceTypes';
 import { normalizeSessionAddress, type SessionAddress } from '@/sync/domains/session/sessionAddress';
+import { useSessionRecordingVisibility } from '@/hooks/session/useSessionListRecordingPrivacy';
+import { t } from '@/text';
 
 function resolveSessionIdFromPathname(pathname: string | null | undefined): string | null {
     const normalized = String(pathname ?? '').trim();
@@ -56,6 +58,7 @@ export function useVoiceSurfaceTargetState(params: Readonly<{
     const startSessionAddress = target.kind === 'session' ? target.sessionAddress : null;
     const startSessionId = startSessionAddress?.sessionId ?? null;
     const displayedBindingSessionMetadata = useSessionListPreferredMetadata(startSessionAddress);
+    const isSessionVisible = useSessionRecordingVisibility();
     const voiceAgentEnabled = useFeatureEnabled('voice.agent');
     const bargeInEnabled = surfaceCapabilities?.bargeInEnabled === true;
     const cancelResponseSupported = surfaceCapabilities?.cancelResponse === 'immediate';
@@ -66,11 +69,11 @@ export function useVoiceSurfaceTargetState(params: Readonly<{
     /*
      * What this device shows its own user: the target Session's display name, from the same
      * display-name owner as every other Session label. Voice privacy limits what is shared with the
-     * provider (`resolveVoiceSessionLabel`, for the model); it never hides a name from the person
-     * who owns it. A target whose row is not on this device has no name to show.
+     * provider (`resolveVoiceSessionLabel`, for the model). Recording discretion masks this incidental
+     * identity while keeping the configured target. A target absent on this device has no name to show.
      */
     const targetLabel = startSessionAddress && displayedBindingSessionMetadata
-        ? getSessionName({
+        ? !isSessionVisible(startSessionAddress) ? t('message.provenanceSession') : getSessionName({
             id: startSessionAddress.sessionId,
             serverId: startSessionAddress.serverId,
             metadata: displayedBindingSessionMetadata,

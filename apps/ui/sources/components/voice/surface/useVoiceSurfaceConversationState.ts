@@ -22,7 +22,6 @@ import {
 const EMPTY_ENTRIES: ReadonlyArray<Readonly<{ id: string; createdAt: number; kind: 'user' | 'assistant' | 'note'; text: string }>> = [];
 const EMPTY_CANONICAL_ENTRIES: readonly CanonicalVoiceTranscriptItem[] = Object.freeze([]);
 const EMPTY_SURFACE_ENTRIES: readonly VoiceSurfaceTranscriptEntry[] = Object.freeze([]);
-const EMPTY_SESSIONS: Record<string, unknown> = {};
 /** Stable stand-in for "no slice to project", so the snapshot never churns. */
 const NO_SESSION_MESSAGES_SLICE: unknown = Object.freeze({});
 
@@ -54,46 +53,14 @@ function useVoiceSurfaceConversationBinding(params: VoiceSurfaceConversationPara
             params.voiceSettings,
         ],
     );
-    /*
-     * The surface depends on the **resolved** conversation session id, not on the
-     * shape of either store behind it.
-     *
-     * Two subscriptions were publishing raw store identity here, and each one
-     * re-rendered the whole surface on every unrelated session write (M3 measured
-     * one render per write, from each):
-     *
-     *  - `state.sessions` by identity — a new map on every append, presence flip
-     *    or metadata patch anywhere in the app;
-     *  - the whole `voiceSessionBindingStore` state. The store now retains
-     *    equivalent bindings across registered storage refreshes; real binding
-     *    changes still need this reader's resolved-session selector.
-     *
-     * Both are replaced by the same derived selector, so the external-store
-     * equality check ends the write: an unrelated session recomputes a
-     * string and stops there. Both stores stay subscribed because either can
-     * change the answer on its own — a runtime `bind()` never touches storage.
-     *
-     * The resolver reads both stores itself (`resolveVoiceBindingBySessionId` →
-     * `VoiceConversationBindingResolver.ts:38-84`) and walks every persisted
-     * session, so the read is cached on both store identities — a write that
-     * cannot change the answer costs one reference comparison.
-     */
-    const subscribeBindingSources = React.useCallback((notify: () => void) => {
-        const unsubscribeSessions = storage.subscribe(notify, { sessions: true, sessionListRowsByServerId: true });
-        const unsubscribeBindings = voiceSessionBindingStore.subscribe(notify);
-        return () => {
-            unsubscribeSessions();
-            unsubscribeBindings();
-        };
-    }, []);
+    // The binding owner ingests Session changes and publishes binding changes.
     const resolvedBindingCache = React.useRef<
-        { sessions: unknown; bindings: unknown; candidates: readonly string[]; providerId: string; value: string | null } | null
+        { bindings: unknown; candidates: readonly string[]; providerId: string; value: string | null } | null
     >(null);
     const readOpenConversationSessionId = React.useCallback((): string | null => {
-        const sessions = storage.getState().sessions ?? EMPTY_SESSIONS;
         const bindings = voiceSessionBindingStore.getState();
         const cached = resolvedBindingCache.current;
-        if (cached && cached.sessions === sessions && cached.bindings === bindings
+        if (cached && cached.bindings === bindings
             && cached.candidates === controlSessionCandidates && cached.providerId === params.providerId) {
             return cached.value;
         }
@@ -112,14 +79,14 @@ function useVoiceSurfaceConversationBinding(params: VoiceSurfaceConversationPara
             }
         }
 
-        resolvedBindingCache.current = { sessions, bindings, candidates: controlSessionCandidates, providerId: params.providerId, value };
+        resolvedBindingCache.current = { bindings, candidates: controlSessionCandidates, providerId: params.providerId, value };
         return value;
     }, [
         controlSessionCandidates,
         params.providerId,
     ]);
     const openConversationSessionId = React.useSyncExternalStore(
-        subscribeBindingSources,
+        voiceSessionBindingStore.subscribe,
         readOpenConversationSessionId,
         readOpenConversationSessionId,
     );

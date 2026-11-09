@@ -19,6 +19,7 @@ import {
 } from '@/dev/testkit';
 import { getStorage } from '@/sync/domains/state/storage';
 import { observeStorageSubscriptionDeliveries } from '@/dev/testkit/performance/storageSubscriptionCensus';
+import { createPlainMachineRowFixture, createMachineReadBatchResponseFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { renderScreen } from '@/dev/testkit';
 import { VOICE_AGENT_GLOBAL_SESSION_ID } from '@/voice/agent/voiceAgentGlobalSessionId';
 import { VOICE_SETTINGS_PROVIDER_FOCUS_TARGET } from '@/voice/settings/voiceSettingsRouteFocus';
@@ -45,6 +46,7 @@ import {
 import { settingsParse } from '@/sync/domains/settings/settings';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import { voiceSettingsParse } from '@/sync/domains/settings/voiceSettings';
+import { normalizeVoiceSettingsLocalDelta } from '@/sync/domains/settings/voiceSettingsPersistence';
 import { installConnectedAccountDescriptorProjection } from '@/sync/domains/connectedServices/connectedServiceRegistry';
 import { ConnectedAccountUiProjectionEntryV1Schema } from '@happier-dev/protocol/connect/connectedAccountUiProjectionV1';
 import type { PartialOptions } from '@elevenlabs/client';
@@ -164,6 +166,7 @@ let lifecycle:
       (typeof import('@/voice/session/voiceSessionLifecycleController'))['createVoiceSessionLifecycleController']
     >
   | undefined;
+let runtimeScreen: Awaited<ReturnType<typeof renderScreen>> | undefined;
 let projectionAdapters: readonly VoiceAdapterController[] = [];
 let providerAssembly:
   | Awaited<ReturnType<
@@ -174,37 +177,32 @@ let sessionHttp: ReturnType<
   (typeof import('@/dev/testkit/harness/sessionMetadataHttpBoundary'))['createSessionMetadataHttpBoundary']
 >;
 
-async function installLifecycle(adapter: VoiceAdapterController) {
-  const [
-    { registerVoiceAdapters, getVoiceAdapterRegistry },
-    { createVoiceSessionLifecycleController },
-    { setVoiceSessionLifecycleController },
-    { setVoiceSessionSnapshot },
-    { createVoiceCaptureAdmissionController },
-  ] = await Promise.all([
-    import('@/voice/session/voiceAdapterRegistry'),
-    import('@/voice/session/voiceSessionLifecycleController'),
-    import('@/voice/session/voiceSessionLifecycleControllerStore'),
-    import('@/voice/session/voiceSessionStore'),
-    import('@/voice/runtime/input/VoiceCaptureAdmissionController'),
-  ]);
-  registerVoiceAdapters([adapter]);
-  lifecycle = createVoiceSessionLifecycleController({
-    getRegistry: getVoiceAdapterRegistry,
-    captureAdmission: createVoiceCaptureAdmissionController(),
+async function installLifecycle() {
+  // Runtime owns declaration readiness, activation, registration and retirement.
+  await providerAssembly?.dispose();
+  providerAssembly = undefined;
+  const { VoiceSessionRuntime } = await import('@/voice/session/VoiceSessionRuntime');
+  runtimeScreen = await renderScreen(<VoiceSessionRuntime />);
+  const { getVoiceSessionLifecycleController } =
+    await import('@/voice/session/voiceSessionLifecycleControllerStore');
+  lifecycle = getVoiceSessionLifecycleController() ?? undefined;
+  if (!lifecycle) throw new Error('Mounted Voice lifecycle unavailable');
+  const { resolveVoiceExecutionMachineSelectionFromState } = await import('@/voice/settings/executionMachine');
+  expect(resolveVoiceExecutionMachineSelectionFromState(getStorage().getState())).toMatchObject({
+    kind: 'resolved', machineId: recoveryRuntime.machineId,
   });
-  lifecycle.subscribe(() => setVoiceSessionSnapshot(lifecycle!.getSnapshot()));
-  setVoiceSessionLifecycleController(lifecycle);
-  lifecycle.setConfiguredProviderId(adapter.id);
-  setVoiceSessionSnapshot(lifecycle.getSnapshot());
   return lifecycle;
+}
+
+async function startVoiceRuntime(target: SessionAddress | null) {
+  const { voiceSessionManager } = await import('@/voice/session/voiceSession');
+  await voiceSessionManager.toggle(target);
 }
 
 async function installElevenLabsLifecycle(
   target: SessionAddress | null = null,
 ) {
   const [
-    { createBuiltinVoiceAdapterAssembly },
     { BUNDLED_FIRST_PARTY_VOICE_CONVERSATION_RUNTIME_ENTRIES },
     { voiceConversationRuntimeMachine },
     { voiceSessionBindingStore },
@@ -214,7 +212,6 @@ async function installElevenLabsLifecycle(
     },
     { TokenStorage },
   ] = await Promise.all([
-    import('@/dev/testkit/harness/builtinVoiceAdapters'),
     import('@/voice/registry/generatedBundledVoiceRuntimeEntries'),
     import('@/voice/runtime/machine/VoiceConversationRuntimeMachine'),
     import('@/voice/binding/voiceConversationBindingStore'),
@@ -305,9 +302,6 @@ async function installElevenLabsLifecycle(
     },
   }));
   voiceConversationRuntimeMachine.reset();
-  providerAssembly = (await createBuiltinVoiceAdapterAssembly({
-    bundledEntries: [entry],
-  }));
   voiceSessionBindingStore
     .getState()
     .bind({
@@ -323,12 +317,8 @@ async function installElevenLabsLifecycle(
       transcriptMode: 'synthetic',
       updatedAt: 1,
     });
-  const adapter = providerAssembly.adapters.find(
-    (value) => value.id === entry.providerId,
-  );
-  if (!adapter) throw new Error('ElevenLabs public runtime activation failed');
-  const controller = await installLifecycle(adapter);
-  return { adapter, controller };
+  const controller = await installLifecycle();
+  return { controller };
 }
 
 function setVoiceAgentFeature(enabled: boolean): void {
@@ -346,7 +336,7 @@ function setVoiceAgentFeature(enabled: boolean): void {
   }));
 }
 
-async function restoreAttemptAccount() {
+async function restoreAttemptAccount(accountId = 'attempt-account') {
   const { loadSyncSingletonForTests } =
     await import('@/dev/testkit/harness/syncSingletonLoader');
   await loadSyncSingletonForTests();
@@ -358,15 +348,29 @@ async function restoreAttemptAccount() {
   sessionHttp = createSessionMetadataHttpBoundary(
     () => getStorage().getState().sessions,
   );
+  const machine = createMachineFixture({
+    id: recoveryRuntime.machineId,
+    activeAt: Date.now(),
+  });
+  const machineRow = createPlainMachineRowFixture({ id: machine.id, accountId, machine });
   connection = await restoreServerAccountForTest({
     serverUrl: 'https://voice-attempt.test',
     serverIdentityId: 'srv_voice_attempt_work',
-    accountId: 'attempt-account',
+    accountId,
     credentialScope: 'restored-home',
     activation: 'switch',
     request: createSessionReadBatchFetchBoundary(async (url, init) => {
       const path = new URL(String(url)).pathname;
       if (path === '/v1/features') return Response.json(features);
+      if (path === '/v1/machines') return Response.json([machineRow]);
+      if (path === '/v1/machines/read-batch' && init?.method === 'POST') {
+        return createMachineReadBatchResponseFixture(init.body, id => id === machine.id ? machineRow : null);
+      }
+      if (path === `/v1/machines/${machine.id}`) return Response.json({ machine: machineRow });
+      if (path === `/v1/machines/${machine.id}/access`) {
+        return Response.json({ machineId: machine.id, custodian: machineRow.access!.custodian,
+          access: machineRow.access, canManage: true, grants: [], ownDirectGrant: false, ownAccessSources: [] });
+      }
       if (path.endsWith('/messages'))
         return Response.json(
           SessionMessagesPageV1Schema.parse({ messages: [], hasMore: false }),
@@ -409,12 +413,8 @@ async function restoreAttemptAccount() {
   });
   const scope = {
     serverId: recoveryRuntime.serverId,
-    accountId: 'attempt-account',
+    accountId,
   };
-  const machine = createMachineFixture({
-    id: recoveryRuntime.machineId,
-    activeAt: Date.now(),
-  });
   getStorage().setState({
     isDataReady: true,
     profileScope: scope,
@@ -471,6 +471,8 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+  await runtimeScreen?.unmount();
+  runtimeScreen = undefined;
   standardCleanup();
   await lifecycle?.dispose();
   lifecycle = undefined;
@@ -494,16 +496,16 @@ function getActivatedAdapter(id: string): VoiceAdapterController {
 function seedVoiceSettings(voice: unknown): void {
   getStorage().setState((state) => ({
     isDataReady: true,
-    settings: {
+    settings: settingsParse({
       ...state.settings,
-      voice: voiceSettingsParse({
+      ...normalizeVoiceSettingsLocalDelta({ voice: voiceSettingsParse({
         ...voiceSettingsParse(voice),
         executionMachine: {
           mode: 'fixed',
           machineId: recoveryRuntime.machineId,
         },
-      }),
-    },
+      }) }, state.settings),
+    }),
   }));
 }
 
@@ -1391,8 +1393,8 @@ describe('useVoiceAttemptControl recovery routing', () => {
 
   it('agrees with the New Action that exact Agent Voice continues a Session rather than replacing it', async () => {
     installCodexConnectedService();
-    const controller = await installLifecycle(getActivatedAdapter(CODEX_PROVIDER_ID));
     seedVoiceSettings(SELECTED_PROFILE_VOICE_SETTINGS);
+    const controller = await installLifecycle();
     const { useVoiceAttemptControl } = await import('./useVoiceAttemptControl');
     const global = await renderHook(() => useVoiceAttemptControl(GLOBAL_TARGET));
     expect(global.getCurrent().canStart).toBe(true);
@@ -2808,19 +2810,70 @@ describe('useVoiceAttemptControl idle targeting', () => {
     );
     try {
       const panel = hook.getCurrent()?.renderPanel?.({ close: () => {} });
-      if (!React.isValidElement<{ actions: { onTry: () => void } }>(panel)) {
+      if (!React.isValidElement<{ model: import('@/voice/settings/setup/VoiceSetupPanel').VoiceSetupPanelModel }>(panel)) {
         throw new Error('Expected the in-place setup panel');
       }
-      await act(async () => { panel.props.actions.onTry(); });
-      await waitForTestEvent(
-        routing.controller.subscribe,
-        routing.controller.getSnapshot,
-        (snapshot) => snapshot.status === 'connected',
-      );
-      expect(routing.controller.getAttemptTargetSessionAddress()).toEqual(target);
+      const { deriveVoiceSetupFacts } = await import('@/voice/settings/setup/voiceSetupFacts');
+      const facts = deriveVoiceSetupFacts({ providerId: 'local_conversation', microphonePermission: 'granted', messages: [],
+        readiness: { role: 'realtime_conversation', providerId: 'local_conversation', status: 'ready', code: 'ready',
+          reasonKey: 'voice.readiness.ready', recoveryAction: 'none' } });
+      const screen = await renderScreen(React.cloneElement(panel, { model: { ...panel.props.model, facts } }));
+      try {
+        expect(screen.findByTestId('voice-setup.step.first_turn.try')?.props.disabled).toBe(false);
+        await act(async () => { screen.pressByTestId('voice-setup.step.first_turn.try'); });
+        await waitForTestEvent(
+          routing.controller.subscribe,
+          routing.controller.getSnapshot,
+          (snapshot) => snapshot.status === 'connected',
+        );
+        expect(routing.controller.getAttemptTargetSessionAddress()).toEqual(target);
+      } finally { await screen.unmount(); }
     } finally {
       await hook.unmount();
     }
+  });
+
+  it.each(['setup', 'top_bar'] as const)('real setup Try refuses a targetless direct-session start with its admission reason and %s recovery', async (entry) => {
+    const { setFocusedSessionId } = await import('@/sync/domains/session/sessionSurfaceVisibility');
+    const { useVoiceTargetStore } = await import('@/voice/runtime/voiceTargetStore');
+    setFocusedSessionId(null);
+    useVoiceTargetStore.getState().setLastFocusedSessionAddress(null);
+    seedVoiceSettings({ ...READY_LOCAL_CONVERSATION, providers: {
+      local_conversation: { schemaVersion: 1, config: { conversationMode: 'direct_session' } },
+    } });
+    const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');
+    const { useVoiceSetupBlock } = await import('@/voice/settings/setup/VoiceSetupItem');
+    const { deriveVoiceSetupFacts } = await import('@/voice/settings/setup/voiceSetupFacts');
+    const { VoiceTopBarPresence } = await import('@/components/voice/presence/VoiceTopBarPresence');
+    const { useVoiceAttemptControl } = await import('./useVoiceAttemptControl');
+    function Scene() {
+      const block = useVoiceSetupBlock({ layout: 'wide' });
+      const voice = useVoiceAttemptControl({ kind: 'default' });
+      const panel = block?.renderPanel?.({ close: () => {} });
+      if (!React.isValidElement<{
+        model: import('@/voice/settings/setup/VoiceSetupPanel').VoiceSetupPanelModel;
+      }>(panel)) throw new Error('Expected setup panel');
+      // Service and microphone are ready in RUN104. Supply those independent
+      // observations; keep the real block's admission and callback unchanged.
+      const facts = deriveVoiceSetupFacts({ providerId: 'local_conversation', microphonePermission: 'granted', messages: [],
+        readiness: { role: 'realtime_conversation', providerId: 'local_conversation', status: 'ready', code: 'ready',
+          reasonKey: 'voice.readiness.ready', recoveryAction: 'none' } });
+      return <>{React.cloneElement(panel, { model: { ...panel.props.model, facts } })}<VoiceTopBarPresence voice={voice} /></>;
+    }
+    const screen = await renderScreen(<InjectedAuthProvider credentials={connection?.credentials ?? null}><Scene /></InjectedAuthProvider>);
+    try {
+      const button = screen.findByTestId('voice-setup.step.first_turn.try');
+      expect(button).not.toBeNull();
+      await act(async () => { screen.pressByTestId('voice-setup.step.first_turn.try'); });
+      expect(button?.props.disabled).toBe(true);
+      expect(screen.getTextContent()).toContain(t('commandPalette.commands.sessionRequiredBody'));
+      expect(screen.findByTestId('voice-top-bar-rest')?.props.accessibilityLabel).toBe(t('commandPalette.commands.newSessionTitle'));
+      await act(async () => { screen.pressByTestId(entry === 'setup'
+        ? 'voice-setup.step.first_turn.recover' : 'voice-top-bar-rest'); });
+      expect(readLastPushedHref()).toBe('/new');
+      const { voiceSessionManager } = await import('@/voice/session/voiceSession');
+      expect(voiceSessionManager.getSnapshot().status).toBe('disconnected');
+    } finally { await screen.unmount(); }
   });
 
   it('offers New conversation only beside an admitted executable Start that would not already start fresh', async () => {
@@ -2952,7 +3005,7 @@ describe('useVoiceAttemptControl idle targeting', () => {
       sessionId: 'attempt-session',
     };
     const routing = await installRoutingLifecycle(target);
-    await routing.controller.toggle(target);
+    await startVoiceRuntime(target);
     expect(routing.controller.getSnapshot().status).toBe('connected');
     expect(routing.controller.getSnapshot().sessionId).toBe('attempt-session');
     const starts = routing.start.mock.calls.length;
@@ -2984,7 +3037,7 @@ describe('useVoiceAttemptControl idle targeting', () => {
       sessionId: 'attempt-session',
     };
     const routing = await installRoutingLifecycle(target);
-    await routing.controller.toggle(target);
+    await startVoiceRuntime(target);
     getStorage().setState((state) => ({
       settings: {
         ...state.settings,
@@ -3118,7 +3171,7 @@ describe('useVoiceAttemptControl idle targeting', () => {
         sessionId: 'hidden-target',
       };
       const routing = await installRoutingLifecycle(address);
-      await routing.controller.toggle(address);
+      await startVoiceRuntime(address);
       expect(routing.controller.getAttemptTargetSessionAddress()).toEqual(
         address,
       );
@@ -3148,7 +3201,7 @@ describe('useVoiceAttemptControl idle targeting', () => {
       const { useVoiceHistoryPendingRecovery } =
         await import('@/voice/history/useVoiceHistoryPendingRecovery');
       let renders = 0;
-      const delivery = observeStorageSubscriptionDeliveries(paths => paths.some(path => path.length === 1 || path.length === 3));
+      const delivery = observeStorageSubscriptionDeliveries();
       const hook = await renderHook(() => {
         renders += 1;
         const control = useVoiceAttemptControl(GLOBAL_TARGET);
@@ -3499,7 +3552,7 @@ describe('useVoiceAttemptControl terminal connection failures', () => {
     const { useVoiceAttemptControl } = await import('./useVoiceAttemptControl');
     const { getVoiceSessionPresentedAttemptId } =
       await import('@/voice/session/voiceSessionStore');
-    await controller.toggle(null);
+    await startVoiceRuntime(null);
     expect(controller.getSnapshot().status).toBe('connected');
     const admittedAttempt = getVoiceSessionPresentedAttemptId();
     const hook = await renderHook(() => useVoiceAttemptControl(GLOBAL_TARGET));
@@ -3589,73 +3642,39 @@ describe('useVoiceAttemptControl terminal connection failures', () => {
     await hook.unmount();
   });
 
-  it('refuses a retained Start after its admitted runtime has retired', async () => {
-    await installElevenLabsLifecycle();
-    const consoleInfo = vi
-      .spyOn(console, 'info')
-      .mockImplementation(() => {});
-    const { useVoiceAttemptControl } = await import('./useVoiceAttemptControl');
-    const hook = await renderHook(() => useVoiceAttemptControl(GLOBAL_TARGET));
-    expect(hook.getCurrent().canStart).toBe(true);
-    const start = hook.getCurrent().onToggle;
-    // The retained control cannot resurrect a retired runtime generation.
-    await act(async () => { await providerAssembly?.dispose(); });
-
-    await act(async () => {
-      expect(await start()).toBe(false);
-    });
-
-    expect(sdk.startSession).not.toHaveBeenCalled();
-    expect(consoleInfo.mock.calls.some(([message]) =>
-      message === '[fireAndForget] VoiceAttemptControl.toggle')).toBe(false);
-
-    await hook.unmount();
-  });
-
-  it('still sends a mismatched rejection to diagnostics after the retry recovery is rendered', async () => {
-    sdk.startSession.mockRejectedValue(
-      Object.assign(new Error('voice_connection_failed'), {
-        code: 'voice_connection_failed',
-      }),
-    );
-    await installElevenLabsLifecycle();
-    const diagnostic = createDeferred<void>();
-    const consoleInfo = vi
-      .spyOn(console, 'info')
-      .mockImplementation((message) => {
-        if (message === '[fireAndForget] VoiceAttemptControl.recover')
-          diagnostic.resolve();
+  it.each(['start', 'retry'] as const)(
+    'refuses a retained %s after its Account retires without changing the next Account',
+    async (operation) => {
+      if (operation === 'retry') {
+        sdk.startSession.mockRejectedValue(Object.assign(new Error('voice_connection_failed'), {
+          code: 'voice_connection_failed',
+        }));
+      }
+      await installElevenLabsLifecycle();
+      const { useVoiceAttemptControl } = await import('./useVoiceAttemptControl');
+      const hook = await renderHook(() => useVoiceAttemptControl(GLOBAL_TARGET));
+      if (operation === 'retry') {
+        await act(async () => { await hook.getCurrent().onToggle(); });
+        expect(hook.getCurrent().primaryAction).toBe('recover');
+      } else {
+        expect(hook.getCurrent().canStart).toBe(true);
+      }
+      const retained = operation === 'retry' ? hook.getCurrent().onRecover : hook.getCurrent().onToggle;
+      const starts = sdk.startSession.mock.calls.length;
+      await act(async () => {
+        await connection?.dispose();
+        connection = undefined;
+        await restoreAttemptAccount('next-attempt-account');
       });
-    const { useVoiceAttemptControl } = await import('./useVoiceAttemptControl');
-    const hook = await renderHook(() => useVoiceAttemptControl(GLOBAL_TARGET));
-    await act(async () => {
-      hook.getCurrent().onToggle();
-    });
-    await waitForTestEvent(
-      hook.subscribe,
-      hook.getCurrent,
-      (value) => value.primaryAction === 'recover',
-    );
-    expect(hook.getCurrent().primaryAction).toBe('recover');
-    // Retiring the real public runtime does not rewrite its terminal error.
-    // Its next Start rejects with a different code before the controller,
-    // which must not be hidden merely because a Retry is already visible.
-    await providerAssembly?.dispose();
-    await act(async () => {
-      await hook.getCurrent().onRecover();
-    });
-    await diagnostic.promise;
-    expect(consoleInfo).toHaveBeenCalledWith(
-      '[fireAndForget] VoiceAttemptControl.recover',
-      expect.objectContaining({
-        code: 'voice_runtime_generation_revoked',
-        message: 'voice_runtime_generation_revoked',
-        failureCause: expect.objectContaining({ errorCode: 'voice_runtime_generation_revoked', phase: 'dispatch' }),
-      }),
-    );
-    expect(hook.getCurrent().primaryAction).toBe('recover');
-    await hook.unmount();
-  });
+      const { voiceSessionManager } = await import('@/voice/session/voiceSession');
+      const nextSnapshot = voiceSessionManager.getSnapshot();
+      await act(async () => { expect(await retained()).toBe(false); });
+      expect(getStorage().getState().profileScope?.accountId).toBe('next-attempt-account');
+      expect(voiceSessionManager.getSnapshot()).toEqual(nextSnapshot);
+      expect(sdk.startSession).toHaveBeenCalledTimes(starts);
+      await hook.unmount();
+    },
+  );
 });
 
 describe('Voice setup dismissal through the current Home Artifact owner', () => {

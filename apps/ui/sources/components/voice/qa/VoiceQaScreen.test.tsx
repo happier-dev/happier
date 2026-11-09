@@ -2,7 +2,7 @@ import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { createMachineReadBatchResponseFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import React from 'react';
 import 'fake-indexeddb/auto';
-import { DEFAULT_SESSION_CAPABILITIES } from '@happier-dev/protocol';
+import { DEFAULT_SESSION_CAPABILITIES } from '@happier-dev/protocol/features/payload/capabilities/sessionCapabilities';
 import { MetadataSchema } from '@happier-dev/session-core/state';
 import renderer, { act } from 'react-test-renderer';
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';

@@ -6,6 +6,7 @@ import { createSessionFixture, renderHook, standardCleanup } from '@/dev/testkit
 import { getStorage } from '@/sync/domains/state/storage';
 import { voiceSessionBindingStore } from '@/voice/binding/voiceConversationBindingStore';
 import { writeVoiceConversationBindingMetadata } from '@/voice/binding/voiceConversationBindingMetadata';
+import { observeStorageSubscriptionDeliveries } from '@/dev/testkit/performance/storageSubscriptionCensus';
 
 const initialStorageState = getStorage().getState();
 const initialBindings = voiceSessionBindingStore.getState();
@@ -80,6 +81,7 @@ describe('useVoiceSurfaceConversationState session-store subscription', () => {
     it('does not re-render on writes to unrelated sessions', async () => {
         const { useVoiceSurfaceConversationState } = await import('./useVoiceSurfaceConversationState');
         let renders = 0;
+        const delivery = observeStorageSubscriptionDeliveries();
 
         const hook = await renderHook(() => {
             renders += 1;
@@ -92,42 +94,66 @@ describe('useVoiceSurfaceConversationState session-store subscription', () => {
             });
         });
 
-        const rendersAfterMount = renders;
-        expect(hook.getCurrent().openConversationSessionId).toBeNull();
+        try {
+            const rendersAfterMount = renders;
+            expect(hook.getCurrent().openConversationSessionId).toBeNull();
+            delivery.reset();
 
-        for (let index = 0; index < 5; index += 1) {
+            for (let index = 0; index < 5; index += 1) {
+                await act(async () => {
+                    writeUnrelatedSession(index);
+                });
+            }
+
+            expect(renders - rendersAfterMount).toBe(0);
+            expect(delivery.count).toBe(0);
+
+            // The same subscription must still discover a newly persisted binding.
+            // A disconnected selector could satisfy the unrelated-write assertion.
+            const carrierId = 'new-voice-carrier';
+            const binding = {
+                adapterId: 'local_conversation', controlSessionId: TARGET_SESSION_ID,
+                conversationSessionId: carrierId,
+                conversationSessionAddress: { serverId: 'server-active', sessionId: carrierId },
+                targetSessionAddress: { serverId: 'server-active', sessionId: TARGET_SESSION_ID },
+                transcriptMode: 'native_session' as const, updatedAt: 10,
+            };
             await act(async () => {
-                writeUnrelatedSession(index);
+                getStorage().setState((state) => ({ sessions: {
+                    ...state.sessions,
+                    [carrierId]: createSessionFixture({
+                        id: carrierId, serverId: 'server-active',
+                        metadata: writeVoiceConversationBindingMetadata({
+                            path: '/voice', host: 'test',
+                            ...buildSystemSessionMetadataV1({ key: 'voice_conversation', hidden: true }),
+                        }, binding),
+                    }),
+                } }));
             });
+            expect(hook.getCurrent().openConversationSessionId).toBe(carrierId);
+            expect(renders).toBeGreaterThan(rendersAfterMount);
+
+            const carrier = getStorage().getState().sessions[carrierId]!;
+            const changeControl = async (controlSessionId: string, updatedAt: number) => act(async () => {
+                getStorage().setState(state => ({ sessions: { ...state.sessions, [carrierId]: {
+                    ...carrier, metadata: writeVoiceConversationBindingMetadata(carrier.metadata,
+                        { ...binding, controlSessionId, updatedAt }),
+                } } }));
+            });
+            await changeControl('other-control', 11);
+            expect(hook.getCurrent().openConversationSessionId).toBeNull();
+            await changeControl(TARGET_SESSION_ID, 12);
+            expect(hook.getCurrent().openConversationSessionId).toBe(carrierId);
+            await act(async () => {
+                getStorage().setState(state => ({ sessions: Object.fromEntries(
+                    Object.entries(state.sessions).filter(([id]) => id !== carrierId),
+                ) }));
+            });
+            expect(hook.getCurrent().openConversationSessionId).toBeNull();
+
+        } finally {
+            await hook.unmount();
+            delivery.restore();
         }
-
-        expect(renders - rendersAfterMount).toBe(0);
-
-        // The same subscription must still discover a newly persisted binding.
-        // A disconnected selector could satisfy the unrelated-write assertion.
-        const carrierId = 'new-voice-carrier';
-        const binding = {
-            adapterId: 'local_conversation', controlSessionId: TARGET_SESSION_ID,
-            conversationSessionId: carrierId,
-            conversationSessionAddress: { serverId: 'server-active', sessionId: carrierId },
-            targetSessionAddress: { serverId: 'server-active', sessionId: TARGET_SESSION_ID },
-            transcriptMode: 'native_session' as const, updatedAt: 10,
-        };
-        await act(async () => {
-            getStorage().setState((state) => ({ sessions: {
-                ...state.sessions,
-                [carrierId]: createSessionFixture({
-                    id: carrierId, serverId: 'server-active',
-                    metadata: writeVoiceConversationBindingMetadata({
-                        path: '/voice', host: 'test',
-                        ...buildSystemSessionMetadataV1({ key: 'voice_conversation', hidden: true }),
-                    }, binding),
-                }),
-            } }));
-        });
-        expect(hook.getCurrent().openConversationSessionId).toBe(carrierId);
-        expect(renders).toBeGreaterThan(rendersAfterMount);
-
-        await hook.unmount();
     });
 });

@@ -11,6 +11,8 @@ import type { VoiceAttemptControlProjection } from '@/components/voice/attempt/u
 import type { VoiceSurfaceViewModel } from '@/components/voice/surface/useVoiceSurfaceModel';
 
 import { VoiceGlance } from './VoiceGlance';
+import { setScreenSharingPrivacyActive } from '@/desktop/capture/useNativeRecordingActive';
+import { buildSessionOrganizationSessionKey } from '@/sync/domains/session/organization/keys';
 
 /**
  * The Voice section (Companion, popovers, sheet) renders the canonical surface model: Mute, the
@@ -90,6 +92,7 @@ function surface(voice: VoiceAttemptControlProjection, overrides: Partial<VoiceS
 
 let screen: RenderScreenResult | null = null;
 afterEach(async () => {
+    setScreenSharingPrivacyActive(false);
     await screen?.unmount();
     screen = null;
     vi.useRealTimers();
@@ -249,6 +252,25 @@ describe('VoiceGlance', () => {
         // The row names the work and says what it is doing in the shared working word (lab A).
         const row = screen.findByTestId('voice-glance-handoff');
         expect(row?.props.accessibilityLabel).toBe(`Codex is running yarn test relay, ${t('voiceSurface.delegatedWorking')}`);
+    });
+
+    it('masks the incidental delegated Session name during sharing', async () => {
+        const previous = storage.getState();
+        const session = createSessionFixture({ id: 'private-delegate', serverId: 'home-a',
+            metadata: { ...createSessionFixture().metadata!, name: 'Confidential delegated work' } });
+        storage.setState({ sessions: { [session.id]: session }, settings: { ...previous.settings,
+            sessionListHiddenTagIdsWhileRecording: { 'home-a': ['private'] } },
+            sessionOrganizationTagAssignmentsBySessionKey: {
+                [buildSessionOrganizationSessionKey('home-a', session.id)]: { sessionId: session.id, tagIds: ['private'] },
+            } });
+        try {
+            screen = await renderScreen(<VoiceGlance model={surface(attempt(), {
+                delegatedWork: { sessionId: session.id, serverId: 'home-a', statusText: 'Working', thinking: true },
+            })} presentation="companion" />);
+            expect(screen.getTextContent()).toContain('Confidential delegated work');
+            await act(async () => setScreenSharingPrivacyActive(true));
+            expect(screen.getTextContent()).not.toContain('Confidential delegated work');
+        } finally { storage.setState(previous, true); }
     });
 
     it('turns into "Voice ended" after a clean End: back to the conversation, or talk again', async () => {

@@ -1,9 +1,9 @@
 import * as React from 'react';
-import { Platform, Pressable, View } from 'react-native';
+import { Pressable, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
+import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 
 import { CompanionNoDragRegion } from '@/components/companion/interaction/CompanionNoDragRegion';
-import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
 import type { VoiceAttemptControlProjection } from '@/components/voice/attempt/useVoiceAttemptControl';
 import { t } from '@/text';
 
@@ -15,7 +15,7 @@ import { VoiceTransport } from './VoiceTransport';
 import { VoiceReadAloudGlyph, VoiceReadAloudStatus, VoiceReadAloudStop, type VoiceReadAloud } from './VoiceReadAloud';
 import { resolveVoicePresenceReadAloud } from './resolveVoicePresenceReadAloud';
 
-import { VoiceIslandAnatomy, VOICE_ISLAND_DESKTOP, VOICE_ISLAND_PHONE } from './voicePresenceAnatomy';
+import { VoiceIslandAnatomy, VOICE_ISLAND_DESKTOP, VOICE_ISLAND_MARK_SLOT, VOICE_ISLAND_PHONE } from './voicePresenceAnatomy';
 export { VOICE_ISLAND_DESKTOP, VOICE_ISLAND_PHONE } from './voicePresenceAnatomy';
 
 /**
@@ -44,7 +44,6 @@ export const VoiceIsland = React.memo(function VoiceIsland(props: Readonly<{
     const reading = resolveVoicePresenceReadAloud(voice, readAloud);
     const height = props.phone ? VOICE_ISLAND_PHONE.height : VOICE_ISLAND_DESKTOP.height;
     const markSize = props.phone ? VOICE_ISLAND_PHONE.mark : VOICE_ISLAND_DESKTOP.mark;
-    const markTarget = Math.max(40, resolveMinimumInteractiveTargetSize(Platform.OS));
     const testID = props.testID ?? 'voice-island';
     const suppress = props.shouldSuppressPress;
     const onMark = React.useCallback(() => {
@@ -78,16 +77,18 @@ export const VoiceIsland = React.memo(function VoiceIsland(props: Readonly<{
                 testID={testID}
                 width={props.width}
                 height={height}
-                mark={<Pressable
+                mark={<HappierPressable
                     testID={`${testID}-mark`}
                     accessibilityRole="button"
                     accessibilityLabel={voice.primaryActionLabel ?? t('voicePresence.talkWithVoice')}
                     accessibilityHint={voice.primaryActionHint ?? undefined}
                     onPress={onMark}
-                    style={[styles.mark, { width: markTarget, height: markTarget, marginVertical: (height - markTarget) / 2 }]}
+                    // The capsule's inset on the left and half the gap to the body on the right bound the reach.
+                    hitReach={{ left: 4, right: 5 }}
+                    style={[styles.mark, { width: VOICE_ISLAND_MARK_SLOT, height: VOICE_ISLAND_MARK_SLOT, marginVertical: (height - VOICE_ISLAND_MARK_SLOT) / 2 }]}
                 >
                     <VoiceMark voice={voice} size={markSize} />
-                </Pressable>}
+                </HappierPressable>}
                 body={<Pressable
                     testID={`${testID}-body`}
                     accessibilityRole="button"

@@ -3,7 +3,7 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { FeaturesResponseSchema } from '@happier-dev/protocol';
+import { FeaturesResponseSchema } from '@happier-dev/protocol/features/payload/featuresResponseSchema';
 import type { FrameRect } from '@happier-dev/plugin-ui/presentation';
 
 import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';

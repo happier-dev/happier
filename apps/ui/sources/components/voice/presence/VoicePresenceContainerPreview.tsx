@@ -11,7 +11,6 @@ import { resolveVoiceAttemptControl } from '../attempt/resolveVoiceAttemptContro
 import type { VoiceAttemptControlProjection } from '../attempt/useVoiceAttemptControl';
 import { t } from '@/text';
 import { IconButton } from '@/components/ui/buttons/IconButton';
-import { resolveTouchTargetFloorPx } from '@/components/ui/interactiveTargetSize';
 
 /** A live planet at rest pose for the miniature: lit, still, no subscriptions. */
 const LIVE_PREVIEW = Object.freeze({ morph: 1, energy: 0.5, flow: 1 });
@@ -53,8 +52,7 @@ export const VoicePresenceContainerPreview = React.memo(function VoicePresenceCo
             {props.container === 'top_bar' ? (
                 <View style={styles.strip}>
                     <View style={styles.topBarSpecimen}><VoiceTopBarAnatomy
-                        mark={<IconButton accessibilityLabel={t('voiceAssistant.endVoice')} variant="plain" size={VOICE_TOP_BAR_PILL_HEIGHT}
-                            minimumInteractiveTargetSize={resolveTouchTargetFloorPx() ?? undefined} icon={mark} onPress={NO_ACTION} />}
+                        mark={<IconButton accessibilityLabel={t('voiceAssistant.endVoice')} variant="plain" size={VOICE_TOP_BAR_PILL_HEIGHT} icon={mark} onPress={NO_ACTION} />}
                         label={<VoiceStatusLine voice={voice} size="pill" />}
                         transport={<VoiceTransport voice={voice} size="pill" />} showDivider
                     /></View>

@@ -12,12 +12,12 @@ const initialStorageState = getStorage().getState();
 const initialBindingState = voiceSessionBindingStore.getState();
 
 describe('useVoiceSurfaceStoreState', () => {
-    it('moves leaf Session demand with its target and releases it when absent', async () => {
+    it('moves Session demand with its target and releases it when absent', async () => {
         const storage = getStorage();
         storage.setState({ sessions: {
             first: createSessionFixture({ id: 'first' }), second: createSessionFixture({ id: 'second' }),
         } });
-        const delivery = observeStorageSubscriptionDeliveries(paths => paths.some(path => path.length === 1 || path.length === 3));
+        const delivery = observeStorageSubscriptionDeliveries();
         const hook = await renderHook(({ sessionId }: { sessionId: string | null }) => useVoiceSurfaceStoreState({
             activeControlSessionId: sessionId, providerId: 'local_conversation', surfaceSessionId: sessionId,
             transcriptEnabled: false, voiceSettings: {}, voicePrivacy: { shareFilePaths: true, shareSessionSummary: true },
@@ -49,9 +49,7 @@ describe('useVoiceSurfaceStoreState', () => {
     it.each([true, false])('delivers only demanded Session and transcript changes (transcript enabled: %s)', async (transcriptEnabled) => {
         const storage = getStorage();
         storage.setState({ sessions: { surface: createSessionFixture({ id: 'surface', serverId: 'server-active' }) } });
-        // Binding discovery legitimately observes the Session collection. This
-        // census isolates the leaf selectors (including the old root bypass).
-        const delivery = observeStorageSubscriptionDeliveries(paths => paths.some(path => path.length === 1 || path.length === 3));
+        const delivery = observeStorageSubscriptionDeliveries();
         const hook = await renderHook(() => useVoiceSurfaceStoreState({
             activeControlSessionId: null, providerId: 'local_conversation', surfaceSessionId: 'surface',
             transcriptEnabled, voiceSettings: {}, voicePrivacy: { shareFilePaths: true, shareSessionSummary: true },
@@ -203,8 +201,11 @@ describe('useVoiceSurfaceStoreState', () => {
         await hook.unmount();
     });
 
-    it('does not offer Open Conversation for a stale runtime binding after storage replacement', async () => {
+    it('follows ordinary runtime binding availability when its backing Session leaves and returns', async () => {
         const storage = getStorage();
+        const conversation = createSessionFixture({
+            id: 'account-a-voice-conversation', serverId: 'server-active',
+        });
         voiceSessionBindingStore.getState().bind({
             adapterId: 'local_conversation',
             controlSessionId: 'account-a-control',
@@ -237,6 +238,15 @@ describe('useVoiceSurfaceStoreState', () => {
 
         expect(hook.getCurrent().openConversationSessionId).toBeNull();
 
-        await hook.unmount();
+        try {
+            await act(async () => { storage.setState({ sessions: { [conversation.id]: conversation } }); });
+            expect(hook.getCurrent().openConversationSessionId).toBe(conversation.id);
+            await act(async () => { storage.setState({ sessions: {} }); });
+            expect(hook.getCurrent().openConversationSessionId).toBeNull();
+            await act(async () => { storage.setState({ sessions: { [conversation.id]: conversation } }); });
+            expect(hook.getCurrent().openConversationSessionId).toBe(conversation.id);
+        } finally {
+            await hook.unmount();
+        }
     });
 });

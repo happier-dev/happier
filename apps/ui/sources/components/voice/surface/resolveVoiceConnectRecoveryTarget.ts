@@ -22,7 +22,7 @@ export type VoiceConnectRecoveryTarget =
     | Readonly<{ kind: 'provider_settings' }>
     | Readonly<{
         kind: 'exact';
-        route: ReturnType<typeof buildConnectedAccountSettingsRoute> | ReturnType<typeof buildConnectedServiceSetupRoute>;
+        route: NonNullable<ReturnType<typeof buildConnectedAccountSettingsRoute>> | ReturnType<typeof buildConnectedServiceSetupRoute>;
     }>
     | Readonly<{ kind: 'unavailable' }>;
 
@@ -137,11 +137,6 @@ export function resolveVoiceConnectRecoveryTarget(params: Readonly<{
     );
     if (!resolved) return { kind: 'unavailable' };
 
-    return {
-        kind: 'exact',
-        route: buildConnectedAccountSettingsRoute(
-            resolved.service,
-            resolved.focus,
-        ),
-    };
+    const route = buildConnectedAccountSettingsRoute(resolved.service, resolved.focus);
+    return route ? { kind: 'exact', route } : { kind: 'unavailable' };
 }

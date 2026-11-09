@@ -7,7 +7,7 @@ import { useVoiceSurfaceModel } from '@/components/voice/surface/useVoiceSurface
 import { useInboxModel } from '@/hooks/inbox/useInboxModel';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { captureActiveServerAccountScopeCurrentness, getActiveServerAccountScope } from '@/sync/domains/scope/activeServerAccountScope';
-import { storage } from '@/sync/domains/state/storage';
+import { useSetting } from '@/sync/store/settingsReadHooks';
 import { buildVoiceBrief } from '@/voice/context/buildVoiceBrief';
 import { voiceHooks } from '@/voice/context/voiceHooks';
 import { useVoiceSessionSnapshot } from '@/voice/session/voiceSession';
@@ -66,8 +66,8 @@ export function useVoiceBriefRequest(onClose?: () => void): {
     closeBrief: () => Promise<ActionExecuteResult>;
 } {
     const inbox = useInboxModel();
-    const settings = storage((state) => state.settings);
-    const brief = React.useMemo(() => buildVoiceBrief({ inbox, settings }), [inbox, settings]);
+    const voiceSettings = useSetting('voice');
+    const brief = React.useMemo(() => buildVoiceBrief({ inbox, settings: { voice: voiceSettings } }), [inbox, voiceSettings]);
     const voice = useVoiceAttemptControl(VOICE_ATTEMPT_IDLE_TARGET_GLOBAL);
     const surface = useVoiceSurfaceModel(SURFACE_PROPS);
     const snapshot = useVoiceSessionSnapshot();

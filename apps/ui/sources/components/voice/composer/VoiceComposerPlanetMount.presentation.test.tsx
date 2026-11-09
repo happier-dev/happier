@@ -39,6 +39,17 @@ describe('VoiceComposerPlanetMount retained presentation', () => {
         resetVoiceSessionStoreForTests();
     });
 
+    it('keeps tap available without offering a Hold gesture for an unsupported conversation', async () => {
+        getStorage().setState(state => ({ localSettings: { ...state.localSettings, voiceHoldToTalkEnabled: true } }));
+        const screen = await renderScreen(scene(true));
+        try {
+            const planet = screen.findByType(VoiceComposerPlanet);
+            expect(planet.props.beginHoldToTalk).toBeUndefined();
+            expect(planet.props.onPress).toBeTypeOf('function');
+            expect(screen.findByTestId('session-composer-voice-gesture')).toBeNull();
+        } finally { await screen.unmount(); }
+    });
+
     it('releases real energy demand while hidden and restores the current attempt when presented', async () => {
         const writer = voiceRuntimeLevelStore.open({ channel: 'input', sourceId: 'retained-composer-test' });
         const screen = await renderScreen(scene(true));

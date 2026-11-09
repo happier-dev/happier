@@ -15,6 +15,9 @@ import { BUNDLED_FIRST_PARTY_VOICE_CONVERSATION_RUNTIME_ENTRIES } from '@/voice/
 import { voiceSettingsParse, writeVoiceProviderSettingsConfig } from '@/sync/domains/settings/voiceSettings';
 import { ELEVENLABS_VOICE_PROVIDER_DEFAULT_SETTINGS } from '../../../../../../packages/plugins/elevenlabs/src/protocol/voice/index';
 import { buildQualifiedPluginContributionKey, createPluginContributionIdentity } from '@happier-dev/protocol/plugins/contribution-identity';
+import { setScreenSharingPrivacyActive } from '@/desktop/capture/useNativeRecordingActive';
+import { buildSessionOrganizationSessionKey } from '@/sync/domains/session/organization/keys';
+import { t } from '@/text';
 
 function localVoiceSettings(global: boolean) {
     return voiceSettingsParse(global ? { providerId: 'local_conversation', providers: {
@@ -37,9 +40,33 @@ describe('useVoiceSurfaceTargetState', () => {
         registerVoiceAdapters([]);
     });
     afterEach(async () => {
+        setScreenSharingPrivacyActive(false);
         await assembly?.dispose();
         assembly = undefined;
         registerVoiceAdapters([]);
+    });
+
+    it('masks the configured Voice start target without changing its binding', async () => {
+        const previous = storage.getState();
+        const address = { serverId: 'home-a', sessionId: 'private-target' };
+        const session = createSessionFixture({ id: address.sessionId, serverId: address.serverId,
+            metadata: { ...createSessionFixture().metadata!, name: 'Confidential Voice target' } });
+        storage.setState({ sessions: { [session.id]: session }, settings: { ...previous.settings,
+            sessionListHiddenTagIdsWhileRecording: { [address.serverId]: ['private'] } },
+            sessionOrganizationTagAssignmentsBySessionKey: {
+                [buildSessionOrganizationSessionKey(address.serverId, session.id)]: { sessionId: session.id, tagIds: ['private'] },
+            } });
+        setScreenSharingPrivacyActive(true);
+        registerVoiceAdapters([createLocalDirectVoiceAdapter()]);
+        const { useVoiceSurfaceTargetState } = await import('./useVoiceSurfaceTargetState');
+        const hook = await renderHook(() => useVoiceSurfaceTargetState({ pathname: '/', providerId: 'local_direct',
+            sessionAddress: address, sessionId: session.id, variant: 'session', voice: localVoiceSettings(false) }));
+        try {
+            expect(hook.getCurrent().startSessionAddress).toEqual(address);
+            expect(hook.getCurrent().targetLabel).toBe(t('message.provenanceSession'));
+            await act(async () => setScreenSharingPrivacyActive(false));
+            expect(hook.getCurrent().targetLabel).toBe('Confidential Voice target');
+        } finally { await hook.unmount(); storage.setState(previous, true); }
     });
 
     it('keeps the failed Session target in the default glance after focus moves', async () => {

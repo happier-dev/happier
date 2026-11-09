@@ -2,13 +2,14 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
-import { Avatar } from '@/components/ui/avatar/Avatar';
+import { SessionAvatar } from '@/components/sessions/bots/face/SessionAvatar';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import type { SessionAddress } from '@/sync/domains/session/sessionAddress';
 import { useSession } from '@/sync/domains/state/storage';
+import { useSessionRecordingVisibility } from '@/hooks/session/useSessionListRecordingPrivacy';
+import { t } from '@/text';
 import {
-  getSessionAvatarId,
   getSessionName,
 } from '@/utils/sessions/sessionUtils';
 
@@ -23,7 +24,9 @@ export function useVoiceTargetName(
     address?.sessionId ?? '',
     address?.serverId ?? null,
   );
+  const isSessionVisible = useSessionRecordingVisibility();
   if (!address || !session) return null;
+  if (!isSessionVisible(address)) return t('message.provenanceSession');
   return getSessionName(session, address.serverId);
 }
 
@@ -41,17 +44,15 @@ export const VoiceTargetIdentity = React.memo(function VoiceTargetIdentity(
   }>,
 ): React.ReactElement | null {
   const session = useSession(props.address.sessionId, props.address.serverId);
+  const isSessionVisible = useSessionRecordingVisibility();
   if (!session) return null;
+  const identityVisible = isSessionVisible(props.address);
   const pill = props.size === 'pill';
-  const name = getSessionName(session, props.address.serverId);
+  const name = identityVisible ? getSessionName(session, props.address.serverId) : t('message.provenanceSession');
   if (props.avatarOnly) {
-    return (
-      <Avatar
-        id={getSessionAvatarId(session, props.address.serverId)}
-        size={pill ? 16 : 18}
-        hasUnreadMessages={false}
-      />
-    );
+    return identityVisible ? (
+      <SessionAvatar session={session} serverId={props.address.serverId} size={pill ? 16 : 18} />
+    ) : null;
   }
   return (
     <View
@@ -59,11 +60,7 @@ export const VoiceTargetIdentity = React.memo(function VoiceTargetIdentity(
       style={styles.row}
       accessibilityLabel={name}
     >
-      <Avatar
-        id={getSessionAvatarId(session, props.address.serverId)}
-        size={pill ? 16 : 18}
-        hasUnreadMessages={false}
-      />
+      {identityVisible ? <SessionAvatar session={session} serverId={props.address.serverId} size={pill ? 16 : 18} /> : null}
       <Text numberOfLines={1} style={pill ? styles.namePill : styles.nameHero}>
         {name}
       </Text>
