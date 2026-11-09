@@ -1,4 +1,4 @@
-import { computeCanonicalDomainSeparatedDigest, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import { arePluginMachineMaterializationRefsEqual, computeCanonicalDomainSeparatedDigest, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import { DEPLOYMENT_RECEIPT_EVENT_REFS_V1, deploymentInProgressStates, DeploymentReceiptEventSourceConfigV1ProtocolSchema as configSchema,
     DeploymentReceiptEventSetupV1ProtocolSchema as setupSchema,
@@ -7,7 +7,7 @@ import { DEPLOYMENT_RECEIPT_EVENT_REFS_V1, deploymentInProgressStates, Deploymen
     createPluginEventAutomationSetupResultV1JsonSchema,
     type DeploymentReceiptEventSourceConfigV1, type PluginEventObservationV1 } from '@happier-dev/plugin-sdk/events';
 import { runCheckpointedPluginEventObserverV1, type BackgroundServiceContext,
-    type PluginCheckpointedEventSourceAdapterV1 } from '@happier-dev/plugin-sdk/background-services';
+    type PluginCheckpointedEventSourceAdapterV1, type PluginCheckpointedEventSourceDefinitionV1 } from '@happier-dev/plugin-sdk/background-services';
 import type { PluginActionResultById } from '@happier-dev/plugin-sdk/actions';
 
 const pluginId = DEPLOYMENT_RECEIPT_EVENT_REFS_V1.failed.pluginId;
@@ -81,8 +81,9 @@ const event = (id: EventId) => {
 };
 export const deploymentEvents = Object.fromEntries((Object.keys(outcomes) as EventId[]).map(id => [id, event(id)]));
 
+type PendingReceipt = { receipt?: Receipt | null };
 type State = { config: DeploymentReceiptEventSourceConfigV1; event: EventId; fullRead: boolean;
-    pending: Set<string>; observing: Set<string>; observations: PluginEventObservationV1[] | null };
+    pending: Map<string, PendingReceipt>; observing: Set<string>; observations: PluginEventObservationV1[] | null };
 const inProgressStates = new Set(deploymentInProgressStates());
 function pendingEligibility(state: State, time: number): number | null {
     return state.observing.size > 0 && state.config.periodMs !== undefined
@@ -93,49 +94,73 @@ function pendingEligibility(state: State, time: number): number | null {
 export function createDeploymentReceiptEventSourceAdapter(host: BackgroundServiceContext['services']['events']['host'],
     now: () => number = Date.now): PluginCheckpointedEventSourceAdapterV1<DeploymentReceiptEventSourceConfigV1, State> {
     const states = new Map<string, State>();
+    const decode = (definition: PluginCheckpointedEventSourceDefinitionV1) => {
+        if (definition.eventRef.pluginId !== pluginId || definition.sourceContractVersion !== 1 || !isEventId(definition.eventRef.localId)) return null;
+        const parsed = configSchema.safeParse(definition.sourceConfig);
+        return parsed.success ? parsed.data : null;
+    };
+    const adopt = (definition: PluginCheckpointedEventSourceDefinitionV1, source: DeploymentReceiptEventSourceConfigV1) => {
+        const event = definition.eventRef.localId as EventId;
+        let state = states.get(definition.sourceInstanceId);
+        if (!state || sourceId(state.config, state.event) !== sourceId(source, event)) {
+            state = { config: source, event, fullRead: true, pending: new Map(), observing: new Set(), observations: null };
+            states.set(definition.sourceInstanceId, state);
+        }
+        state.config = source;
+        return state;
+    };
     return {
-        decode(definition) {
-            if (definition.eventRef.pluginId !== pluginId || definition.sourceContractVersion !== 1 || !isEventId(definition.eventRef.localId)) return null;
-            const parsed = configSchema.safeParse(definition.sourceConfig);
-            return parsed.success ? parsed.data : null;
-        },
+        decode,
         async observe({ context, definition, source }) {
             const event = definition.eventRef.localId as EventId;
-            let state = states.get(definition.sourceInstanceId);
-            if (!state || sourceId(state.config, state.event) !== sourceId(source, event)) {
-                state = { config: source, event, fullRead: true, pending: new Set(), observing: new Set(), observations: null };
-                states.set(definition.sourceInstanceId, state); }
-            state.config = source;
+            const state = adopt(definition, source);
             if (state.observations === null) {
               const fullRead = state.fullRead;
-              const pending = new Set([...state.pending, ...state.observing]);
+              const pending = new Map<string, PendingReceipt>();
               try {
                 const receipts: Receipt[] = [];
                 if (state.fullRead) {
+                    const retained: Receipt[] = [];
                     let cursor: string | undefined;
                     do {
                         const page = await context.services.actions.execute('deployments.receipts.list', {
                             serverId: source.serverId, environmentId: source.environmentId, ...(cursor ? { cursor } : {}),
                         }, { signal: context.signal });
                         if (!('ok' in page) || !page.ok) throw new PluginError({ code: 'ok' in page ? page.error : 'deployment_unavailable', message: 'Deployment receipts are unavailable.' });
-                        receipts.push(...page.items); cursor = page.nextCursor ?? undefined;
+                        retained.push(...page.items); cursor = page.nextCursor ?? undefined;
                     } while (cursor);
-                    state.fullRead = false;
-                } else {
-                    for (const id of pending) state.pending.delete(id);
-                    for (const deploymentId of pending) {
+                    // The adapter belongs to one authenticated Account. Share the
+                    // receipt owner's facts only within the same Home/Environment;
+                    // each source keeps its own projection and checkpoint.
+                    const entries = retained.map(receipt => [receipt.id, { receipt }] as const);
+                    for (const sibling of states.values()) {
+                        if (!sibling.fullRead || sibling.config.serverId !== source.serverId
+                            || sibling.config.environmentId !== source.environmentId) continue;
+                        for (const [id, entry] of entries) if (!sibling.pending.has(id)) sibling.pending.set(id, entry);
+                        sibling.observing.clear();
+                        sibling.fullRead = false;
+                    }
+                }
+                for (const id of state.observing) if (!state.pending.has(id)) state.pending.set(id, {});
+                for (const [id, entry] of state.pending) pending.set(id, entry);
+                for (const [id, entry] of pending) {
+                    if (state.pending.get(id) === entry) state.pending.delete(id);
+                }
+                for (const [deploymentId, entry] of pending) {
+                    if (entry.receipt === undefined) {
                         const read = await context.services.actions.execute('deployments.receipts.get', {
                             serverId: source.serverId, environmentId: source.environmentId, deploymentId,
                         }, { signal: context.signal });
                         if (!('ok' in read) || !read.ok) {
                             if ('ok' in read && !read.ok && read.error === 'deployment_unavailable') {
-                                state.observing.delete(deploymentId);
-                                continue;
-                            }
-                            throw new PluginError({ code: 'ok' in read ? read.error : 'deployment_unavailable', message: 'Deployment receipt is unavailable.' });
+                                entry.receipt = null;
+                            } else throw new PluginError({ code: 'ok' in read ? read.error : 'deployment_unavailable', message: 'Deployment receipt is unavailable.' });
+                        } else {
+                            entry.receipt = { ...read.deployment, failureSummary: read.failureSummary };
                         }
-                        receipts.push({ ...read.deployment, failureSummary: read.failureSummary });
                     }
+                    if (entry.receipt === null) state.observing.delete(deploymentId);
+                    else receipts.push(entry.receipt);
                 }
                 // Only the failed source drives finite platform observation. Its
                 // sibling outcome sources consume the receipt owner's invalidation.
@@ -159,6 +184,7 @@ export function createDeploymentReceiptEventSourceAdapter(host: BackgroundServic
                             }, { signal: context.signal });
                             if (!read.ok) throw new PluginError({ code: read.error });
                             receipts[index] = { ...read.deployment, failureSummary: read.failureSummary };
+                            pending.get(receipt.id)!.receipt = receipts[index];
                         }
                     }
                 }
@@ -193,7 +219,7 @@ export function createDeploymentReceiptEventSourceAdapter(host: BackgroundServic
                 state.observations = observations;
               } catch (error) {
                 if (fullRead) state.fullRead = true;
-                else for (const id of pending) state.pending.add(id);
+                else for (const id of pending.keys()) if (!state.pending.has(id)) state.pending.set(id, {});
                 throw error;
               }
             }
@@ -207,15 +233,25 @@ export function createDeploymentReceiptEventSourceAdapter(host: BackgroundServic
             const state = definition && states.get(definition.sourceInstanceId);
             return state ? pendingEligibility(state, time) : null;
         },
-        async retire({ definitions }) {
-            const current = new Set(definitions.map(definition => definition.sourceInstanceId));
+        async retire({ context, definitions }) {
+            const current = new Set<string>();
+            for (const definition of definitions) {
+                const assigned = definition.observationTransport.kind === 'checkpointedPull'
+                    ? definition.observationTransport.watcherMaterializationRef : definition.observationTransport.consumerMaterializationRef;
+                if (!context.materialization || !arePluginMachineMaterializationRefsEqual(context.materialization, assigned)) continue;
+                const source = decode(definition);
+                if (source) { adopt(definition, source); current.add(definition.sourceInstanceId); }
+            }
             for (const key of states.keys()) if (!current.has(key)) states.delete(key);
             return { complete: true };
         },
         subscribeWake(wake) {
             const receipts = host.subscribe({ eventId: '@happier/deployment/receipt-invalidated', scope: { kind: 'account' } }, async event => {
+                const entries = new Map<string, PendingReceipt>();
                 for (const [id, state] of states) if (state.config.environmentId === event.payload.environmentId) {
-                    state.pending.add(event.payload.deploymentId); await wake(id);
+                    const entry = entries.get(state.config.serverId) ?? {};
+                    entries.set(state.config.serverId, entry);
+                    state.pending.set(event.payload.deploymentId, entry); await wake(id);
                 }
             });
             const reconnect = host.subscribe({ eventId: '@happier/automation/event-sources-invalidated', scope: { kind: 'account' } }, async event => {
