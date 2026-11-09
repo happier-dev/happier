@@ -1,9 +1,10 @@
 import type { NativeCatalogTarget } from './nativeCatalogCredential';
+import type { ContributedProviderCatalogParserBinding } from './catalog';
 import { applyProviderCatalogRefreshV1 } from '@happier-dev/protocol/providers/catalog/merge';
 import { projectAgentCatalogObservationSnapshot } from './agentCatalogSnapshot';
 import { createProviderProbeRequestFingerprintV1 } from '@happier-dev/protocol/providers/securityFingerprintsV1';
 import { qualifiedPurposeKey } from '@happier-dev/protocol/connect/connected-account-purpose-bindings';
-import type { OAuthBearerLeaseV1, PluginContributionIdentityV1, ProviderContributionV1, ProviderCatalogTransitionStateV1, ProviderModelDescriptorV1, QualifiedConnectedAccountPurposeBindingV1, QualifiedConnectedAccountPurposeV1, QualifiedConnectedAccountRequestAuthUseV1 } from '@happier-dev/protocol';
+import type { RequestAuthHeadersV1, PluginContributionIdentityV1, ProviderContributionV1, ProviderCatalogTransitionStateV1, ProviderModelDescriptorV1, QualifiedConnectedAccountPurposeBindingV1, QualifiedConnectedAccountPurposeV1, QualifiedConnectedAccountRequestAuthUseV1 } from '@happier-dev/protocol';
 
 import type {
   ConnectedAccountPurposeBindingOwner,
@@ -50,6 +51,7 @@ export type AgentProviderCatalogObservationInput = Readonly<{
   binding: QualifiedConnectedAccountPurposeBindingV1 | null;
   requestAuthUse: QualifiedConnectedAccountRequestAuthUseV1;
   provider: ProviderContributionV1;
+  resolveContributedCatalogParsers?: () => Promise<ContributedProviderCatalogParserBinding | null>;
   trigger: ProviderCatalogRefreshTrigger;
   currentOnly?: boolean;
   isCurrent(): boolean;
@@ -78,7 +80,7 @@ function requestAuthMaterializationKey(use: QualifiedConnectedAccountRequestAuth
   const materialization = use.materialization;
   return JSON.stringify([
     materialization.kind,
-    new URL(materialization.origin).origin,
+    [...materialization.origins].sort(),
     [...materialization.headerNames].map((name) => name.trim().toLowerCase()).sort(),
   ]);
 }
@@ -117,6 +119,7 @@ function schedulerError(error: unknown): Readonly<{ retryAfterMs?: number }> | u
 
 export function createAgentProviderCatalogObservationService(dependencies: Readonly<{
   activatePurposeBindings: ConnectedAccountPurposeBindingOwner['activatePurposeBindings'];
+  readBindingObservation: ConnectedAccountPurposeBindingOwner['readBindingObservation'];
   requestAuth: Pick<ConnectedAccountRequestAuthService, 'lookupRequestAuth' | 'refreshAfterAuthFailure'>;
   createRedactionLease: () => Pick<
     ProviderRedactionLease,
@@ -188,11 +191,7 @@ export function createAgentProviderCatalogObservationService(dependencies: Reado
         return request.pathname + request.search;
       })() : probe.path;
       const publicHeaders = endpoint.publicHeaders ?? Object.freeze({});
-      let redaction: Pick<
-        ProviderRedactionLease,
-        'add' | 'containsSensitiveValue' | 'close'
-      > | null = null;
-      let requestAuthReady = false;
+      let observationReady = false;
       const activateLease = (isCurrent: () => boolean) => runtimeDependencies.activatePurposeBindings({
         subject: {
           kind: 'agent_catalog_observation',
@@ -207,23 +206,16 @@ export function createAgentProviderCatalogObservationService(dependencies: Reado
         lease = activateLease(input.isCurrent);
         assertCurrent();
         assertLeaseCurrent(lease);
-        redaction = runtimeDependencies.createRedactionLease();
-        const subject = scopeConnectedAccountPurposeBindingLease({
-          lease,
-          subjectId: lease.subjectId,
-          uses: [input.requestAuthUse],
-          registerRedaction: (values) => redaction?.add(values),
-        });
-        assertCurrent();
-        assertLeaseCurrent(lease);
-        let bearer = await runtimeDependencies.requestAuth.lookupRequestAuth({
-          subject,
+        const observation = await runtimeDependencies.readBindingObservation({
           purpose: input.purpose,
-          ...(input.signal ? { signal: input.signal } : {}),
+          serviceRefs: [binding.target.kind === 'account' ? binding.target.account.service : binding.target.service],
+          exactPurposeBindingSubjectId: lease.subjectId,
+          signal: input.signal ?? new AbortController().signal,
         });
         assertCurrent();
         assertLeaseCurrent(lease);
-        requestAuthReady = true;
+        if (!observation || typeof observation.credentialRevision !== 'string') return staticResult(catalog);
+        observationReady = true;
         const requestFingerprint = createProviderProbeRequestFingerprintV1({
           method: 'GET',
           endpointUrl,
@@ -231,7 +223,7 @@ export function createAgentProviderCatalogObservationService(dependencies: Reado
           parser: probe.parser,
           publicHeaders,
         });
-        const identityFor = (current: OAuthBearerLeaseV1): string => JSON.stringify([
+        const identityFor = (current: Pick<RequestAuthHeadersV1['credentialContext'], 'account' | 'credentialRevision' | 'group'>): string => JSON.stringify([
           input.machineId,
           contributionKey(input.consumer),
           input.provider.id,
@@ -239,17 +231,16 @@ export function createAgentProviderCatalogObservationService(dependencies: Reado
           requestFingerprint,
           requestAuthMaterializationKey(input.requestAuthUse),
           nativeTarget?.headerBindings.map(({ name, format }) => [name.toLowerCase(), format]).sort() ?? null,
-          contributionKey(current.credentialContext.account.service),
-          current.credentialContext.account.accountId,
-          current.credentialContext.credentialRevision,
-          current.credentialContext.group?.groupId ?? null,
-          current.credentialContext.group?.generation ?? null,
+          contributionKey(current.account.service),
+          current.account.accountId,
+          current.credentialRevision,
+          observation.configurationRevision ?? null,
+          current.group?.groupId ?? null,
+          current.group?.generation ?? null,
         ]);
-        const scheduledIdentity = identityFor(bearer);
+        const scheduledIdentity = identityFor({ ...observation, credentialRevision: observation.credentialRevision });
         assertCurrent();
         assertLeaseCurrent(lease);
-        redaction.close();
-        redaction = null;
         lease.dispose();
         lease = null;
         assertCurrent();
@@ -275,6 +266,8 @@ export function createAgentProviderCatalogObservationService(dependencies: Reado
             try {
               const assertSharedWorkCurrent = (): void => assertLeaseCurrent(sharedLease);
               assertSharedWorkCurrent();
+              const contributedCatalogParsers = await input.resolveContributedCatalogParsers?.();
+              assertSharedWorkCurrent();
               sharedRedaction = runtimeDependencies.createRedactionLease();
               const sharedSubject = scopeConnectedAccountPurposeBindingLease({
                 lease: sharedLease,
@@ -288,7 +281,7 @@ export function createAgentProviderCatalogObservationService(dependencies: Reado
                 purpose: input.purpose,
               });
               assertSharedWorkCurrent();
-              const dispatch = async (current: OAuthBearerLeaseV1) => {
+              const dispatch = async (current: RequestAuthHeadersV1) => {
                 assertSharedWorkCurrent();
                 const result = await runtimeDependencies.client.getCatalog({
                   signal,
@@ -296,13 +289,14 @@ export function createAgentProviderCatalogObservationService(dependencies: Reado
                   endpointUrl,
                   path: probePath,
                   parser: probe.parser,
+                  ...(contributedCatalogParsers
+                    ? { contributedCatalogParsers: contributedCatalogParsers.parsersByFormat }
+                    : {}),
                   publicHeaders,
                   credentialPolicy: 'required',
                   resolveCredential: async () => ({
                     credential: (() => {
-                      const bindings = nativeTarget?.headerBindings ?? [{ name: 'authorization', format: 'bearer' as const }];
-                      const credentials = bindings.map(binding => ({ kind: 'httpHeader' as const, name: binding.name,
-                        value: binding.format === 'bearer' ? `Bearer ${current.accessToken}` : current.accessToken }));
+                      const credentials = Object.entries(current.headers).map(([name, value]) => ({ kind: 'httpHeader' as const, name, value }));
                       const first = credentials[0];
                       if (!first) throw new TypeError('native_catalog_header_binding_missing');
                       return { ...first, additionalCredentials: credentials.slice(1) };
@@ -312,7 +306,7 @@ export function createAgentProviderCatalogObservationService(dependencies: Reado
                     close: () => {},
                   }),
                   authorizeDestination: async (destination) => {
-                    if (!sharedSubject.isCurrent() || destination.origin !== input.requestAuthUse.materialization.origin) {
+                    if (!sharedSubject.isCurrent() || !input.requestAuthUse.materialization.origins.includes(destination.origin)) {
                       throw new ProviderProbeCancelledError();
                     }
                   },
@@ -325,7 +319,7 @@ export function createAgentProviderCatalogObservationService(dependencies: Reado
                   status: 'success',
                   result: await dispatch(sharedBearer),
                   observedAt: now(),
-                  completedKey: identityFor(sharedBearer),
+                  completedKey: identityFor(sharedBearer.credentialContext),
                 };
               } catch (error) {
                 if (error instanceof ProviderProbeCancelledError) throw error;
@@ -333,7 +327,7 @@ export function createAgentProviderCatalogObservationService(dependencies: Reado
                   const errorDetails = schedulerError(error);
                   return {
                     status: 'error',
-                    completedKey: identityFor(sharedBearer),
+                    completedKey: identityFor(sharedBearer.credentialContext),
                     ...(errorDetails ? { error: errorDetails } : {}),
                   };
                 }
@@ -358,7 +352,7 @@ export function createAgentProviderCatalogObservationService(dependencies: Reado
                   const errorDetails = schedulerError(error);
                   return {
                     status: 'error',
-                    completedKey: identityFor(sharedBearer),
+                    completedKey: identityFor(sharedBearer.credentialContext),
                     ...(errorDetails ? { error: errorDetails } : {}),
                   };
                 }
@@ -371,15 +365,15 @@ export function createAgentProviderCatalogObservationService(dependencies: Reado
                   return {
                     status: 'success',
                     result: await dispatch(sharedBearer),
-                  observedAt: now(),
-                    completedKey: identityFor(sharedBearer),
+                    observedAt: now(),
+                    completedKey: identityFor(sharedBearer.credentialContext),
                   };
                 } catch (retryError) {
                   if (retryError instanceof ProviderProbeCancelledError) throw retryError;
                   const errorDetails = schedulerError(retryError);
                   return {
                     status: 'error',
-                    completedKey: identityFor(sharedBearer),
+                    completedKey: identityFor(sharedBearer.credentialContext),
                     ...(errorDetails ? { error: errorDetails } : {}),
                   };
                 }
@@ -410,11 +404,10 @@ export function createAgentProviderCatalogObservationService(dependencies: Reado
         if (error instanceof ProviderProbeCancelledError) throw error;
         assertCurrent();
         if (lease) assertLeaseCurrent(lease);
-        if (!requestAuthReady) return staticResult(catalog);
+        if (!observationReady) return staticResult(catalog);
         if (error instanceof ConnectedAccountRequestAuthError) return staticResult(catalog);
         throw error;
       } finally {
-        redaction?.close();
         lease?.dispose();
       }
   };
@@ -434,11 +427,20 @@ export function createAgentProviderCatalogObservationService(dependencies: Reado
       const credentialRevision = `csr_${input.target.credentialFingerprint.slice('sha256:'.length, 'sha256:'.length + 32)}`;
       const nativeDependencies: ObservationDependencies = {
         ...dependencies,
+        readBindingObservation: async () => ({
+          purpose: input.purpose.purpose,
+          service: input.service,
+          target: { kind: 'account', displayName: 'Native account' },
+          account: { service: input.service, accountId: 'native' },
+          credentialRevision,
+        }),
         requestAuth: {
           lookupRequestAuth: async ({ subject }) => {
             subject.registerRedaction([input.target.credentialValue]);
             return Object.freeze({
-              accessToken: input.target.credentialValue,
+              headers: Object.fromEntries((input.target.headerBindings ?? [{ name: 'authorization', format: 'bearer' as const }])
+                .map(binding => [binding.name, binding.format === 'bearer' ? `Bearer ${input.target.credentialValue}` : input.target.credentialValue])),
+              facts: {},
               credentialContext: Object.freeze({
                 account: Object.freeze({ service: input.service, accountId: 'native' }),
                 credentialRevision,
@@ -452,7 +454,7 @@ export function createAgentProviderCatalogObservationService(dependencies: Reado
       return await observeWithDependencies(nativeDependencies, {
         ...input,
         requestAuthUse: { purpose: input.purpose, materialization: {
-          kind: 'httpHeaders', origin: new URL(input.target.endpointUrl).origin,
+          kind: 'httpHeaders', origins: [new URL(input.target.endpointUrl).origin],
           headerNames: input.target.headerBindings.map(binding => binding.name),
         } },
         binding: nativeBinding,

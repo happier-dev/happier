@@ -497,6 +497,7 @@ describe('capability preflight with a cold Agent plugin', () => {
         assertTargetAccountMaterializable: outsideObservation,
       });
       const observation = createAgentProviderCatalogObservationService({
+        readBindingObservation: input => bindingOwner.readBindingObservation(input),
         // Explicit native bindings use the real lease owner without reading a
         // selected Account store, showing UI, or materializing Account secrets.
         activatePurposeBindings: input => bindingOwner.activatePurposeBindings(input),
@@ -538,6 +539,10 @@ describe('capability preflight with a cold Agent plugin', () => {
         id: 'cli.claude', method: 'probeModels', params: { cwd: home, bypassCache: true },
       });
       const expectedModels = [{ id: 'default', name: 'Default' }, { id: 'claude-rpc-model', name: 'RPC model' }];
+      expect(await client.call(RPC_METHODS.CAPABILITIES_INVOKE, {
+        id: 'cli.claude', method: 'probeModels', params: { cwd: home, currentOnly: true },
+      })).toMatchObject({ ok: true, result: { source: 'static' } });
+      expect(requests).toBe(0);
       const initial = await invoke();
       expect(initial, JSON.stringify(initial)).toMatchObject({ ok: true, result: { observedAt: 42, refreshError: false, availableModels: expectedModels } });
       expect(httpRequests[0]).toMatchObject({

@@ -22,7 +22,7 @@ const use = {
   purpose,
   materialization: {
     kind: 'httpHeaders' as const,
-    origin: 'https://api.anthropic.com',
+    origins: ['https://api.anthropic.com'],
     headerNames: ['authorization'],
   },
 };
@@ -78,6 +78,10 @@ function harness(
   let selectedAccountId = 'selected-account';
   let revision = 'csr_0123456789ABCDEFGHJKMNPQRS';
   let token = 'selected-account-token';
+  let groupMember: string | null = 'selected-account';
+  let groupGeneration = 1;
+  let configurationRevision: string | null = null;
+  let selectedGroup: { groupId: string; generation: number } | undefined;
   const refreshAfterAuthFailure = vi.fn<ConnectedAccountRequestAuthService['refreshAfterAuthFailure']>(async () => {
     token = 'refreshed-selected-account-token';
     revision = 'csr_1123456789ABCDEFGHJKMNPQRS';
@@ -85,11 +89,13 @@ function harness(
   });
   const requestAuth = {
     lookupRequestAuth: vi.fn<ConnectedAccountRequestAuthService['lookupRequestAuth']>(async () => ({
-      accessToken: token,
+      headers: { authorization: `Bearer ${token}` },
+      facts: {},
       credentialContext: {
         account: { service, accountId: selectedAccountId },
         credentialRevision: revision,
         failingAccessTokenFingerprint: `sha256:${'a'.repeat(64)}`,
+        ...(selectedGroup ? { group: selectedGroup } : {}),
       },
     })),
     refreshAfterAuthFailure,
@@ -98,21 +104,32 @@ function harness(
   // Catalog observation uses explicit operation bindings. These persistent-store,
   // UI selection and credential boundaries must never be needed for native OAuth.
   const outsideObservation = async (): Promise<never> => { throw new Error('outside catalog observation'); };
+  const resolveTarget = vi.fn(async (target: Parameters<Parameters<typeof createConnectedAccountPurposeBindingOwner>[0]['resolveTarget']>[0]) => {
+    const account = target.kind === 'account' ? target.account
+      : groupMember ? { service: target.service, accountId: groupMember } : null;
+    return account ? { account, displayName: account.accountId,
+      ...(target.kind === 'group' ? { group: { groupId: target.groupId, generation: groupGeneration } } : {}) } : null;
+  });
   const bindingOwner = createConnectedAccountPurposeBindingOwner({
     store: { read: outsideObservation, update: outsideObservation, subscribe: () => ({ dispose() {} }) },
     selectTarget: outsideObservation,
-    resolveTarget: outsideObservation,
+    resolveTarget,
+    resolveCredentialRevision: async () => revision,
+    resolveCredentialConfigurationRevision: async () => configurationRevision,
     materializeAccount: outsideObservation,
     projectTargetAccounts: outsideObservation,
     assertTargetAccountMaterializable: outsideObservation,
   });
   const observation = createAgentProviderCatalogObservationService({
+    readBindingObservation: input => bindingOwner.readBindingObservation(input),
     activatePurposeBindings: ({ subject, bindings, ...rest }) => {
       if (subject.kind !== 'agent_catalog_observation') {
         throw new Error('agent catalog observation test received an unexpected binding subject');
       }
       const binding = bindings[0];
       if (binding?.target.kind === 'account') selectedAccountId = binding.target.account.accountId;
+      selectedGroup = binding?.target.kind === 'group'
+        ? { groupId: binding.target.groupId, generation: groupGeneration } : undefined;
       return bindingOwner.activatePurposeBindings({
         ...rest, bindings,
         subject: { ...subject, isCurrent: () => current && subject.isCurrent() },
@@ -131,7 +148,10 @@ function harness(
     scheduler,
     now: (() => { let value = 10; return () => value += 1; })(),
   });
-  return { observation, requestAuth, refreshAfterAuthFailure, redacted, setCurrent: (value: boolean) => { current = value; } };
+  return { observation, requestAuth, refreshAfterAuthFailure, redacted, resolveTarget,
+    setGroupMember: (accountId: string | null) => { groupMember = accountId; groupGeneration += 1; },
+    setConfigurationRevision: (value: string) => { configurationRevision = value; },
+    setCurrent: (value: boolean) => { current = value; } };
 }
 
 function input(selection: 'selected-account' | 'other-account' = 'selected-account') {
@@ -168,11 +188,13 @@ describe('Agent Provider catalog observation', () => {
     let requests = 0;
     const h = harness(async () => { requests++; return response(status, models); });
     expect(await h.observation.observe({ ...input(), currentOnly: true })).toMatchObject({ source: 'static' });
+    expect(h.requestAuth.lookupRequestAuth).not.toHaveBeenCalled();
     expect(requests).toBe(0);
     const first = await h.observation.observe(input());
     expect(first).toMatchObject({ source: 'dynamic', models: [{ id: 'gpt-6.1-sol' }] });
     expect(await h.observation.observe({ ...input(), currentOnly: true })).toEqual(first);
     expect(await h.observation.observe({ ...input('other-account'), currentOnly: true })).toMatchObject({ source: 'static' });
+    expect(h.requestAuth.lookupRequestAuth).toHaveBeenCalledTimes(1);
     expect(requests).toBe(1);
     models = ['gpt-6.1-terra'];
     const changed = await h.observation.observe(input());
@@ -182,6 +204,47 @@ describe('Agent Provider catalog observation', () => {
     await h.observation.observe(input());
     expect(await h.observation.observe({ ...input(), currentOnly: true })).toMatchObject({ source: 'dynamic', stale: true });
     expect(requests).toBe(3);
+  });
+
+  it('reads an explicitly empty observation without acquiring credentials or restoring declared fallback models', async () => {
+    const transport = vi.fn<ProviderProbeTransport>(async () => response(200, []));
+    const h = harness(transport);
+    expect(await h.observation.observe(input())).toMatchObject({ source: 'dynamic', models: [] });
+    const acquisitions = h.requestAuth.lookupRequestAuth.mock.calls.length;
+    for (let index = 0; index < 4; index++) {
+      expect(await h.observation.observe({ ...input(), currentOnly: true })).toMatchObject({ source: 'dynamic', models: [] });
+    }
+    expect(h.requestAuth.lookupRequestAuth).toHaveBeenCalledTimes(acquisitions);
+    expect(transport).toHaveBeenCalledOnce();
+  });
+
+  it('reads recorded pool identity without selecting a member when the pool is empty or advances', async () => {
+    const transport = vi.fn<ProviderProbeTransport>(async () => response(200, []));
+    const h = harness(transport);
+    const groupInput = { ...input(), binding: { purpose,
+      target: { kind: 'group' as const, service, groupId: 'selected-pool' } } };
+    await h.observation.observe(groupInput);
+    const acquisitions = h.requestAuth.lookupRequestAuth.mock.calls.length;
+    h.resolveTarget.mockClear();
+    expect(await h.observation.observe({ ...groupInput, currentOnly: true })).toMatchObject({ source: 'dynamic', models: [] });
+    expect(h.resolveTarget).toHaveBeenCalledTimes(1);
+    h.setGroupMember(null);
+    expect(await h.observation.observe({ ...groupInput, currentOnly: true })).toMatchObject({ source: 'static' });
+    expect(h.resolveTarget).toHaveBeenCalledTimes(2);
+    h.setGroupMember('other-account');
+    expect(await h.observation.observe({ ...groupInput, currentOnly: true })).toMatchObject({ source: 'static' });
+    expect(h.resolveTarget).toHaveBeenCalledTimes(3);
+    expect(h.requestAuth.lookupRequestAuth).toHaveBeenCalledTimes(acquisitions);
+    expect(transport).toHaveBeenCalledOnce();
+  });
+
+  it('withdraws a cached catalog when selected source configuration changes without borrowing credentials', async () => {
+    const h = harness(async () => response(200, ['configured-model']));
+    await h.observation.observe(input());
+    const acquisitions = h.requestAuth.lookupRequestAuth.mock.calls.length;
+    h.setConfigurationRevision('configuration-2');
+    expect(await h.observation.observe({ ...input(), currentOnly: true })).toMatchObject({ source: 'static' });
+    expect(h.requestAuth.lookupRequestAuth).toHaveBeenCalledTimes(acquisitions);
   });
 
   it('retains the successful observation time when a refresh fails', async () => {
@@ -319,7 +382,7 @@ describe('Agent Provider catalog observation', () => {
     });
     expect(requests[0]).toMatchObject({ authorization: 'Bearer selected-account-token' });
     expect(requests[0]).not.toHaveProperty('x-api-key');
-    expect(h.requestAuth.lookupRequestAuth).toHaveBeenCalledTimes(2);
+    expect(h.requestAuth.lookupRequestAuth).toHaveBeenCalledTimes(1);
 
     models = [];
     await expect(h.observation.observe(input())).resolves.toMatchObject({ source: 'dynamic', models: [], stale: false });
@@ -377,17 +440,17 @@ describe('Agent Provider catalog observation', () => {
     const h = harness(async () => response(statuses.shift() ?? 500, ['curated']));
     await expect(h.observation.observe(input())).resolves.toMatchObject({ source: 'dynamic' });
     expect(h.refreshAfterAuthFailure).toHaveBeenCalledOnce();
-    expect(h.requestAuth.lookupRequestAuth).toHaveBeenCalledTimes(3);
+    expect(h.requestAuth.lookupRequestAuth).toHaveBeenCalledTimes(2);
 
     const forbidden = harness(async () => response(403));
     await forbidden.observation.observe(input());
     expect(forbidden.refreshAfterAuthFailure).not.toHaveBeenCalled();
-    expect(forbidden.requestAuth.lookupRequestAuth).toHaveBeenCalledTimes(2);
+    expect(forbidden.requestAuth.lookupRequestAuth).toHaveBeenCalledTimes(1);
 
     const repeated = harness(async () => response(401));
     await repeated.observation.observe(input());
     expect(repeated.refreshAfterAuthFailure).toHaveBeenCalledOnce();
-    expect(repeated.requestAuth.lookupRequestAuth).toHaveBeenCalledTimes(3);
+    expect(repeated.requestAuth.lookupRequestAuth).toHaveBeenCalledTimes(2);
   });
 
   it('uses the catalog observation caller signal before joining shared work, not during recovery or retry', async () => {
@@ -399,12 +462,8 @@ describe('Agent Provider catalog observation', () => {
       source: 'dynamic',
     });
 
-    expect(h.requestAuth.lookupRequestAuth).toHaveBeenNthCalledWith(
-      1,
-      expect.objectContaining({ signal }),
-    );
     expect(h.refreshAfterAuthFailure.mock.calls[0]?.[0]).not.toHaveProperty('signal');
-    for (const [lookup] of h.requestAuth.lookupRequestAuth.mock.calls.slice(1)) {
+    for (const [lookup] of h.requestAuth.lookupRequestAuth.mock.calls) {
       expect(lookup).not.toHaveProperty('signal');
     }
   });
@@ -446,7 +505,8 @@ describe('Agent Provider catalog observation', () => {
       signal: secondController.signal,
       isCurrent: () => !secondController.signal.aborted,
     });
-    await vi.waitFor(() => expect(h.requestAuth.lookupRequestAuth).toHaveBeenCalledTimes(3));
+    await vi.waitFor(() => expect(h.resolveTarget).toHaveBeenCalledTimes(2));
+    expect(h.requestAuth.lookupRequestAuth).toHaveBeenCalledOnce();
 
     firstController.abort();
     await expect(first).rejects.toBeInstanceOf(ProviderProbeCancelledError);

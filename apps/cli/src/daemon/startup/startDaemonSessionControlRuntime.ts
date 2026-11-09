@@ -640,7 +640,7 @@ import {
   type ConnectedAccountRequestAuthTemporaryRetryRecordResult,
 } from '../connectedServices/requestAuth/ConnectedAccountRequestAuthRecovery';
 import {
-  materializeFirstPartyConnectedAccountBearer,
+  materializeFirstPartyConnectedAccountHeaders,
   resolveFirstPartyConnectedAccountBinding,
   resolveFirstPartyConnectedAccountServiceId,
 } from '../connectedServices/requestAuth/firstPartyConnectedAccountRequestAuthAdapter';
@@ -1396,6 +1396,7 @@ export async function startDaemonSessionControlRuntime(
     resolveCurrentRequestAuthBinding?: ConnectedAccountPurposeBindingOwner['resolveCurrentRequestAuthBinding'];
     materializeRequestAuthBearer?: ConnectedAccountPurposeBindingOwner['materializeRequestAuthBearer'];
     activatePurposeBindings?: ConnectedAccountPurposeBindingOwner['activatePurposeBindings'];
+    readBindingObservation?: ConnectedAccountPurposeBindingOwner['readBindingObservation'];
     resolveHostedWebStaticAssetContributionRegistry?: () => Promise<ResolvedContributionRegistry>;
     liveStreamCaptureRegistry?: MachineLiveStreamCaptureRegistry;
     simulatorInputLeaseManager?: SimulatorInputLeaseManager;
@@ -2144,14 +2145,18 @@ export async function startDaemonSessionControlRuntime(
       return await withSessionAccountContext(input.sessionId, async (accountContext) => {
         const accountApi = accountContext?.api ?? params.api;
         return await withSessionAccountHome(accountContext, async () => {
-          await commitConnectedServiceAccountSwitchSessionEvent({
+          const listQualifiedConnectedAccounts: NonNullable<Parameters<typeof commitConnectedServiceAccountSwitchSessionEvent>[0]['listQualifiedConnectedAccounts']> =
+            (selection) => listQualifiedConnectedAccountsV4({
+              token: accountContext?.bootstrap.credentials.token ?? params.credentials.token,
+              ...selection,
+            });
+          const profilesById = await commitConnectedServiceAccountSwitchSessionEvent({
             mutationCustody:
               accountContext?.daemonSessionMutationCustody ??
               params.daemonSessionMutationCustody,
             sessionId: input.sessionId,
             event: input.event,
-            listConnectedServiceProfiles:
-              accountApi.listConnectedServiceProfiles.bind(accountApi),
+            listQualifiedConnectedAccounts,
           });
 
           const record =
@@ -2197,8 +2202,8 @@ export async function startDaemonSessionControlRuntime(
             runtimeQuotaSnapshots:
               accountContext?.connectedServiceRuntimeQuotaSnapshots ??
               connectedServiceRuntimeQuotaSnapshots,
-            listConnectedServiceProfiles:
-              accountApi.listConnectedServiceProfiles.bind(accountApi),
+            listQualifiedConnectedAccounts,
+            profilesById,
             source: {
               sessionId: input.sessionId,
               sessionTitle: resolveTrackedSessionNotificationTitle(
@@ -2888,7 +2893,7 @@ export async function startDaemonSessionControlRuntime(
           signal,
         );
       },
-      materializeBearer: async ({
+      materializeHeaders: async ({
         subject,
         binding,
         resolved,
@@ -2906,7 +2911,7 @@ export async function startDaemonSessionControlRuntime(
             ? resolveFirstPartyConnectedAccountServiceId(service)
             : null;
         if (!legacyServiceId) {
-          return await qualifiedRequestAuthCallbacks.materializeBearer({
+          return await qualifiedRequestAuthCallbacks.materializeHeaders({
             subject,
             binding,
             resolved,
@@ -2914,7 +2919,7 @@ export async function startDaemonSessionControlRuntime(
             signal,
           });
         }
-        return await materializeFirstPartyConnectedAccountBearer({
+        return await materializeFirstPartyConnectedAccountHeaders({
           resolved,
           materialization,
           signal,
@@ -9885,6 +9890,7 @@ export async function startDaemonSessionControlRuntime(
       },
       finishRunRecovery: async (runKey) => {
         await temporaryThrottleScheduler.finishRun(runKey);
+        await params.connectedServiceGroupHomeCleanupScheduler?.cleanupPendingDeletedGroupHomes();
       },
       resolveRunMaterializedRoot: async ({
         runKey,
@@ -16037,6 +16043,7 @@ export async function startDaemonSessionControlRuntime(
     ) =>
       createAgentProviderCatalogObservationService({
         ...infrastructure,
+        readBindingObservation: params.readBindingObservation ?? (async () => null),
         activatePurposeBindings:
           params.activatePurposeBindings ??
           (() => {
