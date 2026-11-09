@@ -39,7 +39,7 @@ import {
 } from '../corpus/testkit/observations.test-support.js';
 import { MAX_TRIAGE_LIST_WINDOW_ROWS_V1, TRIAGE_LIST_DEFAULT_LENS_V1, triageEntryRowKey } from './listWindow.js';
 import { createTriageListWindowStore } from './listWindowStore.js';
-import { resolveTriageListShellState } from '../ui/shell/windowState.js';
+import { readTriageListFailureNotice, readTriageSourceFailureRowV1, resolveTriageListShellState } from '../ui/shell/windowState.js';
 import { projectTriagePickerCorpusFacts } from '../composer/pickerFacts.js';
 import { projectTriageWindowRow } from '../ui/marks/pinnedRows.js';
 import { readTriageEntryRowAnnouncementV1 } from '../ui/window/entryDisplay.js';
@@ -1597,6 +1597,43 @@ describe('the mounted PRs & Issues window store', () => {
         }
     });
 
+    it('retains a source invocation Request ID through the scan, window and source disclosures', async () => {
+        const requestId = 'a72d338d-5ad9-44c9-b722-f080c7cb84e1';
+        const harness = createHarness({ configureSourceB: false, scanA: async () => {
+            throw new PluginError({ code: 'plugin_action_generation_retired', retryable: false,
+                details: { requestId } });
+        } });
+        // F's loaded census has fourteen active connections. Keeping their
+        // diagnostics must not trigger a second read of any connection.
+        const sourceInstanceIds = [INSTANCE_A, ...Array.from({ length: 13 }, (_, index) =>
+            `00000000-0000-4000-8000-${String(index + 1).padStart(12, '0')}`)];
+        for (const [index, sourceInstanceId] of sourceInstanceIds.slice(1).entries()) {
+            harness.control.sourceInstances.seed(toCorpusStoredValue(instanceRow(
+                `request-id-${String(index).padStart(2, '0')}`, SOURCE_A, sourceInstanceId, index + 1,
+            )));
+        }
+        const store = createTriageListWindowStore({ readEntries: harness.readEntries, nowMs: () => harness.clock.nowMs });
+        try {
+            await store.refresh('view');
+            expect(harness.scanCalls.count).toBe(sourceInstanceIds.length);
+            expect(store.getSnapshot().unreadableSources).toHaveLength(sourceInstanceIds.length);
+            for (const sourceInstanceId of sourceInstanceIds) {
+                expect(store.getSnapshot().unreadableSources).toContainEqual(expect.objectContaining({
+                    sourceInstanceId, code: 'plugin_action_generation_retired', requestId,
+                }));
+            }
+            const state = resolveTriageListShellState(store.getSnapshot());
+            if (state.kind !== 'window' || state.failure === null) throw new Error('Expected the named source failure');
+            expect(state.failure.sources).toHaveLength(sourceInstanceIds.length);
+            for (const source of state.failure.sources) {
+                expect(source).toMatchObject({ requestId });
+                expect(readTriageSourceFailureRowV1(source).details).toContain(requestId);
+            }
+            expect(readTriageListFailureNotice(state.failure).details).toContain(requestId);
+        } finally {
+            store.dispose();
+        }
+    });
     it('keeps whether retrying can help, and the host diagnostic, beside the aggregate failure', async () => {
         // The shell used to print the host's bare code ("unavailable") as the
         // sentence and offered Refresh whatever the host said. The store keeps

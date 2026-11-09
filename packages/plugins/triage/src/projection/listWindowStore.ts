@@ -443,6 +443,7 @@ export function createTriageListWindowStore(deps: Readonly<{
             unreadable.push(Object.freeze({
                 sourceInstanceId, message: state.error.message,
                 code: state.error.code,
+                ...(state.error.requestId === undefined ? {} : { requestId: state.error.requestId }),
                 ...(state.error.retryable === undefined ? {} : { retryable: state.error.retryable }),
             }));
         }

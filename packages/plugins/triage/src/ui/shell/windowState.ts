@@ -69,6 +69,7 @@ export type TriageListSourceFailureV1 = Readonly<{
   reason: string;
   /** Non-secret invocation diagnostic; separate from the translated reason. */
   code?: string;
+  requestId?: string;
   /**
    * The class's own sentence, present when `reason` is the provider's bounded detail. The one-line summary says
    * this; the detail, which can carry a diagnostic such as GitHub's request ID, stays in the notice Details shows.
@@ -207,6 +208,7 @@ function readShellFailure(snapshot: TriageListWindowSnapshotV1): TriageListShell
       displayName: entry.displayName,
       reason,
       ...(entry.code === undefined ? {} : { code: entry.code }),
+      ...(entry.requestId === undefined ? {} : { requestId: entry.requestId }),
       ...(entry.retryable === undefined ? {} : { retryable: entry.retryable }),
       sharedCauseKey: `${entry.code ?? ''}\n${entry.retryable ?? ''}\n${reason}`,
       needsConnectionChange: entry.retryable === false && entry.code !== 'timeout',
@@ -313,7 +315,7 @@ export function readTriageListFailureNotice(
     ? text('plugins.triage.surface.listFailed.permanent', 'Trying again will not fix this. The details below can help support find out why.')
     : resolveSourceFailureReason(text, source.reason);
   const details = failure.sources.flatMap((source) => source.code === undefined ? [] : [
-    `${source.displayName} — ${source.code}${source.retryable === undefined ? '' : ` · retryable=${source.retryable}`}`,
+    `${source.displayName} — ${readSourceFailureDetails(source, text)}`,
   ]).join('\n');
   const first = failure.sources[0];
   const sharedCause = first?.sharedCauseKey !== undefined
@@ -335,6 +337,12 @@ export function readTriageListFailureNotice(
   });
 }
 
+/** Details: the producer's own explanation when the line said something shorter, then the code support can look up. */
+function readSourceFailureDetails(source: TriageListSourceFailureV1, text: TriageTextResolverV1): string {
+  const code = `${text('plugins.triage.surface.sources.supportCode', 'For support')}: ${source.code}${source.requestId === undefined ? '' : ` · Request ID: ${source.requestId}`}`;
+  return source.lineReason === undefined ? code : `${source.reason} ${code}`;
+}
+
 /** One connection's own health, for its row in Manage sources: its reason in the line's words, and what fixes it. */
 export type TriageSourceFailureRowV1 = Readonly<{
   reason: string;
@@ -351,12 +359,13 @@ export function readTriageSourceFailureRowV1(
   const lineReason = source.lineReason ?? source.reason;
   const permanent = source.retryable === false;
   return Object.freeze({
+    // The row's reason stands beside its ⋯, so it names Details rather than pointing below.
     reason: permanent && lineReason === SOURCE_FAILURE_COPY_V1.transient
-      ? text('plugins.triage.surface.listFailed.permanent', 'Trying again will not fix this. The details below can help support find out why.')
+      ? text('plugins.triage.surface.sources.permanent', 'Trying again won’t fix this. Details has what support needs.')
       : resolveSourceFailureReason(text, lineReason),
     fix: source.needsConnectionChange === true ? 'connection' : permanent ? null : 'retry',
     details: source.code === undefined ? null
-      : `${source.displayName} — ${source.code}${source.retryable === undefined ? '' : ` · retryable=${source.retryable}`}`,
+      : readSourceFailureDetails(source, text),
   });
 }
 
@@ -372,13 +381,17 @@ export function readTriageListFailureLine(
   locale?: string,
 ): TriageListFailureLineV1 {
   const names = createTriageNameListFormatter(locale)(failure.sources.map((source) => source.displayName));
-  const title = `${names} ${text('plugins.triage.surface.failure.suffix', 'could not be read')}`;
   const first = failure.sources[0];
   const lineReason = (source: TriageListSourceFailureV1) => source.lineReason ?? source.reason;
   const oneReason = first !== undefined && failure.sources.every((source) => lineReason(source) === lineReason(first))
     && !(first.retryable === false && lineReason(first) === SOURCE_FAILURE_COPY_V1.transient);
+  // "Could not be reached" and "could not be read" say one thing: the shared transient reason becomes the verb.
+  const unreachable = oneReason && lineReason(first!) === SOURCE_FAILURE_COPY_V1.transient;
+  const title = `${names} ${unreachable
+    ? text('plugins.triage.surface.failure.unreachableSuffix', 'could not be reached')
+    : text('plugins.triage.surface.failure.suffix', 'could not be read')}`;
   return Object.freeze({
-    label: `${title}. ${text('plugins.triage.surface.failure.retained', 'Their entries may be missing or out of date.')}${oneReason ? ` ${resolveSourceFailureReason(text, lineReason(first))}` : ''}`,
+    label: `${title}. ${text('plugins.triage.surface.failure.retained', 'Their entries may be missing or out of date.')}${oneReason && !unreachable ? ` ${resolveSourceFailureReason(text, lineReason(first!))}` : ''}`,
     recovery: 'retry',
   });
 }

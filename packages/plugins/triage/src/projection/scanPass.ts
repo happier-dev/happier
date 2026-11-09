@@ -1,4 +1,4 @@
-import { isPluginError, type LoggerService, type PluginCancellationOptions } from '@happier-dev/plugin-sdk';
+import { isPluginError, readPluginErrorRequestIdV1, type LoggerService, type PluginCancellationOptions } from '@happier-dev/plugin-sdk';
 import type { PluginContributionIdentity } from '@happier-dev/plugin-sdk/manifest';
 import {
     type TriageConfiguredSourceInstanceV1,
@@ -272,6 +272,7 @@ export async function runTriageScanPass(input: Readonly<{
             const parsed = isPluginError(settled.reason)
                 ? TriageListInvocationErrorV1Schema.safeParse({
                     code: settled.reason.code, retryable: settled.reason.retryable,
+                    requestId: readPluginErrorRequestIdV1(settled.reason),
                 })
                 : null;
             const error = parsed?.success

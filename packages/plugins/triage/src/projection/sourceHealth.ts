@@ -151,6 +151,7 @@ export function projectTriageUnreadableSourceHealth(
             displayName: readTriageSourceDisplayName(snapshot, sourceInstance),
             reason: unread.message,
             ...(unread.code === undefined ? {} : { code: unread.code }),
+            ...(unread.requestId === undefined ? {} : { requestId: unread.requestId }),
             ...(unread.retryable === undefined ? {} : { retryable: unread.retryable }),
         }));
     }
