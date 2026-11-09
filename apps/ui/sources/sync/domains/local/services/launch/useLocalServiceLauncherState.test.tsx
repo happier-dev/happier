@@ -58,12 +58,14 @@ async function createHookHome() {
 
 describe('useLocalServiceLauncherState', () => {
     beforeEach(() => {
-        // Launcher readiness follows genuine inventory transport, even with an injected launcher reader.
+        // Only daemon transport is substituted; qualified subscription lifecycle remains real.
         vi.spyOn(inventoryMachineRpc, 'fetchLocalServiceInventorySnapshotViaMachineRpc').mockResolvedValue({
             ok: true,
             snapshot: { v: 1, machineId: 'machine-a', generatedAt: 1_000, refreshState: 'idle', entries: [], diagnostics: [] },
         });
         vi.spyOn(inventoryMachineRpc, 'watchLocalServiceInventorySnapshotViaMachineRpc')
+            .mockImplementation(async () => new Promise(() => {}));
+        vi.spyOn(machineRpc, 'watchLocalServiceLauncherSnapshotViaMachineRpc')
             .mockImplementation(async () => new Promise(() => {}));
     });
     afterEach(async () => {
@@ -135,7 +137,7 @@ describe('useLocalServiceLauncherState', () => {
         const key = { machineId: 'machine-a', serverId: resolved.scope.serverId, sessionId: 'session-a',
             accountId: resolved.scope.accountId, credentialKey: resolved.credentialKey };
         const watchSignals: AbortSignal[] = [];
-        vi.spyOn(inventoryMachineRpc, 'watchLocalServiceInventorySnapshotViaMachineRpc').mockImplementation(async input => {
+        vi.spyOn(machineRpc, 'watchLocalServiceLauncherSnapshotViaMachineRpc').mockImplementation(async input => {
             if (input.signal) watchSignals.push(input.signal);
             return new Promise(() => {});
         });
@@ -178,13 +180,10 @@ describe('useLocalServiceLauncherState', () => {
         const connection = await restoreServerAccountForTest({ serverUrl, serverIdentityId: 'srv_launcher_retained' });
         onTestFinished(() => connection.dispose());
         const watchSignals: AbortSignal[] = [];
-        vi.spyOn(inventoryMachineRpc, 'watchLocalServiceInventorySnapshotViaMachineRpc').mockImplementation(async input => {
+        vi.spyOn(machineRpc, 'watchLocalServiceLauncherSnapshotViaMachineRpc').mockImplementation(async input => {
             if (input.signal) watchSignals.push(input.signal);
             return new Promise(() => {});
         });
-        const inventorySnapshotClient = vi.fn(async () => ({ ok: true as const, snapshot: {
-            v: 1 as const, machineId: 'machine-a', generatedAt: 1_000, refreshState: 'idle' as const, entries: [], diagnostics: [],
-        } }));
         const pending = createDeferred<Awaited<ReturnType<LocalServiceLauncherSnapshotClient>>>();
         let deferAccountA = false;
         const pendingSignals: AbortSignal[] = [];
@@ -200,13 +199,12 @@ describe('useLocalServiceLauncherState', () => {
         let latest: ReturnType<typeof useLocalServiceLauncherStateController> | undefined;
         function Probe() {
             latest = useLocalServiceLauncherStateController({ machineId: 'machine-a', serverId: connection.serverId,
-                sessionId: 'session-a', snapshotClient, inventorySnapshotClient });
+                sessionId: 'session-a', snapshotClient });
             return null;
         }
         const frame = (active: boolean) => <RetainedPanelSurface isActive={active}><Probe /></RetainedPanelSurface>;
         const screen = await renderScreen(frame(false));
         expect(snapshotClient).not.toHaveBeenCalled();
-        expect(inventorySnapshotClient).not.toHaveBeenCalled();
         await screen.update(frame(true));
         await vi.waitFor(() => expect(latest?.state.updatedAt).toBe(1_000));
         await vi.waitFor(() => expect(watchSignals).toHaveLength(1));
@@ -215,10 +213,8 @@ describe('useLocalServiceLauncherState', () => {
         await screen.update(frame(false));
         expect(watchSignals[0]?.aborted).toBe(true);
         expect(latest?.state.targetsById.get('managed:preview')?.title).toBe('Preview');
-        const closedInventoryReads = inventorySnapshotClient.mock.calls.length;
         await flushHookEffects();
         expect(snapshotClient).toHaveBeenCalledTimes(initialReads);
-        expect(inventorySnapshotClient).toHaveBeenCalledTimes(closedInventoryReads);
         deferAccountA = true;
         await screen.update(frame(true));
         expect(latest?.state.targetsById.get('managed:preview')?.title).toBe('Preview');

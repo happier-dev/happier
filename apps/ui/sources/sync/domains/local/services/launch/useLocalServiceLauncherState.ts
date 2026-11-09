@@ -8,7 +8,6 @@ import type {
     LocalServiceLauncherSnapshotClientInput,
     LocalServiceLauncherSnapshotClientResult,
 } from './api';
-import type { LocalServiceInventorySnapshotClient } from '../inventory/sharedStore';
 import {
     EMPTY_LOCAL_SERVICE_LAUNCHER_STATE,
     getLocalServiceLauncherState,
@@ -35,7 +34,6 @@ export type UseLocalServiceLauncherStateInput = Readonly<{
     enabled?: boolean;
     nowMs?: () => number;
     snapshotClient?: LocalServiceLauncherSnapshotClient;
-    inventorySnapshotClient?: LocalServiceInventorySnapshotClient;
 }>;
 
 export type LocalServiceLauncherStateController = Readonly<{
@@ -72,7 +70,6 @@ export function useLocalServiceLauncherStateController(
     const snapshotClient = input.snapshotClient;
     const nowMs = input.nowMs ?? Date.now;
     const snapshotClientRef = React.useRef(snapshotClient);
-    const inventorySnapshotClientRef = React.useRef(input.inventorySnapshotClient);
     const nowMsRef = React.useRef(nowMs);
     const storeKey = React.useMemo<LocalServiceLauncherStoreKeyInput | null>(() => (
         eligible && machineId && binding?.isCurrent() && binding.credentialKey
@@ -90,15 +87,13 @@ export function useLocalServiceLauncherStateController(
 
     React.useEffect(() => {
         snapshotClientRef.current = snapshotClient;
-        inventorySnapshotClientRef.current = input.inventorySnapshotClient;
         nowMsRef.current = nowMs;
-    }, [nowMs, snapshotClient, input.inventorySnapshotClient]);
+    }, [nowMs, snapshotClient]);
 
     const subscribe = React.useCallback((listener: () => void) => {
         if (!enabled || !storeKey || !binding?.isCurrent()) return () => {};
         const release = subscribeLocalServiceLauncherStore(storeKey, listener, {
                 ...(snapshotClientRef.current ? { snapshotClient: (request) => snapshotClientRef.current!(request) } : {}),
-                ...(inventorySnapshotClientRef.current ? { inventorySnapshotClient: (request) => inventorySnapshotClientRef.current!(request) } : {}),
                 nowMs: () => nowMsRef.current(),
         });
         const retirement = binding.onRetire(() => { release(); listener(); });

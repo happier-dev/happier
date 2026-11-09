@@ -17,12 +17,15 @@ import {
     isRpcMethodNotFoundError,
 } from '@happier-dev/protocol/rpcErrors';
 import { readRpcRequestDisposition } from '@happier-dev/sync-client';
+import { DaemonLocalServiceInventoryWatchRequestV1Schema, DaemonLocalServiceInventoryLauncherWatchResponseV1Schema } from '@happier-dev/protocol/local/services/inventory/v1';
 
 import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
 
 import {
     type LocalServiceLauncherSnapshotClientInput,
     type LocalServiceLauncherSnapshotClientResult,
+    type LocalServiceLauncherWatchClientInput,
+    type LocalServiceLauncherWatchClientResult,
 } from './api';
 import type {
     LocalServiceLauncherHistoryClearClientInput,
@@ -46,6 +49,34 @@ function readRpcFailureReason(value: unknown): 'unavailable' | 'request_failed' 
         return null;
     }
     return isRpcMethodNotAvailableError({ rpcErrorCode: value.errorCode }) ? 'request_failed' : null;
+}
+
+/** Reuse the inventory watch, disclosing only the same projection as the launcher read. */
+export async function watchLocalServiceLauncherSnapshotViaMachineRpc(
+    input: LocalServiceLauncherWatchClientInput,
+): Promise<LocalServiceLauncherWatchClientResult> {
+    if (input.signal?.aborted) return { ok: false, reason: 'request_failed' };
+    try {
+        const payload = DaemonLocalServiceInventoryWatchRequestV1Schema.parse({ machineId: input.machineId,
+            launcherProjection: { targets: input.targets, request: {
+                ...(input.sessionId ? { sessionId: input.sessionId } : {}),
+                ...(input.scope ? { scope: input.scope } : {}),
+                ...(input.workspaceRoot ? { workspaceRoot: input.workspaceRoot } : {}),
+                ...(input.projection ? { projection: input.projection } : {}),
+            } },
+        });
+        const raw = await machineRpcWithServerScope<unknown, typeof payload>({ machineId: input.machineId,
+            serverId: input.serverId, accountId: input.accountId, method: RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_WATCH,
+            payload, ...(input.signal ? { signal: input.signal } : {}),
+        });
+        if (isRpcMethodNotFoundResult(raw)) return { ok: false, reason: 'unavailable' };
+        const parsed = DaemonLocalServiceInventoryLauncherWatchResponseV1Schema.safeParse(raw);
+        if (!parsed.success) return { ok: false, reason: 'invalid_response' };
+        if (!parsed.data.changed) return { ok: true, changed: false };
+        return parsed.data.snapshot.machineId === input.machineId
+            ? { ok: true, changed: true, snapshot: parsed.data.snapshot }
+            : { ok: false, reason: 'invalid_response' };
+    } catch { return { ok: false, reason: 'request_failed' }; }
 }
 
 export async function fetchLocalServiceLauncherSnapshotViaMachineRpc(

@@ -4,6 +4,7 @@ import { act } from 'react-test-renderer';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { LocalServiceLauncherSnapshotV1Schema } from '@happier-dev/protocol/local/services/launcher/v1';
 import type { DaemonLocalServiceInventoryWatchRequestV1 } from '@happier-dev/protocol/local/services/inventory/v1';
+import type { LocalServiceLauncherSnapshotV1 } from '@happier-dev/protocol/local/services/launcher/v1';
 import { createDeferred, createRenderCommitCounter, flushHookEffects, renderHook, useRenderCommitCounter } from '@/dev/testkit';
 import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
 
@@ -25,7 +26,7 @@ afterEach(() => {
     vi.useRealTimers();
 });
 
-it('declares only currently subscribed launcher scopes on the shared Machine observation', async () => {
+it('parks each qualified launcher projection independently of broad Machine observation', async () => {
     const registry = createLocalServiceInventoryRegistry();
     registry.replaceSnapshot({ v: 1, machineId: 'machine-a', generatedAt: 1_000,
         refreshState: 'idle', entries: [], diagnostics: [] });
@@ -34,6 +35,14 @@ it('declares only currently subscribed launcher scopes on the shared Machine obs
     let inventoryReads = 0;
     rpc.machine.mockImplementation(async (request: { method: string; payload: DaemonLocalServiceInventoryWatchRequestV1; signal: AbortSignal }) => {
         if (request.method === RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_WATCH) {
+            if (request.payload.launcherProjection) {
+                observations.push({ scopes: [request.payload.launcherProjection.request], signal: request.signal });
+                return { protocolVersion: 1, ...await routes.watchLauncherSnapshot({
+                    targets: request.payload.launcherProjection.targets,
+                    readSnapshot: async () => ({ v: 1, machineId: 'machine-a', updatedAt: Date.now(), targets: [] }),
+                    signal: request.signal,
+                }) };
+            }
             if (request.payload.observationOnly) observations.push({ scopes: request.payload.launcherScopes ?? [], signal: request.signal });
             return { protocolVersion: 1, ...await routes.watchSnapshot({ ...request.payload, signal: request.signal }) };
         }
@@ -54,25 +63,26 @@ it('declares only currently subscribed launcher scopes on the shared Machine obs
         expect(inventoryReads).toBe(1);
         const leaveA = subscribeLocalServiceLauncherStore(a, () => {});
         releases.push(leaveA);
-        await vi.waitFor(() => expect(activeScopes()).toEqual([[{ workspaceRoot: a.workspaceRoot }]]));
+        await vi.waitFor(() => expect(activeScopes()).toEqual([[], [{ workspaceRoot: a.workspaceRoot }]]));
         const duplicate = subscribeLocalServiceLauncherStore(a, () => {});
         releases.push(duplicate);
         const enrolled = observations.length;
         leaveA();
         await flushHookEffects();
-        expect(activeScopes()).toEqual([[{ workspaceRoot: a.workspaceRoot }]]);
+        expect(activeScopes()).toEqual([[], [{ workspaceRoot: a.workspaceRoot }]]);
         expect(observations).toHaveLength(enrolled);
         duplicate();
         await vi.waitFor(() => expect(activeScopes()).toEqual([[]]));
         const leaveB = subscribeLocalServiceLauncherStore(b, () => {});
         releases.push(leaveB);
-        await vi.waitFor(() => expect(activeScopes()).toEqual([[{ sessionId: b.sessionId }]]));
+        await vi.waitFor(() => expect(activeScopes()).toEqual([[], [{ sessionId: b.sessionId }]]));
         leaveB();
         await vi.waitFor(() => expect(activeScopes()).toEqual([[]]));
         releases.push(subscribeLocalServiceLauncherStore({ ...machine, scope: 'machine', workspaceRoot: a.workspaceRoot }, () => {}));
         releases.push(subscribeLocalServiceLauncherStore({ ...a, projection: 'managed_bindings' }, () => {}));
         await flushHookEffects();
-        expect(activeScopes()).toEqual([[]]);
+        expect(activeScopes()).toEqual([[], [{ scope: 'machine', workspaceRoot: a.workspaceRoot }],
+            [{ workspaceRoot: a.workspaceRoot, projection: 'managed_bindings' }]]);
         const idleObservations = observations.length;
         for (let index = 0; index < 75; index++) {
             registry.replaceSnapshot({ ...registry.getSnapshot(), generatedAt: 2_000 + index });
@@ -167,7 +177,7 @@ it.each(['observation', 'snapshot'] as const)('releases producer demand after a 
     expect(routes.watcherCount()).toBe(0);
 });
 
-it('refreshes a retained Session projection after a managed-only Stop while sharing the Machine watch', async () => {
+it('refreshes a retained Session projection after a managed-only Stop through its projected watch', async () => {
     vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
     const registry = createLocalServiceInventoryRegistry();
     registry.replaceSnapshot({ v: 1, machineId: 'machine-a', generatedAt: 1_000,
@@ -178,20 +188,21 @@ it('refreshes a retained Session projection after a managed-only Stop while shar
     const unrelated = { id: 'unrelated', machineId: 'machine-a', source: 'inventory_entry',
         sourceClass: { kind: 'inventory_entry', inventoryEntryId: 'unrelated' },
         title: 'Unrelated listener', confidence: 'high', state: 'available', actions: [] } as const;
-    rpc.machine.mockImplementation(async (request: { method: string; payload: { sinceGeneratedAt?: number; observationOnly?: boolean; sessionId?: string }; signal: AbortSignal }) => {
-        if (request.method === RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_WATCH) {
-            return { protocolVersion: 1, ...await routes.watchSnapshot({ ...request.payload, signal: request.signal }) };
-        }
-        if (request.method === RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_REFRESH) {
-            return { protocolVersion: 1, snapshot: registry.getSnapshot() };
-        }
-        reads++;
-        return { protocolVersion: 1, snapshot: LocalServiceLauncherSnapshotV1Schema.parse({
-            v: 1, machineId: 'machine-a', sessionId: request.payload.sessionId, updatedAt: registry.getSnapshot().generatedAt,
+    const readSnapshot = (sessionId?: string): LocalServiceLauncherSnapshotV1 => LocalServiceLauncherSnapshotV1Schema.parse({
+            v: 1, machineId: 'machine-a', sessionId, updatedAt: registry.getSnapshot().generatedAt,
             targets: [...(running ? [{ id: 'managed', machineId: 'machine-a', source: 'managed_service',
                 sourceClass: { kind: 'managed_service', managedServiceId: 'managed' },
                 title: 'Managed', confidence: 'high', state: 'available', actions: ['manage'] }] : []), unrelated],
-        }) };
+        });
+    rpc.machine.mockImplementation(async (request: { method: string; payload: DaemonLocalServiceInventoryWatchRequestV1 & { sessionId?: string }; signal: AbortSignal }) => {
+        if (request.method === RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_WATCH) {
+            const projection = request.payload.launcherProjection;
+            if (!projection) throw new Error('Launcher requires its projected watch');
+            return { protocolVersion: 1, ...await routes.watchLauncherSnapshot({ targets: projection.targets,
+                readSnapshot: async () => readSnapshot(projection.request.sessionId), signal: request.signal }) };
+        }
+        reads++;
+        return { protocolVersion: 1, snapshot: readSnapshot(request.payload.sessionId) };
     });
     const machine = { machineId: 'machine-a', serverId: 'server-a' };
     const session = { ...machine, sessionId: 'session-a', scope: 'workspace' as const };
@@ -233,19 +244,20 @@ it('keeps scoped Service rows uncommitted for 75 unrelated listener changes and 
         refreshState: 'idle', entries: [], diagnostics: [] });
     const routes = createLocalServiceInventoryRoutes({ registry });
     let reads = 0;
-    rpc.machine.mockImplementation(async (request: { method: string; payload: { sinceGeneratedAt?: number; observationOnly?: boolean }; signal: AbortSignal }) => {
-        if (request.method === RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_WATCH) {
-            return { protocolVersion: 1, ...await routes.watchSnapshot({ ...request.payload, signal: request.signal }) };
-        }
-        if (request.method === RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_REFRESH) {
-            return { protocolVersion: 1, snapshot: registry.getSnapshot() };
-        }
-        return { protocolVersion: 1, snapshot: LocalServiceLauncherSnapshotV1Schema.parse({
+    const readSnapshot = (): LocalServiceLauncherSnapshotV1 => LocalServiceLauncherSnapshotV1Schema.parse({
             v: 1, machineId: 'machine-a', updatedAt: 1_000 + ++reads,
             targets: [{ id: 'scoped-service', machineId: 'machine-a', source: 'managed_service',
                 sourceClass: { kind: 'managed_service', managedServiceId: 'scoped-service' },
                 title: 'Scoped service', confidence: 'high', state: 'available', actions: ['manage'] }],
-        }) };
+        });
+    rpc.machine.mockImplementation(async (request: { method: string; payload: DaemonLocalServiceInventoryWatchRequestV1; signal: AbortSignal }) => {
+        if (request.method === RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_WATCH) {
+            const projection = request.payload.launcherProjection;
+            if (!projection) throw new Error('Launcher requires its projected watch');
+            return { protocolVersion: 1, ...await routes.watchLauncherSnapshot({ targets: projection.targets,
+                readSnapshot: async () => readSnapshot(), signal: request.signal }) };
+        }
+        return { protocolVersion: 1, snapshot: readSnapshot() };
     });
     const key = { machineId: 'machine-a', serverId: 'server-a', scope: 'workspace' as const, workspaceRoot: '/scoped' };
     const counter = createRenderCommitCounter();
@@ -258,9 +270,9 @@ it('keeps scoped Service rows uncommitted for 75 unrelated listener changes and 
     });
     try {
         await vi.waitFor(() => expect(hook.getCurrent()?.id).toBe('scoped-service'));
-        await vi.waitFor(() => expect(routes.watcherCount()).toBe(2));
+        await vi.waitFor(() => expect(routes.watcherCount()).toBe(1));
         await flushHookEffects();
-        const initialReads = reads;
+        const initialWatches = rpc.machine.mock.calls.filter(([request]) => request.method === RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_WATCH).length;
         counter.reset();
         for (let index = 1; index <= 75; index++) {
             await act(async () => {
@@ -273,23 +285,24 @@ it('keeps scoped Service rows uncommitted for 75 unrelated listener changes and 
                 await flushHookEffects();
             });
         }
-        expect(reads - initialReads).toBe(75);
+        // The owner compares the projection on activity; no remote reply or row commit occurs.
+        expect(rpc.machine.mock.calls.filter(([request]) => request.method === RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_WATCH)).toHaveLength(initialWatches);
         expect(counter.read().commits).toBe(0);
         expect(hook.getCurrent()?.id).toBe('scoped-service');
     } finally { await hook.unmount(); }
 });
 
-it('does not invalidate launcher snapshots for 75 unchanged daemon scans, but wakes for a material change', async () => {
+it('ignores unchanged scans and unrelated diagnostics but delivers its own material projection', async () => {
     const registry = createLocalServiceInventoryRegistry();
     registry.replaceSnapshot({ v: 1, machineId: 'machine-a', generatedAt: 1_000,
         refreshState: 'idle', entries: [], diagnostics: [] });
     const routes = createLocalServiceInventoryRoutes({ registry });
-    rpc.machine.mockImplementation(async (request: { method: string; payload: { sinceGeneratedAt?: number; observationOnly?: boolean }; signal: AbortSignal }) => {
+    rpc.machine.mockImplementation(async (request: { method: string; payload: DaemonLocalServiceInventoryWatchRequestV1; signal: AbortSignal }) => {
         if (request.method === RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_WATCH) {
-            return { protocolVersion: 1, ...await routes.watchSnapshot({ ...request.payload, signal: request.signal }) };
-        }
-        if (request.method === RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_REFRESH) {
-            return { protocolVersion: 1, snapshot: registry.getSnapshot() };
+            const projection = request.payload.launcherProjection;
+            if (!projection) throw new Error('Launcher requires its projected watch');
+            return { protocolVersion: 1, ...await routes.watchLauncherSnapshot({ targets: projection.targets,
+                readSnapshot: async () => (await rpc.launcher(request)).snapshot, signal: request.signal }) };
         }
         return rpc.launcher(request);
     });
@@ -297,7 +310,7 @@ it('does not invalidate launcher snapshots for 75 unchanged daemon scans, but wa
         snapshot: LocalServiceLauncherSnapshotV1Schema.parse({ v: 1, machineId: 'machine-a', updatedAt: 1_000, targets: [] }) });
     const release = subscribeLocalServiceLauncherStore({ machineId: 'machine-a', serverId: 'server-a' }, () => {});
     try {
-        await vi.waitFor(() => expect(routes.watcherCount()).toBe(2));
+        await vi.waitFor(() => expect(routes.watcherCount()).toBe(1));
         await flushHookEffects();
         const initialReads = rpc.launcher.mock.calls.length;
         for (let index = 1; index <= 75; index++) {
@@ -307,6 +320,15 @@ it('does not invalidate launcher snapshots for 75 unchanged daemon scans, but wa
         expect(rpc.launcher.mock.calls.length - initialReads).toBe(0);
         registry.replaceSnapshot({ ...registry.getSnapshot(), generatedAt: 761_000,
             diagnostics: [{ code: 'local_services_process_facts_unavailable', severity: 'warning' }] });
-        await vi.waitFor(() => expect(rpc.launcher.mock.calls.length - initialReads).toBe(1));
+        await flushHookEffects();
+        const wireWatches = () => rpc.machine.mock.calls.filter(([request]) => request.method === RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_WATCH).length;
+        expect(wireWatches()).toBe(1);
+        const snapshot = LocalServiceLauncherSnapshotV1Schema.parse({ v: 1, machineId: 'machine-a', updatedAt: 762_000,
+            targets: [{ id: 'own-service', machineId: 'machine-a', source: 'managed_service',
+                title: 'Own Service', confidence: 'high', state: 'available', actions: ['manage'] }] });
+        rpc.launcher.mockResolvedValue({ protocolVersion: 1, snapshot });
+        registry.invalidate();
+        await vi.waitFor(() => expect(getLocalServiceLauncherState({ machineId: 'machine-a', serverId: 'server-a' }).targetIds).toEqual(['own-service']));
+        expect(wireWatches()).toBe(2);
     } finally { release(); }
 });

@@ -28,6 +28,14 @@ export type LocalServiceLauncherSnapshotClientResult =
     | Readonly<{ ok: true; snapshot: LocalServiceLauncherSnapshot }>
     | Readonly<{ ok: false; reason: 'unavailable' | 'request_failed' | 'invalid_response' }>;
 
+export type LocalServiceLauncherWatchClientInput = Omit<LocalServiceLauncherSnapshotClientInput, 'request'> & Readonly<{
+    targets: LocalServiceLauncherSnapshot['targets'];
+}>;
+export type LocalServiceLauncherWatchClientResult =
+    | Readonly<{ ok: true; changed: true; snapshot: LocalServiceLauncherSnapshot }>
+    | Readonly<{ ok: true; changed: false }>
+    | Readonly<{ ok: false; reason: 'unavailable' | 'request_failed' | 'invalid_response' }>;
+
 function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
     return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }

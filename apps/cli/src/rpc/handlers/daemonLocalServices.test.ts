@@ -20,6 +20,7 @@ import type { RpcHandlerContext, RpcHandlerRegistrar } from '@/api/rpc/types';
 import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
 import { authorizeMachineRpcRequest } from '@/api/machine/machineRpcAuthorization';
 import { createLocalServiceInventoryRegistry } from '@/daemon/local/services/inventory/registry';
+import { createLocalServiceInventoryRoutes } from '@/daemon/local/services/inventory/routes';
 import { createLocalServicePreviewRegistry, registerLocalServicePreview } from '@/daemon/local/services/preview/registry';
 import { createLocalServicePreviewRoutes } from '@/daemon/local/services/preview/routes';
 import { createLocalServicePublicPreviewServerRoutes } from '@/daemon/local/services/public/routes';
@@ -40,6 +41,7 @@ import { ApprovalRequestV2Schema } from '@happier-dev/protocol/approvals/approva
 import { discoverLocalServiceRunTargets } from '@/daemon/local/services/launch/runTargets';
 import { createManagedServicesOwner } from '@/plugins/runtime/invocation/services/managedServicesOwner';
 import { DaemonLocalServiceLauncherSnapshotResponseV1Schema } from '@happier-dev/protocol/local/services/launcher/v1';
+import { DaemonLocalServiceInventoryLauncherWatchResponseV1Schema } from '@happier-dev/protocol/local/services/inventory/v1';
 import { fetchLocalServiceLauncherSnapshotViaMachineRpc } from '../../../../ui/sources/sync/domains/local/services/launch/machineRpc';
 
 const launcherReadTransport = vi.hoisted(() => vi.fn());
@@ -369,18 +371,20 @@ describe('daemon local services machine rpc handlers', () => {
                 const workspace = { id: 'private-workspace', serverId: 'private-home', machineId: 'machine_1',
                     rootPath: root, createdAtMs: 1, projectKey: 'private-project' };
                 const declaration = { workspaceRefId: workspace.id, selection: { kind: 'manifest' as const, name: 'private-web' } };
+                const stopped = new Set<string>();
                 const supervise = (serviceId: string, accountId: string) => owner.superviseProject({
                     kind: 'workspace',
                     workspace, declaration: accountId === 'custodian' ? declaration : {
                         workspaceRefId: workspace.id, selection: { kind: 'manifest', name: 'requester-web' },
-                    }, cwd: root, serviceId, specIdentity: 'private-native-effect',
+                    }, cwd: root, serviceId, specIdentity: 'private-native-effect', execution: 'portable',
                     requester: { serverId: workspace.serverId, accountId, machineId: workspace.machineId,
                         installationId: 'installation_1' }, isCurrent: () => true,
                     processSpec: { startupTimeoutMs: 1_000, mode: { kind: 'native',
                         instance: { adapter: { pluginId: 'private-native', localId: 'web' }, nativeResourceId: serviceId },
                         // Native inspection and termination are external IO; all owner/feed logic remains real.
-                        lifecycle: { inspect: async () => ({ phase: 'running', readiness: 'not_reported', endpoint: 'http://127.0.0.1:43170' }),
-                            stop: async () => ({ status: 'stopped' }) },
+                        lifecycle: { inspect: async () => ({ phase: stopped.has(serviceId) ? 'stopped' : 'running',
+                            readiness: 'not_reported', endpoint: stopped.has(serviceId) ? null : 'http://127.0.0.1:43170' }),
+                            stop: async () => { stopped.add(serviceId); return { status: 'stopped' }; } },
                     } },
                     authorizeLaunch: ({ signal }) => authorizeResolvedProjectExecLaunchForHost({ signal, assertCurrent() {},
                         projectLaunch: { status: 'ready', reviewedEffectDigest: 'private-native-effect', toolchain: {
@@ -408,8 +412,10 @@ describe('daemon local services machine rpc handlers', () => {
                     initialPath: { pathname: '/private', search: '' },
                     display: { title: 'Custodian private preview', addressLabel: 'localhost:43170' }, originMode: 'host',
                 }).ok).toBe(true);
+                const inventoryRegistry = createLocalServiceInventoryRegistry();
+                const inventoryRoutes = createLocalServiceInventoryRoutes({ registry: inventoryRegistry });
                 const feed = createLocalServiceLauncherFeed({ machineId: workspace.machineId,
-                    inventoryRegistry: createLocalServiceInventoryRegistry(), previewRegistry,
+                    inventoryRegistry, previewRegistry,
                     projectManagedServices: owner,
                     runTargets,
                 });
@@ -425,6 +431,7 @@ describe('daemon local services machine rpc handlers', () => {
                 const boundCredential = { accountId: 'custodian' };
                 registerDaemonLocalServicesMachineRpcHandlers(rpc, { ...boundCredential,
                     machineId: workspace.machineId, serverId: workspace.serverId,
+                    localServicesInventory: inventoryRoutes,
                     localServicesLauncher: createLocalServiceLauncherRoutes({ feed }),
                 });
                 const params = { machineId: workspace.machineId, scope: 'workspace', workspaceRoot: root,
@@ -476,6 +483,48 @@ describe('daemon local services machine rpc handlers', () => {
                 expect(DaemonLocalServiceLauncherSnapshotResponseV1Schema.parse(await rpc.handleRequest({
                     ...request, machineAdmission: { ...machineAdmission, actorAccountId: 'unrelated-account', role: 'use' },
                 })).snapshot.targets).toEqual([]);
+                if (projection === 'managed_bindings') {
+                    const guest = { ...machineAdmission, actorAccountId: 'foreign-account', role: 'use' as const };
+                    const watch = (targets: LocalServiceLauncherSnapshotV1['targets']) => rpc.handleRequest({
+                        method: `${workspace.machineId}:${RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_WATCH}`,
+                        machineAdmission: guest,
+                        params: { machineId: workspace.machineId,
+                            launcherProjection: { request: { scope: 'workspace', workspaceRoot: root, projection }, targets } },
+                    });
+                    // The snapshot/watch gap is closed against the caller's admitted projection,
+                    // never against the Machine-wide inventory generation.
+                    expect(await watch([])).toMatchObject({ protocolVersion: 1, changed: true,
+                        snapshot: { targets: [expect.objectContaining({ id: requesterHandle.serviceId })] } });
+                    let settled = false;
+                    const pending = watch(decoded.data.snapshot.targets).then(value => { settled = true; return value; });
+                    await vi.waitFor(() => expect(inventoryRoutes.watcherCount()).toBe(1));
+                    inventoryRegistry.invalidate();
+                    await new Promise<void>(resolve => setImmediate(resolve));
+                    await vi.waitFor(() => expect(inventoryRoutes.watcherCount()).toBe(1));
+                    expect(settled).toBe(false);
+                    await expect(handle.stop()).resolves.toEqual({ status: 'stopped' });
+                    inventoryRegistry.invalidate();
+                    await new Promise<void>(resolve => setImmediate(resolve));
+                    await vi.waitFor(() => expect(inventoryRoutes.watcherCount()).toBe(1));
+                    expect(settled).toBe(false);
+                    await expect(requesterHandle.stop()).resolves.toEqual({ status: 'stopped' });
+                    inventoryRegistry.invalidate();
+                    const change = DaemonLocalServiceInventoryLauncherWatchResponseV1Schema.parse(await pending);
+                    expect(change.changed).toBe(true);
+                    if (!change.changed) throw new Error('Own Service removal must settle its projected watch');
+                    expect(change.snapshot.targets.every(target => target.id === requesterHandle.serviceId)).toBe(true);
+                    // Stop can publish its own material transition before cleanup completes.
+                    // Re-parking from that snapshot must immediately catch the completed removal.
+                    if (change.snapshot.targets.length) {
+                        expect(await watch(change.snapshot.targets)).toMatchObject({ protocolVersion: 1, changed: true,
+                            snapshot: { targets: [] } });
+                    }
+                    expect(owner.listProjectServices()).toEqual([]);
+                    expect(inventoryRoutes.watcherCount()).toBe(0);
+                    expect(await rpc.handleRequest({ method: `${workspace.machineId}:${RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_WATCH}`,
+                        machineAdmission: guest, params: { machineId: workspace.machineId, sinceGeneratedAt: 0 } }))
+                        .toMatchObject({ error: 'requester_credentials_unavailable' });
+                }
             } finally {
                 await owner.dispose();
                 await rm(root, { recursive: true, force: true });

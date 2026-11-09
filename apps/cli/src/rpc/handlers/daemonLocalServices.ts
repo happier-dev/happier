@@ -1,5 +1,6 @@
 import type { RpcHandlerContext, RpcHandlerRegistrar } from '@/api/rpc/types';
 import { LocalServiceInventoryCountResponseV1Schema, type LocalServiceInventoryCountResponseV1 } from '@happier-dev/protocol/local/services/inventory/v1';
+import { DaemonLocalServiceInventoryLauncherWatchResponseV1Schema, type DaemonLocalServiceInventoryLauncherWatchResponseV1 } from '@happier-dev/protocol/local/services/inventory/v1';
 import { DaemonLocalServiceActionExecuteRequestV1Schema, DaemonLocalServiceActionExecuteResponseV1Schema } from '@happier-dev/protocol/local/services/actions/v1';
 import { DaemonLocalServiceInventoryRefreshRequestV1Schema, DaemonLocalServiceInventoryRefreshResponseV1Schema, DaemonLocalServiceInventorySnapshotRequestV1Schema, DaemonLocalServiceInventorySnapshotResponseV1Schema, DaemonLocalServiceInventoryWatchRequestV1Schema, DaemonLocalServiceInventoryWatchResponseV1Schema } from '@happier-dev/protocol/local/services/inventory/v1';
 import { DaemonLocalServiceLauncherHistoryClearResponseV1Schema, DaemonLocalServiceLauncherLeafRequestV1Schema, DaemonLocalServiceLauncherOpenPreviewResponseV1Schema, DaemonLocalServiceLauncherRegisterPreviewResponseV1Schema, DaemonLocalServiceLauncherSnapshotRequestV1Schema, DaemonLocalServiceLauncherSnapshotResponseV1Schema } from '@happier-dev/protocol/local/services/launcher/v1';
@@ -28,7 +29,7 @@ export type DaemonLocalServicesMachineRpcRoutes = Pick<DaemonLocalServicePreview
     accountId?: string;
     localServicesInventory?:
         & Pick<LocalServiceInventoryRoutes, 'getSnapshot' | 'refreshSnapshot'>
-        & Partial<Pick<LocalServiceInventoryRoutes, 'watchSnapshot' | 'getSummary'>>
+        & Partial<Pick<LocalServiceInventoryRoutes, 'watchSnapshot' | 'watchLauncherSnapshot' | 'getSummary'>>
         | null;
     localServicesLauncher?: Pick<LocalServiceLauncherRoutes, 'getSnapshot'> & Partial<Pick<LocalServiceLauncherRoutes, 'startTarget' | 'leaves' | 'prepareStartApproval' | 'bindStartOperations'>> | null;
     localServicesPreview?: LocalServicePreviewRoutes | null;
@@ -81,6 +82,13 @@ export function registerDaemonLocalServicesMachineRpcHandlers(
     const assertRequesterRead = (context?: RpcHandlerContext) => assertLocalServiceReadCustody({
         accountId: options.accountId, machineId: options.machineId ?? '', context,
     });
+    const readLauncherCustody = async (context?: RpcHandlerContext, requesterOnly?: true) => {
+        const accountId = await assertLocalServiceReadCustody({
+            accountId: options.accountId, machineId: options.machineId ?? '', context,
+        }, requesterOnly);
+        if (accountId && !options.serverId) throw new Error('requester_credentials_unavailable');
+        return accountId && options.serverId ? { accountId, serverId: options.serverId } : undefined;
+    };
     if (options.projectManagedServices && options.machineId && options.serverId && options.resolveLauncherActionExecutor) {
         registerActionSpecRpcHandlers({
             rpcHandlerManager: rpc, actionIds: [...MACHINE_SERVICE_FRONTDOOR_ACTION_IDS, 'machines.services.logs.read', 'machines.services.control', 'machines.services.exec'],
@@ -129,8 +137,30 @@ export function registerDaemonLocalServicesMachineRpcHandlers(
         if (options.localServicesInventory.watchSnapshot) {
             rpc.registerHandler(
                 RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_WATCH,
-                async (raw: unknown, context): Promise<DaemonLocalServiceInventoryWatchResponseV1> => {
+                async (raw: unknown, context): Promise<DaemonLocalServiceInventoryWatchResponseV1 | DaemonLocalServiceInventoryLauncherWatchResponseV1> => {
                     const request = DaemonLocalServiceInventoryWatchRequestV1Schema.parse(raw);
+                    if (request.launcherProjection) {
+                        const requesterManagedServices = await readLauncherCustody(context, true);
+                        if (request.machineId !== options.machineId) throw new Error('Local service inventory Machine target does not match');
+                        const watchLauncherSnapshot = requireInventoryRoutes(options).watchLauncherSnapshot;
+                        if (!watchLauncherSnapshot) throw new Error('Local service inventory watch runtime is unavailable');
+                        const projection = request.launcherProjection;
+                        const routes = requireLauncherRoutes(options);
+                        const result = await watchLauncherSnapshot({ targets: projection.targets,
+                            readSnapshot: () => routes.getSnapshot({ ...projection.request, discovery: 'cached',
+                                ...(requesterManagedServices ? { requesterManagedServices } : {}),
+                                ...(context ? { signal: context.signal } : {}) }),
+                            // Guest projections contain only their installed managed bindings;
+                            // they cannot enroll the custodian's declaration discovery roots.
+                            ...(!requesterManagedServices && projection.request.projection !== 'managed_bindings'
+                                && projection.request.scope !== 'machine'
+                                && (projection.request.sessionId || projection.request.workspaceRoot)
+                                ? { launcherScopes: [{ ...(projection.request.sessionId ? { sessionId: projection.request.sessionId } : {}),
+                                    ...(projection.request.workspaceRoot ? { workspaceRoot: projection.request.workspaceRoot } : {}) }] } : {}),
+                            ...(context ? { signal: context.signal } : {}),
+                        });
+                        return DaemonLocalServiceInventoryLauncherWatchResponseV1Schema.parse({ protocolVersion: 1, ...result });
+                    }
                     await assertRequesterRead(context);
                     const watchSnapshot = requireInventoryRoutes(options).watchSnapshot;
                     if (!watchSnapshot) {
@@ -158,12 +188,7 @@ export function registerDaemonLocalServicesMachineRpcHandlers(
             RPC_METHODS.DAEMON_LOCAL_SERVICES_LAUNCHER_SNAPSHOT,
             async (raw: unknown, context): Promise<DaemonLocalServiceLauncherSnapshotResponseV1> => {
                 const request = DaemonLocalServiceLauncherSnapshotRequestV1Schema.parse(raw);
-                const requesterAccountId = await assertLocalServiceReadCustody({
-                    accountId: options.accountId, machineId: options.machineId ?? '', context,
-                }, request.startReview ? undefined : true);
-                const requesterManagedServices = requesterAccountId && options.serverId
-                    ? { accountId: requesterAccountId, serverId: options.serverId } : undefined;
-                if (requesterAccountId && !requesterManagedServices) throw new Error('requester_credentials_unavailable');
+                const requesterManagedServices = await readLauncherCustody(context, request.startReview ? undefined : true);
                 const review = request.startReview;
                 const prepare = options.localServicesLauncher?.prepareStartApproval;
                 let startReview: DaemonLocalServiceLauncherSnapshotResponseV1['startReview'];

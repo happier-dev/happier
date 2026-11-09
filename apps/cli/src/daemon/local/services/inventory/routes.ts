@@ -1,5 +1,6 @@
 import { projectLocalServiceMachineSummaryV1, type LocalServiceMachineSummaryV1 } from '@happier-dev/protocol/local/services/inventory/v1';
-import type { LocalServiceLauncherScopeV1 } from '@happier-dev/protocol/local/services/launcher/v1';
+import type { LocalServiceLauncherScopeV1, LocalServiceLauncherSnapshotV1 } from '@happier-dev/protocol/local/services/launcher/v1';
+import { isDeepStrictEqual } from 'node:util';
 
 import { createParkWatch, type ParkWatchResult } from '@/daemon/lifecycle/parkWatch';
 
@@ -33,6 +34,13 @@ export type LocalServiceInventoryRoutes = Readonly<{
         launcherScopes?: readonly LocalServiceLauncherScopeV1[];
         signal?: AbortSignal;
     }>): Promise<LocalServiceInventoryWatchResult>;
+    /** The same parked owner, restricted to the caller's already-admitted launcher projection. */
+    watchLauncherSnapshot(input: Readonly<{
+        targets: LocalServiceLauncherSnapshotV1['targets'];
+        readSnapshot(): Promise<LocalServiceLauncherSnapshotV1>;
+        launcherScopes?: readonly LocalServiceLauncherScopeV1[];
+        signal?: AbortSignal;
+    }>): Promise<ParkWatchResult<LocalServiceLauncherSnapshotV1>>;
     /** Live count of parked watchers. The scan loop follows this rather than running unconditionally. */
     watcherCount(): number;
     patchLabel(input: Readonly<{
@@ -92,6 +100,35 @@ export function createLocalServiceInventoryRoutes(input: Readonly<{
                     read: input.registry.getSnapshot,
                     signal: request.signal,
                 });
+            } finally { release?.(); }
+        },
+        async watchLauncherSnapshot(request) {
+            const release = request.launcherScopes?.length
+                ? await input.observeLauncherScopes?.(request.launcherScopes, request.signal) : undefined;
+            try {
+                while (!request.signal?.aborted) {
+                    const snapshot = await request.readSnapshot();
+                    if (!isDeepStrictEqual(snapshot.targets, request.targets)) return { changed: true, snapshot };
+                    let readFailure: unknown;
+                    const result = await watches.parkWatch({
+                        isNewer: () => false,
+                        subscribe(listener) {
+                            const unsubscribe = input.registry.subscribe(listener);
+                            // Close the async projection-read/subscribe gap at the existing watch owner.
+                            void request.readSnapshot().then(current => {
+                                if (!isDeepStrictEqual(current.targets, request.targets)) listener();
+                            }, error => { readFailure = error; listener(); });
+                            return unsubscribe;
+                        },
+                        read: () => undefined,
+                        signal: request.signal,
+                    });
+                    if (readFailure !== undefined) throw readFailure;
+                    if (!result.changed) return { changed: false };
+                    // Unrelated Machine activity stays inside the owner. Only a material
+                    // change to this requester's projection can settle the remote watch.
+                }
+                return { changed: false };
             } finally { release?.(); }
         },
         watcherCount() {

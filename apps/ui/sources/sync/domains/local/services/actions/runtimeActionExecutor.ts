@@ -42,7 +42,7 @@ import type {
     LocalServiceLauncherStartClientInput,
     LocalServiceLauncherStartClientResult,
 } from '../launch/types';
-import { publishLocalServiceLauncherSnapshot, recoverLocalServiceLauncherStores } from '../launch/sharedStore';
+import { invalidateLocalServiceLauncherStores, publishLocalServiceLauncherSnapshot, recoverLocalServiceLauncherStores } from '../launch/sharedStore';
 import type { LocalServiceLauncherSnapshot } from '../launch/types';
 import {
     clearLocalServiceLauncherHistoryViaMachineRpc,
@@ -316,8 +316,11 @@ export function createLocalServicesRuntimeActionExecutor(
     const mayPublishCatalog = (serverId: string | null | undefined) => !catalogBinding || (
         catalogBinding.lifetime.isCurrent() && (!serverId
             || areServerProfileIdentifiersEquivalent(serverId, catalogBinding.lifetime.scope.serverId)));
-    const invalidateInventory = (target: Parameters<typeof invalidateLocalServiceInventoryStore>[0]) => {
-        if (mayPublishCatalog(target.serverId)) invalidateLocalServiceInventoryStore({ ...target, ...catalogScope });
+    const invalidateServiceStores = (target: Parameters<typeof invalidateLocalServiceInventoryStore>[0]) => {
+        if (mayPublishCatalog(target.serverId)) {
+            invalidateLocalServiceInventoryStore({ ...target, ...catalogScope });
+            invalidateLocalServiceLauncherStores({ ...target, ...catalogScope });
+        }
     };
     const fetchInventorySnapshot = input.fetchInventorySnapshot ?? fetchLocalServiceInventorySnapshot;
     const onInventorySnapshot: NonNullable<CreateLocalServicesRuntimeActionExecutorInput['onInventorySnapshot']> = published => {
@@ -399,7 +402,7 @@ export function createLocalServicesRuntimeActionExecutor(
             const outcome = ProjectServiceRelocateResultV1Schema.safeParse(result);
             if (outcome.success && ['accepted', 'moved', 'unchanged'].includes(outcome.data.status)) {
                 for (const machineId of new Set([source.ref.machineId, request.currentTarget.machineId, request.selectedTarget.machineId])) {
-                    invalidateInventory({ machineId, serverId: request.workspace.serverId });
+                    invalidateServiceStores({ machineId, serverId: request.workspace.serverId });
                 }
             }
             return result;
@@ -484,7 +487,7 @@ export function createLocalServicesRuntimeActionExecutor(
             onLauncherSnapshot({ machineId, serverId, sessionId,
                 ...(request.workspace ? { scope: 'workspace' as const, workspaceRoot: request.workspace.rootPath } : {}),
                 snapshot: result.response.snapshot });
-            if (result.response.status === 'succeeded') invalidateInventory({ machineId, serverId });
+            if (result.response.status === 'succeeded') invalidateServiceStores({ machineId, serverId });
             return result.response;
         }
 
@@ -674,10 +677,10 @@ export function createLocalServicesRuntimeActionExecutor(
             }
             const response = LocalServiceActionResultV1Schema.safeParse(result);
             // Mutation settlement is shared by every UI entry point. A successful write
-            // also recovers a retired inventory watch; derived launcher projections follow it.
+            // also recovers retired inventory and requester-scoped launcher watches.
             if (response.success && response.data.status === 'succeeded'
                 && request.data.action !== 'copy_url' && request.data.action !== 'open_preview') {
-                invalidateInventory({ machineId: request.data.target.machineId, serverId });
+                invalidateServiceStores({ machineId: request.data.target.machineId, serverId });
             }
             return result;
         }

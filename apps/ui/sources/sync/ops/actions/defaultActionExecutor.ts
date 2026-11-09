@@ -486,6 +486,8 @@ import { invokeScopeAction } from './scopeActionFamily';
 import { invokeDiagnosticAction } from '@/components/settings/diagnosis/diagnosticsActionRuntime';
 import { signOutEverywhere } from '@/sync/api/account/signOutEverywhere';
 import { DaemonLocalServiceLauncherSnapshotResponseV1Schema } from '@happier-dev/protocol/local/services/launcher/v1';
+import { MachineServiceControlResultV1Schema } from '@happier-dev/protocol/actions/specs/machine/services';
+import { invalidateLocalServiceLauncherStores } from '@/sync/domains/local/services/launch/sharedStore';
 import {
     createCurrentAccountApiToken,
     listCurrentAccountApiTokens,
@@ -5198,12 +5200,20 @@ function createCapturedScopeFamilyPorts(account: LazyActionAccountContext,
     },
     machineProcessesAction: ({ actionId, input, context, signal }) => machineActionRpc(actionId, input, signal, context.actionRequestId ?? undefined),
     machineServiceAction: ({ actionId, input, context, signal }) => machineActionRpc(actionId, input, signal, context.actionRequestId ?? undefined),
-    machineServiceControl: ({ input, context, signal }) => createUiAccountAction({ account })({
-      actionId: 'machines.services.control', input, signal, context: { ...context,
-        actionCaller: context.actionCaller ?? { kind: 'host' },
-        externalActionTarget: context.externalActionTarget ?? { kind: 'machine', machineId: input.machineId },
-      },
-    }),
+    machineServiceControl: async ({ input, context, signal }) => {
+      const result = await createUiAccountAction({ account })({
+        actionId: 'machines.services.control', input, signal, context: { ...context,
+          actionCaller: context.actionCaller ?? { kind: 'host' },
+          externalActionTarget: context.externalActionTarget ?? { kind: 'machine', machineId: input.machineId },
+        },
+      });
+      const outcome = MachineServiceControlResultV1Schema.safeParse(result);
+      if (outcome.success && (outcome.data.kind === 'observed' || outcome.data.kind === 'accepted') && isCurrent()) {
+        invalidateLocalServiceLauncherStores({ ...scope, machineId: input.machineId,
+          credentialKey: resolveAuthCredentialsScopeKey(account.credentials) });
+      }
+      return result;
+    },
     machineServiceLogsRead: ({ input, context, signal }) => machineActionRpc('machines.services.logs.read', input, signal, context.actionRequestId ?? undefined),
     machineAdminAccessAction: ({ actionId, input, context, signal }) => machineActionRpc(actionId, input, signal, context.actionRequestId ?? undefined),
     machineAgentIsolationAction: ({ actionId, input, context, signal }) => machineActionRpc(actionId, input, signal, context.actionRequestId ?? undefined),

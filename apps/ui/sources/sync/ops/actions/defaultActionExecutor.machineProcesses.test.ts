@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { answerExternalActionAccountForHome } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { resetMmkvStoresForTests } from '@/dev/reactNativeMmkvStub';
@@ -78,6 +79,9 @@ const { DEFAULT_SERVER_SCOPED_RPC_TIMEOUT_MS } = await import('@/sync/runtime/or
 const { executeGuardStopWarningAction, reconcileGuardStopWarningNotifications } = await import('@/activity/notifications/guardStopWarningLifecycle');
 const { machineGuardStore } = await import('@/sync/domains/machines/guard/machineGuardStore');
 const { storage } = await import('@/sync/domains/state/storage');
+const { captureLazyActionAccountContext } = await import('./actionAccountContext');
+const { resolveAuthCredentialsScopeKey } = await import('@/auth/storage/resolveAuthCredentialsScopeKey');
+const { getLocalServiceLauncherState, resetLocalServiceLauncherStoreForTests, subscribeLocalServiceLauncherStore } = await import('@/sync/domains/local/services/launch/sharedStore');
 const initialStorage = storage.getState();
 let serverId: string;
 let savedHomeId: string;
@@ -97,6 +101,7 @@ beforeEach(async () => {
 });
 afterEach(async () => {
     vi.useRealTimers();
+    resetLocalServiceLauncherStoreForTests();
     await homes.reset();
     storage.setState(initialStorage, true);
     resetMmkvStoresForTests();
@@ -157,22 +162,59 @@ describe('machine process Actions through the captured UI Home', () => {
             expectedGeneration: 'native-generation', operation: 'restart' };
         const observed = { kind: 'observed', serviceId: input.serviceId, generation: input.expectedGeneration,
             state: 'running', operation: { operationId: 'native-control' } };
-        rpc.machine.mockResolvedValue(observed);
+        const controlled: unknown[] = [];
+        await answerExternalActionAccountForHome(homes, savedHomeId, { actionId: 'machines.services.control',
+            machineId: input.machineId, installationId: 'native-installation', tokenEpoch: 0,
+            execute: value => { controlled.push(value); return observed; } });
         const confirmation = vi.fn(async () => true);
         const executor = createDefaultActionExecutor({ presentUserActionConfirmation: confirmation });
         expect(await executor.execute('machines.services.control', input, {
             surface: 'ui', serverId, expectedAccountId: 'owner',
         })).toEqual({ ok: true, result: observed });
-        expect(rpc.machine).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
-            method: RPC_METHODS.MACHINES_SERVICE_CONTROL, serverId, accountId: 'owner',
-            machineId: input.machineId, payload: input, operationTimeoutMs: null,
-        }));
+        expect(controlled).toEqual([input]);
+        expect(homes.requestsFor('/v1/actions/machines.services.control')).toHaveLength(1);
+        expect(rpc.machine).not.toHaveBeenCalled();
         expect(confirmation).not.toHaveBeenCalled();
         expect(homes.artifacts(savedHomeId).list()).toHaveLength(0);
         expect(await executor.execute('machines.services.control', {
             ...input, scope: { kind: 'machine', machineId: input.machineId },
         }, { surface: 'ui', serverId, expectedAccountId: 'owner' })).toMatchObject({ ok: false, errorCode: 'invalid_parameters' });
-        expect(rpc.machine).toHaveBeenCalledTimes(1);
+        expect(controlled).toHaveLength(1);
+    });
+
+    it('refreshes its qualified launcher and restores a retired watch after native service control', async () => {
+        const account = await captureLazyActionAccountContext(serverId);
+        const key = { serverId, accountId: account.accountId, credentialKey: resolveAuthCredentialsScopeKey(account.credentials),
+            machineId: 'service-machine', scope: 'workspace' as const, workspaceRoot: '/repo' };
+        let running = true;
+        let watches = 0;
+        await answerExternalActionAccountForHome(homes, savedHomeId, { actionId: 'machines.services.control',
+            machineId: key.machineId, installationId: 'native-installation', tokenEpoch: 0,
+            execute: () => { running = false; return { kind: 'observed', serviceId: 'instance/web', generation: 'native-generation',
+                state: 'stopped', operation: { operationId: 'native-stop' } }; } });
+        rpc.machine.mockImplementation(async ({ method }: { method: string }) => {
+            if (method === RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_WATCH) {
+                if (++watches === 1) return { ok: false };
+                return new Promise(() => {});
+            }
+            return { protocolVersion: 1, snapshot: { v: 1, machineId: key.machineId, updatedAt: running ? 1_000 : 2_000,
+                targets: running ? [{ id: 'instance/web', machineId: key.machineId, source: 'managed_service',
+                    sourceClass: { kind: 'managed_service', managedServiceId: 'instance/web' },
+                    title: 'Web', confidence: 'high', state: 'available', serviceState: 'running', actions: ['manage'] }] : [] } };
+        });
+        const release = subscribeLocalServiceLauncherStore(key, () => {});
+        try {
+            await vi.waitFor(() => expect(getLocalServiceLauncherState(key).targetsById.size).toBe(1));
+            expect(watches).toBe(1);
+            expect(await createDefaultActionExecutor().execute('machines.services.control', {
+                serverId, machineId: key.machineId, serviceId: 'instance/web', expectedGeneration: 'native-generation', operation: 'stop',
+            }, { surface: 'ui', serverId, expectedAccountId: 'owner' })).toEqual({ ok: true, result: {
+                kind: 'observed', serviceId: 'instance/web', generation: 'native-generation', state: 'stopped',
+                operation: { operationId: 'native-stop' },
+            } });
+            await vi.waitFor(() => expect(getLocalServiceLauncherState(key).targetsById.size).toBe(0));
+            expect(watches).toBe(2);
+        } finally { release(); account.dispose(); }
     });
 
     it('routes safe service reads and watch intent through the captured Home without an approval artifact', async () => {

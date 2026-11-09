@@ -56,6 +56,27 @@ async function flushMicrotasks(): Promise<void> {
 }
 
 describe('shared local-service launcher store', () => {
+    it('settles requester-owned rows through a scoped watch when broad inventory is refused', async () => {
+        const watches: Array<(value: unknown) => void> = [];
+        rpc.machine.mockImplementation(async (request: { method: string; payload?: { launcherProjection?: unknown } }) => {
+            if (request.method === RPC_METHODS.DAEMON_LOCAL_SERVICES_LAUNCHER_SNAPSHOT) return { protocolVersion: 1, snapshot };
+            if (request.method === RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_WATCH && request.payload?.launcherProjection) {
+                return new Promise(resolve => watches.push(resolve));
+            }
+            return { error: 'requester_credentials_unavailable' };
+        });
+        const key = { machineId: 'machine-a', serverId: 'server-a', accountId: 'guest', credentialKey: 'guest-credential' };
+        const release = subscribeLocalServiceLauncherStore(key, () => {});
+        try {
+            await vi.waitFor(() => expect(selectLocalServiceLaunchTargets(getLocalServiceLauncherState(key))).toEqual(snapshot.targets));
+            await vi.waitFor(() => expect(watches).toHaveLength(1));
+            watches[0]!({ protocolVersion: 1, changed: true, snapshot: { ...snapshot, updatedAt: 2_000, targets: [] } });
+            await vi.waitFor(() => expect(selectLocalServiceLaunchTargets(getLocalServiceLauncherState(key))).toEqual([]));
+            expect(watches).toHaveLength(2);
+            expect(getLocalServiceLauncherState(key).refreshStatus).toBe('idle');
+        } finally { release(); }
+    });
+
     it('hydrates a declared Service while the scan owner exposes one failed observation', async () => {
         const key = { machineId: 'machine-a', serverId: 'server-a', workspaceRoot: '/repo' };
         const diagnostic = { code: 'local_services_inventory_scan_failed', severity: 'error' };
@@ -176,7 +197,8 @@ describe('shared local-service launcher store', () => {
             running = true;
             generation = 2_000;
             watches[1]!.resolve({ protocolVersion: 1, changed: true,
-                snapshot: { v: 1, machineId: key.machineId, generatedAt: generation, refreshState: 'idle', entries: [], diagnostics: [] } });
+                snapshot: { ...snapshot, updatedAt: generation,
+                    targets: snapshot.targets.map(target => ({ ...target, serviceState: 'running' })) } });
             await vi.waitFor(() => expect(rows()[0]?.status).toBe('running'));
             expect(watches).toHaveLength(3);
             const calls = rpc.machine.mock.calls.length;
@@ -381,7 +403,7 @@ describe('shared local-service launcher store', () => {
         } finally { release(); }
     });
 
-    it('recovers a failed Session read on a new ready Machine observation without polling or healthy receipt rereads', async () => {
+    it('recovers a failed Session read on authenticated reconnect without unrelated inventory receipt rereads', async () => {
         const watches: Array<(value: unknown) => void> = [];
         rpc.launcher.mockResolvedValue({ protocolVersion: 1, snapshot });
         rpc.machine.mockImplementation(async (request: { method: string; payload?: { observationOnly?: true } }) => {
@@ -398,16 +420,16 @@ describe('shared local-service launcher store', () => {
             await vi.waitFor(() => expect(watches).toHaveLength(1));
             await flushMicrotasks();
             rpc.launcher.mockRejectedValueOnce(new Error('independent launcher failure'));
-            watches[0]!({ invalid: true });
+            invalidateLocalServiceLauncherStore(key);
             await vi.waitFor(() => expect(getLocalServiceLauncherState(key).refreshStatus).toBe('error'));
             const reads = rpc.launcher.mock.calls.length;
             publishLocalServiceInventoryMachineSummary({ ...key, machineId: 'other-machine' }, { v: 1, state: 'ready', runningCount: 1 });
             publishLocalServiceInventoryMachineSummary(key, { v: 1, state: 'unknown' });
             await flushMicrotasks();
             expect(rpc.launcher).toHaveBeenCalledTimes(reads);
-            publishLocalServiceInventoryMachineSummary(key, { v: 1, state: 'ready', runningCount: 1 });
+            publishHomeAccountChange(key.serverId, undefined, { source: 'connected' });
             await vi.waitFor(() => expect(getLocalServiceLauncherState(key).refreshStatus).toBe('idle'));
-            await vi.waitFor(() => expect(watches).toHaveLength(2));
+            expect(watches).toHaveLength(1);
             expect(rpc.launcher).toHaveBeenCalledTimes(reads + 1);
             const totalReads = rpc.machine.mock.calls.length;
             const current = getLocalServiceLauncherState(key);
@@ -442,20 +464,15 @@ describe('shared local-service launcher store', () => {
         } finally { release(); }
     });
 
-    it.each(['healthy inventory', 'recovering inventory', 'change during read'] as const)(
-        'reads a recovered launcher independently and retains subsequent-change freshness (%s)', async scenario => {
+    it('reads a recovered launcher independently of inventory and retains subsequent projected changes', async () => {
             const key = { machineId: 'machine-a', serverId: 'server-a' };
             const watches: Array<(value: unknown) => void> = [];
-            const inventoryReply = createDeferred<unknown>();
             const launcherReply = createDeferred<unknown>();
-            let holdInventory = false;
             let holdLauncher = false;
             rpc.machine.mockImplementation(async (request: { method: string; payload?: { observationOnly?: true } }) => {
                 if (request.payload?.observationOnly) return new Promise(() => {});
                 if (request.method === RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_WATCH) return new Promise(resolve => watches.push(resolve));
-                if (isInventoryRead(request.method)) return holdInventory ? inventoryReply.promise
-                    : { protocolVersion: 1, snapshot: { v: 1, machineId: 'machine-a', generatedAt: 1_000,
-                        refreshState: 'idle', entries: [], diagnostics: [] } };
+                if (isInventoryRead(request.method)) throw new Error('Launcher must not read broad inventory');
                 return rpc.launcher(request);
             });
             rpc.launcher.mockImplementation(() => holdLauncher ? launcherReply.promise : Promise.resolve({ protocolVersion: 1, snapshot }));
@@ -463,44 +480,26 @@ describe('shared local-service launcher store', () => {
             try {
                 await vi.waitFor(() => expect(watches).toHaveLength(1));
                 await flushMicrotasks();
-                if (scenario === 'recovering inventory') {
-                    rpc.launcher.mockRejectedValueOnce(new Error('independent launcher failure'));
-                    watches[0]!({ invalid: true });
-                    await flushMicrotasks();
-                    expect(getLocalServiceLauncherState(key).refreshStatus).toBe('error');
-                    holdInventory = true;
-                } else {
-                    rpc.launcher.mockRejectedValueOnce(new Error('independent launcher failure'));
-                    invalidateLocalServiceLauncherStore(key);
-                    await readLocalServiceLauncherStore(key);
-                    expect(getLocalServiceLauncherState(key).refreshStatus).toBe('error');
-                }
+                rpc.launcher.mockRejectedValueOnce(new Error('independent launcher failure'));
+                invalidateLocalServiceLauncherStore(key);
+                await readLocalServiceLauncherStore(key);
+                expect(getLocalServiceLauncherState(key).refreshStatus).toBe('error');
                 const reads = rpc.launcher.mock.calls.length;
                 holdLauncher = true;
                 publishHomeAccountChange(key.serverId, undefined, { source: 'connected' });
                 await flushMicrotasks();
-                if (scenario === 'recovering inventory') {
-                    // Declarations can recover while listener observation is still pending.
-                    expect.soft(rpc.launcher.mock.calls.length - reads).toBe(1);
-                    inventoryReply.resolve({ protocolVersion: 1, snapshot: { v: 1, machineId: 'machine-a', generatedAt: 1_000,
-                        refreshState: 'idle', entries: [], diagnostics: [] } });
-                }
                 await vi.waitFor(() => expect(rpc.launcher.mock.calls.length - reads).toBe(1));
-                if (scenario === 'change during read') {
-                    watches[0]!({ protocolVersion: 1, changed: true, snapshot: { v: 1, machineId: 'machine-a', generatedAt: 2_000,
-                        refreshState: 'idle', entries: [], diagnostics: [] } });
-                    await flushMicrotasks();
-                }
                 holdLauncher = false;
-                rpc.launcher.mockResolvedValue({ protocolVersion: 1, snapshot: { ...snapshot, updatedAt: 3_000, targets: [] } });
                 launcherReply.resolve({ protocolVersion: 1, snapshot: { ...snapshot, updatedAt: 2_000 } });
-                await flushMicrotasks();
-                expect(rpc.launcher.mock.calls.length - reads).toBe(scenario === 'healthy inventory' ? 1 : 2);
+                await vi.waitFor(() => expect(getLocalServiceLauncherState(key).refreshStatus).toBe('idle'));
+                expect(watches).toHaveLength(1);
+                watches[0]!({ protocolVersion: 1, changed: true,
+                    snapshot: { ...snapshot, updatedAt: 3_000, targets: [] } });
+                await vi.waitFor(() => expect(getLocalServiceLauncherState(key).targetIds).toEqual([]));
+                expect(rpc.launcher.mock.calls.length - reads).toBe(1);
                 expect(getLocalServiceLauncherState(key).refreshStatus).toBe('idle');
-                if (scenario === 'change during read') expect(getLocalServiceLauncherState(key).targetIds).toEqual([]);
-            } finally { inventoryReply.resolve({ invalid: true }); launcherReply.resolve({ invalid: true }); release(); }
-        },
-    );
+            } finally { launcherReply.resolve({ invalid: true }); release(); }
+    });
 
     it('refreshes all launcher projections after external runtime changes without a mounted surface refresh', async () => {
         const watches: Array<(value: unknown) => void> = [];
@@ -527,16 +526,18 @@ describe('shared local-service launcher store', () => {
         await flushMicrotasks();
         running = false;
         generation = 2_000;
-        // An inventory watch is shared by every launcher projection on this Home/Machine.
-        watches[0]!({ protocolVersion: 1, changed: true, snapshot: { v: 1, machineId: 'machine-a', generatedAt: generation,
-            refreshState: 'idle', entries: [], diagnostics: [] } });
+        // Each qualified projection receives only its own material snapshot.
+        const changed = { protocolVersion: 1, changed: true, snapshot: { ...snapshot, updatedAt: generation,
+            targets: snapshot.targets.map(target => ({ ...target, serviceState: 'stopped' })) } };
+        watches[0]!(changed);
+        watches[1]!(changed);
         await vi.waitFor(() => expect(selectLocalServiceLaunchTargets(getLocalServiceLauncherState(source))[0]?.serviceState).toBe('stopped'));
         expect(selectLocalServiceLaunchTargets(getLocalServiceLauncherState(bindings))[0]?.serviceState).toBe('stopped');
         expect(selectLocalServiceLaunchTargets(getLocalServiceLauncherState(otherHome))[0]?.serviceState).toBe('healthy');
         dispose.forEach(unsubscribe => unsubscribe());
     });
 
-    it('shares the initial launcher and completed-scan reads regardless of how many consumers subscribe', async () => {
+    it('shares one initial launcher read regardless of how many consumers subscribe', async () => {
         const snapshotClient = rpc.launcher.mockResolvedValue({
             protocolVersion: 1,
             snapshot,
@@ -553,7 +554,7 @@ describe('shared local-service launcher store', () => {
         const unsubB = subscribeLocalServiceLauncherStore(key, () => {});
         await flushMicrotasks();
 
-        expect(snapshotClient).toHaveBeenCalledTimes(2);
+        expect(snapshotClient).toHaveBeenCalledTimes(1);
         expect(snapshotClient).toHaveBeenCalledWith(expect.objectContaining({
             method: RPC_METHODS.DAEMON_LOCAL_SERVICES_LAUNCHER_SNAPSHOT,
             serverId: 'server-a', payload: { machineId: 'machine-a', sessionId: 'session-a', scope: 'workspace', workspaceRoot: '/repo' },
@@ -595,7 +596,7 @@ describe('shared local-service launcher store', () => {
         } finally { dispose.forEach(unsubscribe => unsubscribe()); }
     });
 
-    it('refreshes and restores a retired inventory watch after a successful Stop through the Action owner', async () => {
+    it('refreshes and restores a retired projected watch after a successful Stop through the Action owner', async () => {
         let running = true;
         let generation = 1_000;
         let watches = 0;
@@ -616,14 +617,15 @@ describe('shared local-service launcher store', () => {
         const unsubscribe = subscribeLocalServiceLauncherStore(key, () => {});
         await vi.waitFor(() => expect(selectLocalServiceLaunchTargets(getLocalServiceLauncherState(key))[0]?.serviceState).toBe('healthy'));
         expect(watches).toBe(1);
-        const execute = createLocalServicesRuntimeActionExecutor({ request: async (_path, init) => {
-            const request = LocalServiceActionRequestV1Schema.parse(JSON.parse(String(init?.body)));
+        // Machine execution is the transport boundary; Action settlement/publication stay real.
+        const execute = createLocalServicesRuntimeActionExecutor({ executeOnMachine: async args => {
+            const request = LocalServiceActionRequestV1Schema.parse(args.input);
             running = false;
             generation = 2_000;
-            return new Response(JSON.stringify(LocalServiceActionResultV1Schema.parse({ v: 1,
+            return LocalServiceActionResultV1Schema.parse({ v: 1,
                 requestId: request.requestId, action: request.action, status: 'succeeded', auditEvents: [{ v: 1,
                     eventId: 'stopped', requestId: request.requestId, action: request.action, machineId: request.target.machineId,
-                    result: 'succeeded', recordedAt: generation }] })), { status: 200 });
+                    result: 'succeeded', recordedAt: generation }] });
         } });
         const result = await execute({ actionId: 'localServices.actions.stopManaged', context: { serverId: 'server-a', surface: 'ui' },
             input: { requestId: 'stop-preview', action: 'stop_managed', target: { kind: 'managed_service', machineId: 'machine-a',
@@ -650,7 +652,7 @@ describe('shared local-service launcher store', () => {
 
         expect(listener).toHaveBeenCalled();
         expect(selectLocalServiceLaunchTargets(getLocalServiceLauncherState(key))).toEqual(snapshot.targets);
-        expect(snapshotClient).toHaveBeenCalledTimes(2);
+        expect(snapshotClient).toHaveBeenCalledTimes(1);
 
         unsub();
     });

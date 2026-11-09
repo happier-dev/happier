@@ -72,7 +72,6 @@ export function useLocalServiceLiveFeeds(input: LocalServiceLiveFeedsInput): Loc
         workspaceRoot: input.workspaceRoot ?? null,
         enabled: input.launcherState === undefined,
         snapshotClient: input.launcherSnapshotClient,
-        inventorySnapshotClient: input.inventorySnapshotClient,
     });
     // Launcher freshness is owned by its shared store for every consumer and mutation surface.
     const inventorySupplied = input.inventoryState !== undefined;
@@ -116,7 +115,7 @@ async function refreshLocalServiceMachine(input: Readonly<{ serverId: string; ma
 
 type ServiceActual = Extract<ProjectServicePlacementGetResultV1, { status: 'ready' }>['actual'];
 
-/** Projection only: reads the same launcher store and parked inventory watches as the SOURCE feed.
+/** Projection only: reads the same launcher store and projected watches as the SOURCE feed.
  * The protocol observation owner selects accepted endpoints and proves native provenance. */
 function useProjectServiceBindings(input: LocalServiceLiveFeedsInput, sourceState: LocalServiceLauncherState | null) {
     const presented = useLayoutPresentationActive();
@@ -130,7 +129,7 @@ function useProjectServiceBindings(input: LocalServiceLiveFeedsInput, sourceStat
         && target.declaration.selection.kind === 'manifest'), [input.workspaceRefId, sourceTargets]);
     const [change, observeAgain] = React.useReducer((value: number) => value + 1, 0);
     const subscriptions = React.useMemo(() => new Map<string, Readonly<{ key: LocalServiceLauncherStoreKeyInput; dispose: () => void }>>(),
-        [binding, enabled, input.serverId, input.workspaceRefId, input.launcherSnapshotClient, input.inventorySnapshotClient, rows]);
+        [binding, enabled, input.serverId, input.workspaceRefId, input.launcherSnapshotClient, rows]);
     React.useEffect(() => {
         if (!canObserve || !binding || !input.machineId) return;
         // Project admission can fail independently of healthy native snapshots. Reconnect
@@ -186,7 +185,6 @@ function useProjectServiceBindings(input: LocalServiceLiveFeedsInput, sourceStat
                             if (observed) observeAgain();
                         }, {
                             ...(input.launcherSnapshotClient ? { snapshotClient: input.launcherSnapshotClient } : {}),
-                            ...(input.inventorySnapshotClient ? { inventorySnapshotClient: input.inventorySnapshotClient } : {}),
                         });
                         subscriptions.set(id, { key, dispose: disposeLauncher });
                     }
@@ -206,7 +204,7 @@ function useProjectServiceBindings(input: LocalServiceLiveFeedsInput, sourceStat
             .catch(() => { if (isCurrent()) setObservation({ binding, rows, declarations,
                 values: new Map(declarations.map(target => [target.id, { status: 'unavailable' as const }])) }); });
         return () => { current = false; abort.abort(); };
-    }, [binding, canObserve, change, declarations, enabled, input.serverId, input.workspaceRefId, input.launcherSnapshotClient, input.inventorySnapshotClient, rows, subscriptions]);
+    }, [binding, canObserve, change, declarations, enabled, input.serverId, input.workspaceRefId, input.launcherSnapshotClient, rows, subscriptions]);
     const sourceTargetIds = sourceState?.targetIds;
     const sourceTargetsById = sourceState?.targetsById;
     // Project rows depend on native facts and their binding, not a new scan cursor.

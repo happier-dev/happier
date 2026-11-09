@@ -1,7 +1,12 @@
 import { lazyZodSchema } from '../../../lazyZodSchema.js';
 import { z } from 'zod/mini';
 import { localServiceListenerGroupKey } from './listeners.js';
-import { LocalServiceLauncherScopeV1Schema } from '../launcher/v1.js';
+import {
+  DaemonLocalServiceLauncherSnapshotRequestV1Schema,
+  LocalServiceLauncherScopeV1Schema,
+  LocalServiceLauncherSnapshotV1Schema,
+  LocalServiceLaunchTargetV1Schema,
+} from '../launcher/v1.js';
 
 export const LocalServiceAddressFamilyV1Schema = lazyZodSchema(() => z.enum(['ipv4', 'ipv6', 'unknown']));
 export type LocalServiceAddressFamilyV1 = z.infer<typeof LocalServiceAddressFamilyV1Schema>;
@@ -257,6 +262,15 @@ export const DaemonLocalServiceInventoryWatchRequestV1Schema = lazyZodSchema(() 
   observationOnly: z.optional(z.literal(true)),
   /** Current Workspace launchers sharing this observation; cancellation releases their demand. */
   launcherScopes: z.optional(z.array(LocalServiceLauncherScopeV1Schema)),
+  /** Compare only this admitted launcher projection; no Machine inventory facts leave this watch. */
+  launcherProjection: z.optional(z.strictObject({
+    request: z.pick(DaemonLocalServiceLauncherSnapshotRequestV1Schema, {
+      sessionId: true, scope: true, workspaceRoot: true, projection: true,
+    }),
+    // The caller already holds these targets. Echoing them closes the read/watch gap
+    // without introducing a retained cursor or exposing unrelated inventory changes.
+    targets: z.array(LocalServiceLaunchTargetV1Schema),
+  })),
   /**
    * The `generatedAt` of the snapshot the caller already holds. The daemon answers immediately
    * when it has produced a newer snapshot, which closes the gap between a caller's snapshot read
@@ -281,4 +295,13 @@ export const DaemonLocalServiceInventoryWatchResponseV1Schema = lazyZodSchema(()
 ]));
 export type DaemonLocalServiceInventoryWatchResponseV1 = z.infer<
   typeof DaemonLocalServiceInventoryWatchResponseV1Schema
+>;
+
+/** The existing watch's launcherProjection replies with the launcher's existing snapshot contract. */
+export const DaemonLocalServiceInventoryLauncherWatchResponseV1Schema = lazyZodSchema(() => z.discriminatedUnion('changed', [
+  z.strictObject({ protocolVersion: z.literal(1), changed: z.literal(true), snapshot: LocalServiceLauncherSnapshotV1Schema }),
+  z.strictObject({ protocolVersion: z.literal(1), changed: z.literal(false) }),
+]));
+export type DaemonLocalServiceInventoryLauncherWatchResponseV1 = z.infer<
+  typeof DaemonLocalServiceInventoryLauncherWatchResponseV1Schema
 >;

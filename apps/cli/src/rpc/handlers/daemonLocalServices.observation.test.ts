@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import type { Socket } from 'socket.io-client';
 import { expect, it, vi } from 'vitest';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { DaemonLocalServiceInventoryLauncherWatchResponseV1Schema } from '@happier-dev/protocol/local/services/inventory/v1';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
 import { authorizeMachineRpcRequest } from '@/api/machine/machineRpcAuthorization';
@@ -71,25 +72,26 @@ it('carries launcher scope demand through admitted RPC and retires it on cancell
     const machineAdmission = { actorAccountId: 'custodian', custodianAccountId: 'custodian', machineId,
         installationId: 'installation_1', role: 'manage' as const, encryptionMode: 'plain' as const };
     const method = `${machineId}:${RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_WATCH}`;
-    const observing = rpc.handleRequest({ method, machineAdmission, requestId: 'scoped-observation',
-        params: { machineId, observationOnly: true, launcherScopes: [{ workspaceRoot: root }] } });
-    let pending: Promise<unknown> | undefined;
+    const initial = await runtime.launcherRoutes.getSnapshot({ workspaceRoot: root });
+    let observing = rpc.handleRequest({ method, machineAdmission, requestId: 'scoped-observation',
+        params: { machineId, launcherProjection: { request: { workspaceRoot: root }, targets: initial.targets } } });
     try {
         await vi.waitFor(() => expect(runtime.inventoryRoutes.watcherCount()).toBe(1));
         await vi.waitFor(async () => expect((await runtime.launcherRoutes.getSnapshot({ workspaceRoot: root, discovery: 'cached' }))
             .targets.flatMap(target => target.sourceClass?.kind === 'package_script' ? [target.sourceClass.scriptName] : [])).toEqual(['dev']));
-        await runtime.launcherRoutes.getSnapshot({ workspaceRoot: root });
-        pending = rpc.handleRequest({ method, machineAdmission, params: { machineId,
-            sinceGeneratedAt: runtime.inventoryRegistry.getSnapshot().generatedAt } });
-        await vi.waitFor(() => expect(runtime.inventoryRoutes.watcherCount()).toBe(2));
         await writeFile(packageFile, JSON.stringify({ name: 'rpc', packageManager: 'npm@10', scripts: { preview: 'serve' } }));
-        expect(await pending).toMatchObject({ protocolVersion: 1, changed: true });
-        expect((await runtime.launcherRoutes.getSnapshot({ workspaceRoot: root, discovery: 'cached' })).targets
+        const changed = DaemonLocalServiceInventoryLauncherWatchResponseV1Schema.parse(await observing);
+        expect(changed.changed).toBe(true);
+        if (!changed.changed) throw new Error('Expected changed launcher projection');
+        expect(changed.snapshot.targets
             .flatMap(target => target.sourceClass?.kind === 'package_script' ? [target.sourceClass.scriptName] : []))
             .toEqual(['preview']);
+        observing = rpc.handleRequest({ method, machineAdmission, requestId: 'scoped-observation',
+            params: { machineId, launcherProjection: { request: { workspaceRoot: root }, targets: changed.snapshot.targets } } });
+        await vi.waitFor(() => expect(runtime.inventoryRoutes.watcherCount()).toBe(1));
     } finally {
         socket.emit(SOCKET_RPC_EVENTS.CANCEL, { requestId: 'scoped-observation' });
-        await observing; await pending; await runtime.stop(); await rm(root, { recursive: true, force: true });
+        await observing; await runtime.stop(); await rm(root, { recursive: true, force: true });
     }
     expect(runtime.inventoryRoutes.watcherCount()).toBe(0);
 });
