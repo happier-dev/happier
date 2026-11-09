@@ -1,4 +1,4 @@
-import type { FeatureDecision } from '@happier-dev/protocol';
+import type { FeatureDecision } from '@happier-dev/protocol/features/decision';
 import { resolveRuntimeFeatureDecision } from '@/sync/domains/features/featureDecisionInputs';
 import { storage } from '@/sync/domains/state/storage';
 

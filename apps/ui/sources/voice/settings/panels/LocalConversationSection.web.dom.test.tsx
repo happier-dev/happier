@@ -24,8 +24,9 @@ import { PROFILE_ROWS_ROUTE_V1, PROFILE_REFERENCE_GUARD_ROUTE_V1 } from '@happie
 import { PROFILE_TRANSFER_ROUTE_V1 } from '@happier-dev/protocol/profiles/profileTransferV1';
 import { REMOTE_HOST_ROWS_ROUTE_V1 } from '@happier-dev/protocol/remoteHosts/remoteHostRecordV1';
 import { NOTIFICATION_CHANNELS_ROUTE_V1 } from '@happier-dev/protocol/account/settings/notificationChannelRecordV1';
-import { StoredApprovalRequestSchema,
-    tryWriteServerEnabledBitInPlace } from '@happier-dev/protocol';
+import { StoredApprovalRequestSchema} from '@happier-dev/protocol/approvals/approvalRequestV1';
+import {
+    tryWriteServerEnabledBitInPlace } from '@happier-dev/protocol/features/serverEnabledBit';
 
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 const transport = vi.hoisted(() => ({ projection: null as unknown, projectionReads: [] as unknown[] }));

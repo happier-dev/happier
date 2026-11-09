@@ -18,7 +18,7 @@ import {
 import { PluginSettingTextField } from '@/components/settings/plugins/detail/PluginDetailGenericSettingsSection';
 import { compilePluginJsonSchema } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
 import { isValidPluginJsonSchemaValue } from '@happier-dev/protocol/plugins/actions/protocol-composable-schema';
-import { resolveRequiredRecipientContractApprovalDigestV1 } from '@happier-dev/protocol/plugins/recipientContractV1';
+import { projectVoiceCredentialReadiness } from '@/voice/credentials/credentialReadiness';
 import type { VoiceCredentialSourceSelection } from '@happier-dev/protocol/account/settings/savedSecretMutationOwner';
 import type { VoiceProviderContribution } from '@happier-dev/protocol/plugins/contributions/voice';
 import { SettingsDeclarationActionOutputSchemasV1 } from '@happier-dev/protocol/actions/settingsDeclarationActionFamily';
@@ -64,7 +64,6 @@ import { presentVoicePipeline, resolveVoiceReadinessTone } from '@/voice/setting
 import { SegmentedChoiceItem } from '@/components/ui/lists/SegmentedChoiceItem';
 import {
   resolveAccountVoiceCredentialSourceSelection,
-  resolveAccountVoiceCredentialStatus,
   resolveSelectedVoiceCredentialRawGrants,
   shouldUseVoiceCredentialSourceMutationForSavedSecret,
 } from '@/voice/credentials/accountVoiceCredential';
@@ -75,7 +74,7 @@ import {
 import { getConnectedAccountAuthentication } from '@/sync/domains/connectedServices/connectedServiceRegistry';
 import { VoiceCredentialItem } from '@/voice/credentials/CredentialItem';
 import { VoiceRawCredentialAccessReview } from '@/voice/credentials/VoiceRawCredentialAccessReview';
-import { useSavedSecretCatalog } from '@/components/secrets/useSavedSecretCatalog';
+import { useSavedSecretReferenceResolver } from '@/components/secrets/useSavedSecretCatalog';
 import { createDefaultVoiceProviderRegistry } from '@/voice/registry/defaultRegistry';
 import {
   parseLocalVoiceSttSettings,
@@ -101,7 +100,6 @@ import {
   resolveVoicePassiveSetupReadiness,
   resolveVoiceRoleReadiness,
   projectHostedModeAvailabilityReadiness,
-  resolveVoiceProviderCredentialFact,
   type VoiceRoleReadiness,
   type VoiceRoleReadinessFacts,
 } from '@/voice/registry/readiness';
@@ -114,6 +112,7 @@ import { projectLocalConversationReadinessFacts, projectLocalConversationProvide
 import { getEnabledAgentIds } from '@/agents/catalog/enabled';
 import { getResolvedBackendCatalogEntries } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
+import { DAEMON_AGENT_CATALOG_SECTIONS } from '@/agents/backendCatalog/agentCatalogSections';
 import { getAcpCatalogSnapshot, subscribeAcpCatalogSnapshots } from '@/sync/store/settings/acpCatalogSnapshot';
 import { projectVoiceConfiguredAgentTarget } from '@/voice/agent/projectVoiceConfiguredAgentTarget';
 import {
@@ -129,6 +128,12 @@ import { resolveVoiceProviderReadinessPresentation, translateVoiceReadiness } fr
 import { PoliteAccessibilityStatus } from '@/components/ui/accessibility/PoliteAccessibilityStatus';
 
 const registry = createDefaultVoiceProviderRegistry();
+
+/** The registry narrowed to the selected service; lookups still see every entry. */
+function selectedVoiceProviderRegistryView(providerId: string | null | undefined): Pick<typeof registry, 'get' | 'list'> {
+  const selected = providerId ? registry.get(providerId) : null;
+  return { get: (id) => registry.get(id), list: () => (selected ? [selected] : []) };
+}
 
 type CheckedVoiceProviderReadinessResult =
   | Readonly<{
@@ -291,6 +296,11 @@ export function useVoiceConversationsReadinessModel(props: {
   executionMachineSelectionKind?: VoiceExecutionMachineSelection['kind'];
   popoverBoundaryRef?: React.RefObject<any> | null;
   onRecoveryAction?: (action: VoiceRoleReadiness['recoveryAction']) => void;
+  /**
+   * `selected` projects only the selected service (Home's closed setup tile shows its readiness and
+   * title); the gallery, its panel and Settings → Voice project every service (`all`, default).
+   */
+  rowScope?: 'all' | 'selected';
 }): {
   serviceTiles: VoiceServiceTile[];
   isOff: boolean;
@@ -316,7 +326,6 @@ export function useVoiceConversationsReadinessModel(props: {
   selectedExternalHasConnectedAccount: boolean;
   selectedExternalCredentialAccessIsRaw: boolean;
   selectedExternalRawReviewGrants: ReturnType<typeof resolveSelectedVoiceCredentialRawGrants>[number][];
-  selectedExternalCredentialSlot: VoiceProviderRegistryEntry['accountCredentialSlot'];
   selectedExternalConnectedRawReviewEligible: boolean;
   selectedDeclarativeSettings: VoiceProviderRegistryEntry['providerSettings'];
   selectedDeclarativeSettingsSource: Exclude<VoiceProviderRegistryEntry['source'], { kind: 'built_in' }> | null;
@@ -349,7 +358,8 @@ export function useVoiceConversationsReadinessModel(props: {
   const purposes = useConnectedAccountCatalog('purposes', settingsScope);
   const connectedPurposes = purposes.status === 'ready' && !purposes.stale ? purposes.value : null;
   const labelsByKey = useConnectedMetadataCatalog(undefined, selectConnectedMetadataLabels);
-  const savedSecretCatalog = useSavedSecretCatalog();
+  // Home's setup tile mounts this model: it consumes only the references its rows resolve.
+  const savedSecretReferences = useSavedSecretReferenceResolver();
   const accountProfile = useProfile();
   const activeAccountScopeLifetime = captureActiveServerAccountScopeLifetime();
   const accountGroupsEnabled = useFeatureEnabled('connectedServices.accountGroups');
@@ -391,6 +401,7 @@ export function useVoiceConversationsReadinessModel(props: {
     serverId: settingsScope?.serverId,
     enabled: configuredAgent !== null,
     load: false,
+    sections: DAEMON_AGENT_CATALOG_SECTIONS,
   });
   const configuredAgentTarget = configuredAgent ? projectVoiceConfiguredAgentTarget({
     selection: configuredAgent,
@@ -426,101 +437,20 @@ export function useVoiceConversationsReadinessModel(props: {
       ? 'unknown' : configuredAgentTarget.ok ? 'ready' : 'incompatible',
     rawCredentialAuthorizationByContribution:
       checkedReadiness?.rawCredentialAuthorizationByContribution,
-    resolveSavedSecret: savedSecretCatalog.resolveReference,
+    resolveSavedSecret: savedSecretReferences.resolve,
   });
-  const rows = projectVoiceProviderSelectionRows(voice, registry).map((row) => {
+  const rowRegistry = props.rowScope === 'selected' ? selectedVoiceProviderRegistryView(voice.providerId) : registry;
+  const rows = projectVoiceProviderSelectionRows(voice, rowRegistry).map((row) => {
     const settingsProjection = projectVoiceProviderSettings(row.entry, row.envelope);
-    const contribution = row.entry.kind === 'voice.conversation-provider.v1'
-      && row.entry.declaration?.kind === 'conversation'
-      ? {
-          pluginId: row.entry.pluginId,
-          localId: row.entry.declaration.id,
-        }
-      : null;
-    const accountCredentialStatus = row.entry.accountCredentialSlot && contribution
-      ? resolveAccountVoiceCredentialStatus({
-          settings: accountSettings,
-          contribution,
-          credentialSlotId: row.entry.accountCredentialSlot.id,
-          requiredRecipientContractDigest: resolveRequiredRecipientContractApprovalDigestV1(
-            row.entry.accountCredentialSlot.recipientContract,
-          ),
-          resolveSavedSecret: savedSecretCatalog.resolveReference,
-        })
-      : null;
-    const accountCredentialReference = accountCredentialStatus?.status === 'ready'
-      ? accountCredentialStatus.reference
-      : null;
-    // Bundled first-party recipients are governed by the shipped contract, not
-    // the external-publisher re-review gate. Keep that gate at its only owner:
-    // an externally supplied provider whose recipient contract can change.
-    const accountCredentialApprovalRequired = row.entry.source.kind === 'external'
-      && accountCredentialStatus?.status === 'review_required';
     const credentialDeclaration = row.entry.kind === 'voice.conversation-provider.v1'
-      && row.entry.declaration?.kind === 'conversation'
-      ? row.entry.declaration.credentials ?? null
-      : null;
-    let sourceSelection: (
-      VoiceCredentialSourceSelection
-      & Readonly<{ connectedAccountEligibility: VoiceConnectedAccountTargetEligibility }>
-    ) | null = null;
-    if (contribution && credentialDeclaration) {
-      try {
-        const resolvedSource = resolveAccountVoiceCredentialSourceSelection({
-          settings: accountSettings,
-          connectedPurposes,
-          contribution,
-          credentialSlotId: credentialDeclaration.slot.id,
-          purpose: {
-            consumer: contribution,
-            purpose: credentialDeclaration.slot.purpose,
-          },
-          machineId: null,
-        });
-        sourceSelection = resolvedSource.selection.kind === 'connectedAccount'
-          ? Object.freeze({
-            kind: 'connectedAccount' as const,
-            target: resolvedSource.selection.target,
-            connectedAccountEligibility: resolveVoiceConnectedAccountTargetEligibility({
-              target: resolvedSource.selection.target,
-              declaredServices: credentialDeclaration.sources.flatMap((source) => (
-                source.kind === 'connectedAccount'
-                  ? [typeof source.service === 'string'
-                      ? { pluginId: contribution.pluginId, localId: source.service }
-                      : source.service]
-                  : []
-              )),
-              accounts: accountProfile.connectedAccountsV4 ?? [],
-              groups: accountProfile.connectedAccountGroupsV4 ?? [],
-              resolveAuthentication: getConnectedAccountAuthentication,
-            }),
-          })
-          : Object.freeze({
-            kind: resolvedSource.selection.kind,
-            connectedAccountEligibility: 'unusable' as const,
-          });
-      } catch {
-        sourceSelection = null;
-      }
-    }
-    const projectedCredential = projectVoiceProviderCredentialReadiness(
-      row.entry,
-      row.envelope,
-      {
-        sourceSelection,
-        savedSecret: {
-          status: accountCredentialStatus?.status === 'unknown'
-            ? 'unknown'
-            : accountCredentialReference ? 'ready' : 'missing',
-        },
-      },
-    );
-    const credentialFact = resolveVoiceProviderCredentialFact({
-      sourceKind: row.entry.source.kind,
-      projectedCredential,
-      hasAccountCredentialSlot: Boolean(row.entry.accountCredentialSlot),
-      hasAccountCredentialReference: Boolean(accountCredentialReference),
-      accountCredentialApprovalRequired,
+      ? row.entry.declaration?.credentials ?? null : null;
+    const { credential: credentialFact, sourceSelection, projectedCredential, accountCredentialReference } = projectVoiceCredentialReadiness({
+      entry: row.entry, envelope: row.envelope, settings: accountSettings, connectedPurposes,
+      resolveSavedSecret: savedSecretReferences.resolve,
+      resolveConnectedAccountEligibility: (selection, declaredServices) => resolveVoiceConnectedAccountTargetEligibility({
+        target: selection.target, declaredServices, accounts: accountProfile.connectedAccountsV4 ?? [],
+        groups: accountProfile.connectedAccountGroupsV4 ?? [], resolveAuthentication: getConnectedAccountAuthentication,
+      }),
     });
     const declaredExecution = row.entry.kind === 'voice.conversation-provider.v1'
       && row.entry.declaration?.kind === 'conversation'
@@ -622,13 +552,9 @@ export function useVoiceConversationsReadinessModel(props: {
       : undefined;
     const joinParts = (parts: readonly (string | null | undefined)[]) => parts
       .filter((value): value is string => typeof value === 'string' && value.length > 0).join(' · ') || undefined;
-    const detail = accountCredentialApprovalRequired
-      ? t('settingsVoice.externalCredentials.reviewRequired')
-      : projectedCredentialGuidance ?? joinParts([credentialDetail, readinessPresentation.reason, readinessPresentation.action]);
+    const detail = projectedCredentialGuidance ?? joinParts([credentialDetail, readinessPresentation.reason, readinessPresentation.action]);
     // What choosing this row needs, without its recovery action: the pipeline card owns the one action.
-    const need = accountCredentialApprovalRequired
-      ? t('settingsVoice.externalCredentials.reviewRequired')
-      : projectedCredentialGuidance ?? joinParts([credentialDetail, readinessPresentation.reason]);
+    const need = projectedCredentialGuidance ?? joinParts([credentialDetail, readinessPresentation.reason]);
     return {
       ...row,
       readiness,
@@ -698,16 +624,8 @@ export function useVoiceConversationsReadinessModel(props: {
     credentialAuthority: selectedPassiveSetup ? null : {
       voiceCredentialBindings: accountSettings.voiceSettingsV1.credentialBindings,
       purposes,
-      savedSecretCatalog: {
-        status: savedSecretCatalog.status,
-        stale: savedSecretCatalog.stale,
-        entries: savedSecretCatalog.sharedEntries.map((entry) => ({
-          ref: entry.ref,
-          revision: entry.revision,
-          materialStatus: entry.materialStatus,
-          use: entry.capabilities.use,
-        })),
-      },
+      // Advances when a Saved Secret these rows resolved changes readiness, revision or material authority.
+      savedSecretReferences: savedSecretReferences.revision,
     },
   });
   currentReadinessCheckKeyRef.current = selectedReadinessCheckKey;
@@ -858,7 +776,6 @@ export function useVoiceConversationsReadinessModel(props: {
   const selectedExternalCredentialAccessIsRaw = selectedExternalRawReviewGrants.length > 0;
   const selectedExternalConnectedRawReviewEligible = selectedExternalSourceSelection?.kind === 'connectedAccount'
     && selectedExternalRawReviewGrants.length > 0;
-  const selectedExternalCredentialSlot = selectedExternalRow?.entry.accountCredentialSlot;
   const selectedDeclarativeSettingsRow = rows.find((row) => (
     row.providerId === voice.providerId
     && row.entry.kind === 'voice.conversation-provider.v1'
@@ -1127,7 +1044,7 @@ export function useVoiceConversationsReadinessModel(props: {
     checkedProviderResult, checkedReadinessRecoveryAction, checkedReadinessRevision, checkedReadiness,
     selectedExternalRow, selectedExternalDeclaration, selectedExternalCredentials, selectedExternalContribution,
     selectedExternalHasSavedSecret, selectedExternalHasConnectedAccount, selectedExternalCredentialAccessIsRaw,
-    selectedExternalRawReviewGrants, selectedExternalCredentialSlot, selectedExternalConnectedRawReviewEligible,
+    selectedExternalRawReviewGrants, selectedExternalConnectedRawReviewEligible,
     selectedDeclarativeSettings, selectedDeclarativeSettingsSource, declarativeSettingsGroup, selectedDeclarativeConfig,
     selectedDeclarativeSettingsRow, localizePluginText, writeExternalSetting,
     selectedProviderRow, selectedUnavailableProvider, localAdapterSettings, selectedSpeechProviderIds,
@@ -1194,7 +1111,7 @@ export function VoiceProviderSection(props: Parameters<typeof useVoiceConversati
     checkedProviderResult, checkedReadinessRevision, checkedReadiness,
     selectedExternalRow, selectedExternalDeclaration, selectedExternalCredentials, selectedExternalContribution,
     selectedExternalHasSavedSecret, selectedExternalHasConnectedAccount, selectedExternalCredentialAccessIsRaw,
-    selectedExternalRawReviewGrants, selectedExternalCredentialSlot, selectedExternalConnectedRawReviewEligible,
+    selectedExternalRawReviewGrants, selectedExternalConnectedRawReviewEligible,
     selectedDeclarativeSettings, selectedDeclarativeSettingsSource, declarativeSettingsGroup, selectedDeclarativeConfig,
     selectedDeclarativeSettingsRow, localizePluginText, writeExternalSetting,
   } = useVoiceConversationsReadinessModel(props);
@@ -1342,12 +1259,6 @@ export function VoiceProviderSection(props: Parameters<typeof useVoiceConversati
             rawCredentialReviewGrants={selectedExternalRow.sourceSelection?.kind === 'savedSecret'
               ? selectedExternalRawReviewGrants
               : undefined}
-            recipientContract={selectedExternalCredentialSlot?.id === selectedExternalCredentials.slot.id
-              ? selectedExternalCredentialSlot.recipientContract
-              : null}
-            recipientContractDigest={selectedExternalCredentialSlot?.id === selectedExternalCredentials.slot.id
-              ? selectedExternalCredentialSlot.recipientContractDigest
-              : null}
             disclosePlainStorage={true}
           />}
           {selectedExternalHasSavedSecret || !selectedExternalConnectedRawReviewEligible ? null : selectedExternalRawReviewGrants.map((rawGrant, index) => (

@@ -1,7 +1,7 @@
 import { describe, expect, it, onTestFinished, vi } from 'vitest';
 import { createDeferred, waitForTestEvent } from '@/dev/testkit';
 import { useVoiceConversationRuntimeStore } from '@/voice/runtime/machine/voiceConversationRuntimeStore';
-import { PluginContributesV2Schema } from '@happier-dev/protocol';
+import { PluginContributesV2Schema } from '@happier-dev/protocol/plugins/contributions/v2';
 import type { RealtimeVoiceProviderRuntime } from '@happier-dev/plugin-sdk/voice/client';
 import { createOpenAiVoiceRuntimeEnvironment } from '@/dev/testkit/harness/openAiVoiceRuntime';
 import { installVoiceWebRtcBrowserBoundary } from '@/dev/testkit/harness/voiceWebRtcHarness';

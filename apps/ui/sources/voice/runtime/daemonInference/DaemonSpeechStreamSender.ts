@@ -5,9 +5,10 @@ import type {
   DaemonVoiceInferenceSttStreamFinishRequest,
   DaemonVoiceInferenceSttStreamFinishResponse,
   DaemonVoiceInferenceSttStreamStartRequest,
-  DaemonVoiceInferenceSttStreamStartResponse,
+  DaemonVoiceInferenceSttStreamStartResponse} from '@happier-dev/protocol/daemon/voiceInference';
+import type {
   VoiceSpeechDiagnosticsCaptureContextV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/voice/diagnostics';
 import { DAEMON_VOICE_INFERENCE_STT_STREAM_PCM_FORMAT } from '@happier-dev/protocol/daemon/voiceInference';
 import {
   DEFAULT_MAX_PENDING_APPLICATION_DISPATCHES as DEFAULT_MAX_IN_FLIGHT_CHUNKS,

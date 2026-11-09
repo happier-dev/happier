@@ -1,8 +1,9 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import {
-  buildQualifiedPluginContributionKey,
+  buildQualifiedPluginContributionKey} from '@happier-dev/protocol/plugins/contribution-key';
+import {
   createPluginContributionIdentity,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/plugins/contribution-identity';
 
 import {
   createBundledConversationUi,

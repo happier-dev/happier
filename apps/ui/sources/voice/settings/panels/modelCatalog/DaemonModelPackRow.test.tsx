@@ -5,7 +5,8 @@ import 'fake-indexeddb/auto';
 
 import { pressTestInstanceAsync, renderScreen, waitForTestEvent } from '@/dev/testkit';
 import { t } from '@/text';
-import { listModelPackCatalogEntries } from '@happier-dev/protocol';
+import { formatHappierDataBytes } from '@happier-dev/plugin-ui/presentation';
+import { listModelPackCatalogEntries } from '@happier-dev/protocol/voice/modelPacks/catalog';
 import { DaemonVoiceInferenceModelStatusSchema,
     DaemonVoiceInferenceModelsInstallResponseSchema } from '@happier-dev/protocol/daemon/voiceInference';
 import { createProviderSettingsAccountHarness } from '@/dev/testkit/harness/providerSettingsHarness';
@@ -26,11 +27,12 @@ const { DaemonModelPackRow, SelectedDaemonModelPackRow } = await import('./Daemo
 const { DaemonVoiceModelCatalogProvider } = await import('./DaemonVoiceModelCatalogContext');
 const { useDaemonVoiceModelCatalogState } = await import('./useDaemonVoiceModelCatalogState');
 const { VOICE_CONVERSATIONS_SETTINGS } = await import('@/voice/settings/voiceSettingsDeclarations');
+const { storage } = await import('@/sync/domains/state/storage');
 
-async function restoreModelAccount(waivedActions?: NonNullable<Parameters<typeof account.restore>[0]>['waivedActions']) {
+async function restoreModelAccount(waivedActions?: NonNullable<Parameters<typeof account.restore>[0]>['waivedActions'], daemonInferenceEnabled = true) {
     const machineId = 'model-row-machine';
     const scope = await account.restore({ waivedActions, settings: { experiments: true,
-        featureToggles: { 'voice.agent': true, 'execution.runs': true, 'voice.daemonInference': true },
+        featureToggles: { 'voice.agent': true, 'execution.runs': true, 'voice.daemonInference': daemonInferenceEnabled },
         voice: { executionMachine: { mode: 'fixed', machineId } } },
         machines: [createMachineFixture({ id: machineId, activeAt: Date.now() })],
         features: createRootLayoutFeaturesResponse({ features: {
@@ -219,6 +221,68 @@ describe('DaemonModelPackRow', () => {
 
         await pressTestInstanceAsync(tree.root.findByProps({ testID: 'voice-model-remove-pack-default' }));
         expect(onRemove).toHaveBeenCalledWith('pack-default');
+    });
+
+    it.each([false, true])('keeps the Parakeet download size visible with service enabled=%s', async enabled => {
+        await restoreModelAccount(['settings.invoke'], enabled);
+        const entry = listModelPackCatalogEntries('stt_sherpa').find(candidate => candidate.packId === 'sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8')!;
+        let model = DaemonVoiceInferenceModelStatusSchema.parse({
+            packId: entry.packId, kind: entry.kind, model: entry.model, pluginIdentity: null,
+            version: null, executionSupport: ['daemon'], runtimeFamily: entry.runtimeFamily,
+            runtimeSupported: true, installState: 'not_installed', progress: null, lastError: null, updatedAtMs: 0,
+        });
+        let installs = 0;
+        reply = request => {
+            const catalog = answerVoiceModelCatalogRpcRequest(request, [model]);
+            if (catalog) return catalog;
+            if (request.method.endsWith(':daemon.voiceInference.models.install')) {
+                installs += 1;
+                model = DaemonVoiceInferenceModelStatusSchema.parse({ ...model, installState: 'installed' });
+                return DaemonVoiceInferenceModelsInstallResponseSchema.parse({ ok: true, model });
+            }
+            throw new Error(`Unexpected model RPC: ${request.method}`);
+        };
+        const screen = await renderScreen(<SelectedRowOwner packId={entry.packId} kind="stt_sherpa" />);
+        const row = () => screen.tree.root.findAllByProps({ testID: `voice-model-row-${entry.packId}` })[0];
+        const download = () => screen.tree.root.findAllByProps({ testID: `voice-model-install-${entry.packId}` })
+            .find(node => String(node.type) === 'Pressable');
+        if (enabled) await waitForTestEvent(screen.subscribe, download, button => Boolean(button));
+        expect(row()?.props.subtitle).toContain(t('settingsVoice.local.models.downloadSize', {
+            size: formatHappierDataBytes(entry.archiveSizeBytes!, { kind: 'storage' }),
+        }));
+        expect(installs).toBe(0);
+        if (!enabled) {
+            expect(download()).toBeUndefined();
+            expect(row()?.props.detail).toBe(t('settingsVoice.local.models.state.unknown'));
+        } else {
+            expect(download()!.props.accessibilityLabel).toContain(t('settingsVoice.local.models.download'));
+            await pressTestInstanceAsync(download()!);
+            await waitForTestEvent(screen.subscribe, () => row()?.props.detail,
+                detail => detail === t('settingsVoice.local.models.state.installed'));
+            expect(installs).toBe(1);
+        }
+    });
+
+    it('offers the Parakeet download after Account policy is enabled without remounting settings', async () => {
+        await restoreModelAccount(['settings.invoke'], false);
+        const entry = listModelPackCatalogEntries('stt_sherpa').find(candidate => candidate.packId === 'sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8')!;
+        const model = DaemonVoiceInferenceModelStatusSchema.parse({
+            packId: entry.packId, kind: entry.kind, model: entry.model, pluginIdentity: null,
+            version: null, executionSupport: ['daemon'], runtimeFamily: entry.runtimeFamily,
+            runtimeSupported: true, installState: 'not_installed', progress: null, lastError: null, updatedAtMs: 0,
+        });
+        reply = request => answerVoiceModelCatalogRpcRequest(request, [model]) ?? (() => { throw new Error(`Unexpected model RPC: ${request.method}`); })();
+        const screen = await renderScreen(<SelectedRowOwner packId={entry.packId} kind="stt_sherpa" />);
+        const download = () => screen.tree.root.findAllByProps({ testID: `voice-model-install-${entry.packId}` })
+            .find(node => String(node.type) === 'Pressable');
+        expect(download()).toBeUndefined();
+        await act(async () => {
+            const settings = storage.getState().settings;
+            storage.getState().applySettingsLocal({ featureToggles: { ...settings.featureToggles, 'voice.daemonInference': true } });
+        });
+        await waitForTestEvent(screen.subscribe, download, button => Boolean(button));
+        expect(screen.tree.root.findAllByProps({ testID: `voice-model-row-${entry.packId}` })[0]?.props.subtitle)
+            .toContain(formatHappierDataBytes(entry.archiveSizeBytes!, { kind: 'storage' }));
     });
 
     it('projects the canonical pack-local mutation failure into the selected-provider row', async () => {

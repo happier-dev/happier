@@ -190,7 +190,7 @@ it.each([
         return <>
             {source === 'durable' ? <VoiceSessionRuntime /> : <VoiceSetupFirstSuccessRuntime />}
             <VoiceSetupPanel testID="setup" model={{ facts, serviceTitle: null, serviceTiles: [], readiness: null,
-                tryLive: setupControl.live, shortcutLabel: null, firstSuccess: setupControl.firstSuccessEvent }}
+                tryLive: setupControl.live, canStart: setupControl.canStart, shortcutLabel: null, firstSuccess: setupControl.firstSuccessEvent }}
                 actions={{ onSelectService() {}, onRecover() {}, onAllowMicrophone() {}, onOpenSystemSettings: null,
                     onTry() {}, onDone() {}, onOpenSettings() {}, onClose() {} }} />
             <VoiceComposerPlanet pose="ready" muted={false} markEvent={control.markEvent}

@@ -50,6 +50,7 @@ export type VoiceDictationFailureReason =
     | 'provider_unavailable'
     | 'transcription_credentials_required'
     | 'transcription_machine_unavailable'
+    | 'transcription_model_not_installed'
     | 'transcription_transfer_failed'
     | 'transcription_failed'
     | 'recorded_audio_size_unavailable'
@@ -83,13 +84,17 @@ function resolveDictationTranscriptionFailureReason(
         ? 'stt_credential_unavailable'
         : resolveRecordedAudioTranscriptionFailureReason(error);
     switch (reason) {
+        case 'stt_feature_disabled':
+        case 'stt_provider_unavailable':
+            return 'provider_unavailable';
         case 'stt_credential_unavailable':
             return 'transcription_credentials_required';
         case 'stt_machine_unavailable':
         case 'stt_machine_unreachable':
         case 'stt_runtime_unavailable':
-        case 'stt_model_not_installed':
             return 'transcription_machine_unavailable';
+        case 'stt_model_not_installed':
+            return 'transcription_model_not_installed';
         case 'stt_transfer_failed':
             return 'transcription_transfer_failed';
         default:

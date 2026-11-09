@@ -1,6 +1,7 @@
 import { storage } from '@/sync/domains/state/storage';
 import { shallow } from 'zustand/vanilla/shallow';
 import { useStoreWithEqualityFn } from 'zustand/traditional';
+import { useShallow } from 'zustand/react/shallow';
 import { resolveMachineForActiveServerFromState, resolveVisibleMachinesForActiveServerFromState } from '@/sync/store/domains/machines/resolveMachinesForActiveServerFromState';
 import { isMachineVisibleForLaunchSelection } from '@/sync/domains/machines/identity/filterVisibleMachines';
 import { resolveVoiceExecutionMachineIdFromState, resolveVoiceExecutionMachineSelectionFromState, type VoiceExecutionMachineSelection } from '@/voice/settings/executionMachine';
@@ -23,10 +24,8 @@ export type VoiceExecutionMachinePresentation = Readonly<{
 const machineNamingSource = {
   getState: () => storage.getState(),
   getInitialState: () => storage.getInitialState(),
-  subscribe: (listener: Parameters<typeof storage.subscribe>[0]) => storage.subscribe((state, previous) => {
-    if (state.machines !== previous.machines
-      || state.machineListByServerId !== previous.machineListByServerId
-      || state.machineListStatusByServerId !== previous.machineListStatusByServerId) listener(state, previous);
+  subscribe: (listener: Parameters<typeof storage.subscribe>[0]) => storage.subscribe(listener, {
+    machines: true, machineListByServerId: true, machineListStatusByServerId: true,
   }),
 };
 
@@ -78,7 +77,7 @@ function useVoiceExecutionMachineState<Value>(select: (state: ReturnType<typeof 
   // Cache selection by the stable storage snapshot: presence can expire
   // between React's reads without the storage object changing.
   // A fresh selector on render also observes local auto-target and scope wakes.
-  return useStoreWithEqualityFn(storage, state => select(state), shallow);
+  return storage(useShallow(select));
 }
 
 /** Execution consumers subscribe to selection, without machine label presentation. */

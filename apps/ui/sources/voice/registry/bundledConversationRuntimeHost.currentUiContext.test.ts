@@ -2,7 +2,7 @@ import { createDeferred, waitForTestEvent } from '@/dev/testkit';
 import { describe, expect, it, vi } from 'vitest';
 import 'fake-indexeddb/auto';
 import * as React from 'react';
-import { SessionLookupByTagsRequestV2Schema, SessionLookupByTagsResponseV2Schema } from '@happier-dev/protocol';
+import { SessionLookupByTagsRequestV2Schema, SessionLookupByTagsResponseV2Schema } from '@happier-dev/protocol/sessions/control/contract';
 import { createSessionFixture, renderScreen } from '@/dev/testkit';
 import { InjectedAuthProvider } from '@/auth/context/AuthContext';
 import { MainAppTabStateProvider } from '@/components/navigation/mobile/chrome/MainAppTabStateProvider';
@@ -69,7 +69,7 @@ describe('bundled conversation runtime host current UI lifecycle', () => {
     const readSession = createSessionReadBatchFetchBoundary(async (input, init) => sessionHttp.handle(input, init));
     // Seed the existing server-owned history with its canonical current tuple
     // before Sync lists it; a legacy projection cannot answer current create/load.
-    const { createSessionOwnerMetadataV1, createPlainSessionOwnerMetadataEnvelopeV1, projectSessionSharedMetadataV1 } = await import('@happier-dev/protocol');
+    const { createSessionOwnerMetadataV1, createPlainSessionOwnerMetadataEnvelopeV1, projectSessionSharedMetadataV1} = await import('@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1');
     const historyOwner = createSessionOwnerMetadataV1({ metadata: history.metadata });
     if (!historyOwner.ok) throw new Error('History owner metadata could not be authored');
     sessionHttp.createSessionFromPost(history.id, {

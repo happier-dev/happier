@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { DEFAULT_ACTIONS_SETTINGS_V1 } from '@happier-dev/protocol';
+import { DEFAULT_ACTIONS_SETTINGS_V1 } from '@happier-dev/protocol/account/settings/accountSettings';
 import type { PluginApi } from '@happier-dev/plugin-sdk';
 import type {
   AgentSessionRealtimeHandle,

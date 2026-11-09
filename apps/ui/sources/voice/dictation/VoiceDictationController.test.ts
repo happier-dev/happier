@@ -120,7 +120,7 @@ function createRealCaptureBoundary(input: Readonly<{
 
 let speechHome: Awaited<ReturnType<typeof createPlainArtifactHomeFixture>>;
 let speechReply: (() => Promise<string | null | undefined>) | null = null;
-type SpeechFault = 'credential_unavailable' | 'machine_unavailable' | 'transfer_failed' | 'provider_secret_raw_error';
+type SpeechFault = 'credential_unavailable' | 'machine_unavailable' | 'transfer_failed' | 'provider_secret_raw_error' | 'model_not_installed';
 let speechFault: SpeechFault | null = null;
 /** The spy observes the public call and delegates every decision to the real owner. */
 function createTranscriptionProbe(reply: (observed: RecordedAudioTranscriptionRequest) => Promise<string | null | undefined> = async () => null,
@@ -196,6 +196,7 @@ beforeEach(async ({ task }) => {
                 : { ...result, path: '/tmp/controller.m4a' };
         }
         if (method.endsWith('stt.transcribe') || method === 'daemon.voice.speech.transcribe') {
+            if (speechFault === 'model_not_installed') return { ok: false, error: 'model not installed', errorCode: speechFault };
             if (speechFault === 'credential_unavailable') return DaemonVoiceSpeechTranscribeResponseSchema.parse({ ok: false, errorCode: speechFault });
             if (speechFault === 'provider_secret_raw_error') throw Object.assign(new Error('private provider detail'), { code: speechFault });
             const text = await speechReply?.() ?? '';
@@ -1535,6 +1536,32 @@ describe('createVoiceDictationController', () => {
         expect(result.kind === 'completed' && result.text === over).toBe(true);
         expect(controller.getSnapshot()).toEqual({ sessionId: null, status: 'idle' });
         expect(captureOwner.stopSession).toHaveBeenCalledTimes(2);
+    });
+
+    it.each([
+        { enabled: false, reason: 'provider_unavailable' },
+        { enabled: true, reason: 'transcription_model_not_installed' },
+    ] as const)('offers setup for daemon Dictation with service enabled=$enabled', async ({ enabled, reason }) => {
+        const settings = storage.getState().settings;
+        storage.getState().applySettingsLocal({ featureToggles: { ...settings.featureToggles, 'voice.daemonInference': enabled } });
+        const captureOwner = createRealCaptureBoundary({ recordedUri: () => 'file:///dictation.m4a' });
+        const controller = createVoiceDictationController({
+            captureOwner,
+            getSettings: () => ({ voice: { dictation: { sttBinding: 'explicit', stt: {
+                provider: 'local_neural', localNeural: { execution: 'daemon',
+                    assetId: 'sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8' },
+            } } } }),
+            ...TEST_RECORDED_AUDIO_BOUNDARY,
+            transcribeRecordedAudio: createTranscriptionProbe(async () => '', 'model_not_installed'),
+        });
+        await expect(controller.toggle('session-1')).resolves.toEqual({ kind: 'started' });
+        await expect(controller.toggle('session-1')).resolves.toEqual({ kind: 'cancelled' });
+        const failure = controller.getSnapshot().failure;
+        expect(failure).toMatchObject({ reason, canRetry: true });
+        const { voiceDictationFailureNeedsSetup, resolveVoiceDictationFailureTranslationKey } = await import('./voiceDictationErrorCopy');
+        expect(voiceDictationFailureNeedsSetup(failure!.reason)).toBe(true);
+        if (enabled) expect(resolveVoiceDictationFailureTranslationKey(failure!.reason)).toBe('voice.readiness.model_missing');
+        else expect(network.requests).toHaveLength(0);
     });
 
     it.each([

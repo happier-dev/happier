@@ -2,13 +2,17 @@ import { describe, expect, it } from 'vitest';
 
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit';
 import type {
-    DaemonVoiceInferenceModelStatus,
-    FeaturesResponse,
-    MachineLiveStreamRelayDisabledReason,
-    ModelPackKind,
+    DaemonVoiceInferenceModelStatus} from '@happier-dev/protocol/daemon/voiceInference';
+import type {
+    FeaturesResponse} from '@happier-dev/protocol/features/payload/featuresResponseSchema';
+import type {
+    MachineLiveStreamRelayDisabledReason} from '@happier-dev/protocol/features/payload/capabilities/machineLiveStreamCapabilities';
+import type {
+    ModelPackKind} from '@happier-dev/protocol/voice/modelPacks/manifest';
+import type {
     PeerLoopbackEndpointCandidateV1,
-} from '@happier-dev/protocol';
-import { getDefaultModelPackId, listModelPackCatalogEntries } from '@happier-dev/protocol';
+} from '@happier-dev/protocol/machines/peer/mediation/loopbackEndpointV1';
+import { getDefaultModelPackId, listModelPackCatalogEntries } from '@happier-dev/protocol/voice/modelPacks/catalog';
 import { parseAuthCredentials } from '@/auth/storage/tokenStorage';
 
 import { resolveVoiceProviderAvailability } from './resolveVoiceProviderAvailability';

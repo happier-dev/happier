@@ -7,7 +7,7 @@ import { ExecutionRunTurnStreamStartV2RequestSchema, ExecutionRunTurnStreamStart
   ExecutionRunTurnStreamReadRequestSchema, ExecutionRunTurnStreamReadResponseSchema,
   ExecutionRunUserTranscriptCommitRequestSchema, ExecutionRunUserTranscriptCommitResponseSchema,
   type ExecutionRunTurnStreamEvent } from '@happier-dev/protocol/execution/runs/streaming';
-import type { VoiceAssistantAction } from '@happier-dev/protocol';
+import type { VoiceAssistantAction } from '@happier-dev/protocol/voice/actions';
 import { VOICE_AGENT_GLOBAL_SESSION_ID } from '@/voice/agent/voiceAgentGlobalSessionId';
 
 vi.mock('socket.io-client', async original =>

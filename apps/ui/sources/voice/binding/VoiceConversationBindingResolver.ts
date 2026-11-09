@@ -3,6 +3,7 @@ import { normalizeNonEmptyString } from '@/voice/shared/normalizeNonEmptyString'
 
 import {
     mergeVoiceConversationBindings,
+    isVoiceSessionBindingAvailableInState as isBindingAvailableInState,
     pickNewerVoiceBinding,
     voiceSessionBindingStore,
 } from './voiceConversationBindingStore';
@@ -22,17 +23,6 @@ type ResolverState = Readonly<{
 
 function isSyncedBindingForLiveControl(binding: VoiceSessionBinding, snapshot: VoiceSessionSnapshot): boolean {
     return snapshot.canStop && snapshot.sessionId === binding.controlSessionId;
-}
-
-function isBindingAvailableInState(
-    binding: VoiceSessionBinding | null,
-    state: ResolverState,
-): binding is VoiceSessionBinding {
-    if (!binding) return false;
-    if (binding.lifetime === 'runtime_attempt') return true;
-    const session = state.sessions?.[binding.conversationSessionId];
-    return normalizeSessionAddress(session?.serverId, binding.conversationSessionId)?.serverId
-        === binding.conversationSessionAddress.serverId;
 }
 
 export function createVoiceConversationBindingResolver(params?: Readonly<{

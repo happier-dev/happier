@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { createLegacyVoiceOutputAdapter } from './legacyVoiceOutputAdapter';
-import { createVoiceAgentOutputTurnV1, ingestVoiceAgentOutputEventV1, VOICE_OUTPUT_INCOMPLETE_TEXT, type VoiceAgentOutputEventV1 } from '@happier-dev/protocol';
+import { createVoiceAgentOutputTurnV1, ingestVoiceAgentOutputEventV1, VOICE_OUTPUT_INCOMPLETE_TEXT, type VoiceAgentOutputEventV1 } from '@happier-dev/protocol/voice/outputEvents';
 
 describe('createLegacyVoiceOutputAdapter', () => {
   it.each([

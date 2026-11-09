@@ -1,3 +1,4 @@
+import { createSessionListSourceFixture, createSessionReadBatchFetchBoundary } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('socket.io-client', async importOriginal =>
@@ -10,17 +11,22 @@ vi.mock('react-native', async () =>
 // The helper returns the actual Sync singleton, without replacing its methods.
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import {
-  FeaturesResponseSchema,
+  FeaturesResponseSchema} from '@happier-dev/protocol/features/payload/featuresResponseSchema';
+import {
   MACHINE_PLAIN_DATA_KEY_MARKER,
-  encodePlainMachineStoredContent,
-  SessionCurrentProjectionRecordV1Schema,
-  SessionMetadataTuplePatchV1Schema,
-  SessionSpawnNewInputV2Schema,
-  V2SessionListResponseSchema,
+  encodePlainMachineStoredContent} from '@happier-dev/protocol/machines/machineStoredContent';
+import {
+  SessionCurrentProjectionRecordV1Schema} from '@happier-dev/protocol/sessions/listing/response';
+import {
+  SessionMetadataTuplePatchV1Schema} from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
+import {
+  SessionSpawnNewInputV2Schema} from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
+import {
   type ExecutionRunPublicState,
-  ExecutionRunPublicStateSchema,
+  ExecutionRunPublicStateSchema} from '@happier-dev/protocol/execution/runs/responseSchemas';
+import {
   ExecutionRunEnsureOrStartRequestSchema,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/execution/runs/index';
 import { RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { AccessibleMachineAccessV1Schema, MachineAccessGrantsListResponseV1Schema } from '@happier-dev/protocol/machines/machineAccessV1';
 import { ACP_CATALOG_ROWS_ROUTE_V1 } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
@@ -33,7 +39,6 @@ import { upsertAndActivateServer } from '@/sync/domains/server/serverRuntime';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 import { createExistingSessionDirectoryPreflightResult, createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { createMachineFixture, createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
-import { createSessionReadBatchFetchBoundary } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { createConnectedPurposeCatalogHttpBoundary } from '@/dev/testkit/harness/connectedAccountCatalogBoundary';
@@ -229,14 +234,14 @@ async function respondToServerRequest(input: RequestInfo | URL, init?: RequestIn
   }
   if (/^\/v1\/sessions\/[^/]+\/messages$/.test(path)) return json({ messages: [], hasMore: false });
   // Named list resources must precede the generic session-by-id route.
-  if (path === '/v2/sessions' || path === '/v2/sessions/active' || path === '/v1/sessions') {
+  if (path === '/v2/sessions' || path === '/v2/sessions/active') {
     if (spawnSession.mock.calls.length > 0) {
       await readSessions();
       for (const session of Object.values(state.sessions) as Array<ReturnType<typeof createSessionFixture>>) {
         if (!committedSessionRecords.has(session.id)) committedSessionRecords.set(session.id, sessionWireRecord(session));
       }
     }
-    return json(V2SessionListResponseSchema.parse({ sessions: [...committedSessionRecords.values()], hasNext: false, nextCursor: null }));
+    return json(createSessionListSourceFixture({ sessions: [...committedSessionRecords.values()], hasNext: false, nextCursor: null }));
   }
   const detail = /^\/v2\/sessions\/([^/]+)$/.exec(path);
   if (detail) {
@@ -1840,7 +1845,7 @@ describe('retained global Voice Run authority', () => {
     vi.resetModules();
     let harness: Awaited<ReturnType<typeof import('@/dev/testkit/harness/standaloneVoicePolicyHarness')['createStandaloneVoicePolicyHarness']>> | undefined;
     try {
-      const { ExecutionRunPublicStateSchema, buildVoiceAgentRunMetadataV1, parseVoiceAgentRunMetadataV1 } = await import('@happier-dev/protocol');
+      const [{ ExecutionRunPublicStateSchema}, { buildVoiceAgentRunMetadataV1, parseVoiceAgentRunMetadataV1}] = await Promise.all([import('@happier-dev/protocol/execution/runs/responseSchemas'), import('@happier-dev/protocol/voice/voiceAgentRunMetadataV1')]);
       const { SESSION_RPC_METHODS } = await import('@happier-dev/protocol/rpc');
       const { VOICE_AGENT_GLOBAL_SESSION_ID } = await import('@/voice/agent/voiceAgentGlobalSessionId');
       const { createStandaloneVoicePolicyHarness } = await import('@/dev/testkit/harness/standaloneVoicePolicyHarness');

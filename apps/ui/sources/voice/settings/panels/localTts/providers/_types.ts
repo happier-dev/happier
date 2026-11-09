@@ -1,5 +1,5 @@
 import type * as React from 'react';
-import type { LocalNeuralExecution } from '@happier-dev/protocol';
+import type { LocalNeuralExecution } from '@happier-dev/protocol/daemon/voiceInference';
 
 import type { VoiceLocalTtsSettings } from '@/sync/domains/settings/voiceLocalTtsSettings';
 import type { VoiceSettings } from '@/sync/domains/settings/voiceSettings';

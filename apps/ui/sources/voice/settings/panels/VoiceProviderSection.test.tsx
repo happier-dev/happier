@@ -2162,7 +2162,7 @@ describe('VoiceProviderSection', () => {
             return <>
                 {React.createElement('ColdHome', { readiness: model.selectedProviderReadiness, canTry: facts.canTry })}
                 <VoiceSetupPanel testID="cold-home" model={{ facts, serviceTitle: 'Local Voice', serviceTiles: [],
-                    readiness: null, tryLive: false, shortcutLabel: null }}
+                    readiness: null, tryLive: false, canStart: facts.canTry, shortcutLabel: null }}
                     actions={{ onSelectService() {}, onRecover() {}, onAllowMicrophone() {}, onOpenSystemSettings: null,
                         onTry() {}, onDone() {}, onOpenSettings() {}, onClose() {} }} />
             </>;

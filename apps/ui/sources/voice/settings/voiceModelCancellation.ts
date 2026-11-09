@@ -49,7 +49,7 @@ export function captureVoiceModelCancellation(packId: string): CapturedModelCanc
         if (captured) return null;
         captured = { target, async cancel(signal?: AbortSignal) {
             if (!isCurrent()) return false;
-            return (await command.invoke({ signal: signal ?? new AbortController().signal })).ok;
+            return (await command.invoke({ signal: signal ?? new AbortController().signal, context: { surface: 'ui' } })).ok;
         } };
     }
     return captured;

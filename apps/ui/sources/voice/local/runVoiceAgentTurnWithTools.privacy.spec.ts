@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
-  getActionSpec,
-  parseVoiceToolResultsFollowUp,
+  getActionSpec} from '@happier-dev/protocol/actions/actionSpecs';
+import {
+  parseVoiceToolResultsFollowUp} from '@happier-dev/protocol/voice/toolResultsChannel';
+import {
   projectSessionActivityCompatibilityV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/sessions/awareness/action';
 
 import { buildToolResultsFollowUpPrompt } from '@/voice/context/buildVoiceToolResultsFollowUp';
 import type { LocalVoiceAgentToolResultEntry } from '@/voice/tools/localVoiceEffectOutcomeCustody';

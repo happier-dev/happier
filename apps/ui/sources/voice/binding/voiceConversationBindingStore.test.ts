@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { createSessionFixture, createSessionListRenderableSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { buildSystemSessionMetadataV1 } from '@happier-dev/protocol/sessions/control/contract';
 import { VOICE_CONVERSATION_SYSTEM_SESSION_KEY } from '@happier-dev/protocol/voice/sessionBinding';
@@ -83,6 +83,140 @@ describe('createVoiceSessionBindingStore', () => {
     state = { ...state, sessions: { ...sessions, carrier: { ...carrier, metadata: null } } };
     syncPersistedVoiceConversationBindings({ state, store });
     expect(resolver.resolveByControlSessionId({ controlSessionId: 'voice-global' })).toBeNull();
+  });
+
+  it('patches binding discovery from real Session publications without revisiting retained rows', async () => {
+    const { storage } = await import('@/sync/domains/state/storage');
+    const { syncPersistedVoiceConversationBindings } = await import('./voiceConversationBindingStore');
+    const { writeVoiceConversationBindingMetadata } = await import('./voiceConversationBindingMetadata');
+    const initial = storage.getState();
+    const store = createVoiceSessionBindingStore();
+    let metadataVisits = 0;
+    let inventoryScans = 0;
+    const carrier = (id: string, controlSessionId: string, updatedAt: number) => createSessionFixture({
+      id, serverId: 'server-1', metadata: writeVoiceConversationBindingMetadata(
+        { path: '/voice', host: 'test', ...buildSystemSessionMetadataV1({ key: VOICE_CONVERSATION_SYSTEM_SESSION_KEY, hidden: true }) },
+        { adapterId: 'local_conversation', controlSessionId, conversationSessionId: id,
+          conversationSessionAddress: { serverId: 'server-1', sessionId: id },
+          transcriptMode: 'synthetic', targetSessionAddress: null, updatedAt },
+      ),
+    });
+    const sessions = Object.fromEntries(Array.from({ length: 1000 }, (_, index) => {
+      const id = `session-${index}`;
+      const row = index < 100 ? carrier(id, `control-${index}`, 1) : createSessionFixture({ id, serverId: 'server-1' });
+      return [id, new Proxy(row, {
+        get(target, key, receiver) {
+          if (index < 100 && key === 'metadata') metadataVisits += 1;
+          return Reflect.get(target, key, receiver);
+        },
+      })];
+    }));
+    let notifications = 0;
+    const stop = store.subscribe(() => { notifications += 1; });
+    let previousPublication: ReturnType<typeof storage.getState> | undefined;
+    const publish = () => {
+      const state = storage.getState();
+      // Observe ingestion separately from the publisher's immutable map construction.
+      const observed = {
+        ...state, sessions: new Proxy(state.sessions, {
+          ownKeys(target) { inventoryScans += 1; return Reflect.ownKeys(target); },
+        }),
+      };
+      syncPersistedVoiceConversationBindings({ store, state: observed, previousState: previousPublication });
+      previousPublication = observed;
+      return observed;
+    };
+    try {
+      storage.setState({ sessions, sessionListRowsByServerId: {} });
+      let published = publish();
+      const before = store.getState();
+      const admittedRows = store.getState().readPersistedBindings(published);
+      notifications = 0;
+      let previousSessions = storage.getState().sessions;
+      for (let index = 0; index < 20; index += 1) {
+        metadataVisits = 0;
+        if (index % 2 === 0) storage.getState().markSessionResuming('session-999');
+        else storage.getState().clearSessionResuming('session-999');
+        expect(storage.getState().sessions).not.toBe(previousSessions);
+        previousSessions = storage.getState().sessions;
+        inventoryScans = 0;
+        published = publish();
+        expect(inventoryScans).toBe(0);
+        expect(metadataVisits).toBe(0);
+        expect(store.getState().readPersistedBindings(published)).toBe(admittedRows);
+      }
+      for (const update of [
+        () => storage.getState().markSessionOptimisticThinking('session-999'),
+        () => storage.getState().clearSessionOptimisticThinking('session-999'),
+        () => storage.getState().applySessionTerminalLifecycle('session-999', 100),
+        () => storage.getState().updateSessionPermissionMode('session-999', 'default'),
+        () => storage.getState().updateSessionModelMode('session-999', 'default'),
+        () => storage.getState().applyMessages('session-999', [{
+          id: 'ordinary-message', seq: 2, localId: null, createdAt: 100,
+          isSidechain: false, role: 'agent',
+          content: [{ type: 'text', text: 'Ordinary activity', uuid: 'ordinary-message', parentUUID: null }],
+        }]),
+      ]) {
+        metadataVisits = 0;
+        previousSessions = storage.getState().sessions;
+        update();
+        expect(storage.getState().sessions).not.toBe(previousSessions);
+        inventoryScans = 0;
+        published = publish();
+        expect(inventoryScans).toBe(0);
+        expect(metadataVisits).toBe(0);
+        expect(store.getState().readPersistedBindings(published)).toBe(admittedRows);
+      }
+
+      expect(notifications).toBe(0);
+      expect(store.getState()).toBe(before);
+
+      // A real metadata advance replaces one binding; the other 99 keep their identity.
+      let retainedBindingVisits = 0;
+      for (const binding of admittedRows) {
+        if (binding.conversationSessionId === 'session-0') continue;
+        const updatedAt = binding.updatedAt;
+        Object.defineProperty(binding, 'updatedAt', { get() { retainedBindingVisits += 1; return updatedAt; } });
+      }
+      storage.getState().applySessions([carrier('session-0', 'control-0', 2)]);
+      publish();
+      expect.soft(retainedBindingVisits).toBe(0);
+      expect(store.getState().getByControlSessionId('control-0')?.updatedAt).toBe(2);
+      expect(Object.entries(before.persistedBindingsByConversationSessionId).filter(([id, row]) =>
+        store.getState().persistedBindingsByConversationSessionId[id] !== row)).toHaveLength(1);
+      expect(notifications).toBe(1);
+      storage.getState().applySessions([createSessionFixture({ id: 'session-0', serverId: 'server-1', metadata: null })]);
+      publish();
+      expect.soft(retainedBindingVisits).toBe(0);
+      expect(store.getState().getByControlSessionId('control-0')).toBeNull();
+      expect(notifications).toBe(2);
+
+      // The natural grace-expiry publication must stay as narrow as explicit clearing.
+      vi.useFakeTimers();
+      const ordinary = storage.getState().sessions['session-999'];
+      storage.getState().applySessions([{ ...ordinary, presence: 'online', thinking: true, thinkingAt: Date.now(), updatedAt: Date.now() }]);
+      publish();
+      storage.getState().applySessions([{ ...storage.getState().sessions['session-999'],
+        presence: 'online', thinking: false, thinkingAt: Date.now() + 1, updatedAt: Date.now() + 1 }]);
+      published = publish();
+      const graceUntil = storage.getState().sessions['session-999'].thinkingGraceUntil;
+      expect(graceUntil).toBeTypeOf('number');
+      previousSessions = storage.getState().sessions;
+      vi.advanceTimersByTime(graceUntil! - Date.now());
+      expect(storage.getState().sessions).not.toBe(previousSessions);
+      expect(storage.getState().sessions['session-999'].thinkingGraceUntil).toBeNull();
+      metadataVisits = 0;
+      inventoryScans = 0;
+      published = publish();
+      expect(inventoryScans).toBe(0);
+      expect(metadataVisits).toBe(0);
+      expect(notifications).toBe(2);
+      vi.useRealTimers();
+    } finally {
+      vi.useRealTimers();
+      stop();
+      storage.setState(initial, true);
+    }
   });
 
   it('does not notify subscribers when a storage refresh has equivalent persisted bindings', () => {
@@ -228,6 +362,45 @@ describe('createVoiceSessionBindingStore', () => {
         updatedAt: 200,
       }),
     );
+  });
+
+  it('keeps the canonical control-slot winner across incremental withdrawals and full replacement', async () => {
+    const { storage } = await import('@/sync/domains/state/storage');
+    const { syncPersistedVoiceConversationBindings } = await import('./voiceConversationBindingStore');
+    const { writeVoiceConversationBindingMetadata } = await import('./voiceConversationBindingMetadata');
+    const initial = storage.getState();
+    const store = createVoiceSessionBindingStore();
+    const carrier = (id: string, updatedAt: number) => createSessionFixture({
+      id, serverId: 'server-1', metadata: writeVoiceConversationBindingMetadata(
+        { path: '/voice', host: 'test', ...buildSystemSessionMetadataV1({ key: VOICE_CONVERSATION_SYSTEM_SESSION_KEY, hidden: true }) },
+        { adapterId: 'local_conversation', controlSessionId: 'voice-global', conversationSessionId: id,
+          conversationSessionAddress: { serverId: 'server-1', sessionId: id },
+          transcriptMode: 'synthetic', targetSessionAddress: null, updatedAt },
+      ),
+    });
+    let previousPublication: ReturnType<typeof storage.getState> | undefined;
+    const publish = () => {
+      const state = storage.getState();
+      syncPersistedVoiceConversationBindings({ store, state, previousState: previousPublication });
+      previousPublication = state;
+    };
+    try {
+      storage.setState({ sessions: { z: carrier('z', 2), a: carrier('a', 1) }, sessionListRowsByServerId: {} });
+      publish();
+      expect(store.getState().getByControlSessionId('voice-global')?.conversationSessionId).toBe('z');
+      storage.getState().applySessions([carrier('a', 2)]);
+      publish();
+      expect(store.getState().getByControlSessionId('voice-global')?.conversationSessionId).toBe('z');
+      storage.getState().applySessions([createSessionFixture({ id: 'z', serverId: 'server-1', metadata: null })]);
+      publish();
+      expect(store.getState().getByControlSessionId('voice-global')?.conversationSessionId).toBe('a');
+      // No delta accompanies a structural replacement: every removed binding must disappear.
+      storage.setState({ sessions: {} });
+      publish();
+      expect(store.getState().list()).toEqual([]);
+    } finally {
+      storage.setState(initial, true);
+    }
   });
 
   it('canonicalizes binding ids when storing and looking up bindings', () => {

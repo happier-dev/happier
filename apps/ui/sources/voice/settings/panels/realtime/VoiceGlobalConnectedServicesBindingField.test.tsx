@@ -5,9 +5,10 @@ import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 
 import {
   ConnectedServiceBindingsV1Schema,
   ConnectedServiceBindingsV2Schema,
-  PluginContributesV2Schema,
   readBuiltInLegacyConnectedAccountServiceKeyIngress,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/connect/connected-service-bindings';
+import {
+  PluginContributesV2Schema} from '@happier-dev/protocol/plugins/contributions/v2';
 
 import { renderScreen as renderTestScreen, standardCleanup } from '@/dev/testkit';
 import { InjectedAuthProvider } from '@/auth/context/AuthContext';
@@ -106,6 +107,36 @@ describe('VoiceGlobalConnectedServicesBindingField', () => {
       allowDefaultProfileFallback: false,
       includeNativeAuthOption: false,
     });
+  });
+
+  it('connects in place and binds the returned account through the existing picker writer', async () => {
+    const { VoiceGlobalConnectedServicesBindingField } = await import('./VoiceGlobalConnectedServicesBindingField');
+    const { Modal } = await import('@/modal');
+    const onChange = vi.fn();
+    const screen = await renderScreen(<VoiceGlobalConnectedServicesBindingField agentId="codex"
+      serviceIds={['openai-codex']} value={null} onChange={onChange} />);
+    await act(async () => screen.tree.findByType(Item).props.onPress());
+    const selection = screen.tree.findByType(NewSessionConnectedServicesSelectionContent);
+    const expectedVersion = storage.getState().settingsVersion;
+    // Presentation is the system boundary; the existing binding writer remains real.
+    const show = vi.spyOn(Modal, 'show').mockReturnValue('connect-sheet');
+    try {
+      const anchor = { kind: 'rect', rect: { left: 40, top: 70, height: 30 }, coordinateSpace: 'window' } as const;
+      await act(async () => selection.props.onOpenSettings('openai-codex', anchor));
+      expect(show).toHaveBeenCalledOnce();
+      const sheet = show.mock.calls[0]![0].props as {
+        request: { service: { pluginId: string; localId: string } };
+        onResult: (result: { kind: 'selected'; account: { service: { pluginId: string; localId: string }; accountId: string } }) => void;
+      };
+      expect(sheet.request.service).toEqual({ pluginId: 'happier.agent.codex', localId: 'openai-codex' });
+      expect(sheet.request).toMatchObject({ anchor });
+      await act(async () => sheet.onResult({ kind: 'selected', account: {
+        service: sheet.request.service, accountId: 'just-connected',
+      } }));
+      expect(onChange).toHaveBeenCalledExactlyOnceWith({ v: 1, bindingsByServiceId: {
+        'happier.agent.codex/openai-codex': { source: 'connected', selection: 'profile', profileId: 'just-connected' },
+      } }, expectedVersion);
+    } finally { show.mockRestore(); }
   });
 
   it.each([

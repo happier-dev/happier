@@ -1,7 +1,8 @@
 import type {
-  VoiceProviderSettingsEnvelopeV1,
+  VoiceProviderSettingsEnvelopeV1} from '@happier-dev/protocol/voice/realtime/providerSettings';
+import type {
   VoiceRuntimePlatform,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/voice/realtime/capabilities';
 
 import {
   parseLocalVoiceSttSettings,

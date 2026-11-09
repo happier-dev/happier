@@ -11,6 +11,7 @@ import { createSessionFixture } from '@/dev/testkit';
 import { createVoiceHistoryListRowFixture } from './voiceConversationHistory.testkit';
 import { createPlainSessionByIdResponseFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { createSessionReadBatchFetchBoundary } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
+import { SESSION_LIST_PAGE_DEFAULT_LIMIT } from '@happier-dev/protocol/sessions/listing/query';
 
 vi.mock('socket.io-client', async original =>
   (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(original));
@@ -94,7 +95,7 @@ describe('History through the default Action composition', () => {
     expect(reads.filter(path => path.endsWith('/messages'))).toEqual([]);
     expect(JSON.stringify(result)).not.toContain('private held text');
   });
-  it.each(['plain', 'e2ee'] as const)('demands progressive active and archived Session pages and exposes their canonical continuation (%s Account)', async mode => {
+  it.each(['plain', 'e2ee'] as const)('fills a Voice page past 1,000 unrelated summaries without reading bodies (%s Account)', async mode => {
     const account = await createVoiceSettingsAccountTestHarness(settingsParse({}), { mode });
     onTestFinished(account.dispose);
     const { storage } = await import('@/sync/domains/state/storage');
@@ -106,12 +107,13 @@ describe('History through the default Action composition', () => {
     await sync.refreshSessions();
     const request = account.request.getMockImplementation()!;
     const pages: string[] = [];
-    const nextCursor = encodeV2SessionListCursorV1('recent-voice');
+    const nextCursor = encodeV2SessionListCursorV1('voice-page-end');
+    const unrelatedPages = 1_000 / SESSION_LIST_PAGE_DEFAULT_LIMIT;
     let bodyReads = 0;
-    const wire = async (id: string, archived: boolean) => {
+    const wire = async (id: string, archived: boolean, voice = true) => {
       const session = createSessionFixture({ id, archivedAt: archived ? 20 : null,
         metadata: { ...createSessionFixture().metadata!,
-          ...buildSystemSessionMetadataV1({ key: 'voice_conversation', hidden: true }), name: id } });
+          ...(voice ? buildSystemSessionMetadataV1({ key: 'voice_conversation', hidden: true }) : {}), name: id } });
       return createVoiceHistoryListRowFixture(session, { credentials: account.credentials, mode });
     };
     account.request.mockImplementation(async (input, init) => {
@@ -119,9 +121,16 @@ describe('History through the default Action composition', () => {
       if (url.pathname === '/v2/sessions' || url.pathname === '/v2/sessions/archived') {
         pages.push(`${url.pathname}:${url.searchParams.get('cursor') ?? 'first'}`);
         const archived = url.pathname.endsWith('/archived');
-        const next = url.searchParams.has('cursor');
-        return Response.json({ sessions: [await wire(archived ? 'archived-voice' : next ? 'older-voice' : 'recent-voice', archived)],
-          nextCursor: archived || next ? null : nextCursor, hasNext: !archived && !next,
+        const cursor = url.searchParams.get('cursor');
+        const ordinaryPage = cursor === null ? 0 : Array.from({ length: unrelatedPages }, (_, i) => encodeV2SessionListCursorV1(`ordinary-${i}`)).indexOf(cursor) + 1;
+        const unrelated = !archived && ordinaryPage >= 0 && ordinaryPage < unrelatedPages && cursor !== nextCursor;
+        const sessions = archived ? [await wire('archived-voice', true)]
+          : unrelated ? await Promise.all(Array.from({ length: SESSION_LIST_PAGE_DEFAULT_LIMIT }, (_, i) => wire(`ordinary-${ordinaryPage * SESSION_LIST_PAGE_DEFAULT_LIMIT + i}`, false, false)))
+          : cursor === nextCursor ? [await wire('older-voice', false)]
+          : await Promise.all(Array.from({ length: SESSION_LIST_PAGE_DEFAULT_LIMIT }, (_, i) => wire(`recent-voice-${i}`, false)));
+        return Response.json({ sessions,
+          nextCursor: archived || cursor === nextCursor ? null : unrelated ? encodeV2SessionListCursorV1(`ordinary-${ordinaryPage}`) : nextCursor,
+          hasNext: !archived && cursor !== nextCursor,
           attentionNextCursor: null, attentionHasNext: false });
       }
       if (/\/sessions\/[^/]+(?:\/messages)?$/.test(url.pathname) || url.pathname.endsWith('/sessions/read-batch')) bodyReads += 1;
@@ -131,18 +140,50 @@ describe('History through the default Action composition', () => {
     const context = { surface: 'agent' as const, authority: 'account_automation' as const,
       serverId: account.scope.serverId, expectedAccountId: account.scope.accountId };
     const first = await executor.execute('ui.voice_global.conversations.list', {}, context);
-    expect(pages).toHaveLength(2);
-    expect(pages).toEqual(expect.arrayContaining(['/v2/sessions:first', '/v2/sessions/archived:first']));
+    // Traverse the unrelated summary windows, fill one Voice page, and read archives once.
+    expect(pages).toHaveLength(unrelatedPages + 2);
     expect(first).toMatchObject({ ok: true, result: { coverage: 'loaded', coverageComplete: false,
       nextCursor: { active: nextCursor, archived: null }, conversations: expect.arrayContaining([
-        expect.objectContaining({ address: { serverId: account.scope.serverId, sessionId: 'recent-voice' } }),
+        expect.objectContaining({ address: { serverId: account.scope.serverId, sessionId: 'recent-voice-0' } }),
         expect.objectContaining({ address: { serverId: account.scope.serverId, sessionId: 'archived-voice' } }),
       ]) } });
     const second = await executor.execute('ui.voice_global.conversations.list', { cursor: { active: nextCursor, archived: null } }, context);
-    expect(pages).toEqual(['/v2/sessions:first', '/v2/sessions/archived:first', `/v2/sessions:${nextCursor}`]);
+    expect(pages).toHaveLength(unrelatedPages + 3);
+    expect(pages.at(-1)).toBe(`/v2/sessions:${nextCursor}`);
     expect(second).toMatchObject({ ok: true, result: { coverageComplete: true, nextCursor: null,
       conversations: expect.arrayContaining([expect.objectContaining({ address: { serverId: account.scope.serverId, sessionId: 'older-voice' } })]) } });
     expect(bodyReads).toBe(0);
+  });
+  it('keeps exhausted discovery incomplete when a summary owner envelope cannot be opened', async () => {
+    const account = await createVoiceSettingsAccountTestHarness(settingsParse({}), { mode: 'e2ee' });
+    onTestFinished(account.dispose);
+    const { storage } = await import('@/sync/domains/state/storage');
+    const { sync } = await import('@/sync/sync');
+    const { waitForHomeGovernance } = await import('@/dev/testkit/harness/homeGovernanceHarness');
+    await waitForHomeGovernance(() => expect(storage.getState().isDataReady).toBe(true));
+    await sync.refreshSessions();
+    const row = await createVoiceHistoryListRowFixture(createSessionFixture({ id: 'unreadable-voice',
+      metadata: { ...createSessionFixture().metadata!,
+        ...buildSystemSessionMetadataV1({ key: 'voice_conversation', hidden: true }) } }),
+      { credentials: account.credentials, mode: 'e2ee' });
+    const request = account.request.getMockImplementation()!;
+    let transcriptReads = 0;
+    account.request.mockImplementation(async (input, init) => {
+      const path = new URL(String(input)).pathname;
+      if (path === '/v2/sessions' || path === '/v2/sessions/archived') return Response.json({
+        sessions: path.endsWith('/archived') ? [] : [{ ...row, displayProjectionV1: {
+          ...row.displayProjectionV1, owner: { t: 'encrypted', c: 'unreadable-ciphertext' },
+        } }], nextCursor: null, hasNext: false,
+      });
+      if (path.endsWith('/messages')) transcriptReads += 1;
+      return request(input, init);
+    });
+    const result = await createDefaultActionExecutor().execute('ui.voice_global.conversations.list', {}, {
+      surface: 'agent', authority: 'account_automation', serverId: account.scope.serverId,
+      expectedAccountId: account.scope.accountId,
+    });
+    expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { coverageComplete: false, nextCursor: null, conversations: [] } });
+    expect(transcriptReads).toBe(0);
   });
   it('cancels a requested Session page when its Action caller leaves', async () => {
     const account = await createVoiceSettingsAccountTestHarness(settingsParse({}));

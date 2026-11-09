@@ -34,12 +34,12 @@ describe('voice history carrier single ownership', () => {
         return sessionHttp.createSessionFromPost(history.id, init);
       }
       if (path === '/v2/sessions/lookup-by-tags') {
-        const { SessionLookupByTagsRequestV2Schema } = await import('@happier-dev/protocol');
+        const { SessionLookupByTagsRequestV2Schema} = await import('@happier-dev/protocol/sessions/control/contract');
         expect(SessionLookupByTagsRequestV2Schema.parse(JSON.parse(String(init?.body))).tags)
           .toEqual([VOICE_TRANSCRIPT_HISTORY_SYSTEM_SESSION_TAG]);
         const detail = sessionHttp.handle(new URL(`/v2/sessions/${history.id}`, String(input)));
         if (!detail) throw new Error('Missing History HTTP record');
-        const { SessionLookupByTagsResponseV2Schema } = await import('@happier-dev/protocol');
+        const { SessionLookupByTagsResponseV2Schema} = await import('@happier-dev/protocol/sessions/control/contract');
         return Response.json(SessionLookupByTagsResponseV2Schema.parse({ sessions: [(await detail.json()).session] }));
       }
       return sessionHttp.handle(input, init) ?? request(input, init);
@@ -65,7 +65,7 @@ describe('voice history carrier single ownership', () => {
         const response = await apiSocket.request('/v2/sessions/lookup-by-tags', {
           method: 'POST', body: JSON.stringify({ tags }),
         });
-        const { SessionLookupByTagsResponseV2Schema } = await import('@happier-dev/protocol');
+        const { SessionLookupByTagsResponseV2Schema} = await import('@happier-dev/protocol/sessions/control/contract');
         return SessionLookupByTagsResponseV2Schema.parse(await response.json()).sessions;
       },
       hydrateSession: sessionId => sync.ensureSessionVisibleForMessageRoute(sessionId, {

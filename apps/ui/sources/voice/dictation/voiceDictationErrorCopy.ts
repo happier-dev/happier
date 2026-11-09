@@ -5,6 +5,7 @@ const FAILURE_TRANSLATION_KEYS = {
     provider_unavailable: 'voiceAssistant.dictationErrors.providerUnavailable',
     transcription_credentials_required: 'voiceAssistant.dictationErrors.transcriptionCredentialsRequired',
     transcription_machine_unavailable: 'voiceAssistant.dictationErrors.transcriptionMachineUnavailable',
+    transcription_model_not_installed: 'voice.readiness.model_missing',
     transcription_transfer_failed: 'voiceAssistant.dictationErrors.transcriptionTransferFailed',
     transcription_failed: 'voiceAssistant.dictationErrors.transcriptionFailed',
     recorded_audio_size_unavailable: 'voiceAssistant.dictationErrors.recordedAudioSizeUnavailable',
@@ -21,6 +22,7 @@ const SETUP_FAILURES: ReadonlySet<VoiceDictationFailureReason> = new Set<VoiceDi
     'provider_unavailable',
     'transcription_credentials_required',
     'transcription_machine_unavailable',
+    'transcription_model_not_installed',
     'transcription_failed',
 ]);
 

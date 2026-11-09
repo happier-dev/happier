@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { getActionSpec, projectSessionActivityCompatibilityV1 } from '@happier-dev/protocol';
+import { getActionSpec} from '@happier-dev/protocol/actions/actionSpecs';
+import { projectSessionActivityCompatibilityV1 } from '@happier-dev/protocol/sessions/awareness/action';
 
 import {
   redactVoiceToolResultForProvider,

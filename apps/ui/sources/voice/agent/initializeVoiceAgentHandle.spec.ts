@@ -1,6 +1,8 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { getAgentModelConfig } from '@happier-dev/agents';
-import { FeaturesResponseSchema, ExecutionRunEnsureOrStartRequestSchema, type ExecutionRunEnsureOrStartRequest, buildBackendTargetKeyV2 } from '@happier-dev/protocol';
+import { FeaturesResponseSchema} from '@happier-dev/protocol/features/payload/featuresResponseSchema';
+import { ExecutionRunEnsureOrStartRequestSchema, type ExecutionRunEnsureOrStartRequest} from '@happier-dev/protocol/execution/runs/index';
+import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { ExecutionRunVoiceAgentIntentInputV1Schema } from '@happier-dev/protocol/execution/runs/startRequest';
 import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';

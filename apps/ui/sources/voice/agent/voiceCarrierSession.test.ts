@@ -175,7 +175,7 @@ async function respondToServerRequest(input: RequestInfo | URL, init?: RequestIn
     }));
   }
   if (path.endsWith('/messages')) return Response.json({ messages: [], hasMore: false });
-  if (path === '/v2/sessions' || path === '/v2/sessions/active' || path === '/v1/sessions') {
+  if (path === '/v2/sessions' || path === '/v2/sessions/active') {
     if (spawnSession.mock.calls.length) { await readSessions(); captureCarrierSessionRecords(); }
     return Response.json(createSessionListSourceFixture({ sessions: [...committedSessionRecords.values()], hasNext: false, nextCursor: null }));
   }

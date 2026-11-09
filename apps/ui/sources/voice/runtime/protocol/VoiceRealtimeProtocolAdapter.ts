@@ -9,9 +9,10 @@ import type {
   VoiceTurnControlAction,
 } from '@happier-dev/plugin-sdk/voice/client';
 import type {
-  VoiceConversationToolEffectCalls,
+  VoiceConversationToolEffectCalls} from '@happier-dev/protocol/plugins/contributions/voice';
+import type {
   VoiceRealtimeJsonValue,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/voice/realtime/events';
 import type { VoiceConnectionCloseReason } from '@/voice/runtime/connection/VoiceRealtimeConnection';
 import type { VoiceTurnControlCapabilities } from './VoiceTurnControlCapabilities';
 import type { VoiceConversationInUseVoice } from '@happier-dev/protocol/actions/voiceConversationActionFamily';

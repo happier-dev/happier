@@ -8,7 +8,8 @@ import { ExecutionRunActionResponseSchema, ExecutionRunEnsureOrStartResponseSche
 import { ExecutionRunStopResponseSchema } from '@happier-dev/protocol/execution/runs/responseSchemas';
 import { ExecutionRunTurnStreamCancelResponseSchema, ExecutionRunTurnStreamReadResponseSchema, ExecutionRunTurnStreamStartResponseSchema, ExecutionRunUserTranscriptCommitResponseSchema, type ExecutionRunTurnStreamReadResponse } from '@happier-dev/protocol/execution/runs/streaming';
 import { ExecutionRunPreparedInstructionsForSchema } from '@happier-dev/protocol/execution/runs/runPrimitives';
-import type { ExecutionRunUserTranscriptDirective, VoiceAssistantAction } from '@happier-dev/protocol';
+import type { ExecutionRunUserTranscriptDirective} from '@happier-dev/protocol/execution/runs/streaming';
+import type { VoiceAssistantAction } from '@happier-dev/protocol/voice/actions';
 
 import type { VoiceAgentClient, VoiceAgentStartParams, VoiceAgentStartResult, VoiceAgentSendTurnOptions } from './types';
 import { streamVoiceAgentTurn } from './streamVoiceAgentTurn';

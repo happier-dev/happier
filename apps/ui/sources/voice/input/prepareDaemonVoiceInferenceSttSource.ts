@@ -1,4 +1,4 @@
-import type { DaemonVoiceInferenceNormalizationDecision } from '@happier-dev/protocol';
+import type { DaemonVoiceInferenceNormalizationDecision } from '@happier-dev/protocol/daemon/voiceInference';
 import { Platform } from 'react-native';
 
 import type { LocalUploadSource } from '@/sync/runtime/files/localUploadSourceReader';

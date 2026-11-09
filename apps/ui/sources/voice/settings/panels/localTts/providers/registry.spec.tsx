@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { VoiceProviderContributionSchema } from '@happier-dev/protocol';
+import { VoiceProviderContributionSchema } from '@happier-dev/protocol/plugins/contributions/voice';
 vi.mock('react-native-unistyles', async () =>
   (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
 

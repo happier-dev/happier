@@ -1,6 +1,7 @@
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { VOICE_OUTPUT_INCOMPLETE_TEXT, SessionCurrentProjectionRecordV1Schema } from '@happier-dev/protocol';
+import { VOICE_OUTPUT_INCOMPLETE_TEXT} from '@happier-dev/protocol/voice/outputEvents';
+import { SessionCurrentProjectionRecordV1Schema } from '@happier-dev/protocol/sessions/listing/response';
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { ExecutionRunTurnStreamReadRequestSchema, type ExecutionRunTurnStreamReadRequest } from '@happier-dev/protocol/execution/runs/streaming';
 import { createDeferred, createSessionFixture } from '@/dev/testkit';

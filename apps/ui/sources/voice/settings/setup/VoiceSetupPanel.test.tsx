@@ -44,6 +44,7 @@ function model(input: Readonly<{
         serviceTiles: [],
         readiness: null,
         tryLive: false,
+        canStart: facts.canTry,
         shortcutLabel: null,
     };
 }

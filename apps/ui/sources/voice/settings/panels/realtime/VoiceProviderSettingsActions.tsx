@@ -1,6 +1,6 @@
 import * as React from 'react';
 
-import type { VoiceProviderSettingsActionDeclaration } from '@happier-dev/protocol';
+import type { VoiceProviderSettingsActionDeclaration } from '@happier-dev/protocol/plugins/contributions/voice';
 
 import { Item } from '@/components/ui/lists/Item';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';

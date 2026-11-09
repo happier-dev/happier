@@ -20,13 +20,18 @@ import { listVoiceToolActionSpecs } from '@happier-dev/protocol/actions/actionSp
 import { createVoiceMachineError } from '@/voice/runtime/machine/voiceMachineError';
 
 import {
-  AccountSettingsV2UpdateRequestSchema,
-  formatQualifiedPluginActionId,
-  getActionSpec,
-  type ActionDefinitionV1,
-  type AccountSettingsStoredContentEnvelope,
+  AccountSettingsV2UpdateRequestSchema} from '@happier-dev/protocol/account/settings/accountSettingsApiV2';
+import {
+  formatQualifiedPluginActionId} from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
+import {
+  getActionSpec} from '@happier-dev/protocol/actions/actionSpecs';
+import {
+  type ActionDefinitionV1} from '@happier-dev/protocol/actions/actionDefinitionV1';
+import {
+  type AccountSettingsStoredContentEnvelope} from '@happier-dev/protocol/account/settings/accountSettingsStoredContentEnvelope';
+import {
   parseVoiceToolResultsFollowUp,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/voice/toolResultsChannel';
 import { buildToolResultsFollowUpPrompt } from '@/voice/context/buildVoiceToolResultsFollowUp';
 import { SettingsDeclarationActionOutputSchemasV1 } from '@happier-dev/protocol/actions/settingsDeclarationActionFamily';
 import { isActionDirectToolExposedOn } from '@happier-dev/protocol/actions/actionToolExposure';

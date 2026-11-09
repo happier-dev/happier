@@ -5,7 +5,9 @@ import { installSessionActionRpcBoundary } from '@/dev/testkit/harness/sessionAc
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
-import { FeaturesResponseSchema, tryWriteServerEnabledBitInPlace, type VoiceProviderContribution } from '@happier-dev/protocol';
+import { FeaturesResponseSchema} from '@happier-dev/protocol/features/payload/featuresResponseSchema';
+import { tryWriteServerEnabledBitInPlace} from '@happier-dev/protocol/features/serverEnabledBit';
+import { type VoiceProviderContribution } from '@happier-dev/protocol/plugins/contributions/voice';
 import { DaemonVoiceSpeechCatalogRequestSchema, DaemonVoiceSpeechTranscribeRequestSchema,
   DaemonVoiceSpeechTranscribeUploadInitRequestSchema, DaemonVoiceSpeechTranscribeUploadInitResponseSchema,
   DaemonVoiceSpeechTranscribeUploadChunkRequestSchema, DaemonVoiceSpeechTranscribeUploadChunkResponseSchema,

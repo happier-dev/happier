@@ -2,7 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createDeferred, waitForTestEvent } from '@/dev/testkit';
 import { createOpenAiVoiceRuntimeEnvironment } from '@/dev/testkit/harness/openAiVoiceRuntime';
 import { installVoiceWebRtcBrowserBoundary, TestVoiceAudioContext } from '@/dev/testkit/harness/voiceWebRtcHarness';
-import { PluginContributesV2Schema, type VoiceRealtimeJsonValue } from '@happier-dev/protocol';
+import { PluginContributesV2Schema} from '@happier-dev/protocol/plugins/contributions/v2';
+import { type VoiceRealtimeJsonValue } from '@happier-dev/protocol/voice/realtime/events';
 import type {
   BundledRetiringDirectMediaTranscriptDrain,
   BundledRealtimeProviderRuntimeHost,
@@ -1098,9 +1099,12 @@ describe('createBundledRealtimeProviderRuntime', () => {
       expect(acceptedBeforeStop).toHaveBeenCalledOnce();
       expect(sentControls).toEqual([{ kind: 'input_text', text: 'accepted before Stop' }]);
       const closeCount = closedConnections.length;
+      const constructionCount = constructionInputs.length;
       failConstruction = true;
-      await expect(adapter.start({ sessionId: controlSessionId, requestedTargetSessionAddress: null }))
-        .rejects.toMatchObject({ code: 'provider_connection_creation_failed' });
+      const constructionError = await adapter.start({ sessionId: controlSessionId, requestedTargetSessionAddress: null })
+        .then(() => null, (error: unknown) => error);
+      expect(constructionError).toMatchObject({ code: 'provider_connection_creation_failed' });
+      expect(constructionInputs).toHaveLength(constructionCount + 1);
       expect(closedConnections.slice(closeCount)).toEqual([
         { code: 'error', detail: 'voice_connection_creation_failed' },
       ]);

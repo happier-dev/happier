@@ -1,7 +1,8 @@
 import type {
-  DaemonVoiceInferenceModelStatus,
+  DaemonVoiceInferenceModelStatus} from '@happier-dev/protocol/daemon/voiceInference';
+import type {
   ModelPackVoiceCatalogEntry,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/voice/modelPacks/manifest';
 import { resolveCanonicalModelPackId } from '@happier-dev/protocol/voice/modelPacks/catalog';
 
 export type DaemonTtsVoiceSelection = Readonly<{

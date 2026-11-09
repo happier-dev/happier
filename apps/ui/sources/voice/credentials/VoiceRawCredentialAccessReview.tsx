@@ -3,10 +3,12 @@ import { View } from 'react-native';
 
 import type {
   DaemonVoiceClientRawCredentialAuthorizationV1,
-  DaemonVoiceClientRawCredentialReviewV1,
-  PluginContributionIdentityV1,
+  DaemonVoiceClientRawCredentialReviewV1} from '@happier-dev/protocol/daemon/voiceCredentials';
+import type {
+  PluginContributionIdentityV1} from '@happier-dev/protocol/plugins/contribution-identity';
+import type {
   VoiceRawCredentialGrantDeclaration,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/plugins/contributions/voice';
 
 import { PluginPermissionGrantSheet } from '@/components/plugins/permissions/PluginPermissionGrantSheet';
 import { Item } from '@/components/ui/lists/Item';
@@ -185,7 +187,7 @@ export function VoiceRawCredentialAccessReview(props: VoiceRawCredentialAccessRe
     return () => controller.abort();
   }, [inspect, scope, voice, voiceSettingsV1, secrets, purposes, savedSecrets]);
 
-  const listInput = React.useMemo(() => !linked && inspection ? ({
+  const listInput = React.useMemo(() => !linked && inspection && inspection.authorization.grantRequirement !== 'linked' ? ({
     pluginId: inspection.authorization.pluginId,
     capability: inspection.authorization.capability,
     targetScope: inspection.authorization.targetScope,
@@ -199,20 +201,11 @@ export function VoiceRawCredentialAccessReview(props: VoiceRawCredentialAccessRe
     enabled: listInput !== null,
     listInput,
   });
-  /**
-   * Grants and requests are listed Account-wide so the management surfaces can
-   * show every device's approval. This surface is not one of those: it acts for
-   * the one selected daemon, so it must read, decide and revoke only the row
-   * that daemon's own installation approved. Taking the first Account-wide
-   * match would let one machine's approval read as this machine's, and would
-   * revoke another device's grant.
-   */
   const authorityIdentity = React.useMemo(() => inspection ? ({
     pluginId: inspection.authorization.pluginId,
     capability: inspection.authorization.capability,
     targetScope: inspection.authorization.targetScope,
     subject: inspection.authorization.subject,
-    authoritySource: inspection.authorization.authoritySource,
   } as const) : null, [inspection]);
   const activeGrant = React.useMemo(() => authorityIdentity
     ? selectPluginPermissionGrants(permissionGrants.state, authorityIdentity)[0] ?? null
@@ -290,7 +283,7 @@ export function VoiceRawCredentialAccessReview(props: VoiceRawCredentialAccessRe
     await decide();
   }, [inspect, inspection]);
 
-  if (linked) return null;
+  if (linked || inspection?.authorization.grantRequirement === 'linked') return null;
   const details = inspection ? createVoiceRawCredentialReviewDetailRows(inspection) : [];
   return (
     <View>

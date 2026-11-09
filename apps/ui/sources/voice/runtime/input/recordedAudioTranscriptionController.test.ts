@@ -1,4 +1,4 @@
-import { MachineLiveStreamRelayCapsV1Schema } from '@happier-dev/protocol';
+import { MachineLiveStreamRelayCapsV1Schema } from '@happier-dev/protocol/machines/peer/mediation/stream/v1';
 import { installSessionOpsNetworkBoundary } from '@/dev/testkit/harness/sessionOpsNetworkBoundary';
 
 const network = await installSessionOpsNetworkBoundary();
@@ -12,7 +12,7 @@ const { createTransferRecipientKeyPair } = await import("@/sync/domains/transfer
 import { DaemonVoiceSpeechTranscribeUploadInitResponseSchema, DaemonVoiceSpeechTranscribeUploadChunkResponseSchema,
     DaemonVoiceSpeechTranscribeUploadFinalizeResponseSchema, DaemonVoiceSpeechTranscribeResponseSchema,
 } from '@happier-dev/protocol/daemon/voiceSpeech';
-import { VoiceProviderContributionSchema } from '@happier-dev/protocol';
+import { VoiceProviderContributionSchema } from '@happier-dev/protocol/plugins/contributions/voice';
 import { createPlainMachineReadHttpResponseFixture } from '@/dev/testkit/fixtures/machineFixtures';
 
 const { createPluginUiExecutableModuleHost } = await import("@/components/plugins/reactNative/executableModuleHost");

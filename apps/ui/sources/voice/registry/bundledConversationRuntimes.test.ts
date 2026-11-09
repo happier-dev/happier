@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PluginApi } from '@happier-dev/plugin-sdk';
-import { createRecipientContractDigestV1 } from '@happier-dev/protocol';
-import { PluginProjectionV2Schema } from '@happier-dev/protocol';
+import { createRecipientContractDigestV1 } from '@happier-dev/protocol/plugins/recipientContractV1';
+import { PluginProjectionV2Schema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { normalizePluginUiProjection } from '@/sync/domains/plugins/ui/projection';
 import { reconcileAppShellProjectedClientExecutables, unloadAppShellProjectedClientExecutables } from '@/components/appShell/plugins/appShellClientExecutableActivation';
 import { createPluginUiExecutableModuleHost } from '@/components/plugins/reactNative/executableModuleHost';
@@ -199,8 +199,8 @@ describe('createBundledConversationRuntimes', () => {
     const project = (withdrawn: boolean) => normalizePluginUiProjection(
       PluginProjectionV2Schema.parse({
         v: 2, generation: withdrawn ? 32 : 31,
-        installedPackagesById: {}, agentsById: {}, actionsById: {},
-         resourcesById: {}, settingsById: {}, diagnostics: [],
+        installedPackagesById: {}, agentsById: {}, actionsById: {}, 
+        resourcesById: {}, settingsById: {}, diagnostics: [],
         familiesById: { voiceProviders: { family: 'voiceProviders', entriesById: withdrawn ? {} : Object.fromEntries(
           BUNDLED_FIRST_PARTY_VOICE_CONVERSATION_RUNTIME_ENTRIES.map(entry => [entry.providerId, {
             id: entry.providerId, pluginId: entry.pluginId, generation: 31,

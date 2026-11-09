@@ -2,7 +2,10 @@ import {
   findSessionListLookupSession,
   listSessionListLookupActiveSessions,
   listSessionListLookupServerSessions,
+  type SessionListLookupStateLike,
 } from '@/sync/domains/session/listing/sessionListLookupState';
+import { readSessionListRowForServerId } from '@/sync/domains/session/listing/sessionListRowStateLookup';
+import { readSessionListRenderableOwnerMetadataView } from '@/sync/domains/session/listing/sessionListRenderableSessionProjection';
 import type { SessionMetadataLike } from '@/sync/domains/session/listing/sessionListLookupState';
 import { readSessionMetadataLayoutVersion } from '@/sync/engine/sessions/parsePlainSessionPayload';
 import { isUserFacingSession } from '@/sync/domains/session/listing/isUserFacingSession';
@@ -190,14 +193,17 @@ function toVoiceSessionRowDraft(
 }
 
 function isUserFacingVoiceSession(
-  state: unknown,
+  state: SessionListLookupStateLike,
   session: unknown,
   address: SessionAddress,
   options?: Readonly<{ activeServerId?: string | null }>,
 ): boolean {
   const record = session && typeof session === 'object' ? session as Record<string, unknown> : null;
   const metadataLayoutVersion = readSessionMetadataLayoutVersion(record?.metadataLayoutVersion);
-  const ownerMetadata = readVoiceSessionOwnerMetadataFromState(state, address, options);
+  const listRow = readSessionListRowForServerId(state?.sessionListRowsByServerId, address.serverId, address.sessionId);
+  // Visibility uses the admitted compact owner projection; execution still needs the full owner view.
+  const ownerMetadata = readVoiceSessionOwnerMetadataFromState(state, address, options)
+    ?? (listRow ? readSessionListRenderableOwnerMetadataView(listRow) : null);
   return isUserFacingSession({
     metadata: metadataLayoutVersion === 1 ? record?.metadata : ownerMetadata,
     ownerMetadataView: metadataLayoutVersion === 1 ? ownerMetadata : undefined,
@@ -251,7 +257,7 @@ export function collectVoiceSessionCorpus(
     if (authoritativeAddressKeys && !authoritativeAddressKeys.has(sessionAddressKey(next.address))) return;
     if (selectedServerIds && !selectedServerIds.has(next.address.serverId)) return;
     coveredServerIds.add(next.address.serverId);
-    if (!isUserFacingVoiceSession(state, session, next.address, { activeServerId })) return;
+    if (!isUserFacingVoiceSession(stateRecord, session, next.address, { activeServerId })) return;
     const key = sessionAddressKey(next.address);
     rows.set(key, mergeVoiceSessionRow(rows.get(key), next));
   };

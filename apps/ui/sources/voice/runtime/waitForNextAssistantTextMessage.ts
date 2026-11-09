@@ -186,7 +186,7 @@ export async function waitForNextAssistantTextMessageEntry(
       }
     }
     try {
-      unsubscribe = storage.subscribe(check);
+      unsubscribe = storage.subscribe(check, { sessionMessages: [sessionId], sessions: [sessionId] });
     } catch {
       done(null);
       return;

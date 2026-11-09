@@ -1,6 +1,10 @@
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
+import { rememberLastUsedBackendSelection } from '@/sync/domains/state/newSessionTargetUiState';
+import { clearPersistenceStorage } from '@/sync/domains/state/persistenceStorage';
 
-import { buildBackendTargetKeyV2 } from '@happier-dev/protocol';
+beforeEach(() => clearPersistenceStorage());
+
+import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 
 import { resolveSpawnBackendTargetFromState, resolveVoiceToolSpawnBackendTarget } from './spawnSessionAgent';
 import { AcpBackendDefinitionV1Schema } from '@happier-dev/protocol/acp/catalog/settingsV1';
@@ -13,6 +17,9 @@ describe('resolveVoiceToolSpawnBackendTarget (RU-02 customAcp ingress-only)', ()
     const definition = AcpBackendDefinitionV1Schema.parse({ id: 'row-review', name: 'row-review', title: 'Row review',
       launch: { kind: 'command' as const, command: 'review', args: [] }, createdAt: 1, updatedAt: 1 });
     applyAcpCatalogSnapshot(scope, { status: 'ready', revision: 3, record: { v: 1, definitions: [definition] } }, true);
+    rememberLastUsedBackendSelection(scope, { lastUsedAgent: 'codex', lastUsedBackendTarget: {
+      kind: 'backend', backendId: 'row-review', configuredBackendId: 'row-review',
+    } });
     expect(resolveSpawnBackendTargetFromState({ settingsScope: scope, settings: {
       lastUsedAgent: 'codex', lastUsedBackendTarget: { kind: 'backend', backendId: 'row-review', configuredBackendId: 'row-review' },
     } })).toEqual({ kind: 'backend', backendId: 'row-review', configuredBackendId: 'row-review', sourceKind: 'configured' });
@@ -21,6 +28,9 @@ describe('resolveVoiceToolSpawnBackendTarget (RU-02 customAcp ingress-only)', ()
 
   it('keeps a built-in automatic spawn independent of configured ACP row availability', () => {
     resetAcpCatalogSnapshotsForTests();
+    rememberLastUsedBackendSelection({ serverId: 'voice-tool-home', accountId: 'voice-tool-account' }, {
+      lastUsedAgent: 'codex', lastUsedBackendTarget: { kind: 'backend', backendId: 'codex' },
+    });
     expect(resolveVoiceToolSpawnBackendTarget({ state: { settingsScope: {
       serverId: 'voice-tool-home', accountId: 'voice-tool-account',
     }, settings: { lastUsedAgent: 'codex' } } })).toEqual({

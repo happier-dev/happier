@@ -1,5 +1,5 @@
 import { Platform } from 'react-native';
-import type { LocalNeuralExecution } from '@happier-dev/protocol';
+import type { LocalNeuralExecution } from '@happier-dev/protocol/daemon/voiceInference';
 
 import { isRuntimeFeatureEnabled } from '@/sync/domains/features/featureDecisionInputs';
 import { createDaemonVoiceInferenceClientError } from './daemonVoiceInferenceErrors';

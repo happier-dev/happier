@@ -1,8 +1,28 @@
 import { describe, expect, it } from 'vitest';
 
 import { collectVoiceSessionRows } from './voiceSessionRows';
+import { createSessionListRenderableSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 
 describe('collectVoiceSessionRows', () => {
+  it('uses admitted layout-one list visibility without requiring private continuation metadata', () => {
+    const visible = createSessionListRenderableSessionFixture({
+      id: 'visible-bot', metadataLayoutVersion: 1, metadataUnavailable: false,
+      metadata: { path: '/repo', bot: { kind: 'bot' }, botFace: { body: 'spider' } },
+    });
+    const hidden = createSessionListRenderableSessionFixture({
+      id: 'hidden-carrier', metadataLayoutVersion: 1, metadataUnavailable: false,
+      metadata: { path: '/repo', hiddenSystemSession: true },
+    });
+    const unavailable = createSessionListRenderableSessionFixture({
+      id: 'unavailable-owner', metadataLayoutVersion: 1, metadataUnavailable: true, metadata: null,
+    });
+    const rows = collectVoiceSessionRows({
+      sessionListRowsByServerId: { server: { 'visible-bot': visible, 'hidden-carrier': hidden, 'unavailable-owner': unavailable } },
+      ordinarySessionListMembershipByServerId: { server: ['visible-bot', 'hidden-carrier', 'unavailable-owner'] },
+    }, { activeServerId: 'server' });
+    expect(rows.map(row => row.id)).toEqual(['visible-bot']);
+  });
+
   it('keeps a current Team recipient visible without inventing a released direct share', () => {
     const rows = collectVoiceSessionRows({
       sessionListRowsByServerId: {

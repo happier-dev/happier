@@ -9,8 +9,23 @@ import { readVoiceSessionOwnerMetadataFromState } from '@/voice/shared/readVoice
 import { getActiveServerSnapshot, subscribeActiveServer } from '@/sync/domains/server/serverRuntime';
 import { getServerProfilesGeneration, subscribeServerProfiles } from '@/sync/domains/server/serverProfiles';
 import { areSessionAddressesEqual, normalizeSessionAddress } from '@/sync/domains/session/sessionAddress';
+import type { SessionListRenderableDelta } from '@/sync/store/domains/sessionListIndexFinalization';
 
 type BindingsByConversationSessionId = Record<string, VoiceSessionBinding>;
+type BindingSourceState = (NonNullable<SessionServerLookupStateLike> & Readonly<{
+    sessionListRenderableDelta?: SessionListRenderableDelta;
+}>) | null | undefined;
+
+export function isVoiceSessionBindingAvailableInState(
+    binding: VoiceSessionBinding | null,
+    state: Pick<NonNullable<SessionServerLookupStateLike>, 'sessions'> | null | undefined,
+): binding is VoiceSessionBinding {
+    if (!binding) return false;
+    if (binding.lifetime === 'runtime_attempt') return true;
+    const session = state?.sessions?.[binding.conversationSessionId];
+    return normalizeSessionAddress(session?.serverId, binding.conversationSessionId)?.serverId
+        === binding.conversationSessionAddress.serverId;
+}
 
 /**
  * Memory-only ownership for a direct-media runtime binding. It is deliberately
@@ -71,7 +86,7 @@ type VoiceSessionBindingStoreState = Readonly<{
     getByConversationSessionId: (conversationSessionId: string) => VoiceSessionBinding | null;
     getByControlSessionId: (controlSessionId: string) => VoiceSessionBinding | null;
     list: () => ReadonlyArray<VoiceSessionBinding>;
-    readPersistedBindings: (state: SessionServerLookupStateLike) => ReadonlyArray<VoiceSessionBinding>;
+    readPersistedBindings: (state: BindingSourceState, previousState?: BindingSourceState) => ReadonlyArray<VoiceSessionBinding>;
 }>;
 
 function normalizeId(value: unknown): string | null {
@@ -138,11 +153,16 @@ function upsertBindingRecord(
 function buildBindingsByConversationSessionId(
     bindings: ReadonlyArray<VoiceSessionBinding>,
 ): BindingsByConversationSessionId {
-    let nextBindings: BindingsByConversationSessionId = {};
+    // Runtime admission and the metadata reader already normalized these rows.
+    const nextBindings: BindingsByConversationSessionId = {};
+    const conversationByControl = new Map<string, string>();
     for (const binding of bindings) {
-        const normalized = normalizeBinding(binding);
-        if (!normalized) continue;
-        nextBindings = upsertBindingRecord(nextBindings, normalized);
+        const previous = conversationByControl.get(binding.controlSessionId);
+        if (previous) delete nextBindings[previous];
+        const replaced = nextBindings[binding.conversationSessionId];
+        if (replaced) conversationByControl.delete(replaced.controlSessionId);
+        nextBindings[binding.conversationSessionId] = binding;
+        conversationByControl.set(binding.controlSessionId, binding.conversationSessionId);
     }
     return nextBindings;
 }
@@ -192,33 +212,24 @@ export function mergeVoiceConversationBindings(
     // The persisted layer still owns discovery before local admission and after cleanup.
     return buildBindingsByConversationSessionId([
         ...Object.values(persistedBindingsByConversationSessionId).sort((left, right) =>
-            left.updatedAt - right.updatedAt || left.conversationSessionId.localeCompare(right.conversationSessionId)),
+            left.updatedAt - right.updatedAt || (left.conversationSessionId > right.conversationSessionId ? 1 : -1)),
         ...Object.values(runtimeBindingsByConversationSessionId),
     ]);
 }
 
-function listPersistedBindingsFromState(state: SessionServerLookupStateLike): ReadonlyArray<VoiceSessionBinding> {
-    const bindings: VoiceSessionBinding[] = [];
-    if (!state || typeof state !== 'object') {
-        return bindings;
-    }
-    for (const [sessionId, session] of Object.entries(state.sessions ?? {})) {
-        if (!session) continue;
-        const sourceServerId = normalizeId(session.serverId) ?? normalizeId(getActiveServerSnapshot().serverId);
-        const address = normalizeSessionAddress(sourceServerId, sessionId);
-        if (!address) continue;
-        const ownerMetadata = readVoiceSessionOwnerMetadataFromState(state, address);
-        const binding = readPreferredVoiceConversationBindingMetadata({
-            conversationSessionId: sessionId,
-            preferredMetadata: ownerMetadata,
-            directMetadata: null,
-            sourceServerId: address.serverId,
-        });
-        if (binding) {
-            bindings.push(binding);
-        }
-    }
-    return bindings;
+function readPersistedBindingFromState(state: BindingSourceState, sessionId: string): VoiceSessionBinding | null {
+    const session = state?.sessions?.[sessionId];
+    if (!session) return null;
+    const sourceServerId = normalizeId(session.serverId) ?? normalizeId(getActiveServerSnapshot().serverId);
+    const address = normalizeSessionAddress(sourceServerId, sessionId);
+    if (!address) return null;
+    const ownerMetadata = readVoiceSessionOwnerMetadataFromState(state, address);
+    return readPreferredVoiceConversationBindingMetadata({
+        conversationSessionId: sessionId,
+        preferredMetadata: ownerMetadata,
+        directMetadata: null,
+        sourceServerId: address.serverId,
+    });
 }
 
 export function createVoiceSessionBindingStore() {
@@ -232,6 +243,15 @@ export function createVoiceSessionBindingStore() {
         profilesGeneration: number;
     }> | null = null;
     let persistedBindings: ReadonlyArray<VoiceSessionBinding> = [];
+    const persistedBySessionId = new Map<string, VoiceSessionBinding>();
+    let replacedPersistedBindings: ReadonlyArray<VoiceSessionBinding> | null = null;
+    let runtimeBindingAvailabilityChanged = false;
+    const mergeAdmittedBindings = (
+        runtime: BindingsByConversationSessionId,
+        persisted: BindingsByConversationSessionId,
+    ) => mergeVoiceConversationBindings(persistedSource
+        ? Object.fromEntries(Object.entries(runtime).filter(([, binding]) => isVoiceSessionBindingAvailableInState(binding, persistedSource)))
+        : runtime, persisted);
     return createStore<VoiceSessionBindingStoreState>((set, get) => ({
         bindingsByConversationSessionId: {},
         runtimeBindingsByConversationSessionId: {},
@@ -251,7 +271,7 @@ export function createVoiceSessionBindingStore() {
                 return {
                     ...state,
                     runtimeBindingsByConversationSessionId,
-                    bindingsByConversationSessionId: mergeVoiceConversationBindings(
+                    bindingsByConversationSessionId: mergeAdmittedBindings(
                         runtimeBindingsByConversationSessionId,
                         state.persistedBindingsByConversationSessionId,
                     ),
@@ -267,7 +287,7 @@ export function createVoiceSessionBindingStore() {
                 return {
                     ...state,
                     runtimeBindingsByConversationSessionId,
-                    bindingsByConversationSessionId: mergeVoiceConversationBindings(
+                    bindingsByConversationSessionId: mergeAdmittedBindings(
                         runtimeBindingsByConversationSessionId,
                         state.persistedBindingsByConversationSessionId,
                     ),
@@ -275,21 +295,33 @@ export function createVoiceSessionBindingStore() {
             }),
         replacePersistedBindings: (bindings) =>
             set((state) => {
+                if (bindings === replacedPersistedBindings && !runtimeBindingAvailabilityChanged) return state;
+                const availabilityChanged = runtimeBindingAvailabilityChanged;
+                runtimeBindingAvailabilityChanged = false;
+                replacedPersistedBindings = bindings;
+                const admitted = bindings === persistedBindings ? bindings : bindings.flatMap(binding => {
+                    const normalized = normalizeBinding(binding);
+                    return normalized ? [normalized] : [];
+                });
+                const winners = new Map<string, VoiceSessionBinding>();
+                for (const binding of admitted) {
+                    winners.set(binding.controlSessionId, pickNewerVoiceBinding(winners.get(binding.controlSessionId) ?? null, binding)!);
+                }
                 const persistedBindingsByConversationSessionId = reconcileBindings(
                     state.persistedBindingsByConversationSessionId,
-                    buildBindingsByConversationSessionId(bindings),
+                    buildBindingsByConversationSessionId([...winners.values()]),
                 );
-                if (persistedBindingsByConversationSessionId === state.persistedBindingsByConversationSessionId) return state;
+                if (persistedBindingsByConversationSessionId === state.persistedBindingsByConversationSessionId && !availabilityChanged) return state;
+                const bindingsByConversationSessionId = reconcileBindings(
+                    state.bindingsByConversationSessionId,
+                    mergeAdmittedBindings(state.runtimeBindingsByConversationSessionId, persistedBindingsByConversationSessionId),
+                );
+                if (persistedBindingsByConversationSessionId === state.persistedBindingsByConversationSessionId
+                    && bindingsByConversationSessionId === state.bindingsByConversationSessionId) return state;
                 return {
                     ...state,
                     persistedBindingsByConversationSessionId,
-                    bindingsByConversationSessionId: reconcileBindings(
-                        state.bindingsByConversationSessionId,
-                        mergeVoiceConversationBindings(
-                            state.runtimeBindingsByConversationSessionId,
-                            persistedBindingsByConversationSessionId,
-                        ),
-                    ),
+                    bindingsByConversationSessionId,
                 };
             }),
         getByConversationSessionId: (conversationSessionId) => {
@@ -308,7 +340,7 @@ export function createVoiceSessionBindingStore() {
             return resolved;
         },
         list: () => Object.values(get().bindingsByConversationSessionId),
-        readPersistedBindings: (state) => {
+        readPersistedBindings: (state, previousState) => {
             const sessions = state?.sessions;
             const rows = state?.sessionListRowsByServerId;
             const activeServerId = getActiveServerSnapshot().serverId;
@@ -316,7 +348,32 @@ export function createVoiceSessionBindingStore() {
             if (!persistedSource || persistedSource.sessions !== sessions
                 || persistedSource.rows !== rows || persistedSource.activeServerId !== activeServerId
                 || persistedSource.profilesGeneration !== profilesGeneration) {
-                persistedBindings = listPersistedBindingsFromState(state);
+                const delta = state?.sessionListRenderableDelta;
+                // A delta is exhaustive only for the exact publication we last consumed.
+                // Unknown replacements and Home identity changes still rebuild discovery.
+                const incremental = persistedSource && previousState
+                    && persistedSource.sessions === previousState.sessions
+                    && persistedSource.rows === previousState.sessionListRowsByServerId
+                    && persistedSource.activeServerId === activeServerId
+                    && persistedSource.profilesGeneration === profilesGeneration
+                    && delta && delta.revision === (previousState.sessionListRenderableDelta?.revision ?? 0) + 1;
+                const ids = incremental
+                    ? new Set([...delta.changedSessionIds, ...delta.removedSessionIds, ...(delta.hydratedSessionIds ?? [])])
+                    : new Set([...persistedBySessionId.keys(), ...Object.keys(sessions ?? {}), ...Object.keys(get().runtimeBindingsByConversationSessionId)]);
+                let changed = false;
+                for (const id of ids) {
+                    const admitted = get();
+                    const runtimeBinding = admitted.runtimeBindingsByConversationSessionId[id];
+                    if (runtimeBinding && (admitted.bindingsByConversationSessionId[id] === runtimeBinding)
+                        !== isVoiceSessionBindingAvailableInState(runtimeBinding, state)) runtimeBindingAvailabilityChanged = true;
+                    const binding = readPersistedBindingFromState(state, id);
+                    const previous = persistedBySessionId.get(id);
+                    if ((!binding && !previous) || (binding && previous && areVoiceSessionBindingsEqual(previous, binding))) continue;
+                    changed = true;
+                    if (binding) persistedBySessionId.set(id, binding);
+                    else persistedBySessionId.delete(id);
+                }
+                if (changed) persistedBindings = [...persistedBySessionId.values()];
                 persistedSource = { sessions, rows, activeServerId, profilesGeneration };
             }
             return persistedBindings;
@@ -357,30 +414,15 @@ export function unbindVoiceRuntimeAttemptBindingIfOwned(input: Readonly<{
     const conversationSessionId = normalizeId(input.conversationSessionId);
     if (!conversationSessionId) return false;
 
-    let removed = false;
-    store.setState((state) => {
-        const current = state.runtimeBindingsByConversationSessionId[conversationSessionId] ?? null;
-        if (!current || readRuntimeAttemptBindingOwner(current) !== input.owner) return state;
-
-        const runtimeBindingsByConversationSessionId = {
-            ...state.runtimeBindingsByConversationSessionId,
-        };
-        delete runtimeBindingsByConversationSessionId[conversationSessionId];
-        removed = true;
-        return {
-            ...state,
-            runtimeBindingsByConversationSessionId,
-            bindingsByConversationSessionId: mergeVoiceConversationBindings(
-                runtimeBindingsByConversationSessionId,
-                state.persistedBindingsByConversationSessionId,
-            ),
-        };
-    });
-    return removed;
+    const current = store.getState().runtimeBindingsByConversationSessionId[conversationSessionId] ?? null;
+    if (!current || readRuntimeAttemptBindingOwner(current) !== input.owner) return false;
+    store.getState().unbind(conversationSessionId);
+    return true;
 }
 
 export function syncPersistedVoiceConversationBindings(params?: Readonly<{
-    state?: SessionServerLookupStateLike;
+    state?: BindingSourceState;
+    previousState?: BindingSourceState;
     store?: typeof voiceSessionBindingStore;
 }>): void {
     const nextState =
@@ -388,15 +430,13 @@ export function syncPersistedVoiceConversationBindings(params?: Readonly<{
         ?? readRegisteredStorageState()
         ?? { sessions: {} };
     const store = params?.store ?? voiceSessionBindingStore;
-    store.getState().replacePersistedBindings(store.getState().readPersistedBindings(nextState));
+    store.getState().replacePersistedBindings(store.getState().readPersistedBindings(nextState, params?.previousState));
 }
 
 syncPersistedVoiceConversationBindings();
 
 subscribeRegisteredStorageState((state, previousState) => {
-    if (previousState && state.sessions === previousState.sessions
-        && state.sessionListRowsByServerId === previousState.sessionListRowsByServerId) return;
-    syncPersistedVoiceConversationBindings({ state });
-});
+    syncPersistedVoiceConversationBindings({ state, previousState });
+}, { sessions: true, sessionListRowsByServerId: true });
 subscribeActiveServer(() => syncPersistedVoiceConversationBindings());
 subscribeServerProfiles(() => syncPersistedVoiceConversationBindings());

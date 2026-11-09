@@ -1,7 +1,8 @@
 import React from 'react';
 import { act } from 'react-test-renderer';
 import 'fake-indexeddb/auto';
-import { PluginContributesV2Schema, createVoiceProviderRecipientContractFromCredentialsV1 } from '@happier-dev/protocol';
+import { PluginContributesV2Schema} from '@happier-dev/protocol/plugins/contributions/v2';
+import { createVoiceProviderRecipientContractFromCredentialsV1 } from '@happier-dev/protocol/plugins/recipientContractV1';
 import { SavedSecretResourceMaterialV1Schema } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
 import { beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 
@@ -10,7 +11,6 @@ import { refreshSavedSecretCatalog } from '@/sync/engine/settings/savedSecretCat
 import { createDefaultVoiceProviderRegistry } from '@/voice/registry/defaultRegistry';
 import { createExternalVoiceProviderActivationScope } from '@/voice/registry/externalVoiceProviderActivation.testkit';
 import { createBundledConversationRuntimeHostLease } from '@/voice/registry/bundledConversationRuntimeHost';
-import { VoiceRawCredentialAccessReview } from '@/voice/credentials/VoiceRawCredentialAccessReview';
 import { VoiceCredentialItem } from '@/voice/credentials/CredentialItem';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { settingsDefaults, type Settings } from '@/sync/domains/settings/settings';
@@ -21,7 +21,6 @@ import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/s
 import { createVoiceSettingsAccountTestHarness, withVoiceSettingsCredentialResource } from './voiceSettingsAccountTestHarness';
 
 import { VoiceCredentialSourceField } from './realtime/VoiceCredentialSourceField';
-import { VoiceServiceGallery } from './VoiceServiceGallery';
 import { createAccountVoiceOperationService } from '@/voice/credentials/accountVoiceOperationService';
 import { resolveAccountVoiceCredentialStatus } from '@/voice/credentials/accountVoiceCredential';
 import { resolveSavedSecretReference } from '@/sync/store/settings/savedSecretCatalogSnapshot';
@@ -45,20 +44,11 @@ vi.mock('socket.io-client', async (importOriginal) => (
 installDisconnectedServerSocketBoundary();
 beforeEach(async () => {
   nativeAlert.mockClear();
-  nativeAlert.mockImplementation(() => { for (const notify of nativeAlertListeners) notify(); });
   account = await createVoiceSettingsAccountTestHarness(settingsDefaults);
   onTestFinished(account.dispose);
 });
 
 const nativeAlert = vi.hoisted(() => vi.fn<typeof import('react-native').Alert.alert>());
-const nativeAlertListeners = new Set<() => void>();
-async function waitForNativeAlert(title: string) {
-  await waitForTestEvent(notify => {
-    nativeAlertListeners.add(notify);
-    return () => { nativeAlertListeners.delete(notify); };
-  }, () => nativeAlert.mock.calls.at(-1)?.[0], value => value === title);
-  expect(nativeAlert.mock.calls.at(-1)?.[0]).toBe(title);
-}
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeNativeMock(
   { platformOS: 'ios' }, { Alert: { alert: nativeAlert },
     useWindowDimensions: () => ({ width: 1024, height: 768, scale: 1, fontScale: 1 }) },
@@ -273,48 +263,27 @@ describe('VoiceProviderSection raw credential review reachability', () => {
     }
   });
 
-  it('retains the Account resource but requires review before an external package change can use its credential', async () => {
+  it('retains the own linked resource across an external package change without a Voice recipient review', async () => {
     const pluginId = 'acme.review-voice';
     const sources = [{ kind: 'savedSecret', access: 'mediated' }] as const;
     const original = await activateRawCredentialOnlyProvider(pluginId, sources, 'acme-review-voice@1.0.0');
     onTestFinished(original.cleanup);
     const { settingsParse } = await import('@/sync/domains/settings/settings');
-    account.replaceSettings(settingsParse({ voice: { providerId: original.providerId,
-      providers: { [original.providerId]: { schemaVersion: 1, config: {} } } } }));
+    account.replaceSettings(await withVoiceSettingsCredentialResource(account, {
+      settings: settingsParse({ voice: { providerId: original.providerId,
+        providers: { [original.providerId]: { schemaVersion: 1, config: {} } } } }),
+      declaration: original.declaration, pluginId, resourceId: 'retained-own-secret',
+    }));
     const { VoiceProviderSection } = await import('./VoiceProviderSection');
     const section = () => <VoiceProviderSection voice={settingsParse(account.settings).voice}
       setVoice={account.replaceVoice} happierVoiceSupported platformOs="web" />;
     const screen = await renderScreen(section());
-    const credential = screen.tree.findAllByType(VoiceCredentialItem)[0]!;
-    const enter = credential.findAll(node => node.props.title === t('settingsVoice.externalCredentials.apiKeyTitle')
-      && typeof node.props.onPress === 'function')[0]!;
-    await act(async () => enter.props.onPress());
-    await waitForTestEvent(screen.subscribe, () => expect(screen.findHostByTestId('web-prompt-input')).not.toBeNull());
-    act(() => screen.changeTextByTestId('web-prompt-input', 'test-only-recipient-key'));
-    await screen.pressByTestIdAsync('web-prompt-confirm');
-    await waitForNativeAlert(t('settingsVoice.local.voiceCredential.plainStorageTitle'));
-    await act(async () => nativeAlert.mock.calls.at(-1)?.[2]?.find(button => button.style !== 'cancel')?.onPress?.());
-    await waitForNativeAlert(t('settingsVoice.externalCredentials.recipientApprovalTitle'));
-    // The present user's reversible Action is direct by default. No resource
-    // may be created before the actual recipient-consent tap.
-    expect(account.resources).toHaveLength(0);
-    expect(account.promotions).toHaveLength(0);
-    await act(async () => nativeAlert.mock.calls.at(-1)?.[2]?.find(button => button.style !== 'cancel')?.onPress?.());
-    await waitForTestEvent(account.subscribe, () => account.resources.length, count => count === 1);
-    expect(account.resources, JSON.stringify({
-      alerts: nativeAlert.mock.calls.map(([title, message]) => ({ title, message })),
-      routes: account.request.mock.calls.map(([input]) => new URL(input instanceof Request ? input.url : String(input)).pathname),
-    })).toHaveLength(1);
-    await waitForTestEvent(screen.subscribe, screen.getTextContent,
-      text => text.includes(t('settingsVoice.local.voiceCredential.setOnAccount')));
-    expect(screen.getTextContent()).toContain(t('settingsVoice.local.voiceCredential.setOnAccount'));
-    expect(account.promotions).toHaveLength(1);
+    await waitForTestEvent(screen.subscribe, () => screen.getTextContent(), text => text.includes(t('settingsVoice.local.voiceCredential.setOnAccount')));
     const retainedEntry = account.resources[0]!.entry;
     if (!('ref' in retainedEntry)) throw new Error('Expected acknowledged SavedSecret Resource');
     const retainedRef = retainedEntry.ref;
     expect(account.settings.voiceSettingsV1.credentialBindings).toHaveLength(1);
-    const priorApproval = account.settings.voiceSettingsV1.credentialBindings[0]!.approvedRecipientContractDigest;
-    expect(priorApproval).toEqual(expect.any(String));
+    expect(account.settings.voiceSettingsV1.credentialBindings[0]!.approvedRecipientContractDigest).toBeUndefined();
     await act(async () => original.cleanup());
     const changed = await activateRawCredentialOnlyProvider(pluginId, sources, 'acme-review-voice@2.0.0');
     onTestFinished(changed.cleanup);
@@ -322,21 +291,14 @@ describe('VoiceProviderSection raw credential review reachability', () => {
     await screen.update(section());
     const entry = createDefaultVoiceProviderRegistry().get(changed.providerId);
     expect(entry?.accountCredentialSlot?.recipientContract).toEqual(changed.recipientContract);
-    expect(entry?.accountCredentialSlot?.recipientContractDigest).not.toBe(
-      priorApproval,
-    );
     expect(resolveAccountVoiceCredentialStatus({ settings: account.settings, contribution: changed.contribution,
       credentialSlotId: changed.declaration.credentials!.slot.id,
-      requiredRecipientContractDigest: entry?.accountCredentialSlot?.recipientContractDigest,
       resolveSavedSecret: ref => resolveSavedSecretReference(account.scope, account.settings.secrets, ref),
-    })).toMatchObject({ status: 'review_required', reference: { secretId: retainedRef } });
-    const gallery = screen.tree.findAllByType(VoiceServiceGallery)[0]!;
-    expect(gallery.props.tiles.find((tile: Readonly<{ id: string }>) => tile.id === changed.providerId)?.status)
-      .toMatchObject({ tone: 'needs_you', detail: expect.stringContaining(t('settingsVoice.externalCredentials.reviewRequired')) });
-    expect(screen.getTextContent()).toContain(t('settingsVoice.externalCredentials.reviewRequired'));
+    })).toMatchObject({ status: 'ready', reference: { secretId: retainedRef } });
+    expect(nativeAlert.mock.calls.some(([title]) => title === t('settingsVoice.externalCredentials.recipientApprovalTitle'))).toBe(false);
     expect(account.resources).toHaveLength(1);
     expect(account.resources[0]!.entry).toMatchObject({ ref: retainedRef });
-    const vendorRequest = vi.fn<typeof globalThis.fetch>();
+    const vendorRequest = vi.fn<typeof globalThis.fetch>(async () => Response.json({ value: 'ephemeral-token' }));
     if (!changed.recipientContract) throw new Error('expected verified external recipient contract');
     const controller = new AbortController();
     const lifetime = captureActiveServerAccountScopeLifetime();
@@ -345,10 +307,8 @@ describe('VoiceProviderSection raw credential review reachability', () => {
       contribution: changed.contribution, declaration: changed.declaration, phase: 'connection',
       recipientContract: changed.recipientContract, signal: controller.signal,
       isCurrent: lifetime.isCurrent, fetch: vendorRequest });
-    await expect(operation.request({ operationId: 'client-auth', parameters: {}, signal: controller.signal })).rejects.toMatchObject({
-      code: 'credential_access_review_required',
-    });
-    expect(vendorRequest).not.toHaveBeenCalled();
+    await expect(operation.request({ operationId: 'client-auth', parameters: {}, signal: controller.signal })).resolves.toMatchObject({ status: 200 });
+    expect(vendorRequest).toHaveBeenCalledTimes(1);
   }, 120_000);
   it.each([
     {
@@ -358,7 +318,7 @@ describe('VoiceProviderSection raw credential review reachability', () => {
       selectedSource: 'savedSecret' as const,
       expectedSavedSecretRawReviewGrants: 1,
       expectedSourceSelectors: 0,
-      expectedRawCredentialReviews: 1,
+      expectedRawCredentialReviews: 0,
       expectedRawCopy: true,
     },
     {
@@ -378,7 +338,7 @@ describe('VoiceProviderSection raw credential review reachability', () => {
       selectedSource: 'savedSecret' as const,
       expectedSavedSecretRawReviewGrants: 1,
       expectedSourceSelectors: 1,
-      expectedRawCredentialReviews: 1,
+      expectedRawCredentialReviews: 0,
       expectedRawCopy: true,
     },
     {
@@ -386,10 +346,10 @@ describe('VoiceProviderSection raw credential review reachability', () => {
       pluginId: 'acme.mediated-secret-voice',
       sources: [{ kind: 'savedSecret', access: 'mediated' }] as const,
       selectedSource: 'savedSecret' as const,
-      expectedSavedSecretRawReviewGrants: 0,
+      expectedSavedSecretRawReviewGrants: 1,
       expectedSourceSelectors: 0,
       expectedRawCredentialReviews: 0,
-      expectedRawCopy: false,
+      expectedRawCopy: true,
     },
     {
       label: 'mediated SavedSecret selected beside a raw Connected Account',
@@ -399,12 +359,12 @@ describe('VoiceProviderSection raw credential review reachability', () => {
         { kind: 'connectedAccount' },
       ] as const,
       selectedSource: 'savedSecret' as const,
-      expectedSavedSecretRawReviewGrants: 0,
+      expectedSavedSecretRawReviewGrants: 1,
       expectedSourceSelectors: 1,
       expectedRawCredentialReviews: 0,
-      expectedRawCopy: false,
+      expectedRawCopy: true,
     },
-  ])('only renders the generic review control for a selected $label source without a mediated account slot', async ({
+  ])('renders review only when the selected $label source needs approval', async ({
     pluginId,
     sources,
     selectedSource,
@@ -458,7 +418,7 @@ describe('VoiceProviderSection raw credential review reachability', () => {
     expect(entry?.accountCredentialSlot).toBeUndefined();
 
     const { VoiceProviderSection } = await import('./VoiceProviderSection');
-    const { tree } = await renderScreen(<VoiceProviderSection
+    const screen = await renderScreen(<VoiceProviderSection
       voice={settingsParse({ voice: {
         providerId: fixture.providerId,
         providers: {
@@ -470,13 +430,11 @@ describe('VoiceProviderSection raw credential review reachability', () => {
       platformOs="web"
     />);
 
-    const reviews = tree.findAllByType(VoiceRawCredentialAccessReview);
-    expect(reviews).toHaveLength(expectedRawCredentialReviews);
-    if (expectedRawCredentialReviews > 0) {
-      expect(reviews[0]?.props.contribution).toEqual(fixture.contribution);
-    }
-
+    const { tree } = screen;
     const savedSecretTestId = `settings.voice.externalCredential.${encodeURIComponent(fixture.providerId)}.${fixture.declaration.credentials?.slot.id}`;
+    const reviewTestId = selectedSource === 'savedSecret' ? `${savedSecretTestId}-raw-credential-access`
+      : `settings.voice.externalCredential.${encodeURIComponent(fixture.providerId)}.rawAccess`;
+    expect(screen.findHostByTestId(reviewTestId) !== null).toBe(expectedRawCredentialReviews > 0);
     const savedSecretEntries = tree.findAllByType(VoiceCredentialItem).filter(
       (item) => item.props.testID === savedSecretTestId,
     );

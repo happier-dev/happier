@@ -36,7 +36,7 @@ describe('VoiceServiceListScreen', () => {
     }
   });
 
-  it('does not recompute service readiness for unrelated Account settings but observes its credential roots', async () => {
+  it('does not recompute service readiness for unrelated Account settings or saved secrets', async () => {
     getPersistenceStorage().clearAll();
     const account = await createVoiceSettingsAccountTestHarness(settingsDefaults);
     await refreshSavedSecretCatalog(account.scope);
@@ -44,7 +44,7 @@ describe('VoiceServiceListScreen', () => {
     const hook = await renderHook(() => {
       renders++;
       return useVoiceConversationsReadinessModel({ voice: settingsDefaults.voice, setVoice: () => {}, happierVoiceSupported: false });
-    }, { wrapper: ({ children }) => <AuthProvider initialCredentials={{ token: 'token-1', secret: 'secret-1' }}>{children}</AuthProvider> });
+    }, { wrapper: ({ children }) => <AuthProvider initialCredentials={account.credentials}>{children}</AuthProvider> });
     const baseline = renders;
     const model = hook.getCurrent();
     await act(async () => {
@@ -56,7 +56,8 @@ describe('VoiceServiceListScreen', () => {
       await account.addOwnerResource();
       await refreshSavedSecretCatalog(account.scope);
     });
-    expect(renders).toBeGreaterThan(baseline);
+    expect(renders - baseline).toBe(0);
+    expect(hook.getCurrent()).toBe(model);
     await hook.unmount();
     await account.dispose();
   });

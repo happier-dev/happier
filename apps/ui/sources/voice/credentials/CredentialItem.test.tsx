@@ -6,7 +6,8 @@ import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import 'fake-indexeddb/auto';
 import { installWebLockManagerMock } from '@/auth/storage/tokenStorage.web.testHelpers';
-import { createRecipientContractDigestV1, normalizeRecipientContractV1, VoiceProviderContributionSchema } from '@happier-dev/protocol';
+import { normalizeRecipientContractV1} from '@happier-dev/protocol/plugins/recipientContractV1';
+import { VoiceProviderContributionSchema } from '@happier-dev/protocol/plugins/contributions/voice';
 import type { ConnectedPurposeCatalogV1 } from '@happier-dev/protocol/connect/connectedAccountConfigurationRowsV1';
 import { createDeferred, renderScreen, standardCleanup, waitForTestEvent } from '@/dev/testkit';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
@@ -149,20 +150,16 @@ const { commitExternalVoiceProviderRegistration, removeExternalVoiceProviderRegi
   replaceExternalVoiceProviderProjectionAuthority } = await import('@/voice/registry/externalVoiceProviderRegistrations');
 const { VoiceCredentialItem } = await import('./CredentialItem');
 const { VoiceRawCredentialAccessReview } = await import('./VoiceRawCredentialAccessReview');
-const { ModalProvider } = await import('@/modal');
+const { Modal, ModalProvider } = await import('@/modal');
 const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');
-const { SavedSecretPickerModal } = await import('@/components/ui/forms/valueRefs/SavedSecretPickerModal');
 const { storage } = await import('@/sync/domains/state/storage');
 const { refreshSavedSecretCatalog } = await import('@/sync/engine/settings/savedSecretCatalogEngine');
 const token = Object.freeze({});
 const contribution = { pluginId: 'com.acme.voice', localId: 'conversation' } as const;
 let account: Awaited<ReturnType<typeof createSecretSettingsTestHarness>> | undefined;
 let selectedSecretRef: string | undefined;
-let pickerProps: React.ComponentProps<typeof SavedSecretPickerModal> | undefined;
 let credentialChanged = createDeferred<void>();
 let alertPresented = createDeferred<void>();
-let confirmPresented = createDeferred<void>();
-let recipientConfirmationPresented = createDeferred<void>();
 
 function register(declaration: typeof credentialSourceDeclaration | null = credentialSourceDeclaration, contract?: typeof recipientContract) {
   removeExternalVoiceProviderRegistration(token);
@@ -190,9 +187,12 @@ function secretSettings(source: 'none' | 'savedSecret' = 'none', reference: stri
 }
 
 async function setup(settings: Settings = settingsParse({}), connectedPurposes: ConnectedPurposeCatalogV1 = { v: 1, bindings: [] }) {
-  account = await createSecretSettingsTestHarness({ settings: settingsParse({ ...settings,
+  const initialSettings = settingsParse({ ...settings,
     actionsSettingsV1: { v: 1, approvalWaivedSurfaces: { 'secrets.shared.promote': ['ui'], 'secrets.shared.create': ['ui'] } },
-  }), connectedPurposes, voiceEnabled: true });
+  });
+  account = await createSecretSettingsTestHarness({ settings: initialSettings,
+    // Retained legacy HTTP bytes are read/imported, not a new unsealed Settings write.
+    rawSettings: initialSettings, connectedPurposes, voiceEnabled: true });
   await account.purposes!.hydrate(account.scope);
   await refreshSavedSecretCatalog(account.scope);
   if (settings.secrets.length) {
@@ -215,7 +215,7 @@ function binding() { return account?.persistedSettings.voiceSettingsV1.credentia
 function choose(ref = storedRef()) {
   selectedSecretRef = ref;
 }
-async function render(options: Partial<React.ComponentProps<typeof VoiceCredentialItem>> = {}, onRender?: React.ProfilerOnRenderCallback) {
+async function render(options: Partial<React.ComponentProps<typeof VoiceCredentialItem>> & { recipientContract?: typeof recipientContract } = {}, onRender?: React.ProfilerOnRenderCallback) {
   if (options.recipientContract) {
     const declaration = VoiceProviderContributionSchema.parse({ ...credentialSourceDeclaration,
       credentials: { ...credentialSourceDeclaration.credentials, hostMediated: { operations: options.recipientContract.operations } },
@@ -233,11 +233,10 @@ async function render(options: Partial<React.ComponentProps<typeof VoiceCredenti
     } : null,
   });
 }
-async function gesture(screen: Awaited<ReturnType<typeof render>>, id: 'enterNew' | 'useSavedSecret' = 'enterNew') {
-  const reviewing = screen.tree.findAll(node => node.props.title === 'API key' && typeof node.props.onPress === 'function')[0]?.props.subtitle
-    === t('settingsVoice.externalCredentials.reviewRequired');
-  const confirmationsBefore = boundary.confirm.mock.calls.length;
-  confirmPresented = createDeferred<void>();
+async function openGesture(screen: Awaited<ReturnType<typeof render>>, gesture: 'enterNew' | 'useSavedSecret') {
+  // A linked key's menu has one way into the Connect sheet (Replace); New and Saved both live in the sheet.
+  void gesture;
+  const id = 'useSavedSecret';
   const menu = screen.tree.findAllByType(DropdownMenu)[0];
   if (menu) {
     const trigger = screen.tree.findAll(node => node.props.title === 'API key' && typeof node.props.onPress === 'function')[0];
@@ -252,37 +251,86 @@ async function gesture(screen: Awaited<ReturnType<typeof render>>, id: 'enterNew
     });
     await screen.tree.pressByTestIdAsync(`dropdown-option-${id}`);
   } else {
-    if (id !== 'enterNew') throw new Error('SavedSecret selector missing');
-    await screen.tree.pressByTestIdAsync('credential');
+    const control = screen.tree.findHostByTestId('credential');
+    if (!control) throw new Error('Credential control missing');
+    await act(async () => { await control.props.onPress({ currentTarget: control.instance }); });
   }
+}
+async function gesture(screen: Awaited<ReturnType<typeof render>>, id: 'enterNew' | 'useSavedSecret' = 'enterNew') {
+  await openGesture(screen, id);
+  await waitForTestEvent(screen.subscribe, () => expect(screen.tree.findByTestId('connect-key-sheet')).not.toBeNull());
   if (id === 'useSavedSecret') {
     const ref = selectedSecretRef ?? storedRef();
-    await waitForTestEvent(screen.subscribe, () => expect(screen.tree.findByTestId(`saved-secret:${ref}`)).not.toBeNull());
-    // React Test Renderer exposes props as an untyped SDK bag at this component boundary.
-    pickerProps = screen.tree.findAllByType(SavedSecretPickerModal)[0]?.props as React.ComponentProps<typeof SavedSecretPickerModal> | undefined;
-    await screen.tree.pressByTestIdAsync(`saved-secret:${ref}`);
-  } else if (reviewing) {
-    await confirmPresented.promise;
-    expect(boundary.confirm.mock.calls.length).toBeGreaterThan(confirmationsBefore);
-  } else {
-    await waitForTestEvent(notify => {
-      const stopScreen = screen.subscribe(notify);
-      nativeAlertObservers.add(notify);
-      return () => { stopScreen(); nativeAlertObservers.delete(notify); };
-    }, () => expect(Boolean(screen.tree.findByTestId('web-prompt-input')) || boundary.alert.mock.calls.length > 0).toBe(true));
-    if (screen.tree.findByTestId('web-prompt-input')) {
-      await act(async () => { screen.tree.changeTextByTestId('web-prompt-input', 'new-secret'); });
-      await screen.tree.pressByTestIdAsync('web-prompt-confirm');
+    await waitForTestEvent(screen.subscribe, () => expect(Boolean(
+      screen.tree.findByTestId(`connect-key-sheet:saved:${ref}`)
+      || screen.tree.findByTestId('connect-key-sheet:mode:saved'),
+    )).toBe(true));
+    if (!screen.tree.findByTestId(`connect-key-sheet:saved:${ref}`)) {
+      await screen.tree.pressByTestIdAsync('connect-key-sheet:mode:saved');
     }
+    await waitForTestEvent(screen.subscribe, () => expect(screen.tree.findByTestId(`connect-key-sheet:saved:${ref}`)).not.toBeNull());
+    await screen.tree.pressByTestIdAsync(`connect-key-sheet:saved:${ref}`);
+    await screen.tree.pressByTestIdAsync('connect-key-sheet:use');
+    return;
   }
+  if (!screen.tree.findByTestId('saved-secret-create-value')) {
+    await screen.tree.pressByTestIdAsync('connect-key-sheet:mode:new');
+  }
+  await waitForTestEvent(screen.subscribe, () => expect(screen.tree.findByTestId('saved-secret-create-value')).not.toBeNull());
+  await act(async () => {
+    const name = screen.tree.findAllByTestId('saved-secret-create-name').find(node => typeof node.props.onChangeText === 'function');
+    name?.props.onChangeText('Acme new key');
+    screen.tree.changeTextByTestId('saved-secret-create-value', 'new-secret');
+  });
+  await screen.tree.pressByTestIdAsync('saved-secret-create-submit');
 }
 function failures() { return log.getLogs().filter(message => message.includes('voice_credential:')); }
 
 describe('VoiceCredentialItem', () => {
+  it('links the canonical key returned by Connect without creating or copying a secret', async () => {
+    await setup(secretSettings());
+    const ref = storedRef();
+    const before = structuredClone(account!.resources);
+    const screen = await render();
+    const shown = createDeferred<{
+      request: { current?: string; bindingTarget?: unknown; anchor?: unknown };
+      onResult: (result: { kind: 'selected'; secretRef: string }) => void;
+    }>();
+    const original = Modal.show.bind(Modal);
+    // Modal presentation is the boundary; binding and Account HTTP remain real.
+    const show = vi.spyOn(Modal, 'show').mockImplementation(config => {
+      const candidate = config.props;
+      if (candidate && typeof candidate === 'object' && 'request' in candidate && 'onResult' in candidate) {
+        shown.resolve(candidate as Parameters<typeof shown.resolve>[0]);
+        return 'connect-key-sheet';
+      }
+      return original(config);
+    });
+    try {
+      await openGesture(screen, 'useSavedSecret');
+      const sheet = await shown.promise;
+      expect(sheet.request.bindingTarget).toEqual({ kind: 'voice', contribution, slot: 'api-key' });
+      expect(sheet.request.anchor).toMatchObject({ kind: 'view' });
+      await act(async () => { sheet.onResult({ kind: 'selected', secretRef: ref }); });
+      await credentialChanged.promise;
+      expect(binding()).toMatchObject({ credentialSource: { kind: 'savedSecret' },
+        credentialBindings: { account: { 'api-key': ref } } });
+      expect(account!.resources).toEqual(before);
+      expect(boundary.confirm).not.toHaveBeenCalled();
+    } finally { show.mockRestore(); }
+  });
+
   it('does not commit for unrelated Account preference revisions', async () => {
     await setup(secretSettings());
     let commits = 0;
     const screen = await render({}, () => { commits += 1; });
+    // Complete the mounted credential acquisition before measuring the idle row.
+    // Opening and cancelling the actual sheet creates no secret or binding.
+    await openGesture(screen, 'enterNew');
+    await waitForTestEvent(screen.subscribe, () => expect(screen.tree.findByTestId('connect-key-sheet')).not.toBeNull());
+    await screen.tree.pressByTestIdAsync(screen.tree.findByTestId('connect-key-sheet:cancel')
+      ? 'connect-key-sheet:cancel' : 'saved-secret-create-cancel');
+    await waitForTestEvent(screen.subscribe, () => expect(screen.tree.findByTestId('connect-key-sheet')).toBeNull());
     const initial = commits;
     for (let index = 0; index < 20; index += 1) {
       await act(async () => { account!.replaceSettings({ ...storage.getState().settings,
@@ -303,19 +351,14 @@ describe('VoiceCredentialItem', () => {
     vi.clearAllMocks();
     log.clear();
     selectedSecretRef = undefined;
-    pickerProps = undefined;
     credentialChanged = createDeferred<void>();
     alertPresented = createDeferred<void>();
-    confirmPresented = createDeferred<void>();
-    recipientConfirmationPresented = createDeferred<void>();
     boundary.confirmDecisions = [];
     // Native Alert is the OS presentation boundary. Press its real supplied
     // button callbacks; ModalManager still owns the confirmation promise.
     boundary.nativeAlert.mockImplementation((title, message, buttons) => {
       if (buttons?.length === 2) {
         boundary.confirm(title, message);
-        confirmPresented.resolve();
-        if (boundary.confirm.mock.calls.length === 2) recipientConfirmationPresented.resolve();
         buttons[boundary.confirmDecisions.shift() === false ? 0 : 1]?.onPress?.();
       } else {
         boundary.alert(title, message);
@@ -343,21 +386,6 @@ describe('VoiceCredentialItem', () => {
       contribution={contribution} credentialSlotId="api-key" credentialSourcePurpose="voice.client-auth"
       credentialSourceDeclaration={credentialSourceDeclaration} rawCredentialReviewGrants={[]} disclosePlainStorage /></ModalProvider></InjectedAuthProvider>);
     expect(screen.tree.findAllByType(VoiceRawCredentialAccessReview)).toHaveLength(0);
-  });
-
-  it('selects a stored SavedSecret without prompting or changing its material', async () => {
-    await setup(secretSettings());
-    const ref = storedRef();
-    const before = structuredClone(account!.resources);
-    choose(ref);
-    const screen = await render();
-    await gesture(screen, 'useSavedSecret');
-    await credentialChanged.promise;
-    expect(binding()).toMatchObject({ credentialSource: { kind: 'savedSecret' },
-      credentialBindings: { account: { 'api-key': ref } } });
-    expect(account!.resources).toEqual(before);
-    expect(screen.tree.findByTestId('web-prompt-input')).toBeNull();
-    expect(pickerProps).toMatchObject({ includeNoneRow: false, allowAdd: false, allowEdit: false });
   });
 
   it('replaces a dormant SavedSecret without changing the selected Connected Account', async () => {
@@ -399,18 +427,17 @@ describe('VoiceCredentialItem', () => {
     expect(failures()).toEqual([]);
   });
 
-  it('declining recipient approval records a safe failure and changes no credential', async () => {
+  it('links an existing own secret even when a recipient confirmation would be declined', async () => {
     await setup(secretSettings());
     choose();
     boundary.confirmDecisions = [false];
     const screen = await render({ recipientContract });
     await gesture(screen, 'useSavedSecret');
-    await waitForTestEvent(listener => log.onChange(listener), failures, values => values.length === 1);
-    expect(failures()).toHaveLength(1);
-    expect(failures()[0]).toContain('recipient_contract_not_approved');
-    expect(failures()[0]).not.toContain('retained-secret');
-    expect(binding()).toBeUndefined();
-    expect(account!.purposes!.writes).toHaveLength(0);
+    await credentialChanged.promise;
+    expect(boundary.confirm).not.toHaveBeenCalled();
+    expect(binding()?.credentialSource).toEqual({ kind: 'savedSecret' });
+    expect(binding()?.approvedRecipientContractDigest).toBeUndefined();
+    expect(failures()).toEqual([]);
   });
 
   it('reports missing Settings CAS authority instead of claiming the selection changed', async () => {
@@ -425,7 +452,7 @@ describe('VoiceCredentialItem', () => {
     expect(account!.purposes!.writes).toHaveLength(0);
   });
 
-  it('atomically creates and activates the new SavedSecret', async () => {
+  it('creates a SavedSecret in Connect and activates its returned reference', async () => {
     await setup();
     const changed = vi.fn();
     const screen = await render({ onChanged: changed });
@@ -435,21 +462,21 @@ describe('VoiceCredentialItem', () => {
     expect(binding()).toMatchObject({ credentialSource: { kind: 'savedSecret' } });
     expect(account!.resources).toHaveLength(1);
     expect(account!.persistedSettings.secrets).toEqual([]);
-    expect(account!.promotions).toHaveLength(1);
+    expect(account!.promotions).toHaveLength(0);
   });
 
-  it('fails closed when the current qualified declaration is unavailable', async () => {
+  it('refuses to bind the created key when the current qualified declaration is unavailable', async () => {
     await setup();
     register(null);
     const screen = await render({ credentialSourceDeclaration: undefined });
     await gesture(screen);
     await alertPresented.promise;
     expect(boundary.alert).toHaveBeenCalledWith(t('common.error'), t('settingsVoice.local.voiceCredential.operationFailed'));
-    expect(account!.resources).toHaveLength(0);
+    expect(account!.resources).toHaveLength(1);
     expect(binding()).toBeUndefined();
   });
 
-  it('reports a save conflict without claiming the credential changed', async () => {
+  it('retains the created key after a binding conflict without claiming the credential changed', async () => {
     await setup();
     account!.setRejectSettingsWrites(true);
     const changed = vi.fn();
@@ -458,7 +485,7 @@ describe('VoiceCredentialItem', () => {
     await alertPresented.promise;
     expect(boundary.alert).toHaveBeenCalledWith(t('common.error'), t('settingsVoice.local.voiceCredential.operationFailed'));
     expect(changed).not.toHaveBeenCalled();
-    expect(account!.resources).toHaveLength(0);
+    expect(account!.resources).toHaveLength(1);
     expect(binding()).toBeUndefined();
   });
 
@@ -483,51 +510,34 @@ describe('VoiceCredentialItem', () => {
     await alertPresented.promise;
     expect(boundary.alert).toHaveBeenCalledWith(t('common.error'), t('settingsProviders.errors.mutationOutcomeUnknownDescription'));
     expect(changed).not.toHaveBeenCalled();
-    expect(failures()[0]).toContain(kind === 'useSavedSecret' ? 'saved_secret_binding_outcome_unknown' : 'saved_secret_replacement_outcome_unknown');
+    expect(failures()[0]).toContain('saved_secret_binding_outcome_unknown');
   });
 
-  it('discloses bounded recipient facts and cancellation persists or sends nothing', async () => {
+  it('creates and links an own credential without a second recipient approval', async () => {
     await setup();
-    boundary.confirmDecisions = [true, false];
     const screen = await render({ recipientContract });
     await gesture(screen);
-    await recipientConfirmationPresented.promise;
-    expect(boundary.confirm).toHaveBeenCalledTimes(2);
-    const body = String(boundary.confirm.mock.calls[1]?.[1]);
-    for (const fact of ['com.acme.voice', '@acme/voice', 'verified', 'npm:https://registry.npmjs.org:@acme', 'conversation', 'voice.session-create',
-      'mutation', 'POST', 'https://api.example.com', '/v1/sessions', 'authorization', 'bearer', '4096', '65536',
-      'voice.catalog', 'read', 'GET', 'https://catalog.example.com', '/v1/voices', 'x-api-key', 'raw', '0', '32768']) expect(body).toContain(fact);
-    expect(body.indexOf('a-create')).toBeLessThan(body.indexOf('z-catalog'));
-    for (const privateValue of ['new-secret', 'DO_NOT_SHOW_STATIC', 'DO_NOT_SHOW_HEADER', 'DO_NOT_SHOW_BODY']) expect(body).not.toContain(privateValue);
-    expect(account!.resources).toHaveLength(0);
-    expect(binding()).toBeUndefined();
+    await credentialChanged.promise;
+    // Creation follows the canonical personal editor; linking an owned reference needs no recipient approval.
+    expect(boundary.confirm).not.toHaveBeenCalled();
+    expect(account!.resources).toHaveLength(1);
+    expect(binding()?.approvedRecipientContractDigest).toBeUndefined();
+    expect(JSON.stringify(boundary.confirm.mock.calls)).not.toContain('new-secret');
   });
 
-  it('requires review of a retained credential and stores approval without disclosing or replacing its material', async () => {
+  it('uses a retained linked credential despite legacy approval metadata without rewriting its material', async () => {
     await setup(secretSettings('savedSecret', 'stored-secret', `sha256:${'0'.repeat(64)}`));
     const before = structuredClone(account!.resources);
-    const reviewRequired = createDeferred<void>();
     const ready = createDeferred<void>();
     const onStatusChanged = vi.fn((status: { status: string }) => {
-      if (status.status === 'review_required') reviewRequired.resolve();
       if (status.status === 'ready') ready.resolve();
     });
-    const screen = await render({ recipientContract, onStatusChanged });
-    await reviewRequired.promise;
-    expect(onStatusChanged).toHaveBeenCalledWith(expect.objectContaining({ status: 'review_required', usable: false }));
-    expect(screen.tree.findAll(node => node.props.title === 'API key' && typeof node.props.onPress === 'function')[0]?.props.subtitle).toBe(t('settingsVoice.externalCredentials.reviewRequired'));
-    await gesture(screen);
+    await render({ recipientContract, onStatusChanged });
     await ready.promise;
     expect(onStatusChanged).toHaveBeenCalledWith(expect.objectContaining({ status: 'ready', usable: true }));
-    expect(screen.tree.findByTestId('web-prompt-input')).toBeNull();
     expect(account!.resources).toEqual(before);
     expect(JSON.stringify(boundary.confirm.mock.calls)).not.toContain('retained-secret');
-    const { resolveAccountVoiceCredentialApprovalDigest } = await import('./accountVoiceCredential');
-    const { resolveSavedSecretReference } = await import('@/sync/store/settings/savedSecretCatalogSnapshot');
-    expect(binding()).toMatchObject({ approvedRecipientContractDigest: resolveAccountVoiceCredentialApprovalDigest({
-      requiredRecipientContractDigest: createRecipientContractDigestV1(recipientContract),
-      savedSecret: resolveSavedSecretReference(account!.scope, [], storedRef()),
-    }) });
+    expect(boundary.confirm).not.toHaveBeenCalled();
   });
 
   it('reports an unreadable Settings snapshot rather than claiming the stored key is missing', async () => {

@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { getActionSpec, zodSchemaToJsonSchemaObject, type VoiceRealtimeJsonValue } from '@happier-dev/protocol';
+import { getActionSpec} from '@happier-dev/protocol/actions/actionSpecs';
+import { zodSchemaToJsonSchemaObject} from '@happier-dev/protocol/actions/actionInputJsonSchema';
+import { type VoiceRealtimeJsonValue } from '@happier-dev/protocol/voice/realtime/events';
 import { describeActionForVoiceTool } from '@happier-dev/protocol/actions/actionVoiceToolSummary';
 import { createOpenAiToolSessionUpdate } from '../../../../../../packages/plugins/openai/src/ui/voice/protocol';
 import { TestVoiceWebRtcPeer as FakeWebRtcPeer, installVoiceWebRtcBrowserBoundary, TestVoiceAudioContext } from '@/dev/testkit/harness/voiceWebRtcHarness';
@@ -899,7 +901,7 @@ describe('VoiceRealtimeConnection implementations', () => {
       releaseInitialControl = resolve;
     });
     const onOpen = vi.fn(async ({ sendJson }: Readonly<{
-      sendJson(value: import('@happier-dev/protocol').VoiceRealtimeJsonValue): Promise<void>;
+      sendJson(value: import('@happier-dev/protocol/voice/realtime/events').VoiceRealtimeJsonValue): Promise<void>;
     }>) => {
       await sendJson({ type: 'session.update', sequence: 1 });
       await initialControlGate;
@@ -956,7 +958,7 @@ describe('VoiceRealtimeConnection implementations', () => {
     const initialSends: Promise<void>[] = [];
     const onOpenEntered = createDeferred<void>();
     const onOpen = vi.fn(({ sendJson }: Readonly<{
-      sendJson(value: import('@happier-dev/protocol').VoiceRealtimeJsonValue): Promise<void>;
+      sendJson(value: import('@happier-dev/protocol/voice/realtime/events').VoiceRealtimeJsonValue): Promise<void>;
     }>) => { onOpenEntered.resolve();
       initialSends.push(
         sendJson(firstInitialControl),
@@ -1006,7 +1008,7 @@ describe('VoiceRealtimeConnection implementations', () => {
     const peer = new FakeWebRtcPeer();
     vi.stubGlobal('RTCPeerConnection', vi.fn(() => peer));
     const onOpen = vi.fn(({ sendJson }: Readonly<{
-      sendJson(value: import('@happier-dev/protocol').VoiceRealtimeJsonValue): Promise<void>;
+      sendJson(value: import('@happier-dev/protocol/voice/realtime/events').VoiceRealtimeJsonValue): Promise<void>;
     }>) => {
       void sendJson(jsonObjectWithExactUtf8Bytes(
         VOICE_WEBRTC_LIMITS.outboundControlBytes + 1,
@@ -1043,7 +1045,7 @@ describe('VoiceRealtimeConnection implementations', () => {
     const peer = new FakeWebRtcPeer();
     vi.stubGlobal('RTCPeerConnection', vi.fn(() => peer));
     const initialSender: {
-      current: ((value: import('@happier-dev/protocol').VoiceRealtimeJsonValue) => Promise<void>)
+      current: ((value: import('@happier-dev/protocol/voice/realtime/events').VoiceRealtimeJsonValue) => Promise<void>)
         | null;
     } = { current: null };
     const connection = createWebRtcConnection({

@@ -1,12 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import {
-  buildQualifiedPluginContributionKey,
-  compilePluginJsonSchema,
-  createPluginContributionIdentity,
-  isValidPluginJsonSchemaValue,
+  buildQualifiedPluginContributionKey} from '@happier-dev/protocol/plugins/contribution-key';
+import {
+  compilePluginJsonSchema} from '@happier-dev/protocol/plugins/actions/json-schema-validation';
+import {
+  createPluginContributionIdentity} from '@happier-dev/protocol/plugins/contribution-identity';
+import {
+  isValidPluginJsonSchemaValue} from '@happier-dev/protocol/plugins/actions/protocol-composable-schema';
+import {
   type PluginSettingFieldSchemaV2,
   type PluginSettingFieldV2,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/plugins/contributions/settings';
 
 import { getBundledVoiceProviderEntry } from '@/voice/registry/internalContributions';
 import { createDefaultVoiceProviderRegistry } from '@/voice/registry/defaultRegistry';

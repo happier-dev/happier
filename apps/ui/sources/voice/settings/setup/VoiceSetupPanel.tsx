@@ -11,6 +11,7 @@ import { useSetupBlockPanelWidth } from '@/components/ui/setupBlocks/SetupBlockG
 import { SetupSteps, type SetupStep } from '@/components/ui/setupBlocks/SetupSteps';
 import { Text } from '@/components/ui/text/Text';
 import { VoiceMarkArt, type VoiceMarkEvent } from '@/components/voice/presence/VoiceMark';
+import type { VoiceAttemptControlProjection } from '@/components/voice/attempt/useVoiceAttemptControl';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 import { VoiceServiceGallery, type VoiceServiceTile } from '@/voice/settings/panels/VoiceServiceGallery';
@@ -35,6 +36,8 @@ export type VoiceSetupPanelModel = Readonly<{
     readiness: Readonly<{ reason: string | null; action: string | null }> | null;
     /** True while the person's first try is running: the try step shows the live status and heard words. */
     tryLive: boolean;
+    canStart: boolean;
+    startRefusal?: VoiceAttemptControlProjection['startRefusal'];
     /** The first genuine turn completed setup here: the planet's dots gather once (lab SD). */
     firstSuccess?: VoiceMarkEvent | null;
     /** The resolved `voice.toggle` binding (rebindable), or null where there is no keyboard. */
@@ -321,16 +324,24 @@ function buildStep(
                 testID,
                 state: stepMarker(step.state),
                 title: t('voiceMoments.setupTryTitle'),
-                detail: current ? (model.facts.canTry ? t('voiceMoments.setupTryDetail') : t('voiceMoments.setupTryNeedsService')) : undefined,
+                detail: current ? (model.startRefusal?.reason ?? t('voiceMoments.setupTryDetail')) : undefined,
                 body: current ? (
                     model.tryLive && context.renderTry ? context.renderTry : (
-                        <RoundButton
-                            testID={`${testID}.try`}
-                            size="small"
-                            title={t('voiceMoments.setupTryAction')}
-                            disabled={!model.facts.canTry}
-                            onPress={actions.onTry}
-                        />
+                        <>
+                            <RoundButton
+                                testID={`${testID}.try`}
+                                size="small"
+                                title={t('voiceMoments.setupTryAction')}
+                                disabled={!model.canStart}
+                                onPress={actions.onTry}
+                            />
+                            {model.startRefusal ? <RoundButton
+                                testID={`${testID}.recover`}
+                                size="small"
+                                title={model.startRefusal.actionLabel}
+                                onPress={model.startRefusal.onRecover}
+                            /> : null}
+                        </>
                     )
                 ) : undefined,
             };

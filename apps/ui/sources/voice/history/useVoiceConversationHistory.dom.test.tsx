@@ -24,12 +24,12 @@ import { buildSessionOrganizationSessionKey } from '@/sync/domains/session/organ
 vi.mock('socket.io-client', async original =>
     (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(original));
 
-describe('Voice conversation History discovery', () => {
+describe.each([true, false])('Voice conversation History discovery (filtered listing: %s)', filteredListing => {
     let account: VoiceSettingsAccountTestHarness;
     beforeEach(async () => {
         installDisconnectedServerSocketBoundary(configureConnectedServerSocketBoundary);
         account = await createVoiceSettingsAccountTestHarness(settingsParse({}), { features: createRootLayoutFeaturesResponse({
-            features: { sessions: { enabled: true, filteredListing: { enabled: true } } },
+            features: { sessions: { enabled: true, filteredListing: { enabled: filteredListing } } },
         }) });
         await getServerFeaturesSnapshot({ serverId: account.scope.serverId, force: true });
         const { sync } = await import('@/sync/sync');
@@ -52,9 +52,11 @@ describe('Voice conversation History discovery', () => {
         ]);
         const request = account.request.getMockImplementation()!;
         account.request.mockImplementation(async (input, init) => {
-            const path = new URL(String(input)).pathname;
-            if (path === '/v2/sessions/query') {
-                const query = SessionListQueryV1Schema.parse(JSON.parse(String(init?.body)));
+            const url = new URL(String(input));
+            const path = url.pathname;
+            if (path === '/v2/sessions/query' || path === '/v2/sessions' || path === '/v2/sessions/archived') {
+                const query = path === '/v2/sessions/query' ? SessionListQueryV1Schema.parse(JSON.parse(String(init?.body)))
+                    : { storage: path.endsWith('/archived') ? 'archived' : 'active', cursor: url.searchParams.get('cursor') };
                 requests.push(`${query.storage}:${query.cursor ?? 'first'}`);
                 const archived = query.storage === 'archived';
                 return Response.json({ sessions: [archived ? retired : query.cursor ? older : ordinary],
@@ -83,7 +85,11 @@ describe('Voice conversation History discovery', () => {
             await waitForHomeGovernance(async () => {
                 await act(async () => {});
                 expect(requests).toEqual(expect.arrayContaining(['active:first', 'archived:first']));
+                expect(state.current?.states.active).toMatchObject({ phase: 'ready' });
+                expect(state.current?.states.archived).toMatchObject({ phase: 'ready' });
                 expect(state.current?.conversations.map(row => row.address.sessionId)).toContain('retired-voice');
+                // Unrelated summary windows advance within this Voice page, without a Load more gesture.
+                expect(state.current?.conversations.map(row => row.address.sessionId)).toContain('older-voice');
             });
             await act(async () => { await state.current?.loadNext?.(); });
             await waitForHomeGovernance(async () => { await act(async () => {});
@@ -113,8 +119,8 @@ describe('Voice conversation History discovery', () => {
             } })));
             query = 'release';
             await act(async () => root.render(<Host />));
-            // A loaded conversation is named by what the person first said, not by "Voice" or its last reply.
-            expect(state.current?.conversations).toMatchObject([{ title: 'Is the release ready yet?', loadedMessageCount: 2 }]);
+            // D1: transcript search and preview must preserve the canonical authored Session title.
+            expect(state.current?.conversations).toMatchObject([{ title: 'older-voice', lastLine: 'The release is ready', loadedMessageCount: 2 }]);
             expect(requests.length).toBe(beforeSearchRequests);
             expect(bodyReads).toBe(0);
             query = '';

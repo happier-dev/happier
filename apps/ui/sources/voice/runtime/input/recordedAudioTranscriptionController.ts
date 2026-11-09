@@ -1,5 +1,5 @@
 import { VoiceProviderOperationErrorCodeSchema } from '@happier-dev/protocol/voice/providerOperations';
-import { DaemonVoiceInferenceErrorCodeSchema } from '@happier-dev/protocol/daemon/voiceInference';
+import { DAEMON_VOICE_INFERENCE_CLIENT_ERROR_CODES } from '@/voice/runtime/daemonInference/daemonVoiceInferenceErrors';
 import { prepareDaemonVoiceInferenceSttSource } from '@/voice/input/prepareDaemonVoiceInferenceSttSource';
 import {
   parseLocalVoiceSttSettings,
@@ -25,7 +25,7 @@ export class MissingBundledSpeechCredentialError extends Error {
 
 const RECORDED_AUDIO_STT_FAILURE_CODES: ReadonlySet<string> = new Set([
   ...VoiceProviderOperationErrorCodeSchema.options,
-  ...DaemonVoiceInferenceErrorCodeSchema.options,
+  ...DAEMON_VOICE_INFERENCE_CLIENT_ERROR_CODES,
   'machine_unavailable',
   'invalid_response',
   'transfer_failed',

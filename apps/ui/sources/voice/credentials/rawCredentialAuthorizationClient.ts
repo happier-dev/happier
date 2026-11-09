@@ -78,6 +78,7 @@ export async function inspectRawCredentialAuthorizationReadiness(
     const inspection = await (dependencies.client ?? rawCredentialAuthorizationClient)
       .inspect(contribution, rawGrant, signal);
     const authorization = inspection.authorization;
+    if (authorization.grantRequirement === 'linked') return 'ready';
     const list = dependencies.list ?? createPluginPermissionGrantActions({
       execute: createFrontDoorUiActionExecutor(),
     }).list;
@@ -90,11 +91,8 @@ export async function inspectRawCredentialAuthorizationReadiness(
       includeResolvedRequests: false,
       limit: 200,
     });
-    const authorityKey = JSON.stringify(authorization.authoritySource);
-    return response.grants.some((grant) => (
-      grant.status === 'active'
-      && JSON.stringify(grant.authoritySource) === authorityKey
-    )) ? 'ready' : 'approval_required';
+    // The grant owner filters the authenticated Account and exact subject.
+    return response.grants.some(grant => grant.status === 'active') ? 'ready' : 'approval_required';
   } catch {
     return 'unknown';
   }

@@ -1,6 +1,7 @@
 import { beforeEach, afterAll, describe, expect, it, vi } from 'vitest';
 import { RPC_ERROR_CODES, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
-import { ProviderBoundModelRefSchema, ExecutionRunEnsureOrStartRequestSchema } from '@happier-dev/protocol';
+import { ProviderBoundModelRefSchema} from '@happier-dev/protocol/providers/selection/v1';
+import { ExecutionRunEnsureOrStartRequestSchema } from '@happier-dev/protocol/execution/runs/index';
 import { createDeferred, createSessionFixture } from '@/dev/testkit';
 import { createPlainSessionByIdResponseFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { installSessionOpsNetworkBoundary } from '@/dev/testkit/harness/sessionOpsNetworkBoundary';
@@ -534,7 +535,7 @@ describe('DaemonVoiceAgentClient', () => {
   });
 
   it('admits the configured speech latency target on the real streamed turn request', async () => {
-    const { ExecutionRunTurnStreamStartRequestSchema } = await import('@happier-dev/protocol');
+    const { ExecutionRunTurnStreamStartRequestSchema} = await import('@happier-dev/protocol/execution/runs/streaming');
     const local = readLocalConversationVoiceSettings(settingsState.current.voice);
     storage.getState().applySettingsLocal(normalizeVoiceSettingsLocalDelta({
       voice: writeVoiceProviderSettingsConfig(settingsState.current.voice, 'local_conversation', {

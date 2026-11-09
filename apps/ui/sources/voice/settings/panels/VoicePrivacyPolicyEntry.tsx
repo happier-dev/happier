@@ -4,7 +4,7 @@ import { HAPPIER_PRIVACY_POLICY_URL } from '@/constants/legalUrls';
 import { SettingRow } from '@/components/settings/shell/SettingRow';
 import { VOICE_PRIVACY_SETTINGS } from '@/voice/settings/voiceSettingsDeclarations';
 import { fireAndForget } from '@/utils/system/fireAndForget';
-import { openExternalUrl } from '@/utils/url/openExternalUrl';
+import { requestOpenExternalUrl as openExternalUrl } from '@/utils/url/requestOpenExternalUrl';
 import { Icon } from '@/components/ui/icons/Icon';
 
 /**

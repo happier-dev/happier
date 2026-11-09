@@ -1,5 +1,5 @@
 import { afterEach, expect, it } from 'vitest';
-import { SessionViewerProjectionV1Schema } from '@happier-dev/protocol';
+import { SessionViewerProjectionV1Schema } from '@happier-dev/protocol/sessions/personal/viewer';
 import { createSessionMessagesFixture } from '@/dev/testkit/fixtures/transcriptFixtures';
 import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { storage } from '@/sync/domains/state/storage';

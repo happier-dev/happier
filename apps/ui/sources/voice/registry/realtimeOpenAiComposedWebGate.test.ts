@@ -5,7 +5,7 @@ import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { getEncoding } from 'js-tiktoken';
 import { z } from 'zod/mini';
-import { type PluginMachineExecutionOriginV1 } from '@happier-dev/protocol';
+import { type PluginMachineExecutionOriginV1 } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
 
 import { normalizePluginUiDestinationBindingV1 } from '@happier-dev/protocol/plugins/ui';
 
@@ -761,7 +761,7 @@ describe('realtime_openai source-composed WebRTC gate', () => {
     const getUserMedia = vi.mocked(
       globalThis.navigator.mediaDevices.getUserMedia,
     );
-    const providerFetch = vi.mocked(globalThis.fetch);
+    const providerFetch = environment.providerFetch;
 
     try {
       await composed.runtime.adapter.start({
@@ -802,7 +802,7 @@ describe('realtime_openai source-composed WebRTC gate', () => {
     const getUserMedia = vi.mocked(
       globalThis.navigator.mediaDevices.getUserMedia,
     );
-    const providerFetch = vi.mocked(globalThis.fetch);
+    const providerFetch = environment.providerFetch;
 
     try {
       await expect(composed.runtime.adapter.start({
@@ -894,7 +894,7 @@ describe('realtime_openai source-composed WebRTC gate', () => {
         expect(peerConstructor).not.toHaveBeenCalled();
         expect(browser.peers).toEqual([]);
         expect(request).toHaveBeenCalledOnce();
-        expect(globalThis.fetch).not.toHaveBeenCalled();
+        expect(environment.providerFetch).not.toHaveBeenCalled();
         expect(openAiSessionUpdates(browser.peers.flatMap(peer => peer.channel.sent))).toEqual([]);
 
         binding = 'account-b';
@@ -983,7 +983,7 @@ describe('realtime_openai source-composed WebRTC gate', () => {
         await firstResourcePreparationEntered.promise;
         expect(requestBindings).toEqual(['account-a']);
         expect(request).toHaveBeenCalledOnce();
-        expect(globalThis.fetch).not.toHaveBeenCalled();
+        expect(environment.providerFetch).not.toHaveBeenCalled();
         expect(browser.micSession.ensureActive).toHaveBeenCalledOnce();
         expect(getUserMedia).toHaveBeenCalledOnce();
         expect(peerConstructor).not.toHaveBeenCalled();
@@ -1070,7 +1070,7 @@ describe('realtime_openai source-composed WebRTC gate', () => {
           });
         });
         const callAuthorizations: string[] = [];
-        vi.mocked(globalThis.fetch).mockImplementation(async (
+        environment.providerFetch.mockImplementation(async (
           input: URL | RequestInfo,
           init?: RequestInit,
         ) => {
@@ -1208,7 +1208,7 @@ describe('realtime_openai source-composed WebRTC gate', () => {
         });
       });
       const callAuthorizations: string[] = [];
-      vi.mocked(globalThis.fetch).mockImplementation(async (
+      environment.providerFetch.mockImplementation(async (
         input: URL | RequestInfo,
         init?: RequestInit,
       ) => {

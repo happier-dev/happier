@@ -74,6 +74,8 @@ export function useVoiceSetupBlock(input: Readonly<{
         executionMachineId: inputs.executionMachine.machineId,
         executionMachineSelectedId: inputs.executionMachine.selectedMachineId,
         executionMachineSelectionKind: inputs.executionMachine.selectionKind,
+        // The closed tile shows the selected service only; the open panel's gallery projects every service.
+        rowScope: panelOpen ? 'all' : 'selected',
     });
     const readiness = readinessModel.selectedProviderReadiness ?? null;
     const microphone = useObservedMicrophonePermission(executeValue);
@@ -135,10 +137,12 @@ export function useVoiceSetupBlock(input: Readonly<{
         serviceTiles: readinessModel.serviceTiles,
         readiness: readinessText,
         tryLive: voice.live,
+        canStart: voice.canStart,
+        startRefusal: voice.startRefusal,
         firstSuccess,
         // The chord is shown where there is a keyboard to press it.
         shortcutLabel: phone ? null : shortcutLabel,
-    }), [firstSuccess, phone, readinessModel.serviceTiles, readinessText, serviceTitle, setup.facts, shortcutLabel, voice.live]);
+    }), [firstSuccess, phone, readinessModel.serviceTiles, readinessText, serviceTitle, setup.facts, shortcutLabel, voice.live, voice.canStart, voice.startRefusal]);
 
     if (!voiceEnabled || setup.hidden || (setup.facts.complete && !panelOpen)) return null;
     return {

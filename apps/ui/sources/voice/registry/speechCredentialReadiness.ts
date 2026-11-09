@@ -1,21 +1,18 @@
 import {
-  type PluginContributionIdentityV1,
-  type VoiceProviderSettingsEnvelopeV1,
+  type PluginContributionIdentityV1} from '@happier-dev/protocol/plugins/contribution-identity';
+import {
+  type VoiceProviderSettingsEnvelopeV1} from '@happier-dev/protocol/voice/realtime/providerSettings';
+import {
   type VoiceReadinessRole,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/voice/realtime/capabilities';
 
 import type { Settings } from '@/sync/domains/settings/settings';
 import type { ConnectedPurposeCatalogV1 } from '@happier-dev/protocol/connect/connectedAccountConfigurationRowsV1';
 import type { SavedSecretReferenceResolution } from '@/sync/store/settings/savedSecretCatalogSnapshot';
-import {
-  resolveAccountVoiceCredentialSourceSelection,
-  resolveAccountVoiceCredentialStatus,
-  resolveSelectedVoiceCredentialRawGrants,
-} from '@/voice/credentials/accountVoiceCredential';
+import { projectVoiceCredentialReadiness } from '@/voice/credentials/credentialReadiness';
 
 import {
   type VoiceProviderRegistry,
-  type VoiceProviderRegistryEntry,
 } from './providerRegistry';
 import type { VoiceCredentialReadinessFact } from './readiness';
 
@@ -30,29 +27,6 @@ function isSpeechReadinessRole(role: VoiceReadinessRole): role is SpeechReadines
     || role === 'conversation_tts';
 }
 
-function resolveSpeechCredentialSlotId(
-  entry: VoiceProviderRegistryEntry,
-  role: SpeechReadinessRole,
-): string | null {
-  if (entry.kind !== 'voice.speech-engine.v1') return null;
-  const declaration = entry.declaration;
-  if (declaration?.kind !== 'speech' || !declaration.roles.includes(role)) return null;
-  return declaration.credentials?.slot.id ?? null;
-}
-
-function resolveSpeechContribution(
-  entry: VoiceProviderRegistryEntry,
-  role: SpeechReadinessRole,
-): PluginContributionIdentityV1 | null {
-  if (entry.kind !== 'voice.speech-engine.v1') return null;
-  if (entry.declaration?.kind === 'speech' && entry.source.kind !== 'built_in') {
-    return Object.freeze({
-      pluginId: entry.pluginId,
-      localId: entry.declaration.id,
-    });
-  }
-  return null;
-}
 
 /**
  * Passive credential fact for one selected speech leaf. This reads only the
@@ -81,78 +55,9 @@ export function projectVoiceSpeechCredentialReadiness(input: Readonly<{
   if (!entry || !entry.roles.includes(input.role) || !isSpeechReadinessRole(input.role)) {
     return 'unknown';
   }
-  const requirement = entry.kind === 'voice.speech-engine.v1'
-    ? entry.declaration?.credentials?.requirement
-    : undefined;
+  const requirement = entry.kind === 'voice.speech-engine.v1' ? entry.declaration?.credentials?.requirement : null;
   if (!requirement) return entry.requirements.includes('credential') ? 'unknown' : 'ready';
-  if (requirement.kind === 'when_setting_equals') {
-    const owner = entry.providerSettings;
-    const envelope = input.providerEnvelope;
-    if (!owner || !envelope || envelope.schemaVersion !== owner.schemaVersion) return 'unknown';
-    const config = owner.parseStoredConfig(envelope.config);
-    if (!config || typeof config !== 'object' || Array.isArray(config)) return 'unknown';
-    if ((config as Readonly<Record<string, unknown>>)[requirement.settingId] !== requirement.value) {
-      return 'ready';
-    }
-  }
-
-  const declaration = entry.kind === 'voice.speech-engine.v1'
-    ? entry.declaration
-    : null;
-  const credentialSlotId = resolveSpeechCredentialSlotId(entry, input.role);
-  const contribution = resolveSpeechContribution(entry, input.role);
-  if (!credentialSlotId || !contribution || declaration?.kind !== 'speech' || !declaration.credentials) {
-    return 'unknown';
-  }
-  let selected: ReturnType<typeof resolveAccountVoiceCredentialSourceSelection>;
-  try {
-    selected = resolveAccountVoiceCredentialSourceSelection({
-      settings: input.settings,
-      connectedPurposes: input.connectedPurposes,
-      contribution,
-      credentialSlotId,
-      purpose: {
-        consumer: contribution,
-        purpose: declaration.credentials.slot.purpose,
-      },
-      machineId: input.executionMachineId ?? null,
-    });
-  } catch {
-    return 'unknown';
-  }
-  if (selected.selection.kind === 'none') {
-    return requirement.kind === 'optional' ? 'ready' : 'missing';
-  }
-  if (selected.selection.kind === 'savedSecret') {
-    const status = resolveAccountVoiceCredentialStatus({
-      settings: input.settings,
-      contribution,
-      credentialSlotId,
-      machineId: input.executionMachineId ?? null,
-      requiredRecipientContractDigest: entry.accountCredentialSlot?.recipientContractDigest ?? null,
-      resolveSavedSecret: input.resolveSavedSecret,
-    }).status;
-    if (status !== 'ready') {
-      return status === 'review_required' ? 'approval_required' : status;
-    }
-  }
-  const selectedSourceHasRawSpeechGrant = resolveSelectedVoiceCredentialRawGrants({
-    declaration,
-    contribution,
-    selection: selected.selection,
-    access: { realm: 'daemon', phase: 'speech' },
-  }).length > 0;
-  const rawAuthorization = input.rawAuthorization;
-  if (selectedSourceHasRawSpeechGrant
-    && rawAuthorization
-    && rawAuthorization.contribution.pluginId === contribution.pluginId
-    && rawAuthorization.contribution.localId === contribution.localId
-    && rawAuthorization.machineId === (input.executionMachineId ?? null)
-    && rawAuthorization.realm === 'daemon'
-    && rawAuthorization.phase === 'speech') {
-    return rawAuthorization.status;
-  }
-  if (selectedSourceHasRawSpeechGrant) return 'unknown';
-  if (selected.selection.kind === 'connectedAccount') return 'ready';
-  return 'ready';
+  return projectVoiceCredentialReadiness({ entry, settings: input.settings, connectedPurposes: input.connectedPurposes,
+    machineId: input.executionMachineId, envelope: input.providerEnvelope, resolveSavedSecret: input.resolveSavedSecret,
+    rawAuthorization: input.rawAuthorization }).credential;
 }

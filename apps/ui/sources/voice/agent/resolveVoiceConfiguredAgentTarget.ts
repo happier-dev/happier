@@ -87,6 +87,7 @@ export async function resolveVoiceConfiguredAgentTarget(params: Readonly<{
             machineId: normalizeNonEmptyString(params.machineId),
             serverId: scope.serverId,
             signal: params.signal,
+            sections: ['agentsById', 'installedPackagesById'],
         });
         if (!lifetime.isCurrent()) return unavailable();
         const projectedTarget = resolveFromCurrentCatalog();

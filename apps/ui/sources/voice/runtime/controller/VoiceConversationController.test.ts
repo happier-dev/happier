@@ -492,6 +492,30 @@ describe('VoiceConversationController', () => {
     }
   });
 
+  it('retains ElevenLabs user and assistant SDK messages through the generated runtime', async () => {
+    const { withGeneratedElevenLabsVoiceRuntime } = await import('@/dev/testkit/harness/elevenLabsVoiceRuntime');
+    elevenLabsSdk.startSession.mockResolvedValue(createElevenLabsSdkSession('elevenlabs-transcript'));
+    await withGeneratedElevenLabsVoiceRuntime(async ({ adapter }) => {
+      await adapter.start({ sessionId: '', requestedTargetSessionAddress: null });
+      const callbacks: ElevenLabsSdkStartOptions = elevenLabsSdk.startSession.mock.calls[0]?.[0];
+      // @elevenlabs/client 1.18.0 BaseConversation.handleUserTranscript /
+      // handleAgentResponse project these exact payloads from the provider wire.
+      callbacks.onMessage?.({ source: 'user', role: 'user', event_id: 42, message: 'What is two plus two?' });
+      callbacks.onMessage?.({ source: 'ai', role: 'agent', event_id: 43, message: 'Two plus two is four.' });
+      await waitForTestEvent(storage.subscribe, () => readCanonicalVoiceTranscriptSnapshot('qa-history'),
+        entries => entries.some(entry => entry.role === 'assistant' && entry.text === 'Two plus two is four.'));
+      expect(readCanonicalVoiceTranscriptSnapshot('qa-history')).toEqual([
+        expect.objectContaining({ role: 'user', text: 'What is two plus two?' }),
+        expect.objectContaining({ role: 'assistant', text: 'Two plus two is four.' }),
+      ]);
+      await adapter.stop({ sessionId: adapter.getSnapshot().sessionId ?? '' });
+      expect(readCanonicalVoiceTranscriptSnapshot('qa-history')).toEqual([
+        expect.objectContaining({ role: 'user', text: 'What is two plus two?' }),
+        expect.objectContaining({ role: 'assistant', text: 'Two plus two is four.' }),
+      ]);
+    });
+  });
+
   it('passes the provider-neutral start request through preparation without interpreting it', async () => {
     const { withGeneratedElevenLabsVoiceRuntime } = await import('@/dev/testkit/harness/elevenLabsVoiceRuntime');
     elevenLabsSdk.startSession.mockResolvedValue(createElevenLabsSdkSession('elevenlabs-start-request'));

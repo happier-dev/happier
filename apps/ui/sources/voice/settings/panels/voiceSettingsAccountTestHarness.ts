@@ -13,7 +13,7 @@ import { createSecretSettingsTestHarness } from '@/components/settings/secrets/s
 import type { ConnectedPurposeCatalogV1 } from '@happier-dev/protocol/connect/connectedAccountConfigurationRowsV1';
 import type { RuntimeFetch } from '@/utils/system/runtimeFetch';
 import type { VoiceProviderContribution } from '@happier-dev/protocol/plugins/contributions/voice';
-import { formatSavedSecretCatalogFingerprintV1, formatSavedSecretCatalogReferenceV1, SavedSecretResourceMaterialV1Schema } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
+import { formatSavedSecretCatalogReferenceV1, SavedSecretResourceMaterialV1Schema } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
 import { sealSavedSecretResourceStoredContentV1 } from '@happier-dev/protocol/account/settings/savedSecretResourceContentV1';
 import { createAccountKvHttpFixture } from '@/dev/testkit/fixtures/accountKvHttpFixture';
 
@@ -78,7 +78,7 @@ export async function withVoiceSettingsCredentialResource(account: VoiceSettings
     approvedRecipientContractDigest?: string;
 }>): Promise<Settings> {
     const { applyAccountVoiceCredentialSourceSelection, createAccountVoiceCredentialBindingMutation,
-        resolveAccountVoiceCredentialApprovalDigest, resolveExactAccountVoiceCredentialSecretId } = await import('@/voice/credentials/accountVoiceCredential');
+        resolveExactAccountVoiceCredentialSecretId } = await import('@/voice/credentials/accountVoiceCredential');
     const slot = params.declaration.credentials?.slot;
     if (!slot) throw new Error('Expected a Voice credential slot');
     const expectedSettingsVersion = storage.getState().settingsVersion;
@@ -96,19 +96,14 @@ export async function withVoiceSettingsCredentialResource(account: VoiceSettings
             name: content.name, kind: content.kind, encryptionMode: 'plain', revision: 1, materialStatus: 'ready',
             capabilities: { use: true, rename: true, rotate: true, manageAccess: true, delete: true } },
     }));
-    const approvedRecipientContractDigest = params.approvedRecipientContractDigest
-        ?? resolveAccountVoiceCredentialApprovalDigest({ requiredRecipientContractDigest: params.recipientContractDigest,
-            savedSecret: { kind: 'shared_resource', fingerprint: formatSavedSecretCatalogFingerprintV1({
-                ref, source: 'shared_resource', revision: 1,
-            }) } });
+    const approvedRecipientContractDigest = params.approvedRecipientContractDigest;
     return applyAccountVoiceCredentialSourceSelection({
         settings: params.settings, connectedPurposes: account.purposes.value, currentDeclaration: params.declaration,
         mutation: { contribution, credentialSlotId: slot.id, expectedSettingsVersion,
-            selection: { kind: 'savedSecret' }, savedSecretMutation: createAccountVoiceCredentialBindingMutation({
+            selection: { kind: 'savedSecret' }, savedSecretMutation: { ...createAccountVoiceCredentialBindingMutation({
                 contribution, credentialSlotId: slot.id, machineId: params.machineId, secretId: ref,
                 expectedSecretId, expectedSecretUpdatedAt: existing?.updatedAt ?? null,
-                ...(approvedRecipientContractDigest ? { approvedRecipientContractDigest } : {}),
-            }) },
+            }), ...(approvedRecipientContractDigest ? { approvedRecipientContractDigest } : {}) } },
     }).settings;
 }
 

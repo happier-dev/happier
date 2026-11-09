@@ -1029,6 +1029,10 @@ export const ELEVENLABS_BUNDLED_VOICE_MANIFEST = Object.freeze<BundledVoiceManif
           "presentation": {
             "credential": {
               "catalog": "voices",
+              "checklist": [
+                "Open API keys in ElevenLabs",
+                "Create a key, then paste it below."
+              ],
               "credentialPurpose": "voice.client-auth.elevenlabs",
               "kind": "api_key",
               "promptBodyKey": "settingsVoice.byo.apiKeyDescription",
@@ -2825,6 +2829,10 @@ export const XAI_BUNDLED_VOICE_MANIFEST = Object.freeze<BundledVoiceManifestProj
           "presentation": {
             "credential": {
               "catalog": "voices",
+              "checklist": [
+                "Open API keys in the xAI Console",
+                "Create a key, then paste it below."
+              ],
               "credentialPurpose": "voice.client-auth",
               "kind": "api_key",
               "promptBodyKey": "settingsVoice.realtimeProviders.xai.credential.promptBody",

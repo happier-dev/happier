@@ -1,11 +1,13 @@
 import { afterEach, describe, expect, it, vi, beforeEach } from 'vitest';
 import { createDeferred } from '@/dev/testkit';
-import { PluginProjectionV2Schema } from '@happier-dev/protocol';
+import { PluginProjectionV2Schema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import {
-  AgentsBackendsListOutputSchema,
-  buildBackendTargetKeyV2,
+  AgentsBackendsListOutputSchema} from '@happier-dev/protocol/actions/agentBackendInventory';
+import {
+  buildBackendTargetKeyV2} from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import {
   FeaturesResponseSchema,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/features/payload/featuresResponseSchema';
 import type { ServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeaturesClient';
 import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
 import { buildDynamicModelProbeCacheKey } from '@/sync/domains/models/dynamicModelProbeCacheKey';
@@ -274,6 +276,16 @@ describe('agent catalog voice tools', () => {
     ]) });
     applyAcpCatalogSnapshot(state.settingsScope, { status: 'unavailable', reason: 'invalid-stored-content' }, true);
     await expect(listAgentBackendsForVoiceTool({ includeDisabled: true })).rejects.toMatchObject({ code: 'acp_catalog_unavailable' });
+  });
+
+  it('projects the Account-scoped New Session default as an exact inventory key', async () => {
+    const { rememberLastUsedBackendSelection } = await import('@/sync/domains/state/newSessionTargetUiState');
+    const target = { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } } as const;
+    rememberLastUsedBackendSelection(state.settingsScope, { lastUsedBackendTarget: target, lastUsedAgent: 'codex' });
+    const { listAgentBackendsForVoiceTool } = await import('./agentCatalogList');
+    const result = await listAgentBackendsForVoiceTool({});
+    expect(result).toMatchObject({ defaultTargetKey: buildBackendTargetKeyV2(target) });
+    expect(AgentsBackendsListOutputSchema.parse(result)).toEqual(result);
   });
 
   it('lists Provider models with exact connection identity through the neutral session projection', async () => {

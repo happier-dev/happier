@@ -7,6 +7,7 @@ import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import { socketRpcCodec } from '@happier-dev/sync-client';
 import { createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
+import { createMachineProvisionerOptionsFixture } from '@/dev/testkit/fixtures/machineProvisionerFixtures';
 import { serveActionHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { configureConnectedServerSocketBoundary, installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { createSocketIoBoundaryStub } from '@/dev/testkit/mocks/socketIo';
@@ -181,11 +182,11 @@ describe('Machines advertised UI and eligible Voice execution', () => {
     const features = createRootLayoutFeaturesResponse({ features: { machines: { pools: { enabled: true } } },
       capabilities: { serverIdentity: { serverIdentityId: homeId } } });
     const preset = { id: 'preset', homeId, revision: 1, name: 'Guest recipe', owner: { kind: 'account', accountId: 'owner' },
-      recipe: { provider: { pluginId: 'happier.machine.lima', localId: 'lima' }, schemaVersion: 1, name: 'Guest', choices: { cores: 2 } },
+      launch: { provider: { pluginId: 'happier.machine.lima', localId: 'lima' }, schemaVersion: 1, name: 'Guest', choices: { cores: 2 } },
       controller: { machineId: 'machine', installationId: 'installation' } };
     const presets = { kind: 'listed', presets: [preset] };
     const managed = { id: 'managed', homeId, custodianAccountId: 'owner', controller: preset.controller,
-      launch: preset.recipe, resource: { contributionRef: preset.recipe.provider, schemaVersion: 1, value: {} },
+      launch: preset.launch, resource: { contributionRef: preset.launch.provider, schemaVersion: 1, value: {} },
       desired: 'stop', desiredWhen: 'now', allocation: 'bound', creationState: 'active', intentRevision: 1,
       retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false };
     const poolId = '06986bf6-681b-46f1-8d68-bb619ac0c7f0';
@@ -255,7 +256,7 @@ describe('Machines advertised UI and eligible Voice execution', () => {
           retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false } }
         : { homeId, managedId: managed.id, expectedRevision: 1, intent: 'stop', when: 'now' });
       const output = actionId === 'machines.provisioners.options'
-        ? ManagedMachineActionOutputSchemasV1[actionId].parse({ choices: [{ id: 'small', title: 'Small', launch: {} }] })
+        ? ManagedMachineActionOutputSchemasV1[actionId].parse(createMachineProvisionerOptionsFixture({ base: { launch: {} } }))
         : { kind: 'approval_request_created', actionId, artifactId: 'native-ask' };
       const settings = { experiments: true, featureToggles: { voice: true } };
       const features = createRootLayoutFeaturesResponse({ capabilities: { serverIdentity: { serverIdentityId: homeId } } });

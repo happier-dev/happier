@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { PluginContributesV2Schema } from '@happier-dev/protocol';
+import { PluginContributesV2Schema } from '@happier-dev/protocol/plugins/contributions/v2';
 
 import { voiceSettingsParse } from '@/sync/domains/settings/voiceSettings';
 import { createDefaultVoiceProviderRegistry } from './defaultRegistry';

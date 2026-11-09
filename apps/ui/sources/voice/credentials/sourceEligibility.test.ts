@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type {
   PluginConnectedAccountAuthenticationModeV2,
   PluginConnectedAccountAuthenticationV2,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/connect/plugin-connected-account-authentication-v2';
 
 import { resolveVoiceConnectedAccountTargetEligibility } from './sourceEligibility';
 

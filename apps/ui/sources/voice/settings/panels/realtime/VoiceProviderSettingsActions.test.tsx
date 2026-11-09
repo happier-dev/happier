@@ -14,13 +14,15 @@ import renderer, { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 
 import {
-  createRecipientContractDigestV1,
+  createRecipientContractDigestV1} from '@happier-dev/protocol/plugins/recipientContractV1';
+import {
   VoiceProviderContributionSchema,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/plugins/contributions/voice';
 import type {
-  PluginSettingsActionDeclarationV2,
+  PluginSettingsActionDeclarationV2} from '@happier-dev/protocol/plugins/contributions/settings';
+import type {
   VoiceProviderSettingsActionDeclaration,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/plugins/contributions/voice';
 import { PLUGIN_MANIFEST } from '@happier-dev/plugins-elevenlabs/manifest';
 import { ELEVENLABS_VOICE_PROVIDER_DEFAULT_SETTINGS } from '@happier-dev/plugins-elevenlabs/protocol/voice';
 

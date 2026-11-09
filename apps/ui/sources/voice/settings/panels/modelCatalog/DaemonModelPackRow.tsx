@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Platform, View } from 'react-native';
+import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { Item } from '@/components/ui/lists/Item';
@@ -16,11 +16,8 @@ import { buildModelCatalogRows } from './buildModelCatalogRows';
 import { formatModelCatalogRowDetail, formatModelCatalogRowFacts, formatModelCatalogRowValue } from './formatModelCatalogRowDetail';
 import { useDaemonVoiceModelCatalogController } from './DaemonVoiceModelCatalogContext';
 import { Icon } from '@/components/ui/icons/Icon';
-import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
 import { SettingAnchor } from '@/components/settings/shell/SettingRow';
 import type { SettingRef } from '@/components/settings/catalog/settingDeclarations';
-
-const REMOVE_TARGET_SIZE = resolveMinimumInteractiveTargetSize(Platform.OS);
 
 export function DaemonModelPackRow(props: Readonly<{
     row: ModelCatalogRow;
@@ -52,9 +49,9 @@ export function DaemonModelPackRow(props: Readonly<{
         <IconButton
             testID={`voice-model-remove-${row.packId}`}
             accessibilityLabel={`${actionLabel}: ${row.displayName}`}
+            tooltip={actionLabel}
             disabled={props.actionsDisabled === true}
             variant="plain"
-            minimumInteractiveTargetSize={REMOVE_TARGET_SIZE}
             onPress={(event) => {
                 event?.stopPropagation?.();
                 if (props.actionsDisabled || props.actionInFlight) return;
@@ -80,8 +77,8 @@ export function DaemonModelPackRow(props: Readonly<{
         <IconButton
             testID={`voice-model-cancel-${row.packId}`}
             accessibilityLabel={`${t('common.cancel')}: ${row.displayName}`}
+            tooltip={t('common.cancel')}
             variant="plain"
-            minimumInteractiveTargetSize={REMOVE_TARGET_SIZE}
             onPress={(event) => {
                 event?.stopPropagation?.();
                 props.onCancel?.();
@@ -126,8 +123,9 @@ export function DaemonModelPackRow(props: Readonly<{
         <Item
             testID={`voice-model-row-${row.packId}`}
             title={row.displayName}
-            // An unknown status is already the row's value; the description stays empty rather than repeat it.
-            subtitle={isUnknown ? undefined : [formatModelCatalogRowFacts(row), consequence].filter(Boolean).join('\n')}
+            // Live status can be unknown while the catalog still knows the download size and languages.
+            subtitle={isUnknown && row.languages === null && row.archiveBytes === null
+                ? undefined : [formatModelCatalogRowFacts(row), consequence].filter(Boolean).join('\n')}
             subtitleLines={0}
             detail={value}
             rightElement={isUnknown ? undefined : rightElement}

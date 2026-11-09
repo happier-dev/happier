@@ -4,10 +4,7 @@ import type {
 } from '@/voice/session/types';
 import { buildQualifiedPluginContributionKey, createPluginContributionIdentity } from '@happier-dev/protocol/plugins/contribution-identity';
 import { derivePluginClientContributionRegistrationRights } from '@happier-dev/protocol/plugins/contributions/catalog';
-import {
-  createPluginRegistrationScope,
-  type PluginRuntimeRegistration,
-} from '@happier-dev/plugin-sdk/host/registration';
+import { createPluginRegistrationScope, type PluginRuntimeRegistration } from '@/sync/domains/plugins/registrationScope';
 
 import { createBundledVoiceRecipientContract } from '@/voice/credentials/voiceRecipientContract';
 import {

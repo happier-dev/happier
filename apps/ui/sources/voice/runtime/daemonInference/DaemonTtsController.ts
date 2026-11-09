@@ -1,4 +1,4 @@
-import type { DaemonVoiceInferenceAudioOutput } from '@happier-dev/protocol';
+import type { DaemonVoiceInferenceAudioOutput } from '@happier-dev/protocol/daemon/voiceInference';
 
 import { playAudioBytesWithStopper } from '@/voice/output/playAudioBytesWithStopper';
 import {

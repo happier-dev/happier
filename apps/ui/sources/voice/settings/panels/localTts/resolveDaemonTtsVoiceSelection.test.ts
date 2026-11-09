@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import type { DaemonVoiceInferenceModelStatus } from '@happier-dev/protocol';
+import type { DaemonVoiceInferenceModelStatus } from '@happier-dev/protocol/daemon/voiceInference';
 
 import { resolveDaemonTtsVoiceSelection } from './resolveDaemonTtsVoiceSelection';
 

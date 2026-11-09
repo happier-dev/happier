@@ -1,4 +1,4 @@
-import type { VoiceSpeechDiagnosticsCaptureContextV1 } from '@happier-dev/protocol';
+import type { VoiceSpeechDiagnosticsCaptureContextV1 } from '@happier-dev/protocol/voice/diagnostics';
 
 import { storage } from '@/sync/domains/state/storage';
 import { voiceSettingsParse } from '@/sync/domains/settings/voiceSettings';

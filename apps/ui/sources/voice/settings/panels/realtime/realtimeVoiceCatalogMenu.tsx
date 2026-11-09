@@ -1,12 +1,10 @@
 import * as React from 'react';
-import { Platform } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 
 import type { DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Icon } from '@/components/ui/icons/Icon';
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
-import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
 import { StatusPill } from '@/components/ui/status/StatusPill';
 import { t, tLoose } from '@/text';
 import { fireAndForget } from '@/utils/system/fireAndForget';
@@ -27,8 +25,6 @@ import {
   subscribeRealtimeCatalogPreview,
 } from './catalogPreview';
 import { readVoiceCatalogSettingsActionResult, type VoiceCatalogRow } from './voiceCatalog';
-
-const PREVIEW_TARGET_SIZE = resolveMinimumInteractiveTargetSize(Platform.OS);
 
 export type RealtimeCatalogState = VoiceRemoteCatalogState<VoiceCatalogRow>;
 
@@ -162,7 +158,6 @@ export function useRealtimeCatalogMenuItems(
             const preview = row.previewUrl || row.previewAvailable || canPreview ? (
               <IconButton
                 variant="plain"
-                minimumInteractiveTargetSize={PREVIEW_TARGET_SIZE}
                 accessibilityLabel={t(
                   'settingsVoice.realtimeProviders.catalog.preview',
                   { voice: row.name },

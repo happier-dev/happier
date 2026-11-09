@@ -13,6 +13,7 @@ const EXPECTED_FAILURE_KEYS = {
     provider_unavailable: 'voiceAssistant.dictationErrors.providerUnavailable',
     transcription_credentials_required: 'voiceAssistant.dictationErrors.transcriptionCredentialsRequired',
     transcription_machine_unavailable: 'voiceAssistant.dictationErrors.transcriptionMachineUnavailable',
+    transcription_model_not_installed: 'voice.readiness.model_missing',
     transcription_transfer_failed: 'voiceAssistant.dictationErrors.transcriptionTransferFailed',
     transcription_failed: 'voiceAssistant.dictationErrors.transcriptionFailed',
     recorded_audio_size_unavailable: 'voiceAssistant.dictationErrors.recordedAudioSizeUnavailable',

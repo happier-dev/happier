@@ -1,4 +1,5 @@
-import type { BackendTargetRefV2, PluginContributionIdentityV1 } from '@happier-dev/protocol';
+import type { BackendTargetRefV2} from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import type { PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
 import { readBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { readBackendTargetEnabled } from '@/agents/backendCatalog/backendTargetEnablement';
 import { formatBackendTargetKeyV2, resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';

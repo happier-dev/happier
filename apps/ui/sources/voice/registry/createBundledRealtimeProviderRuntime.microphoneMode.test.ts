@@ -19,7 +19,7 @@ import { BUNDLED_FIRST_PARTY_VOICE_CONVERSATION_RUNTIME_ENTRIES } from './genera
 import { ELEVENLABS_VOICE_PROVIDER_DEFAULT_SETTINGS } from '../../../../../packages/plugins/elevenlabs/src/protocol/voice/index';
 import { getSharedVoiceAudioSessionCoordinator } from '@happier-dev/audio-stream-native';
 import type { RealtimeVoiceProviderRuntime } from '@happier-dev/plugin-sdk/voice/client';
-import { PluginContributesV2Schema } from '@happier-dev/protocol';
+import { PluginContributesV2Schema } from '@happier-dev/protocol/plugins/contributions/v2';
 import { createBundledConversationRuntimeHostLease, getCurrentBundledConversationRuntimeHost } from './bundledConversationRuntimeHost';
 import { createExternalVoiceProviderActivationScope } from './externalVoiceProviderActivation.testkit';
 import { getExternalVoiceProviderRegistration } from './externalVoiceProviderRegistrations';

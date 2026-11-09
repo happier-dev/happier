@@ -1,7 +1,7 @@
 import * as React from 'react';
 
 import type { LocalSttProviderId, LocalSttProviderSpec } from './_types';
-import type { VoiceReadinessRole } from '@happier-dev/protocol';
+import type { VoiceReadinessRole } from '@happier-dev/protocol/voice/realtime/capabilities';
 import { normalizeNonEmptyString } from '@/voice/shared/normalizeNonEmptyString';
 import { createDefaultVoiceProviderRegistry } from '@/voice/registry/defaultRegistry';
 import type { VoiceProviderRegistry } from '@/voice/registry/providerRegistry';

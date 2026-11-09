@@ -1,6 +1,6 @@
 import { SettingsDeclarationValueV1Schema } from '@happier-dev/protocol/actions/settingsDeclarationActionFamily';
 import type { SettingOperationContext, SettingOperationResult } from '@/components/settings/catalog/settingDeclarations';
-import { mutateScopedAccountVoiceCredentialSource, voiceCredentialSourceMutationContractDigest } from '@/voice/credentials/accountVoiceCredential';
+import { mutateScopedAccountVoiceCredentialSource } from '@/voice/credentials/accountVoiceCredential';
 import type { VoiceProviderRegistry, VoiceProviderRegistryEntry } from '@/voice/registry/providerRegistry';
 import { qualifyPluginContributionReferenceV1 } from '@happier-dev/protocol/plugins/contribution-identity';
 import { storage } from '@/sync/domains/state/storage';
@@ -24,10 +24,6 @@ export async function invokeVoiceCredentialSourceSettingsOperation(
         expectedSettingsVersion: input.expectedSettingsVersion,
         selection: input.selection,
     };
-    const digest = voiceCredentialSourceMutationContractDigest(declaration, mutation);
-    if (!digest || input.expectedContractDigest !== undefined && input.expectedContractDigest !== digest) {
-        return { status: 'completed', value: { status: 'conflict', currentSettingsVersion: input.expectedSettingsVersion } };
-    }
     const declaredServices = declaration.credentials?.sources.flatMap(source => source.kind === 'connectedAccount'
         ? [qualifyPluginContributionReferenceV1(source.service, entry.pluginId)] : []) ?? [];
     const sourceUsable = () => {
@@ -45,7 +41,6 @@ export async function invokeVoiceCredentialSourceSettingsOperation(
     const result = await mutateScopedAccountVoiceCredentialSource({
         scope: context.accountScope,
         mutation,
-        expectedDeclaration: declaration,
         resolveCurrentDeclaration: () => {
             if (!context.isCurrent() || !sourceUsable()) return null;
             const current = registry.get(entry.providerId);

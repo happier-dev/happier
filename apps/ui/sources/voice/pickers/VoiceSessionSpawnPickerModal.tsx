@@ -1,6 +1,6 @@
 import { useAuthoringMemoryField } from '@/sync/domains/state/storage';
 import * as React from 'react';
-import { View, Pressable, ScrollView } from 'react-native';
+import { View, ScrollView } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import type { CustomModalInjectedProps } from '@/modal';
@@ -12,7 +12,7 @@ import { PathSelectionList } from '@/components/sessions/new/components/PathSele
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 
-import { useAllMachines, useAllSessionListRenderables, useSetting, useSettingMutable } from '@/sync/domains/state/storage';
+import { useAllSessionListRenderables, useSetting, useSettingMutable, useActiveMachineFacts } from '@/sync/domains/state/storage';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import { getRecentMachinesFromSessions } from '@/utils/sessions/recentMachines';
 import {
@@ -33,6 +33,7 @@ import type { VoiceSessionSpawnPickerResult } from './openVoiceSessionSpawnPicke
 import { Icon } from '@/components/ui/icons/Icon';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
 import { HAPPIER_PAGE_METRICS } from '@happier-dev/plugin-ui/presentation/pageMetrics';
+import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 
 
 type Props = CustomModalInjectedProps & Readonly<{
@@ -64,7 +65,7 @@ export function VoiceSessionSpawnPickerModal(props: Props) {
   const styles = stylesheet;
   const { onClose, onResolve, setChrome } = props;
 
-  const machines = useAllMachines();
+  const machines = useActiveMachineFacts();
   const scope = useActiveServerAccountScope();
   useMachineReachabilityRevision();
   const sessions = useAllSessionListRenderables();
@@ -165,16 +166,15 @@ export function VoiceSessionSpawnPickerModal(props: Props) {
 
   // The title band names the step; on the folder step its leading control goes back to machines.
   const backToMachines = React.useMemo(() => step === 'path' ? (
-    <Pressable
+    <HappierPressable
       testID="voice-session-spawn-back"
       onPress={() => setStep('machine')}
-      hitSlop={10}
       style={({ pressed }) => ({ padding: theme.space.s2, opacity: pressed ? motionTokens.press.opacity : 1 })}
       accessibilityRole="button"
       accessibilityLabel={t('common.back')}
     >
       <Icon name="caret-left" size={20} color={theme.colors.text.secondary} />
-    </Pressable>
+    </HappierPressable>
   ) : null, [step, theme.colors.text.secondary]);
 
   const chrome = React.useMemo(() => ({

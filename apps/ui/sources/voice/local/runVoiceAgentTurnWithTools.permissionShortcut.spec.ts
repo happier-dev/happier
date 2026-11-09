@@ -4,7 +4,7 @@ import { VOICE_AGENT_GLOBAL_SESSION_ID } from '@/voice/agent/voiceAgentGlobalSes
 import { readLocalConversationVoiceSettings } from '@/sync/domains/settings/voiceSettings';
 import { ExecutionRunTurnStreamStartV2RequestSchema, ExecutionRunTurnStreamReadRequestSchema,
   ExecutionRunTurnStreamStartResponseSchema, ExecutionRunTurnStreamReadResponseSchema } from '@happier-dev/protocol/execution/runs/streaming';
-import type { VoiceAssistantAction } from '@happier-dev/protocol';
+import type { VoiceAssistantAction } from '@happier-dev/protocol/voice/actions';
 
 import {
   getStorage,

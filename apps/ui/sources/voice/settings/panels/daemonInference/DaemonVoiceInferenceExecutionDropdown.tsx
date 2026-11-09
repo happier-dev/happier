@@ -2,7 +2,7 @@ import * as React from 'react';
 
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { t } from '@/text';
-import type { LocalNeuralExecution } from '@happier-dev/protocol';
+import type { LocalNeuralExecution } from '@happier-dev/protocol/daemon/voiceInference';
 
 function resolveExecutionTitle(execution: LocalNeuralExecution): string {
     switch (execution) {

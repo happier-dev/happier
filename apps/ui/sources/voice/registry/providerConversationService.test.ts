@@ -1,10 +1,11 @@
 import { createSessionReadBatchFetchBoundary } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
 import { describe, expect, it, onTestFinished, vi } from 'vitest';
 import {
-  SessionMetadataTuplePatchV1Schema,
+  SessionMetadataTuplePatchV1Schema} from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
+import {
   SessionLookupByTagsResponseV2Schema,
   SessionLookupByTagsRequestV2Schema,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/sessions/control/contract';
 import { projectSessionOwnerCompatibilityViewV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import { createDeferred, createSessionFixture } from '@/dev/testkit';
 import { createSessionMetadataHttpBoundary } from '@/dev/testkit/harness/sessionMetadataHttpBoundary';

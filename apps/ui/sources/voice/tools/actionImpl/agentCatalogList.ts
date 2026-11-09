@@ -1,4 +1,4 @@
-import { providerDeclarationContext } from '@/providers/catalog/accountProviderDeclarations';
+import { PROVIDER_DECLARATION_CONTEXT_SECTIONS, providerDeclarationContext } from '@/providers/catalog/accountProviderDeclarations';
 import { getAgentCore, isBundledAgentId, type AgentId } from '@/agents/catalog/catalog';
 import { listExecutableAgentUniverseIds } from '@/agents/catalog/agentUniverse';
 import { AgentsBackendsListOutputSchema, type AgentsBackendsListOutput } from '@happier-dev/protocol/actions/agentBackendInventory';
@@ -28,6 +28,7 @@ import { storage } from '@/sync/domains/state/storage';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { discoverMachineModelsForActions } from '@/sync/ops/modelDiscovery';
 import { loadDaemonMergedProjectionInputs } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
+import { DAEMON_AGENT_CATALOG_SECTIONS } from '@/agents/backendCatalog/agentCatalogSections';
 import { buildDynamicModelProbeCacheKey } from '@/sync/domains/models/dynamicModelProbeCacheKey';
 import { createUnavailablePreflightModelList, type PreflightModelList } from '@/sync/domains/models/modelOptions';
 import { describeProviderModels } from '@/providers/actions/client';
@@ -42,6 +43,9 @@ import { isVoiceProvidersFeatureEnabledForSpawn } from './spawnSessionModelSelec
 import type { AcpCatalogSnapshotV1 } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
 import { getAcpCatalogSnapshot } from '@/sync/store/settings/acpCatalogSnapshot';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
+import { readLastUsedBackendSelection } from '@/sync/domains/state/newSessionTargetUiState';
+import { resolvePreferredBackendTarget } from '@/agents/backendCatalog/resolvePreferredBackendTarget';
+import { PersistedBackendTargetRefV2Schema, buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 
 function normalizeId(raw: unknown): string {
   return String(raw ?? '').trim();
@@ -189,7 +193,7 @@ async function projectVoiceToolProviderModels(params: Readonly<{
     });
     context.assertCurrent();
     const declarations = await loadDaemonMergedProjectionInputs({ machineId: params.machineId, serverId: params.serverId,
-      accountLifetime: context.accountLifetime });
+      accountLifetime: context.accountLifetime, sections: PROVIDER_DECLARATION_CONTEXT_SECTIONS });
     context.assertCurrent();
     await refreshProviderCatalog(scope);
     context.assertCurrent();
@@ -303,6 +307,7 @@ function resolveBackendCatalogItemsForVoiceTool(params: Readonly<{
         enabled,
         agentId: entry.builtInAgentId,
         ...(executionTarget ? { identity: executionTarget.identity } : {}),
+        ...(executionTarget ? { agentTarget: executionTarget } : {}),
       });
       continue;
     }
@@ -315,6 +320,7 @@ function resolveBackendCatalogItemsForVoiceTool(params: Readonly<{
         enabled,
         ...(probeAgentId ? { agentId: probeAgentId } : {}),
         ...(executionTarget ? { identity: executionTarget.identity } : {}),
+        ...(executionTarget ? { agentTarget: executionTarget } : {}),
       });
       continue;
     }
@@ -324,6 +330,7 @@ function resolveBackendCatalogItemsForVoiceTool(params: Readonly<{
       label: entry.title,
       enabled,
       backendId: entry.backendId,
+      ...(executionTarget ? { agentTarget: executionTarget } : {}),
       ...(entry.subtitle ? { description: entry.subtitle } : {}),
     });
   }
@@ -354,7 +361,7 @@ export async function listAgentBackendsForVoiceTool(params: Readonly<{ includeDi
   }
   const daemonMergedProjectionInputs = machineId
     ? await (async () => {
-      const inputs = await loadDaemonMergedProjectionInputs({ machineId, serverId });
+      const inputs = await loadDaemonMergedProjectionInputs({ machineId, serverId, sections: DAEMON_AGENT_CATALOG_SECTIONS });
       if (!inputs) return null;
       return {
         mergedProviderProjectionById: inputs.mergedProviderProjectionById,
@@ -366,8 +373,18 @@ export async function listAgentBackendsForVoiceTool(params: Readonly<{ includeDi
   const items = resolveBackendCatalogItemsForVoiceTool({ includeDisabled, daemonMergedProjectionInputs, acpCatalogSnapshot,
     backendEnabledByTargetKey: params.backendEnabledByTargetKey });
 
+  // Reuse the ordinary New Session default owner; the inventory publishes its
+  // exact key so plugins never reconstruct Account agent preferences.
+  const availableBackendTargets = items.filter(item => item.enabled).flatMap(item => {
+    const target = PersistedBackendTargetRefV2Schema.safeParse(item.agentTarget);
+    return target.success ? [target.data] : [];
+  });
+  const preferred = resolvePreferredBackendTarget({ ...readLastUsedBackendSelection(settingsScope), availableBackendTargets });
+  const defaultTargetKey = buildBackendTargetKeyV2(preferred);
+
   return AgentsBackendsListOutputSchema.parse({
     items: limit ? items.slice(0, limit) : items,
+    ...(items.some(item => item.enabled && item.targetKey === defaultTargetKey) ? { defaultTargetKey } : {}),
   });
 }
 

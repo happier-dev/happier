@@ -1,6 +1,6 @@
+import { createSessionListSourceFixture } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
 import 'fake-indexeddb/auto';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { V2SessionListResponseSchema } from '@happier-dev/protocol/sessions/control/contract';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit';
 import { configureConnectedServerSocketBoundary, installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
@@ -17,7 +17,7 @@ afterEach(() => storage.setState(initialState, true));
 describe('resolveToolSessionAddress after an off-list acquisition', () => {
     it('resolves a bare id against rows actually fetched and hydrated by the admitted Home list owner', async () => {
         let publishFreshSession = false;
-        const rows = V2SessionListResponseSchema.parse({
+        const rows = createSessionListSourceFixture({
             sessions: [{
                 id: 'fresh-session', seq: 0, createdAt: 1, updatedAt: 20, active: true, activeAt: 20,
                 encryptionMode: 'plain', metadata: JSON.stringify({ path: '/repo', host: 'test', summary: { text: 'Fresh', updatedAt: 20 } }),
@@ -32,7 +32,7 @@ describe('resolveToolSessionAddress after an off-list acquisition', () => {
                 if (path === '/v1/features') return Response.json(createRootLayoutFeaturesResponse());
                 if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 0 });
                 if (path === '/v2/sessions' || path === '/v2/sessions/active') return Response.json(
-                    publishFreshSession ? rows : V2SessionListResponseSchema.parse({ sessions: [], hasNext: false, nextCursor: null }));
+                    publishFreshSession ? rows : createSessionListSourceFixture({ sessions: [], hasNext: false, nextCursor: null }));
                 return null;
             },
         });

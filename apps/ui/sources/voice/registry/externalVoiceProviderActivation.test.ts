@@ -4,13 +4,15 @@ import * as React from 'react';
 import type { VoiceSettingsActionContext } from '@happier-dev/plugin-sdk/voice';
 import type { PluginSettingsActionInput } from '@happier-dev/plugin-sdk/settings';
 import {
-  PluginContributesV2Schema,
+  PluginContributesV2Schema} from '@happier-dev/protocol/plugins/contributions/v2';
+import {
   VoiceProviderContributionSchema,
-  createRecipientContractDigestV1,
-  createVoiceProviderRecipientContractFromCredentialsV1,
-  type VoiceProviderContribution,
+  type VoiceProviderContribution} from '@happier-dev/protocol/plugins/contributions/voice';
+import {
+  createVoiceProviderRecipientContractFromCredentialsV1} from '@happier-dev/protocol/plugins/recipientContractV1';
+import {
   AgentSessionRealtimeInspectResultV1Schema,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/voice/realtime/agentSession';
 
 import { createPluginReactNativeBundleCache } from '@/components/plugins/reactNative/bundleCache';
 import { createPluginUiExecutableModuleHost } from '@/components/plugins/reactNative/executableModuleHost';
@@ -1125,7 +1127,6 @@ describe('external Voice provider activation', () => {
         scope: 'account',
         kind: 'apiKey',
         recipientContract,
-        recipientContractDigest: createRecipientContractDigestV1(recipientContract),
       });
     expect(registrations.find((entry) => entry.localId === undeclaredSlot.id)?.descriptor?.accountCredentialSlot)
       .toBeUndefined();
@@ -1234,12 +1235,12 @@ describe('external Voice provider activation', () => {
     if (!request) throw new Error('Account HTTP boundary missing');
     account.request.mockImplementation(createSessionReadBatchFetchBoundary(async (input, init) => {
       if (new URL(String(input)).pathname === '/v2/sessions/lookup-by-tags') {
-        const { SessionLookupByTagsRequestV2Schema } = await import('@happier-dev/protocol');
+        const { SessionLookupByTagsRequestV2Schema} = await import('@happier-dev/protocol/sessions/control/contract');
         expect(SessionLookupByTagsRequestV2Schema.parse(JSON.parse(String(init?.body))).tags)
           .toEqual([VOICE_TRANSCRIPT_HISTORY_SYSTEM_SESSION_TAG]);
         const detail = sessionHttp.handle(new URL(`/v2/sessions/${history.id}`, String(input)));
         if (!detail) throw new Error('Missing History HTTP record');
-        const { SessionLookupByTagsResponseV2Schema } = await import('@happier-dev/protocol');
+        const { SessionLookupByTagsResponseV2Schema} = await import('@happier-dev/protocol/sessions/control/contract');
         return Response.json(SessionLookupByTagsResponseV2Schema.parse({ sessions: [(await detail.json()).session] }));
       }
       return sessionHttp.handle(input, init) ?? request(input, init);

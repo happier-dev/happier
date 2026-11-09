@@ -9,6 +9,7 @@ import { useEnabledAgentIds } from '@/agents/hooks/useEnabledAgentIds';
 import { resolveAgentCatalogTitle } from '@/agents/backendCatalog/agentCatalogProjection';
 import { getResolvedBackendCatalogEntries } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
+import { DAEMON_AGENT_CATALOG_SECTIONS } from '@/agents/backendCatalog/agentCatalogSections';
 import { AgentCatalogIdentityIcon } from '@/agents/presentation/AgentCatalogIdentityIcon';
 import { getModelDropdownMenuItems, REFRESH_MODELS_DROPDOWN_ITEM_ID } from '@/components/settings/pickers/modelDropdownItems';
 import { renderDropdownItemIcon } from '@/components/settings/pickers/renderDropdownItemIcon';
@@ -195,6 +196,7 @@ export function LocalConversationSection(props: {
     machineId: preflightMachineId,
     serverId: capabilityServerId,
     enabled: Boolean(preflightMachineId),
+    sections: DAEMON_AGENT_CATALOG_SECTIONS,
   });
   const currentDaemonProjectionInputs = daemonMergedProjection.phase === 'ready'
     ? daemonMergedProjection.inputs

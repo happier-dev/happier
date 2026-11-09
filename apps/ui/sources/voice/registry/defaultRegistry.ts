@@ -1,13 +1,5 @@
-import {
-  BUNDLED_FIRST_PARTY_VOICE_CONTRIBUTIONS,
-  BUNDLED_FIRST_PARTY_VOICE_PRESENTATIONS,
-} from './generatedBundledVoiceEntries';
-import { BUILT_IN_VOICE_UI_ENTRIES } from './builtInEntries';
-import {
-  createVoiceProviderRegistry,
-  type VoiceProviderRegistry,
-  type VoiceProviderRegistryEntry,
-} from './providerRegistry';
+import { getBundledBaseVoiceProviderRegistry } from './internalContributions';
+import type { VoiceProviderRegistry, VoiceProviderRegistryEntry } from './providerRegistry';
 import {
   getExternalVoiceProviderRegistrationsRevision,
   getExternalVoiceProviderProjectionAuthority,
@@ -16,22 +8,10 @@ import {
   subscribeExternalVoiceProviderRegistrations,
 } from './externalVoiceProviderRegistrations';
 
-let bundledBaseRegistry: VoiceProviderRegistry | undefined;
-
-function getBundledBaseRegistry(): VoiceProviderRegistry {
-  // Generated inputs are module-owned and normalized descriptors are deeply
-  // frozen. Live enablement and occurrence authority stay in each projection.
-  return bundledBaseRegistry ??= createVoiceProviderRegistry({
-    builtIn: BUILT_IN_VOICE_UI_ENTRIES,
-    bundledContributions: BUNDLED_FIRST_PARTY_VOICE_CONTRIBUTIONS,
-    bundledPresentations: BUNDLED_FIRST_PARTY_VOICE_PRESENTATIONS,
-  });
-}
-
 export function createDefaultVoiceProviderRegistry(input: Readonly<{
   enabledPluginIds?: ReadonlySet<string> | null;
 }> = {}): VoiceProviderRegistry {
-  const base = getBundledBaseRegistry();
+  const base = getBundledBaseVoiceProviderRegistry();
   const enabledPluginIds = input.enabledPluginIds ?? null;
   let cachedRevision = -1;
   let cachedEntries: readonly VoiceProviderRegistryEntry[] = Object.freeze([]);

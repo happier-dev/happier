@@ -5,7 +5,7 @@ import {
 import { randomUUID } from '@/platform/randomUUID';
 import { sync } from '@/sync/sync';
 import type { PendingMessageEnqueueResultV2 } from '@/sync/engine/pending/pendingQueueV2';
-import type { PendingDeliveryBlockedReason } from '@happier-dev/protocol';
+import type { PendingDeliveryBlockedReason } from '@happier-dev/protocol/sessions/messages/pendingDeliveryBlockedReason';
 import {
     buildRealtimeConversationTurnMeta,
     type RealtimeConversationTurnSource,

@@ -1,7 +1,7 @@
 import {
   projectSessionActivityCompatibilityV1,
   type SessionActivityCompatibilityMessageCountsV1,
-  type SessionListViewV1,
+  type SessionActivityViewV1,
 } from '@happier-dev/protocol/sessions/awareness/action';
 import { readStoredSessionMessages } from "@happier-dev/session-core/messages";
 import { findSessionListLookupSession } from '@/sync/domains/session/listing/sessionListLookupState';
@@ -14,6 +14,7 @@ import { listSessionAddressesForSessionIdFromLocalState } from '@/sync/domains/s
 import { storage } from '@/sync/domains/state/storage';
 import { sync } from '@/sync/sync';
 import { createAbortRacer } from '@/voice/agent/voiceAgentAbort';
+import { readSessionRecapForAddress } from '@/sync/ops/sessionRecap';
 
 /**
  * Released UI-only counts cover the retained local window, never the whole Session.
@@ -48,7 +49,7 @@ export async function getSessionActivityForVoiceTool(params: Readonly<{
   sessionId: string;
   serverId?: string | null;
   signal?: AbortSignal;
-  view?: SessionListViewV1;
+  view?: SessionActivityViewV1;
   windowSeconds?: number;
 }>) {
   const sessionId = params.sessionId.trim();
@@ -87,6 +88,8 @@ export async function getSessionActivityForVoiceTool(params: Readonly<{
     ? raw
     : findSessionListLookupSession(state, address)?.session;
   if (!session) return fail('invalid_response');
+  if (params.view === 'recap') return { view: 'recap' as const, sessionId,
+    ...await readSessionRecapForAddress(address, params.signal) };
   const nowMs = Date.now();
   const awareness = projectUiSessionAwareness(session, nowMs);
   if (params.view === 'awareness') return awareness;

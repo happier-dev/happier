@@ -36,6 +36,53 @@ async function pressTtsSample(screen: Awaited<ReturnType<typeof renderScreen>>) 
 }
 
 describe('Voice declarations through the default Settings Action and Account persistence', () => {
+    it('keeps the reply language live in both directions and binds every writable Voice declaration', async () => {
+        const account = await createVoiceSettingsAccountTestHarness(settingsParse({
+            voice: { providerId: 'local_conversation' },
+            actionsSettingsV1: { v: 1, actions: {}, approvalWaivedSurfaces: { 'settings.set': ['agent'] } },
+        }));
+        onTestFinished(account.dispose);
+        const { VoiceConversationLanguageSection } = await import('./panels/VoiceConversationLanguageSection');
+        const { useVoiceSettingsMutable } = await import('./useVoiceSettingsMutable');
+        const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
+        const { getSettingsPageDeclarations } = await import('@/components/settings/catalog/settingsPageDeclarations');
+        function Language() {
+            const [voice, setVoice] = useVoiceSettingsMutable();
+            return React.createElement(VoiceConversationLanguageSection, { voice, setVoice });
+        }
+        const screen = await renderScreen(React.createElement(Language));
+        onTestFinished(() => screen.unmount());
+        const executor = createDefaultActionExecutor();
+        const context = { surface: 'agent' as const, authority: 'account_automation' as const,
+            serverId: account.scope.serverId, expectedAccountId: account.scope.accountId };
+        const anchor = 'voiceConversations.assistantLanguage';
+        const writesBefore = account.writes.length;
+        await act(async () => {
+            expect(await executor.execute('settings.set', { anchor, value: 'fr-FR' }, context)).toMatchObject({ ok: true });
+        });
+        expect(screen.tree.root.findByType(DropdownMenu).props.selectedId).toBe('fr-FR');
+        expect(account.persistedSettings.voice.assistantLanguage).toBe('fr-FR');
+        await act(async () => {
+            screen.tree.root.findByType(DropdownMenu).props.onSelect('de-DE');
+            await vi.waitFor(() => expect(account.persistedSettings.voice.assistantLanguage).toBe('de-DE'));
+        });
+        expect(await executor.execute('settings.get', { anchor }, context)).toMatchObject({ ok: true, result: { value: 'de-DE' } });
+        expect(account.writes).toHaveLength(writesBefore + 2);
+        const pages = getSettingsPageDeclarations(undefined, account.settings).filter(page => page.pageId.startsWith('voice'));
+        for (const pageId of new Set(pages.map(page => page.pageId))) {
+            const listed = await executor.execute('settings.list', { pageId }, context);
+            expect(listed.ok).toBe(true);
+            if (!listed.ok) throw new Error('Missing Voice descriptors');
+            const { items } = SettingsDeclarationActionOutputSchemasV1['settings.list'].parse(listed.result);
+            for (const ref of pages.filter(page => page.pageId === pageId).flatMap(page => Object.values(page.settings))) {
+                if (ref.storage?.access !== 'read_write') continue;
+                expect(items.find(item => item.anchor === ref.anchor), ref.anchor)
+                    .toMatchObject({ readable: true, writable: true });
+            }
+        }
+        expect(account.writes).toHaveLength(writesBefore + 2);
+    });
+
     it('retains a saved Voice binding across predecessor ingress without a write on load', async () => {
         const { normalizeVoiceSettingsServerDelta } = await import('@/sync/domains/settings/voiceSettingsPersistence');
         const { readLocalConversationVoiceSettings } = await import('@/sync/domains/settings/voiceSettings');
@@ -160,12 +207,12 @@ describe('Voice declarations through the default Settings Action and Account per
         const before = account.persistedSettings;
         const writes = account.writes.length;
         expect(await executor.execute('settings.set', { anchor, value: 'false' }, context)).toMatchObject({ ok: false });
-        expect(await executor.execute('settings.set', { anchor, value: true }, {
-            ...context, surface: 'voice', authority: 'account_automation',
-        })).toMatchObject({ ok: false, errorCode: 'present_user_required' });
         expect(account.writes).toHaveLength(writes);
         expect(account.persistedSettings).toEqual(before);
-        expect(await executor.execute('settings.set', { anchor, value: true }, context)).toMatchObject({ ok: true });
+        // Surface defaults are user-changeable: the explicit Voice-surface waiver admits this write.
+        expect(await executor.execute('settings.set', { anchor, value: true }, {
+            ...context, surface: 'voice', authority: 'account_automation',
+        })).toMatchObject({ ok: true });
         expect(account.persistedSettings.voice).toMatchObject({ canApproveRequests: true,
             assistantLanguage: 'de', privacy: { shareToolNames: false } });
     });

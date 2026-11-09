@@ -1,4 +1,4 @@
-import type { VoiceProviderSettingsActionDeclaration } from '@happier-dev/protocol';
+import type { VoiceProviderSettingsActionDeclaration } from '@happier-dev/protocol/plugins/contributions/voice';
 
 import type { VoiceProviderRegistryEntry } from '@/voice/registry/providerRegistry';
 

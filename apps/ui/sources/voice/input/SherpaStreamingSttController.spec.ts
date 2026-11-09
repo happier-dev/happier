@@ -3,7 +3,7 @@ import { createDeferred, type Deferred } from '@/dev/testkit';
 import { createHash } from 'node:crypto';
 import { parseModelPackManifest } from '@happier-dev/protocol/voice/modelPacks/manifest';
 import { createMemFs } from '@/voice/modelPacks/installerTestFs';
-import { VOICE_RUNTIME_STT_PCM_FORMAT } from '@happier-dev/protocol';
+import { VOICE_RUNTIME_STT_PCM_FORMAT } from '@happier-dev/protocol/voice/runtimeConfig';
 import type { SherpaNativeModule, SherpaNativeStreamingFinalResult } from '@happier-dev/sherpa-native';
 
 import type { MicSession } from '@/voice/runtime/mic/MicSession';

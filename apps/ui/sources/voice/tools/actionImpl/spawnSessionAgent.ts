@@ -12,6 +12,7 @@ import { resolvePreferredBackendTargetFromProjection } from '@/agents/backendCat
 import type { DaemonMergedProjectionInputs } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
 import { resolveOperationalBackendTargetForAgentSelection } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import { getAcpCatalogSnapshot } from '@/sync/store/settings/acpCatalogSnapshot';
+import { readLastUsedBackendSelection } from '@/sync/domains/state/newSessionTargetUiState';
 
 /**
  * The one operational backend target for a selected Agent.
@@ -54,9 +55,10 @@ export function resolveSpawnBackendTargetFromState(
   opts?: Readonly<{ daemonMergedProjectionInputs?: DaemonMergedProjectionInputs | null }>,
 ): BackendTargetRefV2 {
   const settings = state?.settings ?? {};
+  const remembered = readLastUsedBackendSelection(state?.settingsScope ?? null);
   const preferredTarget = resolvePreferredBackendTargetFromProjection({
-    lastUsedAgent: settings.lastUsedAgent,
-    lastUsedBackendTarget: settings.lastUsedBackendTarget,
+    lastUsedAgent: remembered.lastUsedAgent,
+    lastUsedBackendTarget: remembered.lastUsedBackendTarget,
     defaultBuiltInAgentId: DEFAULT_AGENT_ID as AgentId,
     backendEnabledByTargetKey: settings.backendEnabledByTargetKey ?? undefined,
     acpCatalogSnapshot: getAcpCatalogSnapshot(state?.settingsScope)?.catalog,
@@ -69,7 +71,7 @@ export function resolveSpawnAgentIdFromState(state: any): AgentId {
   const backendTarget = resolveSpawnBackendTargetFromState(state);
   return resolvePersistedAgentIdForBackendTarget({
     backendTarget,
-    persistedAgentId: state?.settings?.lastUsedAgent,
+    persistedAgentId: readLastUsedBackendSelection(state?.settingsScope ?? null).lastUsedAgent,
     selectedBuiltInAgentId: DEFAULT_AGENT_ID as AgentId,
   });
 }

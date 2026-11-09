@@ -60,6 +60,23 @@ function fieldTestId(field: RealtimeSettingsFieldDescriptor): string {
   return `voice-realtime-field-${field.path.replaceAll('.', '-')}`;
 }
 
+/** Only the range's displayed value follows a drag; its declared setting commits on release. */
+function RealtimeRangeControl(props: Readonly<{
+  value: number; min: number; max: number; step: number; testID: string; label: string;
+  format: (value: number) => string; onCommit: (value: number) => void; reset: React.ReactNode;
+}>) {
+  const { theme } = useUnistyles();
+  const [preview, setPreview] = React.useState<number | undefined>();
+  return <View style={{ gap: theme.space.s4, minWidth: 180, flex: 1 }}>
+    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: theme.space.s8 }}>
+      <Text style={{ ...Typography.default(), fontVariant: ['tabular-nums'], color: theme.colors.text.secondary }}>{props.format(preview ?? props.value)}</Text>
+      {props.reset}
+    </View>
+    <Slider testID={props.testID} value={props.value} min={props.min} max={props.max} step={props.step}
+      accessibilityLabel={props.label} formatValueText={props.format} onValuePreview={setPreview} onValueChange={props.onCommit} />
+  </View>;
+}
+
 function readOptionRows(field: RealtimeSettingsFieldDescriptor): DropdownMenuItem[] {
   if (!Array.isArray(field.options)) return [];
   return field.options.flatMap((raw): DropdownMenuItem[] => {
@@ -152,9 +169,7 @@ export function RealtimeProviderFields(props: Readonly<{
     config: props.config,
   };
   const credentialUsable = props.credentialStatus === 'ready';
-  const credentialUnavailableDetail = props.credentialStatus === 'review_required'
-    ? tLoose('settingsVoice.externalCredentials.reviewRequired')
-    : props.credentialStatus === 'unknown'
+  const credentialUnavailableDetail = props.credentialStatus === 'unknown'
       // The snapshot could not be read; asking for a credential that may
       // already be stored is the same falsehood the row above avoids.
       ? tLoose('voice.readiness.credential_unknown')
@@ -246,16 +261,12 @@ export function RealtimeProviderFields(props: Readonly<{
       const format = (number: number) => `${typeof field.fractionDigits === 'number' ? number.toFixed(field.fractionDigits) : number}${typeof field.valueSuffix === 'string' ? field.valueSuffix : ''}`;
       return <Item key={key} testID={fieldTestId(field)} title={translate(title)} subtitle={translate(subtitle)}
         subtitleLines={0} showChevron={false} accessoryLayout="adaptive" rightElementOutsidePressable
-        rightElement={<View style={{ gap: theme.space.s4, minWidth: 180, flex: 1 }}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: theme.space.s8 }}>
-            <Text style={{ ...Typography.default(), fontVariant: ['tabular-nums'], color: theme.colors.text.secondary }}>{format(value)}</Text>
-            {value !== defaultValue ? <RoundButton testID={`${fieldTestId(field)}.default`} title={t('common.default')} size="small" display="inverted"
-              onPress={() => { if (field.nullable === true) write(field, null, props.providerId); else commitNumber(field, current, ''); }} /> : null}
-          </View>
-          <Slider testID={`${fieldTestId(field)}.slider`} value={value} min={field.min} max={field.max} step={field.step}
-            accessibilityLabel={translate(title)} formatValueText={format}
-            onValueChange={(next) => commitNumber(field, current, String(next))} />
-        </View>} />;
+        rightElement={<RealtimeRangeControl value={value} min={field.min} max={field.max} step={field.step}
+          testID={`${fieldTestId(field)}.slider`} label={translate(title)} format={format}
+          onCommit={(next) => { commitNumber(field, current, String(next)); }}
+          reset={value !== defaultValue ? <RoundButton testID={`${fieldTestId(field)}.default`} title={t('common.default')} size="small" display="inverted"
+            onPress={() => { if (field.nullable === true) write(field, null, props.providerId); else commitNumber(field, current, ''); }} /> : null}
+        />} />;
     }
     return (
     <FieldValueItem

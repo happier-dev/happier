@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { VoiceTranscriptCanonicalEventV1 } from '@happier-dev/protocol';
+import type { VoiceTranscriptCanonicalEventV1 } from '@happier-dev/protocol/voice/realtime/events';
 
 import { createVoiceTranscriptProjector } from './VoiceTranscriptProjector';
 

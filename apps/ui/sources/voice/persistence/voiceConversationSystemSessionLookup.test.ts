@@ -1,4 +1,5 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, beforeEach } from 'vitest';
+import { selectActiveTestHomeForTests } from '@/dev/testkit/fixtures/persistedHomeProfiles';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 
 import {
@@ -196,3 +197,6 @@ describe('voiceConversationSystemSessionLookup', () => {
     expect(isVoiceConversationSystemSessionMetadata(resolveVoiceConversationSessionMetadataFromState(state, 'voice_missing_owner'))).toBe(false);
   });
 });
+
+// P03-TESTKIT-SERVER: the unconfigured test build seeds no Home; select one through the real owner.
+beforeEach(async () => { await selectActiveTestHomeForTests(); });

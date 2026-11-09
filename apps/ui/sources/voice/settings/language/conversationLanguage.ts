@@ -10,7 +10,7 @@ import {
   resolveLocalVoiceRecognitionLanguage,
 } from '@/voice/local/localVoiceSettings';
 import { resolveStoredVoiceProviderId, resolveVoiceProviderIdFromSettings } from '@/voice/settings/resolveVoiceProviderId';
-import type { VoiceProviderSettingsPresentation } from '@happier-dev/protocol';
+import type { VoiceProviderSettingsPresentation } from '@happier-dev/protocol/plugins/contributions/voice';
 import { createDefaultVoiceProviderRegistry } from '@/voice/registry/defaultRegistry';
 import type { VoiceProviderRegistry } from '@/voice/registry/providerRegistry';
 import { getExternalVoiceProviderProjectionAuthority, getExternalVoiceProviderRegistration } from '@/voice/registry/externalVoiceProviderRegistrations';

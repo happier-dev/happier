@@ -24,18 +24,24 @@ import type {
   VoiceRealtimeConnection,
 } from '@happier-dev/plugin-sdk/voice/client';
 import {
-  MACHINE_PLAIN_DATA_KEY_MARKER,
+  MACHINE_PLAIN_DATA_KEY_MARKER} from '@happier-dev/protocol/machines/machineStoredContent';
+import {
   DaemonPluginActionSchemasReadRequestSchema,
   DaemonPluginActionSchemasReadResponseSchema,
-  createVoiceProviderRecipientContractFromCredentialsV1,
-  PluginContributesV2Schema,
   PluginProjectedActionV2Schema,
-  VoiceRealtimeJsonValueSchema,
-  type PluginContributionIdentityV1,
-  type PluginMachineExecutionOriginV1,
-  type VoiceRealtimeJsonValue,
   type PluginProjectedActionV2,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import {
+  createVoiceProviderRecipientContractFromCredentialsV1} from '@happier-dev/protocol/plugins/recipientContractV1';
+import {
+  PluginContributesV2Schema} from '@happier-dev/protocol/plugins/contributions/v2';
+import {
+  VoiceRealtimeJsonValueSchema,
+  type VoiceRealtimeJsonValue} from '@happier-dev/protocol/voice/realtime/events';
+import {
+  type PluginContributionIdentityV1} from '@happier-dev/protocol/plugins/contribution-identity';
+import {
+  type PluginMachineExecutionOriginV1} from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
 import {
   computePluginUiArtifactFileSetSha256DigestV1,
 } from '@happier-dev/protocol/plugins/ui';

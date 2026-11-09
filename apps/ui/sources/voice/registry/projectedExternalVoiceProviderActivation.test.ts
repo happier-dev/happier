@@ -1,21 +1,29 @@
 import { installSessionOpsNetworkBoundary } from '@/dev/testkit/harness/sessionOpsNetworkBoundary';
 import { createPlainMachineReadHttpResponseFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { createPluginArtifactTransferBoundary, pluginArtifactTransferDaemonState } from '@/dev/testkit/harness/pluginArtifactTransferBoundary';
+import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 
 const network = await installSessionOpsNetworkBoundary();
 import { readFile } from 'node:fs/promises';
 
 import { afterAll, afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import {
-  MACHINE_PLAIN_DATA_KEY_MARKER,
+  MACHINE_PLAIN_DATA_KEY_MARKER} from '@happier-dev/protocol/machines/machineStoredContent';
+import {
   createRecipientContractDigestV1,
-  createVoiceProviderRecipientContractFromCredentialsV1,
+  createVoiceProviderRecipientContractFromCredentialsV1} from '@happier-dev/protocol/plugins/recipientContractV1';
+import {
   DaemonPluginReactNativeBundleCacheIdentityV1Schema,
-  PluginContributesV2Schema,
-  PluginManifestV2Schema,
-  PluginProjectionV2Schema,
-  type PluginMachineExecutionOriginV1,
+  PluginProjectionV2Schema} from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import {
+  PluginContributesV2Schema} from '@happier-dev/protocol/plugins/contributions/v2';
+import {
+  PluginManifestV2Schema} from '@happier-dev/protocol/plugins/manifest/v2';
+import {
+  type PluginMachineExecutionOriginV1} from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
+import {
   type VoiceProviderContribution,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/plugins/contributions/voice';
 import type { PluginClientApi } from '@happier-dev/plugin-sdk';
 import type { BundledSpeechDaemonClient } from '@/voice/credentials/bundledSpeechClient';
 import { PluginReleaseFactsV1Schema } from '@happier-dev/protocol/plugins/availability';
@@ -54,7 +62,8 @@ const { projectVoiceProviderAgentRealtimePassiveSetup } = await import("@/voice/
 
 const { createBundledConversationRuntimeHostLease } = await import("./bundledConversationRuntimeHost");
 const { createDefaultVoiceProviderRegistry } = await import("./defaultRegistry");
-const { listExternalVoiceProviderRegistrations, getExternalVoiceProviderRegistrationsRevision, subscribeExternalVoiceProviderRegistrations } = await import("./externalVoiceProviderRegistrations");
+const { listExternalVoiceProviderRegistrations, getExternalVoiceProviderRegistrationsRevision,
+  subscribeExternalVoiceProviderRegistrations } = await import("./externalVoiceProviderRegistrations");
 import type {
   ExternalVoiceProviderRuntimeRegistration,
   VoiceConversationProviderContribution,
@@ -68,26 +77,25 @@ type BundledSpeechClient = NonNullable<Parameters<typeof createBundledSpeechRunt
 
 const rawCredentialMachineRpc = vi.fn();
 const reactNativeArtifactDaemonTransport = { fetch: vi.fn<PluginArtifactDaemonByteFetcher>() };
-const { DaemonPluginUiArtifactBytesReadRequestSchema } = await import('@happier-dev/protocol');
-const { RPC_METHODS } = await import('@happier-dev/protocol/rpc');
+const artifactTransfers = createPluginArtifactTransferBoundary(async request =>
+  reactNativeArtifactDaemonTransport.fetch({ transport: { machineId: request.machineId, serverId: account.home.id },
+    family: request.payload.artifactFamily, digest: request.payload.cacheIdentity.artifactDigest }));
 let account: Awaited<ReturnType<typeof createPlainArtifactHomeFixture>>;
 beforeEach(async () => {
   network.resetRequests();
   await network.addHome('https://projected-voice.example.test', 'artifact-account');
   network.setRpcResponder(async request => {
-    if (request.method === RPC_METHODS.DAEMON_PLUGIN_UI_ARTIFACT_BYTES_READ) {
-      const payload = DaemonPluginUiArtifactBytesReadRequestSchema.parse(request.payload);
-      return await reactNativeArtifactDaemonTransport.fetch({ transport: { machineId: request.targetId, serverId: account.home.id }, family: payload.artifactFamily, digest: payload.cacheIdentity.artifactDigest });
-    }
+    if (artifactTransfers.handles(request.method)) return artifactTransfers.request({ ...request, machineId: request.targetId });
     return await rawCredentialMachineRpc(request);
   });
   const purposes = createConnectedPurposeCatalogHttpBoundary();
   account = await createPlainArtifactHomeFixture('https://projected-voice.example.test', {
-    handleRequest: async (path, init) => createPlainMachineReadHttpResponseFixture(path, init) ?? await purposes.handle(new URL(path, 'https://projected-voice.example.test'), init)
+    serverFeatures: createRootLayoutFeaturesResponse({ features: { machines: { enabled: true, transfer: { enabled: true, directPeer: { enabled: false }, serverRouted: { enabled: false } } } } }),
+    handleRequest: async (path, init) => createPlainMachineReadHttpResponseFixture(path, init, 'artifact-account', { daemonState: pluginArtifactTransferDaemonState }) ?? await purposes.handle(new URL(path, 'https://projected-voice.example.test'), init)
       ?? answerVoiceRealtimePreparationHttpRequest(new URL(path, 'https://projected-voice.example.test'), storage.getState().settings),
   });
   await purposes.hydrate({ serverId: account.home.id, accountId: 'artifact-account' });
-  const machine = createMachineFixture({ activeAt: Date.now() });
+  const machine = createMachineFixture({ activeAt: Date.now(), daemonState: pluginArtifactTransferDaemonState });
   storage.setState({ machines: { [machine.id]: machine }, machineListByServerId: { [account.home.id]: [machine] } });
 });
 afterEach(async () => {
@@ -257,8 +265,8 @@ function projectConversationVoiceEntries(input: Readonly<{
 }>): PluginUiProjectionModel['voiceProvidersById'] {
   const projection = normalizePluginUiProjection(PluginProjectionV2Schema.parse({
     v: 2, generation: input.generation,
-    installedPackagesById: {}, agentsById: {}, actionsById: {},
-     resourcesById: {}, settingsById: {}, diagnostics: [],
+    installedPackagesById: {}, agentsById: {}, actionsById: {}, 
+    resourcesById: {}, settingsById: {}, diagnostics: [],
     familiesById: { voiceProviders: { family: 'voiceProviders', entriesById: Object.fromEntries(
       input.declarations.map(definition => {
         const id = `${input.pluginId}/${definition.id}`;
@@ -481,8 +489,6 @@ describe('projected external Voice provider activation', () => {
       installedPackagesById: {},
       agentsById: {},
       actionsById: {},
-
-
       resourcesById: {},
       settingsById: {},
       familiesById: {
@@ -787,8 +793,6 @@ describe('projected external Voice provider activation', () => {
       installedPackagesById: {},
       agentsById: {},
       actionsById: {},
-
-
       resourcesById: {},
       settingsById: {},
       familiesById: {
@@ -1284,8 +1288,8 @@ describe('projected external Voice provider activation', () => {
           executionOrigin: origin,
           available: true,
         },
-      },
-       resourcesById: {}, settingsById: {},
+      }, 
+      resourcesById: {}, settingsById: {},
       familiesById: {
         voiceProviders: {
           family: 'voiceProviders',
@@ -1418,8 +1422,12 @@ describe('projected external Voice provider activation', () => {
     });
     await network.addHome('https://projected-voice-two.example.test', 'artifact-account');
     const replacementHome = await createPlainArtifactHomeFixture('https://projected-voice-two.example.test', {
-      handleRequest: async (path, init) => createPlainMachineReadHttpResponseFixture(path, init),
+      serverFeatures: createRootLayoutFeaturesResponse({ features: { machines: { enabled: true,
+        transfer: { enabled: true, directPeer: { enabled: false }, serverRouted: { enabled: false } } } } }),
+      handleRequest: async (path, init) => createPlainMachineReadHttpResponseFixture(path, init, 'artifact-account', { daemonState: pluginArtifactTransferDaemonState }),
     });
+    storage.getState().applyMachines([createMachineFixture({ id: 'machine-2', activeAt: Date.now(),
+      daemonState: pluginArtifactTransferDaemonState })], false, { sourceServerId: replacementHome.home.id });
     onTestFinished(() => replacementHome.dispose());
     const { reader: replacementReader, lifetime: replacementLifetime } = createCurrentVoiceArtifactAdmission({
       pluginId,

@@ -1,8 +1,10 @@
 import type {
-  DaemonVoiceInferenceModelStatus,
-  ModelPackCatalogEntry,
+  DaemonVoiceInferenceModelStatus} from '@happier-dev/protocol/daemon/voiceInference';
+import type {
+  ModelPackCatalogEntry} from '@happier-dev/protocol/voice/modelPacks/catalog';
+import type {
   ModelPackKind,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/voice/modelPacks/manifest';
 import {
   getDefaultModelPackId,
   getModelPackCatalogEntry,

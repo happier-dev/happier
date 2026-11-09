@@ -8,7 +8,6 @@ import { observeMachinePresenceForTest } from '@/dev/testkit/harness/machinePres
 installDisconnectedServerSocketBoundary();
 const { activateStorageAccountScope } = await import('@/dev/testkit/mocks/storage');
 const { storage } = await import('@/sync/domains/state/storage');
-const { readMachineOnlineGraceMsFromEnv } = await import('@/utils/sessions/machineUtils');
 const { resolveVoiceExecutionMachineIdFromState } = await import('@/voice/settings/executionMachine');
 const { useVoiceExecutionMachineId, useVoiceExecutionMachineSelection, useVoiceExecutionMachinePresentation } = await import('./useExecutionMachinePresentation');
 const machineNames = await import('@/utils/sessions/machineDisplayNames');
@@ -138,7 +137,7 @@ it('does not reread persisted Voice bindings on unrelated root notifications', a
   expect(voiceSessionBindingStore.getState().list()).toEqual([]);
 });
 
-it.each(['execution', 'selection', 'catalog'] as const)('keeps the %s snapshot stable across presence expiry and refreshes it on the next render', async consumer => {
+it.each(['execution', 'selection', 'catalog'] as const)('keeps the %s snapshot stable as time passes and observes an authoritative withdrawal', async consumer => {
   const scope = { serverId: 'voice-snapshot-home', accountId: 'voice-snapshot-account' };
   account = await activateStorageAccountScope(scope);
   const machine = createMachineFixture({ id: 'machine-a', active: true, activeAt: Date.now() });
@@ -154,7 +153,7 @@ it.each(['execution', 'selection', 'catalog'] as const)('keeps the %s snapshot s
   observeMachinePresenceForTest(scope, [machine.id]);
   const snapshot = storage.getState();
   expect(resolveVoiceExecutionMachineIdFromState(snapshot)).toBe(machine.id);
-  const deadline = machine.activeAt + readMachineOnlineGraceMsFromEnv();
+  const deadline = machine.activeAt + 120_000;
   let now = deadline - 1;
   const voice = voiceSettingsParse({ providerId: 'local_conversation' });
   // React's initial subscription may legitimately re-read selection. Move the
@@ -175,7 +174,13 @@ it.each(['execution', 'selection', 'catalog'] as const)('keeps the %s snapshot s
   else expect(first).toEqual(expect.any(String));
   now = deadline + 1;
   await hook.rerender();
+  expect(hook.getCurrent()).toBe(first);
+  expect(storage.getState()).toBe(snapshot);
+  await act(async () => storage.getState().applyMachineActivityUpdates([{ id: machine.id, active: false, activeAt: now }], { sourceServerId: scope.serverId }));
   if (consumer !== 'catalog') expect(hook.getCurrent()).toBeNull();
   else expect(hook.getCurrent()).not.toBe(first);
-  expect(storage.getState()).toBe(snapshot);
+  expect(storage.getState()).not.toBe(snapshot);
+  expect(storage.getState().machineListByServerId[scope.serverId]?.[0]?.active).toBe(false);
+  expect(snapshot.machineListByServerId[scope.serverId]?.[0]?.active).toBe(true);
+  expect(storage.getState().machineListByServerId[scope.serverId]?.[0]?.metadata).toBe(machine.metadata);
 });

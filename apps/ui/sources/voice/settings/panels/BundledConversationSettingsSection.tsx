@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Linking, Platform } from 'react-native';
+import { Platform } from 'react-native';
 
 import { Icon } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
@@ -10,6 +10,7 @@ import {
 } from '@/sync/domains/settings/voiceSettings';
 import { t, tLoose } from '@/text';
 import { fireAndForget } from '@/utils/system/fireAndForget';
+import { requestOpenExternalUrl } from '@/utils/url/requestOpenExternalUrl';
 import {
   VoiceCredentialItem,
   type VoiceCredentialItemStatus,
@@ -179,7 +180,6 @@ export function BundledConversationSettingsSection(props: Readonly<{
     && contribution !== null
     && credentialDeclaration !== null
     && credentialDeclaration.sources.some((source) => source.kind === 'connectedAccount');
-  const accountCredentialSlot = providerRegistry.get(providerId)?.accountCredentialSlot;
   const primarySettingsVisible = credentialSettingsVisible
     || credentialSourceVisible
     || visibleDescriptor.fields.length > 0
@@ -225,12 +225,6 @@ export function BundledConversationSettingsSection(props: Readonly<{
           : undefined}
         credentialSourceDeclaration={credentialProviderDeclaration ?? undefined}
         rawCredentialReviewGrants={selectedSavedSecretRawReviewGrants}
-        recipientContract={accountCredentialSlot?.id === credential.kind
-          ? accountCredentialSlot.recipientContract
-          : null}
-        recipientContractDigest={accountCredentialSlot?.id === credential.kind
-          ? accountCredentialSlot.recipientContractDigest
-          : null}
         disclosePlainStorage={true}
         onStatusChanged={onCredentialStatusChanged}
         onChanged={onCredentialChanged}
@@ -314,9 +308,7 @@ export function BundledConversationSettingsSection(props: Readonly<{
           : kind === 'apiKeys' ? providerEntry?.presentation?.resources?.apiKeysTitleKey : undefined)
           ?? `settingsVoice.realtimeProviders.links.${kind}.title`)}
         subtitle={providerEntry?.presentation?.resources ? undefined : tLoose(`settingsVoice.realtimeProviders.links.${kind}.subtitle`)}
-        onPress={() => fireAndForget((async () => {
-          if (await Linking.canOpenURL(url)) await Linking.openURL(url);
-        })(), { tag: `BundledConversationSettings.openLink.${kind}` })}
+        onPress={() => fireAndForget(requestOpenExternalUrl(url), { tag: `BundledConversationSettings.openLink.${kind}` })}
       />)}
     </ItemGroup>}
 

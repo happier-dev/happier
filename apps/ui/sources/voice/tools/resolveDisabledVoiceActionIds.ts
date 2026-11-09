@@ -3,6 +3,7 @@ import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 import { isActionEnabledWithSessionMemory } from '@happier-dev/protocol/actions/actionSurfaceAvailability';
 import { readSessionMemoryEnabledV1 } from '@happier-dev/protocol/sessions/context/sessionContextV1';
 
+import type { Settings } from '@/sync/domains/settings/settings';
 import { isActionEnabledInState } from '@/sync/domains/settings/actionsSettings';
 import { isInventoryPrivacyAction } from '@/sync/domains/settings/actionSettingsPolicy';
 import { readVoicePrivacySettings } from '@/sync/domains/settings/readVoicePrivacySettings';
@@ -24,7 +25,7 @@ export function isCurrentUiContextVoiceAction(actionId: ActionId): boolean {
  * and remains usable by retained Local Voice handlers as settings change.
  */
 export function isVoiceActionAvailableInState(
-  state: Readonly<{ settings?: unknown }>,
+  state: Readonly<{ settings?: Readonly<Partial<Settings>> | null }>,
   actionId: ActionId,
   scope?: VoiceActionSessionScope,
 ): boolean {
@@ -44,18 +45,18 @@ export function isVoiceActionAvailableInState(
   return isActionEnabledInState(state, actionId, { surface: 'voice' });
 }
 
-export function resolveEnabledVoiceToolActionSpecsFromState(state: Readonly<{ settings?: unknown }>, scope?: VoiceActionSessionScope): readonly ActionSpec[] {
+export function resolveEnabledVoiceToolActionSpecsFromState(state: Readonly<{ settings?: Readonly<Partial<Settings>> | null }>, scope?: VoiceActionSessionScope): readonly ActionSpec[] {
   return listVoiceToolActionSpecs().filter((spec) => isVoiceActionAvailableInState(state, spec.id as ActionId, scope));
 }
 
 export function resolveEnabledVoiceSdkSafeToolActionSpecsFromState(
-  state: Readonly<{ settings?: unknown }>,
+  state: Readonly<{ settings?: Readonly<Partial<Settings>> | null }>,
   scope?: VoiceActionSessionScope,
 ): readonly ActionSpec[] {
   return resolveEnabledVoiceToolActionSpecsFromState(state, scope).filter(isVoiceSdkSafeActionSpec);
 }
 
-export function resolveDisabledVoiceActionIdsFromState(state: Readonly<{ settings?: unknown }>, scope?: VoiceActionSessionScope): readonly ActionId[] {
+export function resolveDisabledVoiceActionIdsFromState(state: Readonly<{ settings?: Readonly<Partial<Settings>> | null }>, scope?: VoiceActionSessionScope): readonly ActionId[] {
   const disabled = listVoiceActionBlockSpecs()
     .filter((spec) => !isVoiceActionAvailableInState(state, spec.id as ActionId, scope))
     .map((spec) => spec.id as ActionId)

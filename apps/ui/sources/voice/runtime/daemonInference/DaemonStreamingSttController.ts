@@ -5,7 +5,7 @@ import { createVoiceMachineError } from '@/voice/runtime/machine/voiceMachineErr
 import type {
     DaemonVoiceInferenceSttStreamEvent,
     DaemonVoiceInferenceSttStreamFinishResponse,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/daemon/voiceInference';
 
 import {
     createDaemonSpeechPcmCapture,

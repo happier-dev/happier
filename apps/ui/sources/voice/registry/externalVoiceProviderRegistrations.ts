@@ -4,7 +4,7 @@ import type {
   PluginSettingsActionInput,
   PluginSettingsActionResult,
 } from '@happier-dev/plugin-sdk/settings';
-import type { VoiceRealtimeJsonValue } from '@happier-dev/protocol';
+import type { VoiceRealtimeJsonValue } from '@happier-dev/protocol/voice/realtime/events';
 
 import type { VoiceProviderRegistryEntry } from './providerRegistry';
 

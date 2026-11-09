@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { SessionViewerProjectionV1Schema } from '@happier-dev/protocol';
+import { SessionViewerProjectionV1Schema } from '@happier-dev/protocol/sessions/personal/viewer';
 
 import { composeCurrentUiContextSnapshot } from '@/components/appShell/currentUiContext/currentUiContextModel';
 import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';

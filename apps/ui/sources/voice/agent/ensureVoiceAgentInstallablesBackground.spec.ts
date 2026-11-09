@@ -1,6 +1,8 @@
 import 'fake-indexeddb/auto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { buildQualifiedPluginContributionKey, createPluginContributionIdentity, PluginProjectionV2Schema } from '@happier-dev/protocol';
+import { buildQualifiedPluginContributionKey} from '@happier-dev/protocol/plugins/contribution-key';
+import { createPluginContributionIdentity} from '@happier-dev/protocol/plugins/contribution-identity';
+import { PluginProjectionV2Schema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { MachineAccessGrantsListResponseV1Schema } from '@happier-dev/protocol/machines/machineAccessV1';
 import { createMachineFixture, createPlainMachineRowFixture, createSessionFixture, standardCleanup } from '@/dev/testkit';
@@ -98,7 +100,7 @@ beforeEach(async () => {
         concurrentSessionListCacheByServerId: {} });
     const { loadDaemonMergedProjectionInputs } = await import('@/agents/backendCatalog/loadDaemonMergedProjectionInputs');
     for (const machineId of machineIds) {
-        await expect(loadDaemonMergedProjectionInputs({ machineId, serverId: account.scope.serverId }))
+        await expect(loadDaemonMergedProjectionInputs({ sections: 'complete', machineId, serverId: account.scope.serverId }))
             .resolves.toMatchObject({ pluginProjectionV2: { agentsById: { [externalAgentId]: { identity: externalAgentIdentity } } } });
     }
     // Separate real projection preparation from the target-selection operation's transport receipts.

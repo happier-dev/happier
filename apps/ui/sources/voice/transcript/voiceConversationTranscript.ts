@@ -1,7 +1,8 @@
 import type {
-    ConversationTurnOriginV1,
+    ConversationTurnOriginV1} from '@happier-dev/protocol/messages/structured/conversationTurnOriginV1';
+import type {
     VoiceTranscriptCanonicalEventV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/voice/realtime/events';
 
 import {
     voiceTranscriptProjector as projector,

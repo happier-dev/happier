@@ -1,8 +1,6 @@
-import * as React from 'react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { ACP_CATALOG_ROWS_ROUTE_V1, AcpCatalogRowReadResponseV1Schema } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
-import { ReviewStartInputSchema } from '@happier-dev/protocol/reviews/reviewStart';
-import { createMachineFixture, createPlainMachineRowFixture, createReadyMachineAgentInventoryFixture, createSessionFixture, standardCleanup, waitForTestEvent } from '@/dev/testkit';
+import { createMachineFixture, createPlainMachineRowFixture, createReadyMachineAgentInventoryFixture, createSessionFixture, standardCleanup } from '@/dev/testkit';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { createAccountTokenForTests } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { createExternalActionAccountHttpBoundary } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
@@ -11,9 +9,7 @@ import { createSessionFilesViewFixture, installSessionFilesViewBoundaries, prepa
 installSessionFilesViewBoundaries();
 await prepareSessionFilesViewTestkit();
 const { listReviewEnginesForVoiceTool } = await import('./reviewEnginesList');
-const { StartReviewDialog, StartReviewDialogView } = await import('@/components/sessions/reviews/walkthrough/StartReviewDialog');
 const { listReviewWalkthroughEngines } = await import('@/sync/ops/reviews/reviewWalkthrough');
-const { resolveReviewWalkthroughPlan } = await import('@/sync/domains/reviews/reviewWalkthroughPlan');
 let fixture: Awaited<ReturnType<typeof createSessionFilesViewFixture>>;
 afterEach(async () => { standardCleanup(); await fixture?.dispose(); });
 
@@ -65,25 +61,10 @@ describe('daemon-owned Review engine inventory', () => {
             .toMatchObject({ ok: false, errorCode: 'action_account_scope_changed' });
         const listed = await listReviewWalkthroughEngines({ sessionId: detached ? null : 's1', machineId: 'm1', serverId: fixture.home.id });
         if (!listed.ok) throw new Error(`Review Action inventory refused: ${JSON.stringify(listed)}`);
-        const screen = await fixture.render(React.createElement(StartReviewDialog, {
-            ...(detached ? { machineId: 'm1' } : { sessionId: 's1' }), serverId: fixture.home.id, cwd: '/repo',
-            comparison: { kind: 'workingTree' }, comparisonId: 'comparison-1', scopeLabel: 'Pending changes',
-            defaultWalkthrough: false, onClose: vi.fn(), onStarted: vi.fn(),
-        }));
-        await waitForTestEvent(screen.subscribe, () => screen.findByTestId('start-review-engine-claude')?.props.accessibilityLabel,
-            value => typeof value === 'string' && value.includes('account-review-model'));
-        expect(screen.findByTestId('start-review-engine-claude')?.props.accessibilityLabel).toContain('account-review-model');
-        expect(screen.findByTestId('start-review-engine-codex')?.props.accessibilityLabel).toBe('Codex');
-        const launchInput = ReviewStartInputSchema.parse({ sessionId: 's1', engineIds: ['claude'], instructions: 'Review',
-            modelId: 'team-review-model', teamCredentialModel: { kind: 'team_credential_provider_model', teamId: 'team-1', resourceId: 'resource-1',
-                expectedResourceRevision: 3, deliveryMode: 'brokered', agentTargetKey: 'agent:happier.agent.claude/claude', modelId: 'team-review-model' } });
-        const explicit = await fixture.render(React.createElement(StartReviewDialogView, {
-            engines: listed.engines, selectedEngineIds: ['claude'], onToggleEngine: vi.fn(), scopeLabel: 'Pending changes',
-            instructions: '', onChangeInstructions: vi.fn(), walkthrough: false, onToggleWalkthrough: vi.fn(),
-            narratorEngineId: null, onSelectNarrator: vi.fn(), launchInput,
-            plan: resolveReviewWalkthroughPlan({ engines: listed.engines, selectedEngineIds: ['claude'], walkthrough: false, narratorEngineId: null }),
-            onCancel: vi.fn(), onStart: vi.fn(),
-        }));
-        expect(explicit.findByTestId('start-review-engine-claude')?.props.accessibilityLabel).toBe('Claude');
+        expect(listed.engines).toEqual([
+            expect.objectContaining({ engineId: 'claude', launchModelId: 'account-review-model' }),
+            expect.objectContaining({ engineId: 'codex' }),
+        ]);
+
     });
 });

@@ -1,16 +1,18 @@
+import type { PopoverAnchor } from '@/components/ui/popover';
 import * as React from 'react';
-import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 
-import { ConnectedAccountServiceKeySchema, ConnectedServiceBindingsV1Schema, ConnectedServiceBindingsV2Schema, ConnectedServiceIdSchema, type ConnectedServiceBindingsV1, type ConnectedServiceBindingsV2 } from '@happier-dev/protocol/connect/connected-service-bindings';
-import { PluginContributionIdentityV1Schema, buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import { ConnectedAccountServiceKeySchema, ConnectedServiceBindingsV1Schema, ConnectedServiceBindingsV2Schema, ConnectedServiceIdSchema } from '@happier-dev/protocol/connect/connected-service-bindings';
+import { PluginContributionIdentityV1Schema, buildQualifiedPluginContributionKey, parseQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 
 import {
   isBundledAgentId,
   resolveBundledAgentIdFromContributionIdentity,
 } from '@/agents/catalog/catalog';
-import { resolveConnectedServiceDisplayName } from '@/components/settings/connectedServices/model/resolveConnectedServiceDisplayName';
-import { resolveConnectedServicesAuthLabel } from '@/components/settings/connectedServices/model/resolveConnectedServicesAuthLabel';
-import { NewSessionConnectedServicesSelectionContent } from '@/components/sessions/new/components/NewSessionConnectedServicesSelectionContent';
+import { presentConnectSheet } from '@/components/settings/connectedServices/setup/ConnectedServiceSetupModal';
+import { resolveQualifiedConnectedAccountServiceKey } from '@/sync/domains/connectedServices/connectedServiceRegistry';
+import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
+import type { AccountSettingsScope } from '@/sync/domains/settings/scope/accountSettingsScope';
+import { ConnectedServicesBindingRow } from '@/components/settings/connectedServices/ConnectedServicesBindingRow';
 import {
   buildConnectedServiceAccountGroupOptionsByServiceId,
   buildConnectedServiceProfileOptionsByServiceId,
@@ -18,7 +20,6 @@ import {
 } from '@/components/sessions/new/modules/connectedServicesNewSessionBindings';
 import { Item } from '@/components/ui/lists/Item';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
-import { Modal } from '@/modal';
 import type { ConnectedServicesServiceBinding } from '@/sync/domains/connectedServices/connectedServicesAgentOptionStateBindings';
 import { storage, useSetting } from '@/sync/domains/state/storage';
 import { useProfile } from '@/sync/store/hooks';
@@ -27,65 +28,7 @@ import { t, tLoose } from '@/text';
 import { buildQualifiedConnectedAccountGroupOptionsByServiceId, buildQualifiedConnectedAccountProfileOptionsByServiceId } from '@/sync/domains/connectedServices/qualifiedConnectedAccountServiceOptions';
 import { useConnectedAccountIdentityPrivacy } from '@/hooks/ui/useConnectedAccountIdentityPrivacy';
 
-const PICKER_MAX_HEIGHT = 520;
-
-type PickerProps = Readonly<{
-  onClose: () => void;
-  initialBindingsByServiceId: Readonly<Record<string, ConnectedServicesServiceBinding | undefined>>;
-  supportedServiceIds: ReadonlyArray<string>;
-  profileOptionsByServiceId: Parameters<typeof NewSessionConnectedServicesSelectionContent>[0]['profileOptionsByServiceId'];
-  groupOptionsByServiceId: Parameters<typeof NewSessionConnectedServicesSelectionContent>[0]['groupOptionsByServiceId'];
-  defaultProfileIdByServiceId: Readonly<Record<string, string | undefined>>;
-  accountGroupsEnabled: boolean;
-  bindingVersion?: 1 | 2;
-  onBindingChange: (bindings: ConnectedServiceBindingsV1 | ConnectedServiceBindingsV2 | null) => void;
-  onOpenSettings: (serviceId: string) => void;
-}>;
-
-function VoiceGlobalConnectedServicesPicker(props: PickerProps) {
-  const [bindingsByServiceId, setBindingsByServiceId] = React.useState(props.initialBindingsByServiceId);
-  // Persisting the Voice setting is an external effect, so it cannot live inside a
-  // functional state updater: React may evaluate or replay an updater more than once
-  // and a single selection would then be written more than once. This ref mirrors the
-  // rendered selection so the event callback derives the next value exactly once —
-  // including for two selections batched before the next render — while the state
-  // update itself stays a pure value assignment.
-  const bindingsRef = React.useRef(bindingsByServiceId);
-  bindingsRef.current = bindingsByServiceId;
-  const setBindingForService = React.useCallback((serviceId: string, binding: ConnectedServicesServiceBinding) => {
-    const next = { ...bindingsRef.current, [serviceId]: binding };
-    bindingsRef.current = next;
-    setBindingsByServiceId(next);
-    const sessionBindings = buildConnectedServicesBindingsPayload({
-      supportedConnectedServiceIds: props.supportedServiceIds,
-      connectedServiceProfileOptionsByServiceId: props.profileOptionsByServiceId,
-      connectedServiceAccountGroupOptionsByServiceId: props.groupOptionsByServiceId,
-      connectedServicesBindingsByServiceId: next,
-      defaultProfileByServiceId: { ...props.defaultProfileIdByServiceId },
-      accountGroupsFeatureEnabled: props.accountGroupsEnabled,
-    });
-    props.onBindingChange(props.bindingVersion === 2 ? sessionBindings : sessionBindings === null
-      ? null
-      : ConnectedServiceBindingsV1Schema.parse({
-        v: 1,
-        bindingsByServiceId: sessionBindings.bindingsByServiceId,
-      }));
-  }, [props]);
-
-  return <NewSessionConnectedServicesSelectionContent
-    supportedServiceIds={props.supportedServiceIds}
-    profileOptionsByServiceId={props.profileOptionsByServiceId}
-    groupOptionsByServiceId={props.groupOptionsByServiceId}
-    bindingsByServiceId={bindingsByServiceId}
-    setBindingForService={setBindingForService}
-    defaultProfileIdByServiceId={props.defaultProfileIdByServiceId}
-    includeNativeAuthOption={props.bindingVersion === 2}
-    allowDefaultProfileFallback={false}
-    onOpenSettings={props.onOpenSettings}
-    requestClose={props.onClose}
-    maxHeight={PICKER_MAX_HEIGHT}
-  />;
-}
+const EMPTY_RECORD: Readonly<Record<string, never>> = Object.freeze({});
 
 export function VoiceGlobalConnectedServicesBindingField(props: Readonly<{
   agentId: unknown;
@@ -103,7 +46,6 @@ export function VoiceGlobalConnectedServicesBindingField(props: Readonly<{
   const { present } = useConnectedAccountIdentityPrivacy();
   const connectedServicesDefaultProfileByServiceId = useSetting('connectedServicesDefaultProfileByServiceId');
   const labelsByKey = useConnectedMetadataCatalog(undefined, selectConnectedMetadataLabels);
-  const router = useRouter();
   const accountGroupsEnabled = useFeatureEnabled('connectedServices.accountGroups');
   const bundledAgentId = isBundledAgentId(props.agentId)
     ? props.agentId
@@ -159,26 +101,42 @@ export function VoiceGlobalConnectedServicesBindingField(props: Readonly<{
     const parsed = (props.bindingVersion === 2 ? ConnectedServiceBindingsV2Schema : ConnectedServiceBindingsV1Schema).safeParse(props.value);
     return parsed.success ? parsed.data : null;
   }, [props.value, props.bindingVersion]);
-  const bindingsByServiceId = parsedBinding?.bindingsByServiceId ?? {};
-  const defaultProfileIdByServiceId = connectedServicesDefaultProfileByServiceId ?? {};
-  const label = React.useMemo(() => resolveConnectedServicesAuthLabel({
-    supportedServiceIds,
-    bindingsByServiceId,
-    profileOptionsByServiceId,
-    accountGroupOptionsByServiceId: groupOptionsByServiceId,
-    accountGroupsEnabled,
-    defaultProfileIdByServiceId,
-    resolveServiceTitle: (serviceId) => resolveConnectedServiceDisplayName(serviceId, t),
-    nativeLabel: t('connectedServices.authChip.nativeLabel'),
-    formatConnectedCountLabel: (count) => t('connectedServices.authChip.connectedCountLabel', { count }),
-  }).label, [
-    accountGroupsEnabled,
-    bindingsByServiceId,
-    defaultProfileIdByServiceId,
-    groupOptionsByServiceId,
-    profileOptionsByServiceId,
-    supportedServiceIds,
-  ]);
+  const bindingsByServiceId = parsedBinding?.bindingsByServiceId ?? EMPTY_RECORD;
+  const defaultProfileIdByServiceId = connectedServicesDefaultProfileByServiceId ?? EMPTY_RECORD;
+  // The value the picks build on, and the version and Account scope the card opened under.
+  const valueRef = React.useRef(bindingsByServiceId);
+  valueRef.current = bindingsByServiceId;
+  const openRef = React.useRef<{ expectedSettingsVersion: number | null; scope: AccountSettingsScope | null } | null>(null);
+  const commit = React.useCallback((next: Readonly<Record<string, ConnectedServicesServiceBinding | undefined>>) => {
+    const sessionBindings = buildConnectedServicesBindingsPayload({
+      supportedConnectedServiceIds: supportedServiceIds,
+      connectedServiceProfileOptionsByServiceId: profileOptionsByServiceId,
+      connectedServiceAccountGroupOptionsByServiceId: groupOptionsByServiceId,
+      connectedServicesBindingsByServiceId: next,
+      defaultProfileByServiceId: { ...defaultProfileIdByServiceId },
+      accountGroupsFeatureEnabled: accountGroupsEnabled,
+    });
+    props.onChange(props.bindingVersion === 2 ? sessionBindings : sessionBindings === null
+      ? null
+      : ConnectedServiceBindingsV1Schema.parse({ v: 1, bindingsByServiceId: sessionBindings.bindingsByServiceId }),
+    openRef.current?.expectedSettingsVersion ?? null);
+  }, [accountGroupsEnabled, defaultProfileIdByServiceId, groupOptionsByServiceId, profileOptionsByServiceId, props, supportedServiceIds]);
+  const openConnect = React.useCallback((serviceId: string, anchor?: PopoverAnchor) => {
+    const serviceKey = resolveQualifiedConnectedAccountServiceKey(serviceId);
+    if (!serviceKey) return;
+    const service = parseQualifiedPluginContributionKey(serviceKey);
+    if (!service) return;
+    const binding = valueRef.current[serviceKey] ?? valueRef.current[serviceId];
+    void presentConnectSheet({
+      scope: openRef.current?.scope ?? null, service, intent: 'add', anchor,
+      ...(binding?.source === 'connected' && binding.profileId
+        ? { account: { service, accountId: binding.profileId } } : {}),
+    }).then(result => {
+      if (result.kind !== 'dismissed') commit({ ...valueRef.current, [serviceId]: {
+        source: 'connected', selection: 'profile', profileId: result.account.accountId,
+      } });
+    });
+  }, [commit]);
 
   if (!bundledAgentId && !qualifiedAgent) return null;
 
@@ -207,41 +165,29 @@ export function VoiceGlobalConnectedServicesBindingField(props: Readonly<{
     />;
   }
 
-  return <Item
+  return <ConnectedServicesBindingRow
     testID={testID}
     title={title}
-    subtitle={subtitle}
-    detail={parsedBinding ? label : props.bindingVersion === 2
-      ? props.value === undefined ? t('common.default') : t('connectedServices.authModal.nativeAuthTitle')
-      : t('common.none')}
-    showChevron
-    onPress={() => {
-      const expectedSettingsVersion = storage.getState().settingsVersion;
-      Modal.show({
-        component: VoiceGlobalConnectedServicesPicker,
-        props: {
-          initialBindingsByServiceId: bindingsByServiceId,
-          supportedServiceIds,
-          profileOptionsByServiceId,
-          groupOptionsByServiceId,
-          defaultProfileIdByServiceId,
-          accountGroupsEnabled,
-          bindingVersion: props.bindingVersion,
-          onBindingChange: (value: ConnectedServiceBindingsV1 | ConnectedServiceBindingsV2 | null) => props.onChange(value, expectedSettingsVersion),
-          onOpenSettings: (serviceId) => router.push({
-            pathname: '/(app)/settings/connected-services/[serviceId]',
-            params: { serviceId },
-          } as never),
-        },
-        chrome: {
-          kind: 'card',
-          title,
-          testID: `voice-realtime-connected-services-modal-${agentTestId}`,
-          scrollHost: 'body',
-          bodyScroll: 'none',
-        },
-        closeOnBackdrop: true,
-      });
+    description={subtitle ?? t('settingsVoice.pages.conversations.agentAccountDescription')}
+    modalTitle={title}
+    modalTestID={`voice-realtime-connected-services-modal-${agentTestId}`}
+    supportedServiceIds={supportedServiceIds}
+    profileOptionsByServiceId={profileOptionsByServiceId}
+    groupOptionsByServiceId={groupOptionsByServiceId}
+    bindingsByServiceId={bindingsByServiceId}
+    defaultProfileIdByServiceId={defaultProfileIdByServiceId}
+    accountGroupsEnabled={accountGroupsEnabled}
+    includeNativeAuthOption={props.bindingVersion === 2}
+    allowDefaultProfileFallback={false}
+    // Native realtime envelopes have no "its own sign-in" answer: nothing stored is none.
+    fallbackLabel={props.bindingVersion !== 2 && !parsedBinding ? t('common.none') : undefined}
+    onBeforeOpen={() => {
+      const lifetime = captureActiveServerAccountScopeLifetime();
+      if (!lifetime?.isCurrent()) return false;
+      openRef.current = { expectedSettingsVersion: storage.getState().settingsVersion, scope: lifetime.scope };
+      return true;
     }}
+    setBindingForService={(_serviceId, _binding, next) => commit(next)}
+    onOpenSettings={openConnect}
   />;
 }

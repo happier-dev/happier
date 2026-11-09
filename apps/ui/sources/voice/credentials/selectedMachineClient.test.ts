@@ -5,7 +5,8 @@ import { installSessionActionRpcBoundary } from '@/dev/testkit/harness/sessionAc
 import { restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { observeMachinePresenceForTest } from '@/dev/testkit/harness/machinePresence';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
-import { FeaturesResponseSchema, tryWriteServerEnabledBitInPlace } from '@happier-dev/protocol';
+import { FeaturesResponseSchema} from '@happier-dev/protocol/features/payload/featuresResponseSchema';
+import { tryWriteServerEnabledBitInPlace } from '@happier-dev/protocol/features/serverEnabledBit';
 
 vi.mock('socket.io-client', async original => (
   await import('@/dev/testkit/harness/serverAccountConnectionHarness')

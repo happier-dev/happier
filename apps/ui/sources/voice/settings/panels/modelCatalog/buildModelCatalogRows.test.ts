@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
-import type { DaemonVoiceInferenceModelStatus } from '@happier-dev/protocol';
+import type { DaemonVoiceInferenceModelStatus } from '@happier-dev/protocol/daemon/voiceInference';
 import {
   getDefaultModelPackId,
   listModelPackCatalogEntries,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/voice/modelPacks/catalog';
 
 import { buildModelCatalogRows } from './buildModelCatalogRows';
 

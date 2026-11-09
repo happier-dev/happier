@@ -1,4 +1,4 @@
-import { MachineLiveStreamRelayCapsV1Schema } from '@happier-dev/protocol';
+import { MachineLiveStreamRelayCapsV1Schema } from '@happier-dev/protocol/machines/peer/mediation/stream/v1';
 import { createPlainMachineReadHttpResponseFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { installSessionOpsNetworkBoundary } from '@/dev/testkit/harness/sessionOpsNetworkBoundary';
 
@@ -10,7 +10,7 @@ const { storage } = await import("@/sync/domains/state/storage");
 import { FeaturesResponseSchema } from '@happier-dev/protocol/features/payload/featuresResponseSchema';
 const { getActiveServerSnapshot } = await import("@/sync/domains/server/serverRuntime");
 const { primeServerFeaturesSnapshot, resetServerFeaturesClientForTests } = await import("@/sync/api/capabilities/serverFeaturesClient");
-import { VOICE_RUNTIME_WARM_DEFAULTS } from '@happier-dev/protocol';
+import { VOICE_RUNTIME_WARM_DEFAULTS } from '@happier-dev/protocol/voice/runtimeConfig';
 import { DaemonVoiceInferenceModelStatusSchema, DaemonVoiceInferenceModelsStatusResponseSchema, DaemonVoiceInferenceModelsWarmResponseSchema } from '@happier-dev/protocol/daemon/voiceInference';
 const { captureDaemonVoiceModelCatalogObservation } = await import('@/voice/settings/panels/modelCatalog/daemonVoiceModelCatalogObservation');
 

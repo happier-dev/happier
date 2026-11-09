@@ -1,7 +1,7 @@
 import { isVoiceProviderSettingsProjectionCurrent, projectVoiceProviderSettings, projectVoiceProviderDeclarationRegistryBase, type VoiceProviderSettingsProjection, type VoiceProviderSelectionOption } from '@happier-dev/protocol/voice/settings/providerRegistry';
 export { isVoiceProviderSettingsProjectionCurrent, projectVoiceProviderSettings, projectVoiceProviderDeclarationRequirements, projectVoiceProviderDeclarationRegistryBase, createDeclaredSettingsProjector, type VoiceProviderSettingsProjection, type VoiceProviderSelectionOption } from '@happier-dev/protocol/voice/settings/providerRegistry';
 import { buildQualifiedPluginContributionKey, createPluginContributionIdentity } from '@happier-dev/protocol/plugins/contribution-identity';
-import { createRecipientContractDigestV1, normalizeRecipientContractV1, type RecipientContractV1 } from '@happier-dev/protocol/plugins/recipientContractV1';
+import { normalizeRecipientContractV1, type RecipientContractV1 } from '@happier-dev/protocol/plugins/recipientContractV1';
 import { VoiceProviderContributionSchema, type VoiceProviderContribution } from '@happier-dev/protocol/plugins/contributions/voice';
 import type { VoiceReadinessRequirement, VoiceReadinessRole, VoiceRuntimePlatform } from '@happier-dev/protocol/voice/realtime/capabilities';
 import type { VoiceServiceMark } from '@happier-dev/plugin-sdk/voice';
@@ -100,7 +100,6 @@ export type VoiceProviderRegistryEntry = VoiceUiRuntimeContribution & Readonly<{
     scope: 'account';
     kind: 'apiKey';
     recipientContract: RecipientContractV1;
-    recipientContractDigest: string;
   }>;
   /** Declarative, non-secret settings validated by the provider declaration. */
   providerSettings?: ExternalVoiceProviderSettingsDescriptor;
@@ -147,14 +146,18 @@ export function projectVoiceProviderCredentialReadiness(
   envelope: Readonly<{ schemaVersion: number; config: unknown }> | null,
   context: VoiceProviderCredentialReadinessContext,
 ): VoiceProviderCredentialReadinessProjection | null {
-  if (entry.kind !== 'voice.conversation-provider.v1') return null;
+  if (entry.kind !== 'voice.conversation-provider.v1' && entry.kind !== 'voice.speech-engine.v1') return null;
   const credentials = entry.declaration?.credentials;
-  if (!credentials || credentials.requirement.kind === 'optional') return null;
+  if (!credentials || credentials.requirement.kind === 'optional'
+    && (entry.kind === 'voice.conversation-provider.v1' || context.sourceSelection?.kind === 'none')) return null;
   try {
     if (credentials.requirement.kind === 'when_setting_equals') {
       const owner = entry.providerSettings;
       const config = owner?.parseStoredConfig(envelope?.config ?? owner.defaultConfig);
-      if (!config || (config as Readonly<Record<string, unknown>>)[credentials.requirement.settingId]
+      if (!config || envelope && envelope.schemaVersion !== owner?.schemaVersion) {
+        return { status: 'unknown', detailKey: 'voice.readiness.credential_unknown' };
+      }
+      if ((config as Readonly<Record<string, unknown>>)[credentials.requirement.settingId]
         !== credentials.requirement.value) return null;
     }
     if (!context.sourceSelection) {
@@ -216,7 +219,6 @@ export function projectVoiceProviderAccountCredentialSlot(
     scope: 'account' as const,
     kind: 'apiKey' as const,
     recipientContract: normalizedRecipientContract,
-    recipientContractDigest: createRecipientContractDigestV1(normalizedRecipientContract),
   });
 }
 

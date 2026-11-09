@@ -8,7 +8,8 @@ const fixtureMetadata = (() => {
     if (!metadata) throw new Error('Canonical Session fixture metadata missing');
     return metadata;
 })();
-import { buildSystemSessionMetadataV1, SessionCurrentProjectionRecordV1Schema, SessionLookupByTagsResponseV2Schema } from '@happier-dev/protocol';
+import { buildSystemSessionMetadataV1, SessionLookupByTagsResponseV2Schema } from '@happier-dev/protocol/sessions/control/contract';
+import { SessionCurrentProjectionRecordV1Schema} from '@happier-dev/protocol/sessions/listing/response';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';

@@ -1,4 +1,4 @@
-import type { ActionSessionReferenceResolution } from '@happier-dev/protocol';
+import type { ActionSessionReferenceResolution } from '@happier-dev/protocol/actions/executor/types';
 
 import { resolveVoiceSessionReference } from './sessionReference';
 import type { VoiceSessionCorpusOptions } from './voiceSessionRows';

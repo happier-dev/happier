@@ -1,10 +1,11 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
 import { voiceSettingsDefaults } from '@/sync/domains/settings/voiceSettings';
 import { VoiceUiSection } from './VoiceUiSection';
+import { resetVoiceSessionStoreForTests, setVoiceSessionSnapshot } from '@/voice/session/voiceSessionStore';
 
 // Icons are a native rendering boundary; settings controls and declarations remain real.
 vi.mock('@expo/vector-icons', async () => {
@@ -13,6 +14,36 @@ vi.mock('@expo/vector-icons', async () => {
 });
 
 describe('VoiceUiSection synced siblings', () => {
+    afterEach(() => { resetVoiceSessionStoreForTests(); });
+
+    it('offers Hold only for the admitted conversation that supports it, without changing the saved preference', async () => {
+        resetVoiceSessionStoreForTests();
+        const setHold = vi.fn();
+        const screen = await renderScreen(<VoiceUiSection voice={voiceSettingsDefaults} setVoice={vi.fn()}
+            voicePresenceContainer="top_bar" setVoicePresenceContainer={() => {}}
+            voiceHoldToTalkEnabled={true} setVoiceHoldToTalkEnabled={setHold} />);
+        const toggle = () => screen.root.findAll((node) => node.props.testID === 'settings.voice.ui.holdToTalk'
+            && typeof node.props.onValueChange === 'function')[0]!;
+        try {
+            expect(toggle().props.disabled).toBe(true);
+            expect(toggle().props.value).toBe(true);
+            await act(async () => {
+                setVoiceSessionSnapshot({ adapterId: 'local_conversation', sessionId: 'voice-1',
+                    status: 'connected', mode: 'listening', canStop: true, canCommitInput: true });
+            });
+            // Local's Send support does not imply the capture/clear controls needed by Hold.
+            expect(toggle().props.disabled).toBe(true);
+            await act(async () => {
+                setVoiceSessionSnapshot({ adapterId: 'happier.voice.openai/realtime-openai', sessionId: 'voice-2',
+                    status: 'connected', mode: 'listening', canStop: true, canCommitInput: true, canHoldToTalk: true });
+            });
+            expect(toggle().props.disabled).toBe(false);
+            expect(setHold).not.toHaveBeenCalled();
+            await act(async () => { toggle().props.onValueChange(false); });
+            expect(setHold).toHaveBeenCalledWith(false);
+        } finally { await screen.unmount(); }
+    });
+
     it('changes the transcript preference through the synced Voice owner', async () => {
         const setVoice = vi.fn();
         const voice = { ...voiceSettingsDefaults, ui: { ...voiceSettingsDefaults.ui, activityFeedEnabled: false } };

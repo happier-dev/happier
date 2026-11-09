@@ -3,7 +3,6 @@ import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSet
 import renderer, { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
 import { createMachineFixture, registerStandardCleanupTarget, renderScreen, renderHook, standardCleanup, waitForTestEvent, type RenderScreenResult } from '@/dev/testkit';
 import { createDiagnosticsTestEvents } from './diagnosticsTestEvents';
 import { installSessionActionRpcBoundary } from '@/dev/testkit/harness/sessionActionRpcBoundary';
@@ -125,6 +124,7 @@ import {
 } from './capturePolicy';
 import { useVoiceDiagnosticsRuntimeSync } from './useVoiceDiagnosticsRuntimeSync';
 import { resetVoiceDiagnosticsRevocationForTests } from './runtimeRevocation';
+import { HAPPIER_POINTER_MINIMUM_INTERACTIVE_TARGET_SIZE, resolveHappierMinimumInteractiveTargetSize } from '@happier-dev/plugin-ui/environment';
 
 function RuntimeSyncIndicatorHarness(props: Readonly<{
   voice: unknown;
@@ -248,7 +248,7 @@ describe('VoiceDiagnosticsIndicator', () => {
       ? action.props.style({ pressed: false })
       : action.props.style;
     const frame = flattenStyle(style);
-    const expectedMinimum = resolveMinimumInteractiveTargetSize('web');
+    const expectedMinimum = HAPPIER_POINTER_MINIMUM_INTERACTIVE_TARGET_SIZE;
     expect(frame.minWidth).toBe(expectedMinimum);
     expect(frame.minHeight).toBe(expectedMinimum);
   });
@@ -608,8 +608,8 @@ describe('VoiceDiagnosticsIndicator', () => {
     });
     await respondToVisibleConfirmation();
     const retryActionStyle = tree.root.findByType('Pressable' as any).props.style;
-    expect(retryActionStyle.minWidth).toBeGreaterThanOrEqual(resolveMinimumInteractiveTargetSize('web'));
-    expect(retryActionStyle.minHeight).toBeGreaterThanOrEqual(resolveMinimumInteractiveTargetSize('web'));
+    expect(retryActionStyle.minWidth).toBeGreaterThanOrEqual(HAPPIER_POINTER_MINIMUM_INTERACTIVE_TARGET_SIZE);
+    expect(retryActionStyle.minHeight).toBeGreaterThanOrEqual(HAPPIER_POINTER_MINIMUM_INTERACTIVE_TARGET_SIZE);
 
     configureState.failedCalls.delete('m1:disabled');
     const oldMachineDisableCallsBeforeRetry = configure.mock.calls.filter(
@@ -664,6 +664,6 @@ describe('VoiceDiagnosticsIndicator', () => {
       tree.root.findByType('Pressable' as any).props.onLayout({ nativeEvent: { layout: { x: 0, y: 0, width: 60, height: 24 } } });
     });
     const slop = tree.root.findByType('Pressable' as any).props.hitSlop as Record<'top' | 'bottom', number>;
-    expect(24 + slop.top + slop.bottom).toBe(resolveMinimumInteractiveTargetSize('android'));
+    expect(24 + slop.top + slop.bottom).toBe(resolveHappierMinimumInteractiveTargetSize('android'));
   });
 });

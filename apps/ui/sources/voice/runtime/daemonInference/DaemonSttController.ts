@@ -1,5 +1,5 @@
 import type { LocalUploadSource } from '@/sync/runtime/files/localUploadSourceReader';
-import type { DaemonVoiceInferenceNormalizationDecision } from '@happier-dev/protocol';
+import type { DaemonVoiceInferenceNormalizationDecision } from '@happier-dev/protocol/daemon/voiceInference';
 
 import { DaemonVoiceInferenceClient } from './DaemonVoiceInferenceClient';
 import type { DaemonVoiceInferenceMachineTarget } from './DaemonVoiceInferenceClient';

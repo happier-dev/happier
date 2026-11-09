@@ -5,7 +5,12 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterAll, afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import 'fake-indexeddb/auto';
-import { buildQualifiedPluginContributionKey, createRecipientContractDigestV1, createVoiceProviderRecipientContractFromCredentialsV1, PluginProjectionV2Schema, VoiceProviderContributionSchema, tryWriteServerEnabledBitInPlace, type PluginContributionIdentityV1, type PluginProjectionV2, type VoiceProviderContribution, type RecipientContractV1 } from '@happier-dev/protocol';
+import { buildQualifiedPluginContributionKey} from '@happier-dev/protocol/plugins/contribution-key';
+import { createRecipientContractDigestV1, createVoiceProviderRecipientContractFromCredentialsV1, type RecipientContractV1 } from '@happier-dev/protocol/plugins/recipientContractV1';
+import { PluginProjectionV2Schema, type PluginProjectionV2} from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import { VoiceProviderContributionSchema, type VoiceProviderContribution} from '@happier-dev/protocol/plugins/contributions/voice';
+import { tryWriteServerEnabledBitInPlace} from '@happier-dev/protocol/features/serverEnabledBit';
+import { type PluginContributionIdentityV1} from '@happier-dev/protocol/plugins/contribution-identity';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { DaemonContributionRegistryProjectionDescribeResponseSchema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { ConnectedAccountUiProjectionEntryV1Schema } from '@happier-dev/protocol/connect/connectedAccountUiProjectionV1';
@@ -300,7 +305,7 @@ const projectionRequests = installSessionActionRpcBoundary(request => {
   const providerId = buildQualifiedPluginContributionKey({ pluginId: contribution.pluginId, localId: projectedDeclaration.id });
   return DaemonContributionRegistryProjectionDescribeResponseSchema.parse({ protocolVersion: 1,
     projection: PluginProjectionV2Schema.parse({ v: 2, generation: 1, installedPackagesById: {},
-      agentsById: {}, actionsById: {},   resourcesById: {}, settingsById: {},
+      agentsById: {}, actionsById: {}, resourcesById: {}, settingsById: {},
       familiesById: {
         connectedAccounts: { family: 'connectedAccounts', entriesById: Object.fromEntries(descriptorReplies.map(entry => [
           buildQualifiedPluginContributionKey({ pluginId: entry.pluginId!, localId: entry.id }), entry,
@@ -602,7 +607,7 @@ describe('VoiceCredentialSourceField → admitted Account purpose transaction', 
     expect(account!.persistedSettings.connectedServicesDefaultProfileByServiceId).toEqual(defaults);
     expect(purposes).toEqual(originalPurposes);
   });
-  it.each(['ui', 'agent'] as const)('binds an exact Saved Secret for an API-key-only service, reviews and removes it through the Action owner on %s', async surface => {
+  it.each(['ui', 'agent'] as const)('links an own Saved Secret without another approval and removes it through the Action owner on %s', async surface => {
     const { SavedSecretResourceMaterialV1Schema, formatSavedSecretCatalogReferenceV1 } = await import('@happier-dev/protocol/account/settings/savedSecretCatalogV1');
     const { sealSavedSecretResourceStoredContentV1 } = await import('@happier-dev/protocol/account/settings/savedSecretResourceContentV1');
     const { refreshSavedSecretCatalog } = await import('@/sync/engine/settings/savedSecretCatalogEngine');
@@ -630,7 +635,6 @@ describe('VoiceCredentialSourceField → admitted Account purpose transaction', 
         capabilities: { use: true, rename: true, rotate: true, manageAccess: true, delete: true } },
     }));
     await refreshSavedSecretCatalog(account!.scope);
-    await renderField(apiOnly);
     const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
     const { SettingsDeclarationActionOutputSchemasV1 } = await import('@happier-dev/protocol/actions/settingsDeclarationActionFamily');
     const context = { surface, authority: surface === 'ui' ? 'present_user' as const : 'account_automation' as const,
@@ -678,18 +682,14 @@ describe('VoiceCredentialSourceField → admitted Account purpose transaction', 
     };
     const initialVersion = storage.getState().settingsVersion;
     confirmation.mockResolvedValueOnce(false);
-    expect(await invoke('bind', null)).toMatchObject({ status: 'cancelled' });
-    expect(binding()).toBeUndefined();
     expect(await invoke('bind', null)).toMatchObject({ status: 'completed', value: { status: 'applied' } });
+    expect(confirmation).not.toHaveBeenCalled();
+    confirmation.mockReset().mockResolvedValue(true);
     expect(binding()).toMatchObject({ credentialSource: { kind: 'savedSecret' }, credentialBindings: { account: { api_key: secretId } } });
     const writesAfterBinding = writes.length;
     const settingsWritesAfterBinding = account!.settingsWrites.length;
     expect(await invoke('bind', null, initialVersion)).toMatchObject({ value: { status: 'conflict' } });
     expect(writes).toHaveLength(writesAfterBinding);
-    expect(await invoke('review', secretId, initialVersion)).toMatchObject({ value: { status: 'conflict' } });
-    expect(account!.settingsWrites).toHaveLength(settingsWritesAfterBinding);
-    expect(await invoke('review', secretId, undefined, `sha256:${'0'.repeat(64)}`))
-      .toMatchObject({ status: 'unavailable', reason: 'credential_contract_changed' });
     expect(account!.settingsWrites).toHaveLength(settingsWritesAfterBinding);
     await act(async () => { await refreshSavedSecretCatalog(account!.scope); });
     await flush();
@@ -699,14 +699,7 @@ describe('VoiceCredentialSourceField → admitted Account purpose transaction', 
     const readsBeforeInspect = materialInventoryReads();
     expect(await invoke('inspect', secretId)).toMatchObject({ status: 'completed', value: { secretId } });
     expect(materialInventoryReads()).toBe(readsBeforeInspect);
-    const approvedDigest = binding()?.approvedRecipientContractDigest;
-    expect(approvedDigest).toMatch(/^sha256:/);
-    account!.replaceSettings(settingsParse({ ...account!.persistedSettings, voiceSettingsV1: {
-      ...account!.persistedSettings.voiceSettingsV1, credentialBindings: account!.persistedSettings.voiceSettingsV1.credentialBindings.map(
-        ({ approvedRecipientContractDigest: _oldApproval, ...rest }) => rest),
-    } }), { version: (storage.getState().settingsVersion ?? 0) + 1 });
-    expect(await invoke('review', secretId)).toMatchObject({ status: 'completed', value: { status: 'applied' } });
-    expect(binding()?.approvedRecipientContractDigest).toBe(approvedDigest);
+    expect(binding()?.approvedRecipientContractDigest).toBeUndefined();
     expect(await invoke('bind', null, undefined, undefined, 'machine-a')).toMatchObject({ value: { status: 'applied' } });
     expect(binding()?.credentialBindings).toMatchObject({ account: { api_key: secretId }, byMachineId: {
       'machine-a': { api_key: secretId },

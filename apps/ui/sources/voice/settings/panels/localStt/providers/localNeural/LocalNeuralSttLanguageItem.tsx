@@ -3,7 +3,8 @@ import * as React from 'react';
 import { SettingAnchor } from '@/components/settings/shell/SettingRow';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { FieldValueItem } from '@/components/ui/forms/FieldValueItem';
-import { t } from '@/text';
+import { getLanguageDisplayNameForCode } from '@/constants/Languages';
+import { getPreferredLanguage, t } from '@/text';
 import { useVoiceSttSettingRefs } from '@/voice/settings/useVoiceSttSettingRefs';
 
 /** Device and daemon recognizers consume this same independent recognition-language field. */
@@ -40,7 +41,8 @@ export function LocalNeuralSttLanguageItem(props: Readonly<{
                     title: t(settings.sttLanguage.titleKey),
                     subtitle: t('settingsVoice.local.localNeuralStt.language.subtitle'),
                     showSelectedSubtitle: false,
-                    detailFormatter: () => language || t('settingsVoice.language.autoDetect'),
+                    // A language reads by its name, never its tag.
+                    detailFormatter: () => language ? getLanguageDisplayNameForCode(language, getPreferredLanguage()) : t('settingsVoice.language.autoDetect'),
                 }}
                 items={[
                     { id: '', title: t('settingsVoice.language.autoDetect'), subtitle: t('settingsVoice.language.autoDetectSubtitle') },

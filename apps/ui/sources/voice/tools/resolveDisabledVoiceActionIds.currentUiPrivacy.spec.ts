@@ -33,7 +33,7 @@ function stateWithCurrentUiContextMode(currentUiContextMode: 'off' | 'on_demand'
   };
 }
 
-function enabledVoiceActionIds(state: Readonly<{ settings?: unknown }>): readonly string[] {
+function enabledVoiceActionIds(state: Parameters<typeof resolveEnabledVoiceToolActionSpecsFromState>[0]): readonly string[] {
   return resolveEnabledVoiceToolActionSpecsFromState(state).map((spec) => String(spec.id));
 }
 

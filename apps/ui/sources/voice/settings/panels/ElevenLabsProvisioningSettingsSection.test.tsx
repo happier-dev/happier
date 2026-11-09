@@ -7,10 +7,12 @@ import { createRoot } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
-  buildQualifiedPluginContributionKey,
-  createPluginContributionIdentity,
+  buildQualifiedPluginContributionKey} from '@happier-dev/protocol/plugins/contribution-key';
+import {
+  createPluginContributionIdentity} from '@happier-dev/protocol/plugins/contribution-identity';
+import {
   createRecipientContractDigestV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/plugins/recipientContractV1';
 import {
   settingsParse,
   type Settings,

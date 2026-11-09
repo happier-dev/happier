@@ -266,7 +266,7 @@ describe('bundled voice runtime contract ownership', () => {
     expect(codexVoice).not.toContain('BUNDLED_VOICE_PROVIDER_ACTIVATION_ENTRIES');
     expect(codexVoice).toContain('VOICE_PROVIDER_PRESENTATIONS');
     expect(codexVoice).not.toContain('declaration:');
-    expect(generatedEntries).toContain('projectBundledVoiceManifestContributions(CODEX_BUNDLED_PLUGIN_MANIFEST)');
+    expect(generatedEntries).toContain('projectBundledVoiceManifestContributions(CODEX_BUNDLED_VOICE_MANIFEST)');
     expect(codexVoice).not.toContain('providerSettings');
     expect(codexVoice).not.toContain('projectSettings');
     expect(codexVoice).not.toContain(

@@ -7,7 +7,7 @@ import { createDeferred } from '@/dev/testkit';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 
 import { parseRealtimeSettingsDescriptor } from './descriptor';
-import { VoiceProviderContributionSchema } from '@happier-dev/protocol';
+import { VoiceProviderContributionSchema } from '@happier-dev/protocol/plugins/contributions/voice';
 import { createVoiceProviderRegistry } from '@/voice/registry/providerRegistry';
 import { commitExternalVoiceProviderRegistration, removeExternalVoiceProviderRegistration } from '@/voice/registry/externalVoiceProviderRegistrations';
 import type { VoiceAdapterController } from '@/voice/session/types';

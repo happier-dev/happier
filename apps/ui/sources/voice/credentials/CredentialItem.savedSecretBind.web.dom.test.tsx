@@ -2,8 +2,8 @@
  * @vitest-environment jsdom
  *
  * The Voice "use a saved secret" gesture, driven the way a user drives it: a real
- * react-native-web render, the real modal host, the real picker, and a real DOM
- * click on a picker ROW — asserted all the way to the account-settings mutation
+ * react-native-web render, the real modal host, the real Connect sheet, and a real DOM
+ * click on a Saved row followed by Use — asserted all the way to the account-settings mutation
  * boundary.
  *
  * Three earlier rounds of tests passed against a feature that had never once
@@ -197,20 +197,61 @@ async function flush(): Promise<void> {
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
 }
 
-async function openSavedSecretPicker(): Promise<void> {
-    await waitForTestEvent(subscribeDomMutations, () => query('voice-credential')?.querySelector<HTMLElement>('[tabindex="0"],[role="button"],button'), node => Boolean(node));
-    expect(requireNode('voice-credential').querySelector<HTMLElement>('[tabindex="0"],[role="button"],button')).not.toBeNull();
-    const trigger = requireNode('voice-credential').querySelector<HTMLElement>('[tabindex="0"],[role="button"],button');
-    if (!trigger) throw new Error('missing actual Voice credential dropdown trigger');
+async function openConnectSheet(): Promise<void> {
+    const row = requireNode('voice-credential');
+    const trigger = row.querySelector<HTMLElement>('[tabindex="0"],[role="button"],button') ?? row;
     await act(async () => { pressWithPointer(trigger); });
-    await waitForTestEvent(subscribeDomMutations, () => query('dropdown-option-useSavedSecret'), node => node !== null);
-    expect(query('dropdown-option-useSavedSecret')).not.toBeNull();
-    await act(async () => { pressWithPointer(requireNode('dropdown-option-useSavedSecret')); });
-    // The real dropdown commits after teardown on a frame (or its owning
-    // fallback). Await the picker, not an invented number of event-loop turns.
+    // Bound slots offer Replace; an unbound slot goes straight to Connect.
     await waitForTestEvent(subscribeDomMutations,
-        () => document.querySelector('[data-testid^="saved-secret:"]'), node => node !== null);
-    expect(document.querySelector('[data-testid^="saved-secret:"]')).not.toBeNull();
+        () => query('dropdown-option-useSavedSecret') ?? query('connect-key-sheet'), node => node !== null);
+    if (query('dropdown-option-useSavedSecret')) {
+        await act(async () => { pressWithPointer(requireNode('dropdown-option-useSavedSecret')); });
+    }
+    await waitForTestEvent(subscribeDomMutations, () => query('connect-key-sheet'), node => node !== null);
+}
+
+async function chooseKeyMode(mode: 'new' | 'saved'): Promise<void> {
+    await waitForTestEvent(subscribeDomMutations,
+        () => query(`connect-key-sheet:mode:${mode}`) ?? query('connect-key-sheet:mode:select'), node => node !== null);
+    const segment = query(`connect-key-sheet:mode:${mode}`);
+    await act(async () => { pressWithPointer(segment ?? requireNode('connect-key-sheet:mode:select')); });
+    // The responsive value control uses its real dropdown when no tab width
+    // fits the DOM harness; both renderings belong to SegmentedTabBar.
+    if (!segment) {
+        await waitForTestEvent(subscribeDomMutations,
+            () => query(`connect-key-sheet:mode:select:${mode}`), node => node !== null);
+        await act(async () => { pressWithPointer(requireNode(`connect-key-sheet:mode:select:${mode}`)); });
+    }
+}
+
+async function openSavedKeys(): Promise<void> {
+    await openConnectSheet();
+    if (!query('connect-key-sheet:saved')) await chooseKeyMode('saved');
+    await waitForTestEvent(subscribeDomMutations, () => query('connect-key-sheet:saved'), node => node !== null);
+}
+
+async function selectSavedSecret(ref: string): Promise<void> {
+    await act(async () => { pressWithPointer(requireNode(`connect-key-sheet:saved:${ref}`)); });
+    expect(requireNode(`connect-key-sheet:saved:${ref}`).getAttribute('aria-checked')).toBe('true');
+    expect(requireNode('connect-key-sheet:use').getAttribute('aria-disabled')).not.toBe('true');
+    await act(async () => { pressWithPointer(requireNode('connect-key-sheet:use')); });
+}
+
+async function enterNewKey(value: string): Promise<void> {
+    await openConnectSheet();
+    await waitForTestEvent(subscribeDomMutations,
+        () => query('saved-secret-create-value') ?? query('connect-key-sheet:mode:new') ?? query('connect-key-sheet:mode:select'), node => node !== null);
+    if (!query('saved-secret-create-value')) await chooseKeyMode('new');
+    await waitForTestEvent(subscribeDomMutations, () => query('saved-secret-create-value'), node => node !== null);
+    const input = requireNode('saved-secret-create-value') as HTMLInputElement;
+    await act(async () => {
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, value);
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    expect(input.value).toBe(value);
+    expect((requireNode('saved-secret-create-name') as HTMLInputElement).value).not.toBe('');
+    expect(requireNode('saved-secret-create-submit').getAttribute('aria-disabled')).not.toBe('true');
+    await act(async () => { pressWithPointer(requireNode('saved-secret-create-submit')); });
 }
 
 async function renderRow(options: Readonly<{
@@ -227,15 +268,10 @@ async function renderRow(options: Readonly<{
     const { ModalProvider } = await import('@/modal');
     const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');
     const { VoiceCredentialItem } = await import('./CredentialItem');
-    const {
-        VoiceProviderContributionSchema,
-        createRecipientContractDigestV1,
-        normalizeRecipientContractV1,
-    } = await import('@happier-dev/protocol');
+    const [{ VoiceProviderContributionSchema}, { createRecipientContractDigestV1, normalizeRecipientContractV1}] = await Promise.all([import('@happier-dev/protocol/plugins/contributions/voice'), import('@happier-dev/protocol/plugins/recipientContractV1')]);
 
-    // The live ElevenLabs slot declares raw grants, so the row carries a recipient
-    // contract and the gesture mounts an approval confirm between the picker
-    // closing and the write. That handoff is part of the path under test.
+    // The live ElevenLabs slot declares raw grants. The real declared recipient
+    // contract stays on the settings Action path when Connect selects a key.
     const recipientContract = options.withRecipientContract
         ? normalizeRecipientContractV1({
             version: 1,
@@ -334,23 +370,24 @@ async function renderRow(options: Readonly<{
 
     // The boundary's full personal-promotion transaction is Plain. E2EE
     // material admission is exercised by the canonical resource-owner suites.
+    const { settingsParse } = await import('@/sync/domains/settings/settings');
+    const initialSettings = settingsParse({
+        actionsSettingsV1: { v: 1, ...(options.approvalRequired
+            ? { actions: { 'secrets.create': { approvalRequiredSurfaces: ['ui'] } } }
+            : { approvalWaivedSurfaces: { 'secrets.create': ['ui'], 'secrets.shared.promote': ['ui'], 'secrets.shared.create': ['ui'] } }) },
+        ...(options.initialRawSettings ?? { secrets: SECRETS }),
+    });
     account = await createSecretSettingsTestHarness({ voiceEnabled: true, mode: options.mode ?? 'plain', approvalRequired: options.approvalRequired,
+        // Historical personal-secret bytes come from HTTP, never a new unsealed write.
+        settings: initialSettings, rawSettings: initialSettings,
         connectedPurposes: options.connectedPurposes ?? { v: 1, bindings: [] } });
-    const { sync } = await import('@/sync/sync');
-    const { storage } = await import('@/sync/domains/state/storage');
-    const { requireOneShotAccountSettingsMutationApplied } = await import('@/sync/engine/settings/syncSettings');
-    const expectedSettingsVersion = storage.getState().settingsVersion;
-    if (expectedSettingsVersion === null) throw new Error('Expected loaded Account settings version');
-    requireOneShotAccountSettingsMutationApplied(await sync.mutateAccountSettingsOnce({
-        expectedSettingsScope: account.scope,
-        expectedSettingsVersion,
-        mutate: (raw) => ({
-            settings: { ...raw, ...(options.initialRawSettings ?? { secrets: SECRETS }) },
-            value: undefined,
-        }),
-    }));
     const { refreshSavedSecretCatalog } = await import('@/sync/engine/settings/savedSecretCatalogEngine');
     await refreshSavedSecretCatalog(account.scope);
+    // Foreground catalog readiness precedes legacy-source cleanup. Establish
+    // that fixture migration before measuring or refusing the user's write.
+    const { storage } = await import('@/sync/domains/state/storage');
+    await waitForTestEvent(storage.subscribe, () => storage.getState().settings.secrets.length === 0
+        && account!.persistedSettings.secrets.length === 0, complete => complete);
     account.settingsWrites.length = 0;
 
     const container = document.createElement('div');
@@ -371,8 +408,6 @@ async function renderRow(options: Readonly<{
                         credentialSlotId="api-key"
                         credentialSourcePurpose={options.credentialSourcePurpose}
                         credentialSourceDeclaration={declaration}
-                        recipientContract={recipientContract}
-                        recipientContractDigest={recipientContractDigest}
                         disclosePlainStorage={false}
                         onChanged={() => { options.onChanged?.(); credentialChanged.resolve(); }}
                     />
@@ -397,7 +432,7 @@ await import('@/sync/domains/settings/settings');
 
 const CASE_TIMEOUT_MS = 180_000;
 
-describe('Voice credential row → saved-secret picker → account-settings write', () => {
+describe('Voice credential row → Connect → account-settings write', () => {
     it.each(['not-required', 'executed', 'canceled'] as const)('saves a new dormant binding without changing the Connected Account source (approval: %s)', async approval => {
         const approvalRequired = approval !== 'not-required';
         const onChanged = vi.fn();
@@ -432,22 +467,7 @@ describe('Voice credential row → saved-secret picker → account-settings writ
                 },
             },
         });
-        const row = requireNode('voice-credential');
-        const trigger = row.querySelector<HTMLElement>('[tabindex="0"],[role="button"],button');
-        await act(async () => { pressWithPointer(trigger ?? row); });
-        if (trigger) {
-            await waitForTestEvent(subscribeDomMutations, () => query('dropdown-option-enterNew'), node => node !== null);
-            expect(query('dropdown-option-enterNew')).not.toBeNull();
-            await act(async () => { pressWithPointer(requireNode('dropdown-option-enterNew')); });
-        }
-        await waitForTestEvent(subscribeDomMutations, () => query('web-prompt-input'), node => node !== null);
-        expect(query('web-prompt-input')).not.toBeNull();
-        const input = requireNode('web-prompt-input') as HTMLInputElement;
-        await act(async () => {
-            Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, 'fixture-new-dormant-key');
-            input.dispatchEvent(new Event('input', { bubbles: true }));
-        });
-        await act(async () => { pressWithPointer(requireNode('web-prompt-confirm')); });
+        await enterNewKey('fixture-new-dormant-key');
         if (approvalRequired) {
             await act(async () => {
                 await waitForTestEvent(account!.subscribe, () => account!.artifacts.list(), artifacts => artifacts.length === 1);
@@ -455,58 +475,42 @@ describe('Voice credential row → saved-secret picker → account-settings writ
             expect(account!.artifacts.list()).toHaveLength(1);
             await flush();
             expect(voiceCredentialGestureRecords()).toEqual([]);
-            expect(account!.promotions).toHaveLength(0);
+            expect(account!.creations).toHaveLength(0);
             expect(account!.settingsWrites).toHaveLength(0);
             expect(appliedVoiceBinding()).toMatchObject({ credentialSource: { kind: 'connectedAccount' }, credentialBindings: { account: {} } });
-            await act(async () => { pressWithPointer(requireNode('voice-credential')); });
+            await act(async () => { pressWithPointer(requireNode('saved-secret-create-submit')); });
             await flush();
-            expect(query('web-prompt-input')).toBeNull();
+            expect(query('saved-secret-create-value')).not.toBeNull();
             expect(account!.artifacts.list()).toHaveLength(1);
-            const { StoredApprovalRequestSchema, buildApprovalRequestArtifactHeaderV1, encodePlainArtifactStoredContent } = await import('@happier-dev/protocol');
-            const { SharedSavedSecretPromoteInputV1Schema } = await import('@happier-dev/protocol/account/settings/savedSecretResourceActionsV1');
+            const { StoredApprovalRequestSchema } = await import('@happier-dev/protocol/approvals/approvalRequestV1');
             const artifact = account!.artifacts.list()[0]!;
             const request = StoredApprovalRequestSchema.parse(JSON.parse(account!.artifacts.readPlainBody(artifact.id)!));
-            if (request.v !== 2) throw new Error('Expected the original result-bearing approval');
-            const originalInput = SharedSavedSecretPromoteInputV1Schema.parse(request.actionArgs);
-            const settledAt = request.createdAtMs + 1;
-            // Only the server transport is synthetic. Execute the exact sealed
-            // operand accepted by Ask, then deliver its durable Artifact result.
-            const result = approval === 'executed'
-                ? await (await account!.request('https://approval-boundary.test/v1/account/saved-secrets/resources/promote', {
-                    method: 'POST', body: JSON.stringify(originalInput),
-                })).json() as unknown
-                : null;
-            const settled = StoredApprovalRequestSchema.parse(approval === 'canceled'
-                ? { ...request, status: 'canceled', updatedAtMs: settledAt }
-                : { ...request, status: 'executed', updatedAtMs: settledAt,
-                    decision: { kind: 'approve', decidedAtMs: settledAt },
-                    execution: { ok: true, executedAtMs: settledAt, result } });
-            const response = await account!.artifacts.handle(`/v1/artifacts/${artifact.id}`, {
-                method: 'POST', body: JSON.stringify({
-                    header: encodePlainArtifactStoredContent(buildApprovalRequestArtifactHeaderV1(settled)), expectedHeaderVersion: artifact.headerVersion,
-                    body: encodePlainArtifactStoredContent({ body: JSON.stringify(settled) }), expectedBodyVersion: artifact.bodyVersion,
-                }),
+            expect(request.actionId).toBe('secrets.create');
+            // A persisted approval label cannot authorize a live-only invocation.
+            // Drive the same authenticated decision Action as the Inbox.
+            const { runTeamAction } = await import('@/sync/ops/teams/teamActionClient');
+            await act(async () => {
+                const decision = await runTeamAction({ scope: account!.scope, actionId: 'approval.request.decide',
+                    input: { artifactId: artifact.id, decision: approval === 'executed' ? 'approve' : 'cancel' },
+                    parse: value => value });
+                expect(decision.kind).toBe('succeeded');
             });
-            expect(await response?.json()).toMatchObject({ success: true });
-            const persistedArtifact = account!.artifacts.read(artifact.id);
-            if (!persistedArtifact) throw new Error('Expected the acknowledged terminal Artifact');
-            const { storage } = await import('@/sync/domains/state/storage');
-            await act(async () => { storage.getState().updateArtifact({ id: artifact.id,
-                header: buildApprovalRequestArtifactHeaderV1(settled), body: JSON.stringify(settled), title: null,
-                headerVersion: persistedArtifact.headerVersion, bodyVersion: persistedArtifact.bodyVersion,
-                seq: persistedArtifact.seq, createdAt: persistedArtifact.createdAt, updatedAt: persistedArtifact.updatedAt, isDecrypted: true }); });
             if (approval === 'canceled') {
-                await waitForCredentialFailure();
-                expect(voiceCredentialGestureRecords().length).toBeGreaterThan(0);
-                expect(account!.promotions).toHaveLength(0);
+                await waitForTestEvent(subscribeDomMutations, () => {
+                    const submit = query('saved-secret-create-submit');
+                    return submit !== null && submit.getAttribute('aria-disabled') !== 'true' && !submit.hasAttribute('disabled');
+                }, ready => ready);
+                expect(voiceCredentialGestureRecords()).toEqual([]);
+                expect(account!.settingsWrites).toHaveLength(0);
+                expect(account!.creations).toHaveLength(0);
                 expect(onChanged).not.toHaveBeenCalled();
                 expect(appliedVoiceBinding()).toMatchObject({ credentialSource: { kind: 'connectedAccount' }, credentialBindings: { account: {} } });
                 return;
             }
             await waitForCredentialChange();
             expect(onChanged).toHaveBeenCalledOnce();
-            expect(account!.promotions).toHaveLength(1);
-            expect(account!.promotions[0]!.resourceId).toBe(originalInput.resourceId);
+            expect(account!.creations).toHaveLength(1);
+            expect(account!.resources[0]?.entry.ref).toBe(`happier:shared-secret:v1:${account!.creations[0]!.resourceId}`);
         }
         await waitForCredentialChange();
         const binding = appliedVoiceBinding();
@@ -514,82 +518,36 @@ describe('Voice credential row → saved-secret picker → account-settings writ
         const refs = binding?.credentialBindings as { account?: Record<string, string> } | undefined;
         expect(refs?.account?.['api-key'], voiceCredentialGestureRecords().join('\n'))
             .toEqual(expect.stringMatching(/^happier:shared-secret:v1:/));
-        expect(account!.settingsWrites).toHaveLength(0);
+        expect(account!.settingsWrites).toHaveLength(1);
         expect(account!.purposes!.value).toEqual(purpose);
         expect(account!.purposes!.writes).toHaveLength(0);
         expect(account!.persistedSettings.secrets.some((secret) => secret.encryptedValue.value === 'fixture-new-dormant-key')).toBe(false);
     }, CASE_TIMEOUT_MS);
 
-    it.each([false, true])('verifies the original uncertain new-credential gesture before offering another credential (temporarily unavailable: %s)', async temporarilyUnavailable => {
+    it('recovers acknowledged Connect creation after its response is lost without replaying creation', async () => {
         const onChanged = vi.fn();
         await renderRow({ mode: 'plain', onChanged, initialRawSettings: { secrets: [], voiceSettingsV1: { credentialBindings: [] } } });
-        account!.setLosePromotionResponse(true);
-        await act(async () => { pressWithPointer(requireNode('voice-credential')); });
-        await waitForTestEvent(subscribeDomMutations, () => query('web-prompt-input'), node => node !== null);
-        expect(query('web-prompt-input')).not.toBeNull();
-        const input = requireNode('web-prompt-input') as HTMLInputElement;
-        await act(async () => {
-            Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, 'original-uncertain-key');
-            input.dispatchEvent(new Event('input', { bubbles: true }));
-        });
-        await act(async () => { pressWithPointer(requireNode('web-prompt-confirm')); });
-        await waitForCredentialFailure();
-        expect(account!.promotions).toHaveLength(1);
-        expect(voiceCredentialGestureRecords().length).toBeGreaterThan(0);
-        // Dismiss the existing outcome alert, not the owning credential row.
-        await waitForTestEvent(subscribeDomMutations, () => query('web-modal-button-0'), node => node !== null);
-        expect(query('web-modal-button-0')).not.toBeNull();
-        await act(async () => { pressWithPointer(requireNode('web-modal-button-0')); });
-        await flush();
-        const originalId = account!.promotions[0]!.resourceId;
-        const originalResources = [...account!.resources];
-        if (temporarilyUnavailable) account!.resources.splice(0);
-        const row = requireNode('voice-credential');
-        const trigger = row.querySelector<HTMLElement>('[tabindex="0"],[role="button"],button');
-        await act(async () => { pressWithPointer(trigger ?? row); });
-        if (trigger) {
-            await waitForTestEvent(subscribeDomMutations, () => query('dropdown-option-enterNew'), node => node !== null);
-            expect(query('dropdown-option-enterNew')).not.toBeNull();
-            await act(async () => { pressWithPointer(requireNode('dropdown-option-enterNew')); });
-        }
-        if (temporarilyUnavailable) {
-            await waitForTestEvent(subscribeDomMutations, () => Boolean(query('web-modal-button-0') ?? query('web-prompt-input')), shown => shown);
-            expect(Boolean(query('web-modal-button-0') ?? query('web-prompt-input'))).toBe(true);
-            expect(onChanged).not.toHaveBeenCalled();
-            expect(query('web-prompt-input')).toBeNull();
-            expect(query('web-modal-button-0')).not.toBeNull();
-            expect(account!.promotions).toHaveLength(1);
-            await act(async () => { pressWithPointer(requireNode('web-modal-button-0')); });
-            // The canonical materials endpoint again observes the exact accepted
-            // resource. Recovery still verifies the original sealed intent.
-            account!.resources.push(...originalResources);
-            await flush();
-            const nextRow = requireNode('voice-credential');
-            const nextTrigger = nextRow.querySelector<HTMLElement>('[tabindex="0"],[role="button"],button');
-            await act(async () => { pressWithPointer(nextTrigger ?? nextRow); });
-            if (nextTrigger) {
-                await waitForTestEvent(subscribeDomMutations, () => query('dropdown-option-enterNew'), node => node !== null);
-                expect(query('dropdown-option-enterNew')).not.toBeNull();
-                await act(async () => { pressWithPointer(requireNode('dropdown-option-enterNew')); });
-            }
-        }
+        account!.setLoseCreationResponse(true);
+        await enterNewKey('original-uncertain-key');
+        // The resource owner reconciles the accepted creation against the Home's
+        // material before returning its reference; Connect does not replay it.
         await waitForCredentialChange();
+        const resource = account!.resources[0];
+        if (!resource || !('ref' in resource.entry)) throw new Error('Missing acknowledged created Resource');
+        const resourceRef = resource.entry.ref;
         expect(onChanged).toHaveBeenCalledOnce();
-        expect(query('web-prompt-input')).toBeNull();
-        expect(account!.promotions).toHaveLength(1);
-        expect(account!.resources.map(resource => 'resourceId' in resource ? resource.resourceId : null)).toEqual([originalId]);
-        expect(account!.settingsWrites).toHaveLength(0);
+        expect(account!.creations).toHaveLength(1);
+        expect(account!.settingsWrites).toHaveLength(1);
+        expect(appliedVoiceBinding()).toMatchObject({ credentialBindings: { account: { 'api-key': resourceRef } } });
     }, CASE_TIMEOUT_MS);
 
-    it('writes the selected SavedSecret when a real click lands on a picker row', async () => {
+    it('writes the selected SavedSecret after a real Saved row click and explicit Use', async () => {
         await renderRow({ credentialSourcePurpose: 'voice.client-auth' });
-        await openSavedSecretPicker();
+        await openSavedKeys();
 
         // The picker is open and lists the account's stored records.
         const selectedRef = importedSecretRef(SECRETS[1]!.id);
-        const row = requireNode(`saved-secret:${selectedRef}`);
-
-        await act(async () => { pressWithPointer(row); });
+        await selectSavedSecret(selectedRef);
         await waitForCredentialChange();
         expect(appliedVoiceBinding(), JSON.stringify(voiceCredentialGestureRecords())).not.toBeNull();
 
@@ -608,11 +566,9 @@ describe('Voice credential row → saved-secret picker → account-settings writ
 
     it('imports a colon-bearing personal SavedSecret before binding its acknowledged Resource', async () => {
         await renderRow({ credentialSourcePurpose: 'voice.client-auth' });
-        await openSavedSecretPicker();
+        await openSavedKeys();
 
-        await act(async () => {
-            pressWithPointer(requireNode(`saved-secret:${importedSecretRef(SECRETS[0]!.id)}`));
-        });
+        await selectSavedSecret(importedSecretRef(SECRETS[0]!.id));
         await waitForCredentialChange();
         expect(appliedVoiceBinding(), JSON.stringify(voiceCredentialGestureRecords())).not.toBeNull();
 
@@ -621,7 +577,7 @@ describe('Voice credential row → saved-secret picker → account-settings writ
         });
     }, CASE_TIMEOUT_MS);
 
-    it('repairs an orphaned Connected Account purpose binding through the real picker without re-entering plaintext', async () => {
+    it('repairs an orphaned Connected Account purpose binding through Connect without re-entering plaintext', async () => {
         const orphanedTarget = {
             kind: 'account' as const,
             account: {
@@ -642,10 +598,8 @@ describe('Voice credential row → saved-secret picker → account-settings writ
         });
         const savedRecordsBefore = account!.persistedSettings.secrets;
 
-        await openSavedSecretPicker();
-        await act(async () => {
-            pressWithPointer(requireNode(`saved-secret:${importedSecretRef(SECRETS[1]!.id)}`));
-        });
+        await openSavedKeys();
+        await selectSavedSecret(importedSecretRef(SECRETS[1]!.id));
         await waitForCredentialChange();
         expect(appliedVoiceBinding(), JSON.stringify(voiceCredentialGestureRecords())).not.toBeNull();
 
@@ -661,40 +615,31 @@ describe('Voice credential row → saved-secret picker → account-settings writ
         expect(JSON.stringify(account!.settingsWrites)).not.toContain('fixture-live-key');
     }, CASE_TIMEOUT_MS);
 
-    it('reaches the write through the recipient-contract approval the live slot requires', async () => {
-        const approvedDigest = await renderRow({ credentialSourcePurpose: 'voice.client-auth', withRecipientContract: true });
-        await openSavedSecretPicker();
-        await act(async () => {
-            pressWithPointer(requireNode(`saved-secret:${importedSecretRef(SECRETS[1]!.id)}`));
-        });
+    it('links the selected own secret without a second recipient-contract approval', async () => {
+        await renderRow({ credentialSourcePurpose: 'voice.client-auth', withRecipientContract: true });
+        await openSavedKeys();
+        await selectSavedSecret(importedSecretRef(SECRETS[1]!.id));
         await flush();
 
-        const confirm = query('web-modal-confirm');
-        expect(confirm, 'the recipient approval must still be readable after the picker closes').not.toBeNull();
-        expect(account!.settingsWrites).toHaveLength(0);
-        expect(appliedVoiceBinding()).toBeNull();
-        await act(async () => { pressWithPointer(confirm!); });
         await waitForCredentialChange();
+        expect(query('web-modal-confirm')).toBeNull();
         expect(appliedVoiceBinding(), JSON.stringify(voiceCredentialGestureRecords())).not.toBeNull();
 
         expect(appliedVoiceBinding()).toMatchObject({
             credentialSource: { kind: 'savedSecret' },
             credentialBindings: { account: { 'api-key': importedSecretRef(SECRETS[1]!.id) } },
-            approvedRecipientContractDigest: expect.stringMatching(/^sha256:/),
         });
         expect(account!.settingsWrites).toHaveLength(1);
         expect(credentialDetail()).toContain(t('settingsVoice.local.voiceCredential.setOnAccount'));
-        expect(appliedVoiceBinding()?.approvedRecipientContractDigest).not.toBe(approvedDigest);
+        expect(appliedVoiceBinding()?.approvedRecipientContractDigest).toBeUndefined();
     }, CASE_TIMEOUT_MS);
 
     it('records one bounded failure when the Home refuses the settings compare-and-set', async () => {
         await renderRow({ credentialSourcePurpose: 'voice.client-auth' });
         const before = account!.persistedSettings.voiceSettingsV1;
         account!.setRejectSettingsWrites(true);
-        await openSavedSecretPicker();
-        await act(async () => {
-            pressWithPointer(requireNode(`saved-secret:${importedSecretRef(SECRETS[1]!.id)}`));
-        });
+        await openSavedKeys();
+        await selectSavedSecret(importedSecretRef(SECRETS[1]!.id));
         await waitForCredentialFailure();
         expect(voiceCredentialGestureRecords()).toHaveLength(1);
 
@@ -707,14 +652,9 @@ describe('Voice credential row → saved-secret picker → account-settings writ
         expect(voiceCredentialGestureRecords()[0]).toContain('"outcome":"failed"');
     }, CASE_TIMEOUT_MS);
 
-    /**
-     * A press the picker never delivers and a deliberate cancel close the surface
-     * identically. Without a record the two are the same observation — which is
-     * exactly why four live sessions could not tell them apart.
-     */
-    it('records one bounded failure when the picker closes without a selection', async () => {
+    it('dismisses Connect without a selection, failure record or settings write', async () => {
         await renderRow({ credentialSourcePurpose: 'voice.client-auth' });
-        await openSavedSecretPicker();
+        await openSavedKeys();
 
         const dialog = document.querySelector<HTMLElement>('[role="dialog"]');
         expect(dialog).not.toBeNull();
@@ -726,7 +666,6 @@ describe('Voice credential row → saved-secret picker → account-settings writ
         await flush();
 
         expect(account!.settingsWrites).toHaveLength(0);
-        expect(voiceCredentialGestureRecords()).toHaveLength(1);
-        expect(voiceCredentialGestureRecords()[0]).toContain('saved_secret_selection_dismissed');
+        expect(voiceCredentialGestureRecords()).toEqual([]);
     }, CASE_TIMEOUT_MS);
 });

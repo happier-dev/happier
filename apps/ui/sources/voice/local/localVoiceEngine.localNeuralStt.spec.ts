@@ -6,7 +6,6 @@ import { uriToFilePath } from '@/platform/fileUri';
 import { StrictSessionStoredMessageContentEnvelopeSchema } from '@happier-dev/protocol/sessions/messages/sessionStoredMessageContent';
 import { RawRecordSchema } from '@happier-dev/session-core/raw';
 import { createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
-import { readMachineOnlineGraceMsFromEnv } from '@/utils/sessions/machineUtils';
 import { VoiceLocalSttSchema } from '@/sync/domains/settings/voiceLocalSttSettings';
 import { parseModelPackManifest } from '@happier-dev/protocol/voice/modelPacks/manifest';
 import { installVoiceWebRtcBrowserBoundary } from '@/dev/testkit/harness/voiceWebRtcHarness';
@@ -28,6 +27,7 @@ import {
   sherpaStreamingPushFrame,
   localVoicePendingEnqueue,
   setPlatformOs,
+  localVoiceHomeId,
   readLocalVoiceMachinePrerequisites,
   setLocalVoiceHttpResponder,
   waitForLocalVoiceBoundaryEvent,
@@ -55,15 +55,11 @@ describe('local voice engine local neural STT (streaming)', () => {
     setPlatformOs('web');
     const storage = await getStorage();
     const heartbeat = storage.getState().machines['machine-1'].activeAt;
-    const readClock = Date.now.bind(Date);
-    // The same unavailable heartbeat must come from the genuine census HTTP
-    // boundary: the canonical presence owner intentionally ignores an older
-    // inactive heartbeat. Expire the admitted heartbeat through the OS clock
-    // using that owner's actual grace, without replacing its decision.
+    // Any later census must agree with the explicit offline publication below.
     setLocalVoiceHttpResponder(request => {
       if (request.path !== '/v1/machines' && request.path !== '/v1/machines/machine-1') return undefined;
       const machine = { ...createPlainMachineRowFixture({ id: 'machine-1', accountId: request.accountId ?? 'account-a' }),
-        active: false, activeAt: heartbeat };
+        presenceProtocolVersion: 1, active: false, activeAt: heartbeat };
       return Response.json(request.path === '/v1/machines' ? [machine] : { machine });
     });
     storage.__setState({
@@ -93,10 +89,14 @@ describe('local voice engine local neural STT (streaming)', () => {
     });
 
     const { toggleLocalVoiceTurn, getLocalVoiceState } = await loadLocalVoiceEngineWithCompatState();
-    const graceMs = readMachineOnlineGraceMsFromEnv();
-    vi.spyOn(Date, 'now').mockImplementation(() => readClock() + graceMs + 1);
 
+    // Home-owned presence makes this explicit offline observation authoritative;
+    // a legacy Home without that fact correctly retains its heartbeat grace.
+    storage.getState().applyMachines([{ ...storage.getState().machines['machine-1'],
+      presenceProtocolVersion: 1, active: false, activeAt: Math.max(Date.now(), heartbeat),
+    }], false, { sourceServerId: localVoiceHomeId });
     const beforeCapture = await readLocalVoiceMachinePrerequisites();
+    expect(beforeCapture.selection).toMatchObject({ kind: 'selected_unreachable' });
     await toggleLocalVoiceTurn('s-web-daemon');
     const stateAfterStart = getLocalVoiceState();
     if (stateAfterStart.status === 'recording' || stateAfterStart.status === 'listening') {

@@ -4,7 +4,7 @@ import {
   ingestVoiceAgentOutputEventV1,
   VoiceAgentOutputEventV1Schema,
   type VoiceAgentOutputEventV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/voice/outputEvents';
 import {
   finalizeVoiceAgentStreamingSpeech,
   ingestVoiceAgentStreamingDelta,

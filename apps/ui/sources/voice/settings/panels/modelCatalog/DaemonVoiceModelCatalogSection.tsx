@@ -1,6 +1,6 @@
 import * as React from 'react';
 
-import type { ModelPackKind } from '@happier-dev/protocol';
+import type { ModelPackKind } from '@happier-dev/protocol/voice/modelPacks/manifest';
 
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';

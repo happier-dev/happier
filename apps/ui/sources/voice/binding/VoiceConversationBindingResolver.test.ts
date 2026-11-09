@@ -1,7 +1,8 @@
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 
 import { createSessionFixture, createSessionListRenderableSessionFixture } from '@/dev/testkit';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
+import { selectActiveTestHomeForTests } from '@/dev/testkit/fixtures/persistedHomeProfiles';
 import type { SessionAddress } from '@/sync/domains/session/sessionAddress';
 import type { Session } from '@/sync/domains/state/storageTypes';
 
@@ -12,6 +13,9 @@ import { writeVoiceConversationBindingMetadata } from './voiceConversationBindin
 await import('./voiceConversationBindingStore');
 await import('./VoiceConversationBindingResolver');
 
+// The unconfigured test build seeds no Home: select the same one before collection and each test.
+await selectActiveTestHomeForTests();
+beforeEach(async () => { await selectActiveTestHomeForTests(); });
 /** Every binding target is Home-qualified; the persisted record carries its own server id. */
 const activeServerId = getActiveServerSnapshot().serverId;
 

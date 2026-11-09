@@ -1,14 +1,11 @@
 import { applyAccountSettingsSavedSecretMutation, applyAccountSettingsVoiceCredentialSourceMutation, resolveAccountSettingsVoiceCredentialSecret, resolveAccountSettingsVoiceCredentialSource, type AccountSettingsSavedSecretMutation, type AccountSettingsVoiceCredentialSourceMutation, type AccountSettingsVoiceCredentialSourceMutationResult, type VoiceCredentialSourceSelection } from '@happier-dev/protocol/account/settings/savedSecretMutationOwner';
 import { buildQualifiedPluginContributionKey, type PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
-import { deriveVoiceCredentialBindingIdentityV1, type VoiceProviderContribution, type VoiceRawCredentialGrantDeclaration, VoiceProviderContributionSchema } from '@happier-dev/protocol/plugins/contributions/voice';
-import { normalizeRecipientContractV1 } from '@happier-dev/protocol/plugins/recipientContractV1';
+import { resolveVoiceCredentialMediatedGrantDeclarationsV1, type VoiceProviderContribution, type VoiceRawCredentialGrantDeclaration } from '@happier-dev/protocol/plugins/contributions/voice';
 import type { QualifiedConnectedAccountPurposeV1 } from '@happier-dev/protocol/connect/connectedAccountPurposeIdentity';
 import { qualifyPluginContributionReferenceV1 } from '@happier-dev/protocol/plugins/contribution-identity';
 import { applySavedSecretCatalogVoiceCredentialSourceMutationV1, resolveSavedSecretCatalogVoiceCredentialSourceV1, listSavedSecretVoiceCredentialMutationReferencesV1 } from '@happier-dev/protocol/account/settings/savedSecretMutationOwner';
 import type { ConnectedPurposeCatalogV1 } from '@happier-dev/protocol/connect/connectedAccountConfigurationRowsV1';
 import type { SavedSecretReferenceCatalogsV1 } from '@happier-dev/protocol/account/settings/savedSecretMutationOwner';
-import { sha256 } from '@noble/hashes/sha2';
-import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils';
 
 import { settingsParse, type Settings } from '@/sync/domains/settings/settings';
 import type { SavedSecretReferenceResolution } from '@/sync/store/settings/savedSecretCatalogSnapshot';
@@ -47,7 +44,7 @@ export type AccountVoiceCredentialSource = 'account' | 'machine_override';
  * `missing` tells the user to add a credential that may already be stored, so
  * the unresolvable case carries its own value.
  */
-export type AccountVoiceCredentialUseStatus = 'ready' | 'missing' | 'review_required' | 'unknown';
+export type AccountVoiceCredentialUseStatus = 'ready' | 'missing' | 'unknown';
 
 export type AccountVoiceCredentialStatus = Readonly<{
   status: AccountVoiceCredentialUseStatus;
@@ -58,18 +55,6 @@ export type AccountVoiceCredentialStatus = Readonly<{
   savedSecret?: SavedSecretReferenceResolution;
 }>;
 
-export function resolveAccountVoiceCredentialApprovalDigest(params: Readonly<{
-  requiredRecipientContractDigest: string | null | undefined;
-  savedSecret: Pick<SavedSecretReferenceResolution, 'kind' | 'fingerprint'> | null | undefined;
-}>): string | null {
-  const required = params.requiredRecipientContractDigest;
-  if (!required) return null;
-  if (params.savedSecret?.kind !== 'shared_resource') return required;
-  if (!params.savedSecret.fingerprint) return null;
-  return `sha256:${bytesToHex(sha256(utf8ToBytes(
-    `happier.voice.shared-secret-approval.v1\u0000${required}\u0000${params.savedSecret.fingerprint}`,
-  )))}`;
-}
 
 export type AccountVoiceCredentialSourceSelectionResolution = ReturnType<
   typeof resolveAccountSettingsVoiceCredentialSource
@@ -172,8 +157,9 @@ function sameContribution(
 }
 
 /**
- * Raw grants belong to the exact source the user selected for this credential
- * slot. Keeping that source matching here prevents readiness and disclosure UI
+ * Grant reviews belong to the exact source the user selected for this credential
+ * slot. Mediated use consumes the same custodian record as raw access.
+ * Keeping that source matching here prevents readiness and disclosure UI
  * from independently treating any declaration alternative as current.
  */
 export function resolveSelectedVoiceCredentialRawGrants(params: Readonly<{
@@ -200,7 +186,12 @@ export function resolveSelectedVoiceCredentialRawGrants(params: Readonly<{
     : null;
   const grants = params.declaration.credentials.sources.flatMap((source) => {
     if (params.selection.kind === 'savedSecret') {
-      return source.kind === 'savedSecret' ? source.rawGrants ?? [] : [];
+      return source.kind === 'savedSecret' ? resolveVoiceCredentialMediatedGrantDeclarationsV1({
+        pluginId: params.contribution.pluginId,
+        contribution: params.declaration,
+        ...(params.access ? { realm: params.access.realm, phase: params.access.phase } : {}),
+        existingGrants: source.rawGrants,
+      }) : [];
     }
     if (source.kind !== 'connectedAccount' || selectedService === null) return [];
     const sourceService = qualifyPluginContributionReferenceV1(
@@ -225,13 +216,6 @@ export function resolveSelectedVoiceCredentialRawGrants(params: Readonly<{
   return Object.freeze(scoped);
 }
 
-function sortByCanonicalJson<T>(values: readonly T[]): readonly T[] {
-  return [...values].sort((left, right) => {
-    const leftKey = JSON.stringify(left);
-    const rightKey = JSON.stringify(right);
-    return leftKey < rightKey ? -1 : leftKey > rightKey ? 1 : 0;
-  });
-}
 
 function canonicalVoiceCredentialRequest<T extends Readonly<{
   kind: 'httpHeaders' | 'environment' | 'files';
@@ -243,118 +227,6 @@ function canonicalVoiceCredentialRequest<T extends Readonly<{
       : { ...request, fileIds: [...(request as T & Readonly<{ fileIds: readonly string[] }>).fileIds].sort() }) as T;
 }
 
-function canonicalVoiceCredentialSource(
-  source: NonNullable<VoiceProviderContribution['credentials']>['sources'][number],
-  declaringPluginId: string,
-): Readonly<Record<string, unknown>> {
-  const operationProjections = source.operationProjections?.map((projection) => (
-    projection.kind === 'materializedHttpHeaders'
-      ? {
-          ...projection,
-          request: canonicalVoiceCredentialRequest(projection.request),
-          requiredHeaderNames: [...projection.requiredHeaderNames].sort(),
-          allowedHeaderNames: [...projection.allowedHeaderNames].sort(),
-        }
-      : projection
-  ));
-  const rawGrants = source.rawGrants?.map((grant) => ({
-    ...grant,
-    request: canonicalVoiceCredentialRequest(grant.request),
-  }));
-  return Object.freeze({
-    ...source,
-    ...(source.kind === 'connectedAccount'
-      ? { service: qualifyPluginContributionReferenceV1(source.service, declaringPluginId) }
-      : { secretKinds: [...source.secretKinds].sort() }),
-    ...(operationProjections
-      ? { operationProjections: sortByCanonicalJson(operationProjections) }
-      : {}),
-    ...(rawGrants ? { rawGrants: sortByCanonicalJson(rawGrants) } : {}),
-  });
-}
-
-function canonicalVoiceHostMediatedOperations(
-  declaration: VoiceProviderContribution,
-): readonly unknown[] | null {
-  const credentials = declaration.credentials;
-  if (!credentials?.hostMediated) return null;
-  return normalizeRecipientContractV1({
-    version: 1,
-    package: {
-      pluginId: 'happier.voice.contract-key',
-      source: { kind: 'bundled', locator: 'happier.voice.contract-key' },
-    },
-    publisher: { trust: 'bundled', identity: 'happier.voice.contract-key' },
-    contribution: {
-      pluginId: 'happier.voice.contract-key',
-      localId: declaration.id,
-    },
-    credentialSlot: { id: credentials.slot.id, scope: 'account' },
-    operations: credentials.hostMediated.operations,
-  }).operations;
-}
-
-/**
- * Canonical manifest facts consumed by one source gesture. Parsing first makes
- * equivalent rehydrations compare equally while slot, purpose, and selected
- * source contract changes invalidate the gesture.
- */
-function voiceCredentialSourceMutationContractKey(
-  declaration: VoiceProviderContribution,
-  mutation: AccountSettingsVoiceCredentialSourceMutation,
-): string | null {
-  try {
-    const normalized = VoiceProviderContributionSchema.parse(declaration);
-    const identity = deriveVoiceCredentialBindingIdentityV1({
-      pluginId: mutation.contribution.pluginId,
-      contribution: normalized,
-    });
-    if (!identity
-      || !sameContribution(identity.contribution, mutation.contribution)
-      || identity.credentialSlotId !== mutation.credentialSlotId) return null;
-    const selection = mutation.selection;
-    const selectedSource = selection.kind === 'savedSecret'
-      ? normalized.credentials?.sources.find((source) => source.kind === 'savedSecret') ?? null
-      : selection.kind === 'connectedAccount'
-        ? normalized.credentials?.sources.find((source) => {
-            if (source.kind !== 'connectedAccount') return false;
-            const selectedService = selection.target.kind === 'account'
-              ? selection.target.account.service
-              : selection.target.service;
-            return sameContribution(
-              qualifyPluginContributionReferenceV1(source.service, mutation.contribution.pluginId),
-              selectedService,
-            );
-          }) ?? null
-        : undefined;
-    if (selectedSource === null) return null;
-    return JSON.stringify({
-      contribution: identity.contribution,
-      credentialSlotId: identity.credentialSlotId,
-      purpose: identity.purpose,
-      hostMediated: canonicalVoiceHostMediatedOperations(normalized),
-      ...(selectedSource === undefined
-        ? {}
-        : {
-            source: canonicalVoiceCredentialSource(
-              selectedSource,
-              mutation.contribution.pluginId,
-            ),
-          }),
-    });
-  } catch {
-    return null;
-  }
-}
-
-/** Value-free fingerprint of the existing normalized slot, purpose and selected-source contract. */
-export function voiceCredentialSourceMutationContractDigest(
-  declaration: VoiceProviderContribution,
-  mutation: AccountSettingsVoiceCredentialSourceMutation,
-): string | null {
-  const key = voiceCredentialSourceMutationContractKey(declaration, mutation);
-  return key === null ? null : `sha256:${bytesToHex(sha256(utf8ToBytes(key)))}`;
-}
 
 function staleVoiceCredentialSourceMutation(
   mutation: AccountSettingsVoiceCredentialSourceMutation,
@@ -370,7 +242,6 @@ export async function mutateAccountVoiceCredentialSource(params: Readonly<{
   connectedPurposes: ConnectedPurposeCatalogV1 | null;
   catalogs?: SavedSecretReferenceCatalogsV1;
   mutation: AccountSettingsVoiceCredentialSourceMutation;
-  expectedDeclaration: VoiceProviderContribution;
   resolveCurrentDeclaration: (
     contribution: PluginContributionIdentityV1,
   ) => VoiceProviderContribution | null;
@@ -389,42 +260,11 @@ export async function mutateAccountVoiceCredentialSource(params: Readonly<{
       }>
   >;
 }>): Promise<AccountSettingsVoiceCredentialSourceMutationResult> {
-  const expectedContractKey = voiceCredentialSourceMutationContractKey(
-    params.expectedDeclaration,
-    params.mutation,
-  );
-  if (!expectedContractKey) return staleVoiceCredentialSourceMutation(params.mutation);
-  let result:
-    | Readonly<{
-        status: 'applied';
-        settingsVersion: number;
-        value: AccountVoiceCredentialSourceMutationValue;
-      }>
-    | Readonly<{
-        status: 'conflict';
-        currentSettingsVersion: number;
-      }>
-    | Readonly<{
-        status: 'outcomeUnknown';
-        lastKnownSettingsVersion: number;
-        safeSnapshotVersion?: number;
-      }>;
-  try {
-    result = await params.mutateAccountSettingsOnce<AccountVoiceCredentialSourceMutationValue>({
+  const currentDeclaration = params.resolveCurrentDeclaration(params.mutation.contribution);
+  if (!currentDeclaration) return staleVoiceCredentialSourceMutation(params.mutation);
+  const result = await params.mutateAccountSettingsOnce<AccountVoiceCredentialSourceMutationValue>({
       expectedSettingsVersion: params.mutation.expectedSettingsVersion,
       mutate: (raw) => {
-        const currentDeclaration = params.resolveCurrentDeclaration(
-          params.mutation.contribution,
-        );
-        if (!currentDeclaration
-          || voiceCredentialSourceMutationContractKey(
-            currentDeclaration,
-            params.mutation,
-          ) !== expectedContractKey) {
-          throw Object.assign(new Error('voice_credential_source_stale'), {
-            code: 'voice_credential_source_stale',
-          });
-        }
         const applied = applyAccountVoiceCredentialSourceSelection({
           settings: settingsParse(raw),
           connectedPurposes: params.connectedPurposes,
@@ -442,13 +282,6 @@ export async function mutateAccountVoiceCredentialSource(params: Readonly<{
         });
       },
     });
-  } catch (error) {
-    if (error instanceof Error
-      && (error as Error & Readonly<{ code?: string }>).code === 'voice_credential_source_stale') {
-      return staleVoiceCredentialSourceMutation(params.mutation);
-    }
-    throw error;
-  }
   if (result.status === 'conflict') {
     return Object.freeze({
       status: 'conflict',
@@ -479,7 +312,6 @@ async function saveScopedAccountVoiceCredentialResource(params: Readonly<{
   scope: AccountSettingsScope;
   replacement: VoiceCredentialReplacement;
   expectedSettingsVersion: number;
-  requiredRecipientContractDigest?: string | null;
   mutate: (capture: SavedSecretFullReferenceResourceMutationCapture, replacement: VoiceCredentialReplacement)
     => ReturnType<SavedSecretFullReferenceResourceCreationParams['mutateCatalogs']>;
   onApprovalSucceeded?: SavedSecretFullReferenceResourceCreationParams['onApprovalSucceeded'];
@@ -492,16 +324,7 @@ async function saveScopedAccountVoiceCredentialResource(params: Readonly<{
     resources: [params.replacement.secret],
     mutateCatalogs: capture => {
       if (capture.settingsVersion !== params.expectedSettingsVersion) return { ok: false, reason: 'changed' };
-      const approvalDigest = params.requiredRecipientContractDigest === undefined
-        ? params.replacement.approvedRecipientContractDigest
-        : resolveAccountVoiceCredentialApprovalDigest({
-            requiredRecipientContractDigest: params.requiredRecipientContractDigest,
-            savedSecret: { kind: 'shared_resource', fingerprint: capture.resourceFingerprints.get(params.replacement.secret.id) ?? null },
-          });
-      if (params.requiredRecipientContractDigest && !approvalDigest) return { ok: false, reason: 'unavailable' };
-      return params.mutate(capture, { ...params.replacement,
-        ...(approvalDigest ? { approvedRecipientContractDigest: approvalDigest } : {}),
-      });
+      return params.mutate(capture, params.replacement);
     },
     ...(params.onApprovalSucceeded ? { onApprovalSucceeded: params.onApprovalSucceeded } : {}),
     ...(params.onApprovalFailed ? { onApprovalFailed: params.onApprovalFailed } : {}),
@@ -513,7 +336,6 @@ export async function replaceScopedAccountVoiceCredential(params: Readonly<{
   scope: AccountSettingsScope | null;
   replacement: VoiceCredentialReplacement;
   expectedSettingsVersion: number;
-  requiredRecipientContractDigest?: string | null;
   onApprovalSucceeded?: (result: Extract<OneShotAccountSettingsMutationResult<undefined>, { status: 'applied' }>) => void | Promise<void>;
   onApprovalFailed?: (code: string) => void;
 }>): Promise<RecoverableVoiceCredentialMutationResult<OneShotAccountSettingsMutationResult<undefined>>> {
@@ -523,7 +345,6 @@ export async function replaceScopedAccountVoiceCredential(params: Readonly<{
     scope: params.scope,
     replacement: params.replacement,
     expectedSettingsVersion: params.expectedSettingsVersion,
-    requiredRecipientContractDigest: params.requiredRecipientContractDigest,
     mutate: ({ rawSettings, catalogs }, replacement) => ({
       settings: applyAccountSettingsSavedSecretMutation(rawSettings, replacement, catalogs).settings,
       catalogs,
@@ -540,17 +361,15 @@ export async function replaceScopedAccountVoiceCredential(params: Readonly<{
 export async function mutateScopedAccountVoiceCredentialSource(params: Readonly<{
   scope: AccountSettingsScope | null;
   mutation: AccountSettingsVoiceCredentialSourceMutation;
-  expectedDeclaration: VoiceProviderContribution;
   resolveCurrentDeclaration: (contribution: PluginContributionIdentityV1) => VoiceProviderContribution | null;
-  requiredRecipientContractDigest?: string | null;
   onApprovalSucceeded?: (result: Extract<AccountSettingsVoiceCredentialSourceMutationResult, { status: 'applied' }>) => void | Promise<void>;
   onApprovalFailed?: (code: string) => void;
 }>): Promise<RecoverableVoiceCredentialMutationResult<AccountSettingsVoiceCredentialSourceMutationResult>> {
   if (!params.scope) throw new Error('connected_purpose_catalog_unavailable');
   const replacement = params.mutation.savedSecretMutation;
   if (replacement?.kind === 'replaceVoiceCredentialSecret') {
-    const expectedContractKey = voiceCredentialSourceMutationContractKey(params.expectedDeclaration, params.mutation);
-    if (!expectedContractKey) return staleVoiceCredentialSourceMutation(params.mutation);
+    const declaration = params.resolveCurrentDeclaration(params.mutation.contribution);
+    if (!declaration) return staleVoiceCredentialSourceMutation(params.mutation);
     let produced: AccountVoiceCredentialSourceMutationValue | null = null;
     const appliedResult = (settingsVersion: number): Extract<AccountSettingsVoiceCredentialSourceMutationResult, { status: 'applied' }> => {
       if (!produced) throw new Error('voice_credential_source_unavailable');
@@ -560,13 +379,7 @@ export async function mutateScopedAccountVoiceCredentialSource(params: Readonly<
       scope: params.scope,
       replacement,
       expectedSettingsVersion: params.mutation.expectedSettingsVersion,
-      requiredRecipientContractDigest: params.requiredRecipientContractDigest,
       mutate: ({ rawSettings, catalogs }, preparedReplacement) => {
-        const declaration = params.resolveCurrentDeclaration(params.mutation.contribution);
-        if (!declaration
-          || voiceCredentialSourceMutationContractKey(declaration, params.mutation) !== expectedContractKey) {
-          return { ok: false, reason: 'changed' };
-        }
         if (catalogs.connectedPurposes === undefined) return { ok: false, reason: 'unavailable' };
         const candidate = applySavedSecretCatalogVoiceCredentialSourceMutationV1(rawSettings, {
           ...params.mutation,
@@ -652,26 +465,13 @@ export function resolveAccountVoiceCredential(
   contribution: PluginContributionIdentityV1,
   credentialSlotId: string,
   machineId?: string | null,
-  requiredRecipientContractDigest?: string | null,
 ): Readonly<{ secretId: string; source: AccountVoiceCredentialSource }> | null {
   const resolved = resolveAccountSettingsVoiceCredentialSecret(settings, {
     contribution,
     credentialSlotId,
     machineId: machineId ?? null,
   });
-  if (requiredRecipientContractDigest
-    && resolved.approvedRecipientContractDigest !== requiredRecipientContractDigest) return null;
   return resolved.reference;
-}
-
-export function isAccountVoiceCredentialRecipientApprovalRequired(params: Readonly<{
-  settings: Pick<Settings, 'voiceSettingsV1' | 'secrets'>;
-  contribution: PluginContributionIdentityV1;
-  credentialSlotId: string;
-  machineId?: string | null;
-  requiredRecipientContractDigest?: string | null;
-}>): boolean {
-  return resolveAccountVoiceCredentialStatus(params).status === 'review_required';
 }
 
 export function resolveAccountVoiceCredentialStatus(params: Readonly<{
@@ -679,11 +479,9 @@ export function resolveAccountVoiceCredentialStatus(params: Readonly<{
   contribution: PluginContributionIdentityV1;
   credentialSlotId: string;
   machineId?: string | null;
-  requiredRecipientContractDigest?: string | null;
   resolveSavedSecret?: (ref: string) => SavedSecretReferenceResolution;
 }>): AccountVoiceCredentialStatus {
   let reference: ReturnType<typeof resolveAccountVoiceCredential>;
-  let binding: ReturnType<typeof resolveAccountSettingsVoiceCredentialSecret>;
   try {
     reference = resolveAccountVoiceCredential(
       params.settings,
@@ -691,11 +489,6 @@ export function resolveAccountVoiceCredentialStatus(params: Readonly<{
       params.credentialSlotId,
       params.machineId,
     );
-    binding = resolveAccountSettingsVoiceCredentialSecret(params.settings, {
-      contribution: params.contribution,
-      credentialSlotId: params.credentialSlotId,
-      machineId: params.machineId ?? null,
-    });
   } catch {
     // The snapshot could not be resolved at all. Fail closed, but say so
     // instead of claiming the credential is absent.
@@ -714,16 +507,8 @@ export function resolveAccountVoiceCredentialStatus(params: Readonly<{
       });
     }
   }
-  const requiredApprovalDigest = resolveAccountVoiceCredentialApprovalDigest({
-    requiredRecipientContractDigest: params.requiredRecipientContractDigest,
-    savedSecret,
-  });
   return Object.freeze({
-    status: params.requiredRecipientContractDigest
-      && (!requiredApprovalDigest
-        || binding.approvedRecipientContractDigest !== requiredApprovalDigest)
-      ? 'review_required'
-      : 'ready',
+    status: 'ready',
     reference,
     ...(savedSecret?.kind === 'shared_resource' ? { savedSecret } : {}),
   });
@@ -752,7 +537,6 @@ export function upsertAccountVoiceCredential(params: Readonly<{
   now: number;
   expectedSecretId: string | null;
   expectedSecretUpdatedAt: number | null;
-  approvedRecipientContractDigest?: string;
 }>): Readonly<{
   settings: Settings;
   accountSettings: Record<string, unknown>;
@@ -778,7 +562,6 @@ export function createAccountVoiceCredentialReplacementMutation(params: Readonly
   now: number;
   expectedSecretId: string | null;
   expectedSecretUpdatedAt: number | null;
-  approvedRecipientContractDigest?: string;
 }>): Readonly<{
   secretId: string;
   mutation: Extract<AccountSettingsSavedSecretMutation, { kind: 'replaceVoiceCredentialSecret' }>;
@@ -806,12 +589,6 @@ export function createAccountVoiceCredentialReplacementMutation(params: Readonly
       createdAt: params.now,
       updatedAt: params.now,
     },
-    ...(params.approvedRecipientContractDigest === undefined
-      ? {}
-      : {
-          approvedRecipientContractDigest:
-            params.approvedRecipientContractDigest,
-        }),
   } satisfies Extract<AccountSettingsSavedSecretMutation, { kind: 'replaceVoiceCredentialSecret' }>;
   return Object.freeze({
     secretId,
@@ -827,7 +604,6 @@ export type AccountVoiceCredentialBindingTarget = Readonly<{
   secretId: string;
   expectedSecretId: string | null;
   expectedSecretUpdatedAt: number | null;
-  approvedRecipientContractDigest?: string;
 }>;
 
 export function createAccountVoiceCredentialBindingMutation(
@@ -843,12 +619,6 @@ export function createAccountVoiceCredentialBindingMutation(
     expectedSecretId: params.expectedSecretId,
     expectedSecretUpdatedAt: params.expectedSecretUpdatedAt,
     secretId: params.secretId,
-    ...(params.approvedRecipientContractDigest === undefined
-      ? {}
-      : {
-          approvedRecipientContractDigest:
-            params.approvedRecipientContractDigest,
-        }),
   } satisfies Extract<AccountSettingsSavedSecretMutation, { kind: 'bindVoiceCredentialSavedSecret' }>);
 }
 
@@ -887,7 +657,6 @@ export function saveAndUseAccountVoiceCredential(params: Readonly<{
   now: number;
   expectedSecretId: string | null;
   expectedSecretUpdatedAt: number | null;
-  approvedRecipientContractDigest?: string;
 }>): Readonly<{
   settings: Settings;
   accountSettings: Record<string, unknown>;
@@ -913,36 +682,6 @@ export function saveAndUseAccountVoiceCredential(params: Readonly<{
   });
 }
 
-export function approveAccountVoiceCredentialRecipientContract(params: Readonly<{
-  settings: Settings;
-  contribution: PluginContributionIdentityV1;
-  credentialSlotId: string;
-  machineId?: string | null;
-  expectedSecretId: string;
-  expectedSecretUpdatedAt: number;
-  approvedRecipientContractDigest: string;
-}>): Readonly<{
-  settings: Settings;
-  accountSettings: Record<string, unknown>;
-}> {
-  const { voice: _runtimeVoiceProjection, ...accountSettings } = params.settings;
-  const result = applyAccountSettingsSavedSecretMutation(accountSettings, {
-    kind: 'approveVoiceCredentialRecipientContract',
-    target: {
-      contribution: params.contribution,
-      credentialSlotId: params.credentialSlotId,
-      machineId: params.machineId ?? null,
-    },
-    expectedSecretId: params.expectedSecretId,
-    expectedSecretUpdatedAt: params.expectedSecretUpdatedAt,
-    approvedRecipientContractDigest:
-      params.approvedRecipientContractDigest,
-  });
-  return {
-    accountSettings: { ...result.settings },
-    settings: settingsParse(result.settings),
-  };
-}
 
 export function removeAccountVoiceCredential(params: Readonly<{
   settings: Settings;

@@ -1,12 +1,15 @@
 import * as React from 'react';
 
 import type {
-  PluginContributionIdentityV1,
-  QualifiedConnectedAccountPurposeBindingTargetV1,
+  PluginContributionIdentityV1} from '@happier-dev/protocol/plugins/contribution-identity';
+import type {
+  QualifiedConnectedAccountPurposeBindingTargetV1} from '@happier-dev/protocol/connect/connectedAccountPurposeBindings';
+import type {
   VoiceCredentialDeclaration,
-  VoiceCredentialSourceSelection,
   VoiceProviderContribution,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/plugins/contributions/voice';
+import type {
+  VoiceCredentialSourceSelection} from '@happier-dev/protocol/account/settings/savedSecretMutationOwner';
 import { qualifyPluginContributionReferenceV1 } from '@happier-dev/protocol/plugins/contribution-identity';
 import { SettingsDeclarationActionOutputSchemasV1 } from '@happier-dev/protocol/actions/settingsDeclarationActionFamily';
 
@@ -29,7 +32,6 @@ import { resolveQualifiedConnectedServiceRegistryDisplayName } from '@/component
 import { getConnectedAccountAuthentication } from '@/sync/domains/connectedServices/connectedServiceRegistry';
 import { presentQualifiedConnectedAccountTarget } from '@/sync/domains/connectedServices/qualifiedConnectedAccountTargetPresentation';
 import {
-  voiceCredentialSourceMutationContractDigest,
   resolveAccountVoiceCredentialSourceSelection,
 } from '@/voice/credentials/accountVoiceCredential';
 import { resolveVoiceConnectedAccountTargetEligibility } from '@/voice/credentials/sourceEligibility';
@@ -325,18 +327,11 @@ export function VoiceCredentialSourceField(props: Readonly<{
       const operation = mutationOperationRef.current + 1;
       mutationOperationRef.current = operation;
       setMutationOutcomeUnknown(false);
-      const selectedMutation = {
-        contribution: props.contribution,
-        credentialSlotId: props.credentials.slot.id,
-        selection: row.selection,
-        expectedSettingsVersion: settingsVersion,
-      };
       const anchor = voiceCredentialSettingAnchor(props.contribution, props.declaration, 'credentialSource');
-      const expectedContractDigest = voiceCredentialSourceMutationContractDigest(props.declaration, selectedMutation);
-      if (!anchor || !expectedContractDigest) return;
+      if (!anchor) return;
       const mutation = sourceAction.execute('settings.invoke', { anchor, input: {
         kind: 'voice_credential_source', credentialSlotId: props.credentials.slot.id,
-        selection: row.selection, expectedSettingsVersion: settingsVersion, expectedContractDigest,
+        selection: row.selection, expectedSettingsVersion: settingsVersion,
       } }, { retainInvocation: true, isPluginSettingsIntentCurrent: props.isCurrent }).then(result => {
         if (!result.ok) {
           presentActionTurnedOffNoticeIfOff(result, 'settings.invoke');

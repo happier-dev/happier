@@ -9,6 +9,7 @@ import { readVoiceConversationHistory } from './voiceConversationHistory';
 import { useSessionRecordingVisibility } from '@/hooks/session/useSessionListRecordingPrivacy';
 import { readStoredSessionTranscriptForAddress } from '@/sync/domains/messages/readStoredSessionMessagesForAddress';
 import { projectVoiceHistoryRows } from './voiceHistoryConsumer';
+import { selectVoiceConversationHistorySession } from './voiceConversationHistorySelection';
 
 const ACTIVE_QUERY: SessionListQueryV1 = {
     v: 1, storage: 'active', includeInactive: true, scope: 'my_work',
@@ -21,10 +22,10 @@ export function useVoiceConversationHistory(query = '') {
     const isSessionVisible = useSessionRecordingVisibility();
     const scope = useActiveServerAccountScope();
     const serverId = scope?.serverId ?? '';
-    const activeHomes = React.useMemo(() => serverId ? [{ serverId, query: ACTIVE_QUERY,
+    const activeHomes = React.useMemo(() => serverId ? [{ serverId, query: ACTIVE_QUERY, selectSession: selectVoiceConversationHistorySession,
         queryMembership: 'rowOnly' as const, ordinaryAdapter: { path: '/v2/sessions',
             allowV1Fallback: true, membership: 'ordinary' as const } }] : [], [serverId]);
-    const archivedHomes = React.useMemo(() => serverId ? [{ serverId, query: ARCHIVED_QUERY,
+    const archivedHomes = React.useMemo(() => serverId ? [{ serverId, query: ARCHIVED_QUERY, selectSession: selectVoiceConversationHistorySession,
         queryMembership: 'rowOnly' as const, ordinaryAdapter: { path: '/v2/sessions/archived',
             allowV1Fallback: false, membership: 'archived' as const } }] : [], [serverId]);
     // Each source has one corpus per Home; combining them would deduplicate the archived corpus.
@@ -44,12 +45,7 @@ export function useVoiceConversationHistory(query = '') {
             const spokenRows = projectVoiceHistoryRows(readStoredSessionMessagesFromStateLike(transcript), () => '');
             const lastText = spokenRows.map(row => row.text.trim()).filter(Boolean).at(-1);
             const lastLine = lastText?.split(/\r?\n/u).map(line => line.trim()).filter(Boolean).at(-1) ?? null;
-            // A loaded conversation is named by what the person first said there (else its first line),
-            // never by the generic Voice title; nothing beyond the already-loaded transcript is read.
-            const opening = spokenRows.find(row => row.role === 'user' && row.text.trim())
-                ?? spokenRows.find(row => row.text.trim());
-            const firstLine = opening?.text.split(/\r?\n/u).map(line => line.trim()).find(Boolean) ?? null;
-            return { conversation: { ...conversation, title: firstLine ?? conversation.title, lastLine,
+            return { conversation: { ...conversation, lastLine,
                 loadedMessageCount: transcript?.isLoaded === true ? spokenRows.length : null },
                 searchText: [conversation.title, ...spokenRows.map(row => row.text)].join('\n').toLocaleLowerCase() };
     }), [projection.conversations, transcripts]);

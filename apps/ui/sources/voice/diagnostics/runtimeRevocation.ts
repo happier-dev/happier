@@ -1,4 +1,4 @@
-import type { VoiceSpeechDiagnosticsSettingsV1 } from '@happier-dev/protocol';
+import type { VoiceSpeechDiagnosticsSettingsV1 } from '@happier-dev/protocol/voice/diagnostics';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { createAbortRacer } from '@/voice/agent/voiceAgentAbort';
 

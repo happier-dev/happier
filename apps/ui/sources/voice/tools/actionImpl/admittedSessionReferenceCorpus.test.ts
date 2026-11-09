@@ -1,7 +1,7 @@
+import { createSessionListSourceFixture } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
 import 'fake-indexeddb/auto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Socket } from 'socket.io-client';
-import { V2SessionListResponseSchema } from '@happier-dev/protocol/sessions/control/contract';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { configureConnectedServerSocketBoundary, installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
@@ -28,7 +28,7 @@ const NO_ORDINARY_MEMBERSHIP = { ordinarySessionListMembershipByServerId: {} } a
 let connection: Awaited<ReturnType<typeof restoreServerAccountForTest>> | undefined;
 
 function page(sessionId: string, options: { hasNext?: boolean; metadataUpgradeRequiredCount?: number } = {}) {
-    return V2SessionListResponseSchema.parse({
+    return createSessionListSourceFixture({
         sessions: [{
             id: sessionId, seq: 0, createdAt: 1, updatedAt: 2, active: true, activeAt: 2,
             encryptionMode: 'plain', metadata: JSON.stringify({ path: '/repo', host: 'test' }), metadataVersion: 1,
@@ -42,8 +42,8 @@ function page(sessionId: string, options: { hasNext?: boolean; metadataUpgradeRe
 async function arrangeHomes(twoMounted = true) {
     const a = await home.addHome({ name: 'A', serverUrl: 'https://voice-corpus-a.test', accountId: 'account-a' });
     const b = await home.addHome({ name: 'B', serverUrl: 'https://voice-corpus-b.test', accountId: 'account-b', active: false });
-    home.answer(a, '/v2/sessions', { body: V2SessionListResponseSchema.parse({ sessions: [], hasNext: false }) });
-    home.answer(b, '/v2/sessions', { body: V2SessionListResponseSchema.parse({ sessions: [], hasNext: false }) });
+    home.answer(a, '/v2/sessions', { body: createSessionListSourceFixture({ sessions: [], hasNext: false }) });
+    home.answer(b, '/v2/sessions', { body: createSessionListSourceFixture({ sessions: [], hasNext: false }) });
     for (const serverId of [a, b]) home.answer(serverId, '/v1/auth/ping', { body: { ok: true } });
     connection = await restoreServerAccountForTest({
         serverUrl: 'https://voice-corpus-a.test', accountId: 'account-a',

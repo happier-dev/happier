@@ -1,4 +1,4 @@
-import { createVoiceTranscriptLadderMapper } from '@happier-dev/protocol';
+import { createVoiceTranscriptLadderMapper } from '@happier-dev/protocol/voice/realtime/transcriptLadder';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createDeferred, waitForTestEvent } from '@/dev/testkit';
 import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';

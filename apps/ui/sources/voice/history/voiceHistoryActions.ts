@@ -12,6 +12,7 @@ import { readVoiceConversationHistory } from './voiceConversationHistory';
 import type { ServerAccountScope, ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { fetchSessionListQueryPageForHome } from '@/sync/domains/session/listing/sessionListQueryRuntime';
 import { mergeAbortSignals } from '@/utils/runtime/abortSignals';
+import { selectVoiceConversationHistorySession } from './voiceConversationHistorySelection';
 
 export async function executeVoiceConversationHistoryListAction(input: unknown, isCurrent: () => boolean,
   invocation?: Readonly<{ scope: ServerAccountScope; lifetime?: ServerAccountScopeLifetime; signal?: AbortSignal }>) {
@@ -42,7 +43,8 @@ export async function executeVoiceConversationHistoryListAction(input: unknown, 
   try {
     const page = async (path: string, cursor: string | null | undefined) => cursor === null ? null
       : fetchSessionListQueryPageForHome(serverId, { source: { kind: 'ordinary', path,
-        allowV1Fallback: path === '/v2/sessions' }, membership: 'rowOnly', cursor, signal });
+        allowV1Fallback: path === '/v2/sessions' }, membership: 'rowOnly', cursor, signal,
+        selectSession: selectVoiceConversationHistorySession });
     const [active, archived] = await Promise.all([
       page('/v2/sessions', value.cursor?.active), page('/v2/sessions/archived', value.cursor?.archived),
     ]);
@@ -52,7 +54,9 @@ export async function executeVoiceConversationHistoryListAction(input: unknown, 
       archived: archived?.hasNext ? archived.nextCursor : null,
     } : null;
     return { ...readVoiceConversationHistory(storage.getState(), { serverId,
-      coverageComplete: nextCursor === null && !active?.metadataUpgradeRequiredCount && !archived?.metadataUpgradeRequiredCount }), nextCursor };
+      coverageComplete: nextCursor === null && !active?.metadataUpgradeRequiredCount && !archived?.metadataUpgradeRequiredCount
+        && !active?.selectionUnavailable && !archived?.selectionUnavailable
+        && !active?.membershipUnavailableReason && !archived?.membershipUnavailableReason }), nextCursor };
   } finally {
     abort.abort();
     merged.dispose();

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { VoiceProviderContributionSchema, VoiceProviderSettingsSchema } from '@happier-dev/protocol';
+import { VoiceProviderContributionSchema, VoiceProviderSettingsSchema } from '@happier-dev/protocol/plugins/contributions/voice';
 import { createDeclaredSettingsProjector } from '@happier-dev/protocol/voice/settings/providerRegistry';
 
 import {

@@ -1,5 +1,5 @@
 import type { VoiceClientToolDefinition } from '@happier-dev/plugin-sdk/voice/client';
-import type { VoiceRealtimeJsonValue } from '@happier-dev/protocol';
+import type { VoiceRealtimeJsonValue } from '@happier-dev/protocol/voice/realtime/events';
 
 function attemptAborted(): Error {
   return Object.assign(new Error('voice_tool_attempt_aborted'), {

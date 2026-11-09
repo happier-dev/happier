@@ -1,15 +1,13 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { VoiceProviderContributionSchema } from '@happier-dev/protocol';
+import { VoiceProviderContributionSchema } from '@happier-dev/protocol/plugins/contributions/voice';
 
 import { settingsParse } from '@/sync/domains/settings/settings';
 import {
-  approveAccountVoiceCredentialRecipientContract,
   applyAccountVoiceCredentialSourceSelection as applyAccountVoiceCredentialSourceSelectionAtOwner,
   mutateAccountVoiceCredentialSource,
   removeAccountVoiceCredential,
   resolveAccountVoiceCredential,
-  resolveAccountVoiceCredentialApprovalDigest,
   resolveAccountVoiceCredentialSourceSelection,
   resolveAccountVoiceCredentialStatus,
   resolveExactAccountVoiceCredentialSecretId,
@@ -110,6 +108,21 @@ const PACKED_VOICE_CONTRIBUTION = Object.freeze({
 });
 
 describe('account Voice credential source mutation', () => {
+  it('uses the current declared source and Settings CAS without a second contract-key fence', async () => {
+    const expectedDeclaration = voiceDeclaration(OPENAI_VOICE_CONTRIBUTION, 'voice.client-auth');
+    const currentDeclaration = VoiceProviderContributionSchema.parse({ ...expectedDeclaration,
+      credentials: { ...expectedDeclaration.credentials, sources: expectedDeclaration.credentials!.sources.map(source =>
+        source.kind === 'savedSecret' ? { ...source, secretKinds: ['apiKey', 'token'] } : source) },
+    });
+    const result = await mutateAccountVoiceCredentialSource({
+      connectedPurposes: { v: 1, bindings: [] },
+      mutation: { contribution: OPENAI_VOICE_CONTRIBUTION, credentialSlotId: 'api_key',
+        selection: { kind: 'savedSecret' }, expectedSettingsVersion: 4 },
+      resolveCurrentDeclaration: () => currentDeclaration,
+      mutateAccountSettingsOnce: async input => ({ status: 'applied', settingsVersion: 5, value: input.mutate({}).value }),
+    });
+    expect(result).toMatchObject({ status: 'applied', selection: { kind: 'savedSecret' } });
+  });
   it('resolves the exact qualified purpose from the connected catalog after its settings carrier is retired', () => {
     const purpose = { consumer: OPENAI_VOICE_CONTRIBUTION, purpose: 'voice.client-auth' };
     const target = {
@@ -136,6 +149,31 @@ describe('account Voice credential source mutation', () => {
       kind: 'connectedAccount', target,
     });
     expect(() => resolveAccountVoiceCredentialSourceSelection({ ...input, connectedPurposes: null })).toThrow();
+  });
+
+  it.each([false, true])('offers the existing grant review for a mediated Saved Secret without duplicate raw review (%s)', withRaw => {
+    const base = voiceDeclaration(OPENAI_VOICE_CONTRIBUTION, 'voice.client-auth');
+    const grant = { realm: 'web' as const, phase: 'prepare' as const,
+      request: { kind: 'httpHeaders' as const, origin: 'https://api.openai.com', headerNames: ['authorization'] } };
+    const declaration = VoiceProviderContributionSchema.parse({ ...base, credentials: {
+      ...base.credentials, sources: [{ kind: 'savedSecret', secretKinds: ['apiKey'],
+        ...(withRaw ? { rawGrants: [grant] } : {}),
+        operationProjections: [{ kind: 'recipientCredential', operation: 'client-auth', phase: 'prepare', format: 'bearer' }],
+      }], hostMediated: { operations: [{ id: 'client-auth', purpose: 'voice.client-auth', credentialSlotId: 'api_key', effect: 'read',
+        request: { origin: grant.request.origin, pathTemplate: '/v1/session', queryTemplate: [], headerTemplate: [],
+          bodyTemplate: { kind: 'none' }, method: 'POST', credential: { kind: 'httpHeader', name: 'authorization', format: 'bearer' },
+          redirect: 'error', maxBodyBytes: 0, contentTypes: [] },
+        parameters: { schema: { type: 'object', properties: {}, additionalProperties: false }, mapping: [] },
+        response: { maxBytes: 32768, contentTypes: ['application/json'] },
+      }] },
+    } });
+    const input = { declaration, contribution: OPENAI_VOICE_CONTRIBUTION,
+      selection: { kind: 'savedSecret' as const }, access: { realm: 'web' as const, phase: 'prepare' as const } };
+    expect(resolveSelectedVoiceCredentialRawGrants(input)).toEqual([grant]);
+    expect(resolveSelectedVoiceCredentialRawGrants({ declaration, contribution: input.contribution,
+      selection: input.selection })).toEqual([grant]);
+    expect(resolveSelectedVoiceCredentialRawGrants({ ...input, selection: { kind: 'none' } })).toEqual([]);
+    expect(resolveSelectedVoiceCredentialRawGrants({ ...input, access: { realm: 'web', phase: 'connection' } })).toEqual([]);
   });
 
   it('projects only the selected source grants for the exact access scope and request', () => {
@@ -262,7 +300,6 @@ describe('account Voice credential source mutation', () => {
         selection: { kind: 'savedSecret' },
         expectedSettingsVersion: 4,
       },
-      expectedDeclaration,
       resolveCurrentDeclaration: () => expectedDeclaration,
       mutateAccountSettingsOnce: async (input) => {
         mutations += 1;
@@ -313,7 +350,6 @@ describe('account Voice credential source mutation', () => {
     const resultPromise = mutateAccountVoiceCredentialSource({
       connectedPurposes: { v: 1, bindings: [] },
       mutation,
-      expectedDeclaration,
       resolveCurrentDeclaration: () => currentDeclaration,
       mutateAccountSettingsOnce: async (input) => {
         const applied = input.mutate({});
@@ -538,7 +574,7 @@ describe('account Voice credential ownership', () => {
     })]);
   });
 
-  it('preserves the selected external provider and config when recipient approval is renewed', () => {
+  it('preserves the selected external provider and config when its credential is replaced', () => {
     const providerId = 'acme.packed-voice/conversation';
     const providerEnvelope = {
       schemaVersion: 2,
@@ -548,8 +584,6 @@ describe('account Voice credential ownership', () => {
         enableProvisioning: true,
       },
     };
-    const recipientContractBefore = `sha256:${'a'.repeat(64)}`;
-    const recipientContractAfter = `sha256:${'b'.repeat(64)}`;
     const credentialCreated = upsertAccountVoiceCredential({
       settings: settingsParse({}),
       contribution: PACKED_VOICE_CONTRIBUTION,
@@ -559,7 +593,6 @@ describe('account Voice credential ownership', () => {
       now: 1,
       expectedSecretId: null,
       expectedSecretUpdatedAt: null,
-      approvedRecipientContractDigest: recipientContractBefore,
     }).settings;
     const initial = {
       ...credentialCreated,
@@ -590,7 +623,6 @@ describe('account Voice credential ownership', () => {
       now: 2,
       expectedSecretId: 'packed-voice-secret',
       expectedSecretUpdatedAt: 1,
-      approvedRecipientContractDigest: recipientContractAfter,
     });
 
     expect(changed.settings.voice).toMatchObject({
@@ -607,7 +639,6 @@ describe('account Voice credential ownership', () => {
       credentialBindings: [{
         contribution: PACKED_VOICE_CONTRIBUTION,
         credentialSlotId: 'api_key',
-        approvedRecipientContractDigest: recipientContractAfter,
         credentialBindings: {
           account: { api_key: 'packed-voice-secret-reapproved' },
         },
@@ -615,7 +646,8 @@ describe('account Voice credential ownership', () => {
     });
   });
 
-  it('renews recipient approval in place without rotating the selected secret', () => {
+
+  it('uses the linked Saved Secret without a separate recipient digest approval', () => {
     const created = saveAndUseAccountVoiceCredential({
       settings: settingsParse({}),
       contribution: PACKED_VOICE_CONTRIBUTION,
@@ -629,53 +661,14 @@ describe('account Voice credential ownership', () => {
       now: 1,
       expectedSecretId: null,
       expectedSecretUpdatedAt: null,
-      approvedRecipientContractDigest: `sha256:${'a'.repeat(64)}`,
-    }).settings;
-
-    const approved = approveAccountVoiceCredentialRecipientContract({
-      settings: created,
-      contribution: PACKED_VOICE_CONTRIBUTION,
-      credentialSlotId: 'api_key',
-      expectedSecretId: 'packed-voice-secret',
-      expectedSecretUpdatedAt: 1,
-      approvedRecipientContractDigest: `sha256:${'b'.repeat(64)}`,
-    });
-
-    expect(approved.settings.secrets).toEqual(created.secrets);
-    expect(resolveAccountVoiceCredential(
-      approved.settings,
-      PACKED_VOICE_CONTRIBUTION,
-      'api_key',
-      null,
-      `sha256:${'b'.repeat(64)}`,
-    )).toEqual({ secretId: 'packed-voice-secret', source: 'account' });
-  });
-
-  it('distinguishes a retained SavedSecret awaiting recipient review from a missing credential', () => {
-    const requiredDigest = `sha256:${'b'.repeat(64)}`;
-    const created = saveAndUseAccountVoiceCredential({
-      settings: settingsParse({}),
-      contribution: PACKED_VOICE_CONTRIBUTION,
-      credentialSlotId: 'api_key',
-      purpose: {
-        consumer: PACKED_VOICE_CONTRIBUTION,
-        purpose: 'voice.client-auth',
-      },
-      value: 'source-account-secret',
-      generateId: () => 'packed-voice-secret',
-      now: 1,
-      expectedSecretId: null,
-      expectedSecretUpdatedAt: null,
-      approvedRecipientContractDigest: `sha256:${'a'.repeat(64)}`,
     }).settings;
 
     expect(resolveAccountVoiceCredentialStatus({
       settings: created,
       contribution: PACKED_VOICE_CONTRIBUTION,
       credentialSlotId: 'api_key',
-      requiredRecipientContractDigest: requiredDigest,
     })).toEqual({
-      status: 'review_required',
+      status: 'ready',
       reference: {
         secretId: 'packed-voice-secret',
         source: 'account',
@@ -685,16 +678,14 @@ describe('account Voice credential ownership', () => {
       settings: settingsParse({}),
       contribution: PACKED_VOICE_CONTRIBUTION,
       credentialSlotId: 'api_key',
-      requiredRecipientContractDigest: requiredDigest,
     })).toEqual({
       status: 'missing',
       reference: null,
     });
   });
 
-  it('requires a current shared catalog materialization and renews approval after rotation', () => {
+  it('consumes current shared catalog material without asking for recipient approval after rotation', () => {
     const ref = 'happier:shared-secret:v1:resource-a';
-    const requiredDigest = `sha256:${'b'.repeat(64)}`;
     const shared = (revision: number) => ({
       ref,
       kind: 'shared_resource' as const,
@@ -711,11 +702,7 @@ describe('account Voice credential ownership', () => {
       revision,
       fingerprint: `shared:${ref}:${revision}`,
     });
-    const approvedDigest = resolveAccountVoiceCredentialApprovalDigest({
-      requiredRecipientContractDigest: requiredDigest,
-      savedSecret: shared(1),
-    });
-    if (!approvedDigest) throw new Error('expected shared approval digest');
+    const approvedDigest = `sha256:${'a'.repeat(64)}`;
     const settings = settingsParse({
       voiceSettingsV1: {
         credentialBindings: [{
@@ -732,21 +719,18 @@ describe('account Voice credential ownership', () => {
       settings,
       contribution: PACKED_VOICE_CONTRIBUTION,
       credentialSlotId: 'api_key',
-      requiredRecipientContractDigest: requiredDigest,
       resolveSavedSecret: () => shared(1),
     }).status).toBe('ready');
     expect(resolveAccountVoiceCredentialStatus({
       settings,
       contribution: PACKED_VOICE_CONTRIBUTION,
       credentialSlotId: 'api_key',
-      requiredRecipientContractDigest: requiredDigest,
       resolveSavedSecret: () => shared(2),
-    }).status).toBe('review_required');
+    }).status).toBe('ready');
     expect(resolveAccountVoiceCredentialStatus({
       settings,
       contribution: PACKED_VOICE_CONTRIBUTION,
       credentialSlotId: 'api_key',
-      requiredRecipientContractDigest: requiredDigest,
       resolveSavedSecret: () => ({ ...shared(2), status: 'temporarily_unavailable', secret: null }),
     })).toMatchObject({ status: 'unknown', reference: { secretId: ref } });
   });

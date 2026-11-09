@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { listVoiceClientToolNames } from '@happier-dev/protocol';
+import { listVoiceClientToolNames } from '@happier-dev/protocol/actions/actionSpecs';
 
 import { createVoiceToolHandlers } from './handlers';
 

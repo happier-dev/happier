@@ -1,10 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import {
-  buildQualifiedPluginContributionKey,
-  createPluginContributionIdentity,
-  readBuiltInLegacyConnectedAccountServiceKeyIngress,
+  buildQualifiedPluginContributionKey} from '@happier-dev/protocol/plugins/contribution-key';
+import {
+  createPluginContributionIdentity} from '@happier-dev/protocol/plugins/contribution-identity';
+import {
+  readBuiltInLegacyConnectedAccountServiceKeyIngress} from '@happier-dev/protocol/connect/connected-service-bindings';
+import {
   VoiceProviderContributionSchema,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/plugins/contributions/voice';
 
 import { getBundledVoiceProviderEntry } from '@/voice/registry/internalContributions';
 import {

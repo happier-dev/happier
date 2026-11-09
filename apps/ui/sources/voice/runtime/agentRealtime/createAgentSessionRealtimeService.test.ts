@@ -1,6 +1,6 @@
 import { createDeferred, flushHookEffects } from '@/dev/testkit';
 import { describe, expect, it, vi } from 'vitest';
-import { AGENT_SESSION_REALTIME_SDP_MAX_BYTES } from '@happier-dev/protocol';
+import { AGENT_SESSION_REALTIME_SDP_MAX_BYTES } from '@happier-dev/protocol/voice/realtime/agentSession';
 import type { AgentSessionRealtimeHandle } from '@happier-dev/plugin-sdk/agents/runtime';
 
 import {

@@ -1,5 +1,5 @@
 import React from 'react';
-import { Alert } from 'react-native';
+import { Alert, Linking } from 'react-native';
 import { act } from 'react-test-renderer';
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import 'fake-indexeddb/auto';
@@ -20,7 +20,9 @@ import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/ac
 import { getConnectedAccountCatalogValue } from '@/sync/store/settings/connectedAccountCatalogSnapshot';
 import { getSavedSecretCatalogSnapshot, resolveSavedSecretReference, subscribeSavedSecretCatalogSnapshots } from '@/sync/store/settings/savedSecretCatalogSnapshot';
 import { refreshSavedSecretCatalog } from '@/sync/engine/settings/savedSecretCatalogEngine';
-import { createRecipientContractDigestV1, deriveVoiceCredentialBindingIdentityV1, openSavedSecretResourceStoredContentV1 } from '@happier-dev/protocol';
+import { createRecipientContractDigestV1} from '@happier-dev/protocol/plugins/recipientContractV1';
+import { deriveVoiceCredentialBindingIdentityV1} from '@happier-dev/protocol/plugins/contributions/voice';
+import { openSavedSecretResourceStoredContentV1 } from '@happier-dev/protocol/account/settings/savedSecretResourceContentV1';
 import { resolveAccountVoiceCredential, resolveAccountVoiceCredentialSourceSelection } from '@/voice/credentials/accountVoiceCredential';
 import { createBundledVoiceRecipientContract } from '@/voice/credentials/voiceRecipientContract';
 import { VoiceCredentialItem } from '@/voice/credentials/CredentialItem';
@@ -138,6 +140,21 @@ describe('BundledConversationSettingsSection', () => {
     });
   }
   function config() { return account.settings.voice.providers[providerId]?.config; }
+  it('refuses a resource link before its OS effect when external-link Actions are disabled', async () => {
+    const open = vi.spyOn(Linking, 'openURL').mockResolvedValue(undefined);
+    const canOpen = vi.spyOn(Linking, 'canOpenURL').mockResolvedValue(true);
+    try {
+      account.replaceSettings(settingsParse({ ...account.settings,
+        actionsSettingsV1: { v: 1, actions: { 'links.openExternal': { enabled: false } } },
+      }));
+      const screen = await render();
+      const resource = screen.tree.findAll(node => node.props.title === t('settingsVoice.realtimeProviders.elevenLabs.openAccount')
+        && typeof node.props.onPress === 'function')[0];
+      expect(resource).toBeDefined();
+      await act(async () => { resource!.props.onPress(); await flushHookEffects(); });
+      expect(open).not.toHaveBeenCalled();
+    } finally { open.mockRestore(); canOpen.mockRestore(); }
+  });
   function configField(provider: unknown, key: string): unknown {
     if (!provider || typeof provider !== 'object' || !('config' in provider)) return undefined;
     const value = provider.config;

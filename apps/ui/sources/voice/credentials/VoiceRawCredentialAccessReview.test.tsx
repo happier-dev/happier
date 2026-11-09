@@ -6,28 +6,22 @@ import 'fake-indexeddb/auto';
 
 import { createDeferred, flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
 import { restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
-import { installSessionActionRpcBoundary } from '@/dev/testkit/harness/sessionActionRpcBoundary';
+import type { ServerScopedMachineRpcParams } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcTypes';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { PluginPermissionSubjectV1Schema } from '@happier-dev/protocol/plugins/permissions/grants';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { createMachineFixture, createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
+import { tryWriteServerEnabledBitInPlace } from '@happier-dev/protocol/features/serverEnabledBit';
+import { observeMachinePresenceForTest } from '@/dev/testkit/harness/machinePresence';
+import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
+import { AccountProfileSchema } from '@happier-dev/protocol/account/profile';
 
 let account: Awaited<ReturnType<typeof restoreServerAccountForTest>>;
 vi.mock('socket.io-client', async original => (
   await import('@/dev/testkit/harness/serverAccountConnectionHarness')
 ).createSocketIoClientBoundary(original));
 type MachineResponses = Readonly<{ inspect: (...args: never[]) => unknown; request: (...args: never[]) => unknown }>;
-let machineResponses: MachineResponses | undefined;
-installSessionActionRpcBoundary(({ method, params }) => {
-  const prefix = 'machine-a:';
-  if (!method.startsWith(prefix)) throw new Error(`Unexpected machine transport method: ${method}`);
-  const operation = method.slice(prefix.length);
-  const respond = operation === RPC_METHODS.DAEMON_VOICE_CLIENT_RAW_CREDENTIAL_AUTHORIZATION_INSPECT ? machineResponses?.inspect
-    : operation === RPC_METHODS.DAEMON_VOICE_CLIENT_RAW_CREDENTIAL_AUTHORIZATION_REQUEST ? machineResponses?.request : null;
-  if (!respond) throw new Error(`Unexpected Machine RPC: ${method}`);
-  const input = params as { contribution: unknown; rawGrant: unknown };
-  return Reflect.apply(respond, undefined, [input.contribution, input.rawGrant]);
-});
 
 vi.mock('react-native', async () => {
   const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -49,8 +43,15 @@ const { PluginPermissionGrantSheet } = await import('@/components/plugins/permis
 const { RawCredentialAuthorizationClient } = await import('./rawCredentialAuthorizationClient');
 
 function machineClient(responses: MachineResponses) {
-  machineResponses = responses;
-  return new RawCredentialAuthorizationClient();
+  return new RawCredentialAuthorizationClient({
+    machineRpc: async <R, A>(request: ServerScopedMachineRpcParams<A, R>): Promise<R> => {
+      const respond = request.method === RPC_METHODS.DAEMON_VOICE_CLIENT_RAW_CREDENTIAL_AUTHORIZATION_INSPECT
+        ? responses.inspect : responses.request;
+      const input = request.payload as { contribution: unknown; rawGrant: unknown };
+      // Synthetic daemon transport bytes; the real client parses its wire response.
+      return await Reflect.apply(respond, undefined, [input.contribution, input.rawGrant]) as R;
+    },
+  });
 }
 
 function httpActions(responders: Readonly<Record<string, (input: never) => unknown>>) {
@@ -85,9 +86,8 @@ const subject = PluginPermissionSubjectV1Schema.parse({
   selectedAuthorityDigest: 'c'.repeat(64),
   selectedRawAccessDigest: 'd'.repeat(64),
 });
-// The daemon only ever authorizes as an exact machine installation; a grant
-// approved by another machine, or by an installation this one replaced, is a
-// different person's approval on a different device.
+// The daemon supplies the authenticated Account and exact credential subject.
+// A different installation within that Account is not a different custodian.
 const thisInstallation = Object.freeze({
   kind: 'machine_installation' as const,
   machineId: 'machine-a',
@@ -189,10 +189,16 @@ const grant = Object.freeze({
 
 describe('VoiceRawCredentialAccessReview', () => {
   beforeEach(async () => {
+    const features = createRootLayoutFeaturesResponse();
+    tryWriteServerEnabledBitInPlace(features, 'machines.liveStream.serverRouted', true);
+    tryWriteServerEnabledBitInPlace(features, 'encryption.plaintextStorage', true);
     account = await restoreServerAccountForTest({ serverUrl: `https://raw-${crypto.randomUUID()}.example.test`,
       accountId: 'account-1', credentialScope: 'restored-home', request: async (url, init) => {
         const path = new URL(String(url)).pathname;
+        if (path === '/v1/features' || path === '/v1/features/authenticated') return Response.json(features);
+        if (path === '/v1/account/profile') return Response.json(AccountProfileSchema.parse({ id: 'account-1' }));
         if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
+        if (path === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
         if (path === '/v2/account/settings') return Response.json({ version: 1, content: { t: 'plain', v: {} } });
         if (path === '/v1/machines') return Response.json([createPlainMachineRowFixture({ id: 'machine-a', accountId: 'account-1' })]);
         if (path === '/v1/machines/read-batch' && init?.method === 'POST') return createMachineReadBatchResponseFixture(init.body,
@@ -206,8 +212,23 @@ describe('VoiceRawCredentialAccessReview', () => {
         executionMachine: { mode: 'fixed', machineId: 'machine-a' },
       } }), 1);
     storage.getState().applyMachines([createMachineFixture({ id: 'machine-a', activeAt: Date.now(), installationId: 'installation-1' })], true, { sourceServerId: account.home.id });
+    observeMachinePresenceForTest({ serverId: account.home.id, accountId: 'account-1' }, ['machine-a']);
   });
   afterEach(async () => { standardCleanup(); await account.dispose(); });
+
+  it('hides the separate review and performs no permission reads for the shared linked decision', async () => {
+    const entered = createDeferred<void>();
+    const linked = { ok: true as const, authorization: { ...authorization, grantRequirement: 'linked' as const }, review };
+    const response = createDeferred<typeof linked>();
+    const inspected = vi.fn(() => { entered.resolve(); return response.promise; });
+    const list = vi.fn(async () => ({ grants: [], pendingRequests: [] }));
+    const { VoiceRawCredentialAccessReview } = await import('./VoiceRawCredentialAccessReview');
+    const screen = await renderScreen(<VoiceRawCredentialAccessReview contribution={contribution} rawGrant={rawGrant}
+      client={machineClient({ inspect: inspected, request: vi.fn() })} actions={httpActions({ list })} testID="raw-access" />);
+    await act(async () => { await entered.promise; response.resolve(linked); });
+    expect(screen.findHostByTestId('raw-access')).toBeNull();
+    expect(list).not.toHaveBeenCalled();
+  });
 
   it('does not re-inspect for unrelated Account preference revisions', async () => {
     const client = {
@@ -313,12 +334,11 @@ describe('VoiceRawCredentialAccessReview', () => {
     expect(actions.request).not.toHaveBeenCalled();
   });
 
-  it('never reads another machine installation approval as this machine being granted', async () => {
+  it('consumes an active Account approval without a second installation guard', async () => {
     const listed = createDeferred<void>();
-    const requested = createDeferred<void>();
     const client = {
       inspect: vi.fn(async () => ({ ok: true as const, authorization, review })),
-      request: vi.fn(async () => { requested.resolve(); return { ok: true as const, authorization, review, pendingRequest }; }),
+      request: vi.fn(),
     };
     const actions = {
       list: vi.fn(async () => { listed.resolve(); return {
@@ -349,22 +369,14 @@ describe('VoiceRawCredentialAccessReview', () => {
     await act(async () => { await listed.promise; });
     expect(actions.list).toHaveBeenCalled();
     await waitForTestEvent(screen.subscribe, () => expect(screen.tree.findAll(node => node.props.testID === 'raw-access' && typeof node.props.title === 'string')[0]?.props.loading).toBe(false));
-    expect(screen.tree.findAll(node => node.props.testID === 'raw-access' && typeof node.props.title === 'string')[0]?.props.destructive).toBe(false);
+    expect(screen.tree.findAll(node => node.props.testID === 'raw-access' && typeof node.props.title === 'string')[0]?.props.destructive).toBe(true);
     expect(screen.tree.findAll(node => node.props.testID === 'raw-access' && typeof node.props.title === 'string')[0]?.props.detail)
-      .toBe(t('settingsVoice.externalCredentials.reviewRequired'));
-    // Another installation's pending request must never be presented here as
-    // this installation's decision.
-    expect(screen.tree.findByTestId('raw-access-sheet')).toBeNull();
-
-    await act(async () => {
-      screen.tree.findByTestId('raw-access')?.props.onPress();
-    });
-    await act(async () => { await requested.promise; });
-    expect(client.request).toHaveBeenCalledWith(contribution, rawGrant);
+      .toBe(t('common.applied'));
+    expect(client.request).not.toHaveBeenCalled();
     expect(actions.revoke).not.toHaveBeenCalled();
   });
 
-  it('revokes this installation grant rather than the first account-wide match', async () => {
+  it('revokes the active Account subject grant supplied by the shared owner', async () => {
     const listed = createDeferred<void>();
     const revoked = createDeferred<void>();
     const client = {
@@ -372,8 +384,7 @@ describe('VoiceRawCredentialAccessReview', () => {
       request: vi.fn(async () => ({ ok: true as const, authorization, review, pendingRequest })),
     };
     const actions = {
-      // The other machine's grant is listed first on purpose: taking the first
-      // account-wide match would revoke a different device's approval.
+      // Account-scoped grants are usable across its installations.
       list: vi.fn(async () => { listed.resolve(); return {
         grants: [
           { ...grant, id: 'grant-other-machine', authoritySource: otherMachine },
@@ -403,8 +414,7 @@ describe('VoiceRawCredentialAccessReview', () => {
       screen.tree.findByTestId('raw-access')?.props.onPress();
     });
     await act(async () => { await revoked.promise; });
-    expect(actions.revoke).toHaveBeenCalledWith({ grantId: grant.id });
-    expect(actions.revoke).not.toHaveBeenCalledWith({ grantId: 'grant-other-machine' });
+    expect(actions.revoke).toHaveBeenCalledWith({ grantId: 'grant-other-machine' });
   });
 
   it('re-inspects before deciding a captured request when account settings switch', async () => {
