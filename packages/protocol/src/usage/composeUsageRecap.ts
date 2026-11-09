@@ -15,8 +15,9 @@ export function composeUsageRecap(args: Readonly<{
   const key = snapshot.key;
   const accounting = snapshot.accounting;
   if (!accounting) return { kind: 'unavailable', reason: 'accounting_unavailable' };
-  const witnessedPeriod = 'relative' in input.query.period
-    ? accounting.coverage?.range ?? {} : input.query.period;
+  const witnessedPeriod: ReturnType<typeof resolveUsageQueryPeriod> = 'relative' in input.query.period
+    ? accounting.coverage?.range ?? {}
+    : { ...input.query.period, endMs: input.query.period.endMs ?? accounting.coverage?.range.endMs };
   const endMs = witnessedPeriod.endMs;
   if (endMs === undefined) return { kind: 'unavailable', reason: 'period_unavailable' };
   const requestedPeriod = resolveUsageQueryPeriod(input.query, endMs);
