@@ -6,6 +6,12 @@
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
+    "./machineSetup/credentialFile": {
+      "happier-source": "./src/machineSetup/credentialFile.ts",
+      "types": "./dist/machineSetup/credentialFile.d.ts",
+      "import": "./dist/machineSetup/credentialFile.js",
+      "default": "./dist/machineSetup/credentialFile.js"
+    },
     "./organizationPolicy/readOrganizationPolicyFile": {
       "happier-source": "./src/organizationPolicy/readOrganizationPolicyFile.ts",
       "types": "./dist/organizationPolicy/readOrganizationPolicyFile.d.ts",
@@ -161,6 +167,18 @@
       "types": "./dist/fs/jsonOwnerFileLock.d.ts",
       "import": "./dist/fs/jsonOwnerFileLock.js",
       "default": "./dist/fs/jsonOwnerFileLock.js"
+    },
+    "./relayAccess/providers/tailscale/membership": {
+      "happier-source": "./src/relayAccess/providers/tailscale/membership.ts",
+      "types": "./dist/relayAccess/providers/tailscale/membership.d.ts",
+      "import": "./dist/relayAccess/providers/tailscale/membership.js",
+      "default": "./dist/relayAccess/providers/tailscale/membership.js"
+    },
+    "./machineSetup/caddyDeclarations": {
+      "happier-source": "./src/machineSetup/caddyDeclarations.ts",
+      "types": "./dist/machineSetup/caddyDeclarations.d.ts",
+      "import": "./dist/machineSetup/caddyDeclarations.js",
+      "default": "./dist/machineSetup/caddyDeclarations.js"
     },
     "./machineSetup/dockerEngine": {
       "happier-source": "./src/machineSetup/dockerEngine.ts",

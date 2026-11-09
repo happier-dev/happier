@@ -41,6 +41,7 @@ export type AccessProviderRoleInputV1<TConfig = ProtocolJsonValue> = Readonly<{
 }>;
 export const AccessProviderRefV1Schema: ProtocolComposableSchema<AccessProviderRefV1> = /* @__PURE__ */ projectProtocolValue(canonical.AccessProviderRefProtocolV1Schema);
 export const AccessProviderSelectionV1Schema: ProtocolComposableSchema<AccessProviderSelectionV1> = /* @__PURE__ */ projectProtocolValue(canonical.AccessProviderSelectionProtocolV1Schema);
+export const SharedSavedSecretReferenceSelectionV1Schema: ProtocolComposableSchema<Readonly<{ ref: string; resourceRevision: number }>> = /* @__PURE__ */ projectProtocolValue(canonical.SharedSavedSecretReferenceSelectionProtocolV1Schema);
 export const AccessProviderRoleResultV1Schema: ProtocolComposableSchema<AccessProviderRoleResultV1> = /* @__PURE__ */ projectProtocolValue(canonical.AccessProviderRoleResultV1Schema);
 export const accessProviderRefsEqualV1: (left: AccessProviderRefV1, right: AccessProviderRefV1) => boolean = /* @__PURE__ */ projectProtocolValue(canonical.accessProviderRefsEqualV1);
 export const defineAccessProviderSchemas: <CI, CO>(schemas: Readonly<{ config: ProtocolComposableSchema<CI, CO> }>) => Readonly<{

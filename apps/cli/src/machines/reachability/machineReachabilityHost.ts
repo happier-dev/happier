@@ -1,7 +1,6 @@
 import { networkInterfaces } from 'node:os';
 import { executeRetainedSshTransition, type RetainedSshTransitionInput } from './retainedSshTransition';
 import { prepareMachineRecipeProgramV1 } from '@/machines/setup/prepareMachineRecipeProgram';
-import { join } from 'node:path';
 import { getMachineSetupDesiredV1, mutateMachineMetadataFieldV1,
   type ActionExecutorContext } from '@happier-dev/protocol';
 import type { MachineMetadataFieldPortV1 } from '@happier-dev/protocol/machines/machineMetadataFieldV1';
@@ -37,6 +36,8 @@ import { checkElevatedMachineSetupPlan, runElevatedEffect,
 import { createReachabilityProviderHost } from './reachabilityProviderHost';
 import { inspectMachineReachabilityNativeFirewall } from './inspectMachineReachabilityNativeFirewall';
 import { withReachabilityJoinCredential } from './prepareReachabilityJoinCredential';
+import { machineConnectorCredentialDirectory as credentialDirectory,
+  machineConnectorCredentialFilePath as credentialFilePath } from '@happier-dev/cli-common/machineSetup/credentialFile';
 import { SelectedProfileRefusal, readMachineReachabilityMetadata, observeMachineReachability,
   reachabilityPostureField, accessProviderSelectionsField } from './readMachineReachability';
 
@@ -103,14 +104,6 @@ async function readCredentialPreparation(deps: MachineReachabilityHostDependenci
     owner: 'root', group: 'root', mode: 0o600, ownerUid: 0, groupGid: 0,
   };
   return { review, observation };
-}
-
-const credentialDirectory: Extract<MachineRecipeStepV1, { kind: 'directory' }> = {
-  id: 'access-provider-credential-directory', kind: 'directory', path: '/run/happier-machine-credentials',
-  owner: 'root', group: 'root', mode: 0o700, protectedAncestors: true,
-};
-function credentialFilePath(installationId: string) {
-  return join(credentialDirectory.path, `${encodeURIComponent(installationId)}.setup-key`);
 }
 
 /** Review binds the operation; P20 observes native satisfaction again at execution. */
@@ -703,7 +696,8 @@ export async function executeMachineReachabilityTransition(input: MachineReachab
  */
 export async function settleMachineCaddyFirewallForHost(input: Pick<RetainedSshTransitionInput,
   'machineId' | 'installationId' | 'operationId' | 'basis' | 'port' | 'native' | 'elevation' | 'readDaemonProof' | 'signal'>
-  & Readonly<{ caddy: import('@happier-dev/cli-common/machineSetup').NativeCaddySetupInput }>) {
+  & Readonly<{ caddy: Pick<import('@happier-dev/cli-common/machineSetup').NativeCaddySetupInput, 'privateBinding' | 'publicBindings'>;
+    privateWorkloadBindings?: RetainedSshTransitionInput['firewallIntent']['privateWorkloadBindings'] }>) {
   const state = await readMachineReachabilityMetadata(input.port);
   if (!state.posture) return refuse('machine_reachability_posture_unavailable', {
     requiredFact: 'reachabilityPosture',
@@ -716,7 +710,8 @@ export async function settleMachineCaddyFirewallForHost(input: Pick<RetainedSshT
       ...(input.caddy.privateBinding ? { privateBinding: { ...input.caddy.privateBinding,
         sourceRanges: [...input.caddy.privateBinding.sourceRanges] } } : {}),
       publicBindings: [...(input.caddy.publicBindings ?? [])],
-    }, publicSsh: state.posture.management.publicSsh } });
+    }, ...(input.privateWorkloadBindings ? { privateWorkloadBindings: input.privateWorkloadBindings } : {}),
+    publicSsh: state.posture.management.publicSsh } });
   if (transitioned.status !== 'applied' && transitioned.status !== 'unchanged')
     return refuse(transitioned.errorCode ?? transitioned.status, {
       ...(transitioned.failure?.requiredFact ? { requiredFact: transitioned.failure.requiredFact } : {}),
@@ -733,4 +728,19 @@ export async function settleMachineCaddyFirewallForHost(input: Pick<RetainedSshT
           ? `The native firewall could not read the required fact ${transitioned.failure.requiredFact}. Check the retained nftables SSH policy and Happier firewall setup on this Machine, then retry the Domain action.`
           : 'Check nftables and the Happier firewall setup prerequisites on this Machine, then retry the Domain action.',
     }, transitioned.effectAttempted);
+}
+
+/** Explicit workload deploys use the same retained-SSH writer as Domains.
+ * Network and Domain callers omit the operand, retaining applied workloads. */
+export async function settleMachinePrivateWorkloadFirewallForHost(input: Pick<RetainedSshTransitionInput,
+  'machineId' | 'installationId' | 'operationId' | 'basis' | 'port' | 'native' | 'elevation' | 'readDaemonProof' | 'signal'>
+  & Readonly<{
+    privateWorkloadBindings: NonNullable<RetainedSshTransitionInput['firewallIntent']['privateWorkloadBindings']>;
+    privateNetworks: readonly import('@happier-dev/protocol/machines/reachability/machineReachabilityPostureV1').MachinePrivateNetworkObservationV1[];
+    runNative?: (command: MachineSetupNativeCommand) => Promise<MachineSetupNativeCommandResult>;
+  }>) {
+  const caddy = await observeNativeCaddyFirewallBindings({ privateNetworks: input.privateNetworks },
+    { run: input.runNative, signal: input.signal });
+  if (caddy.status !== 'ready') return refuse(caddy.reason, caddy.details);
+  return settleMachineCaddyFirewallForHost({ ...input, caddy: caddy.bindings });
 }

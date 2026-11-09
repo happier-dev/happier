@@ -7,13 +7,13 @@ export function isMachineConnectorSecretGrantHttpPurpose(
     effectActionId: string,
     proof: Readonly<{ method: string; path: string; body?: unknown }>,
 ): boolean {
-    const setupRead = binding.actionId === 'machines.setup.apply';
+    const setup = binding.actionId === 'machines.setup.apply';
     const configure = binding.actionId === 'machines.reachability.configure';
-    if ((!setupRead && !configure) || effectActionId !== binding.actionId
+    if ((!setup && !configure) || effectActionId !== binding.actionId
         || proof.method.toUpperCase() !== 'POST'
         || proof.path !== `/v1/deployments/machines/${encodeURIComponent(binding.machineId)}/connector-secret-grant`) return false;
     const parsed = MachineConnectorSecretGrantInputV1Schema.safeParse(proof.body);
-    if (!parsed.success || setupRead && parsed.data.operation !== 'read') return false;
+    if (!parsed.success) return false;
     const request = parsed.data;
     return request.serverId === binding.serverIdentityId
         && request.hostMachineId === binding.machineId && request.subject.machineId === binding.machineId

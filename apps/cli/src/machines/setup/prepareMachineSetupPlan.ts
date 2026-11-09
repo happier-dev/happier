@@ -1,9 +1,15 @@
-import { MachineSetupPlanInputV1Schema, MachineSetupPlanResultV1Schema, MachineSetupObservationReasonV1Schema, machineSetupSourceOriginKeyV1, machineSetupItemKeyV1, reviewMachineSetupSourceChangeV1, projectMachineSetupSourceChangeExecutionV1, areMachineSetupExclusionsBoundV1, isMachineSetupRecipeExcludedV1, mergeMachineSetupsV1, type MachineSetupPlanInputV1, type MachineSetupPlanResultV1, type MachineSetupV1, type getMachineSetupDesiredV1 } from '@happier-dev/protocol';
+import {
+  MachineSetupPlanInputV1Schema, MachineSetupPlanResultV1Schema, MachineSetupObservationReasonV1Schema,
+  machineSetupSourceOriginKeyV1, machineSetupItemKeyV1, reviewMachineSetupSourceChangeV1,
+  projectMachineSetupSourceChangeExecutionV1, areMachineSetupExclusionsBoundV1,
+  isMachineSetupRecipeExcludedV1, mergeMachineSetupsV1,
+  type MachineSetupPlanInputV1, type MachineSetupPlanResultV1, type MachineSetupV1, type getMachineSetupDesiredV1,
+} from '@happier-dev/protocol';
 import { readMachineSetupAppOriginsV1, selectMachineSetupRecipeItemsV1 } from '@happier-dev/protocol/machines/setup/machineSetupSourcesV1';
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { compilePluginJsonSchema, isValidPluginJsonSchemaValue } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
 import type { PluginProjectedMachineRecipeEntryV1 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
-
+import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { machineRecipeInputConstraintsSatisfiedV1,
   MachineRecipeTargetFactUnavailableErrorV1, type MachineRecipeTargetFactsV1 } from '@happier-dev/protocol/machines/setup/machineRecipeV1';
 import type { MachineAdminAccessObservationV1 } from '@happier-dev/protocol/machines/adminAccessV1';
@@ -17,6 +23,8 @@ import { readMachineSetupSessionRefreshRequirement, type DaemonGroupRefreshNativ
 /** Saved-copy reads stay inert; newly selected declarations use the native observer. */
 export async function prepareMachineSetupPlanV1(params: Readonly<{
   input: MachineSetupPlanInputV1;
+  installationId?: string;
+  onCredentialSelection?: Parameters<typeof prepareMachineRecipeProgramV1>[0]['onCredentialSelection'];
   current: Awaited<ReturnType<typeof getMachineSetupDesiredV1>>;
   /** Receiving Apply reuses its prepared changed operands. */
   executionSources?: readonly MachineSetupV1[];
@@ -116,6 +124,8 @@ export async function prepareMachineSetupPlanV1(params: Readonly<{
         || !machineRecipeInputConstraintsSatisfiedV1(recipe, inputs))) continue;
       try {
         const plan = await prepareMachineRecipeProgramV1({ machineId: input.machineId,
+          ...(params.installationId ? { installationId: params.installationId } : {}),
+          ...(params.onCredentialSelection ? { onCredentialSelection: params.onCredentialSelection } : {}),
           desiredRevision: current.policy.revision, selection: item.selection, recipe, program: 'steps',
           backend, readTargetFacts, ...(params.signal ? { signal: params.signal } : {}) });
         if (!plan) return fail('machine_recipe_unavailable');

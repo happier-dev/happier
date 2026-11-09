@@ -34,6 +34,10 @@ import { prepareMachineSetupAcceptedAppRuns } from './acceptedAppRuns';
 import { machineSetupPlansRequireAdministratorV1, readMachineSetupInitialPresenceV1 } from '@happier-dev/cli-common/machineSetup';
 import { prepareMachineSetupUpdatesPlanV1 } from './machineSetupUpdatesAction';
 import { logger } from '@/ui/logger';
+import type { AccessProviderSelectionV1 } from '@happier-dev/protocol/plugins/contributions/accessProviders';
+import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';
+import { readInstallationIdentityIfExistsSync } from '@/daemon/identity/store';
+import { withReachabilityJoinCredential } from '../reachability/prepareReachabilityJoinCredential';
 
 export type MachineSetupTargetAction = (params: Readonly<{
   input: MachineSetupApplyTargetV1; context: RpcActionExecutorContext; signal?: AbortSignal;
@@ -136,6 +140,7 @@ export function createMachineSetupPlanAction(params: Readonly<{
     let result: Awaited<ReturnType<typeof prepareMachineSetupPlanV1>>;
     try {
       result = await prepareMachineSetupPlanV1({ input, current,
+        ...(params.installation ? { installationId: params.installation.installationId } : {}),
         ...(params.apiMachine.captureMachineAdminAccess ? { readAdminAccessObservation: params.apiMachine.captureMachineAdminAccess().observe } : {}),
         ...(signal ?? context.signal ? { signal: signal ?? context.signal } : {}),
         ...(params.runNative ? { runNative: params.runNative } : {}), readRecipes: async () => {
@@ -255,7 +260,17 @@ function createMachineSetupTargetAction(params: MachineSetupActionParameters, mo
               generation: lease.registry.generation }, machineSetupPresetsProjectionFamily).entriesById);
             const preset = available.find(entry => entry.pluginId === source.ref.pluginId
               && entry.definition.id === source.ref.localId && entry.definition.revision === source.ref.revision);
-            if (!preset || !sameStrictJsonValue(preset.definition.setup, source.setup)) return fail('machine_setup_preset_unavailable');
+            if (!preset) return fail('machine_setup_preset_unavailable');
+            // Input review fills recipe selections; every authored reference, item order and other setup field stays exact.
+            const authored = preset.definition.setup;
+            const structure = { ...source.setup, ...(source.setup.items ? {
+              items: source.setup.items.map((item, index) => {
+                const expected = authored.items?.[index];
+                return item.kind !== 'app' && expected && expected.kind !== 'app'
+                  ? { ...item, selection: { ...item.selection, inputs: expected.selection.inputs } } : item;
+              }),
+            } : {}) };
+            if (!sameStrictJsonValue(authored, structure)) return fail('machine_setup_preset_unavailable');
           }
         }
         if (!managedContinuation && personalPresetCopies.length) {
@@ -285,7 +300,15 @@ function createMachineSetupTargetAction(params: MachineSetupActionParameters, mo
           : { currentSources: current.policy.sources, currentExclusions: current.policy.exclusions, sources };
         const prepared = mode === 'remove' ? undefined
           : prepareMachineSetupStages(setups, input.recipePlans, exclusions, sourceChange);
+        let credentialSelection: AccessProviderSelectionV1 | undefined;
         const planned = await prepareMachineSetupPlanV1({ readAdminAccessObservation: administrator.observe,
+          installationId: params.installation.installationId,
+          onCredentialSelection: selection => {
+            if (credentialSelection && !sameStrictJsonValue(credentialSelection, selection)) {
+              throw Object.assign(new Error('invalid_machine_recipe_inputs'), { code: 'invalid_machine_recipe_inputs' });
+            }
+            credentialSelection = selection;
+          },
           input: { homeId: input.homeId, machineId: input.machineId,
           sources, exclusions, ...(input.removeItemKeys === undefined ? {} : { removeItemKeys: input.removeItemKeys }),
           mode: 'effects' }, current, signal: cancellationSignal,
@@ -370,12 +393,26 @@ function createMachineSetupTargetAction(params: MachineSetupActionParameters, mo
             homeServerIdentityId: context.externalActionExecutionAuthorization!.binding.serverIdentityId,
             installationId: params.installation.installationId, requesterAccountId, rootPath: homedir() } } satisfies
           Omit<Parameters<typeof applyMachineSetup>[0], 'setup' | 'recipePlans'>;
-        nativeStarted = true;
-        const result = mode === 'remove' ? await removeMachineSetup({ ...nativeInput,
+        const executeNative = (connectorSecretGrant?: NonNullable<typeof elevation>['connectorSecretGrant']) => {
+          nativeStarted = true;
+          return mode === 'remove' ? removeMachineSetup({ ...nativeInput,
           plans: (planned.removalPlans ?? []).map(entry => entry.plan) })
-          : await applyMachineSetup({ ...nativeInput, setup: [...setups], recipePlans: input.recipePlans,
+          : applyMachineSetup({ ...nativeInput, ...(connectorSecretGrant && elevation ? {
+            elevation: { ...elevation, connectorSecretGrant },
+          } : {}), setup: [...setups], recipePlans: input.recipePlans,
             removalPlans: planned.removalPlans, exclusions, ...(sourceChange ? { sourceChange } : {}),
             ...(secretEnvironment ? { secretEnvironment } : {}) }, prepared);
+        };
+        const result = credentialSelection && mode === 'apply' ? await (async () => {
+          const identity = readInstallationIdentityIfExistsSync();
+          if (!identity || identity.installationId !== params.installation.installationId) return fail('credential_unavailable');
+          return withReachabilityJoinCredential({ selection: credentialSelection,
+            target: { serverId: params.homeId, machineId: params.machineId, installationId: identity.installationId },
+            runtime, machineAdmission: { actorAccountId: requesterAccountId, custodianAccountId },
+            installationPublicKey: decodeBase64(identity.publicKey, 'base64url'),
+            context: { ...context, ...operation, signal: cancellationSignal }, signal: cancellationSignal,
+            isCurrent: isActive }, grant => executeNative(grant.grantRequest));
+        })() : await executeNative();
         // Read-only preparation can fail before native admission. Its captures
         // still belong to this operation and must physically settle as well.
         await custody.release();
