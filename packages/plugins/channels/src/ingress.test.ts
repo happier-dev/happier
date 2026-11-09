@@ -2349,7 +2349,11 @@ describe('Conversation provider observation ingress', () => {
     expect(changed).toBe(true);
     expect(harness.send).toHaveBeenCalledTimes(initiallyAllowed ? 0 : 1);
   });
-  it.each([undefined, 'Support mailbox'])('posts admitted external text with the binding conversation name (%s), never the observation id', async endpointLabel => {
+  it.each([
+    { endpointLabel: undefined, expectedName: 'External conversation' },
+    { endpointLabel: 'Support mailbox', expectedName: 'Support mailbox' },
+    { endpointLabel: '  Support mailbox  ', expectedName: 'Support mailbox' },
+  ])('posts admitted external text with the binding conversation name ($endpointLabel), never the observation id', async ({ endpointLabel, expectedName }) => {
     const harness = createIngressHarness({ execute: async (id, input): Promise<JsonValue> => {
       if (id !== 'discussion.post') throw new Error(`Unexpected host Action ${id}`);
       if (!isChannelStateJsonRecord(input)) throw new Error('Expected the Discussion Action request object.');
@@ -2372,7 +2376,7 @@ describe('Conversation provider observation ingress', () => {
       discussionId: 'discussion-1', localId: expect.any(String),
       content: { v: 1, parts: [{ t: 'text', text: 'Hello from Telegram' }],
         externalSource: { kind: 'channel', providerPluginId: 'happier.channel.telegram',
-          conversationDisplayName: endpointLabel ?? 'External conversation', senderDisplayName: 'Ada' } },
+          conversationDisplayName: expectedName, senderDisplayName: 'Ada' } },
     }), { signal: harness.context.signal });
     expect(harness.send).not.toHaveBeenCalled();
     const occurrence = [...harness.rows.values()].find(row => row.value['record-kind'] === 'ingress-obligation');

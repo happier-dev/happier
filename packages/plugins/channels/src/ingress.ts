@@ -137,6 +137,7 @@ import {
 } from './permissionMediation.js';
 import {
   asChannelStateRow as readStateRow,
+  readConversationBindingEndpointName,
   readConversationBindingUpdateRow,
   readConversationBindingParentEligibility,
   readConversationConnectionUpdateRow,
@@ -4127,7 +4128,7 @@ async function dispatchIngressObligationAttempt(input: Readonly<{
         localId: dispatchTarget.localId,
         ...(threadRootLocalId === undefined ? {} : { threadRootLocalId }),
         providerPluginId: dispatchTarget.providerPluginId, observation: fullText,
-        conversationDisplayName: displayBinding?.value.payload.endpoint.label || 'External conversation',
+        conversationDisplayName: readConversationBindingEndpointName(displayBinding?.value.payload.endpoint ?? {}) ?? 'External conversation',
         attachments: channelFileSessionAttachments({ connectionId: input.connectionId,
           connectionAuthorityEpoch: obligation.value.payload.sourceAuthority.connectionAuthorityEpoch, observation: fullText }),
       }, input.context);
