@@ -1,7 +1,8 @@
 import type { DiscardedPendingMessage, PendingMessage } from '@/sync/domains/state/storageTypes';
 import type { Message } from "@happier-dev/session-core/messages";
 import { isToolCallMessageGroupableInTranscript } from '@/components/sessions/transcript/toolCalls/isToolCallMessageGroupableInTranscript';
-import { filterVisibleContextCompactionLifecycleMessageIds, resolveTranscriptMessageItemId } from '@/components/sessions/transcript/events/contextCompactionLifecycleProjection';
+import { resolveTranscriptMessageItemId } from '@/components/sessions/transcript/events/contextCompactionLifecycleProjection';
+import { filterVisibleTranscriptMessageIds } from '@/components/sessions/transcript/events/runtimeIssueRepeatProjection';
 import type { PendingPermissionRequest } from '@/utils/sessions/sessionUtils';
 import { projectPendingTranscriptItems } from '@/components/sessions/transcript/items/projectPendingTranscriptItems';
 import type { PendingMessagesPresentationByRecipient } from '@/components/sessions/pending/pendingMessageVisualState';
@@ -205,7 +206,7 @@ export function buildChatListItems(opts: {
     groupConsecutiveToolCalls?: boolean;
 }): ChatListItem[] {
     const items: ChatListItem[] = [];
-    const visibleMessageIds = new Set(filterVisibleContextCompactionLifecycleMessageIds(opts.messageIdsOldestFirst, opts.messagesById));
+    const visibleMessageIds = new Set(filterVisibleTranscriptMessageIds(opts.messageIdsOldestFirst, opts.messagesById));
 
     const includeCommittedMessages = opts.includeCommittedMessages !== false;
     if (includeCommittedMessages) {
@@ -355,7 +356,7 @@ export function buildChatListItemsCached(opts: {
         }
     }
 
-    const visibleMessageIdsOldestFirst = filterVisibleContextCompactionLifecycleMessageIds(opts.messageIdsOldestFirst, opts.messagesById);
+    const visibleMessageIdsOldestFirst = filterVisibleTranscriptMessageIds(opts.messageIdsOldestFirst, opts.messagesById);
     const visibleMessageIds = new Set(visibleMessageIdsOldestFirst);
     if (
         canReuse &&

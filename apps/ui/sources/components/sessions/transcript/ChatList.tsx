@@ -8,6 +8,7 @@ import { useChatListRootState } from '@/components/sessions/transcript/useChatLi
 import type { ChatListProps } from '@/components/sessions/transcript/chatListTypes';
 import { ChatListInternal } from '@/components/sessions/transcript/ChatListInternal';
 import { PluginContextualResourceStoreProvider } from '@/components/plugins/surfaces/PluginContextualResourceStoreProvider';
+import { TranscriptRuntimeIssueRepeatCountsContext } from '@/components/sessions/transcript/events/runtimeIssueRepeatProjection';
 
 export type { TranscriptViewportChangeState } from '@/components/sessions/transcript/chatListTypes';
 
@@ -23,6 +24,7 @@ function ChatListContent(props: ChatListProps) {
     const rootState = useChatListRootState(props);
     return (
         <PluginMessageActionHostProvider host={rootState.pluginMessageActionHost}>
+            <TranscriptRuntimeIssueRepeatCountsContext.Provider value={rootState.runtimeIssueRepeatCountByMessageId}>
             <TranscriptMessageSelectionBoundary
                 key={rootState.boundary.key}
                 sessionId={rootState.boundary.sessionId}
@@ -33,6 +35,7 @@ function ChatListContent(props: ChatListProps) {
                     <ChatListInternal {...rootState.internalProps} />
                 </SyncPerformanceReactProfiler>
             </TranscriptMessageSelectionBoundary>
+            </TranscriptRuntimeIssueRepeatCountsContext.Provider>
         </PluginMessageActionHostProvider>
     );
 }

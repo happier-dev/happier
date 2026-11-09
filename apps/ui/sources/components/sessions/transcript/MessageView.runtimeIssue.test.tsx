@@ -114,6 +114,29 @@ describe('MessageView runtime failure rows', () => {
         expect(screen.findAllByType(Icon).some(icon => icon.props.name === 'warning')).toBe(true);
     });
 
+    it('keeps a typed failure\'s raw cause behind Details and says how many identical failures the row stands for', async () => {
+        // QA-SESSION-1109 D6: 11 identical "codex turn failed: Provider session failed" rows, no cause, no Details.
+        const { MessageView } = await import('./MessageView');
+        const { TranscriptRuntimeIssueRepeatCountsContext } = await import('./events/runtimeIssueRepeatProjection');
+        const preview = 'Provider session failed';
+        const messages = projectPersistedRows([{ id: 'session-failure', data: { type: 'message', message: `codex turn failed: ${preview}` },
+            meta: { source: 'runtime', runtimeIssueV1: { v: 1, scope: 'primary_session', status: 'failed',
+                code: 'agent_session_error', source: 'agent_session_error', occurredAt: 1_000, sanitizedPreview: preview,
+                failureCause: { phase: 'turn', failureReason: 'unknown', requestId: 'req-42' } } } }]);
+        const failure = messages[0]!;
+        const screen = await renderScreen(<TranscriptRuntimeIssueRepeatCountsContext.Provider value={{ [failure.id]: 11 }}>
+            <MessageView message={failure} metadata={null} sessionId="s1" />
+        </TranscriptRuntimeIssueRepeatCountsContext.Provider>);
+        expect(screen.findByTestId('transcript-event-runtime-issue')).not.toBeNull();
+        expect(screen.getTextContent()).toContain('session.transcriptFailureRepeated');
+        expect(screen.findHostByTestId('transcript-event-runtime-issue-details-code')).toBeNull();
+        await screen.pressByTestIdAsync('transcript-event-runtime-issue-details-toggle');
+        const details = screen.findHostByTestId('transcript-event-runtime-issue-details-code');
+        expect(details).not.toBeNull();
+        expect(screen.getTextContent()).toContain('agent_session_error');
+        expect(screen.getTextContent()).toContain('session.startFailure.requestId');
+    });
+
     it('renders an input rejection the same way', async () => {
         const { MessageView } = await import('./MessageView');
         const rejection = 'custom-acp input rejected: Internal error: Cannot connect to API';

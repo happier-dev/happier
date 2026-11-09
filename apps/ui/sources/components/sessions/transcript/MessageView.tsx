@@ -57,6 +57,8 @@ import type { FollowDeliveryProjectionV1 } from '@happier-dev/protocol/sessions/
 import { isRuntimeIssueMessageMeta, readRuntimeIssueMessageMeta } from '@/components/sessions/transcript/events/runtimeIssueMessage';
 import { TeamCredentialDenialRecovery } from '@/components/sessions/transcript/events/TeamCredentialDenialRecovery';
 import { AgentAuthRequiredRecovery } from '@/components/sessions/transcript/events/AgentAuthRequiredRecovery';
+import { RuntimeIssueDetails } from '@/components/sessions/transcript/events/RuntimeIssueDetails';
+import { useTranscriptRuntimeIssueRepeatCount } from '@/components/sessions/transcript/events/runtimeIssueRepeatProjection';
 import { isHostAuthoredInputMeta, isHostOnboardingInputMeta, readDiscussionInputOrigin, readHostDiscussionInputMeta, readHostFollowInputMeta } from '@/sync/domains/session/input/hostAuthoredInput';
 import { useDiscussionTitles } from '@/components/discussions/useDiscussionTitles';
 import type { AgentEvent } from "@happier-dev/session-core/raw";
@@ -850,15 +852,21 @@ function TranscriptTextNoticeRow(props: Readonly<{
   const transcriptSource = useSessionTranscriptSource();
   const find = useTranscriptFindRow(props.message.id);
   const findSourceRanges = find?.blocks.find((block) => block.id === 'text')?.sourceRanges;
-  const displayText = props.displayText ?? (props.tone === 'failure'
+  const repeatCount = useTranscriptRuntimeIssueRepeatCount(props.message.id);
+  const messageText = props.displayText ?? (props.tone === 'failure'
     ? resolveTranscriptMessageDisplayText(props.message).text ?? '' : props.message.text);
+  // One row stands for a run of identical failures; the suffix keeps Find's ranges over the text intact.
+  const displayText = repeatCount === null ? messageText
+    : `${messageText} · ${t('session.transcriptFailureRepeated', { count: repeatCount })}`;
   const event = React.useMemo<AgentEvent>(() => ({ type: 'message', message: displayText }), [displayText]);
   const sessionAddress = transcriptSource.sessionId === props.sessionId ? normalizeSessionAddress(transcriptSource.serverId, props.sessionId) : null;
   // A refused Team credential or a missing native Agent sign-in adds its recovery under the shared display text; Find and copy keep that text.
   const runtimeIssue = props.tone === 'failure' && props.message.kind === 'agent-text' ? readRuntimeIssueMessageMeta(props.message.meta) : null;
   const recovery = runtimeIssue?.source === 'team_credential'
     ? <TeamCredentialDenialRecovery issue={runtimeIssue} address={sessionAddress} />
-    : runtimeIssue?.source === 'auth_error' ? <AgentAuthRequiredRecovery issue={runtimeIssue} /> : undefined;
+    : runtimeIssue?.source === 'auth_error' ? <AgentAuthRequiredRecovery issue={runtimeIssue} /> : null;
+  // Every typed failure keeps its raw cause one press away, under any recovery it offers.
+  const footer = runtimeIssue ? <>{recovery}<RuntimeIssueDetails issue={runtimeIssue} /></> : undefined;
   return (
     <TranscriptJumpAttention
       sessionAddress={sessionAddress}
@@ -875,7 +883,7 @@ function TranscriptTextNoticeRow(props: Readonly<{
         sessionId={props.sessionId}
         serverId={props.serverId}
         createdAt={props.message.createdAt}
-        footer={recovery}
+        footer={footer}
       />
     </TranscriptJumpAttention>
   );

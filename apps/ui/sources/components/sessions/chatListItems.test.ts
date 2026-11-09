@@ -1029,3 +1029,36 @@ describe('buildChatListItemsCached', () => {
             .toEqual(['p1-server']);
     });
 });
+
+describe('repeated runtime failure rows (QA-SESSION-1109 D6)', () => {
+    const failure = (id: string, seq: number, text = 'codex turn failed: Provider session failed', code = 'agent_session_error'): Message => ({
+        kind: 'agent-text', id, localId: `${id}:runtime_issue`, createdAt: seq, seq, text, isThinking: false,
+        meta: { source: 'runtime', runtimeIssueCode: code, runtimeIssueSource: 'agent_session_error' },
+    } as AgentTextMessage);
+    const visibleIds = (items: ReturnType<typeof buildChatListItems>) => items.flatMap((item) => item.kind === 'message' ? item.messageId : []);
+
+    it.each(['full', 'cached', 'cached-append'] as const)('shows one row, the latest, for a run of identical failures (%s)', (path) => {
+        const messages: Message[] = [
+            { kind: 'user-text', id: 'ask', localId: null, createdAt: 1, seq: 1, text: 'hi' },
+            ...Array.from({ length: 11 }, (_, index) => failure(`f${index + 1}`, index + 2)),
+        ];
+        const messagesById = Object.fromEntries(messages.map((message) => [message.id, message]));
+        const ids = messages.map((message) => message.id);
+        const input = { messageIdsOldestFirst: ids, messagesById, pendingMessages: [] };
+        const initial = buildChatListItemsCached({ ...input, cache: null, messageIdsOldestFirst: ids.slice(0, 6) });
+        const items = path === 'full' ? buildChatListItems(input)
+            : buildChatListItemsCached({ ...input, cache: path === 'cached-append' ? initial.cache : null }).items;
+        expect(visibleIds(items)).toEqual(['ask', 'f11']);
+    });
+
+    it('keeps failures that differ or are separated by another visible row', () => {
+        const messages: Message[] = [
+            failure('a1', 1), failure('a2', 2),
+            { kind: 'user-text', id: 'ask', localId: null, createdAt: 3, seq: 3, text: 'retry' },
+            failure('a3', 4), failure('b1', 5, 'codex turn failed: Provider stream failed', 'stream_error'),
+        ];
+        const messagesById = Object.fromEntries(messages.map((message) => [message.id, message]));
+        expect(visibleIds(buildChatListItems({ messageIdsOldestFirst: messages.map((m) => m.id), messagesById, pendingMessages: [] })))
+            .toEqual(['a2', 'ask', 'a3', 'b1']);
+    });
+});

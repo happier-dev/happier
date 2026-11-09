@@ -31,6 +31,7 @@ import {
     resolveTranscriptEventEmphasisByMessageId,
     resolveTranscriptHostWakeCountByMessageId,
 } from '@/components/sessions/transcript/events/transcriptEventEmphasis';
+import { resolveTranscriptRuntimeIssueRepeatCountByMessageId } from '@/components/sessions/transcript/events/runtimeIssueRepeatProjection';
 import type { Message } from "@happier-dev/session-core/messages";
 import { isRecoveredHistoryTranscriptObservation } from "@happier-dev/session-core/messages";
 import { readExternalSessionOperationPresentationFromMetadata } from '@/components/sessions/transcript/items/externalSessionOperationMetadata';
@@ -289,6 +290,14 @@ export function useChatListRootState(props: ChatListProps) {
         hostWakeCounts,
         Object.entries(hostWakeCounts).map(([id, count]) => `${id}:${count}`).join('|'),
     );
+    const runtimeIssueRepeatCounts = React.useMemo(() => (
+        resolveTranscriptRuntimeIssueRepeatCountByMessageId({ messageIdsOldestFirst, messagesById })
+    ), [messageIdsOldestFirst, messagesById]);
+    // Only the drawn failure row of a repeated run reads this; it changes only when a run grows.
+    const runtimeIssueRepeatCountByMessageId = useStableValueBySignature(
+        runtimeIssueRepeatCounts,
+        Object.entries(runtimeIssueRepeatCounts).map(([id, count]) => `${id}:${count}`).join('|'),
+    );
 
     const transcriptSource = useSessionTranscriptSource();
     const interaction = transcriptSource.useInteraction();
@@ -468,6 +477,7 @@ export function useChatListRootState(props: ChatListProps) {
             selectionEnabled: transcriptSessionCommon.messageDisplay.transcriptMessageSelectionEnabled === true,
         },
         pluginMessageActionHost,
+        runtimeIssueRepeatCountByMessageId,
         internalProps: {
             metadata: stableSessionMetadata,
             sessionId: props.session.id,
