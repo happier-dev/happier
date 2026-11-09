@@ -7532,6 +7532,23 @@ Current 0.3 readers and generated SDK DTOs move together under the direct cut;
 the routing identity is not an ignorable extension for older closed readers.
 No migration, alternate routing owner or wire epoch is added.
 
+## Service Move setup consent transport (unreleased 0.3)
+
+The closed native Service Start request adds optional `setupReview`, using the
+existing setup review schema. Move's child producer carries its prepared review
+in the existing signed child operand. The receiving Move path reconstructs that
+prepared root only for its admitted child; SOURCE's live Start claim still checks
+the exact admitted input before execution. Ordinary public Start input cannot
+grant consent, and the original signed Move envelope is unchanged.
+
+Matching Protocol and SOURCE/WORKER daemons reload together under the unpublished
+0.3 direct cut; earlier strict development Start readers reject the new field.
+New readers accept requests without it. No persisted format, wire epoch, approval
+step or new proof carrier is introduced. The inspected `../0.2` frontier
+`7b37d65ca75e58560f8f3ca850958ac5407d2e75`, including scoped staged and unstaged
+paths, has neither this native launcher schema nor the Move contract; no
+predecessor adapter is introduced.
+
 ## SDK protocol evolution
 
 Unreleased 0.3 Connected Account completion results and V4 presentation metadata

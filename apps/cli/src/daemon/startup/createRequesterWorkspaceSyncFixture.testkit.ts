@@ -389,7 +389,9 @@ export async function createRequesterWorkspaceSyncFixture(options: Readonly<{
           throw error;
         }
       } } : {}),
-      callWorkspaceTargetPhase: (descriptor, context) => {
+    } : {}),
+    // Installed daemons provide this transport for local targets too.
+    callWorkspaceTargetPhase: (descriptor, context) => {
         targetRpcDiagnostics.push({ message: 'Source target-phase descriptor', data: { method: descriptor.method,
           originalEnvelopePresent: context?.workspaceSyncSourceRouting?.originalActionEnvelope !== undefined,
           sourceRootMatches: context?.callerInputAuthorization && context.workspaceSyncSourceRouting
@@ -404,7 +406,7 @@ export async function createRequesterWorkspaceSyncFixture(options: Readonly<{
         return installed.machine.callWorkspaceSyncTargetPhase({ ...descriptor,
           credentials: installed.bootstrap.credentials, context: buildActionExecutorContextForRpc({ ...context,
             serverId: installed.serverId }) });
-      } } : {}),
+    },
     privateCheckout: { prepareNativeOperation: async input => {
       native.phases.push('native_prepare_started');
       try { return await installed.machine.prepareNativeOperation(input); }

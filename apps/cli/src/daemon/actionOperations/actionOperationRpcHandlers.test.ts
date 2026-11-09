@@ -179,6 +179,7 @@ describe('action operation observation RPC handlers', () => {
     const workspace = { serverId: 'home', refId: 'workspace' };
     const destination = { kind: 'workers' as const, destination: { kind: 'machine' as const, machineId: 'worker' } };
     const input = ProjectServiceRelocateInputV1Schema.parse({ workspace, sourceMachineId: scope.machineId, serviceName: 'web', requestId: 'move',
+      setupReview: { reviewedEffect: { commands: ['setup'] }, reviewedEffectDigest: 'reviewed-setup' },
       currentTarget: { kind: 'managed_service', machineId: 'source', managedServiceId: 'native-old',
         workspaceId: 'workspace', cwd: '/project', declaration: { workspaceRefId: 'workspace', selection: { kind: 'manifest', name: 'web' } } },
       destination, selectedTarget: { machineId: 'worker' }, desiredPlacement: { workspace, serviceName: 'web',
@@ -206,6 +207,11 @@ describe('action operation observation RPC handlers', () => {
       progress({ phase: 'starting', label: 'Starting service' });
       expect(await handlers.claimServiceMoveStart({ ...request, installationId: 'replaced' }, context)).toEqual(refused);
       expect(await handlers.claimServiceMoveStart({ ...request, input: { ...input, selectedTarget: { machineId: 'other' } } }, context)).toEqual(refused);
+      const unreviewed = { ...input };
+      delete unreviewed.setupReview;
+      expect(await handlers.claimServiceMoveStart({ ...request, input: unreviewed }, context)).toEqual(refused);
+      expect(await handlers.claimServiceMoveStart({ ...request, input: { ...input,
+        setupReview: { ...input.setupReview!, reviewedEffectDigest: 'other-setup' } } }, context)).toEqual(refused);
       expect(await handlers.claimServiceMoveStart(request, { ...context,
         machineAdmission: { ...context.machineAdmission, actorAccountId: 'stranger' } })).toEqual(refused);
       expect(await Promise.all([handlers.claimServiceMoveStart(request, context), handlers.claimServiceMoveStart(request, context)]))

@@ -257,6 +257,8 @@ export const DaemonLocalServiceLauncherStartRequestV1Schema = lazyZodSchema(() =
     workspace: z.optional(WorkspaceAddressV1Schema),
     declaration: z.optional(ProjectServiceDeclarationRefV1Schema),
     expectedEffectDigest: z.optional(z.string().check(z.regex(/^[a-f0-9]{64}$/))),
+    /** Move's signed child operand; consent still requires its admitted private root. */
+    setupReview: z.optional(ProjectSetupReviewV1Schema),
   }));
 export type DaemonLocalServiceLauncherStartRequestV1 = z.infer<
   typeof DaemonLocalServiceLauncherStartRequestV1Schema

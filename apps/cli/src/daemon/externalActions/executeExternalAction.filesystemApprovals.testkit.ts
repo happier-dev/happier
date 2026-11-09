@@ -50,7 +50,6 @@ import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { CallToolResultSchema } from '@modelcontextprotocol/sdk/types.js';
 import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
-import { FeaturesResponseSchema } from '@happier-dev/protocol/features/payload/featuresResponseSchema';
 import { handleActionsCommand } from '@/cli/commands/actions';
 import { captureConsoleJsonOutput } from '@/testkit/logger/captureOutput';
 import { logger } from '@/ui/logger';
@@ -163,9 +162,10 @@ export async function createHarness(actionId: ActionId, approval: 'ask' | 'allow
   }>, worker = false, sameMachineWorker = false,
   cliPolicy?: Readonly<{ authentication: 'account' | 'terminal'; askWithUiWaiver?: boolean; hostOnlyAsk?: 'waived' | 'unavailable';
     requireMoveChild?: true; approvalDecisionActorAccountId?: string; machineCustodianAccountId?: string; machineRole?: 'manage' | 'use';
-    deploymentRuntimeMachine?: true }>) {
+    deploymentRuntimeMachine?: true; waiveDeploymentChild?: true }>) {
   const serviceAction = actionId.startsWith('localServices.') || actionId.startsWith('machines.services.')
     || actionId === 'projects.service.relocate';
+  const deploymentAction = actionId.startsWith('deployments.');
   let deploymentChildDelivery: ((job: ReturnType<typeof DeploymentChildRpcV1Schema.parse>, result: unknown) => Promise<void>) | undefined;
   vi.spyOn(syncClient, 'createHappierSocket').mockImplementation(params => {
     // Substitute only the Home socket boundary; the transport adapter, RPC
@@ -198,7 +198,8 @@ export async function createHarness(actionId: ActionId, approval: 'ask' | 'allow
         source: { kind: 'command', command: `${JSON.stringify(process.execPath)} -e "setInterval(() => {}, 1000)"` } } } }));
   }
   await writeFile(join(directory, 'outside'), 'outside unchanged');
-  const env = createEnvKeyScope(['HAPPIER_HOME_DIR', 'HAPPIER_ACTIVE_SERVER_ID', 'HAPPIER_SERVER_URL', 'HAPPIER_MACHINE_RPC_WORKING_DIRECTORY']);
+  const env = createEnvKeyScope(['HAPPIER_HOME_DIR', 'HAPPIER_ACTIVE_SERVER_ID', 'HAPPIER_SERVER_URL', 'HAPPIER_MACHINE_RPC_WORKING_DIRECTORY',
+    'HAPPIER_ACTIONS_SETTINGS_V1']);
   env.patch({ HAPPIER_HOME_DIR: join(directory, 'srv_n2'), HAPPIER_ACTIVE_SERVER_ID: 'srv_n2',
     HAPPIER_SERVER_URL: 'https://home.example.test',
     // A Machine-only shell uses the host's default directory, outside the
@@ -322,7 +323,8 @@ export async function createHarness(actionId: ActionId, approval: 'ask' | 'allow
     ...(cliPolicy?.requireMoveChild ? { 'localServices.launcher.start': { approvalRequiredSurfaces: ['ui', 'rpc', 'cli'] } } : {}),
     ...(setup && actionId === 'projects.service.relocate'
       ? { 'projects.prepare': { approvalRequiredSurfaces: ['ui', 'rpc', 'cli'] } } : {}) },
-    ...(approval === 'allowed' ? { approvalWaivedSurfaces: { [actionId]: ['ui', 'rpc', 'cli'] } }
+    ...(approval === 'allowed' ? { approvalWaivedSurfaces: { [actionId]: ['ui', 'rpc', 'cli', ...(deploymentAction ? ['mcp'] : [])],
+      ...(cliPolicy?.waiveDeploymentChild ? { 'deployments.deploy': ['ui', 'rpc', 'cli', 'mcp'] } : {}) } }
       : cliPolicy?.askWithUiWaiver ? { approvalWaivedSurfaces: { [actionId]: ['ui'] } } : {}),
     ...(actionId === 'projects.service.relocate' ? { approvalWaivedSurfaces: {
       ...(approval === 'allowed' ? { [actionId]: ['ui', 'rpc', 'cli'] } : {}),
@@ -410,6 +412,7 @@ export async function createHarness(actionId: ActionId, approval: 'ask' | 'allow
     networkPaths.push('FETCH ' + path);
     if (path !== '/v1/features' && path !== '/v1/features/authenticated') throw new Error('Unexpected Home fetch ' + path);
     return Response.json({ features: actionId === 'workflow.trigger.run_now' ? { workflows: { enabled: true }, automations: { enabled: true } }
+      : deploymentAction ? { deployments: { enabled: true } }
       : serviceAction ? { localServices: { enabled: true,
       inventory: { enabled: true }, launcher: { enabled: true }, actions: { enabled: true }, managed: { enabled: true } },
       browser: { enabled: true, viewTargets: { enabled: true } } } : {},
@@ -971,11 +974,12 @@ export async function createHarness(actionId: ActionId, approval: 'ask' | 'allow
     runtime: { serverId: 'srv_n2', serverHttpBaseUrl: params.serverHttpBaseUrl, machineId: ref.machineId,
       accountId: 'account', readCredentials: async () => { throw new Error('Admitted Open must use its requester projection'); },
       setupPreparation: { nativeIo: nativeIo.commandIo, platform: { os: 'linux', arch: 'x64' } } } });
-  const features = serviceAction || actionId === 'workflow.trigger.run_now'
+  const features = serviceAction || deploymentAction || actionId === 'workflow.trigger.run_now'
     ? await api.getServerFeaturesSnapshot({ refresh: true }) : undefined;
   api.setServerFeaturesSnapshotProvider(() => features);
   if (worker) {
-    await readProjectAccountRows({ credentials, serverId: homeId, publication: 'installed' });
+    // Installed reconciliation is scoped to the local profile; Workspace refs retain the portable Home identity.
+    await readProjectAccountRows({ credentials, serverId: 'srv_n2', publication: 'installed' });
     const descriptor = HomeConnectionDescriptorV1Schema.parse({ v: 1, homeServerIdentityId: homeId,
       canonicalServerUrl: 'https://home.example.test', revision: 1, endpoints: [{ kind: 'https', url: 'https://home.example.test' }] });
     const homeTarget = resolveHomeTargetFromDescriptor({ descriptor, authority: 'saved_profile',
@@ -1083,7 +1087,7 @@ export async function createHarness(actionId: ActionId, approval: 'ask' | 'allow
       topologyChange: true,
     } });
     expect(committed).toMatchObject({ status: 'updated' });
-    await readProjectAccountRows({ credentials, serverId: homeId, publication: 'installed' });
+    await readProjectAccountRows({ credentials, serverId: 'srv_n2', publication: 'installed' });
     if (!sameMachineWorker) {
       sourceWorkspaceSync = await rpcInstallation.run(sourceInstallation, () => composeSync(ref.machineId));
       registerMachineWorkspaceSyncRpcHandlers({ rpcHandlerManager: sourceRpc!, service: sourceWorkspaceSync.workspaceSync });
@@ -1296,10 +1300,13 @@ export async function createHarness(actionId: ActionId, approval: 'ask' | 'allow
     },
     async runSavedProfileMcp(input: unknown, requestedActionId: ActionId) {
       if (!features) throw new Error('Missing server features');
+      writeDaemonState({ pid: process.pid, startedAt: Date.now(), startedWithCliVersion: 'test',
+        httpPort: runtime.controlPort, controlToken: runtime.controlToken, machineId: target.machineId, accountId: 'account' });
+      // Standalone MCP receives its presentation policy through the command's environment snapshot.
+      env.patch({ HAPPIER_ACTIONS_SETTINGS_V1: JSON.stringify(accountSettings.actionsSettingsV1) });
       const { mcp } = runWithServerHttpBaseUrl(params.serverHttpBaseUrl, () => createExternalMcpServer({
         credentials: cliCredentials, machineId: target.machineId, daemonControlTarget: null,
-        serverFeaturesSnapshot: { status: 'ready', features: FeaturesResponseSchema.parse({ features,
-          capabilities: { serverIdentity: { serverIdentityId: homeId } } }) },
+        serverFeaturesSnapshot: features,
       }));
       const client = new Client({ name: 'managed-service-stop', version: '1' });
       const [serverTransport, clientTransport] = InMemoryTransport.createLinkedPair();
@@ -1547,8 +1554,7 @@ export async function createHarness(actionId: ActionId, approval: 'ask' | 'allow
                 if (!features) throw new Error('Missing Move server features');
                 const { mcp } = runWithServerHttpBaseUrl(params.serverHttpBaseUrl, () => createExternalMcpServer({
                   credentials, machineId: ref.machineId, daemonControlTarget: null,
-                  serverFeaturesSnapshot: { status: 'ready', features: FeaturesResponseSchema.parse({ features,
-                    capabilities: { serverIdentity: { serverIdentityId: homeId } } }) },
+                  serverFeaturesSnapshot: features,
                 }));
                 const client = new Client({ name: 'service-move', version: '1' });
                 const [serverTransport, clientTransport] = InMemoryTransport.createLinkedPair();

@@ -5,6 +5,7 @@ import { TargetedActionRpcRequestV1Schema } from '@happier-dev/protocol/actions/
 import { projectNativeJsonValueForTransport, type JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 import { readProjectServiceMoveChildEffectV1 } from '@happier-dev/protocol/workspaces/projectServiceRelocationV1';
+import { DaemonLocalServiceLauncherStartRequestV1Schema } from '@happier-dev/protocol/local/services/launcher/v1';
 import { openReviewedServiceMove } from '@/api/externalActionExecutionAuthorization';
 import { projectServiceMoveChildRole } from '@/daemon/local/services/actions/projectServiceMoveChildren';
 import { buildActionExecutorContextForRpc } from '@/rpc/handlers/_actionDispatchAdapter';
@@ -24,11 +25,14 @@ export async function invokeReviewedServiceMoveChild(input: Readonly<{
     const admission = context.machineAdmission;
     const action = ActionIdSchema.safeParse(readProjectServiceMoveChildEffectV1(input.method));
     if (!authorization || !admission || !context.originalActionEnvelope || !action.success) return denied();
-    const move = await openReviewedServiceMove({ authorization, envelope: context.originalActionEnvelope, signal: context.signal });
-    if (!move) return denied();
     const wrapper = TargetedActionRpcRequestV1Schema.safeParse(input.params);
     const normalized = getActionSpec(action.data).inputSchema.safeParse(wrapper.success ? wrapper.data.input : input.params);
     if (!normalized.success) return denied();
+    const start = action.data === 'localServices.launcher.start'
+        ? DaemonLocalServiceLauncherStartRequestV1Schema.parse(normalized.data) : undefined;
+    const move = await openReviewedServiceMove({ authorization, envelope: context.originalActionEnvelope, signal: context.signal,
+        ...(start?.setupReview ? { setupReview: start.setupReview } : {}) });
+    if (!move) return denied();
     const childInput = projectNativeJsonValueForTransport(normalized.data);
     const actionContext = buildActionExecutorContextForRpc({ ...context, actionId: action.data,
         runtimeAccountId: admission.actorAccountId, externalActionExecutionAuthorization: authorization });

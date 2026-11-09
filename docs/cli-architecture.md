@@ -877,6 +877,12 @@ does not require a separate prepare flow. Normal Action Move reads the Account
 graph once for pre-review selection and once for the retained route used at
 execution; it does not reselect the destination after Stop.
 
+The existing signed Start child carries that prepared `setupReview` to WORKER.
+The receiver reconstructs the prepared Move root and SOURCE's existing live Start
+claim checks the exact admitted input, including the review, before native Start
+can consume consent. The original signed request envelope remains unchanged;
+the public Start field alone grants no consent.
+
 Clean copying and setup remain after confirmed Stop. The destination's setup
 owner remeasures the copied effect before execution. A changed platform, native
 resolution, toolchain or environment returns `project_setup_effect_changed`
@@ -7947,6 +7953,13 @@ daemon operation by default; explicit caller deadlines and cancellation remain
 available. A guarded refusal to signal does not authorize an unsafe kill: Stop
 rechecks positive runner exit before reporting incomplete termination. Transport
 timeout or disconnect never proves physical termination.
+
+The existing Protocol Session Stop owner classifies a missing runtime separately
+from a missing saved Session. CLI and UI both report `already_stopped` with
+`no_runtime_session_inactive` only when an authoritative Session read confirms
+that the saved Session is inactive. An active Session or an unavailable read
+leaves termination unconfirmed; cached UI activity and transport errors do not
+prove that a process stopped.
 
 In 0.3 development source, Stop diagnostics project the original admitted Action
 surface, caller kind, requesting Session and transcript tool-call id when known.

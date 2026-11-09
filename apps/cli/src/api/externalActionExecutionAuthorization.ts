@@ -548,9 +548,14 @@ async function claimReviewedServiceMoveStartForInput(input: Parameters<typeof cl
 
 /** One admitted receiving invocation opens SOURCE once; current refs and the
  * operation's Start claim still belong to their existing owners below. */
-export async function openReviewedServiceMove(input: Parameters<typeof claimReviewedServiceMoveStart>[0]) {
-  const move = await readReviewedServiceMoveInput(input);
-  if (!move) return null;
+export async function openReviewedServiceMove(input: Parameters<typeof claimReviewedServiceMoveStart>[0] & Readonly<{
+  setupReview?: import('@happier-dev/protocol/workspaces/projectServiceRelocationV1').ProjectServiceRelocateInputV1['setupReview'];
+}>) {
+  const original = await readReviewedServiceMoveInput(input);
+  if (!original) return null;
+  // SOURCE prepared this operand after opening the unchanged envelope. The
+  // existing exact Start claim must accept it before the receiver executes.
+  const move = input.setupReview ? { ...original, setupReview: input.setupReview } : original;
   return {
     input: move,
     isChild: (child: Pick<Parameters<typeof isReviewedServiceMoveChild>[0], 'actionId' | 'machineId' | 'params'>) =>

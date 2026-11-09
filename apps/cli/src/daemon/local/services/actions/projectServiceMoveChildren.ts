@@ -40,6 +40,7 @@ export function projectServiceMoveStartInput(request: ProjectServiceRelocateInpu
         workspace: { serverId: destination.serverId, machineId: destination.machineId,
             workspaceId: destination.id, rootPath: destination.rootPath },
         declaration: { workspaceRefId: destination.id, selection },
+        ...(request.setupReview ? { setupReview: request.setupReview } : {}),
         choice: request.destination.kind === 'primary' ? { kind: 'primary' as const }
             : { kind: 'workers' as const, destination: { kind: 'machine' as const, machineId: destination.machineId } } };
 }
@@ -109,7 +110,7 @@ export async function prepareProjectServiceMoveChildren(input: Readonly<{
         add('projects.worker.status', projectServiceMoveStatusInput(request, basis.target.machineId));
         add('projects.inspect', projectServiceMoveInspectionInput(basis.source, true));
         add('localServices.actions.stopManaged', projectServiceMoveStopInput(request));
-        add('localServices.launcher.start', projectServiceMoveStartInput(request, basis.target));
+        add('localServices.launcher.start', projectServiceMoveStartInput(preparedInput, basis.target));
     }
     return { children, input: projectNativeJsonValueForTransport(preparedInput) } satisfies HostReviewedChildrenPreparationV1;
 }
