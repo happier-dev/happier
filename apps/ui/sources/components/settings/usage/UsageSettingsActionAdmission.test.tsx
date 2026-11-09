@@ -23,14 +23,13 @@ vi.mock('@/sync/ops/actions/frontDoorRuntimeActionExecutor', async (importOrigin
     return { ...original, createFrontDoorActionExecute: createFrontDoorActionExecuteForVitest(original) };
 });
 
-const { renderMountedCurrentUiContext: renderScreen } = await import('@/dev/testkit/harness/mountedCurrentUiContext');
+const { renderMountedCurrentUiContext } = await import('@/dev/testkit/harness/mountedCurrentUiContext');
 const { useOptionalCurrentUiContextReader } = await import('@/components/appShell/currentUiContext/CurrentUiContextProvider');
 const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
 const { ACTION_ID_FAMILIES_V1 } = await import('@happier-dev/protocol/actions/actionIds');
 const { renderHook } = await import('@/dev/testkit/hooks/renderHook');
 const { useMountedActionExecution } = await import('@/components/approvals/useMountedActionExecution');
 const { loadSyncSingletonForTests } = await import('@/dev/testkit/harness/syncSingletonLoader');
-const { decideApprovalAsInbox } = await import('@/dev/testkit/harness/approvalInbox');
 const { storage } = await import('@/sync/domains/state/storage');
 const { settingsParse } = await import('@/sync/domains/settings/settings');
 const { primeServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
@@ -55,6 +54,14 @@ const [{ ApprovalRequestV2Schema}, { AccountProfileSchema}] = await Promise.all(
 const { z } = await import('zod/mini');
 const machineRpc = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc');
 const { t } = await import('@/text');
+
+// Use the canonical testkit's real AppShell modal host; Ask on UI is answered in place.
+const renderScreen = (children: React.ReactNode) => renderMountedCurrentUiContext(children, { withModalProvider: true });
+async function confirm(screen: Awaited<ReturnType<typeof renderScreen>>, decision: 'approve' | 'reject' = 'approve') {
+    await waitForHomeGovernance(() => expect(screen.findByTestId('web-modal-confirm')).toBeTruthy());
+    expect(harness.artifacts(serverId).list()).toEqual([]);
+    await screen.pressByTestIdAsync(decision === 'approve' ? 'web-modal-confirm' : 'web-modal-cancel');
+}
 
 const settingsInput = z.object({ content: z.object({ t: z.literal('plain'), v: z.record(z.string(), z.unknown()) }), expectedVersion: z.number() });
 let serverId: string;
@@ -140,7 +147,7 @@ function priceSlice() {
 }
 
 describe('Usage settings UI Action admission', () => {
-    it.each(['disabled', 'approval'] as const)('announces a Coach failure and distinguishes a waiting approval: %s', async (admission) => {
+    it.each(['disabled', 'approval'] as const)('announces a Coach failure and distinguishes a waiting native confirmation: %s', async (admission) => {
         const { evaluateUsageCoach } = await import('@happier-dev/protocol/usage/coach/evaluateUsageCoach');
         const query = normalizeUsageQuery({ period: { startMs: 0, endMs: 1000 } });
         const key = getUsageQueryKey(query);
@@ -168,10 +175,10 @@ describe('Usage settings UI Action admission', () => {
             expect(screen.getTextContent()).toContain(t('usage.board.coach.actionFailed'));
             expect(screen.findByTestId('usage-coach-approval-pending')).toBeNull();
         } else {
-            await waitForHomeGovernance(() => expect(screen.findByTestId('usage-coach-approval-pending')).toBeTruthy());
-            expect(screen.getTextContent()).toContain(t('usage.board.coach.approvalPending'));
+            await waitForHomeGovernance(() => expect(screen.findByTestId('web-modal-confirm')).toBeTruthy());
             expect(screen.findByTestId(`${findingId}.error`)).toBeNull();
             expect(screen.findAll(node => typeof node.type === 'string' && node.props.accessibilityRole === 'alert')).toHaveLength(0);
+            await confirm(screen, 'reject');
         }
         expect(screen.findByTestId(findingId)).toBeTruthy();
         await screen.unmount();
@@ -300,20 +307,17 @@ describe('Usage settings UI Action admission', () => {
             const request = ApprovalRequestV2Schema.safeParse(JSON.parse(harness.artifacts(serverId).readPlainBody(artifact.id) ?? 'null'));
             return request.success && request.data.actionId === actionId;
         });
-        // Mounted Actions settle after approval; the person's press starts the wait before Inbox decides it.
+        // Ask is a native confirmation; cancellation must leave the persisted price unchanged.
         await act(async () => { screen.pressByTestId(`subscription.${operation}`); });
         if (requireApproval) {
-            await waitForHomeGovernance(() => expect(approvals()).toHaveLength(1));
+            await waitForHomeGovernance(() => expect(screen.findByTestId('web-modal-confirm')).toBeTruthy());
             expect(record).toEqual(original);
-            const rejectedId = approvals()[0]!.id;
-            expect(await decideApprovalAsInbox(serverId, rejectedId, 'reject')).toMatchObject({ ok: true });
+            await confirm(screen, 'reject');
             await waitForHomeGovernance(() => expect(screen.findByTestId(`subscription.${operation}`)?.props.disabled).toBe(false));
             expect(record).toEqual(original);
             expect(settled).not.toHaveBeenCalled();
             await act(async () => { screen.pressByTestId(`subscription.${operation}`); });
-            await waitForHomeGovernance(() => expect(approvals()).toHaveLength(2));
-            expect(await decideApprovalAsInbox(serverId, approvals().find(artifact => artifact.id !== rejectedId)!.id, 'approve'))
-                .toMatchObject({ ok: true });
+            await confirm(screen);
         } else expect(approvals()).toHaveLength(0);
         await waitForHomeGovernance(() => expect(record.entries).toMatchObject(operation === 'clear' ? [] : [{
             subject: { kind: 'account', account: ref }, subscriptionMonthlyPrice: { amount: 17, currency: 'USD' },
@@ -341,7 +345,7 @@ describe('Usage settings UI Action admission', () => {
         expect([...dismissed]).toEqual(['source']);
         await hook.unmount();
     });
-    it('retries model-price Refresh after approval rejection and refuses a retired control', async () => {
+    it('retries model-price Refresh after confirmation cancellation and refuses a retired control', async () => {
         let refreshes = 0;
         harness.answer(serverId, 'POST /v1/account/usage/prices/refresh', { select: () => {
             refreshes++;
@@ -357,22 +361,15 @@ describe('Usage settings UI Action admission', () => {
         const { slice } = priceSlice();
         const screen = await renderScreen(<UsageModelPricesEditor slice={slice} serverId={serverId} testID="prices" />);
         const refreshId = 'prices.provenance.refresh';
-        const approvals = () => harness.artifacts(serverId).list().filter(artifact => {
-            const request = ApprovalRequestV2Schema.safeParse(JSON.parse(harness.artifacts(serverId).readPlainBody(artifact.id) ?? 'null'));
-            return request.success && request.data.actionId === 'usage.prices.refresh';
-        });
         await act(async () => { screen.pressByTestId(refreshId); });
-        await waitForHomeGovernance(() => expect(approvals()).toHaveLength(1));
+        await waitForHomeGovernance(() => expect(screen.findByTestId('web-modal-confirm')).toBeTruthy());
         expect(refreshes).toBe(0);
         expect(screen.findByTestId(refreshId)?.props.disabled).toBe(true);
-        const rejectedId = approvals()[0]!.id;
-        expect(await decideApprovalAsInbox(serverId, rejectedId, 'reject')).toMatchObject({ ok: true });
+        await confirm(screen, 'reject');
         await waitForHomeGovernance(() => expect(screen.findByTestId(refreshId)?.props.disabled).toBe(false));
         expect(screen.getTextContent()).not.toContain(t('usage.board.page.pricesFetchFailed'));
         await act(async () => { screen.pressByTestId(refreshId); });
-        await waitForHomeGovernance(() => expect(approvals()).toHaveLength(2));
-        expect(await decideApprovalAsInbox(serverId, approvals().find(artifact => artifact.id !== rejectedId)!.id, 'approve'))
-            .toMatchObject({ ok: true });
+        await confirm(screen);
         await waitForHomeGovernance(() => {
             expect(refreshes).toBe(1);
             expect(screen.findByTestId(refreshId)?.props.disabled).toBe(false);
@@ -407,8 +404,8 @@ describe('Usage settings UI Action admission', () => {
         await act(async () => { screen.pressByTestId('prices.model.qa-private-model.save'); });
         if (requireApproval) {
             expect(storage.getState().settings.usageModelPriceOverridesV1).toEqual({});
-            await waitForHomeGovernance(() => expect(approvalFor('usage.modelPrices')).toBeTruthy());
-            await decideApprovalAsInbox(serverId, approvalFor('usage.modelPrices')!.id, 'approve');
+            await waitForHomeGovernance(() => expect(screen.findByTestId('web-modal-confirm')).toBeTruthy());
+            await confirm(screen, 'approve');
         } else expect(approvalFor('usage.modelPrices')).toBeUndefined();
         await act(async () => { await waitForHomeGovernance(() => expect(storage.getState().settings.usageModelPriceOverridesV1).toEqual({
             'qa-private-model': { kind: 'rates', inputUsdPerMillion: 3, outputUsdPerMillion: 15 } })); });
@@ -419,8 +416,7 @@ describe('Usage settings UI Action admission', () => {
         await act(async () => { screen.pressByTestId('prices.model.qa-private-model.reset'); });
         const next = () => harness.artifacts(serverId).list().find(row => !previous.has(row.id));
         if (requireApproval) {
-            await waitForHomeGovernance(() => expect(next()).toBeTruthy());
-            await decideApprovalAsInbox(serverId, next()!.id, 'approve');
+            await confirm(screen);
         } else expect(next()).toBeUndefined();
         await waitForHomeGovernance(() => expect(storage.getState().settings.usageModelPriceOverridesV1).toEqual({}));
         await screen.unmount();
@@ -450,17 +446,15 @@ describe('Usage settings UI Action admission', () => {
         await screen.pressByTestIdAsync('coach.configure-header');
         await screen.pressByTestIdAsync('coach.preferences.check.mcp_overhead');
         expect(storage.getState().settings.usageCoachPreferencesV1.disabledChecks).toEqual([]);
-        await waitForHomeGovernance(() => expect(approvalFor('usage.coachPreferences')).toBeTruthy());
-        await decideApprovalAsInbox(serverId, approvalFor('usage.coachPreferences')!.id, 'approve');
+        await waitForHomeGovernance(() => expect(screen.findByTestId('web-modal-confirm')).toBeTruthy());
+        await confirm(screen, 'approve');
         await waitForHomeGovernance(() => expect(storage.getState().settings.usageCoachPreferencesV1.disabledChecks).toEqual(['mcp_overhead']));
-        const previousArtifacts = new Set(harness.artifacts(serverId).list().map(row => row.id));
         const dropdown = screen.findAllByType(DropdownMenu).find(row => row.props.testID === 'coach.preferences.model')!;
         await act(async () => { dropdown.props.onOpenChange(true); });
         await act(async () => { dropdown.props.onSelect('complete_only'); });
-        const nextApproval = () => harness.artifacts(serverId).list().find(row => !previousArtifacts.has(row.id));
-        await waitForHomeGovernance(() => expect(nextApproval()).toBeTruthy());
+        await waitForHomeGovernance(() => expect(screen.findByTestId('web-modal-confirm')).toBeTruthy());
         expect(storage.getState().settings.usageCoachPreferencesV1.modelSuggestion).toBe('suggest_with_estimates');
-        await decideApprovalAsInbox(serverId, nextApproval()!.id, 'approve');
+        await confirm(screen);
         await waitForHomeGovernance(() => expect(storage.getState().settings.usageCoachPreferencesV1.modelSuggestion).toBe('complete_only'));
         expect(raw.usageCoachPreferencesV1).toEqual({ v: 1, disabledChecks: ['mcp_overhead'], modelSuggestion: 'complete_only' });
         const suppressionRow = kv.read(USAGE_COACH_SUPPRESSIONS_KV_KEY);
@@ -484,17 +478,16 @@ describe('Usage settings UI Action admission', () => {
         const screen = await renderScreen(<UsageCapacityAlertsSettingsGroup />);
         await waitForHomeGovernance(() => expect(screen.findByTestId('settings-usage-alerts-pace')).toBeTruthy());
         await screen.pressByTestIdAsync('settings-usage-alerts-pace');
-        await waitForHomeGovernance(() => expect(approvalFor('session.providerLimits.alertPace')).toBeTruthy());
+        await waitForHomeGovernance(() => expect(screen.findByTestId('web-modal-confirm')).toBeTruthy());
         expect(storage.getState().settings.usageQuotaNotificationsV1.pace).toBe(false);
         expect(raw.usageQuotaNotificationsV1).toMatchObject({ pace: false });
-        const artifact = approvalFor('session.providerLimits.alertPace')!;
-        await decideApprovalAsInbox(serverId, artifact.id, 'approve');
+        await confirm(screen);
         await waitForHomeGovernance(() => expect(storage.getState().settings.usageQuotaNotificationsV1.pace).toBe(true));
         expect(storage.getState().settings.usageQuotaNotificationsV1.depletion).toBe(false);
         await screen.pressByTestIdAsync('settings-usage-pace-target:75');
-        await waitForHomeGovernance(() => expect(approvalFor('session.providerLimits.personalPaceTarget')).toBeTruthy());
+        await waitForHomeGovernance(() => expect(screen.findByTestId('web-modal-confirm')).toBeTruthy());
         expect(storage.getState().settings.usagePacingTargetsV1).toEqual([]);
-        await decideApprovalAsInbox(serverId, approvalFor('session.providerLimits.personalPaceTarget')!.id, 'approve');
+        await confirm(screen, 'approve');
         await waitForHomeGovernance(() => expect(storage.getState().settings.usagePacingTargetsV1).toEqual([expect.objectContaining({ scope: { kind: 'personal' }, utilizationFraction: 0.75 })]));
         await screen.unmount();
     });
@@ -511,8 +504,8 @@ describe('Usage settings UI Action admission', () => {
         expect(checked(`settings-usage-alerts-creditExpiry:${3 * 24 * 60 * 60 * 1000}`)).toBe(true);
         expect(checked('settings-usage-alerts-ending:off')).toBe(false);
         await screen.pressByTestIdAsync('settings-usage-alerts-almostOut:off');
-        await waitForHomeGovernance(() => expect(approvalFor('session.providerLimits.alertAlmostOut')).toBeTruthy());
-        await decideApprovalAsInbox(serverId, approvalFor('session.providerLimits.alertAlmostOut')!.id, 'approve');
+        await waitForHomeGovernance(() => expect(screen.findByTestId('web-modal-confirm')).toBeTruthy());
+        await confirm(screen, 'approve');
         await waitForHomeGovernance(() => expect(storage.getState().settings.usageQuotaNotificationsV1.almostOutRemainingFraction).toBeNull());
         await screen.unmount();
     });
@@ -522,8 +515,8 @@ describe('Usage settings UI Action admission', () => {
         await waitForHomeGovernance(() => expect(screen.findByTestId('settings-session-providerUsageGauge-routingHints')).toBeTruthy());
         await screen.pressByTestIdAsync('settings-session-providerUsageGauge-routingHints');
         expect(storage.getState().settings.usageRoutingHintsEnabled).toBe(true);
-        await waitForHomeGovernance(() => expect(approvalFor('session.providerLimits.routingHints')).toBeTruthy());
-        await decideApprovalAsInbox(serverId, approvalFor('session.providerLimits.routingHints')!.id, 'reject');
+        await waitForHomeGovernance(() => expect(screen.findByTestId('web-modal-confirm')).toBeTruthy());
+        await confirm(screen, 'reject');
         expect(storage.getState().settings.usageRoutingHintsEnabled).toBe(true);
         await screen.unmount();
     });
@@ -552,7 +545,7 @@ describe('Usage settings UI Action admission', () => {
         await alerts.unmount();
     });
 
-    it('keeps the picker hint visible while its hide Action awaits approval', async () => {
+    it('restores the picker hint after cancel and persists its hide only after confirmation', async () => {
         const entry = createResolvedAgentCatalogEntryFixture({ agentId: 'claude' });
         const declaration = entry.connectedAccounts[0]!;
         expect(entry.identity).toBeTruthy();
@@ -568,10 +561,13 @@ describe('Usage settings UI Action admission', () => {
         const screen = await renderScreen(<InjectedAuthProvider credentials={credentials}><SessionModelRoutingHint entry={entry} machineId={null} /></InjectedAuthProvider>);
         await waitForHomeGovernance(() => expect(screen.findByTestId('session-model-routing-hint.hide')).toBeTruthy());
         await screen.pressByTestIdAsync('session-model-routing-hint.hide');
-        await act(async () => { await waitForHomeGovernance(() => expect(approvalFor('session.providerLimits.routingHints')).toBeTruthy()); });
+        await waitForHomeGovernance(() => expect(screen.findByTestId('web-modal-confirm')).toBeTruthy());
         expect(storage.getState().settings.usageRoutingHintsEnabled).toBe(true);
-        expect(screen.findByTestId('session-model-routing-hint.hide')).toBeTruthy();
-        await decideApprovalAsInbox(serverId, approvalFor('session.providerLimits.routingHints')!.id, 'approve');
+        await confirm(screen, 'reject');
+        await waitForHomeGovernance(() => expect(screen.findByTestId('session-model-routing-hint.hide')).toBeTruthy());
+        expect(storage.getState().settings.usageRoutingHintsEnabled).toBe(true);
+        await screen.pressByTestIdAsync('session-model-routing-hint.hide');
+        await confirm(screen, 'approve');
         await waitForHomeGovernance(() => expect(storage.getState().settings.usageRoutingHintsEnabled).toBe(false));
         expect(screen.findAllByTestId('session-model-routing-hint.hide')).toHaveLength(0);
         await screen.unmount();
@@ -644,8 +640,8 @@ describe('Usage settings UI Action admission', () => {
         expect(raw.usageNightHoursV1).toBeNull();
         await act(async () => { screen.findAllByType(DropdownMenu)[1]!.props.onSelect('7'); });
         expect(storage.getState().settings.usageNightHoursV1).toBeNull();
-        await waitForHomeGovernance(() => expect(approvalFor('usage.nightHours')).toBeTruthy());
-        await decideApprovalAsInbox(serverId, approvalFor('usage.nightHours')!.id, 'approve');
+        await waitForHomeGovernance(() => expect(screen.findByTestId('web-modal-confirm')).toBeTruthy());
+        await confirm(screen, 'approve');
         await waitForHomeGovernance(() => expect(storage.getState().settings.usageNightHoursV1).toEqual({ startHour: 23, endHour: 7 }));
         const retiredPress = screen.findAllByType(DropdownMenu)[0]!.props.onSelect;
         await act(async () => { await harness.switchAccount(serverId, 'other-account'); });
@@ -661,10 +657,13 @@ describe('Usage settings UI Action admission', () => {
         storage.getState().applySettings(settingsParse(raw), ++version);
         const screen = await renderNight();
         await act(async () => { screen.findAllByType(DropdownMenu)[0]!.props.onSelect('clear'); });
-        await act(async () => { await waitForHomeGovernance(() => expect(approvalFor('usage.nightHours')).toBeTruthy()); });
+        await waitForHomeGovernance(() => expect(screen.findByTestId('web-modal-confirm')).toBeTruthy());
         expect(storage.getState().settings.usageNightHoursV1).toEqual({ startHour: 23, endHour: 7 });
-        expect(screen.findAllByType(DropdownMenu).map(control => control.props.selectedId)).toEqual(['23', '7']);
-        await decideApprovalAsInbox(serverId, approvalFor('usage.nightHours')!.id, 'approve');
+        await confirm(screen, 'reject');
+        await waitForHomeGovernance(() => expect(screen.findAllByType(DropdownMenu).map(control => control.props.selectedId)).toEqual(['23', '7']));
+        expect(storage.getState().settings.usageNightHoursV1).toEqual({ startHour: 23, endHour: 7 });
+        await act(async () => { screen.findAllByType(DropdownMenu)[0]!.props.onSelect('clear'); });
+        await confirm(screen, 'approve');
         await waitForHomeGovernance(() => expect(storage.getState().settings.usageNightHoursV1).toBeNull());
         await act(async () => { screen.findAllByType(DropdownMenu)[0]!.props.onSelect('23'); });
         await act(async () => {
