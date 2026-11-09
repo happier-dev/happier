@@ -129,7 +129,6 @@ export async function resolveHomeEnrollmentTransport(
         }
     } else if (canonicalEndpointUrl) {
         const acquired = await acquireEligibleHomeCarrier({
-            mode: 'initial_selection',
             descriptor,
             verification: options.verification ?? { kind: 'enrollment' },
         });

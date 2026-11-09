@@ -11,7 +11,7 @@ import {
 import {
     createExpectedAccountKeyChallengeSigningInputV1,
     createKeyChallengeV2SigningInput,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/auth/keyChallenge';
 import {
     HOME_ADDRESS_MISMATCH_AUTH_CODE,
     HOME_IDENTITY_MISMATCH_AUTH_CODE,

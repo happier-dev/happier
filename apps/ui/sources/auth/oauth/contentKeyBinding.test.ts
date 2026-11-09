@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import tweetnacl from 'tweetnacl';
-import { verifyAccountContentKeyBindingV1 } from '@happier-dev/protocol';
+import { verifyAccountContentKeyBindingV1 } from '@happier-dev/protocol/crypto/accountContentKeyBindingV1';
 
 import { decodeBase64 } from '@/encryption/base64';
 import { Encryption } from '@/sync/encryption/encryption';

@@ -1,4 +1,11 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+
+// Counting seam over the real hash: the output stays the real digest, only the work done is observed.
+const hashCalls = vi.hoisted(() => ({ count: 0 }));
+vi.mock('@noble/hashes/sha2', async (importOriginal) => {
+    const original = await importOriginal<typeof import('@noble/hashes/sha2')>();
+    return { ...original, sha256: Object.assign((message: Uint8Array) => { hashCalls.count += 1; return original.sha256(message); }, original.sha256) };
+});
 
 import { resolveAuthCredentialsScopeKey } from './resolveAuthCredentialsScopeKey';
 
@@ -54,5 +61,18 @@ describe('resolveAuthCredentialsScopeKey', () => {
                 machineKey: `${credentials.encryption.machineKey}_changed`,
             },
         })).not.toBe(scopeKey);
+    });
+
+    it('fingerprints one credentials object once however many requests resolve its scope', () => {
+        const credentials = { token: 'HOT_PATH_TOKEN', encryption: { publicKey: 'HOT_PATH_PUBLIC', machineKey: 'HOT_PATH_MACHINE' } } as const;
+        const before = hashCalls.count;
+        const first = resolveAuthCredentialsScopeKey(credentials);
+        const afterFirst = hashCalls.count;
+        for (let request = 0; request < 50; request += 1) expect(resolveAuthCredentialsScopeKey(credentials)).toBe(first);
+        expect(hashCalls.count).toBe(afterFirst);
+        expect(afterFirst - before).toBeGreaterThan(0);
+        // A different credentials object (rotated material) is fingerprinted afresh.
+        expect(resolveAuthCredentialsScopeKey({ ...credentials, token: 'HOT_PATH_TOKEN_ROTATED' })).not.toBe(first);
+        expect(hashCalls.count).toBeGreaterThan(afterFirst);
     });
 });

@@ -1,5 +1,5 @@
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
-import type { AuthProviderId } from '@happier-dev/protocol';
+import type { AuthProviderId } from '@happier-dev/protocol/auth/providers';
 
 export type ExternalAuthStartInput =
     | { mode: 'keyed'; publicKey: string }

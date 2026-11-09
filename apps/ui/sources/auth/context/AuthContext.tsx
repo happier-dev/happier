@@ -3,7 +3,7 @@ import { getCurrentAuth, setCurrentAuth } from './currentAuth';
 export { getCurrentAuth, setCurrentAuth } from './currentAuth';
 import { readCredentialAuthorityKind, type CredentialAuthorityKind } from './credentialAuthority';
 import { TokenStorage, replayHomeCredentialMutation, type AuthCredentials } from '@/auth/storage/tokenStorage';
-import { loadLocalSettings } from '@/sync/domains/state/persistence';
+import { onboardingAuthHistoryState } from '@/sync/domains/state/onboardingUiState';
 import { forgetPluginAccountAvailabilityArtifacts } from '@/sync/domains/plugins/availability/projection';
 import { getActiveServerAccountScope } from '@/sync/domains/scope/activeServerAccountScope';
 import { createServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
@@ -251,14 +251,9 @@ export function AuthProvider({ children, initialCredentials }: { children: React
         if (retirePendingArchives && archiveServerId) {
             getStorage().getState().clearSessionArchiveOperations(archiveServerId);
         }
-        // Mark this device as one where the user has authenticated at least once.
-        // We persist this through the store (not raw saveLocalSettings) so the
-        // in-memory Zustand `localSettings` slice — which survives logout because
-        // clearPersistence only wipes MMKV — also reflects the flag. The welcome
-        // screen reads it via useLocalSetting('hasCompletedAuthOnce') to swap to
-        // the warmer "Good to have you back" copy on subsequent visits.
-        if (!loadLocalSettings().hasCompletedAuthOnce) {
-            getStorage().getState().applyLocalSettings({ hasCompletedAuthOnce: true }, { source: 'ui' });
+        // Device history survives every scoped Home or Account logout.
+        if (onboardingAuthHistoryState.read('completed') !== true) {
+            onboardingAuthHistoryState.set('completed', true);
         }
         if (!isSameServerTarget(target, getActiveServerSnapshot())) {
             // The credential belongs to a Home that is no longer focused. It is

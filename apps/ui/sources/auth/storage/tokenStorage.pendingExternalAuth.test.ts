@@ -1,9 +1,10 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import {
     createPasswordCredentialMutationDigestV1,
-    createPasswordCredentialTargetDigestV1,
+    createPasswordCredentialTargetDigestV1} from '@happier-dev/protocol/auth/passwordMutationChallenge';
+import {
     encodePasswordCredentialFieldV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/auth/accountPasswordCredential';
 import { seedPersistedHomeProfilesForTests } from '@/dev/testkit/fixtures/persistedHomeProfiles';
 import type { ServerProfile } from '@/sync/domains/server/serverProfiles';
 import { installLocalStorageMock, type LocalStorageMockHandle } from './tokenStorage.web.testHelpers';

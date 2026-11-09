@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import tweetnacl from 'tweetnacl';
-import { openTerminalProvisioningV3Payload } from '@happier-dev/protocol';
+import { openTerminalProvisioningV3Payload } from '@happier-dev/protocol/crypto/terminalProvisioningV2';
 
 import { buildTerminalResponseV3 } from './terminalProvisioning';
 

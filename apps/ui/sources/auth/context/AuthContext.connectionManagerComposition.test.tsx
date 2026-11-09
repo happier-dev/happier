@@ -2,20 +2,20 @@ import React from 'react';
 import 'fake-indexeddb/auto';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
-import { AUTHORING_MEMORY_ROUTE_V1, AuthoringMemoryListResponseV1Schema } from '@happier-dev/protocol';
+import { AUTHORING_MEMORY_ROUTE_V1, AuthoringMemoryListResponseV1Schema } from '@happier-dev/protocol/account/authoringMemory';
 import { PROJECT_ACCOUNT_ROWS_ROUTE_V1, ProjectAccountRowListResponseV1Schema } from '@happier-dev/protocol/projects/projectAccountRowsV1';
 import { createAccountScopedCryptoMaterialSnapshotV1 } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import { convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1 } from '@happier-dev/protocol/account/encryptionKeyFingerprintV1';
 import { createMachineDataEncryptionKeyV1 } from '@happier-dev/protocol/machines/machineStoredContent';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 
-import { createDeferred, flushHookEffects, renderScreen } from '@/dev/testkit';
+import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
+import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
+import { renderScreen } from '@/dev/testkit/render/renderScreen';
 import { installTokenStorageWebPlatformMocks } from '@/auth/storage/tokenStorage.testHelpers';
 import { installLocalStorageMock, installWebLockManagerMock } from '@/auth/storage/tokenStorage.web.testHelpers';
-import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { createPlainProjectAccountRowListFixture } from '@/dev/testkit/fixtures/projectAccountRows';
-import { initializeTerminalRouteRuntimeForTests } from '@/__tests__/routes/(app)/terminal/terminalRouteTestHelpers';
 
 const nativeStorage = vi.hoisted(() => ({
     values: new Map<string, string>(),
@@ -27,6 +27,9 @@ const nativeStorageBoundary = {
     deleteItemAsync: async (key: string) => { nativeStorage.values.delete(key); },
 };
 installTokenStorageWebPlatformMocks({ secureStore: () => nativeStorageBoundary });
+// Install storage and transport boundaries before runtime-bearing helpers load their consumers.
+const { initializeAuthRouteRuntimeForTests } = await import('@/dev/testkit/harness/authRouteRuntimeHarness');
+const { createPlainAccountEncryptionCurrentnessFixture } = await import('@/dev/testkit/fixtures/accountEncryptionCurrentness');
 const { encodeBase64 } = await import('@/encryption/base64');
 const { createEncryptionFromAuthCredentials } = await import('@/auth/encryption/createEncryptionFromAuthCredentials');
 // Route replacement is an external navigation boundary; mounted Action and Auth lifetimes remain real.
@@ -34,7 +37,7 @@ vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).
 // Reset before the real manager starts: its generation state shares this runtime's lifetime.
 // Rewinding only serverProfiles between tests leaves the manager ahead of every new target.
 (await import('@/sync/domains/server/serverProfiles')).resetServerProfilesRuntimeForTests();
-await initializeTerminalRouteRuntimeForTests();
+await initializeAuthRouteRuntimeForTests();
 
 describe('AuthContext with the production connection manager', () => {
     let restoreStorage: (() => void) | undefined;
@@ -56,7 +59,7 @@ describe('AuthContext with the production connection manager', () => {
         vi.unstubAllGlobals();
     });
 
-    it('completes login and persists auth while the real connection owner awaits Sync bootstrap', async () => {
+    it('completes Plain login and applies its transport while Account bootstrap is pending', async () => {
         restoreStorage = installLocalStorageMock().restore;
         restoreLocks = installWebLockManagerMock().restore;
         vi.stubGlobal('window', { location: { origin: 'https://origin.example.test' } });
@@ -102,7 +105,9 @@ describe('AuthContext with the production connection manager', () => {
             });
             expect(await TokenStorage.getCredentialsForServerUrl(home.serverUrl, { serverId: home.id })).toEqual(credentials);
             expect(getCurrentAuth()).toMatchObject({ isAuthenticated: true, credentials });
-            expect(connection.isAppliedActiveServerRuntimeAvailable()).toBe(false);
+            // Plain credentials have no encryption material to resolve before the transport applies.
+            // Account content bootstrap can still be pending after that connection is available.
+            expect(connection.isAppliedActiveServerRuntimeAvailable()).toBe(true);
             mode.resolve(Response.json({ mode: 'plain', updatedAt: 1 }));
             await act(async () => {
                 await connection.switchConnectionToActiveServer();
@@ -324,6 +329,8 @@ describe('AuthContext with the production connection manager', () => {
             initialCredentials: homeACredentials, children: React.createElement(React.Fragment, null),
         }));
         try {
+            // Finish the mounted provider's initial refresh before delaying a new read.
+            await connection.switchConnectionToActiveServer();
             const auth = getCurrentAuth();
             if (!auth) throw new Error('Expected AuthContext to be mounted');
             holdHomeARead = true;
@@ -587,8 +594,9 @@ describe('AuthContext with the production connection manager', () => {
                     for (const [index, resource] of retainedResources.entries()) {
                         await waitForHomeGovernance(() => expect(presentations[index]?.config.type).toBe('confirm'));
                         const presentation = presentations[index];
-                        expect('message' in presentation.config && presentation.config.message)
-                            .toContain(JSON.stringify(resource, null, 2));
+                        const { describeManagedRemovalResource } = await import('@/components/settings/machines/managed/reviewManagedResourceRemoval');
+                        expect(presentation.config.type === 'confirm' && presentation.config.messageParagraphs)
+                            .toContainEqual({ text: describeManagedRemovalResource(resource) });
                         expect(await TokenStorage.getCredentialsForServerUrl(home.serverUrl, { serverId: home.id })).toEqual(credentials);
                         Modal.resolveConfirm(presentation.id, entrypoint !== 'delete-resource-cancel');
                         Modal.hide(presentation.id);

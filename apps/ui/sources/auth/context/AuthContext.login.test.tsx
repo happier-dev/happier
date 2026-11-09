@@ -2,16 +2,18 @@ import React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 import * as SecureStore from 'expo-secure-store';
-import { AUTHORING_MEMORY_ROUTE_V1, AuthoringMemoryListResponseV1Schema } from '@happier-dev/protocol';
+import { AUTHORING_MEMORY_ROUTE_V1, AuthoringMemoryListResponseV1Schema } from '@happier-dev/protocol/account/authoringMemory';
 import { PROJECT_ACCOUNT_ROWS_ROUTE_V1 } from '@happier-dev/protocol/projects/projectAccountRowsV1';
 import { createDeferred, renderScreen, standardCleanup } from '@/dev/testkit';
 import { initializeAuthRouteRuntimeForTests } from '@/dev/testkit/harness/authRouteRuntimeHarness';
-import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
+import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { createAccountEncryptionCurrentnessFixtureForCredentials, createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { createPlainProjectAccountRowListFixture } from '@/dev/testkit/fixtures/projectAccountRows';
 import tweetnacl from 'tweetnacl';
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { encodeBase64 } from '@/encryption/base64';
+import { onboardingAuthHistoryState, onboardingHistoryState } from '@/sync/domains/state/onboardingUiState';
 
 // Analytics is an external service boundary; the logout ordering contract observes it.
 vi.mock('@/track', () => ({
@@ -94,13 +96,16 @@ function buildTokenWithSub(sub: string): string {
 /** The Homes' network: Sync bootstrap answers for a Plain Account, push cleanup DELETEs recorded. */
 const network = {
     deletes: [] as string[],
+    requests: [] as string[],
     beforeDelete: null as ((url: URL) => Promise<void>) | null,
     beforeAccountMode: null as (() => Promise<void>) | null,
+    accountCurrentness: createPlainAccountEncryptionCurrentnessFixture(),
 };
 
 function installHomesNetwork() {
     setRuntimeFetch(async (input, init) => {
         const url = new URL(String(input));
+        network.requests.push(url.href);
         const method = String(init?.method ?? 'GET').toUpperCase();
         if (method === 'DELETE' && url.pathname.startsWith('/v1/push-tokens/')) {
             network.deletes.push(url.href);
@@ -109,10 +114,12 @@ function installHomesNetwork() {
         }
         if (url.pathname === '/health' || url.pathname === '/v1/auth/ping') return Response.json({ ok: true });
         if (url.pathname === '/v1/account/encryption') {
-            await network.beforeAccountMode?.();
-            return Response.json({ mode: 'plain', updatedAt: 1 });
+            return Response.json({ mode: network.accountCurrentness.mode, updatedAt: 1 });
         }
-        if (url.pathname === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
+        if (url.pathname === '/v1/account/encryption/currentness') {
+            await network.beforeAccountMode?.();
+            return Response.json(network.accountCurrentness);
+        }
         if (url.pathname === '/v1/machines') return Response.json([]);
         if (url.pathname === '/v2/account/settings') return Response.json({ content: null, version: 0 });
         if (url.pathname === AUTHORING_MEMORY_ROUTE_V1) return Response.json(AuthoringMemoryListResponseV1Schema.parse({ rows: [] }));
@@ -187,8 +194,10 @@ describe('AuthContext.login', () => {
     beforeEach(async () => {
         await connection.disconnectActiveServerConnection();
         network.deletes = [];
+        network.requests = [];
         network.beforeDelete = null;
         network.beforeAccountMode = null;
+        network.accountCurrentness = createPlainAccountEncryptionCurrentnessFixture();
         installHomesNetwork();
         setCurrentAuth(null);
         vi.mocked(trackLogout).mockClear();
@@ -201,6 +210,50 @@ describe('AuthContext.login', () => {
         setCurrentAuth(null);
         vi.unstubAllGlobals();
         desktopEvents.clear();
+    });
+
+    it('keeps non-selected Home requests at zero across explicit web bootstrap and sign-in with a historical descriptor endpoint', async () => {
+        const { entry: selected, retained } = await prepareHomes('entry', 'retained');
+        await focusHome(retained);
+        const historicalUrl = 'https://historical-entry.example.test';
+        await profiles.adoptHomeProfile({
+            descriptor: { v: 1, homeServerIdentityId: selected.serverId,
+                canonicalServerUrl: selected.serverUrl, revision: 1,
+                endpoints: [{ kind: 'https', url: historicalUrl }] },
+            source: 'manual',
+        });
+        const location = { href: `https://app.example.test/?server=${encodeURIComponent(selected.serverUrl)}` };
+        vi.stubGlobal('document', {});
+        vi.stubGlobal('window', { location, history: { state: null,
+            replaceState: (_state: unknown, _title: string, relativeUrl: string) => {
+                location.href = new URL(relativeUrl, location.href).href;
+            } } });
+        const { bootstrapActiveServerFromWebLocation, commitWebServerUrlOverride } = await import('@/sync/domains/server/url/bootstrapActiveServerFromWebLocation');
+        await bootstrapActiveServerFromWebLocation({ scope: 'tab' });
+        const sockets: string[] = [];
+        installDisconnectedServerSocketBoundary((_socket, url) => {
+            if (typeof url === 'string') sockets.push(new URL(url).origin);
+        });
+        const screen = await mountAuth(null);
+        try {
+            await act(async () => {
+                await commitWebServerUrlOverride({ action: { kind: 'refresh_auth', serverUrl: selected.serverUrl },
+                    switchServer: async () => { throw new Error('already bootstrapped'); },
+                    refreshAuth: () => getCurrentAuth()!.refreshFromActiveServer() });
+                await expect(getCurrentAuth()!.loginWithCredentials({ token: buildTokenWithSub('entry-account') }))
+                    .resolves.toEqual({ kind: 'completed' });
+            });
+            expect(network.requests.length).toBeGreaterThan(0);
+            expect(network.requests.filter((url) => new URL(url).origin !== selected.serverUrl)).toEqual([]);
+            expect(sockets.filter((origin) => origin !== selected.serverUrl)).toEqual([]);
+            const { resolveWizardAuthReturnToRoute } = await import('@/components/onboarding/state/wizardResume');
+            expect(resolveWizardAuthReturnToRoute()).toBe(`/?server=${encodeURIComponent(selected.serverUrl)}`);
+            expect(profiles.getActiveServerSnapshot()).toMatchObject({ serverId: selected.serverId,
+                serverUrl: selected.serverUrl, runtimeOrigin: selected.serverUrl });
+        } finally {
+            installDisconnectedServerSocketBoundary();
+            await screen.unmount();
+        }
     });
 
     it('closes outgoing Account windows after logout guards and before removing only the addressed Home credential', async () => {
@@ -374,7 +427,7 @@ describe('AuthContext.login', () => {
         const { home } = await prepareHomes('home');
         await focusHome(home);
         const previousState = storage.getState();
-        storage.getState().applyLocalSettings({ hasCompletedAuthOnce: false }, { source: 'test' });
+        onboardingAuthHistoryState.set('completed', false);
         storage.setState(state => ({ settings: settingsParse({ ...state.settings,
             actionsSettingsV1: { v: 1, actions: { 'settings.set': { disabledSurfaces: ['ui'] } } } }) }));
         // Hold the login-triggered rebind inside its Sync bootstrap.
@@ -385,17 +438,22 @@ describe('AuthContext.login', () => {
             await releaseRebind.promise;
         };
         const credentials = { token: buildTokenWithSub('server-test'), secret: LEGACY_SECRET };
+        network.accountCurrentness = createAccountEncryptionCurrentnessFixtureForCredentials(credentials);
         const screen = await mountAuth(null);
         let refresh: Promise<void> | undefined;
         try {
             const auth = getCurrentAuth()!;
+            const device = (await import('@/sync/domains/state/persistenceStorage')).getPersistenceStorage();
+            const localWrites = vi.spyOn(device, 'set');
             await act(async () => {
                 await expect(auth.login(credentials.token, credentials.secret)).resolves.toEqual({ kind: 'completed' });
                 await rebindStarted.promise;
             });
             expect(getCurrentAuth()).toMatchObject({ isAuthenticated: true, credentials });
             // The device remembers a completed sign-in even when the UI settings Action surface is disabled.
-            expect(storage.getState().localSettings.hasCompletedAuthOnce).toBe(true);
+            expect(device.getString('ui-state:onboarding-auth-history-v1:completed')).toBe('true');
+            expect(localWrites.mock.calls.filter(([key]) => key === 'local-settings')).toHaveLength(0);
+            localWrites.mockRestore();
 
             // A refresh issued while the rebind is in flight settles with it and keeps the session.
             refresh = auth.refreshFromActiveServer();
@@ -540,10 +598,11 @@ describe('AuthContext.login', () => {
 
     it('keeps the mobile brand hero dismissed after logout', async () => {
         const seenAt = 1_789_222_000_000;
-        const { localSettingsDefaults } = await import('@/sync/domains/settings/localSettings');
-        const { clearPersistence, loadLocalSettings, saveLocalSettings } = await import('@/sync/domains/state/persistence');
+        const { clearPersistence } = await import('@/sync/domains/state/persistence');
         await clearPersistence();
-        saveLocalSettings({ ...localSettingsDefaults, brandHeroSeenAt: seenAt });
+        onboardingHistoryState.set('brandHeroSeenAt', seenAt);
+        onboardingHistoryState.set('homeWelcomeSeenAt', seenAt);
+        onboardingAuthHistoryState.set('completed', true);
         const { home } = await prepareHomes('home');
         await focusHome(home);
         const credentials = { token: buildTokenWithSub('server-test'), secret: LEGACY_SECRET };
@@ -555,7 +614,9 @@ describe('AuthContext.login', () => {
                 await getCurrentAuth()!.logout();
             });
 
-            expect(loadLocalSettings().brandHeroSeenAt).toBe(seenAt);
+            expect(onboardingHistoryState.read('brandHeroSeenAt')).toBe(seenAt);
+            expect(onboardingHistoryState.read('homeWelcomeSeenAt')).toBe(seenAt);
+            expect(onboardingAuthHistoryState.read('completed')).toBe(true);
             expect(getCurrentAuth()).toMatchObject({ isAuthenticated: false, credentials: null });
         } finally {
             await screen.unmount();

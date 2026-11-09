@@ -1,4 +1,4 @@
-import type { HomeConnectionDescriptorV1 } from '@happier-dev/protocol';
+import type { HomeConnectionDescriptorV1 } from '@happier-dev/protocol/auth/accountDirectory';
 
 export type HomeEnrollmentPresentationPhase =
     | 'generating'
@@ -39,7 +39,11 @@ export type HomeEnrollmentPresentationModel = Readonly<{
         | 'errors.operationFailed'
         | 'terminal.invalidConnectionLinkDescription';
     contextualFacts: 'none' | 'target' | 'target_and_expiry' | 'target_and_requester';
-    recoveryAction: 'none' | 'automatic_retry' | 'retry' | 'create_new_qr';
+    /**
+     * The one way forward this state offers. `retry` returns the scanner to the same code;
+     * an expired code instead needs a fresh one, scanned (`scan_new_code`) or pasted (`enter_new_link`).
+     */
+    recoveryAction: 'none' | 'automatic_retry' | 'retry' | 'create_new_qr' | 'scan_new_code' | 'enter_new_link';
     liveRegion: 'none' | 'polite' | 'assertive';
     activity: boolean;
 }>;
@@ -58,6 +62,10 @@ type HomeEnrollmentPresentationSource =
         kind: 'scanner';
         phase: 'idle' | 'requesting' | 'securing';
         direction?: 'trusted_home_displays' | 'requester_displays';
+        /** How the current code arrived: from the camera, or as a pasted or opened link. */
+        inviteOrigin?: 'scanned' | 'link';
+        /** Whether the host can take a pasted link (the only way to replace a link without a camera). */
+        linkEntryAvailable?: boolean;
         result?:
             | 'succeeded'
             | 'partial_commit'
@@ -103,7 +111,7 @@ const TERMINAL_SCANNER_PRESENTATIONS: Readonly<Record<
         phase: 'expired',
         primaryTranslationKey: 'connect.pairingQrExpired',
         contextualFacts: 'target',
-        recoveryAction: 'retry',
+        recoveryAction: 'scan_new_code',
         liveRegion: 'assertive',
         activity: false,
     },
@@ -175,6 +183,16 @@ const APPROVER_SCANNER_TRANSLATION_KEYS: Readonly<Partial<Record<
 };
 
 /**
+ * The same expired code can never succeed, so the way forward is a new one, by the route the old
+ * one came in: a pasted link is replaced by pasting a new link where the host takes one.
+ */
+function resolveExpiredScannerRecovery(
+    source: Extract<HomeEnrollmentPresentationSource, { kind: 'scanner' }>,
+): 'scan_new_code' | 'enter_new_link' {
+    return source.inviteOrigin === 'link' && source.linkEntryAvailable === true ? 'enter_new_link' : 'scan_new_code';
+}
+
+/**
  * Pure semantic projection shared by the three QR surfaces. It deliberately
  * contains no transport, protocol, secret, or workflow state ownership.
  */
@@ -187,9 +205,16 @@ export function resolveHomeEnrollmentPresentation(
             if (approverTranslationKey) {
                 return {
                     ...TERMINAL_SCANNER_PRESENTATIONS[source.result],
+                    ...(source.result === 'expired' ? { recoveryAction: resolveExpiredScannerRecovery(source) } : {}),
                     primaryTranslationKey: approverTranslationKey,
                 };
             }
+        }
+        if (source.result === 'expired') {
+            return {
+                ...TERMINAL_SCANNER_PRESENTATIONS.expired,
+                recoveryAction: resolveExpiredScannerRecovery(source),
+            };
         }
         if (source.result) return TERMINAL_SCANNER_PRESENTATIONS[source.result];
         if (source.phase === 'idle') {
@@ -250,8 +275,10 @@ export function resolveHomeEnrollmentPresentation(
         }
         if (source.phase === 'invalid') {
             return {
+                // The Home refuses this sign-in method, so a new QR meets the same refusal; the
+                // other ways in (scan, link, recovery key) stay as the surface's alternatives.
                 phase: 'invalid_request', primaryTranslationKey: 'connect.scanComputerQrUnavailableBody', contextualFacts: 'target',
-                recoveryAction: 'create_new_qr', liveRegion: 'assertive', activity: false,
+                recoveryAction: 'none', liveRegion: 'assertive', activity: false,
             };
         }
         if (source.phase === 'update_required') {

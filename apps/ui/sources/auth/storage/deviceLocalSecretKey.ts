@@ -1,3 +1,4 @@
+import { Platform } from 'react-native';
 import { decodeBase64, encodeBase64 } from '@/encryption/base64';
 import { digest } from '@/platform/digest';
 import { getRandomBytes } from '@/platform/cryptoRandom';
@@ -49,7 +50,9 @@ function parseStoredDeviceLocalSecretKey(raw: string | null): StoredDeviceLocalS
 async function resolveStorageKey(scope: ServerAccountScope): Promise<string> {
     const identity = new TextEncoder().encode(`${scope.serverId}\u0000${scope.accountId}`);
     const scopeDigest = await digest('SHA-256', identity);
-    return `${DEVICE_LOCAL_SETTINGS_SECRET_KEY_PREFIX}:${encodeBase64(scopeDigest, 'base64url')}`;
+    const key = `${DEVICE_LOCAL_SETTINGS_SECRET_KEY_PREFIX}:${encodeBase64(scopeDigest, 'base64url')}`;
+    // SecureStore rejects colons before reaching the OS; web/desktop already retain this key.
+    return Platform.OS === 'web' ? key : key.replaceAll(':', '.');
 }
 
 async function resolveForStorageKey(storageKey: string): Promise<Uint8Array | null> {

@@ -52,17 +52,46 @@ describe('resolveHomeEnrollmentPresentation', () => {
         }
     });
 
-    it('offers a new QR only for an expired or invalid displayed code and no retry after a partial commit', () => {
+    it('offers a new QR only where one can work and no retry after a partial commit', () => {
         for (const source of DISPLAY_SOURCES) {
             const presentation = resolveHomeEnrollmentPresentation(source);
+            // A requester whose Home refuses this sign-in method gets the same refusal for a new QR.
+            const methodRefused = source.kind === 'requester_display' && source.phase === 'invalid';
             expect({ source, createNewQr: presentation.recoveryAction === 'create_new_qr' }).toEqual({
                 source,
-                createNewQr: presentation.phase === 'expired' || presentation.phase === 'invalid_request',
+                createNewQr: !methodRefused
+                    && (presentation.phase === 'expired' || presentation.phase === 'invalid_request'),
             });
             if (presentation.phase === 'partial_commit') expect(presentation.recoveryAction).toBe('none');
         }
         expect(resolveHomeEnrollmentPresentation({ kind: 'requester_display', phase: 'retryable_error', partialCommit: false }))
             .toMatchObject({ phase: 'retryable_error', recoveryAction: 'retry' });
+    });
+
+    it('leaves a requester refused by its Home with only the other ways in', () => {
+        expect(resolveHomeEnrollmentPresentation({ kind: 'requester_display', phase: 'invalid' })).toMatchObject({
+            phase: 'invalid_request',
+            primaryTranslationKey: 'connect.scanComputerQrUnavailableBody',
+            recoveryAction: 'none',
+        });
+    });
+
+    it.each([
+        ['scanned', true, 'scan_new_code'],
+        ['scanned', false, 'scan_new_code'],
+        ['link', true, 'enter_new_link'],
+        ['link', false, 'scan_new_code'],
+    ] as const)('sends an expired %s code (link entry available: %s) to a new one, not back to the same one', (inviteOrigin, linkEntryAvailable, recoveryAction) => {
+        for (const direction of ['trusted_home_displays', 'requester_displays'] as const) {
+            expect(resolveHomeEnrollmentPresentation({
+                kind: 'scanner',
+                phase: 'idle',
+                direction,
+                result: 'expired',
+                inviteOrigin,
+                linkEntryAvailable,
+            })).toMatchObject({ phase: 'expired', recoveryAction });
+        }
     });
 
     it('keeps a terminal success authoritative over a later transient scanner phase', () => {
@@ -98,7 +127,7 @@ describe('resolveHomeEnrollmentPresentation', () => {
     it.each([
         ['retryable_error', 'connect.requesterDeviceRetryBody', 'retry'],
         ['wrong_target', 'connect.requesterDeviceWrongHomeBody', 'retry'],
-        ['expired', 'connect.requesterDeviceQrExpiredBody', 'retry'],
+        ['expired', 'connect.requesterDeviceQrExpiredBody', 'scan_new_code'],
         ['invalid_request', 'connect.requesterDeviceRequestInvalidBody', 'retry'],
     ] as const)('describes reverse-direction %s from the approving Home\'s perspective', (result, primaryTranslationKey, recoveryAction) => {
         const joinerPresentation = resolveHomeEnrollmentPresentation({

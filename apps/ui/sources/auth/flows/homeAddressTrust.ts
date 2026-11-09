@@ -1,4 +1,4 @@
-import type { KeyChallengeV2Audience } from '@happier-dev/protocol';
+import type { KeyChallengeV2Audience } from '@happier-dev/protocol/auth/keyChallenge';
 
 import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { Modal } from '@/modal';

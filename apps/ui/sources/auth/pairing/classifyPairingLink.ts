@@ -1,4 +1,4 @@
-import type { HomeQrInviteV2 } from '@happier-dev/protocol';
+import type { HomeQrInviteV2 } from '@happier-dev/protocol/crypto/qrProvisioningV2';
 
 import { parseAccountConnectDeepLink } from '@/auth/pairing/accountConnectUrl';
 import { classifyLegacyPairingDeepLink, parseHomeQrInviteDeepLink } from '@/auth/pairing/pairingUrl';

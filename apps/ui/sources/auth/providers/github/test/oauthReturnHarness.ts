@@ -7,7 +7,7 @@ import type {
     PendingExternalAuth,
     PendingExternalConnect,
 } from '@/auth/storage/tokenStorage';
-import type { TeamInvitationPostAuthContinuationV1 } from '@happier-dev/protocol';
+import type { TeamInvitationPostAuthContinuationV1 } from '@happier-dev/protocol/teams/invitation';
 import type {
     AuthCredentialLifecycleResult,
 } from '@/auth/context/AuthContext';
@@ -323,7 +323,7 @@ vi.mock('@/auth/storage/tokenStorage', async () => {
 });
 
 vi.mock('@/encryption/libsodium.lib', async () => {
-    const { deriveBoxPublicKeyFromSeed } = await vi.importActual<typeof import('@happier-dev/protocol')>('@happier-dev/protocol');
+    const { deriveBoxPublicKeyFromSeed} = await vi.importActual<typeof import('@happier-dev/protocol/crypto/boxBundle')>('@happier-dev/protocol/crypto/boxBundle');
     const tweetnacl = (
         await vi.importActual<{ default: typeof import('tweetnacl') }>('tweetnacl')
     ).default;

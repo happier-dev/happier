@@ -38,7 +38,7 @@ import {
     type HomeAuthenticationAction,
 } from '@/auth/capabilities/authMethodCapabilities';
 import type { HomeCarrier } from '@/sync/runtime/homeCarrier';
-import { buildHomeConnectionDescriptorForProfile, resolveServerProfileForPortableIdentity } from '@/sync/domains/server/serverProfiles';
+import { buildHomeConnectionDescriptorForProfile, getSavedHomeConnectionAddress, resolveServerProfileForPortableIdentity } from '@/sync/domains/server/serverProfiles';
 import { resolveHomeEnrollmentTransport } from '@/auth/enrollment/homeEnrollmentTransport';
 import {
     selectAccountServiceAuthenticationMethod,
@@ -417,7 +417,8 @@ export async function acquireAccountServiceAuthTransport(target: Readonly<{ serv
     const profile = resolveServerProfileForPortableIdentity(target.serverIdentityId);
     const descriptor = profile.kind === 'resolved' ? buildHomeConnectionDescriptorForProfile(profile.profile) : null;
     if (!descriptor || normalizeAccountDirectoryEndpoint(descriptor.canonicalServerUrl) !== normalizeAccountDirectoryEndpoint(target.canonicalServerUrl)) {
-        return { transport: {}, close: async () => {} };
+        const runtimeOrigin = getSavedHomeConnectionAddress(target);
+        return { transport: runtimeOrigin !== target.canonicalServerUrl ? { runtimeOrigin } : {}, close: async () => {} };
     }
     const resolved = await resolveHomeEnrollmentTransport(descriptor);
     if (!resolved.ok) throw new HappyError('Account Service transport unavailable', resolved.reason === 'iroh_transport_unavailable', {

@@ -7,7 +7,7 @@ import tweetnacl from 'tweetnacl';
 import {
     deriveBoxPublicKeyFromSeed,
     deriveBoxSecretKeyFromSeed,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/crypto/boxBundle';
 
 describe('native libsodium compatibility adapter', () => {
     it('does not import the JSI installer package at module evaluation time', () => {

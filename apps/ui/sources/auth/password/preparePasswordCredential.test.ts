@@ -2,7 +2,7 @@ import {
     PASSWORD_ENVELOPE_WRITER_PROFILE_V1,
     PasswordWrappedRecoverySecretV1Schema,
     encodePasswordCredentialFieldV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/auth/accountPasswordCredential';
 import { expect, it, vi } from 'vitest';
 
 import { deriveAccountSigningPublicKey } from '@/auth/flows/challenge';

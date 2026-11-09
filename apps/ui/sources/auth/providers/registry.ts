@@ -1,7 +1,7 @@
 import { authProviderModules } from '@/auth/providers/providerModules';
 import type { AuthProvider } from '@/auth/providers/types';
 import { createExternalOAuthProvider } from '@/auth/providers/externalOAuthProvider';
-import type { AuthProviderId } from '@happier-dev/protocol';
+import type { AuthProviderId } from '@happier-dev/protocol/auth/providers';
 
 export type { AuthProvider } from '@/auth/providers/types';
 

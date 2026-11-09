@@ -95,10 +95,20 @@ export function isPublicRouteForUnauthenticated(segments: string[]): boolean {
   // Only the exact public-share bearer landing is unauthenticated. Publication
   // does not make sibling or future nested application routes public.
   if (first === 'share' && normalized.length === 2) return true;
+  // This landing captures the fragment before sign-in; joining still requires
+  // the authenticated Account Action owner and the person's Open gesture.
+  if (first === 'share' && normalized[1] === 'artifact' && normalized.length === 3) return true;
+  // A people share's landing explains that signing in comes first; admission itself is the
+  // authenticated Home's decision, made only after sign-in.
+  if (first === 'preview-link' && normalized.length === 2) return true;
 
   // Desktop activity overlay must stay reachable so the separate Tauri overlay window
   // can bootstrap its own public utility surface before auth state settles.
   if (first === 'desktop' && normalized[1] === 'activity-overlay') return true;
+
+  // The Capture window and the selection layer are thin aux webviews with no Sync: every Account
+  // operation they offer runs in the main window, so they never wait on this webview's auth state.
+  if (first === 'desktop' && (normalized[1] === 'capture' || normalized[1] === 'capture-selection') && normalized.length === 2) return true;
 
   // The stage performance route must be reachable without credentials because its demo seed
   // guard intentionally refuses to run when real credentials are present. Keep it closed in
@@ -157,6 +167,26 @@ export function isPublicRouteForUnauthenticated(segments: string[]): boolean {
     isDevRouteEnabled() &&
     first === 'dev' &&
     normalized[1] === 'prompts' &&
+    normalized.length === 2
+  )
+    return true;
+
+  // The screen capture specimen draws the selection layer and Capture window over a stand-in desktop
+  // with fixture pictures and inert delivery, no account or machine data. Exact dev/debug route only.
+  if (
+    isDevRouteEnabled() &&
+    first === 'dev' &&
+    normalized[1] === 'screen-capture' &&
+    normalized.length === 2
+  )
+    return true;
+
+  // The media specimen opens the real Media stage on bundled sample pictures with inert edits,
+  // no account or machine data. Exact dev/debug route only.
+  if (
+    isDevRouteEnabled() &&
+    first === 'dev' &&
+    normalized[1] === 'media' &&
     normalized.length === 2
   )
     return true;

@@ -63,6 +63,11 @@ describe('isPublicRouteForUnauthenticated', () => {
         { name: 'bare share route without a bearer stays private', segments: ['share'], expected: false },
         { name: 'nested share route', segments: ['(app)', 'share', 'abc123'], expected: true },
         { name: 'deeper share route stays private', segments: ['share', 'abc123', 'admin'], expected: false },
+        { name: 'signed-in Artifact link landing before authentication', segments: ['share', 'artifact', 'lookup'], expected: true },
+        { name: 'grouped signed-in Artifact link landing', segments: ['(app)', 'share', 'artifact', '[lookupId]'], expected: true },
+        { name: 'signed-in Artifact link siblings stay private', segments: ['share', 'artifact', 'lookup', 'admin'], expected: false },
+        { name: 'people-share Service preview landing before authentication', segments: ['(app)', 'preview-link', '[exposureId]'], expected: true },
+        { name: 'people-share landing siblings stay private', segments: ['preview-link', 'exposure', 'admin'], expected: false },
         { name: 'bare join route without a bearer stays private', segments: ['join'], expected: false },
         { name: 'other team route stays private', segments: ['(app)', 'teams', '[teamId]', 'sessions'], expected: false },
         { name: 'team root stays private', segments: ['(app)', 'teams'], expected: false },
@@ -86,6 +91,8 @@ describe('isPublicRouteForUnauthenticated', () => {
         { name: 'unrelated auth route stays private', segments: ['auth', 'internal'], expected: false },
         { name: 'ordinary Team routes stay private', segments: ['teams', 'team-1', 'sessions'], expected: false },
         { name: 'desktop activity overlay route', segments: ['desktop', 'activity-overlay'], expected: true },
+        { name: 'desktop Capture window route', segments: ['(app)', 'desktop', 'capture'], expected: true },
+        { name: 'desktop capture selection route', segments: ['(app)', 'desktop', 'capture-selection'], expected: true },
         { name: 'grouped desktop activity overlay route', segments: ['(app)', 'desktop', 'activity-overlay'], expected: true },
         { name: 'other dev route stays private', segments: ['(app)', 'dev', 'other'], expected: false },
         { name: 'private settings route', segments: ['settings'], expected: false },
@@ -117,6 +124,8 @@ describe('isPublicRouteForUnauthenticated', () => {
                 expect(isPublicRouteForUnauthenticated(['(app)', 'dev', 'soft-surfaces'])).toBe(true);
                 expect(isPublicRouteForUnauthenticated(['dev', 'soft-surfaces'])).toBe(true);
                 expect(isPublicRouteForUnauthenticated(['(app)', 'dev', 'soft-surfaces', 'other'])).toBe(false);
+                expect(isPublicRouteForUnauthenticated(['(app)', 'dev', 'media'])).toBe(true);
+                expect(isPublicRouteForUnauthenticated(['(app)', 'dev', 'media', 'other'])).toBe(false);
                 // Only the exact fixture specimens: other dev screens read the signed-in account.
                 expect(isPublicRouteForUnauthenticated(['(app)', 'dev', 'logs'])).toBe(false);
             });
@@ -130,6 +139,7 @@ describe('isPublicRouteForUnauthenticated', () => {
                 expect(isPublicRouteForUnauthenticated(['(app)', 'dev', 'prompts'])).toBe(false);
                 expect(isPublicRouteForUnauthenticated(['(app)', 'dev', 'scripts'])).toBe(false);
                 expect(isPublicRouteForUnauthenticated(['(app)', 'dev', 'soft-surfaces'])).toBe(false);
+                expect(isPublicRouteForUnauthenticated(['(app)', 'dev', 'media'])).toBe(false);
                 expect(isPublicRouteForUnauthenticated(['(app)', 'dev', 'stage-dperf'])).toBe(false);
                 expect(isPublicRouteForUnauthenticated(['(app)', 'dev', 'terminal-qa'])).toBe(false);
             });

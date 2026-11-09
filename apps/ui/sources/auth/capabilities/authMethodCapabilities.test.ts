@@ -152,7 +152,6 @@ describe('projectAuthenticationMethodCapabilities authentication actions', () =>
         // provisioning provider nor a keyless login entry point.
         expect(result.keyedProvisionProviderIds).toEqual([]);
         expect(result.keylessLoginMethodIds).toEqual([]);
-        expect(result.anonymousProvisionAvailable).toBe(false);
     });
 
     it('preserves every structured advertised method without consulting the legacy OAuth map', () => {

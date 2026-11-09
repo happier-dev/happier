@@ -4,7 +4,7 @@ import {
     encodePasswordCredentialFieldV1,
     type PasswordEnvelopeKdfV1,
     type PasswordWrappedRecoverySecretV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/auth/accountPasswordCredential';
 import { deriveAccountSigningPublicKey } from '@/auth/flows/challenge';
 import { sealAes256GcmBytes } from '@/encryption/aes256GcmBytes';
 import { deriveKey } from '@/encryption/deriveKey';

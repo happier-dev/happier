@@ -1,5 +1,5 @@
 import { Platform } from 'react-native';
-import type { HomeConnectionDescriptorV1 } from '@happier-dev/protocol';
+import type { HomeConnectionDescriptorV1 } from '@happier-dev/protocol/auth/accountDirectory';
 
 import { adoptHomeProfile } from '@/sync/domains/server/serverProfiles';
 import { setActiveServerAndSwitch } from '@/sync/domains/server/activeServerSwitch';

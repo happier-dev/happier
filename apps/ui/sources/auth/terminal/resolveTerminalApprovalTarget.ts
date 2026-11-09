@@ -4,7 +4,7 @@ import {
     buildHomeConnectionDescriptorForProfile, getActiveServerUrl, listServerProfiles,
     resolveServerProfileForPortableIdentity, type ServerProfile,
 } from '@/sync/domains/server/serverProfiles';
-import type { HomeConnectionDescriptorV1 } from '@happier-dev/protocol';
+import type { HomeConnectionDescriptorV1 } from '@happier-dev/protocol/auth/accountDirectory';
 import { getActiveServerHomeCarrier, getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { canonicalizeServerUrl, createServerUrlComparableKey } from '@/sync/domains/server/url/serverUrlCanonical';
 import { resolveEffectiveServerUrlOverride } from '@/sync/domains/server/url/serverUrlOverridePolicy';

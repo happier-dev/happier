@@ -3,7 +3,7 @@ import tweetnacl from 'tweetnacl';
 import {
     sealTerminalProvisioningV3Payload,
     sealTerminalProvisioningV3TokenOnlyPayload,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/crypto/terminalProvisioningV2';
 
 import { encodeBase64 } from '@/encryption/base64';
 import { encryptBox } from '@/encryption/libsodium';

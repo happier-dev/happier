@@ -1,4 +1,5 @@
-import type { AuthEntryActionV1, AuthEntryProjectionV1, FeaturesResponse } from '@happier-dev/protocol';
+import type { AuthEntryActionV1, AuthEntryProjectionV1} from '@happier-dev/protocol/auth/entry';
+import type { FeaturesResponse } from '@happier-dev/protocol/features/payload/featuresResponseSchema';
 import {
     projectAuthenticationMethodCatalog,
     projectAuthenticationMethodCatalogFromAuthEntry,
@@ -117,8 +118,6 @@ export type AuthenticationMethodCapabilities = Readonly<{
     usesStructuredMethods: boolean;
     legacyEnabledSignupMethodIds: readonly string[];
     legacyEnabledLoginMethodIds: readonly string[];
-    anonymousProvisionAvailable: boolean;
-    keyChallengeV2Available: boolean;
     keyedProvisionProviderIds: readonly string[];
     configuredKeyedProvisionProviderIds: readonly string[];
     keylessLoginMethodIds: readonly string[];
@@ -176,10 +175,6 @@ export function projectAuthEntryMethodCapabilities(
         usesStructuredMethods: true,
         legacyEnabledSignupMethodIds: [],
         legacyEnabledLoginMethodIds: [],
-        anonymousProvisionAvailable: authenticationActions.some(({ method, action }) => (
-            method.id === 'key_challenge' && action.id === 'provision'
-        )),
-        keyChallengeV2Available: false,
         keyedProvisionProviderIds,
         configuredKeyedProvisionProviderIds: keyedProvisionProviderIds,
         keylessLoginMethodIds,
@@ -245,11 +240,6 @@ export function projectAuthenticationMethodCapabilities(
         usesStructuredMethods,
         legacyEnabledSignupMethodIds,
         legacyEnabledLoginMethodIds,
-        anonymousProvisionAvailable: usesStructuredMethods
-            ? catalog.methods.some((method) => method.id === 'key_challenge'
-                && method.enabledActions.some((action) => action.id === 'provision' && (action.mode === 'keyed' || action.mode === 'either')))
-            : legacyEnabledSignupMethodIds.includes('anonymous'),
-        keyChallengeV2Available: features?.capabilities?.auth?.keyChallenge?.v2 === true,
         keyedProvisionProviderIds,
         configuredKeyedProvisionProviderIds,
         keylessLoginMethodIds,
