@@ -19,6 +19,7 @@ import { configureConnectedServerSocketBoundary, installDisconnectedServerSocket
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import { ACTION_OPERATION_RPC_METHODS_V2, type ActionOperationSnapshotV1 } from '@happier-dev/protocol/actions/operations/v1';
 import { readDeploymentTemplateCreationOperationRequestIdV1 } from '@happier-dev/protocol/deployments/deploymentTemplateInstantiationV1';
+import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpc/errors';
 
 installPromptRegistriesCommonModuleMocks({ storage: original => original() });
 vi.mock('socket.io-client', async (importOriginal) =>
@@ -200,7 +201,9 @@ it.each(['unavailable', 'wrong-environment'] as const)('retains an acknowledged 
     } finally { await hook.unmount(); await fixture.dispose(); }
 });
 
-it.each(['failed', 'succeeded'] as const)('recovers the created Environment from its %s retained install receipt after losing the HTTP reply without replaying create', async state => {
+it.each((['failed', 'succeeded'] as const).flatMap(state =>
+    (['immediate', 'publication', 'reconnect'] as const).map(recovery => ({ state, recovery }))))(
+    'recovers the created Environment from its $state install after losing the HTTP reply and $recovery without replaying create', async ({ state, recovery }) => {
     const fixture = await createFixture(true);
     fixture.createMode.value = 'replyLost';
     const { TokenStorage } = await import('@/auth/storage/tokenStorage');
@@ -208,8 +211,13 @@ it.each(['failed', 'succeeded'] as const)('recovers the created Environment from
     if (!credentials) throw new Error('Expected Store Home credentials');
     const partial = { ...fixture.partial, errorCode: 'action_forbidden' };
     const receiptReads: string[] = [];
+    const { actionOperationStore } = await import('@/sync/domains/actionOperations/actionOperationStore');
+    let publishedOperation: ActionOperationSnapshotV1 | undefined;
+    let reconnect = () => { throw new Error('Expected connected install receipt socket'); };
+    let getAttempts = 0;
     const socket = installDisconnectedServerSocketBoundary(socket => {
         configureConnectedServerSocketBoundary(socket);
+        reconnect = () => { socket.disconnect(); socket.connect(); };
         socket.emitWithAck = vi.fn<typeof socket.emitWithAck>(async (event, payload) => {
             if (event !== SOCKET_RPC_EVENTS.CALL || !payload || typeof payload !== 'object'
                 || !('method' in payload) || !('params' in payload)) throw new Error('Unexpected install receipt request');
@@ -224,13 +232,17 @@ it.each(['failed', 'succeeded'] as const)('recovers the created Environment from
                     ? { error: { errorCode: partial.errorCode, error: partial.errorCode, effectAttempted: true, details: partial } }
                     : { result: { kind: 'applied', environmentId: partial.environmentId, revision: partial.revision,
                         targetLinkId: partial.targetLinkId, definition: partial.definition, savedSecrets: [] } }) };
+            publishedOperation = operation;
             receiptReads.push(String(payload.method));
             if (payload.method === `controller:${ACTION_OPERATION_RPC_METHODS_V2.list}`) {
                 expect(payload.params).toMatchObject({ requestIdentity: { actionId: operation.actionId, requestId } });
-                return { ok: true, result: { items: [operation], nextCursor: null } };
+                return { ok: true, result: { items: recovery === 'publication' ? [] : [operation], nextCursor: null } };
             }
             expect(payload.method).toBe(`controller:${ACTION_OPERATION_RPC_METHODS_V2.get}`);
             expect(payload.params).toMatchObject({ operationId: operation.operationId, waitForTerminal: true });
+            if (recovery === 'reconnect' && ++getAttempts === 1) {
+                return { ok: true, result: { error: 'Connection unavailable', errorCode: RPC_ERROR_CODES.TRANSPORT_UNAVAILABLE } };
+            }
             return { ok: true, result: { kind: 'found', operation } };
         });
     }, { serverUrl: 'https://store-app-listing-' + fixtureSequence + '.test', token: credentials.token });
@@ -244,12 +256,22 @@ it.each(['failed', 'succeeded'] as const)('recovers the created Environment from
             newProject: { requestKey: 'store-new-project', name: 'New project', owner: { kind: 'account', accountId: 'owner' } } });
         expect(prepared).toMatchObject({ kind: 'prepared' });
         if (!('kind' in prepared) || prepared.kind !== 'prepared') throw new Error('Expected prepared new Project');
-        const outcome = await ready.create(prepared, { name: 'Kuma', protection: 'nonProduction', deployerMode: 'managers' });
+        const pending = ready.create(prepared, { name: 'Kuma', protection: 'nonProduction', deployerMode: 'managers' });
+        if (recovery !== 'immediate') {
+            await waitForHomeGovernance(() => expect(receiptReads).toHaveLength(recovery === 'publication' ? 1 : 2));
+            if (recovery === 'publication') {
+                if (!publishedOperation) throw new Error('Expected issued install operation');
+                actionOperationStore.mergeSnapshots({ serverId: fixture.home.id, snapshots: [publishedOperation] });
+            } else reconnect();
+        }
+        const outcome = await pending;
         expect(outcome).toMatchObject(state === 'failed'
             ? { ok: false, errorCode: 'action_forbidden', progress: partial }
             : { projectSourceId: 'source-retained', environmentId: partial.environmentId });
         expect(fixture.creations).toHaveLength(1);
-        expect(receiptReads).toEqual([`controller:${ACTION_OPERATION_RPC_METHODS_V2.list}`, `controller:${ACTION_OPERATION_RPC_METHODS_V2.get}`]);
+        expect(receiptReads).toEqual([`controller:${ACTION_OPERATION_RPC_METHODS_V2.list}`,
+            `controller:${ACTION_OPERATION_RPC_METHODS_V2.get}`,
+            ...(recovery === 'reconnect' ? [`controller:${ACTION_OPERATION_RPC_METHODS_V2.get}`] : [])]);
     } finally { await hook.unmount(); socket.dispose(); await fixture.dispose(); }
 });
 

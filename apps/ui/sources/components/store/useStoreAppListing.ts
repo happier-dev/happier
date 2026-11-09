@@ -6,7 +6,6 @@ import { type DeploymentPublishPrepareInputV1, type DeploymentPublishPrepareResu
 import { type DeploymentTemplateRefV1 } from '@happier-dev/protocol/deployments/storedAppInputV1';
 import { ActionApprovalRequestCreatedResultSchema, type ActionApprovalRequestCreatedResult,
     isActionOutcomeUnknownErrorCodeV1, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
-import type { ActionOperationSnapshotV1 } from '@happier-dev/protocol/actions/operations/v1';
 import { DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { readDeploymentTemplateCreationOperationRequestIdV1 } from '@happier-dev/protocol/deployments/deploymentTemplateInstantiationV1';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
@@ -19,6 +18,8 @@ import { useCatalogAppPreparation } from '@/components/projects/deployments/useC
 import { buildCatalogAppTemplateBindings } from '@/sync/ops/actions/deploymentPublishActions';
 import { buildDeploymentEnvironmentHref } from '@/components/projects/deployments/deploymentNavigation';
 import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
+import { withActionAccountRequestSignal } from '@/sync/ops/actions/actionAccountContext';
+import { observeActionOperationByRequestId } from '@/sync/domains/actionOperations/observeActionOperationByRequestId';
 import { randomUUID } from '@/platform/randomUUID';
 import type { StoreDemand } from './catalog/storeKinds';
 import { readDeploymentFailureRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
@@ -202,30 +203,16 @@ export function useStoreAppListing(input: Readonly<{
                     if (requestId) {
                         // Observe the admitted install at its controller. Losing its HTTP reply
                         // does not undo an Environment or justify replaying creation.
-                        const transport = { ...input.lifetime.scope, machineId: controllerMachineId, signal };
-                        const matches = (operation: ActionOperationSnapshotV1) =>
-                            operation.actionId === DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1
-                            && operation.requestId === requestId
-                            && operation.scope.accountId === input.lifetime.scope.accountId
-                            && operation.scope.machineId === controllerMachineId;
                         try {
-                            const { listActionOperations, getActionOperation } = await import('@/sync/ops/actionOperations');
-                            const list = await listActionOperations({ ...transport, request: {
-                                requestIdentity: { actionId: DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1, requestId },
-                            } });
-                            const retained = list.items.find(matches);
-                            if (retained && input.lifetime.isCurrent()) {
-                                const settled = await getActionOperation({ ...transport,
-                                    operationId: retained.operationId, waitForTerminal: true });
-                                if (settled.kind === 'found' && settled.operation.operationId === retained.operationId
-                                    && settled.operation.revision >= retained.revision && matches(settled.operation)) {
-                                    const operation = settled.operation;
-                                    if (operation.state === 'failed' && operation.error) {
-                                        result = { ok: false, ...operation.error };
-                                    } else if (operation.state === 'succeeded' && operation.result !== undefined) {
-                                        result = { ok: true, result: operation.result };
-                                    }
-                                }
+                            const operation = await withActionAccountRequestSignal({ accountLifetime: input.lifetime }, signal,
+                                signal => observeActionOperationByRequestId({
+                                    ...input.lifetime.scope, machineId: controllerMachineId, signal,
+                                    requestIdentity: { actionId: DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1, requestId },
+                                }));
+                            if (operation?.state === 'failed' && operation.error) {
+                                result = { ok: false, ...operation.error };
+                            } else if (operation?.state === 'succeeded' && operation.result !== undefined) {
+                                result = { ok: true, result: operation.result };
                             }
                         } catch {
                             // Unavailable observation leaves the original uncertain outcome intact.
