@@ -34,8 +34,8 @@ afterAll(async () => { vi.unstubAllEnvs(); await rm(home, { recursive: true, for
 function connectedAccounts() {
   return {
     getBinding: async () => null,
-    watch: (_purpose: string, listener: (event: { kind: 'resync' }) => void) => {
-      queueMicrotask(() => listener({ kind: 'resync' }));
+    watch: (_purpose: string, listener: (event: { kind: 'resync'; authorityChanged: boolean }) => void) => {
+      queueMicrotask(() => listener({ kind: 'resync', authorityChanged: true }));
       return { dispose() {} };
     },
   };

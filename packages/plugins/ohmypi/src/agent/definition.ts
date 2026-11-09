@@ -1,3 +1,4 @@
+import { OH_MY_PI_CONNECTED_ACCOUNT_PURPOSES } from './auth/services/accountPurposes.js';
 export { ohMyPiConnectedServiceStateSharingDescriptor as AGENT_STATE_SHARING_DESCRIPTOR } from './connectedServices/stateSharing.js';
 
 const OH_MY_PI_AGENT_ID = 'ohMyPi';
@@ -12,7 +13,7 @@ export const AGENT_DEFINITION = Object.freeze({
     flavorAliases: ['oh-my-pi', 'omp'],
     cloudConnect: null,
     connectedServices: {
-      supportedServiceIds: ['openai-codex', 'openai', 'claude-subscription', 'anthropic', 'gemini'],
+      supportedServiceIds: OH_MY_PI_CONNECTED_ACCOUNT_PURPOSES.map((row) => row.service.localId),
     },
     resume: { vendorResume: 'supported' as const, vendorResumeIdField: 'ohMyPiSessionId' },
     sessionStorage: { direct: true, persisted: true },

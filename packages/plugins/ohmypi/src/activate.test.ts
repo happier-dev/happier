@@ -5,6 +5,7 @@ import type {
   AgentExecutionRunRuntime,
   AgentExecutionRunRuntimeContextV1,
   AgentSessionOpenRequest,
+  AgentSessionConfigurationSnapshot,
   AgentSessionRuntime,
   AgentSessionRuntimeContext,
 } from '@happier-dev/plugin-sdk/agents/runtime';
@@ -14,13 +15,20 @@ import { activate } from './activate.js';
 import { PLUGIN_MANIFEST } from './manifest.js';
 import { claudeSubscriptionConnectedAccountRuntime } from '../../claude/src/connectedAccounts/claudeSubscriptionRuntime.js';
 
+const explicitModelConfiguration = {
+  model: { value: 'fixture-selected-model', updatedAtMs: 1 },
+  mode: { value: null, updatedAtMs: 1 },
+  permissionIntent: { value: null, updatedAtMs: 1 },
+  options: {},
+} satisfies AgentSessionConfigurationSnapshot;
+
 function createUnboundConnectedAccounts() {
   return {
     getBinding: vi.fn(async () => null),
     requestSelection: vi.fn(),
     materialize: vi.fn(),
-    watch: vi.fn((_purpose: string, listener: (event: { kind: 'resync' }) => void) => {
-      queueMicrotask(() => listener({ kind: 'resync' }));
+    watch: vi.fn((_purpose: string, listener: (event: { kind: 'resync'; authorityChanged: boolean }) => void) => {
+      queueMicrotask(() => listener({ kind: 'resync', authorityChanged: true }));
       return { dispose() {} };
     }),
   };
@@ -150,7 +158,7 @@ describe('OhMyPi plugin activation', () => {
     try {
       const launch = fixture.registration('agents', 'ohmypi')?.connectedAccountLaunch;
 
-      expect(Object.keys(launch ?? {}).sort()).toEqual(['continuity', 'stateSharingDescriptor']);
+      expect(Object.keys(launch ?? {}).sort()).toEqual(['continuity', 'environmentUses', 'stateSharingDescriptor']);
       expect(launch?.continuity?.verifyResumeReachable).toBeTypeOf('function');
       expect(launch?.stateSharingDescriptor).toEqual({
         nativeHome: {
@@ -271,6 +279,7 @@ describe('OhMyPi plugin activation', () => {
       definition: {
         acceptsVerifiedImageInput: true,
         modelConfigOptionId: 'model',
+        models: { catalogConfidence: 'account_unverified', projectModel: expect.any(Function) },
         mcp: { policy: 'pass_through' },
       },
     });
@@ -335,14 +344,14 @@ describe('OhMyPi plugin activation', () => {
       kind: 'environment' as const,
       env: environmentByPurpose[purpose] ?? {},
     }));
-    const listeners = new Map<string, (event: { kind: 'resync' }) => void>();
+    const listeners = new Map<string, (event: { kind: 'resync'; authorityChanged: boolean }) => void>();
     const watchDisposers = new Map<string, ReturnType<typeof vi.fn>>();
-    const watch = vi.fn((purpose: string, listener: (event: { kind: 'resync' }) => void) => {
+    const watch = vi.fn((purpose: string, listener: (event: { kind: 'resync'; authorityChanged: boolean }) => void) => {
       lifecycle.push(`watch:${purpose}`);
       listeners.set(purpose, listener);
       const dispose = vi.fn();
       watchDisposers.set(purpose, dispose);
-      queueMicrotask(() => listener({ kind: 'resync' }));
+      queueMicrotask(() => listener({ kind: 'resync', authorityChanged: true }));
       return { dispose };
     });
     const context = {
@@ -357,6 +366,7 @@ describe('OhMyPi plugin activation', () => {
       kind: 'create',
       sessionId: 'qualified-ohmypi',
       cwd: '/workspace',
+      configuration: explicitModelConfiguration,
       launchEnvironment: {
         values: {
           KEEP: 'caller-value',
@@ -376,11 +386,11 @@ describe('OhMyPi plugin activation', () => {
     }, context);
 
     expect(getBinding.mock.calls).toEqual([
-      ['openai-codex', { signal }],
-      ['openai', { signal }],
-      ['claude-subscription', { signal }],
-      ['anthropic', { signal }],
-      ['gemini', { signal }],
+      ['openai-codex', { signal, observation: true }],
+      ['openai', { signal, observation: true }],
+      ['claude-subscription', { signal, observation: true }],
+      ['anthropic', { signal, observation: true }],
+      ['gemini', { signal, observation: true }],
     ]);
     expect(lifecycle).toEqual([
       'watch:openai-codex',
@@ -435,7 +445,7 @@ describe('OhMyPi plugin activation', () => {
     ]);
     expect(nativeDispose).not.toHaveBeenCalled();
 
-    listeners.get('openai')?.({ kind: 'resync' });
+    listeners.get('openai')?.({ kind: 'resync', authorityChanged: true });
     await vi.waitFor(() => expect(nativeDispose).toHaveBeenCalledWith('runtime_recovery'));
     for (const dispose of watchDisposers.values()) expect(dispose).toHaveBeenCalledTimes(1);
     await session.dispose();
@@ -452,17 +462,17 @@ describe('OhMyPi plugin activation', () => {
       agent: { id: 'ohmypi' },
       signal: new AbortController().signal,
     });
-    const listeners = new Map<string, (event: { kind: 'resync' }) => void>();
+    const listeners = new Map<string, (event: { kind: 'resync'; authorityChanged: boolean }) => void>();
     const watchDisposers = new Map<string, ReturnType<typeof vi.fn>>();
     const connectedAccounts = {
       getBinding: vi.fn(async () => null),
       requestSelection: vi.fn(),
       materialize: vi.fn(),
-      watch: vi.fn((purpose: string, listener: (event: { kind: 'resync' }) => void) => {
+      watch: vi.fn((purpose: string, listener: (event: { kind: 'resync'; authorityChanged: boolean }) => void) => {
         listeners.set(purpose, listener);
         const dispose = vi.fn();
         watchDisposers.set(purpose, dispose);
-        queueMicrotask(() => listener({ kind: 'resync' }));
+        queueMicrotask(() => listener({ kind: 'resync', authorityChanged: true }));
         return { dispose };
       }),
     };
@@ -500,7 +510,7 @@ describe('OhMyPi plugin activation', () => {
     ]);
     expect(open).toHaveBeenCalledWith(expect.objectContaining({ launchEnvironment }), expect.any(Object));
     expect(nativeDispose).not.toHaveBeenCalled();
-    listeners.get('openai-codex')?.({ kind: 'resync' });
+    listeners.get('openai-codex')?.({ kind: 'resync', authorityChanged: true });
     await vi.waitFor(() => expect(nativeDispose).toHaveBeenCalledWith('runtime_recovery'));
     for (const dispose of watchDisposers.values()) expect(dispose).toHaveBeenCalledTimes(1);
     await session.dispose();
@@ -518,10 +528,10 @@ describe('OhMyPi plugin activation', () => {
       signal: new AbortController().signal,
     });
     const service = { pluginId: 'happier.voice.openai', localId: 'openai' };
-    const listeners = new Map<string, (event: { kind: 'resync' }) => void>();
-    const watch = vi.fn((purpose: string, listener: (event: { kind: 'resync' }) => void) => {
+    const listeners = new Map<string, (event: { kind: 'resync'; authorityChanged: boolean }) => void>();
+    const watch = vi.fn((purpose: string, listener: (event: { kind: 'resync'; authorityChanged: boolean }) => void) => {
       listeners.set(purpose, listener);
-      queueMicrotask(() => listener({ kind: 'resync' }));
+      queueMicrotask(() => listener({ kind: 'resync', authorityChanged: true }));
       return { dispose() {} };
     });
     const getBinding = vi.fn(async (purpose: string) => purpose === 'openai'
@@ -533,7 +543,7 @@ describe('OhMyPi plugin activation', () => {
         }
       : null);
     const materialize = vi.fn(async () => {
-      listeners.get('openai')?.({ kind: 'resync' });
+      listeners.get('openai')?.({ kind: 'resync', authorityChanged: true });
       return { kind: 'environment' as const, env: { OPENAI_API_KEY: 'qualified-key' } };
     });
     const open = vi.fn();
@@ -543,6 +553,7 @@ describe('OhMyPi plugin activation', () => {
       kind: 'create',
       sessionId: 'qualified-ohmypi-invalidated-before-open',
       cwd: '/workspace',
+      configuration: explicitModelConfiguration,
     }, {
       protocols: { acp: { open } },
       services: { connectedAccounts: { getBinding, requestSelection: vi.fn(), materialize, watch } },
@@ -575,10 +586,10 @@ describe('OhMyPi plugin activation', () => {
       signal: new AbortController().signal,
     });
     const watchDisposers: Array<ReturnType<typeof vi.fn>> = [];
-    const watch = vi.fn((_purpose: string, listener: (event: { kind: 'resync' }) => void) => {
+    const watch = vi.fn((_purpose: string, listener: (event: { kind: 'resync'; authorityChanged: boolean }) => void) => {
       const dispose = vi.fn();
       watchDisposers.push(dispose);
-      queueMicrotask(() => listener({ kind: 'resync' }));
+      queueMicrotask(() => listener({ kind: 'resync', authorityChanged: true }));
       return { dispose };
     });
     const getBinding = vi.fn(async (purpose: string) => purpose === 'claude-subscription'
@@ -615,6 +626,7 @@ describe('OhMyPi plugin activation', () => {
     const opening = runtime.sessions.open({
       kind,
       sessionId: 'oauth-access-only',
+      configuration: explicitModelConfiguration,
       ...(kind === 'resume' ? { providerSessionId: 'existing-native-session' } : {}),
       cwd: '/workspace',
     }, {
@@ -688,10 +700,10 @@ describe('OhMyPi plugin activation', () => {
         }
       : null);
     const materialize = vi.fn(async () => result);
-    const watch = vi.fn((_purpose: string, listener: (event: { kind: 'resync' }) => void) => {
+    const watch = vi.fn((_purpose: string, listener: (event: { kind: 'resync'; authorityChanged: boolean }) => void) => {
       const dispose = vi.fn();
       disposeWatches.push(dispose);
-      queueMicrotask(() => listener({ kind: 'resync' }));
+      queueMicrotask(() => listener({ kind: 'resync', authorityChanged: true }));
       return { dispose };
     });
     const open = vi.fn(async () => ({
@@ -705,6 +717,7 @@ describe('OhMyPi plugin activation', () => {
       kind: 'create',
       sessionId: 'invalid-qualified-ohmypi',
       cwd: '/workspace',
+      configuration: explicitModelConfiguration,
     }, {
       protocols: { acp: { open } },
       services: {
