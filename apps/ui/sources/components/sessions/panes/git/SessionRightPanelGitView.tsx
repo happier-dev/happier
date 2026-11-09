@@ -12,6 +12,8 @@ import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
 import { useAppPaneScope } from '@/components/appShell/panes/hooks/useAppPaneScope';
 import { NotSourceControlRepositoryState, SourceControlSessionInactiveState, SourceControlStaleSnapshotNotice, SourceControlUnavailableState } from '@/components/workspaces/scm/states';
 import { useSessionMachineReachability } from '@/components/sessions/model/useSessionMachineReachability';
+import { useSessionCheckoutReachability } from '@/components/sessions/model/useSessionCheckoutReachability';
+import { CheckoutUnreachableState } from '@/components/workspaces/reachability/checkoutReachability';
 import { useSessionResumeAction } from '@/components/sessions/model/SessionResumeContext';
 import { emitSessionResumeRequest } from '@/components/sessions/model/sessionResumeRequests';
 import { fireAndForget } from '@/utils/system/fireAndForget';
@@ -202,6 +204,7 @@ export const SessionRightPanelGitView = React.memo((props: SessionRightPanelGitV
         projectPath: project?.key?.rootPath ?? null,
     });
     const { machineReachable, machineRpcTargetAvailable } = useSessionMachineReachability(props.sessionId, props.serverId);
+    const checkoutReachability = useSessionCheckoutReachability(props.sessionId, props.serverId);
     const { blocked: branchWritesBlocked, sessionPaused } = useSessionBranchWritesBlocked(props.sessionId, props.serverId);
     const maxIntervalMs = React.useMemo(() => {
         const raw = typeof autoRefreshIntervalSetting === 'number' && Number.isFinite(autoRefreshIntervalSetting)
@@ -653,6 +656,10 @@ export const SessionRightPanelGitView = React.memo((props: SessionRightPanelGitV
     }
 
     if (!effectiveScmSnapshot) {
+        // The Session's machine isn't answering: the pane waits with it rather than loading without end.
+        if (checkoutReachability.unreachable) {
+            return <CheckoutUnreachableState reachability={checkoutReachability} testID="session-rightpanel-git-unreachable" />;
+        }
         return (
             <SurfaceStateCard testID="session-rightpanel-git-loading" kind="loading" title={t('common.loading')} />
         );

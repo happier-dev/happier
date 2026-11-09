@@ -27,8 +27,8 @@ import { useScmReviewedMarks } from '@/components/sessions/files/comparison/useS
 import { useWalkthroughReading } from '@/components/sessions/files/walkthrough/useWalkthroughReading';
 import { useScmWalkthroughStates } from '@/components/sessions/files/walkthrough/useSessionScmWalkthrough';
 import { useSessionMachineReachability } from '@/components/sessions/model/useSessionMachineReachability';
-import { useSessionMachineDisplayIdentity } from '@/components/sessions/model/useSessionMachineTarget';
-import { CheckoutUnreachableState, useCheckoutReachability } from '@/components/workspaces/reachability/checkoutReachability';
+import { useSessionCheckoutReachability } from '@/components/sessions/model/useSessionCheckoutReachability';
+import { CheckoutUnreachableState } from '@/components/workspaces/reachability/checkoutReachability';
 import {
   describeChangedFilesModeAsComparison,
   listFilesComparisonScopeOptions,
@@ -266,10 +266,7 @@ const SessionWorkingScmReviewDetailsView = React.memo(
       sessionId: props.sessionId,
     });
     // The Session's machine isn't answering: the review waits with it, in the one shared state, rather than loading without end.
-    const reviewMachineId = useSessionMachineDisplayIdentity(props.sessionId, reviewServerId).machineId;
-    const reviewMachineScope = React.useMemo(() => reviewServerId && reviewMachineId
-      ? { serverId: reviewServerId, machineId: reviewMachineId } : null, [reviewServerId, reviewMachineId]);
-    const reviewMachineReachability = useCheckoutReachability(reviewMachineScope);
+    const reviewMachineReachability = useSessionCheckoutReachability(props.sessionId, reviewServerId);
     const accountBindings = useServerCredentialAccountScopeBindings([
       reviewServerId,
     ]);

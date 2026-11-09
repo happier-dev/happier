@@ -78,6 +78,21 @@ describe('SessionRightPanelGitView (inactive session resume)', () => {
         expect(resume).toHaveBeenCalled();
     });
 
+    it('says the Machine is offline with Retry, instead of loading without end, when no snapshot can arrive', async () => {
+        const { SessionRightPanelGitView } = await import('./SessionRightPanelGitView');
+        const lastHeartbeat = Date.now();
+        // An inactive heartbeat stays reachable during the presence owner's grace: move only the clock.
+        vi.useFakeTimers({ toFake: ['Date'] });
+        try {
+            vi.setSystemTime(lastHeartbeat + 24 * 60 * 60 * 1000);
+            await act(async () => storage.getState().applyMachines([createMachineFixture({ id: 'm1', storageMode: 'plain', active: false,
+                activeAt: lastHeartbeat, seq: 2, updatedAt: Date.now() })], true, { sourceServerId: runtime.serverId }));
+            const screen = await renderScreen(<runtime.Wrapper><SessionRightPanelGitView sessionId="s1" serverId={runtime.serverId} scopeId="session:s1" /></runtime.Wrapper>);
+            expect(screen.findHostByTestId('session-rightpanel-git-loading')).toBeNull();
+            expect(screen.findHostByTestId('session-rightpanel-git-unreachable')).not.toBeNull();
+        } finally { vi.useRealTimers(); }
+    });
+
     it('does not borrow a legacy project path when the exact Home workspace is absent', async () => {
         const { SessionRightPanelGitView } = await import('./SessionRightPanelGitView');
         seedSession({ machineOnline: true, path: '' });
