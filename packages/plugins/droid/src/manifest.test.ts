@@ -6,26 +6,14 @@ import { AGENT_DEFINITION } from './agent/definition.js';
 import { PLUGIN_MANIFEST } from './manifest.js';
 
 describe('Factory Droid plugin manifest', () => {
-  it('ingests and declares the current `droid exec --output-format acp` runtime', () => {
+  it('ingests the Provider-capable Droid launch leaf', () => {
     expect(ingestPluginManifestV2(PLUGIN_MANIFEST)).toMatchObject({ ok: true });
     expect(PLUGIN_MANIFEST).toHaveProperty('entrypoints.daemon', './.happier-plugin/daemon.js');
     expect(PLUGIN_MANIFEST.contributes.agents).toEqual([
       expect.objectContaining({
         id: 'droid',
-        runtime: expect.objectContaining({
-          kind: 'acp',
-          transport: expect.objectContaining({
-            kind: 'stdio',
-            executable: { kind: 'systemTool', id: 'droid-cli' },
-            // The current vendor ACP contract is exactly
-            // `droid exec --output-format acp`; `acp-daemon` is obsolete.
-            args: ['exec', '--output-format', 'acp'],
-          }),
-          definition: expect.objectContaining({
-            mcp: { policy: 'pass_through' },
-            modelConfigOptionId: 'model',
-          }),
-        }),
+        runtime: { kind: 'custom' },
+        providerRequirements: expect.objectContaining({ materialization: 'configFile', applyPolicy: 'restart_session' }),
         primary: 'sessions',
       }),
     ]);

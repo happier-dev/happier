@@ -2,7 +2,7 @@ import type { AgentTerminalSurface } from '@happier-dev/plugin-sdk/agents/runtim
 
 /**
  * The ordinary interactive `droid` command is the terminal surface; the ACP
- * entry point stays with the declarative Session runtime. `argv` carries only
+ * entry point stays with the Session runtime launch leaf. `argv` carries only
  * the arguments appended after the host-resolved Agent CLI executable, so
  * naming the executable here would run `droid droid`.
  */

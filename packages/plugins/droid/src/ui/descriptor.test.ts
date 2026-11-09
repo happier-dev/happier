@@ -1,7 +1,10 @@
+import { readPluginTranslationResources } from '../../../../../scripts/testing/readPluginTranslationResources.js';
+
 import { describe, expect, it } from 'vitest';
 
 import { DROID_UI_DESCRIPTOR } from './descriptor.js';
-import { DROID_UI_TRANSLATIONS } from './translations.js';
+
+const PACKAGED_UI_TRANSLATIONS = readPluginTranslationResources(new URL('../../', import.meta.url));
 
 describe('Factory Droid UI projection source', () => {
   /**
@@ -35,7 +38,7 @@ describe('Factory Droid UI projection source', () => {
       localControl: true,
       picker: { cliGlyph: 'DR' },
     });
-    for (const messages of Object.values(DROID_UI_TRANSLATIONS)) {
+    for (const messages of Object.values(PACKAGED_UI_TRANSLATIONS)) {
       expect(messages['agentInput.agent.droid']).toBeTruthy();
       expect(messages['sessionInfo.droidSessionId']).toBeTruthy();
       expect(messages['sessionInfo.droidSessionIdCopied']).toBeTruthy();

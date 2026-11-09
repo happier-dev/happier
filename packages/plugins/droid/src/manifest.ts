@@ -1,15 +1,16 @@
-import { projectAgentCapabilitiesV2FromDefinition, type PluginHostOwnedAgentDeclaration } from '@happier-dev/plugin-sdk/agents';
+import { projectAgentCapabilitiesV2FromDefinition } from '@happier-dev/plugin-sdk/agents';
 import { definePlugin } from '@happier-dev/plugin-sdk';
 
 import { AGENT_DEFINITION } from './agent/definition.js';
 import { DROID_ACP_COMMAND } from './agent/preflight.js';
-import { DROID_TERMINAL_CONTRIBUTION } from './agent/terminal/contribution.js';
 import { droidExternalSessionsContribution } from './agent/externalSessions/contribution.js';
-import { DROID_UI_TRANSLATION_BUNDLES } from './ui/translations.js';
+import { DROID_PROVIDER_BINDING_ADAPTER, DROID_PROVIDER_OWNED_ENV_KEYS } from './agent/providerBinding/adapter.js';
+import { createDroidAgentRuntime } from './agent/runtime/factory.js';
+import { DROID_CHATGPT_PURPOSE, DROID_CHATGPT_SERVICE, DROID_CONNECTED_ACCOUNT_LAUNCH } from './agent/runtime/connectedAccount.js';
+
 
 export const DROID_PLUGIN = definePlugin({
   id: 'happier.agent.droid', version: '0.0.0', displayName: 'Factory Droid',
-  engines: { happier: '^0.0.0' }, runtime: { apiVersion: 1 },
   entrypoints: { daemon: './.happier-plugin/daemon.js' },
   hostAccess: { required: [{
     id: 'droid-process', capability: 'process', reason: 'Run the declared Factory Droid CLI executable.',
@@ -19,7 +20,20 @@ export const DROID_PLUGIN = definePlugin({
     declaration: {
       title: { key: 'agentInput.agent.droid', fallback: 'Factory Droid' },
       description: { key: 'profiles.aiBackend.droidSubtitleExperimental', fallback: 'Factory Droid (experimental)' },
-      runtime: { kind: 'acp', transport: { kind: 'stdio', executable: { kind: 'systemTool', id: 'droid-cli' }, args: [...DROID_ACP_COMMAND.args] }, definition: { modelConfigOptionId: 'model', mcp: { policy: 'pass_through' } } },
+      runtime: { kind: 'custom' },
+      connectedAccounts: [{ purpose: DROID_CHATGPT_PURPOSE, service: DROID_CHATGPT_SERVICE,
+        credentialKinds: ['oauth'], materializationKinds: ['httpHeaders'] }],
+      providerRequirements: {
+        acceptsProtocols: ['openai-chat', 'openai-responses', 'anthropic'], required: { streaming: true, toolRoundTrips: true },
+        credentialSupport: { supportsNoAuth: true, apiKeyTransports: [
+          { protocol: 'openai-chat', destination: { kind: 'httpHeader', names: ['authorization'], formats: ['bearer'] } },
+          { protocol: 'openai-responses', destination: { kind: 'httpHeader', names: ['authorization'], formats: ['bearer'] } },
+          { protocol: 'anthropic', destination: { kind: 'httpHeader', names: ['x-api-key'], formats: ['raw'] } },
+          { protocol: 'anthropic', destination: { kind: 'httpHeader', names: ['authorization'], formats: ['bearer'] } },
+        ] },
+        authIsolation: { suppressConnectedServiceIds: [], ownedEnvKeys: [...DROID_PROVIDER_OWNED_ENV_KEYS] },
+        materialization: 'configFile', applyPolicy: 'restart_session', supportsFreeformModelIds: true,
+      },
       cli: {
         displayName: 'Factory Droid CLI', executable: { binaryName: 'droid', knownUserBinDirSuffixes: ['.local/bin'], sourcePreference: 'system-first', systemCommandResolutionStrategy: 'path-first' },
         install: {
@@ -50,7 +64,7 @@ export const DROID_PLUGIN = definePlugin({
         auth: { support: 'login_terminal', environmentVariables: ['FACTORY_API_KEY'], missingCredentialState: 'unknown', loginLaunches: [{ kind: 'primary', args: [], initialInput: '/login' }] },
       },
       primary: 'sessions',
-      catalog: { acpRegistryIds: [...AGENT_DEFINITION.acpRegistryIds], vendorResume: { support: AGENT_DEFINITION.core.resume.vendorResume } },
+      catalog: { agentCliSystemTool: { toolId: DROID_ACP_COMMAND.toolId }, acpRegistryIds: [...AGENT_DEFINITION.acpRegistryIds], vendorResume: { support: AGENT_DEFINITION.core.resume.vendorResume } },
       // The host keeps Session V1 canonical and exposes the separately
       // versioned detached Run context through the same declarative ACP core.
       capabilities: projectAgentCapabilitiesV2FromDefinition(AGENT_DEFINITION.core, {
@@ -77,12 +91,43 @@ export const DROID_PLUGIN = definePlugin({
           instances: [{ kind: 'default', constants: {} }],
         }],
       } },
-    } satisfies PluginHostOwnedAgentDeclaration,
-    terminal: DROID_TERMINAL_CONTRIBUTION,
+    },
+    factory: createDroidAgentRuntime,
+    connectedAccountLaunch: DROID_CONNECTED_ACCOUNT_LAUNCH,
+    providerBinding: DROID_PROVIDER_BINDING_ADAPTER,
+    sessionRunnerFactory: { module: './agent/runtime/factory', export: 'createDroidAgentRuntime', runtimeApiVersion: 1, externalSessionsExport: 'droidExternalSessionsContribution' },
+    preflightSessionControls: { catalogs: { kind: 'acp', command: DROID_ACP_COMMAND } },
     externalSessions: droidExternalSessionsContribution,
   } },
   systemTools: { 'droid-cli': { title: 'Factory Droid CLI', executableNames: ['droid'] } },
-  ui: { translations: DROID_UI_TRANSLATION_BUNDLES },
+  ui: { translations: [
+    { locale: "en", resourceId: "i18n-en" },
+    { locale: "de", resourceId: "i18n-de" },
+    { locale: "ru", resourceId: "i18n-ru" },
+    { locale: "pl", resourceId: "i18n-pl" },
+    { locale: "es", resourceId: "i18n-es" },
+    { locale: "fr", resourceId: "i18n-fr" },
+    { locale: "it", resourceId: "i18n-it" },
+    { locale: "pt", resourceId: "i18n-pt" },
+    { locale: "ca", resourceId: "i18n-ca" },
+    { locale: "zh-Hans", resourceId: "i18n-zh-hans" },
+    { locale: "zh-Hant", resourceId: "i18n-zh-hant" },
+    { locale: "ja", resourceId: "i18n-ja" },
+  ] },
+  resources: {
+    "i18n-en": { kind: 'asset', path: "assets/i18n/en.json", contentType: 'application/json' },
+    "i18n-de": { kind: 'asset', path: "assets/i18n/de.json", contentType: 'application/json' },
+    "i18n-ru": { kind: 'asset', path: "assets/i18n/ru.json", contentType: 'application/json' },
+    "i18n-pl": { kind: 'asset', path: "assets/i18n/pl.json", contentType: 'application/json' },
+    "i18n-es": { kind: 'asset', path: "assets/i18n/es.json", contentType: 'application/json' },
+    "i18n-fr": { kind: 'asset', path: "assets/i18n/fr.json", contentType: 'application/json' },
+    "i18n-it": { kind: 'asset', path: "assets/i18n/it.json", contentType: 'application/json' },
+    "i18n-pt": { kind: 'asset', path: "assets/i18n/pt.json", contentType: 'application/json' },
+    "i18n-ca": { kind: 'asset', path: "assets/i18n/ca.json", contentType: 'application/json' },
+    "i18n-zh-hans": { kind: 'asset', path: "assets/i18n/zh-Hans.json", contentType: 'application/json' },
+    "i18n-zh-hant": { kind: 'asset', path: "assets/i18n/zh-Hant.json", contentType: 'application/json' },
+    "i18n-ja": { kind: 'asset', path: "assets/i18n/ja.json", contentType: 'application/json' },
+  },
 });
 
 export const PLUGIN_MANIFEST = DROID_PLUGIN.manifest;

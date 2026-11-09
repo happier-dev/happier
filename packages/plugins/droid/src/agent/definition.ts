@@ -28,7 +28,9 @@ export const AGENT_DEFINITION = Object.freeze({
   sessionModesKind: 'acpAgentModes',
   modelConfig: {
     supportsSelection: true,
-    supportsFreeform: false,
+    // Process-scoped customModels accepts exact upstream ids which the native
+    // preflight catalog cannot list before a Provider/account is materialized.
+    supportsFreeform: true,
     nonAcpApplyScope: 'next_prompt',
     acpApplyBehavior: 'set_model',
     acpModelConfigOptionId: 'model',
