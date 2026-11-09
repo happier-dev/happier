@@ -27,7 +27,10 @@ import { sanitizeSessionInputForgeEvidenceMetaV1 } from '@happier-dev/protocol/r
 import { SessionMessageRefV1Schema, type SessionMessageRefV1 } from '@happier-dev/protocol/sessions/messages/sessionMessageRefV1';
 import type { SessionMessageReplyOutcomeV1 } from '@happier-dev/protocol/sessions/messages/sessionMessageReplyV1';
 import { resolveSessionReceiverDeliveryV1, type SessionReceiverDeliveryDecisionV1 } from '@happier-dev/protocol/sessions/follow/sessionReceiverDeliveryV1';
-import { readSessionExplicitStopV1FromMetadata } from '@happier-dev/protocol/sessions/metadata/sessionExplicitStopV1';
+import {
+  readSessionExplicitStopV1FromMetadata,
+  resolveSessionAutoResumeAdmissionV1,
+} from '@happier-dev/protocol/sessions/metadata/sessionExplicitStopV1';
 import { isFollowDeliveryMutedV1 } from '@happier-dev/protocol/sessions/follow/sessionDeliveryMuteV1';
 
 import { fetchEncryptedTranscriptPageAfterSeq } from '@/api/session/fetchEncryptedTranscriptWindow';
@@ -123,7 +126,7 @@ export type SendSessionMessageResult =
       message?: string;
       providerError?: ProviderErrorV1;
       admissionResult?: SessionInputEnqueueResultV1;
-      /** Proven terminal settlement for one exact admitted Execution Run input. */
+      /** Waiting failed or settled; admission separately records retained Pending custody. */
       settlementResult?: Extract<SessionMessageSendResultV1, { status: 'failed' | 'cancelled' }>;
     }> & Pick<Extract<InactiveSessionResumeResult, { ok: false }>, 'errorDetail' | 'spawnErrorCode' | 'runtimeFailureReason'>);
 
@@ -227,6 +230,8 @@ type SendSessionMessageParams = Readonly<{
   followRelations?: SessionPendingEnqueueByMachineRequestV1['followRelations'];
   /** Non-ignorable host intent; authored message metadata never supplies it. */
   replyIntent?: SessionInputReplyIntentV1;
+  /** An explicit message send resumes a stopped Session, whoever sends it. Automatic deliveries omit this and stay held. */
+  explicitMessageSend?: boolean;
   /** Captured Action authority; automatic callers cannot clear a person's Stop. */
   executionAuthority?: import('@happier-dev/protocol').ActionExecutorContext['authority'];
   permissionModeOverride?: string;
@@ -1743,7 +1748,10 @@ export async function sendSessionMessage(
   // turns are counted separately, so its receiver projection is not a Run gate.
   const receiverControlled = executionRunRecipient === undefined
     && (informationDelivery || senderSessionId !== undefined || discussionAddressing !== undefined);
-  const stop = receiverControlled ? readSessionExplicitStopV1FromMetadata(decryptedMetadata) : null;
+  const crossesStopHold = params.explicitMessageSend === true && resolveSessionAutoResumeAdmissionV1({
+    metadata: decryptedMetadata, archivedAt: sessionTarget.rawSession.archivedAt, machineAvailable: true, authorityAvailable: true,
+  }) === 'held_by_person';
+  const stop = receiverControlled && !crossesStopHold ? readSessionExplicitStopV1FromMetadata(decryptedMetadata) : null;
   const activity = receiverControlled ? detectSessionTurnActivityFromProjection(sessionTarget.rawSession) : null;
   const receiverDelivery = receiverControlled ? resolveSessionReceiverDeliveryV1({
     facts: {
@@ -2095,9 +2103,10 @@ export async function sendSessionMessage(
       sessionId,
       localId,
       rawSession: sessionTarget.rawSession,
-      // Message admission never grants explicit Resume, even for a person.
-      // Reuse automatic admission so Stop holds survive every next-message wake.
+      // Automatic admission unless this send crosses a stopped Session's hold.
       executionAuthority: 'account_automation',
+      crossesStopHold,
+      ...(params.wait === true ? { waitForReady: true } : {}),
       ...(params.incomingResumeOptions ? { incomingOptions: params.incomingResumeOptions } : {}),
       metadata: decryptedMetadata && typeof decryptedMetadata === 'object' && !Array.isArray(decryptedMetadata)
         ? decryptedMetadata as Record<string, unknown>
@@ -2110,7 +2119,8 @@ export async function sendSessionMessage(
       ...(params.spawnSession ? { spawnSession: params.spawnSession } : {}),
     });
     if (!resumeResult.ok) {
-      if (resumeResult.code === 'authority_unavailable') {
+      if (resumeResult.code === 'authority_unavailable'
+        || params.wait === true && resumeResult.code === 'resume_failed' && resumeResult.errorDetail?.kind === 'launch_error') {
         // The input is already in custody. Keep it recoverable and visible as
         // blocked rather than claiming it is still waiting for a runner.
         await blockPendingQueueV2Delivery({ token: params.credentials.token, sessionId, localId,
@@ -2125,6 +2135,12 @@ export async function sendSessionMessage(
         ...resumeResult,
         code: resumeResult.code === 'SESSION_DIRECTORY_MISSING' ? 'resume_failed' : resumeResult.code,
         ...(admissionResult ? { admissionResult } : {}),
+        ...(params.wait === true
+          && (resumeResult.code === 'resume_failed' || resumeResult.code === 'SESSION_DIRECTORY_MISSING')
+          && admissionResult && (admissionResult.status === 'accepted' || admissionResult.status === 'alreadyAccepted')
+          ? { settlementResult: { status: 'failed' as const, code: 'resume_failed' as const, localId, admissionResult,
+            ...(resumeResult.errorDetail?.kind === 'launch_error' ? { errorDetail: resumeResult.errorDetail } : {}) } }
+          : {}),
         ...(receiverDelivery ? { receiverDelivery } : {}),
       };
     }

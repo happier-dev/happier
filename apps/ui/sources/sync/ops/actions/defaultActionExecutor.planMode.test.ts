@@ -1421,6 +1421,11 @@ describe('default Action executor mode and catalog contracts', () => {
       for (const result of [
         { status: 'rejected', code: 'session_input_unauthorized' },
         { status: 'failed', localId: 'real-input', code: 'session_input_turn_failed' },
+        { status: 'failed', localId: 'real-input', code: 'resume_failed',
+          admissionResult: { status: 'accepted', localId: 'real-input' },
+          errorDetail: { kind: 'launch_error', code: 'agent_startup_model_reconciliation_failed',
+            message: 'Review the selected model.', failureCause: { code: 'agent_startup_model_reconciliation_failed',
+              phase: 'client_start', failureReason: 'model_selection_required', retryable: false } } },
         { status: 'cancelled', localId: 'real-input', code: 'session_input_turn_cancelled' },
       ]) {
         outcome = SessionMessageSendResultV1Schema.parse(result);

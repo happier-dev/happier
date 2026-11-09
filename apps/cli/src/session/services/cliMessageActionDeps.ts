@@ -7,7 +7,7 @@ import { randomUUID } from 'node:crypto';
 import { readAgentStartCallerWorkDepthV1, AgentStartSessionCallerV1Schema } from '@happier-dev/protocol/account/settings/admitAgentStartV1';
 import { isPermissionModeGrantedV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
 import type { SessionBridgeLifecycleHookEventIdV1, ActionExecutorDeps, ActionExecutorContext, ComposerAttachmentInputV1, SessionMessageSendResultV1 } from '@happier-dev/protocol';
-import { derivePluginSessionInputLocalIdV1, buildTrustedHostSessionInputAdmissionV1, SessionInputSourceSessionV1Schema } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
+import { derivePluginSessionInputLocalIdV1, deriveWorkflowSessionInputLocalIdV2, buildTrustedHostSessionInputAdmissionV1, SessionInputSourceSessionV1Schema } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import { ProviderConnectionIdSchema } from '@happier-dev/protocol/providers/ids';
 import { HAPPIER_STRUCTURED_INPUT_METADATA_KEY_V1, RawIngressStructuredInputV1Schema, hasRawSessionAttachmentSelectionV1 } from '@happier-dev/protocol/runtime/input/structuredInputV1';
 import { readSessionInputForgeEvidenceV1 } from '@happier-dev/protocol/sessions/messages/sessionInputPromptContextV1';
@@ -15,7 +15,7 @@ import { SessionPendingMessageComposerAdmissionPrepareResponseV1Schema } from '@
 import { buildUploadedAttachment } from '@happier-dev/protocol/messages/structured/sessionAttachmentsInputV1';
 import { readPendingLocalId } from '@happier-dev/protocol/sessions/pending/pendingLocalId';
 import type { projectSessionAttachmentInputV1 } from '@/session/attachments/projectRawIngressSessionAttachmentsV1';
-import type { parsePermissionIntentAlias } from '@happier-dev/agents';
+import { parsePermissionIntentAlias } from '@happier-dev/agents';
 import { configuration } from '@/configuration';
 import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import type { hasStoredSessionCredentialProvenance } from '@/persistence';
@@ -35,6 +35,7 @@ import { tryDecryptSessionOwnerMetadataView } from '@/session/transport/encrypti
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
+import { isAuthenticationError } from '@/api/client/httpStatusError';
 import type { CliServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
 type ResolvedSessionTransport = Extract<Awaited<ReturnType<typeof resolveSessionTransportContext>>, Readonly<{ ok: true }>>;
 type LifecycleHookSessionContext = Readonly<{
@@ -47,8 +48,9 @@ type MessageActionDeps = Required<Pick<ActionExecutorDeps, 'sessionSendMessage'>
 
 /**
  * Projects the low-level send wrapper onto the one public Action result.
- * Admission evidence is authoritative even when acknowledgement or waiting
- * failed after a durable effect. A successful unprotected send predates the
+ * Waiting outcomes preserve admitted custody separately from the failure.
+ * Admission evidence remains authoritative after an ambiguous acknowledgement.
+ * A successful unprotected send predates the
  * admission envelope, so its resolved local id is projected as accepted.
  */
 function projectSessionMessageSendActionResult(
@@ -208,7 +210,7 @@ export function createCliMessageActionDeps(
             idempotencyKey: idempotencyKey!,
           })
         : undefined;
-      const [{ buildPluginSessionInputAdmissionV1, buildCausalSessionInputAdmissionV1 }, { sendSessionMessage }, { isOriginalSessionInputExternalActionCustody }, { resolveSessionMessageAdmissionTimeoutMs }, { hasStoredSessionCredentialProvenance }] = await Promise.all([import("@/session/services/sessionInputAdmissionIdentity"), import("@/session/services/sendSessionMessage"), import("@/daemon/sessionEncryption/requesterAccountActionProjection"), import("@/session/transport/shared/sessionTimeouts"), import("@/persistence")]);
+      const [{ buildPluginSessionInputAdmissionV1, buildCausalSessionInputAdmissionV1, buildWorkflowSessionInputAdmissionV2 }, { sendSessionMessage }, { isOriginalSessionInputExternalActionCustody }, { resolveSessionMessageAdmissionTimeoutMs }, { hasStoredSessionCredentialProvenance }] = await Promise.all([import("@/session/services/sessionInputAdmissionIdentity"), import("@/session/services/sendSessionMessage"), import("@/daemon/sessionEncryption/requesterAccountActionProjection"), import("@/session/transport/shared/sessionTimeouts"), import("@/persistence")]);
       const pluginInputAdmission = pluginCaller
         ? buildPluginSessionInputAdmissionV1({
             caller: pluginCaller,
@@ -274,6 +276,16 @@ export function createCliMessageActionDeps(
       let admittedComposerAttachments: readonly ComposerAttachmentInputV1[] = [];
       let admittedMessageText = authoredMessageText;
       let rejoinedMessageMeta: Record<string, unknown> | undefined;
+      const prepareAttachmentTransport = async () => {
+        const transport = await resolveTransportForSession(sessionId, signal,
+          externalActionRequest && messageContext ? { context: messageContext, actionId: preparationActionId } : undefined,
+          context?.expectedSessionAddress);
+        return transport.ok ? transport : {
+          status: 'rejected' as const,
+          code: transport.code === 'not_authenticated'
+            ? 'session_input_unauthorized' as const : 'session_input_target_unavailable' as const,
+        };
+      };
       const composerAttachmentRegistry = params.resolveComposerAttachmentSendPreparation?.() ?? null;
       if (attachments && attachments.length > 0) {
         if (!pluginCaller || !pluginLocalId) {
@@ -282,13 +294,8 @@ export function createCliMessageActionDeps(
             code: 'session_input_untrusted_assertion' as const,
           };
         }
-        const transport = await resolveTransportForSession(sessionId, signal, undefined, context?.expectedSessionAddress);
-        if (!transport.ok) {
-          return {
-            status: 'rejected' as const,
-            code: 'session_input_target_unavailable' as const,
-          };
-        }
+        const transport = await prepareAttachmentTransport();
+        if ('status' in transport) return transport;
         const { buildPluginSessionInputAttachmentDraftsV1 } = await import("@/session/composer/admitPluginSessionInputAttachmentsV1");
         let rawAttachmentMeta: Record<string, unknown>;
         try {
@@ -314,6 +321,8 @@ export function createCliMessageActionDeps(
             token: params.credentials.token,
             sessionId: transport.sessionId,
             localId: pluginLocalId,
+            ...(signal ? { signal } : {}),
+            ...(resolveAuthorizationHeaders ? { resolveAuthorizationHeaders } : {}),
             queryContext: transport.mode === 'plain'
               ? { encryptionMode: 'plain' }
               : {
@@ -322,7 +331,10 @@ export function createCliMessageActionDeps(
                   encryptionVariant: transport.ctx.encryptionVariant,
                 },
           });
-        } catch {
+        } catch (error) {
+          if (isAuthenticationError(error)) {
+            return { status: 'rejected' as const, code: 'session_input_unauthorized' as const };
+          }
           return {
             status: 'outcomeUnknown' as const,
             localId: pluginLocalId,
@@ -371,8 +383,8 @@ export function createCliMessageActionDeps(
           return { status: 'rejected' as const, code: 'session_input_invalid' as const };
         }
         localId = preparationLocalId;
-        const transport = await resolveTransportForSession(sessionId, signal, undefined, context?.expectedSessionAddress);
-        if (!transport.ok) return { status: 'rejected' as const, code: 'session_input_target_unavailable' as const };
+        const transport = await prepareAttachmentTransport();
+        if ('status' in transport) return transport;
         const legacyMeta = { [HAPPIER_STRUCTURED_INPUT_METADATA_KEY_V1]: {
           v: 1 as const, sessionAttachments: ingress.data.sessionAttachments,
         } };
@@ -440,7 +452,26 @@ export function createCliMessageActionDeps(
         ...(explicitForgeEvidence ? { forgeEvidence: explicitForgeEvidence } : {}),
       } : undefined;
 
-      const protectedInputAdmission = pluginInputAdmission ?? causalSessionInputAdmission;
+      const workflowCaller = actionCaller?.kind === 'workflowRun' ? actionCaller : null;
+      const workflow = workflowCaller ? context?.workflowSessionInput : undefined;
+      if (workflowCaller && (!workflow || workflow.runId !== workflowCaller.runId)) {
+        return { status: 'rejected' as const, code: 'session_input_untrusted_assertion' as const };
+      }
+      const workflowPermissionCeiling = normalizedPermissionModeOverride
+        ? parsePermissionIntentAlias(normalizedPermissionModeOverride) : workflowCaller?.authorization.admittedPermissionCeiling;
+      if (workflowCaller && !workflowPermissionCeiling) {
+        return { status: 'rejected' as const, code: 'session_input_invalid' as const };
+      }
+      const workflowInputAdmission = workflow && workflowCaller && workflowPermissionCeiling
+        ? buildWorkflowSessionInputAdmissionV2(workflow, { requestedPermissionCeiling: workflowPermissionCeiling,
+            ...(canonicalReplyIntent ? { replyIntent: canonicalReplyIntent } : {}),
+            ...(workflowCaller.authorization.sourceAuthority ? { sourceAuthority: { kind: 'mediatedExternal',
+              ...workflowCaller.authorization.sourceAuthority,
+              admittedPermissionCeiling: workflowCaller.authorization.admittedPermissionCeiling } } : {}),
+            ...(context?.actionRequestAttributionV1 ? { actionRequestAttributionV1: context.actionRequestAttributionV1 } : {}),
+          }) : undefined;
+      const workflowLocalId = workflow ? deriveWorkflowSessionInputLocalIdV2(workflow) : undefined;
+      const protectedInputAdmission = pluginInputAdmission ?? causalSessionInputAdmission ?? workflowInputAdmission;
       const replyCredentials = params.credentials;
       const settleCanonicalReply = async (sent: Extract<SendSessionMessageResult, { ok: true }>, admission: SessionMessageSendResultV1) => {
         if ((reply !== 'wait' && reply !== 'return') || (admission.status !== 'accepted' && admission.status !== 'alreadyAccepted')) return admission;
@@ -539,6 +570,7 @@ export function createCliMessageActionDeps(
         const [{ sendSessionMessage }, { resolveSessionMessageAdmissionTimeoutMs }] = await Promise.all([import("@/session/services/sendSessionMessage"), import("@/session/transport/shared/sessionTimeouts")]);
         const protectedResult = await sendSessionMessage({
           ...(readExecutionRun ? { readExecutionRun } : {}),
+          explicitMessageSend: true,
           ...(context?.authority ? { executionAuthority: context.authority } : {}),
           ...(context?.externalActionExecutionAuthorization ? { callerInputAuthorization: context.externalActionExecutionAuthorization } : {}),
           credentials: params.credentials,
@@ -551,8 +583,8 @@ export function createCliMessageActionDeps(
           wait: normalizedWait,
           timeoutMs: reply === undefined ? normalizedTimeoutSeconds * 1000 : resolveSessionMessageAdmissionTimeoutMs(),
           ...(canonicalReplyIntent ? { replyIntent: canonicalReplyIntent } : {}),
-          ...(pluginLocalId
-            ? { localId: pluginLocalId }
+          ...(pluginLocalId ?? workflowLocalId
+            ? { localId: pluginLocalId ?? workflowLocalId }
             : typeof localId === 'string' && localId.trim().length > 0
               ? { localId }
               : {}),
@@ -616,6 +648,7 @@ export function createCliMessageActionDeps(
         : undefined;
       const result = await sendSessionMessage({
         ...(readExecutionRun ? { readExecutionRun } : {}),
+        explicitMessageSend: true,
         ...(context?.authority ? { executionAuthority: context.authority } : {}),
         ...(context?.externalActionExecutionAuthorization ? { callerInputAuthorization: context.externalActionExecutionAuthorization } : {}),
         credentials: params.credentials,
@@ -636,7 +669,7 @@ export function createCliMessageActionDeps(
               machineId: context.defaultSessionMachineId
                 ?? (context.externalActionTarget?.kind === 'machine' ? context.externalActionTarget.machineId : undefined) })))
           && (!actionCaller || actionCaller.kind === 'host')
-          ? { inputAdmission: buildTrustedHostSessionInputAdmissionV1(callerSurface) }
+          ? { inputAdmission: buildTrustedHostSessionInputAdmissionV1(callerSurface, context?.actionRequestAttributionV1) }
           : {}),
         wait: normalizedWait,
         timeoutMs: reply === undefined ? normalizedTimeoutSeconds * 1000 : resolveSessionMessageAdmissionTimeoutMs(),

@@ -4,7 +4,7 @@ import { createStoredReadSchema, defineStoredReadProjection } from '../../json/s
 import { z } from 'zod/mini';
 import { CallerInputConstraintsV1Schema } from '../../auth/callerInputConstraintsV1.js';
 import { sha256 } from '@noble/hashes/sha2';
-import { ActionRequestAttributionV1Schema } from '../../actions/actionRequestAttributionV1.js';
+import { ActionRequestAttributionV1Schema, type ActionRequestAttributionV1 } from '../../actions/actionRequestAttributionV1.js';
 import { isRunFollowOriginalV1, SessionFollowInputV1Schema, SessionFollowReceiptDeliveryV1Schema } from '../follow/sessionFollowInputV1.js';
 import { DiscussionAddressingV1Schema } from '../../discussions/references.js';
 import { SessionFollowSourceOccurrenceWitnessesV1Schema, SessionFollowRelationWitnessesV1Schema } from '../follow/sessionFollowSourceOccurrenceV1.js';
@@ -26,6 +26,7 @@ import { AgentPermissionIntentV1Schema } from '../../runtime/permissionIntentV1.
 import { SessionIdSchema, TurnIdSchema } from '../idsV1.js';
 import { SessionMessageRefV1Schema } from './sessionMessageRefV1.js';
 import { SessionMessageReplyResolvedOutcomeV1Schema } from './sessionMessageReplyV1.js';
+import { SessionSpawnLaunchErrorV1Schema } from '../creation/sessionSpawnLaunchErrorV1.js';
 import { SessionWorkDepthV1Schema } from '../creation/sessionCreateOriginV1.js';
 import {
   SessionMutationEqualityBase64UrlSha256V1Schema,
@@ -686,6 +687,7 @@ export const SESSION_INPUT_ADMISSION_WORKFLOW_PROTOCOL_VERSION = 2 as const;
  */
 export function buildTrustedHostSessionInputAdmissionV1(
   surface: keyof ActionSurfaces | null | undefined,
+  actionRequestAttributionV1?: ActionRequestAttributionV1,
 ): Readonly<{
   provenance: SessionMessageProvenanceV1;
   request: SessionInputRequestV1;
@@ -711,6 +713,7 @@ export function buildTrustedHostSessionInputAdmissionV1(
       producer,
       caller: { kind: 'host' },
       permission: {},
+      ...(actionRequestAttributionV1 ? { actionRequestAttributionV1 } : {}),
     }),
   });
 }
@@ -1097,9 +1100,8 @@ export type SessionInputAdmissionResultV1 = z.infer<typeof SessionInputAdmission
 
 /**
  * Public result for `session.message.send`. Admission remains owned by the
- * canonical admission result above; these two additional arms describe a
- * proven terminal outcome when the caller asked to wait for one exact,
- * already-admitted Execution Run input.
+ * canonical admission result above. Waiting can fail while an admitted input
+ * remains recoverable in Pending, or settle one exact Execution Run input.
  */
 export const SessionMessageSendResultV1Schema = lazyZodSchema(() => z.union([
   SessionInputAdmissionResultV1Schema,
@@ -1113,6 +1115,16 @@ export const SessionMessageSendResultV1Schema = lazyZodSchema(() => z.union([
     status: z.literal('failed'),
     localId: PendingLocalIdSchema,
     code: z.literal('session_input_turn_failed'),
+  }),
+  z.strictObject({
+    status: z.literal('failed'),
+    localId: PendingLocalIdSchema,
+    code: z.literal('resume_failed'),
+    admissionResult: z.union([
+      SessionInputEnqueueResultV1Schema.options[0],
+      SessionInputEnqueueResultV1Schema.options[1],
+    ]),
+    errorDetail: z.optional(SessionSpawnLaunchErrorV1Schema),
   }),
   z.strictObject({
     status: z.literal('cancelled'),

@@ -1,11 +1,16 @@
-import { beforeEach, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { sendSessionMessage } from './sendSessionMessage';
 import type { SpawnSessionOptions } from '@/session/shared/spawnSessionContract';
-import { buildTrustedHostSessionInputAdmissionV1, deriveWorkflowSessionInputLocalIdV2 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
+import { buildTrustedHostSessionInputAdmissionV1, deriveWorkflowSessionInputLocalIdV2, SessionMessageSendResultV1Schema } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import { buildSessionStopHoldV1 } from '@happier-dev/protocol/sessions/metadata/sessionExplicitStopV1';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { createCliActionDeps } from '@/session/actions/createCliActionDeps';
+import { createSocketTransportAdapter } from '@happier-dev/sync-client';
+import { createApiSessionSocketStub } from '@/testkit/backends/apiSessionSocketHarness';
 
 const http = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn() }));
+const sockets = vi.hoisted(() => ({ connect: vi.fn() }));
 // HTTP and Machine RPC are external boundaries; admission and resume logic stay real.
 vi.mock('axios', async importOriginal => {
   const actual = await importOriginal<typeof import('axios')>();
@@ -17,6 +22,10 @@ vi.mock('@/configuration', async importOriginal => {
   serverUrl: 'https://home.example', apiServerUrl: 'https://home.example', sessionControlHttpTimeoutMs: 1000,
   clientEncryptionRequirement: 'follow_account',
   } };
+});
+vi.mock('@/api/session/sockets', async importOriginal => {
+  const actual = await importOriginal<typeof import('@/api/session/sockets')>();
+  return { ...actual, createSessionScopedSocketConnection: sockets.connect };
 });
 
 const sessionId = 'c123456789012345678901234';
@@ -91,35 +100,66 @@ it('accepts the Discussion original into Machine Pending before reusing the host
   expect(spawnSession.mock.calls[0]?.[0]).not.toHaveProperty('executionAuthorization');
 });
 
-it.each(['account', 'cli', 'present_user'] as const)(
-  'keeps ordinary %s input Pending after person Stop without minting explicit Resume authority', async source => {
+describe('a message send after Stop', () => {
+  const heldStop = () => {
     const hold = buildSessionStopHoldV1({ rawSession: { id: sessionId }, stopIntent: 'explicit_stop',
       executionAuthority: 'present_user', requestId: 'person-stop', requestedAtMs: 1 });
     if (hold.kind !== 'hold') throw new Error('Expected an explicit person Stop');
     receiverMetadata = { sessionExplicitStopV1: hold.stop };
-    const machineResumeTransport = vi.fn(async (_method: string, _request: unknown) => ({ type: 'success', sessionId }));
-    const result = await sendSessionMessage({ credentials: { token: 'account-token', encryption: null },
-      idOrPrefix: sessionId, message: 'An ordinary message, not Resume', localId: 'ordinary-held',
-      wait: false, timeoutMs: 1000, machineResumeTransport,
-      ...(source !== 'account' ? { inputAdmission: buildTrustedHostSessionInputAdmissionV1('cli') } : {}),
-      ...(source === 'present_user' ? { executionAuthority: 'present_user' as const } : {}),
-    });
-    expect(result).toMatchObject({ ok: false, code: 'held_by_person',
-      admissionResult: { status: 'accepted', localId: 'ordinary-held' } });
-    expect(machineResumeTransport).not.toHaveBeenCalled();
-    expect(receiverMetadata.sessionExplicitStopV1).toEqual(hold.stop);
+    return hold.stop;
+  };
+  const transport = () => vi.fn(async (_method: string, _request: unknown) => ({ type: 'success', sessionId }));
 
-    // Clearing the hold is an explicit Resume's responsibility. Once clear,
-    // ordinary next-message wake remains available without a person-Resume grant.
-    receiverMetadata = {};
+  it.each(['account', 'cli', 'present_user', 'automation'] as const)('%s send resumes through the Resume authority, once', async source => {
+    const stop = heldStop();
+    const machineResumeTransport = transport();
     expect(await sendSessionMessage({ credentials: { token: 'account-token', encryption: null },
-      idOrPrefix: sessionId, message: 'After explicit Resume', localId: 'ordinary-unheld',
-      wait: false, timeoutMs: 1000, executionAuthority: 'present_user', machineResumeTransport,
-    })).toMatchObject({ ok: true });
+      idOrPrefix: sessionId, message: 'Pick this back up', localId: 'send-1', wait: false, timeoutMs: 1000,
+      explicitMessageSend: true, machineResumeTransport,
+      ...(source === 'cli' ? { inputAdmission: buildTrustedHostSessionInputAdmissionV1('cli') } : {}),
+      ...(source === 'present_user' ? { executionAuthority: 'present_user' as const } : {}),
+      ...(source === 'automation' ? { executionAuthority: 'account_automation' as const } : {}),
+    })).toMatchObject({ ok: true, localId: 'send-1' });
     expect(machineResumeTransport).toHaveBeenCalledOnce();
+    expect(machineResumeTransport.mock.calls[0]?.[1]).toMatchObject({
+      executionAuthorization: { provenance: 'user_request', requestId: 'send-1' } });
+    // Only the launch owner clears the hold, after an exact successful resume.
+    expect(receiverMetadata.sessionExplicitStopV1).toEqual(stop);
+  });
+
+  it('an agent or manager Session send wakes the stopped receiver through the same rule', async () => {
+    heldStop();
+    const machineAdmissionTransport = vi.fn(async () => ({ status: 'accepted', localId: 'agent-send' } as const));
+    const machineResumeTransport = transport();
+    expect(await sendSessionMessage({ credentials: { token: 'account-token', encryption: null }, idOrPrefix: sessionId,
+      message: 'new instruction', localId: 'agent-send', wait: false, timeoutMs: 1000, explicitMessageSend: true,
+      inputAdmission: protectedSender, machineAdmissionTransport, machineResumeTransport,
+    })).toMatchObject({ ok: true, receiverDelivery: { disposition: 'wake' } });
+    expect(machineResumeTransport).toHaveBeenCalledOnce();
+    expect(machineResumeTransport.mock.calls[0]?.[1]).toMatchObject({ executionAuthorization: { provenance: 'user_request' } });
+  });
+
+  it('an automatic delivery that is not a new send stays held and starts nothing', async () => {
+    const stop = heldStop();
+    const machineResumeTransport = transport();
+    expect(await sendSessionMessage({ credentials: { token: 'account-token', encryption: null },
+      idOrPrefix: sessionId, message: 'Continue after the limit', localId: 'automatic-1', wait: false, timeoutMs: 1000,
+      machineResumeTransport,
+    })).toMatchObject({ ok: false, code: 'held_by_person', admissionResult: { status: 'accepted', localId: 'automatic-1' } });
+    expect(machineResumeTransport).not.toHaveBeenCalled();
+    expect(receiverMetadata.sessionExplicitStopV1).toEqual(stop);
+  });
+
+  it('a send into a Session without a hold mints no Resume authority', async () => {
+    receiverMetadata = {};
+    const machineResumeTransport = transport();
+    expect(await sendSessionMessage({ credentials: { token: 'account-token', encryption: null },
+      idOrPrefix: sessionId, message: 'Ordinary', localId: 'ordinary-unheld', wait: false, timeoutMs: 1000,
+      explicitMessageSend: true, machineResumeTransport,
+    })).toMatchObject({ ok: true });
     expect(machineResumeTransport.mock.calls[0]?.[1]).not.toHaveProperty('executionAuthorization');
-  },
-);
+  });
+});
 
 it('suppresses an admitted sender before writing or waking a muted receiver', async () => {
   receiverMuteScopes = [{ kind: 'sender_session', sessionId: senderSessionId }];
@@ -203,7 +243,7 @@ it('suppresses a protected returned sender without inventing an active source tu
   expect(http.post).not.toHaveBeenCalled();
 });
 
-it('holds an agent send after person Stop without granting an explicit human resume', async () => {
+it('holds an automatic Session delivery after Stop that is not a new send', async () => {
   receiverMetadata = { sessionExplicitStopV1: { v: 1, cause: 'explicit_stop', requestId: 'person-stop', requestedAtMs: 1 } };
   const machineAdmissionTransport = vi.fn(async () => ({ status: 'accepted', localId: 'held-agent-input' } as const));
   const machineResumeTransport = vi.fn();
@@ -325,4 +365,70 @@ it('retains the typed Machine refusal through ordinary Send after accepting Pend
     spawnErrorCode: 'SPAWN_VALIDATION_FAILED', runtimeFailureReason: 'runner_authority_unavailable', errorDetail,
     admissionResult: { status: 'accepted', localId: 'typed-resume-refusal' },
   });
+});
+
+it.each(['service', 'action'] as const)('returns a typed startup refusal for a waiting send through the %s while retaining its exact Pending input for recovery', async entry => {
+  const localId = 'failed-start-later-send';
+  receiverMetadata = { lifecycleState: 'failed' };
+  const errorDetail = { kind: 'launch_error', code: 'agent_startup_model_reconciliation_failed',
+    message: 'Review the selected model.', failureCause: { code: 'agent_startup_model_reconciliation_failed',
+      phase: 'client_start', failureReason: 'model_selection_required', retryable: false } } as const;
+  let retainedInput: unknown;
+  let blocked = false;
+  const readSession = http.get.getMockImplementation();
+  http.get.mockImplementation(async (url: string) => {
+    if (url.endsWith(`/messages/by-local-id/${localId}`)) {
+      throw { response: { status: 404, data: { error: 'message_not_found' } } };
+    }
+    if (url.endsWith(`/pending?includeDiscarded=true`)) return { status: 200, data: { pending: [] } };
+    return readSession?.(url);
+  });
+  const socket = createApiSessionSocketStub({ connected: true });
+  // Socket.IO is a genuine boundary; the shared observer and its existing wait budget stay real.
+  sockets.connect.mockImplementation(() => ({ socket, transport: createSocketTransportAdapter(socket as never) }));
+  http.post.mockImplementation(async (url: string, body: unknown) => {
+    if (url.endsWith(`/v2/sessions/${sessionId}/pending`)) {
+      retainedInput = body;
+      return { status: 200, data: { didWrite: true, terminal: false, suppressed: false } };
+    }
+    if (url.endsWith(`/pending/${localId}/delivery/block`)) {
+      expect(body).toEqual({ reason: 'session_input_target_unavailable' });
+      blocked = true;
+      return { status: 200, data: { ok: true, didUpdate: true } };
+    }
+    throw new Error(`Unexpected HTTP request: ${url}`);
+  });
+  let admittedSpawnNonce: string | undefined;
+  const machineResumeTransport = vi.fn(async (method: string, request: unknown) => {
+    if (method === RPC_METHODS.SPAWN_HAPPY_SESSION) {
+      const nonce = request && typeof request === 'object' ? Reflect.get(request, 'spawnNonce') : undefined;
+      admittedSpawnNonce = typeof nonce === 'string' ? nonce : undefined;
+      return { type: 'success', sessionId, ...(admittedSpawnNonce ? { spawnNonce: admittedSpawnNonce } : {}) };
+    }
+    if (method === RPC_METHODS.DAEMON_SPAWN_SESSION_RESOLVE) {
+      expect(request).toMatchObject({ spawnNonce: admittedSpawnNonce });
+      return { status: 'error', errorCode: 'SPAWN_FAILED', errorMessage: errorDetail.message, errorDetail };
+    }
+    throw new Error(`Unexpected Machine request: ${method}`);
+  });
+  const credentials = { token: 'account-token', encryption: null };
+  const expectedFailure = { status: 'failed', code: 'resume_failed', localId, errorDetail,
+    admissionResult: { status: 'accepted', localId } };
+  if (entry === 'service') {
+    await expect(sendSessionMessage({ credentials, idOrPrefix: sessionId,
+      message: 'Keep this prompt for recovery', localId, wait: true, timeoutMs: 1000, machineResumeTransport,
+    })).resolves.toMatchObject({ ok: false, code: 'resume_failed', errorDetail,
+      admissionResult: { status: 'accepted', localId }, settlementResult: expectedFailure });
+  } else {
+    const deps = createCliActionDeps({ token: credentials.token, credentials, sessionId: 'daemon-global',
+      mode: 'plain', ctx: null, machineActionDirectTargetTransport: { machineId: 'machine-1', invoke: machineResumeTransport } });
+    const outcome = await deps.sessionSendMessage!({ sessionId, message: 'Keep this prompt for recovery', localId,
+      wait: true, timeoutSeconds: 1, context: { surface: 'ui', authority: 'present_user' },
+      requestedAction: { v: 1, kind: 'enqueue' } });
+    expect(SessionMessageSendResultV1Schema.parse(outcome)).toEqual(expectedFailure);
+  }
+  expect(blocked).toBe(true);
+  expect(retainedInput).toMatchObject({ localId, content: { t: 'plain', v: {
+    content: { text: 'Keep this prompt for recovery' },
+  } } });
 });
