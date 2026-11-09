@@ -778,6 +778,7 @@ const AgentEventSchema = lazyZodSchema(() => z.pipe(z.discriminatedUnion('type',
   z.looseObject({
       type: z.literal('task-lifecycle'),
       event: TurnLifecycleEventV1Schema,
+      cause: z.optional(z.string()),
       id: z.optional(z.nullable(z.string())),
     }),
   z.looseObject({ type: z.literal('ready'),

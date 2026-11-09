@@ -22,7 +22,8 @@ export function runModeSwitchEventsPhase(params: Readonly<{
             }
             state.messageIds.set(msg.id, msg.id);
 
-            if (msg.content.type === 'task-lifecycle') {
+            if (msg.content.type === 'task-lifecycle'
+                && !(msg.content.event === 'turn_cancelled' && msg.content.cause === 'user')) {
                 continue;
             }
 

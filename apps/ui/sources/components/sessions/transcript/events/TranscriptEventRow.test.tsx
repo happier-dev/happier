@@ -1,3 +1,4 @@
+import { createReducer, reducer } from '@happier-dev/session-core/reducer';
 import { StyleSheet } from 'react-native';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -57,6 +58,18 @@ installDisconnectedServerSocketBoundary();
 await loadSyncSingletonForTests();
 
 describe('TranscriptEventRow', () => {
+    it('presents a retained user-stopped turn through the existing event row', async () => {
+        const normalized = normalizeRawMessage('stop', null, 1000, {
+            role: 'agent', content: { type: 'acp', agentId: 'opencode', data: { type: 'turn_cancelled', id: 'turn', cause: 'user' } },
+        }, { seq: 14 });
+        const result = reducer(createReducer(), [normalized!]);
+        const message = result.messages[0];
+        expect(message?.kind).toBe('agent-event');
+        if (message?.kind !== 'agent-event') throw new Error('Missing stop event');
+        const screen = await renderScreen(<TranscriptEventRow event={message.event} />);
+        expect(JSON.stringify(screen.tree.toJSON())).toContain(t('machineGuard.session.stopped'));
+    });
+
     it('retains canonical MCP accounting evidence without displaying it as an unknown conversation event', async () => {
         // The host projector commits this canonical event; usageWorkEvidence consumes
         // it independently of the transcript presentation.

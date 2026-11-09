@@ -526,6 +526,11 @@ function TranscriptEventRowContent(props: TranscriptEventRowProps & Readonly<{ c
         iconName = 'pause-circle';
         text = readTerminalComposerDraftBlockedMessage(props.event)
             ?? t('session.pendingMessages.steerBlockedTerminalDraftNotice');
+    } else if (props.event.type === 'task-lifecycle') {
+        // The reducer publishes only user-stopped lifecycle markers as visible rows.
+        testID = 'transcript-event-turn-stopped';
+        iconName = 'stop-circle';
+        text = t('machineGuard.session.stopped');
     } else if (props.event.type === 'worker-report') {
         testID = 'transcript-event-worker-report';
         text = props.event.summary;

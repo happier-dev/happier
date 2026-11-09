@@ -1,3 +1,4 @@
+import type { AgentSessionRuntimeEvent } from '@happier-dev/protocol/runtime';
 import type { TranscriptPeerSenderV1, TranscriptRawAgentEventV1 } from '@happier-dev/protocol';
 
 type AcpSidechainMeta = { sidechainId?: string };
@@ -60,7 +61,7 @@ export type ACPMessageData = AcpSidechainMeta & (
   | { type: 'task_started'; id: string }
   | { type: 'task_complete'; id: string }
   | { type: 'turn_failed'; id: string }
-  | { type: 'turn_cancelled'; id: string }
+  | { type: 'turn_cancelled'; id: string; cause?: Extract<AgentSessionRuntimeEvent, { kind: 'turn-cancelled' }>['cause'] }
   | { type: 'turn_aborted'; id: string }
   | { type: 'permission-request'; permissionId: string; toolName: string; description: string; options?: unknown }
   | { type: 'permission-response'; permissionId: string; approved: boolean; decision?: string; toolName?: string }

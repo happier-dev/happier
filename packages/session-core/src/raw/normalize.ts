@@ -359,6 +359,23 @@ function normalizeRawMessageFromRaw(
             meta: raw?.meta as MessageMeta | undefined });
     }
     const raw = parsed.data as RawRecord;
+    if (raw.role === 'agent' && (raw.content.type === 'codex' || raw.content.type === 'acp')) {
+        const data = raw.content.data;
+        if (data.type === 'task_complete' || data.type === 'turn_cancelled'
+            || data.type === 'turn_failed' || data.type === 'turn_aborted') {
+            return {
+                id, localId, createdAt, ...(seq !== undefined ? { seq } : {}),
+                role: 'event', isSidechain: false,
+                ...(typeof data.sidechainId === 'string' ? { sidechainId: data.sidechainId } : {}),
+                content: { type: 'task-lifecycle', event: data.type,
+                    ...(typeof data.id === 'string' ? { id: data.id } : {}),
+                    ...(typeof data.cause === 'string' ? { cause: data.cause } : {}),
+                },
+                meta: raw.meta,
+            } satisfies NormalizedMessage;
+        }
+    }
+
     if (raw.role === 'user' && isSessionToolAnswerDeliveryMeta(raw.meta)) return null;
 
     const toolResultContentToText = (content: unknown): string => {
@@ -1197,8 +1214,8 @@ function normalizeRawMessageFromRaw(
                     usage,
                 } satisfies NormalizedMessage;
             }
-            // Task lifecycle events (including canonical turn terminal markers)
-            // are status/metrics - skip normalization, they don't need UI rendering
+            // Terminal lifecycle markers were retained above for read activity.
+            // Remaining status/metrics records have no transcript presentation.
         }
     }
     // Status/metrics and unknown future presentation records have no visible transcript row.

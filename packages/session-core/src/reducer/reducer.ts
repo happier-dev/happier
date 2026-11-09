@@ -545,7 +545,6 @@ export function reducer(
         if (seq !== null) latestNonRenderableMessageSeq = Math.max(latestNonRenderableMessageSeq ?? 0, seq);
     }
 
-
     // Separate sidechain and non-sidechain messages.
     // Important: sidechain messages must never appear in the main transcript, even if sidechainId
     // isn't resolved yet (otherwise subagent tool execution leaks into the main timeline).

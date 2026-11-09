@@ -1,9 +1,29 @@
 import { describe, expect, it } from 'vitest';
 
 import { normalizeRawMessage } from "./normalize.js";
+import { createReducer, reducer } from '../reducer/reducer.js';
 import { RawRecordSchema } from "./schemas.js";
 
 describe('typesRaw progress record handling', () => {
+  it('acknowledges a trailing sidechain row without exposing it in the main transcript', () => {
+    const message = normalizeRawMessage('sidechain', null, 1000, {
+      role: 'agent', content: { type: 'codex', data: { type: 'message', message: 'worker output', sidechainId: 'worker' } },
+    }, { seq: 13 });
+    expect(message).not.toBeNull();
+    const result = reducer(createReducer(), [message!]);
+    expect(result.latestNonRenderableMessageSeq).toBe(13);
+    expect(result.messages).toEqual([]);
+  });
+
+  it('retains a user cancellation cause in the existing lifecycle event row', () => {
+    const message = normalizeRawMessage('stop', null, 1000, {
+      role: 'agent', content: { type: 'acp', agentId: 'opencode', data: { type: 'turn_cancelled', id: 'turn', cause: 'user' } },
+    }, { seq: 14 });
+    expect(message).not.toBeNull();
+    const result = reducer(createReducer(), [message!]);
+    expect(result.messages).toMatchObject([{ kind: 'agent-event', event: { type: 'task-lifecycle', event: 'turn_cancelled', cause: 'user' } }]);
+  });
+
   it('accepts Codex question tool records without an event id', () => {
     const call = normalizeRawMessage('call-message', null, 1000, {
       role: 'agent', content: { type: 'codex', data: {
@@ -105,8 +125,8 @@ describe('typesRaw progress record handling', () => {
     expect(normalized).toBeNull();
   });
 
-  it.each(['turn_failed', 'turn_cancelled', 'turn_aborted'] as const)(
-    'accepts codex %s records and drops them during normalization',
+  it.each(['task_complete', 'turn_failed', 'turn_cancelled', 'turn_aborted'] as const)(
+    'retains codex %s read activity without a visible terminal row',
     (type) => {
     const raw: any = {
       role: 'agent',
@@ -122,8 +142,11 @@ describe('typesRaw progress record handling', () => {
     const parsed = RawRecordSchema.safeParse(raw);
     expect(parsed.success).toBe(true);
 
-    const normalized = normalizeRawMessage(`msg-${type}`, null, 1000, raw);
-    expect(normalized).toBeNull();
+    const normalized = normalizeRawMessage(`msg-${type}`, null, 1000, raw, { seq: 12 });
+    expect(normalized).not.toBeNull();
+    const result = reducer(createReducer(), [normalized!]);
+    expect(result.latestNonRenderableMessageSeq).toBe(12);
+    expect(result.messages).toEqual([]);
     },
   );
 });

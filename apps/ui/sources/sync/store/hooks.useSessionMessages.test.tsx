@@ -377,6 +377,28 @@ describe('useSessionMessages', () => {
         }
     });
 
+    it.each(['socket', 'page'] as const)('acks applied terminal activity on %s without using raw Session seq', async (path) => {
+        const previousState = storage.getState();
+        const sessionId = 's-terminal-applied';
+        try {
+            storage.getState().applySessions([createSessionFixture({ id: sessionId, seq: 14, latestTurnStatus: 'failed' })]);
+            storage.getState().applyMessagesLoaded(sessionId);
+            const hook = await renderHook(() => useSessionVisibleReadSeq(sessionId, {
+                sessionSeq: 14, latestTurnStatus: 'failed',
+            }), { flushOptions: { cycles: 1, turns: 4 } });
+            try {
+                await act(async () => {
+                    const messages = [{ id: 'end', seq: 12, localId: null, createdAt: 1000,
+                        role: 'event' as const, isSidechain: false,
+                        content: { type: 'task-lifecycle' as const, event: 'turn_failed' as const } }];
+                    if (path === 'page') storage.getState().replaceSessionMessages(sessionId, messages);
+                    else storage.getState().applyMessages(sessionId, messages);
+                });
+                expect(hook.getCurrent()).toBe(12);
+            } finally { await hook.unmount(); }
+        } finally { storage.setState(previousState); }
+    });
+
     it('keeps transcript ids stable when message content changes without id changes', async () => {
         const previousState = storage.getState();
         try {
