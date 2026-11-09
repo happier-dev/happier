@@ -1,3 +1,4 @@
+import { fingerprintPluginAccountActionConfirmation } from '@happier-dev/protocol/plugins/actions/invocation';
 import { getActionSpec, isPluginActionCallerPolicySatisfied, PluginInvocableActionIdSchema } from '@happier-dev/protocol/actions/actionSpecs';
 import { PLUGIN_ACTION_CURRENT_INTENT_REJECTED_CODE, createPluginActionInvocation, createPluginActionPresentUserGate, pluginActionRequiresPresentUserIntent, type PluginActionCurrentIntentRequest, type PluginActionCurrentIntentResult } from '@happier-dev/protocol/plugins/actions/invocation';
 import { buildQualifiedPluginContributionKey, type PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
@@ -1247,7 +1248,7 @@ async function prepareClientContributedAction(
             return clientActionFailure('plugin_action_read_observation_session_unresolved');
         }
     }
-    return { kind: 'prepared' as const, initial, authority, invocationAuthority, invocation, preparedInput };
+    return { kind: 'prepared' as const, initial, authority, invocationAuthority, invocation, preparedInput, accountDeclaration, accountOrigin };
 }
 
 /** Both execution placements enter the same retained canonical Session admission. */
@@ -1433,10 +1434,21 @@ async function executeClientContributedAction(
     const originSurface = readActionOriginSurface(input);
     if (!originSurface) return clientActionFailure('plugin_action_origin_unavailable');
     let normalizedInput: unknown = preparedInput.input;
-    const requestCurrentIntent: PluginSurfaceActionCurrentIntentPresenter = request =>
-        input.hostAction?.context?.interactivePresentation === 'unavailable'
-            ? Promise.resolve({ status: 'unavailable', code: 'action_interactive_review_required' })
-            : resolveCurrentIntentPresenter(input, projectedAction, invocationSurface)(request);
+    let confirmedInvocation: Readonly<{ input: unknown; inputDigest: string }> | undefined;
+    const requestCurrentIntent: PluginSurfaceActionCurrentIntentPresenter = async request => {
+        const decision = input.hostAction?.context?.interactivePresentation === 'unavailable'
+            ? { status: 'unavailable' as const, code: 'action_interactive_review_required' }
+            : await resolveCurrentIntentPresenter(input, projectedAction, invocationSurface)(request);
+        if (decision.status === 'approved' && decision.fingerprint === request.fingerprint) {
+            const wrapper = { action: identity, ...(request.input === undefined ? {} : { input: request.input }) };
+            const inputDigest = fingerprintPluginAccountActionConfirmation({ input: wrapper, pluginId: identity.pluginId,
+                pluginVersion: initial.pluginVersion, declaration: request.action.accountActionDeclaration ?? preparation.accountDeclaration ?? undefined,
+                sourceCustody: request.action.accountActionDeclaration
+                    ? readPluginUiAccountExecutableOrigin(request.action)?.sourceCustody : preparation.accountOrigin?.sourceCustody });
+            if (inputDigest) confirmedInvocation = { input: wrapper, inputDigest };
+        }
+        return decision;
+    };
     const presentUserGate = createPluginActionPresentUserGate<PluginUiActionProjection>({
         resolve: () => {
             const current = resolveClientContributedActionSelection(input, identity, projectedAction);
@@ -1856,8 +1868,9 @@ async function executeClientContributedAction(
                 const clientCaller = input.invocation?.kind === 'clientPluginAction' ? input.invocation.clientActionBinding : null;
                 const context = mountedHostActionContext(input, caller, clientCaller, 'action.invoke');
                 return executeAccountActionAtRuntimeHost({ accountScope: accountLifetime.scope,
-                    action: identity, input: actionInput, signal,
-                    context: { ...context, surface: invocationSurface,
+                    action: identity, execution: current.action.execution, input: actionInput, signal,
+                    ...(confirmedInvocation ? { confirmedInvocation } : {}),
+                    context: { ...context, presentUserConfirmation: undefined, surface: invocationSurface,
                         ...(context.actionCaller?.kind === 'plugin' ? {} : { authority: invocationAuthority }) },
                     executeLocal: () => executeHandler(messageAction) });
             };

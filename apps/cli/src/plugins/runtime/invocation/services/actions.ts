@@ -145,6 +145,7 @@ export function projectContributedActionExecuteResult(result: ActionExecuteResul
 }
 
 export type InvokeContributedAction = (params: Readonly<{
+    expectedContributorOccurrenceId?: string;
     action: PluginContributionRef;
     /** `action.invoke` accepts omitted input; target validation retains that distinction. */
     input: JsonValue | undefined;
@@ -447,7 +448,11 @@ export function createPluginInvocationActionsService(params: Readonly<{
             });
         }
         throwIfContributedActionCallerInactive(params.seed, signal, actionCaller);
-        const originalApprovalContext = readApprovalContext();
+        // A new contributed child owns its target expectation and confirmation.
+        // The reviewedParent issuer below supplies any exact reviewed-child authority.
+        const inherited = readApprovalContext();
+        const originalApprovalContext = inherited ? { ...inherited, presentUserConfirmation: undefined,
+            presentUserApproval: undefined, expectedContributedActionOccurrenceId: undefined } : undefined;
         const approvalContext = agentWitness?.nativeRealtimeAdmission
             ? { ...originalApprovalContext, nativeRealtimeInput: true as const, signal }
             : originalApprovalContext;

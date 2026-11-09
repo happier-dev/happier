@@ -34,6 +34,7 @@ export type ResolvedTargetAction = NormalizedTargetActionPolicy & Readonly<{
   inputSchema?: object;
   /** Canonical admitted Action declaration; excludes implementation/build identity. */
   declaration?: object;
+  accountActionDeclaration?: import("@happier-dev/protocol/plugins/actions/v2").PluginActionContributionV2;
   accountId?: string;
   resourceId?: string;
   /** Durable source authority for replay; live admission remains occurrence-fenced. */
@@ -145,6 +146,7 @@ export function fingerprintTargetActionPolicy(action: NormalizedTargetActionPoli
   pluginVersion?: string;
   inputSchema?: object;
   declaration?: object;
+  accountActionDeclaration?: import("@happier-dev/protocol/plugins/actions/v2").PluginActionContributionV2;
 }>): string {
   return createHash('sha256').update(stable({
     qualifiedId: action.qualifiedId,
@@ -160,7 +162,7 @@ export function fingerprintTargetActionPolicy(action: NormalizedTargetActionPoli
     ...(action.secretInputLabels === undefined ? {} : { secretInputLabels: action.secretInputLabels }),
     // Consent binds the executable declaration, independently of its build.
     inputSchema: action.inputSchema,
-    declaration: action.declaration,
+    declaration: action.accountActionDeclaration ?? action.declaration,
   })).digest('hex');
 }
 

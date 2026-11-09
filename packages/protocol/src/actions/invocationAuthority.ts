@@ -1,5 +1,5 @@
 import type { ActionRequiredAuthority, ActionSurfaces } from './metadata.js';
-import type { ActionId } from './actionIds.js';
+import { ACTION_INVOKE_ACTION_ID_V1, type ActionId } from './actionIds.js';
 import type { ActionExecutorContext } from './executor/types.js';
 
 export const AUTHORITY_CEILING_HEADER_V1 =
@@ -91,4 +91,12 @@ export function resolveInvocationAuthority(
   )
     return 'present_user';
   return 'account_automation';
+}
+
+/** Private consent for one Plugin Account relay never raises the caller's authority. */
+export function isPluginActionInvokeConfirmationV1(context: Pick<ActionExecutorContext,
+  'surface' | 'authority' | 'actionCaller' | 'presentUserConfirmation'>): boolean {
+  return context.actionCaller?.kind === 'plugin' && context.authority === 'account_automation'
+    && (context.surface === 'ui' || context.surface === 'voice' || context.surface === 'plugin')
+    && context.presentUserConfirmation?.actionId === ACTION_INVOKE_ACTION_ID_V1;
 }

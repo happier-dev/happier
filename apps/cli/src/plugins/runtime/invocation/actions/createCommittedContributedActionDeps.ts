@@ -1,3 +1,6 @@
+import { fingerprintPluginAccountActionConfirmation } from '@happier-dev/protocol/plugins/actions/invocation';
+import { ACTION_INVOKE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
+import { admitAccountActionInvokeConfirmationV1 } from '@happier-dev/protocol/actions/executor/approvalReview';
 import { ActionDefinitionV1Schema } from '@happier-dev/protocol/actions/actionDefinitionV1';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import type { ActionDefinitionV1 } from '@happier-dev/protocol';
@@ -115,6 +118,9 @@ export function createCommittedContributedActionInvoker(input: Readonly<{
 }> = {}): NonNullable<ActionExecutorDeps['invokeContributedAction']> {
   const acquire = input.acquireRuntimeRegistryLease ?? acquireAuthoritativePluginRuntimeRegistryLease;
   return async ({ action, input: actionInput, clientId, messageActionReference, context, approvalExecutionOrigin, requiredDangerLevel, resolveEnvironmentApprovalScope, signal }) => {
+    const expectedContributorOccurrenceId = context.expectedContributedActionOccurrenceId;
+    const hasCarriedConsent = context.presentUserConfirmation?.actionId === ACTION_INVOKE_ACTION_ID_V1
+      || context.presentUserApproval?.actionId === ACTION_INVOKE_ACTION_ID_V1;
     const invocationSignal = signal ?? context.signal ?? new AbortController().signal;
     invocationSignal.throwIfAborted();
     const surface = readSurface(context.surface) ?? input.defaultInvocationSurface;
@@ -160,6 +166,7 @@ export function createCommittedContributedActionInvoker(input: Readonly<{
         ...input.inheritedInvocation,
         actionId: buildQualifiedPluginContributionKey(action),
         input: actionInput,
+        ...(expectedContributorOccurrenceId === undefined ? {} : { expectedContributorOccurrenceId }),
         ...(clientId === undefined ? {} : { clientId }),
         ...(messageActionReference ? { messageActionReference } : {}),
         ...(requiredDangerLevel ? { requiredDangerLevel } : {}),
@@ -168,7 +175,20 @@ export function createCommittedContributedActionInvoker(input: Readonly<{
         ...(context.actionsSettings ? { actionsSettings: context.actionsSettings } : {}),
         ...(admittedManagedProviderOperation ? { admittedManagedProviderOperation } : {}),
         ...(approvalExecutionOrigin ? { approvalExecutionOrigin } : {}),
-        ...(input.requestCurrentIntent ? { requestCurrentIntent: input.requestCurrentIntent } : {}),
+        ...(input.requestCurrentIntent || hasCarriedConsent ? { requestCurrentIntent: async request => {
+          const wrapper = { action: { pluginId: request.action.pluginId, localId: request.action.localId },
+            ...(request.action.input === undefined ? {} : { input: request.action.input }),
+            ...(clientId === undefined ? {} : { clientId }),
+            ...(expectedContributorOccurrenceId === undefined ? {} : { expectedContributorOccurrenceId }),
+            ...(messageActionReference ? { messageActionReference } : {}) };
+          const digest = fingerprintPluginAccountActionConfirmation({ input: wrapper, pluginId: request.action.pluginId,
+            pluginVersion: request.action.pluginVersion, sourceCustody: request.action.sourceCustody,
+            declaration: request.action.accountActionDeclaration });
+          if (admitAccountActionInvokeConfirmationV1(wrapper, context, digest)) return { status: 'approved', fingerprint: request.fingerprint };
+          if (hasCarriedConsent) return { status: 'unavailable', code: 'plugin_action_current_intent_mismatch' };
+          return input.requestCurrentIntent ? await input.requestCurrentIntent(request)
+            : { status: 'unavailable', code: 'plugin_action_current_intent_unavailable' };
+        } } : {}),
         context: {
           ...(input.observePluginExecution ? { observePluginExecution: input.observePluginExecution } : {}),
           surface,

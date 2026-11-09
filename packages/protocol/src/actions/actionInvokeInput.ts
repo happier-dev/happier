@@ -8,6 +8,7 @@ import { defineProtocolJsonValue, defineProtocolObject, defineProtocolString, ty
 export const ActionInvokeInputProtocolSchema = defineProtocolObject({
   action: PluginContributionIdentityV1Schema,
   input: defineProtocolJsonValue().optional(),
+  expectedContributorOccurrenceId: defineProtocolString({ minLength: 1 }).optional(),
   clientId: defineProtocolString({ minLength: 1 }).optional(),
   messageActionReference: MessageActionReferenceV1ProtocolSchema.optional(),
 }, { policy: 'closed' });

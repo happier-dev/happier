@@ -1,3 +1,4 @@
+import { isPluginActionInvokeConfirmationV1 } from './invocationAuthority.js';
 import { isWorkspaceSyncRelationshipWriteActionId } from './actionIds.js';
 import { FILESYSTEM_BROWSER_ACTION_IDS_V1 } from './filesystemActionIdsV1.js';
 import { isSessionAgentReadinessRootActionIdV1, readSessionAgentReadinessRoleV1, type SessionAgentReadinessActionIdV1 } from '../machines/managed/actionIdsV1.js';
@@ -3142,7 +3143,8 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       ...(deploymentReview === undefined ? {} : { deploymentReview }),
     } };
     // A bound confirmation that did not match is not the legacy default-only marker.
-    if (ctx.presentUserConfirmation?.inputDigest !== undefined) ctx = { ...ctx, presentUserConfirmation: undefined };
+    if (ctx.presentUserConfirmation?.inputDigest !== undefined
+      && !isPluginActionInvokeConfirmationV1(ctx)) ctx = { ...ctx, presentUserConfirmation: undefined };
     // Known children's explicit Require belongs to this parent review. Native
     // confirmation answers defaults; it cannot hide that deliberate choice.
     let childReviewRequired = childrenPreparation.reviewRequired;
@@ -5645,6 +5647,14 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
             };
           }
           const invocation = data as z.infer<typeof ActionInvokeInputSchema>;
+          if (invocation.expectedContributorOccurrenceId !== undefined) {
+            if (ctx.expectedContributedActionOccurrenceId !== undefined
+              && ctx.expectedContributedActionOccurrenceId !== invocation.expectedContributorOccurrenceId) {
+              return { ok: false, errorCode: 'plugin_action_generation_retired', error: 'plugin_action_generation_retired',
+                details: { actionHandlerInvocation: 'notStarted' } };
+            }
+            ctx = { ...ctx, expectedContributedActionOccurrenceId: invocation.expectedContributorOccurrenceId };
+          }
           const approvalExecutionOrigin = await prepareApprovalExecutionOrigin({
             actionId: 'action.invoke',
             input: data,

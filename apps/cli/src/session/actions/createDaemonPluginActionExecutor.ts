@@ -191,6 +191,8 @@ export function createPluginActionExecutor(params: Readonly<{
     invokeContributedAction: async (request) => {
       const attempt = await requestContributed('action.invoke', {
         action: request.action, input: request.input,
+        ...(request.context.expectedContributedActionOccurrenceId === undefined ? {} : {
+          expectedContributorOccurrenceId: request.context.expectedContributedActionOccurrenceId }),
         ...(request.messageActionReference ? { messageActionReference: request.messageActionReference } : {}),
       }, { ...request.context,
         ...(request.requiredDangerLevel ? { requiredContributedActionDangerLevel: request.requiredDangerLevel } : {}),

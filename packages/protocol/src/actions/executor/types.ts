@@ -818,7 +818,8 @@ export type ActionExecutorContext = Readonly<{
    */
   presentUserConfirmation?: Readonly<{
     actionId: ActionId;
-    /** Bound by the invoking host at its designed confirmation, never Action input. */
+    /** Host confirmation binds normalized input. Plugin Account action.invoke binds the
+     * exact wrapper, portable source and whole canonical declaration at current-intent. */
     inputDigest?: string;
     requestId?: string;
     accountId?: string;

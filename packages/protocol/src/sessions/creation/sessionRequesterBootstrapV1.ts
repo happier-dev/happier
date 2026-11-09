@@ -37,7 +37,7 @@ import { WorkflowApprovedOperationParentV1Schema } from '../../actions/approvedO
 import { MACHINE_SETUP_APPLY_ACTION_ID_V1 } from '../../machines/managed/actionIdsV1.js';
 import { ActionIdSchema } from '../../actions/actionIds.js';
 import { getActionSpec } from '../../actions/actionSpecs.js';
-import { isPresentUserHostInvocation } from '../../actions/invocationAuthority.js';
+import { isPresentUserHostInvocation, isPluginActionInvokeConfirmationV1 } from '../../actions/invocationAuthority.js';
 import { ActionRequestAttributionV1Schema, materializeActionRequestAttributionV1, type ActionRequestAttributionV1 } from '../../actions/actionRequestAttributionV1.js';
 import type { ActionExecutorContext } from '../../actions/executor/types.js';
 import { readHostReviewedParentV1 } from '../../actions/executor/deploymentRoleChild.js';
@@ -137,8 +137,10 @@ export const ExternalActionRequesterInvocationV1Schema = lazyZodSchema(() => z.s
   message: 'A reviewed parent belongs to a host invocation.',
 }), z.refine(value => !value.presentUserConfirmation
   || value.caller.kind === 'host' && isPresentUserHostInvocation({ surface: value.surface,
-    authority: value.authority, actionCaller: { kind: 'host' } }), {
-  message: 'An in-flow confirmation belongs to the present person in a host invocation.',
+    authority: value.authority, actionCaller: { kind: 'host' } })
+  || isPluginActionInvokeConfirmationV1({ surface: value.surface, authority: value.authority,
+    actionCaller: value.caller, presentUserConfirmation: value.presentUserConfirmation }), {
+  message: 'An in-flow confirmation belongs to a present-person host or Plugin action.invoke.',
 })));
 export type ExternalActionRequesterInvocationV1 = z.infer<typeof ExternalActionRequesterInvocationV1Schema>;
 

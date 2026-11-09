@@ -131,6 +131,8 @@ export type TargetActionInvocationRegistration = Readonly<{
     sourceCustody?: PluginSourceCustodyV1;
     localId: string;
     definition: TargetActionDefinition;
+    /** Whole portable manifest Action, retained separately from invocation normalization. */
+    accountActionDeclaration?: import("@happier-dev/protocol/plugins/actions/v2").PluginActionContributionV2;
     inputParser?: PluginActionInputParser;
     resultParser?: PluginActionInputParser;
     handler: ActionHandler<JsonValue, JsonValue | void>;
@@ -1055,6 +1057,7 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
                     pluginVersion: registration.pluginVersion,
                     ...(registration.definition.inputSchema === undefined ? {} : { inputSchema: registration.definition.inputSchema }),
                     declaration: registration.definition,
+                    ...(registration.accountActionDeclaration ? { accountActionDeclaration: registration.accountActionDeclaration } : {}),
                 };
                 return Object.freeze({ ...action, policyFingerprint: fingerprintTargetActionPolicy(action) });
             };

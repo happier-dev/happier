@@ -58,6 +58,7 @@ import {
 import { createMcpSignInConnectedAccountRegistration } from '@/mcp/oauth/mcpSignInRuntime';
 import { assembleAutomationRuntime } from './composition/automationAssembly';
 import { createSavedHealthChecksHost } from '@/deployments/healthChecks/savedHealthChecks';
+import { publishSavedServiceHealthResult } from '@/deployments/healthChecks/publishServiceHealth';
 import { createPluginWebhookHeartbeatClient } from './webhooks/heartbeatClient';
 import { createCurrentDomainEdgeObservation } from '@/deployments/healthChecks/currentDomainEdgeObservation';
 import { readAdoptedHealthCheckBatch } from '@/deployments/healthChecks/readAdoptedHealthCheckBatch';
@@ -3191,6 +3192,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
                 catch { return { status: 'unavailable' as const, code: 'plugin_action_execution_origin_unavailable',
                     message: 'Current Machine source declarations are unavailable', actionHandlerInvocation: 'notStarted' as const }; }
                 const source = sources.find(row => row.manifest.id === request.action.pluginId
+                    && (request.expectedContributorOccurrenceId === undefined || row.occurrenceId === request.expectedContributorOccurrenceId)
                     && (request.admittedTargetedOperation === undefined
                         || row.occurrenceId === request.admittedTargetedOperation.contributorOccurrenceId)
                     && row.manifest.contributes.actions.some(action => action.id === request.action.localId && action.execution.target === 'daemon'));
@@ -3221,6 +3223,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
                 actionId: formatQualifiedPluginActionId(request.action),
                 input: request.input,
                 context: { ...request.approvalContext, surface: 'plugin', authority: 'account_automation',
+                    expectedContributedActionOccurrenceId: request.expectedContributorOccurrenceId,
                     actionCaller: request.initiatingActionCaller,
                     ...(request.sessionId ? { defaultSessionId: request.sessionId } : {}), signal: request.signal },
                 inheritedInvocation: {
@@ -3250,6 +3253,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
                 }),
             ),
             input: request.input,
+            ...(request.expectedContributorOccurrenceId === undefined ? {} : { expectedContributorOccurrenceId: request.expectedContributorOccurrenceId }),
             ...(request.requiredDangerLevel ? { requiredDangerLevel: request.requiredDangerLevel } : {}),
             ...(request.requiredReadOnly ? { requiredReadOnly: true as const } : {}),
             ...(request.resourceSessionId ? { resourceSessionId: request.resourceSessionId } : {}),
@@ -3493,15 +3497,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
             enrollHeartbeat: heartbeatClient.enroll,
             readHeartbeatReceipt: heartbeatClient.read,
             onDomainResult: value => currentDomainEdgeObservation.publish(value),
-            onServiceResult: value => {
-                const handles = [...projectManagedServicesOwner.listMachineServices(), ...projectManagedServicesOwner.listProjectServices()];
-                const handle = handles.find(candidate => {
-                    const target = candidate.kind === 'workspace' ? candidate.workspace : candidate;
-                    return target.serverId === value.serverId && target.machineId === value.subject.machineId
-                        && candidate.serviceId === value.subject.serviceId && candidate.instanceId === value.generation;
-                });
-                if (handle) projectManagedServicesOwner.machineServiceRows.publishHealthResult(handle, value);
-            },
+            onServiceResult: value => publishSavedServiceHealthResult(projectManagedServicesOwner, value),
             openDomainArtifact: async (artifactId, signal) => {
                 const current = await readHealthCheckCredentials();
                 if (!current) return null;

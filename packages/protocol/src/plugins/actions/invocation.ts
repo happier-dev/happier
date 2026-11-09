@@ -1,3 +1,5 @@
+import { computeCanonicalDomainSeparatedDigest } from '../../crypto/canonicalDigest.js';
+import type { PluginSourceCustodyV1 } from '../runtime/sourceCustody.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { evaluateInputPredicate } from '../../inputs/inputPredicates.js';
 import { AgentRuntimeJsonValueV1Schema } from '../../runtime/agentSessionV1.js';
@@ -702,6 +704,29 @@ function evaluatePresentUserPolicy(
     ...(policy.availability === undefined ? {} : { availability: policy.availability }),
     confirmation: requiresCurrentIntent ? 'currentIntentRequired' : 'notRequired',
   });
+}
+
+/** Portable settled consent for one Account action.invoke, not generic host approval.
+ * Bundled build roots differ between hosts; the canonical declaration and package
+ * version bind what was reviewed while Account releases retain exact source custody.
+ */
+export function fingerprintPluginAccountActionConfirmation(params: Readonly<{
+  input: unknown;
+  pluginId: string;
+  pluginVersion?: string;
+  sourceCustody?: PluginSourceCustodyV1;
+  /** Whole normalized manifest Action; transformed invocation definitions are insufficient. */
+  declaration?: PluginActionContributionV2;
+}>): string | null {
+  const source = params.sourceCustody;
+  const declaration = params.declaration;
+  if (!params.pluginVersion || !declaration || declaration.execution.target !== 'account'
+    || !source || source.kind !== 'account_release' && source.kind !== 'bundled_first_party') return null;
+  return computeCanonicalDomainSeparatedDigest('happier.plugin-account-action.confirmation.v1',
+    [createCanonicalJsonSigningInput({ input: params.input, pluginId: params.pluginId,
+      pluginVersion: params.pluginVersion, declaration,
+      source: source.kind === 'account_release' ? source : { kind: source.kind },
+    })]);
 }
 
 export function fingerprintPluginActionCurrentIntent(params: Readonly<{

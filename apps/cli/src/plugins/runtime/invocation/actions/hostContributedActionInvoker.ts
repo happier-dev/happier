@@ -88,6 +88,8 @@ export function createHostContributedActionInvoker(params: Readonly<{
             ...(caller.originSurface ? { originSurface: caller.originSurface } : {}),
             initiatingActionCaller: caller,
             approvalContext: context,
+            ...(context.expectedContributedActionOccurrenceId === undefined ? {} : {
+                expectedContributorOccurrenceId: context.expectedContributedActionOccurrenceId }),
             ...(context.contributedActionExecutionOrigin ? {
                 captureExecutionOrigin: true as const,
                 ...(context.contributedActionExecutionOrigin.expectedExecutionOrigin === undefined ? {} : {

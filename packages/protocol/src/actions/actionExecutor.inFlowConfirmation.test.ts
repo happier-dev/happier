@@ -9,6 +9,8 @@ import { getActionSpec } from './actionSpecs.js';
 import { artifactHtmlBundleFromBodyV1 } from '../artifacts/artifactHtmlV1.js';
 import { ExternalActionExecutionAuthorizationV1Schema } from './externalActionApi.js';
 import { computeExternalActionRequestEnvelopeDigestV1 } from './externalActionExecutionAuthorization.js';
+import { PluginActionContributionV2Schema } from '../plugins/actions/v2.js';
+import { fingerprintPluginAccountActionConfirmation } from '../plugins/actions/invocation.js';
 import { admitPresentUserConfirmationV1 } from './executor/approvalReview.js';
 
 const actionId = 'machines.setup.apply' as const;
@@ -367,4 +369,26 @@ describe('one in-flow confirmation for the requested operation', () => {
       expect(applied).toBe(0);
     },
   );
+});
+
+
+describe('portable Account Action consent binding', () => {
+  const declaration = PluginActionContributionV2Schema.parse({ id: 'assign', title: 'Assign', scopes: ['global'],
+    surfaces: ['ui', 'plugin'], placementBindings: ['detailsPanel'], dangerLevel: 'writesRemote',
+    execution: { target: 'account', account: { artifactId: 'portable', exportName: 'activate' } },
+    confirmation: { title: 'Assign', body: 'Assign this issue?', confirmLabel: 'Assign' } });
+  const requested = { pluginId: 'acme.picker', pluginVersion: '1.2.3', declaration,
+    input: { action: { pluginId: 'acme.picker', localId: 'assign' }, input: { assignee: 'alice' } } };
+  it('retains bundled consent across host build roots while binding the whole declaration', () => {
+    const browser = fingerprintPluginAccountActionConfirmation({ ...requested,
+      sourceCustody: { kind: 'bundled_first_party', packagedRuntime: { kind: 'source_declaration', packageName: '@acme/picker' } } });
+    const daemon = { ...requested, sourceCustody: { kind: 'bundled_first_party' as const,
+      packagedRuntime: { kind: 'cli_version_root' as const, versionRootId: 'another-build-root' } } };
+    expect(browser).not.toBeNull();
+    expect(fingerprintPluginAccountActionConfirmation(daemon)).toBe(browser);
+    expect(fingerprintPluginAccountActionConfirmation({ ...daemon,
+      declaration: PluginActionContributionV2Schema.parse({ ...declaration,
+        confirmation: { ...declaration.confirmation, title: 'Review different effect' } }) })).not.toBe(browser);
+    expect(fingerprintPluginAccountActionConfirmation({ ...daemon, declaration: undefined })).toBeNull();
+  });
 });

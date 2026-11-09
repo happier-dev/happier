@@ -284,6 +284,7 @@ export function buildTargetActionInvocationRegistry(params: Readonly<{
                 occurrenceId,
                 sourceCustody,
                 localId: entry.registration.localId,
+                ...(admittedTarget.declaration.execution.target === 'account' ? { accountActionDeclaration: admittedTarget.declaration } : {}),
                 definition: {
                     ...readAdmittedTargetDefinition(admittedTarget),
                     secretInputPaths,

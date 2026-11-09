@@ -1,3 +1,6 @@
+import { ACTION_INVOKE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
+import { projectExternalActionRequesterInvocationV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
+import { bindPresentUserActionConfirmation } from '@/sync/ops/actions/presentUserConfirmation';
 import { DaemonContributionRegistryProjectionDescribeRequestSchema, DaemonPluginUiTargetedContributionsReadRequestSchema, DaemonPluginSettingsGetRequestSchema, DaemonPluginSettingsGetResponseSchema, DaemonPluginSettingsSetRequestSchema, DaemonPluginSettingsSetResponseSchema, DaemonPluginSecretStatusRequestSchema, DaemonPluginSecretStatusResponseSchema, DaemonPluginSecretSetRequestSchema, DaemonPluginSecretSetResponseSchema, DaemonPluginSecretDeleteRequestSchema, DaemonPluginSecretDeleteResponseSchema, DaemonPluginStructuredMessageActionExecuteResponseSchema, DaemonPluginActionFormConnectedAccountOptionsResolveRequestSchema, DaemonPluginActionFormConnectedAccountOptionsResolveResponseSchema, DaemonPluginActionSchemasReadRequestSchema, DaemonPluginActionSchemasReadResponseSchema, DaemonPluginUiResourceReadRequestSchema, DaemonPluginUiResourceReadResponseSchema, DaemonPluginUiResourceWatchOpenRequestSchema, DaemonPluginUiResourceWatchOpenResponseSchema, DaemonPluginUiResourceWatchNextRequestSchema, DaemonPluginUiResourceWatchNextResponseSchema, DaemonPluginUiResourceWatchCloseRequestSchema, DaemonPluginUiResourceWatchCloseResponseSchema, type DaemonPluginSettingsSnapshot, type DaemonPluginSettingsMutation, type DaemonPluginSettingsSetResponse, type DaemonPluginSecretStatusResponse, type DaemonPluginSecretSetResponse, type DaemonPluginSecretDeleteResponse, type DaemonPluginStructuredMessageActionExecuteResponse, type DaemonPluginActionFormConnectedAccountOptionsResolveRequest, type DaemonPluginActionFormConnectedAccountOptionsResolveResponse, type DaemonPluginActionSchemasReadRequest, type DaemonPluginActionSchemasReadResponse, type DaemonPluginUiResourceReadRequest, type DaemonPluginUiResourceReadResponse, type DaemonPluginUiResourceWatchOpenRequest, type DaemonPluginUiResourceWatchOpenResponse, type DaemonPluginUiResourceWatchNextRequest, type DaemonPluginUiResourceWatchNextResponse, type DaemonPluginUiResourceWatchCloseRequest, type DaemonContributionRegistryProjectionAutomationEligibleEventsV1, type DaemonPluginUiComposerSurfaceCatalogEntryV1, type DaemonPluginUiTargetedSurfaceMountV1 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import type { DaemonPluginStructuredMessageActionExecuteRequest } from '@happier-dev/protocol/plugins/actions/daemonInvocationV1';
 import { parseQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
@@ -964,10 +967,21 @@ export async function machinePluginStructuredMessageActionExecute(
                     return { supported: false, reason: 'error' };
                 }
                 const requestId = payload.requestId ?? randomUUID();
-                const actionInput = { action, ...(payload.input === undefined ? {} : { input: payload.input }),
+                const actionInput = { action, ...(payload.expectedContributorOccurrenceId === undefined ? {} : { expectedContributorOccurrenceId: payload.expectedContributorOccurrenceId }), ...(payload.input === undefined ? {} : { input: payload.input }),
                     ...(payload.messageActionReference ? { messageActionReference: payload.messageActionReference } : {}) };
-                let result = await executeOriginalAccountMachineAction({ account, actionId: 'action.invoke',
+                const target = { kind: 'machine' as const, machineId };
+                const context = { surface: payload.executionSurface, authority: 'present_user' as const,
+                    actionCaller: { kind: 'host' as const }, actionRequestId: requestId,
+                    runtimeAccountId: account.accountId, serverId: account.serverId,
+                    ...(account.serverIdentityId ? { serverIdentityId: account.serverIdentityId } : {}),
+                    externalActionTarget: target };
+                const invocation = projectExternalActionRequesterInvocationV1({ actionId: ACTION_INVOKE_ACTION_ID_V1,
+                    context: payload.presentUserIntent === 'confirmed'
+                        ? bindPresentUserActionConfirmation(ACTION_INVOKE_ACTION_ID_V1, actionInput, context) : context,
+                    account, target });
+                let result = await executeOriginalAccountMachineAction({ account, actionId: ACTION_INVOKE_ACTION_ID_V1,
                     requestId, machineId, authority: 'present_user', input: actionInput,
+                    ...(invocation ? { invocation } : {}),
                     ...(opts.signal ? { signal: opts.signal } : {}),
                     ...(opts.timeoutMs == null ? {} : { timeoutMs: opts.timeoutMs }), onTransportIssued: onIssued });
                 if (opts.onApprovalPending) {
