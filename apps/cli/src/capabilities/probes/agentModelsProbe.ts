@@ -68,6 +68,9 @@ const ProbeModelsObservationSchema = lazyZodSchema(() => z.object({
   refreshErrorMessage: z.optional(z.string()),
   spawnFailure: z.optional(SpawnFailureV1Schema),
   source: z.optional(z.enum(['dynamic', 'static', 'unavailable'])),
+  // A native inventory was read, but some eligibility could not be established.
+  // Consume this raw producer fact here; it is not a published observation field.
+  catalogObserved: z.optional(z.literal(true)),
 }));
 const ProbeDescriptionSchema = lazyZodSchema(() => z.string());
 const ProbeDynamicModelInputSchema = lazyZodSchema(() => z.object({
@@ -151,10 +154,13 @@ function buildStatic(
 }
 
 function buildUnavailable(agentId: CatalogAgentLookupId): ProbedAgentModelsResult {
+  const config = resolveAgentModelConfigForLookupId(agentId);
   return {
     agentId,
     availableModels: [],
-    supportsFreeform: false,
+    // Discovery availability and the Agent's explicit-selection capability are
+    // separate facts. Keep the declared recovery path when a catalog fails.
+    supportsFreeform: config?.supportsSelection === true && config.supportsFreeform === true,
     source: 'unavailable',
   };
 }
@@ -496,14 +502,15 @@ async function probeAgentModels(params: {
       if (error instanceof SpawnFailureError) spawnFailure = error.spawnFailure;
       return null;
     };
-    const failedResult = (cold: ProbedAgentModelsResult, ttlMs = PROBE_MODELS_FAILURE_TTL_MS): ProbedAgentModelsResult => {
+    const failedResult = (cold: ProbedAgentModelsResult, ttlMs = PROBE_MODELS_FAILURE_TTL_MS, catalogObserved = false): ProbedAgentModelsResult => {
       const lastGood = cached2?.kind === 'success' && cached2.value.source !== 'unavailable' ? cached2.value : null;
       // A successful setter can replace this scope's catalog before a later
       // setter fails. Its actual accepted observation outranks the older cache;
       // an ordinary failed refresh still retains the last good observation.
+      // A native inventory refusal also replaces rows from an older auth route.
       const acceptedScopeObservation = params.configOptionOverrides
         && Object.keys(params.configOptionOverrides).length > 0 && cold.source === 'dynamic' && cold.observedAt !== undefined;
-      const { spawnFailure: _previousFailure, refreshErrorMessage: _previousMessage, ...observation } = acceptedScopeObservation ? cold : lastGood ?? cold;
+      const { spawnFailure: _previousFailure, refreshErrorMessage: _previousMessage, ...observation } = catalogObserved || acceptedScopeObservation ? cold : lastGood ?? cold;
       const result = { ...observation, refreshError: true, cacheable: false,
         ...(cold.refreshErrorMessage === undefined ? {} : { refreshErrorMessage: cold.refreshErrorMessage }),
         ...(spawnFailure ? { spawnFailure } : {}) };
@@ -552,9 +559,11 @@ async function probeAgentModels(params: {
       const preflightModelsAdapter = await resolvePreflightSessionControlsProbeAdapter(params.agentId, params.catalogEntry);
       const probeModelsRaw = preflightModelsAdapter?.probeModelsRaw;
       if (probeModelsRaw) {
+        let catalogObserved = false;
         let provenance: Partial<Pick<ProbedAgentModelsResult, 'observedAt' | 'refreshError' | 'refreshErrorMessage' | 'source' | 'spawnFailure'>> = {};
         const probePreflightModelsOnce = async (): Promise<ProbedAgentModel[] | null> => {
           provenance = {};
+          catalogObserved = false;
           const modelsRaw = await withPreflightSessionControlsProbeEnvironment({
             agentId: params.agentId,
             processEnv: params.env ?? process.env,
@@ -577,6 +586,7 @@ async function probeAgentModels(params: {
           })).catch(observeFailure);
           const envelope = ProbeModelsObservationSchema.safeParse(modelsRaw);
           if (envelope.success) {
+            catalogObserved = envelope.data.catalogObserved === true;
             spawnFailure = envelope.data.spawnFailure;
             provenance = {
               ...(envelope.data.observedAt !== undefined ? { observedAt: envelope.data.observedAt } : {}),
@@ -600,7 +610,7 @@ async function probeAgentModels(params: {
         });
         if (decision.kind === 'success') {
           if (provenance.refreshError || provenance.spawnFailure) {
-            return failedResult({ ...fallback, availableModels: decision.value, source: 'dynamic', ...provenance });
+            return failedResult({ ...fallback, availableModels: decision.value, source: 'dynamic', ...provenance }, PROBE_MODELS_FAILURE_TTL_MS, catalogObserved);
           }
           const res: ProbedAgentModelsResult = {
             ...fallback, availableModels: decision.value, source: 'dynamic',

@@ -121,10 +121,12 @@ export const OPENCODE_PREFLIGHT_SESSION_CONTROLS = Object.freeze({
         : controls?.models ?? null;
     }
     return await withOpenCodePreflightServer(context, async client => {
-      const catalog = buildOpenCodeModelCatalogFromProviders(await client.providersList(), Date.now());
+      const providers = await client.providersList();
+      const observedAt = Date.now();
+      const catalog = buildOpenCodeModelCatalogFromProviders(providers, observedAt);
       return catalog.unavailableReason
         ? { availableModels: catalog.models ?? [], source: catalog.models?.length ? 'dynamic' as const : 'unavailable' as const,
-          refreshError: true, refreshErrorMessage: catalog.unavailableReason }
+          catalogObserved: true as const, observedAt, refreshError: true, refreshErrorMessage: catalog.unavailableReason }
         : catalog.models;
     });
   },
