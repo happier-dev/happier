@@ -73,11 +73,6 @@ import { readCapabilityRefusalDetails } from '@/capabilities/errors';
 import { ActionFailureCauseV1Schema, projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { redactBugReportSensitiveText } from '@happier-dev/protocol/bugs/reports/redaction';
 
-type RpcTransportReply = {
-    signal?: AbortSignal;
-    isCancelled(): boolean;
-};
-
 type OwnedHandlerRegistrationContext = {
     ownerId: string;
     previousMethods: ReadonlySet<string>;
@@ -355,20 +350,14 @@ export class RpcHandlerManager {
         source?: 'authenticated_home_socket',
     ): Promise<any> {
         const requestStartedAtMs = Date.now();
-        const reply: RpcTransportReply | undefined = callback ? {
-            isCancelled() {
-                return this.signal?.aborted === true && request.waitForResultOnCancel !== true;
-            },
-        } : undefined;
         // Diagnostic correlation never supplies cancellation or admission authority.
         const trace = SocketRpcRequestIdSchema.safeParse(request.traceId);
         const diagnosticId = trace.success ? trace.data : request.requestId;
         const traceRequestId = typeof diagnosticId === 'string' ? diagnosticId.replace(/^rpc_/u, '') : diagnosticId;
         const response = await withWebLatencyTrace(traceRequestId, () => this.observeRequest(request.method, diagnosticId,
-            diagnostic => this.dispatchRequest(request, diagnostic, requestStartedAtMs, trace.success, reply, source)));
-        // Cancellation can arrive during asynchronous encoding or requester cleanup.
-        // Only this owner may release the captured native acknowledgement.
-        if (!reply?.isCancelled()) callback?.(response);
+            diagnostic => this.dispatchRequest(request, diagnostic, requestStartedAtMs, trace.success, source)));
+        // Cancellation signals the handler; its settled result still owns the reply.
+        callback?.(response);
         return response;
     }
 
@@ -470,7 +459,7 @@ export class RpcHandlerManager {
             phaseDurationsMs: { ...diagnostic.failure?.phaseDurationsMs, ...operation.phaseDurationsMs } };
     }
 
-    private async dispatchRequest(request: RpcRequest, diagnostic: RequestDiagnostic, requestStartedAtMs: number, hasDiagnosticTrace: boolean, reply?: RpcTransportReply, source?: 'authenticated_home_socket'): Promise<unknown> {
+    private async dispatchRequest(request: RpcRequest, diagnostic: RequestDiagnostic, requestStartedAtMs: number, hasDiagnosticTrace: boolean, source?: 'authenticated_home_socket'): Promise<unknown> {
         // Admission captures its reply codec; later key adoption only affects new requests.
         const admittedContent = this.rpcContent;
         if (!admittedContent) {
@@ -486,12 +475,6 @@ export class RpcHandlerManager {
             || privateMethod === RPC_METHODS.DAEMON_BROWSER_PROFILE_PASSKEYS_APPLY;
         let callId: string | null = null;
         const respond = (request: RpcRequest, result: unknown, acknowledgement: SocketRpcTransportAcknowledgementV1 | null = null) => {
-            // A retired transport caller needs neither encryption nor serialization.
-            // In-process invocations and cooperative result custody retain their result.
-            if (reply?.isCancelled()) {
-                diagnostic.outcomeCode = 'cancelled';
-                return undefined;
-            }
             diagnostic.outcomeCode = readOutcomeCode(result, false, diagnostic.method);
             diagnostic.modelProbe = readModelProbeDiagnostic(diagnostic.method, result);
             diagnostic.capabilityFailure = readCapabilityFailureDiagnostic(diagnostic.method, result);
@@ -816,7 +799,6 @@ export class RpcHandlerManager {
         let countedInFlight = !this.pausedRequestAdmission.has(receivingMethod);
         if (countedInFlight) this.beginInFlightRequest(receivingMethod);
         const controller = new AbortController();
-        if (reply) reply.signal = controller.signal;
         this.activeTransportRequestControllers.add(controller);
         if (requestId) {
             this.activeTransportRequestControllersByRequestId.set(requestId, controller);

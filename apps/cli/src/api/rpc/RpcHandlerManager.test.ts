@@ -2476,6 +2476,52 @@ describe('RpcHandlerManager in-flight request tracking', () => {
 });
 
 describe('RpcHandlerManager request lifetime', () => {
+  it.each([
+    { when: 'during handler execution', outcome: 'success', succeeded: true },
+    { when: 'during response encoding', outcome: 'success', succeeded: true },
+    { when: 'during handler execution', outcome: 'failure', succeeded: false },
+    { when: 'during response encoding', outcome: 'failure', succeeded: false },
+  ])('preserves the settled $outcome RPC result after cancellation $when', async ({ when, succeeded }) => {
+    const encryptionKey = new Uint8Array(32).fill(13);
+    const logger = vi.fn();
+    const rpc = new RpcHandlerManager({ scopePrefix: 'machine-settlement', encryptionKey,
+      encryptionVariant: 'dataKey', logger });
+    const boundary = createSocketEventBoundary();
+    const requestId = 'settled-action-request';
+    const result = succeeded ? { ok: true, result: { environmentRemoved: true } }
+      : { ok: false, errorCode: 'native_refused', error: 'native_refused' };
+    const entered = Promise.withResolvers<void>();
+    let cancelled = false;
+    rpc.registerHandler('demo.settle', async (_input: unknown, context?: RpcHandlerContext) => {
+      if (!context) throw new Error('Missing receiving context');
+      const aborted = new Promise<void>(resolve => context.signal.addEventListener('abort', () => {
+        cancelled = true;
+        resolve();
+      }, { once: true }));
+      entered.resolve();
+      if (when === 'during handler execution') await aborted;
+      else {
+        // Let the handler return before cancellation reaches the real async codec.
+        queueMicrotask(() => queueMicrotask(() => boundary.trigger('rpc-cancel', { requestId })));
+      }
+      return result;
+    });
+    rpc.onSocketConnect(boundary.socket);
+    const callback = vi.fn();
+    const pending = rpc.handleRequest({ method: 'machine-settlement:demo.settle', requestId,
+      params: await sealRpcRequest(encryptionKey, 'machine-settlement:demo.settle', {}) }, callback);
+    await entered.promise;
+    if (when === 'during handler execution') boundary.trigger('rpc-cancel', { requestId });
+    const response: unknown = await pending;
+    expect(cancelled).toBe(true);
+    expect(callback).toHaveBeenCalledExactlyOnceWith(response);
+    expect(typeof response).toBe('string');
+    expect(await openRpcResponse(encryptionKey, response as string)).toEqual(result);
+    expect(logger).toHaveBeenCalledWith('[RPC] Request completed', expect.objectContaining({
+      outcomeCode: succeeded ? 'ok' : 'native_refused',
+    }));
+  });
+
   it.each(['demo.page', 'demo.unrelated'])('gives every handler the full receipt-anchored forwarded budget (%s)', async method => {
     vi.useFakeTimers();
     vi.setSystemTime(10_000);
